@@ -252,6 +252,7 @@ class LMStudioAgent(Agent):
         self._cancelled = False
         self._last_tool_call = None
         self._last_reasoning = None
+        self._files_read: set[str] = set()
         self._checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
         if self._checkpoint_dir:
             self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -281,8 +282,20 @@ class LMStudioAgent(Agent):
                     self._last_tool_call = tool_calls[0]
                     return content or ""
                 if content:
+                    if "<think>" in content and not reasoning:
+                        import re
+                        think_match = re.search(r"<think>(.*?)</think>", content, re.DOTALL)
+                        if think_match:
+                            self._last_reasoning = think_match.group(1).strip()
                     content = self._strip_thinking(content)
                     if not content and not reasoning:
+                        if self._last_reasoning:
+                            nl_tool = self._parse_natural_language(self._last_reasoning)
+                            if nl_tool:
+                                tool_name, args = nl_tool
+                                if tool_name == "read_file" and args.get("path", "") in self._files_read:
+                                    return ""
+                                return json.dumps({"tool": tool_name, "args": args})
                         return ""
                     xml_tool = self._parse_minimax_tool_call(content) if content else None
                     if xml_tool:
@@ -292,6 +305,15 @@ class LMStudioAgent(Agent):
                     extracted = self._parse_tool_call(reasoning)
                     if extracted:
                         tool_name, args = extracted
+                        return json.dumps({"tool": tool_name, "args": args})
+                    xml_tool = self._parse_minimax_tool_call(reasoning) if reasoning else None
+                    if xml_tool:
+                        return json.dumps({"tool": xml_tool[0], "args": xml_tool[1]})
+                    nl_tool = self._parse_natural_language(reasoning)
+                    if nl_tool:
+                        tool_name, args = nl_tool
+                        if tool_name == "read_file" and args.get("path", "") in self._files_read:
+                            return ""
                         return json.dumps({"tool": tool_name, "args": args})
                     return ""
                 return content
@@ -448,6 +470,20 @@ class LMStudioAgent(Agent):
     def cancel(self):
         self._cancelled = True
 
+    def clear_history(self):
+        self._history = []
+        self._last_reasoning = None
+        self._last_tool_call = None
+        self._files_read = set()
+        if self._checkpoint_dir:
+            import re
+            safe_name = re.sub(r'[^\w\-]', '_', self.name)
+            path = self._checkpoint_dir / f"{safe_name}_checkpoint.json"
+            if path.exists():
+                path.unlink()
+                logger.info("Checkpoint deleted: %s", path)
+        logger.info("History cleared for %s", self.name)
+
     def _summarize_response(self, text: str) -> str:
         text = text.strip()
         if len(text) <= 100:
@@ -499,15 +535,33 @@ class LMStudioAgent(Agent):
                 last_response = tool_key
                 no_tool_count = 0
                 reasoning_count = 0
+                print(f"  [{tool_name}] {json.dumps(args)}")
                 result = await self._execute_tool(tool_name, args)
+                if tool_name == "read_file":
+                    self._files_read.add(args.get("path", ""))
+                    lines = result.count("\n") + 1 if result else 0
+                    print(f"  <- {lines} lines read")
+                elif tool_name == "search_file":
+                    match_count = result.count("\n") + 1 if result else 0
+                    print(f"  <- {match_count} matches")
+                else:
+                    print(f"  <- {result[:120]}{'...' if len(result) > 120 else ''}")
                 self._history.append({"role": "assistant", "content": response if response.strip() else None, "tool_calls": [tc]})
                 self._history.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
                 continue
 
             if not response.strip():
                 reasoning_count += 1
+                if last_response is not None and self._last_reasoning:
+                    print(f"\n  {self._last_reasoning}")
+                    self._history.append({"role": "assistant", "content": self._last_reasoning})
+                    self.save_checkpoint()
+                    return self._last_reasoning
                 if reasoning_count >= 5:
                     return "[No action after 5 reasoning rounds]"
+                if self._last_reasoning:
+                    preview = self._last_reasoning[:150]
+                    print(f"  (...) {preview}{'...' if len(self._last_reasoning) > 150 else ''}")
                 content = f"<think>\n{self._last_reasoning}\n</think>" if self._last_reasoning else "[thinking]"
                 self._last_reasoning = None
                 self._history.append({"role": "assistant", "content": content})
@@ -524,9 +578,14 @@ class LMStudioAgent(Agent):
             if not tool_call:
                 no_tool_count += 1
                 if no_tool_count >= 3:
+                    if response.strip():
+                        print(f"  {response[:200]}")
                     self._history.append({"role": "assistant", "content": self._summarize_response(response)})
                     self.save_checkpoint()
                     return self._summarize_response(response)
+                if response.strip():
+                    preview = response[:150]
+                    print(f"  ? {preview}{'...' if len(response) > 150 else ''}")
                 self._history.append({"role": "assistant", "content": self._summarize_response(response)})
                 self._history.append({"role": "user", "content": "Only respond with a JSON tool call."})
                 continue
@@ -542,7 +601,16 @@ class LMStudioAgent(Agent):
                 continue
 
             last_response = tool_key
+            print(f"  [{tool_name}] {json.dumps(args)}")
             result = await self._execute_tool(tool_name, args)
+            if tool_name == "read_file":
+                lines = result.count("\n") + 1 if result else 0
+                print(f"  <- {lines} lines read")
+            elif tool_name == "search_file":
+                match_count = result.count("\n") + 1 if result else 0
+                print(f"  <- {match_count} matches")
+            else:
+                print(f"  <- {result[:120]}{'...' if len(result) > 120 else ''}")
 
             tc = {"id": f"call_{tool_name}", "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}}
             self._history.append({"role": "assistant", "content": None, "tool_calls": [tc]})
@@ -577,6 +645,10 @@ class LLMStudio(metaclass=SingletonMeta):
         for agent in self.agents.values():
             agent.cancel()
 
+    def clear_all(self):
+        for agent in self.agents.values():
+            agent.clear_history()
+
     def shutdown(self):
         for agent in self.agents.values():
             agent.save_checkpoint()
@@ -585,7 +657,7 @@ class LLMStudio(metaclass=SingletonMeta):
 async def main():
     llmstudio = LLMStudio()
     await llmstudio.add_agent("Holger", "minimax-m2.5@q2_k", checkpoint_dir="checkpoints")
-    print("Agent ready. Type 'quit' to exit, 'cancel' to interrupt.\n")
+    print("Agent ready. Type 'quit' to exit, 'cancel' to interrupt, 'clear' to reset.\n")
     try:
         while True:
             prompt = await asyncio.get_running_loop().run_in_executor(None, input, "You: ")
@@ -594,6 +666,10 @@ async def main():
             if prompt.strip().lower() == "cancel":
                 llmstudio.cancel_all()
                 print("Cancelled.\n")
+                continue
+            if prompt.strip().lower() == "clear":
+                llmstudio.clear_all()
+                print("History cleared.\n")
                 continue
             async for msg in llmstudio.converse(prompt):
                 print(msg)
