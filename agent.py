@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import time
 import urllib.error
 from pathlib import Path
 from typing import Any
@@ -39,13 +38,50 @@ def _normalize_path(path: str) -> str:
     return path
 
 
+def _safe_path(path: str) -> str:
+    """Validate and normalize a file path, blocking path traversal attempts.
+
+    Converts Unix-style paths (e.g., /c/Users/...) to Windows format,
+    resolves the path to an absolute path, and checks for directory
+    traversal attempts using '..' components.
+
+    Args:
+        path: The file path to validate. Can be in Unix /c/... format
+              or Windows C:\\... format.
+
+    Returns:
+        The resolved absolute path in Windows format.
+
+    Raises:
+        ValueError: If the path is empty, invalid, or contains traversal
+                    attempts (e.g., '..' components).
+    """
+    if not path or not isinstance(path, str):
+        raise ValueError("Path must be a non-empty string")
+
+    # Normalize to Windows format first for consistent checking
+    normalized = _normalize_path(path)
+
+    # Check for path traversal components before resolution
+    if ".." in Path(normalized).parts:
+        raise ValueError(f"Path traversal blocked: {path}")
+
+    # Resolve to absolute path (handles relative paths and symlinks)
+    try:
+        resolved = Path(normalized).resolve()
+    except (OSError, RuntimeError) as e:
+        raise ValueError(f"Invalid path: {path}") from e
+
+    return str(resolved)
+
+
 class ToolRegistry:
     @staticmethod
     async def read_file(path: str) -> str:
         try:
             if not isinstance(path, str) or not path:
                 return "Error: Invalid path"
-            local_path = _normalize_path(path)
+            local_path = _safe_path(path)
             if not os.path.exists(local_path):
                 return f"File not found: {path}"
             if not os.path.isfile(local_path):
@@ -68,7 +104,7 @@ class ToolRegistry:
                 return "Error: All arguments must be strings"
             if not find:
                 return "Error: find text cannot be empty"
-            local_path = _normalize_path(path)
+            local_path = _safe_path(path)
             if not os.path.exists(local_path):
                 return f"File not found: {path}"
             with open(local_path, "r", encoding="utf-8", errors="replace") as f:
@@ -94,7 +130,7 @@ class ToolRegistry:
         try:
             if not isinstance(path, str) or not path:
                 return "Error: Invalid path"
-            local_path = _normalize_path(path)
+            local_path = _safe_path(path)
             dir_name = os.path.dirname(local_path)
             if dir_name:
                 os.makedirs(dir_name, exist_ok=True)
@@ -113,7 +149,7 @@ class ToolRegistry:
         try:
             if not isinstance(query, str) or not query:
                 return "Error: Invalid query"
-            local_path = _normalize_path(path) if path != "." else "."
+            local_path = _safe_path(path) if path != "." else "."
             import platform
             if platform.system() == "Windows":
                 search_pattern = local_path + "\\*.*"
@@ -166,16 +202,21 @@ class LMStudioAgent(Agent):
     async def _send(self, messages: list[dict]) -> str:
         import urllib.request
         payload = json.dumps({"model": self.model, "messages": messages, "temperature": 0.1, "max_tokens": 2048, "stop": ["\n\n", "I need to", "Let me", "First,"]}).encode()
-        req = urllib.request.Request(self.BASE_URL, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        headers = {"Content-Type": "application/json"}
         for attempt in range(3):
+            req = urllib.request.Request(self.BASE_URL, data=payload, headers=headers, method="POST")
             try:
-                resp = await asyncio.get_event_loop().run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=300))
+                resp = await asyncio.get_running_loop().run_in_executor(None, lambda r=req: urllib.request.urlopen(r, timeout=300))
                 data = json.loads(resp.read())
                 msg = data["choices"][0]["message"]
                 content = msg.get("content") or ""
                 reasoning = msg.get("reasoning_content") or ""
                 if not content and reasoning:
-                    return reasoning
+                    extracted = self._parse_tool_call(reasoning)
+                    if extracted:
+                        tool_name, args = extracted
+                        return json.dumps({"tool": tool_name, "args": args})
+                    return ""
                 return content
             except urllib.error.HTTPError as e:
                 logger.warning("HTTP %d on attempt %d: %s", e.code, attempt + 1, e.reason)
@@ -259,7 +300,7 @@ class LMStudioAgent(Agent):
         if not files_mentioned:
             return None
         filename = files_mentioned[0]
-        is_read = any(w in text_lower for w in ['read', 'see', 'show', 'view', 'check', 'open', 'cat'])
+        is_read = any(w in text_lower for w in ['read', 'see', 'show', 'view', 'check', 'open', 'cat', 'analyze', 'explain', 'describe', 'review'])
         is_search = any(w in text_lower for w in ['search', 'find', 'grep', 'look for'])
         is_edit = any(w in text_lower for w in ['edit', 'change', 'modify', 'update', 'fix', 'improve', 'add', 'remove', 'write', 'patch'])
         if is_search:
@@ -273,11 +314,7 @@ class LMStudioAgent(Agent):
                     query = text[idx:end].strip().strip('`')
                     break
             return ("search_file", {"query": query, "path": "/c/Dev/Agent1"})
-        if is_read:
-            return ("read_file", {"path": f"/c/Dev/Agent1/{filename}"})
-        if is_edit:
-            if 'improve' in text_lower or 'add' in text_lower or 'fix' in text_lower:
-                return ("read_file", {"path": f"/c/Dev/Agent1/{filename}"})
+        if is_read or is_edit:
             return ("read_file", {"path": f"/c/Dev/Agent1/{filename}"})
         return ("read_file", {"path": f"/c/Dev/Agent1/{filename}"})
 
@@ -285,7 +322,9 @@ class LMStudioAgent(Agent):
         if not self._checkpoint_dir:
             return
         try:
-            path = self._checkpoint_dir / f"{self.name}_checkpoint.json"
+            import re
+            safe_name = re.sub(r'[^\w\-]', '_', self.name)
+            path = self._checkpoint_dir / f"{safe_name}_checkpoint.json"
             path.write_text(json.dumps({"name": self.name, "model": self.model, "history": self._history}, indent=2))
         except Exception as e:
             logger.error("Failed to save checkpoint: %s", e)
@@ -293,7 +332,9 @@ class LMStudioAgent(Agent):
     def load_checkpoint(self) -> bool:
         if not self._checkpoint_dir:
             return False
-        path = self._checkpoint_dir / f"{self.name}_checkpoint.json"
+        import re
+        safe_name = re.sub(r'[^\w\-]', '_', self.name)
+        path = self._checkpoint_dir / f"{safe_name}_checkpoint.json"
         if not path.exists():
             return False
         try:
@@ -324,9 +365,9 @@ class LMStudioAgent(Agent):
             self._history.append({"role": "system", "content": SYSTEM_PROMPT})
         self._history.append({"role": "user", "content": prompt})
 
-        seen_tools = set()
         last_response = None
         no_tool_count = 0
+        reasoning_count = 0
         for _ in range(max_rounds):
             if self._cancelled:
                 return "[Cancelled]"
@@ -335,6 +376,16 @@ class LMStudioAgent(Agent):
                 self._history = [self._history[0]] + self._history[-(self._max_history - 1):]
 
             response = await self._send(self._history)
+
+            if not response.strip():
+                reasoning_count += 1
+                if reasoning_count >= 5:
+                    return "[No action after 5 reasoning rounds]"
+                self._history.append({"role": "assistant", "content": "[thinking]"})
+                self._history.append({"role": "user", "content": "Output ONLY a JSON tool call now."})
+                continue
+
+            reasoning_count = 0
 
             tool_call = self._parse_tool_call(response)
             if not tool_call:
@@ -346,7 +397,7 @@ class LMStudioAgent(Agent):
                     self.save_checkpoint()
                     return self._summarize_response(response)
                 self._history.append({"role": "assistant", "content": self._summarize_response(response)})
-                self._history.append({"role": "user", "content": "STOP. Output ONLY JSON tool call. No explanation. Example: {\"tool\": \"read_file\", \"args\": {\"path\": \"/c/Dev/Agent1/agent.py\"}}"})
+                self._history.append({"role": "user", "content": "Only respond with a JSON tool call."})
                 continue
             no_tool_count = 0
 
@@ -405,7 +456,7 @@ async def main():
     print("Agent ready. Type 'quit' to exit, 'cancel' to interrupt.\n")
     try:
         while True:
-            prompt = await asyncio.get_event_loop().run_in_executor(None, input, "You: ")
+            prompt = await asyncio.get_running_loop().run_in_executor(None, input, "You: ")
             if prompt.strip().lower() in ("quit", "exit"):
                 break
             if prompt.strip().lower() == "cancel":
