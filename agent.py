@@ -13,19 +13,74 @@ logging.basicConfig(
 )
 logger = logging.getLogger("agent")
 
-SYSTEM_PROMPT = """Respond with ONLY a JSON tool call. No explanation, no analysis, no thinking. Just the JSON.
+TOOL_DEFINITIONS = {
+    "read_file": {
+        "description": "Read the contents of a file at the given path",
+        "parameters": {
+            "path": {"type": "string", "description": "File path, e.g. /c/Dev/Agent1/agent.py", "required": True}
+        },
+        "example_args": {"path": "/c/Dev/Agent1/agent.py"}
+    },
+    "apply_patch": {
+        "description": "Apply a find-and-replace patch to a file. Find text must match exactly once.",
+        "parameters": {
+            "path": {"type": "string", "description": "Path to the file to patch", "required": True},
+            "find": {"type": "string", "description": "Exact text to find", "required": True},
+            "replace": {"type": "string", "description": "Replacement text", "required": True}
+        },
+        "example_args": {"path": "/c/Dev/Agent1/agent.py", "find": "old text", "replace": "new text"}
+    },
+    "edit_file": {
+        "description": "Create or overwrite a file with new content",
+        "parameters": {
+            "path": {"type": "string", "description": "Path to the file to write", "required": True},
+            "content": {"type": "string", "description": "Full file content", "required": True}
+        },
+        "example_args": {"path": "/c/Dev/Agent1/agent.py", "content": "full file"}
+    },
+    "search_file": {
+        "description": "Search for text in files within a directory",
+        "parameters": {
+            "query": {"type": "string", "description": "Text or pattern to search for", "required": True},
+            "path": {"type": "string", "description": "Directory to search, default is current directory", "required": False}
+        },
+        "example_args": {"query": "search term", "path": "/c/Dev/Agent1"}
+    }
+}
 
-{"tool": "read_file", "args": {"path": "/c/Dev/Agent1/agent.py"}}
-{"tool": "apply_patch", "args": {"path": "/c/Dev/Agent1/agent.py", "find": "old text", "replace": "new text"}}
-{"tool": "search_file", "args": {"query": "search term", "path": "/c/Dev/Agent1"}}
-{"tool": "edit_file", "args": {"path": "/c/Dev/Agent1/agent.py", "content": "full file"}}
+def _build_system_prompt() -> str:
+    json_examples = "\n".join(
+        json.dumps({"tool": name, "args": d["example_args"]})
+        for name, d in TOOL_DEFINITIONS.items()
+    )
+    return f"""You are a coding agent. Think, then output a JSON tool call.
 
-Rules:
-- For ANY file request, output ONLY the JSON tool call immediately
-- No text before or after the JSON
-- Use read_file first to see content
-- Use apply_patch for changes
-- Paths: /c/Dev/file.txt"""
+{json_examples}
+
+Always read a file before editing it.
+Paths use /c/Dev/file.txt format"""
+
+def _build_tool_schemas() -> list[dict]:
+    schemas = []
+    for name, d in TOOL_DEFINITIONS.items():
+        properties = {}
+        required = []
+        for pname, pinfo in d["parameters"].items():
+            properties[pname] = {"type": pinfo["type"], "description": pinfo["description"]}
+            if pinfo.get("required", False):
+                required.append(pname)
+        schemas.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": d["description"],
+                "parameters": {"type": "object", "properties": properties, "required": required}
+            }
+        })
+    return schemas
+
+SYSTEM_PROMPT = _build_system_prompt()
+TOOL_SCHEMAS = _build_tool_schemas()
 
 
 def _normalize_path(path: str) -> str:
@@ -178,7 +233,7 @@ class ToolRegistry:
             logger.error("search_file failed for %s in %s: %s", query, path, e)
             return f"Error searching: {e}"
 
-    TOOLS = ["read_file", "apply_patch", "edit_file", "search_file"]
+    TOOLS = list(TOOL_DEFINITIONS.keys())
 
 
 class Agent:
@@ -195,13 +250,23 @@ class LMStudioAgent(Agent):
         super().__init__(name, max_history)
         self.model = model
         self._cancelled = False
+        self._last_tool_call = None
+        self._last_reasoning = None
         self._checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
         if self._checkpoint_dir:
             self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     async def _send(self, messages: list[dict]) -> str:
         import urllib.request
-        payload = json.dumps({"model": self.model, "messages": messages, "temperature": 0.1, "max_tokens": 2048, "stop": ["\n\n", "I need to", "Let me", "First,"]}).encode()
+        self._last_tool_call = None
+        self._last_reasoning = None
+        payload = json.dumps({
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.1,
+            "max_tokens": 2048,
+            "stop": ["\n\n"],
+        }).encode()
         headers = {"Content-Type": "application/json"}
         for attempt in range(3):
             req = urllib.request.Request(self.BASE_URL, data=payload, headers=headers, method="POST")
@@ -211,7 +276,19 @@ class LMStudioAgent(Agent):
                 msg = data["choices"][0]["message"]
                 content = msg.get("content") or ""
                 reasoning = msg.get("reasoning_content") or ""
+                tool_calls = msg.get("tool_calls") or []
+                if tool_calls:
+                    self._last_tool_call = tool_calls[0]
+                    return content or ""
+                if content:
+                    content = self._strip_thinking(content)
+                    if not content and not reasoning:
+                        return ""
+                    xml_tool = self._parse_minimax_tool_call(content) if content else None
+                    if xml_tool:
+                        return json.dumps({"tool": xml_tool[0], "args": xml_tool[1]})
                 if not content and reasoning:
+                    self._last_reasoning = reasoning
                     extracted = self._parse_tool_call(reasoning)
                     if extracted:
                         tool_name, args = extracted
@@ -318,6 +395,30 @@ class LMStudioAgent(Agent):
             return ("read_file", {"path": f"/c/Dev/Agent1/{filename}"})
         return ("read_file", {"path": f"/c/Dev/Agent1/{filename}"})
 
+    @staticmethod
+    def _strip_thinking(text: str) -> str:
+        import re
+        text = re.sub(r'<think>.*?</think>\s*', '', text, count=1, flags=re.DOTALL)
+        return text.rstrip()
+
+    @staticmethod
+    def _parse_minimax_tool_call(text: str) -> tuple[str, dict] | None:
+        if "<minimax:tool_call>" not in text:
+            return None
+        import re
+        match = re.search(r"<minimax:tool_call>(.*?)</minimax:tool_call>", text, re.DOTALL)
+        if not match:
+            return None
+        block = match.group(1)
+        invoke_match = re.search(r'<invoke name="([^"]+)"\s*>(.*?)</invoke>', block, re.DOTALL)
+        if not invoke_match:
+            return None
+        tool_name = invoke_match.group(1)
+        args: dict = {}
+        for m in re.finditer(r'<parameter name="([^"]+)"\s*>(.*?)</parameter>', invoke_match.group(2), re.DOTALL):
+            args[m.group(1)] = m.group(2).strip()
+        return (tool_name, args)
+
     def save_checkpoint(self):
         if not self._checkpoint_dir:
             return
@@ -377,17 +478,47 @@ class LMStudioAgent(Agent):
 
             response = await self._send(self._history)
 
+            if self._last_tool_call:
+                tc = self._last_tool_call
+                self._last_tool_call = None
+                tool_name = tc["function"]["name"]
+                try:
+                    args = json.loads(tc["function"]["arguments"])
+                except json.JSONDecodeError:
+                    args = {}
+                if tool_name not in ToolRegistry.TOOLS:
+                    self._history.append({"role": "assistant", "content": None, "tool_calls": [tc]})
+                    self._history.append({"role": "tool", "tool_call_id": tc["id"], "content": f"Unknown tool: {tool_name}"})
+                    continue
+                tool_key = f"{tool_name}:{json.dumps(args, sort_keys=True)}"
+                if tool_key == last_response:
+                    self._history.append({"role": "assistant", "content": None, "tool_calls": [tc]})
+                    self._history.append({"role": "tool", "tool_call_id": tc["id"], "content": "[STOP] Same tool call repeated. Analyze and respond to user."})
+                    last_response = None
+                    continue
+                last_response = tool_key
+                no_tool_count = 0
+                reasoning_count = 0
+                result = await self._execute_tool(tool_name, args)
+                self._history.append({"role": "assistant", "content": response if response.strip() else None, "tool_calls": [tc]})
+                self._history.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+                continue
+
             if not response.strip():
                 reasoning_count += 1
                 if reasoning_count >= 5:
                     return "[No action after 5 reasoning rounds]"
-                self._history.append({"role": "assistant", "content": "[thinking]"})
-                self._history.append({"role": "user", "content": "Output ONLY a JSON tool call now."})
+                content = f"<think>\n{self._last_reasoning}\n</think>" if self._last_reasoning else "[thinking]"
+                self._last_reasoning = None
+                self._history.append({"role": "assistant", "content": content})
+                self._history.append({"role": "user", "content": "Now output the tool call."})
                 continue
 
             reasoning_count = 0
 
             tool_call = self._parse_tool_call(response)
+            if not tool_call:
+                tool_call = self._parse_minimax_tool_call(response)
             if not tool_call:
                 tool_call = self._parse_natural_language(response)
             if not tool_call:
@@ -413,8 +544,9 @@ class LMStudioAgent(Agent):
             last_response = tool_key
             result = await self._execute_tool(tool_name, args)
 
-            self._history.append({"role": "assistant", "content": response})
-            self._history.append({"role": "user", "content": f"Tool {tool_name} result:\n{result}"})
+            tc = {"id": f"call_{tool_name}", "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}}
+            self._history.append({"role": "assistant", "content": None, "tool_calls": [tc]})
+            self._history.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
 
         return "[Max rounds reached]"
 
@@ -452,7 +584,7 @@ class LLMStudio(metaclass=SingletonMeta):
 
 async def main():
     llmstudio = LLMStudio()
-    await llmstudio.add_agent("Holger", "qwen3.6-27b-mtp", checkpoint_dir="checkpoints")
+    await llmstudio.add_agent("Holger", "minimax-m2.5@q2_k", checkpoint_dir="checkpoints")
     print("Agent ready. Type 'quit' to exit, 'cancel' to interrupt.\n")
     try:
         while True:
