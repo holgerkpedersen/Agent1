@@ -1,0 +1,1184 @@
+{
+  "timestamp": "2026-07-18 16:58:06",
+  "models": [
+    {
+      "model": "qwen2.5-coder-7b-instruct",
+      "overall_accuracy": 93.9,
+      "total_correct": 92,
+      "total_scoreable": 98,
+      "avg_latency_ms": 3670.4,
+      "categories": {
+        "reasoning": {
+          "accuracy": 92.0,
+          "correct_count": 23,
+          "scoreable_count": 25,
+          "avg_latency_ms": 5495.0,
+          "p95_latency_ms": 11031.0,
+          "questions": [
+            {
+              "index": 0,
+              "prompt": "If all Bloops are Razzies and all Razzies are Lazzies, are all Bloops definitely Lazzies? Answer yes or no.",
+              "response": "Yes.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 9656.999999991967,
+              "tokens_used": 64
+            },
+            {
+              "index": 1,
+              "prompt": "A farmer has 17 sheep. All but 9 run away. How many sheep does the farmer have left?",
+              "response": "The farmer has 9 sheep left.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2343.0000000080327,
+              "tokens_used": 62
+            },
+            {
+              "index": 2,
+              "prompt": "If it takes 5 machines 5 minutes to make 5 widgets, how long would it take 100 machines to make 100 widgets?",
+              "response": "The scenario you've described is a classic example of a linear relationship between the number of machines and the production rate. Here's the breakdown:\n\n- If 5 machines can produce 5 widgets in 5 minutes, this means each machine produces 1 widget in 5 minutes.\n- Therefore, if you have 100 machines working at the same rate, each machine will still produce 1 widget in 5 minutes.\n\nSo, it would take 100 machines 5 minutes to make 100 widgets.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 4406.999999991967,
+              "tokens_used": 170
+            },
+            {
+              "index": 3,
+              "prompt": "What comes next in the sequence: 2, 6, 18, 54, ?",
+              "response": "The sequence you provided is 2, 6, 18, 54, and it follows a pattern where each term is multiplied by 3 to get the next term. \n\nTo find the next term after 54:\n\\[ 54 \\times 3 = 162 \\]\n\nSo, the next number in the sequence is 162.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 3812.000000005355,
+              "tokens_used": 130
+            },
+            {
+              "index": 4,
+              "prompt": "If A is taller than B, and B is taller than C, who is the shortest? Answer with one letter.",
+              "response": "C",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2187.999999994645,
+              "tokens_used": 55
+            },
+            {
+              "index": 5,
+              "prompt": "A clock shows 3:15. What is the angle between the hour hand and the minute hand in degrees?",
+              "response": "To find the angle between the hour hand and the minute hand of a clock at 3:15, we need to calculate the positions of both hands separately and then determine the difference.\n\n### Step 1: Calculate the position of the minute hand.\nThe minute hand moves 360 degrees in 60 minutes. Therefore, each minute, the minute hand moves:\n\\[ \\frac{360}{60} = 6 \\text{ degrees} \\]\n\nAt 15 minutes past the hour, the minute hand is at:\n\\[ 15 \\times 6 = 90 \\text{ degrees} \\]\nfrom the 12 o'clock position.\n\n### Step ",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 11031.000000002678,
+              "tokens_used": 468
+            },
+            {
+              "index": 6,
+              "prompt": "Mary's father has five daughters: Nana, Nene, Nini, Nono. What is the fifth daughter's name?",
+              "response": "The fifth daughter's name is Mary. The question states that \"Mary's father has five daughters,\" so Mary herself is one of those daughters.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2906.0000000026776,
+              "tokens_used": 86
+            },
+            {
+              "index": 7,
+              "prompt": "If you rearrange the letters 'CIFAIPC', you get the name of a(n): A) City B) Animal C) Ocean D) Country",
+              "response": "The letters \"CIFAIPC\" can be rearranged to form the word \"CAPICAI\", which is not a standard English word. However, if we consider the possibility of a misspelling or a different arrangement, one possible correct answer could be:\n\nA) City\n\nIf we rearrange the letters to form \"PACIFIC\", it refers to a famous ocean. But since \"CIFAIPC\" does not directly spell out any of the given options, the most plausible answer based on common English words and the provided options is:\n\nD) Country\n\nIf we conside",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 5281.000000002678,
+              "tokens_used": 210
+            },
+            {
+              "index": 8,
+              "prompt": "What number should replace the question mark: 1, 1, 2, 3, 5, 8, ?",
+              "response": "The sequence you've provided is known as the Fibonacci sequence. Each number in the sequence after the first two (1 and 1) is the sum of the two preceding ones. \n\nSo, to find the next number:\n\n- The last two numbers are 3 and 5.\n- Adding them together: 3 + 5 = 8\n\nTherefore, the number that should replace the question mark is **13**.\n\nThe sequence would then be: 1, 1, 2, 3, 5, 8, 13.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 4625.0,
+              "tokens_used": 172
+            },
+            {
+              "index": 9,
+              "prompt": "A bat and a ball cost $1.10 in total. The bat costs $1 more than the ball. How much does the ball cost? Give your answer in dollars.",
+              "response": "To solve this problem, let's define the variables:\n\n- Let \\( B \\) be the cost of the ball in dollars.\n- Then the cost of the bat would be \\( B + 1 \\) dollars.\n\nAccording to the problem, the total cost of the bat and the ball is $1.10. So we can write the equation:\n\\[ B + (B + 1) = 1.10 \\]\n\nSimplifying this equation:\n\\[ 2B + 1 = 1.10 \\]\n\\[ 2B = 1.10 - 1 \\]\n\\[ 2B = 0.10 \\]\n\\[ B = \\frac{0.10}{2} \\]\n\\[ B = 0.05 \\]\n\nSo, the ball costs $0.05. Let's verify this by coding it in Python.\n```python\n# Defin",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 9015.999999988708,
+              "tokens_used": 385
+            },
+            {
+              "index": 10,
+              "prompt": "If yesterday was two days after Monday, what day is tomorrow?",
+              "response": "If yesterday was two days after Monday, then yesterday was Wednesday. Therefore, tomorrow would be Thursday.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2688.000000009197,
+              "tokens_used": 63
+            },
+            {
+              "index": 11,
+              "prompt": "In a race, you overtake the person in second place. What place are you now in?",
+              "response": "If you overtake the person who is currently in second place, you will take their position. Therefore, after overtaking them, you would be in second place.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2843.9999999973224,
+              "tokens_used": 83
+            },
+            {
+              "index": 12,
+              "prompt": "How many sides does a hexagon have?",
+              "response": "A hexagon has six sides.",
+              "correct": false,
+              "score": 0.0,
+              "latency_ms": 2327.999999994063,
+              "tokens_used": 46
+            },
+            {
+              "index": 13,
+              "prompt": "If 3 cats catch 3 mice in 3 minutes, how many cats are needed to catch 100 mice in 100 minutes?",
+              "response": "To solve this problem, we need to determine the rate at which the cats catch mice and then use that rate to find out how many cats are required to catch 100 mice in 100 minutes.\n\nFirst, let's find the rate at which one cat catches mice. We know that 3 cats can catch 3 mice in 3 minutes. Therefore, in 3 minutes, one cat catches:\n\n\\[\n\\frac{3 \\text{ mice}}{3 \\text{ cats}} = 1 \\text{ mouse per cat}\n\\]\n\nThis means that one cat catches 1 mouse every 3 minutes.\n\nNext, we need to determine how many mice",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 11139.999999999418,
+              "tokens_used": 477
+            },
+            {
+              "index": 14,
+              "prompt": "What is the next prime number after 29?",
+              "response": "The next prime number after 29 is 31.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2547.000000005937,
+              "tokens_used": 54
+            },
+            {
+              "index": 15,
+              "prompt": "A snail is at the bottom of a 10-meter well. Each day it climbs 3 meters, but each night it slips back 2 meters. How many days to get out?",
+              "response": "To determine how many days it will take for the snail to climb out of the well, we need to consider both its daily progress and the nightly slip.\n\n1. **Daily Progress Calculation:**\n   - Each day, the snail climbs 3 meters.\n   - Each night, the snail slips back 2 meters.\n   - Therefore, the net progress each day is \\(3 - 2 = 1\\) meter.\n\n2. **Progress Over Multiple Days:**\n   - After 8 days, the snail will have climbed \\(8 \\times 1 = 8\\) meters.\n   - On the 9th day, the snail starts at 8 meters a",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 6843.999999997322,
+              "tokens_used": 292
+            },
+            {
+              "index": 16,
+              "prompt": "If you have a 3×3×3 cube painted red on all outside faces and cut into 1×1×1 cubes, how many small cubes have exactly two red faces?",
+              "response": "To determine how many small cubes have exactly two red faces when a 3×3×3 cube is painted red on all outside faces and then cut into 1×1×1 cubes, we can follow these steps:\n\n1. **Identify the structure of the original cube**: The original cube is a 3×3×3 cube, which means it has 27 smaller 1×1×1 cubes.\n\n2. **Understand the painting and cutting process**: When the original cube is painted red on all outside faces and then cut into smaller cubes, the smaller cubes that have exactly two red faces a",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 9125.0,
+              "tokens_used": 383
+            },
+            {
+              "index": 17,
+              "prompt": "Which does not belong: Apple, Banana, Carrot, Date, Elderberry? Answer with one word.",
+              "response": "Carrot",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2328.0000000086147,
+              "tokens_used": 54
+            },
+            {
+              "index": 18,
+              "prompt": "If you flip a fair coin twice, what is the probability of getting at least one head? Give answer as a fraction.",
+              "response": "To determine the probability of getting at least one head when flipping a fair coin twice, we can follow these steps:\n\n1. **Identify all possible outcomes**: When flipping a fair coin twice, each flip has 2 possible outcomes (Heads or Tails). Therefore, there are \\(2 \\times 2 = 4\\) possible outcomes in total.\n   - HH\n   - HT\n   - TH\n   - TT\n\n2. **Count the favorable outcomes**: We need to count the number of outcomes that include at least one head.\n   - HH (both flips are heads)\n   - HT (first f",
+              "correct": false,
+              "score": 0.0,
+              "latency_ms": 7593.999999997322,
+              "tokens_used": 311
+            },
+            {
+              "index": 19,
+              "prompt": "What comes next: J, F, M, A, M, J, ?",
+              "response": "The sequence you provided is the first letter of each month in English:\n\n- January (J)\n- February (F)\n- March (M)\n- April (A)\n- May (M)\n- June (J)\n\nFollowing this pattern, the next month after June is July. Therefore, the next letter in the sequence is:\n\n- July (J)",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 3733.9999999967404,
+              "tokens_used": 118
+            },
+            {
+              "index": 20,
+              "prompt": "A train leaves station A at 60 mph. Another leaves station B (120 miles away) toward A at 40 mph. How many hours until they meet?",
+              "response": "To determine how long it will take for the two trains to meet, we need to calculate the time it takes for them to cover the distance between the two stations together.\n\nHere are the steps:\n\n1. **Identify the speeds of the trains:**\n   - Train from station A: 60 mph\n   - Train from station B: 40 mph\n\n2. **Calculate their combined speed:**\n   Since they are moving towards each other, we add their speeds together.\n   \\[\n   \\text{Combined speed} = 60 \\text{ mph} + 40 \\text{ mph} = 100 \\text{ mph}\n  ",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 8016.00000000326,
+              "tokens_used": 337
+            },
+            {
+              "index": 21,
+              "prompt": "If you write out the numbers from 1 to 100, how many times does the digit '7' appear?",
+              "response": "To determine how many times the digit '7' appears when writing out the numbers from 1 to 100, we can break down the problem into counting the occurrences of '7' in both the tens and units places.\n\n1. **Counting '7's in the units place:**\n   - The numbers that have '7' in the units place are: 7, 17, 27, 37, 47, 57, 67, 77, 87, and 97.\n   - There are 10 such numbers.\n\n2. **Counting '7's in the tens place:**\n   - The numbers that have '7' in the tens place are: 70, 71, 72, 73, 74, 75, 76, 77, 78, a",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 8046.999999991385,
+              "tokens_used": 324
+            },
+            {
+              "index": 22,
+              "prompt": "What is the only number that has the same number of letters as its value in English?",
+              "response": "The number is \"four.\"",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2343.0000000080327,
+              "tokens_used": 54
+            },
+            {
+              "index": 23,
+              "prompt": "In a group of 30 people, everyone shakes hands with everyone else once. How many handshakes occur?",
+              "response": "To determine the number of handshakes in a group of 30 people where each person shakes hands with every other person exactly once, we can use the concept of combinations from combinatorics.\n\nThe number of ways to choose 2 people out of 30 to shake hands is given by the combination formula:\n\n\\[\nC(n, k) = \\frac{n!}{k!(n-k)!}\n\\]\n\nwhere \\( n \\) is the total number of people (30 in this case), and \\( k \\) is the number of people involved in each handshake (2 in this case).\n\nSo, we need to calculate:\n",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 8110.000000000582,
+              "tokens_used": 337
+            },
+            {
+              "index": 24,
+              "prompt": "If A=1, B=2, ..., Z=26, what is the sum of the letters in 'CAT'?",
+              "response": "To find the sum of the letters in 'CAT', we need to assign each letter its corresponding value based on the given mapping (A=1, B=2, ..., Z=26) and then add these values together.\n\n- C = 3\n- A = 1\n- T = 20\n\nNow, let's add these values:\n\n3 + 1 + 20 = 24\n\nTherefore, the sum of the letters in 'CAT' is 24.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 4421.999999991385,
+              "tokens_used": 159
+            }
+          ]
+        },
+        "math": {
+          "accuracy": 96.0,
+          "correct_count": 24,
+          "scoreable_count": 25,
+          "avg_latency_ms": 4290.0,
+          "p95_latency_ms": 6875.0,
+          "questions": [
+            {
+              "index": 0,
+              "prompt": "What is 17 × 23?",
+              "response": "The product of 17 and 23 is 391.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2500.0,
+              "tokens_used": 56
+            },
+            {
+              "index": 1,
+              "prompt": "Simplify: (12 + 8) ÷ 5",
+              "response": "To simplify the expression \\((12 + 8) \\div 5\\), follow these steps:\n\n1. First, perform the addition inside the parentheses:\n   \\[\n   12 + 8 = 20\n   \\]\n\n2. Next, divide the result by 5:\n   \\[\n   20 \\div 5 = 4\n   \\]\n\nSo, the simplified expression is \\(4\\).",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 4000.0,
+              "tokens_used": 134
+            },
+            {
+              "index": 2,
+              "prompt": "What is the square root of 2025?",
+              "response": "The square root of 2025 is 45.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2453.0000000086147,
+              "tokens_used": 56
+            },
+            {
+              "index": 3,
+              "prompt": "Calculate: 15% of 240",
+              "response": "To calculate 15% of 240, you can use the following formula:\n\n\\[ \\text{Percentage} = \\left( \\frac{\\text{Part}}{\\text{Whole}} \\right) \\times 100 \\]\n\nIn this case, we want to find 15% of 240. So, we set up the equation as follows:\n\n\\[ 15\\% = \\left( \\frac{x}{240} \\right) \\times 100 \\]\n\nTo solve for \\( x \\), which represents 15% of 240, you can rearrange the formula:\n\n\\[ x = \\left( \\frac{15}{100} \\right) \\times 240 \\]\n\nNow, calculate the value:\n\n\\[ x = 0.15 \\times 240 \\]\n\\[ x = 36 \\]\n\nSo, 15% of 240 ",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 6421.999999991385,
+              "tokens_used": 249
+            },
+            {
+              "index": 4,
+              "prompt": "If x + 7 = 15, what is x?",
+              "response": "To solve the equation \\( x + 7 = 15 \\), you need to isolate \\( x \\). You can do this by subtracting 7 from both sides of the equation:\n\n\\[\nx + 7 - 7 = 15 - 7\n\\]\n\nThis simplifies to:\n\n\\[\nx = 8\n\\]",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 3687.000000005355,
+              "tokens_used": 116
+            },
+            {
+              "index": 5,
+              "prompt": "What is 2^10?",
+              "response": "2^10 equals 1024.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2406.0000000026776,
+              "tokens_used": 49
+            },
+            {
+              "index": 6,
+              "prompt": "A rectangle has length 12 and width 5. What is its diagonal? Give the number.",
+              "response": "The diagonal of a rectangle can be found using the Pythagorean theorem. For a rectangle with length \\( l \\) and width \\( w \\), the diagonal \\( d \\) is given by:\n\n\\[ d = \\sqrt{l^2 + w^2} \\]\n\nGiven:\n- Length (\\( l \\)) = 12\n- Width (\\( w \\)) = 5\n\nLet's calculate the diagonal using Python.\n```python\nimport math\n\n# Given dimensions\nlength = 12\nwidth = 5\n\n# Calculate the diagonal using the Pythagorean theorem\ndiagonal = math.sqrt(length**2 + width**2)\nprint(diagonal)\n```\n```output\n13.0\n```\nThe length ",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 5546.999999991385,
+              "tokens_used": 217
+            },
+            {
+              "index": 7,
+              "prompt": "Convert 72 km/h to m/s",
+              "response": "To convert kilometers per hour (km/h) to meters per second (m/s), you can use the conversion factor:\n\n\\[ 1 \\text{ km/h} = \\frac{1000 \\text{ meters}}{3600 \\text{ seconds}} = \\frac{5}{18} \\text{ m/s} \\]\n\nSo, to convert 72 km/h to m/s:\n\n\\[ 72 \\text{ km/h} = 72 \\times \\frac{5}{18} \\text{ m/s} \\]\n\n\\[ 72 \\text{ km/h} = 20 \\text{ m/s} \\]\n\nTherefore, 72 km/h is equal to 20 m/s.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 5422.000000005937,
+              "tokens_used": 195
+            },
+            {
+              "index": 8,
+              "prompt": "What is the sum of interior angles of a pentagon in degrees?",
+              "response": "The sum of interior angles of a pentagon is 540 degrees.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2516.0000000032596,
+              "tokens_used": 60
+            },
+            {
+              "index": 9,
+              "prompt": "Solve: 3x - 9 = 12. What is x?",
+              "response": "To solve the equation \\(3x - 9 = 12\\), follow these steps:\n\n1. Add 9 to both sides of the equation to isolate the term with \\(x\\) on one side:\n   \\[\n   3x - 9 + 9 = 12 + 9\n   \\]\n   Simplifying this, we get:\n   \\[\n   3x = 21\n   \\]\n\n2. Divide both sides by 3 to solve for \\(x\\):\n   \\[\n   \\frac{3x}{3} = \\frac{21}{3}\n   \\]\n   Simplifying this, we find:\n   \\[\n   x = 7\n   \\]\n\nSo, the solution is \\(x = 7\\).",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 5483.99999999674,
+              "tokens_used": 209
+            },
+            {
+              "index": 10,
+              "prompt": "What is the greatest common divisor of 48 and 36?",
+              "response": "The greatest common divisor (GCD) of 48 and 36 can be found using the Euclidean algorithm. Here's how you can implement it in Python:\n\n```python\ndef gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a\n\n# Example usage\nnum1 = 48\nnum2 = 36\nprint(gcd(num1, num2))  # Output: 12\n```\n\nThis code defines a function `gcd` that takes two integers as input and returns their greatest common divisor. The Euclidean algorithm is used here, which repeatedly replaces the larger number by its remainder w",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 5625.0,
+              "tokens_used": 209
+            },
+            {
+              "index": 11,
+              "prompt": "A circle has radius 7. What is its area? Use π ≈ 3.14, round to nearest whole number.",
+              "response": "To find the area of a circle, you can use the formula:\n\n\\[ \\text{Area} = \\pi r^2 \\]\n\nwhere \\( r \\) is the radius of the circle.\n\nGiven that the radius \\( r = 7 \\), and using \\( \\pi \\approx 3.14 \\):\n\n\\[ \\text{Area} = 3.14 \\times (7)^2 \\]\n\\[ \\text{Area} = 3.14 \\times 49 \\]\n\\[ \\text{Area} = 153.86 \\]\n\nRounding to the nearest whole number, the area of the circle is approximately **154** square units.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 5187.999999994645,
+              "tokens_used": 201
+            },
+            {
+              "index": 12,
+              "prompt": "What is 0.375 as a fraction in simplest form?",
+              "response": "To convert the decimal 0.375 to a fraction in its simplest form, follow these steps:\n\n1. **Express the decimal as a fraction**: The decimal 0.375 can be written as \\(\\frac{375}{1000}\\) because there are three digits after the decimal point.\n\n2. **Simplify the fraction**: To simplify \\(\\frac{375}{1000}\\), we need to find the greatest common divisor (GCD) of 375 and 1000. The GCD of 375 and 1000 is 125.\n\n3. **Divide both the numerator and the denominator by their GCD**: \n   \\[\n   \\frac{375 \\div 12",
+              "correct": false,
+              "score": 0.0,
+              "latency_ms": 6781.000000002678,
+              "tokens_used": 261
+            },
+            {
+              "index": 13,
+              "prompt": "If a triangle has sides 5, 12, and 13, what type of triangle is it? Answer with one word.",
+              "response": "Right-angled triangle",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2312.000000005355,
+              "tokens_used": 63
+            },
+            {
+              "index": 14,
+              "prompt": "Calculate the factorial of 6 (6!)",
+              "response": "The factorial of 6 (6!) is calculated as follows:\n\n\\[ 6! = 6 \\times 5 \\times 4 \\times 3 \\times 2 \\times 1 \\]\n\n\\[ 6! = 720 \\]",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 3235.000000000582,
+              "tokens_used": 92
+            },
+            {
+              "index": 15,
+              "prompt": "What is the median of: 3, 7, 8, 5, 12, 15, 9?",
+              "response": "To find the median of a set of numbers, you first need to arrange them in ascending order. The median is then the middle number if there's an odd count, or the average of the two middle numbers if there's an even count.\n\nLet's arrange your numbers in ascending order:\n\n3, 5, 7, 8, 9, 12, 15\n\nSince there are 7 numbers (an odd count), the median will be the 4th number in this ordered list.\n\nThe median is 8.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 4421.999999991385,
+              "tokens_used": 170
+            },
+            {
+              "index": 16,
+              "prompt": "A store offers a 20% discount on an item priced at $85. What is the sale price? Give just the number.",
+              "response": "$68",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2234.0000000112923,
+              "tokens_used": 62
+            },
+            {
+              "index": 17,
+              "prompt": "What is log base 10 of 1000?",
+              "response": "The log base 10 of 1000 is 3. This is because \\(10^3 = 1000\\).",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2827.999999994063,
+              "tokens_used": 76
+            },
+            {
+              "index": 18,
+              "prompt": "How many degrees are in a full circle?",
+              "response": "A full circle is 360 degrees.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2360.000000000582,
+              "tokens_used": 49
+            },
+            {
+              "index": 19,
+              "prompt": "If f(x) = 2x² + 3, what is f(4)?",
+              "response": "To find \\( f(4) \\), we need to substitute \\( x = 4 \\) into the function \\( f(x) = 2x^2 + 3 \\).\n\nLet's do this step by step:\n\n1. Substitute \\( x = 4 \\) into the function:\n   \\[\n   f(4) = 2(4)^2 + 3\n   \\]\n\n2. Calculate \\( 4^2 \\):\n   \\[\n   4^2 = 16\n   \\]\n\n3. Multiply by 2:\n   \\[\n   2 \\times 16 = 32\n   \\]\n\n4. Add 3:\n   \\[\n   32 + 3 = 35\n   \\]\n\nSo, \\( f(4) = 35 \\).",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 5656.000000002678,
+              "tokens_used": 220
+            },
+            {
+              "index": 20,
+              "prompt": "What is the least common multiple of 8 and 12?",
+              "response": "The least common multiple (LCM) of 8 and 12 is 24.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2608.9999999967404,
+              "tokens_used": 64
+            },
+            {
+              "index": 21,
+              "prompt": "A right triangle has legs 9 and 12. What is its area?",
+              "response": "The area \\( A \\) of a right triangle can be calculated using the formula:\n\n\\[ A = \\frac{1}{2} \\times \\text{base} \\times \\text{height} \\]\n\nIn this case, the legs of the right triangle are given as 9 and 12. We can consider either leg to be the base and the other to be the height.\n\nLet's calculate the area using Python.\n```python\n# Given legs of the right triangle\nbase = 9\nheight = 12\n\n# Calculate the area of the right triangle\narea = 0.5 * base * height\nprint(area)\n```\n```output\n54.0\n```\nThe area",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 5625.0,
+              "tokens_used": 215
+            },
+            {
+              "index": 22,
+              "prompt": "Convert 3/7 to a decimal, rounded to two decimal places.",
+              "response": "To convert the fraction \\( \\frac{3}{7} \\) to a decimal and round it to two decimal places, we can use Python's built-in `decimal` module for precise arithmetic operations.\n\nHere is the step-by-step code to achieve this:\n\n1. Import the `Decimal` class from the `decimal` module.\n2. Set the precision high enough to handle the division accurately.\n3. Perform the division and round the result to two decimal places.\n\nLet's write the Python code to do this:\n```python\nfrom decimal import Decimal, getcon",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 6875.0,
+              "tokens_used": 266
+            },
+            {
+              "index": 23,
+              "prompt": "What is the derivative of x³ at x = 2? Give just the number.",
+              "response": "12",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2281.0000000026776,
+              "tokens_used": 50
+            },
+            {
+              "index": 24,
+              "prompt": "If you invest $1000 at 5% annual interest compounded yearly, how much after 2 years? Round to nearest dollar.",
+              "response": "To calculate the future value of an investment with compound interest, you can use the formula:\n\n\\[ A = P \\left(1 + \\frac{r}{n}\\right)^{nt} \\]\n\nWhere:\n- \\( A \\) is the amount of money accumulated after n years, including interest.\n- \\( P \\) is the principal amount (the initial amount of money).\n- \\( r \\) is the annual interest rate (decimal).\n- \\( n \\) is the number of times that interest is compounded per year.\n- \\( t \\) is the time the money is invested for in years.\n\nIn this case:\n- \\( P = 10",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 8780.999999988126,
+              "tokens_used": 370
+            }
+          ]
+        },
+        "coding": {
+          "accuracy": 93.3,
+          "correct_count": 14,
+          "scoreable_count": 15,
+          "avg_latency_ms": 3768.1,
+          "p95_latency_ms": 7141.0,
+          "questions": [
+            {
+              "index": 0,
+              "prompt": "Write a Python function called 'is_palindrome' that takes a string and returns True if it reads the same forwards and backwards. Return only the function code.",
+              "response": "```python\ndef is_palindrome(s):\n    return s == s[::-1]\n```",
+              "correct": null,
+              "score": 0.7,
+              "latency_ms": 2625.0,
+              "tokens_used": 80
+            },
+            {
+              "index": 1,
+              "prompt": "Write a one-line Python expression to reverse a list called 'lst'.",
+              "response": "```python\nreversed_lst = lst[::-1]\n```",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2391.0000000032596,
+              "tokens_used": 56
+            },
+            {
+              "index": 2,
+              "prompt": "What does this Python code output? print(len('hello world'))",
+              "response": "The Python code `print(len('hello world'))` outputs the length of the string 'hello world', which is 11 characters long.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2781.0000000026776,
+              "tokens_used": 72
+            },
+            {
+              "index": 3,
+              "prompt": "Write a Python function 'fibonacci(n)' that returns the nth Fibonacci number (0-indexed). Return only the function.",
+              "response": "```python\ndef fibonacci(n):\n    if n <= 1:\n        return n\n    else:\n        return fibonacci(n-1) + fibonacci(n-2)\n```",
+              "correct": null,
+              "score": 0.7,
+              "latency_ms": 2891.0000000032596,
+              "tokens_used": 90
+            },
+            {
+              "index": 4,
+              "prompt": "In Python, what is the difference between a list and a tuple? Answer in one sentence.",
+              "response": "A list in Python is mutable, allowing for changes such as additions or deletions of elements, while a tuple is immutable, meaning once created, its elements cannot be altered.",
+              "correct": false,
+              "score": 0.0,
+              "latency_ms": 2875.0,
+              "tokens_used": 84
+            },
+            {
+              "index": 5,
+              "prompt": "What does this code output?\nx = [1, 2, 3]\ny = x\ny.append(4)\nprint(x)",
+              "response": "The code outputs: `[1, 2, 3, 4]`\n\nExplanation:\nIn Python, when you assign a list to another variable (like `y = x`), both variables point to the same list object in memory. Therefore, any modifications made to the list through one variable will be reflected in the other.\n\nHere's a step-by-step breakdown of what happens:\n\n1. `x = [1, 2, 3]`: A list `[1, 2, 3]` is created and assigned to the variable `x`.\n2. `y = x`: The variable `y` is assigned to point to the same list object that `x` points to.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 7233.99999999674,
+              "tokens_used": 304
+            },
+            {
+              "index": 6,
+              "prompt": "Write a Python function 'flatten(lst)' that takes a nested list and returns a flat list. Return only the function.",
+              "response": "```python\ndef flatten(lst):\n    result = []\n    for item in lst:\n        if isinstance(item, list):\n            result.extend(flatten(item))\n        else:\n            result.append(item)\n    return result\n```",
+              "correct": null,
+              "score": 0.7,
+              "latency_ms": 3141.0000000032596,
+              "tokens_used": 98
+            },
+            {
+              "index": 7,
+              "prompt": "What is the time complexity of binary search on a sorted array of n elements? Use Big-O notation.",
+              "response": "The time complexity of binary search on a sorted array of n elements is O(log n). This is because binary search divides the array into halves with each iteration, significantly reducing the search space and thus the number of comparisons needed to find an element or determine that it is not present in the array.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 3421.9999999913853,
+              "tokens_used": 110
+            },
+            {
+              "index": 8,
+              "prompt": "Write a Python one-liner to find all even numbers from 1 to 20.",
+              "response": "```python\neven_numbers = [i for i in range(1, 21) if i % 2 == 0]\n```",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2734.0000000112923,
+              "tokens_used": 78
+            },
+            {
+              "index": 9,
+              "prompt": "What does this output?\nprint(bool(''))",
+              "response": "The output of `print(bool(''))` is `False`.\n\nIn Python, the `bool()` function returns `True` if the value passed to it is considered \"truthy,\" and `False` if it is considered \"falsy.\" An empty string (`''`) is considered a falsy value in Python. Therefore, when you pass an empty string to the `bool()` function, it returns `False`.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 3858.9999999967404,
+              "tokens_used": 123
+            },
+            {
+              "index": 10,
+              "prompt": "Write a Python function 'count_vowels(s)' that returns the number of vowels in string s. Return only the function.",
+              "response": "```python\ndef count_vowels(s):\n    return sum(1 for char in s if char.lower() in \"aeiou\")\n```",
+              "correct": null,
+              "score": 0.7,
+              "latency_ms": 2750.0,
+              "tokens_used": 85
+            },
+            {
+              "index": 11,
+              "prompt": "In Python, what keyword is used to define a constant? (Hint: there isn't one — explain briefly.)",
+              "response": "In Python, there is no specific keyword like `const` or `final` that you can use to declare constants. However, by convention, people often use all uppercase letters for variable names to indicate that they are intended to be treated as constants and should not be modified after their initial assignment.\n\nFor example:\n```python\nMAX_VALUE = 100\n```\n\nWhile this does not enforce immutability, it serves as a clear signal to other developers that the value of `MAX_VALUE` is meant to remain constant t",
+              "correct": null,
+              "score": 0.7,
+              "latency_ms": 4421.999999991385,
+              "tokens_used": 163
+            },
+            {
+              "index": 12,
+              "prompt": "What does this code output?\na = {1: 'one', 2: 'two'}\nprint(a.get(3, 'missing'))",
+              "response": "The code outputs `'missing'`. \n\nHere's why:\n- The dictionary `a` is defined with two key-value pairs: `{1: 'one', 2: 'two'}`.\n- The method `get()` is called on the dictionary `a` with two arguments: `3` and `'missing'`.\n- The first argument to `get()` (`3`) is a key that does not exist in the dictionary `a`. \n- Since the key `3` is not found, the second argument to `get()` (`'missing'`) is returned as the default value.\n- Therefore, the output of the code is `'missing'`.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 4953.000000008615,
+              "tokens_used": 193
+            },
+            {
+              "index": 13,
+              "prompt": "Write a Python function 'binary_search(arr, target)' on a sorted list. Return only the function.",
+              "response": "```python\ndef binary_search(arr, target):\n    left, right = 0, len(arr) - 1\n    \n    while left <= right:\n        mid = (left + right) // 2\n        \n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            left = mid + 1\n        else:\n            right = mid - 1\n            \n    return -1\n```",
+              "correct": null,
+              "score": 0.7,
+              "latency_ms": 4016.0000000032596,
+              "tokens_used": 139
+            },
+            {
+              "index": 14,
+              "prompt": "What is the output of: print(0.1 + 0.2 == 0.3)",
+              "response": "The output of `print(0.1 + 0.2 == 0.3)` in Python is `False`.\n\nThis is because floating-point numbers in computers are represented in a way that can lead to small inaccuracies due to the binary representation and the finite precision of floating-point arithmetic. When you add `0.1` and `0.2`, the result is not exactly `0.3` but a value very close to it, which cannot be precisely represented as `0.3`.\n\nTo check if two floating-point numbers are approximately equal within a certain tolerance, you ",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 7140.999999988708,
+              "tokens_used": 279
+            },
+            {
+              "index": 15,
+              "prompt": "Write a Python function 'merge_sort(lst)' that returns a new sorted list. Return only the function.",
+              "response": "```python\ndef merge_sort(lst):\n    if len(lst) <= 1:\n        return lst\n\n    mid = len(lst) // 2\n    left_half = merge_sort(lst[:mid])\n    right_half = merge_sort(lst[mid:])\n\n    return merge(left_half, right_half)\n\ndef merge(left, right):\n    sorted_list = []\n    left_index = 0\n    right_index = 0\n\n    while left_index < len(left) and right_index < len(right):\n        if left[left_index] < right[right_index]:\n            sorted_list.append(left[left_index])\n            left_index += 1\n        e",
+              "correct": null,
+              "score": 0.7,
+              "latency_ms": 5797.000000005937,
+              "tokens_used": 218
+            },
+            {
+              "index": 16,
+              "prompt": "In SQL, what clause filters groups created by GROUP BY?",
+              "response": "The clause that filters groups created by the `GROUP BY` statement in SQL is the `HAVING` clause.\n\nHere's an example to illustrate how it works:\n\n```sql\nSELECT department, AVG(salary) AS avg_salary\nFROM employees\nGROUP BY department\nHAVING AVG(salary) > 5000;\n```\n\nIn this query:\n- The `GROUP BY` clause groups the rows in the `employees` table by the `department` column.\n- The `AVG(salary)` function calculates the average salary for each department.\n- The `HAVING` clause filters these groups, kee",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 5625.0,
+              "tokens_used": 205
+            },
+            {
+              "index": 17,
+              "prompt": "What does this output?\nprint(type([]) is type(list()))",
+              "response": "The output of the code `print(type([]) is type(list()))` will be `True`.\n\nHere's why:\n\n- `type([])` returns the type of an empty list, which is `<class 'list'>`.\n- `type(list())` also returns the type of a list created by calling the `list()` constructor without any arguments, which is also `<class 'list'>`.\n- The `is` operator in Python checks if two variables point to the same object. Since both expressions evaluate to the same type (`<class 'list'>`), they are indeed pointing to the same obje",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 5342.999999993481,
+              "tokens_used": 194
+            },
+            {
+              "index": 18,
+              "prompt": "Write a Python function 'anagram(s1, s2)' that returns True if s1 and s2 are anagrams. Return only the function.",
+              "response": "```python\ndef anagram(s1, s2):\n    return sorted(s1) == sorted(s2)\n```",
+              "correct": null,
+              "score": 0.7,
+              "latency_ms": 2672.000000005937,
+              "tokens_used": 85
+            },
+            {
+              "index": 19,
+              "prompt": "What HTTP status code means 'Not Found'?",
+              "response": "The HTTP status code that means 'Not Found' is 404.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2485.000000000582,
+              "tokens_used": 55
+            },
+            {
+              "index": 20,
+              "prompt": "Write a Python function 'factorial(n)' using recursion. Return only the function.",
+              "response": "```python\ndef factorial(n):\n    if n == 0:\n        return 1\n    else:\n        return n * factorial(n-1)\n```",
+              "correct": null,
+              "score": 0.7,
+              "latency_ms": 2781.0000000026776,
+              "tokens_used": 79
+            },
+            {
+              "index": 21,
+              "prompt": "In Git, what command creates a new branch and switches to it in one step?",
+              "response": "The command that creates a new branch and immediately switches to it is `git checkout -b`. For example, if you want to create a new branch named \"feature-branch\" and switch to it, you would use the following command:\n\n```bash\ngit checkout -b feature-branch\n```\n\nThis command combines two Git operations into one: creating a new branch and switching to that branch.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 3811.999999990803,
+              "tokens_used": 127
+            },
+            {
+              "index": 22,
+              "prompt": "What does this output?\nprint([x**2 for x in range(5)])",
+              "response": "The output of the code is:\n\n```\n[0, 1, 4, 9, 16]\n```",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2719.0000000118744,
+              "tokens_used": 73
+            },
+            {
+              "index": 23,
+              "prompt": "Write a Python function 'remove_duplicates(lst)' that preserves order. Return only the function.",
+              "response": "```python\ndef remove_duplicates(lst):\n    seen = set()\n    result = []\n    for item in lst:\n        if item not in seen:\n            seen.add(item)\n            result.append(item)\n    return result\n```",
+              "correct": null,
+              "score": 0.7,
+              "latency_ms": 3108.9999999967404,
+              "tokens_used": 93
+            },
+            {
+              "index": 24,
+              "prompt": "What is the output of: print('abc' * 3)",
+              "response": "The output of `print('abc' * 3)` will be:\n\n```\nabcabcabc\n```",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2625.0,
+              "tokens_used": 66
+            }
+          ]
+        },
+        "knowledge": {
+          "accuracy": 92.0,
+          "correct_count": 23,
+          "scoreable_count": 25,
+          "avg_latency_ms": 2465.0,
+          "p95_latency_ms": 2844.0,
+          "questions": [
+            {
+              "index": 0,
+              "prompt": "What is the chemical symbol for gold?",
+              "response": "The chemical symbol for gold is Au.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2296.9999999913853,
+              "tokens_used": 46
+            },
+            {
+              "index": 1,
+              "prompt": "Who painted the Mona Lisa? Give just the last name.",
+              "response": "Da Vinci",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2141.0000000032596,
+              "tokens_used": 44
+            },
+            {
+              "index": 2,
+              "prompt": "What planet is known as the Red Planet?",
+              "response": "Mars is known as the Red Planet due to its reddish appearance, which is caused by iron oxide (rust) on its surface.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2687.000000005355,
+              "tokens_used": 67
+            },
+            {
+              "index": 3,
+              "prompt": "What year did World War II end?",
+              "response": "World War II ended in 1945.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2360.000000000582,
+              "tokens_used": 49
+            },
+            {
+              "index": 4,
+              "prompt": "What is the capital of Australia?",
+              "response": "The capital of Australia is Canberra.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2264.999999999418,
+              "tokens_used": 44
+            },
+            {
+              "index": 5,
+              "prompt": "Which element has atomic number 1?",
+              "response": "The element with atomic number 1 is hydrogen (H).",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2360.000000000582,
+              "tokens_used": 50
+            },
+            {
+              "index": 6,
+              "prompt": "Who wrote 'Romeo and Juliet'?",
+              "response": "\"Romeo and Juliet\" was written by William Shakespeare.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2406.0000000026776,
+              "tokens_used": 52
+            },
+            {
+              "index": 7,
+              "prompt": "What is the largest ocean on Earth?",
+              "response": "The largest ocean on Earth is the Pacific Ocean.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2327.999999994063,
+              "tokens_used": 48
+            },
+            {
+              "index": 8,
+              "prompt": "In what year did the first Moon landing occur?",
+              "response": "The first Moon landing occurred in 1969.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2343.9999999973224,
+              "tokens_used": 52
+            },
+            {
+              "index": 9,
+              "prompt": "What gas do plants absorb from the atmosphere during photosynthesis?",
+              "response": "Plants absorb carbon dioxide (CO2) from the atmosphere during the process of photosynthesis.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2531.0000000026776,
+              "tokens_used": 61
+            },
+            {
+              "index": 10,
+              "prompt": "Who developed the theory of relativity? Give just the last name.",
+              "response": "Einstein",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2172.000000005937,
+              "tokens_used": 46
+            },
+            {
+              "index": 11,
+              "prompt": "What is the hardest natural substance on Earth?",
+              "response": "The hardest known natural substance on Earth is diamond.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2296.9999999913853,
+              "tokens_used": 49
+            },
+            {
+              "index": 12,
+              "prompt": "Which country has the most population in the world?",
+              "response": "As of now, China is the country with the most population in the world.",
+              "correct": false,
+              "score": 0.0,
+              "latency_ms": 2468.9999999973224,
+              "tokens_used": 56
+            },
+            {
+              "index": 13,
+              "prompt": "What is the speed of light approximately in km/s? Give a round number.",
+              "response": "The speed of light in a vacuum is approximately 300,000 kilometers per second (km/s).",
+              "correct": false,
+              "score": 0.0,
+              "latency_ms": 2639.999999999418,
+              "tokens_used": 70
+            },
+            {
+              "index": 14,
+              "prompt": "Who was the first President of the United States?",
+              "response": "The first President of the United States was George Washington. He served from April 30, 1789, to March 4, 1797.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2844.0000000118744,
+              "tokens_used": 76
+            },
+            {
+              "index": 15,
+              "prompt": "What is the smallest prime number?",
+              "response": "The smallest prime number is 2.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2328.0000000086147,
+              "tokens_used": 45
+            },
+            {
+              "index": 16,
+              "prompt": "Which organ in the human body produces insulin?",
+              "response": "The pancreas is the organ that produces insulin in the human body.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2421.9999999913853,
+              "tokens_used": 53
+            },
+            {
+              "index": 17,
+              "prompt": "What language has the most native speakers worldwide?",
+              "response": "The language with the most native speakers worldwide is Mandarin Chinese.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2406.0000000026776,
+              "tokens_used": 51
+            },
+            {
+              "index": 18,
+              "prompt": "What is the boiling point of water at sea level in Celsius?",
+              "response": "The boiling point of water at sea level is 100 degrees Celsius.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2437.000000005355,
+              "tokens_used": 59
+            },
+            {
+              "index": 19,
+              "prompt": "Who discovered penicillin? Give just the last name.",
+              "response": "Fleming",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2218.9999999973224,
+              "tokens_used": 45
+            },
+            {
+              "index": 20,
+              "prompt": "What is the longest river in Africa?",
+              "response": "The Nile is the longest river in Africa and also one of the longest rivers in the world. It flows through eleven countries including Tanzania, Uganda, Rwanda, Burundi, Congo-Kinshasa, Democratic Republic of the Congo, Kenya, Ethiopia, Eritrea, Sudan, and Egypt before emptying into the Mediterranean Sea. The Nile is approximately 6,650 kilometers (4,132 miles) long.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 3906.0000000026776,
+              "tokens_used": 125
+            },
+            {
+              "index": 21,
+              "prompt": "Which planet has the most moons in our solar system?",
+              "response": "Jupiter has the most moons in our solar system. It is followed closely by Saturn.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2531.9999999919673,
+              "tokens_used": 59
+            },
+            {
+              "index": 22,
+              "prompt": "What year did the Berlin Wall fall?",
+              "response": "The Berlin Wall fell on November 9, 1989.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2453.0000000086147,
+              "tokens_used": 53
+            },
+            {
+              "index": 23,
+              "prompt": "What is the currency of Japan?",
+              "response": "The currency of Japan is the Japanese Yen (JPY).",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2389.999999999418,
+              "tokens_used": 50
+            },
+            {
+              "index": 24,
+              "prompt": "Who wrote '1984'?",
+              "response": "'1984' was written by George Orwell.",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2391.0000000032596,
+              "tokens_used": 50
+            }
+          ]
+        },
+        "instruction_following": {
+          "accuracy": 100.0,
+          "correct_count": 8,
+          "scoreable_count": 8,
+          "avg_latency_ms": 2333.7,
+          "p95_latency_ms": 2594.0,
+          "questions": [
+            {
+              "index": 0,
+              "prompt": "Write exactly three words. No more, no less.",
+              "response": "Sure, here it is:\n\nThree words.",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2296.9999999913853,
+              "tokens_used": 50
+            },
+            {
+              "index": 1,
+              "prompt": "List the numbers from 1 to 5, each on its own line, with nothing else.",
+              "response": "1\n2\n3\n4\n5",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2328.0000000086147,
+              "tokens_used": 59
+            },
+            {
+              "index": 2,
+              "prompt": "Respond only with the word 'banana'. Do not add any other text.",
+              "response": "banana",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2187.999999994645,
+              "tokens_used": 46
+            },
+            {
+              "index": 3,
+              "prompt": "Give me a sentence that contains exactly 7 words. Count carefully.",
+              "response": "Sure! Here's a sentence with exactly seven words:\n\nThe quick brown fox jumps over the lazy dog.",
+              "correct": null,
+              "score": 0.5,
+              "latency_ms": 2531.0000000026776,
+              "tokens_used": 65
+            },
+            {
+              "index": 4,
+              "prompt": "Write the alphabet backwards from Z to A as one continuous string with no spaces.",
+              "response": "ZYXWVUTSRQPONMLKJIHGFEDCBA",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2483.9999999967404,
+              "tokens_used": 62
+            },
+            {
+              "index": 5,
+              "prompt": "List three fruits, each starting with a different letter of the alphabet, comma-separated only.",
+              "response": "Apple, Banana, Cherry",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2218.9999999973224,
+              "tokens_used": 53
+            },
+            {
+              "index": 6,
+              "prompt": "Do not use the letter 'e' in your response. Write a short sentence about cats.",
+              "response": "Cats are feline creatures known for their independent nature and purring sound.",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2468.9999999973224,
+              "tokens_used": 65
+            },
+            {
+              "index": 7,
+              "prompt": "Output exactly this text and nothing else: HELLO WORLD",
+              "response": "HELLO WORLD",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2218.0000000080327,
+              "tokens_used": 44
+            },
+            {
+              "index": 8,
+              "prompt": "Write a haiku (5-7-5 syllables) about programming. Output only the poem, no explanation.",
+              "response": "Code flows like a stream,\nSyntax dances on the screen,\nPrograms come to life.",
+              "correct": null,
+              "score": 0.7,
+              "latency_ms": 2500.0,
+              "tokens_used": 72
+            },
+            {
+              "index": 9,
+              "prompt": "Give me 4 colors in alphabetical order, one per line, with no numbering or bullets.",
+              "response": "Blue  \nGreen  \nRed  \nYellow",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2280.9999999881256,
+              "tokens_used": 56
+            },
+            {
+              "index": 10,
+              "prompt": "Respond with exactly one word that means 'happy'.",
+              "response": "Joyful",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2188.000000009197,
+              "tokens_used": 42
+            },
+            {
+              "index": 11,
+              "prompt": "Write a sentence where every word starts with the letter 's'.",
+              "response": "Sure, here's a sentence where every word starts with the letter 's': \"Silent snow softly falls silently.\"",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2593.9999999973224,
+              "tokens_used": 67
+            },
+            {
+              "index": 12,
+              "prompt": "List these numbers from smallest to largest: 42, 7, 103, 28. Output only the numbers separated by commas.",
+              "response": "7, 28, 42, 103",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2421.0000000020955,
+              "tokens_used": 76
+            },
+            {
+              "index": 13,
+              "prompt": "Write a title for an essay about climate change. The title must be exactly 5 words long.",
+              "response": "\"Rising Temperatures: Understanding Climate Change\"",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2360.000000000582,
+              "tokens_used": 60
+            },
+            {
+              "index": 14,
+              "prompt": "Output the word 'success' in all capital letters and nothing else.",
+              "response": "SUCCESS",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2139.999999999418,
+              "tokens_used": 45
+            },
+            {
+              "index": 15,
+              "prompt": "Give me two synonyms for 'big'. Output only the two words separated by a comma.",
+              "response": "large, huge",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2171.9999999913853,
+              "tokens_used": 51
+            },
+            {
+              "index": 16,
+              "prompt": "Write a question that ends with the word 'why?'.",
+              "response": "Why did the team decide to change their project plan at the last minute?",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2453.0000000086147,
+              "tokens_used": 57
+            },
+            {
+              "index": 17,
+              "prompt": "List 5 countries. Each must have fewer than 7 letters in its name. One per line, no numbering.",
+              "response": "India  \nChina  \nJapan  \nSingapore  \nMalaysia",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2360.000000000582,
+              "tokens_used": 64
+            },
+            {
+              "index": 18,
+              "prompt": "Repeat this exact phrase: The quick brown fox jumps over the lazy dog",
+              "response": "The quick brown fox jumps over the lazy dog",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2311.999999990803,
+              "tokens_used": 53
+            },
+            {
+              "index": 19,
+              "prompt": "Write a sentence that has exactly 10 words. Count carefully and output only the sentence.",
+              "response": "The quick brown fox jumps over the lazy dog.",
+              "correct": null,
+              "score": 0.5,
+              "latency_ms": 2328.0000000086147,
+              "tokens_used": 59
+            },
+            {
+              "index": 20,
+              "prompt": "Name three planets in our solar system, ordered by distance from the Sun (closest first). Comma-separated only.",
+              "response": "Mercury,Venus,Earth",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2281.9999999919673,
+              "tokens_used": 59
+            },
+            {
+              "index": 21,
+              "prompt": "Output the number 42 in Roman numerals and nothing else.",
+              "response": "XLII",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2172.000000005937,
+              "tokens_used": 46
+            },
+            {
+              "index": 22,
+              "prompt": "Write a short greeting. Do not use any punctuation marks at all.",
+              "response": "Hello there",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2156.0000000026776,
+              "tokens_used": 46
+            },
+            {
+              "index": 23,
+              "prompt": "Give me exactly two sentences about water. No more, no less.",
+              "response": "Water is essential for all known forms of life. It covers approximately 71% of the Earth's surface.",
+              "correct": null,
+              "score": 1.0,
+              "latency_ms": 2608.9999999967404,
+              "tokens_used": 67
+            },
+            {
+              "index": 24,
+              "prompt": "List the four seasons in order starting from spring. Use only lowercase letters, comma-separated.",
+              "response": "spring, summer, autumn, winter",
+              "correct": true,
+              "score": 1.0,
+              "latency_ms": 2281.0000000026776,
+              "tokens_used": 55
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
