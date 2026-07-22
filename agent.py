@@ -1,683 +1,811 @@
+#!/usr/bin/env python3
+"""Agent implementation with workspace management and tool execution."""
+
 import asyncio
-import json
-import logging
 import os
-import urllib.error
+import platform
+import re
+from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
-from typing import Any
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger("agent")
-
-TOOL_DEFINITIONS = {
-    "read_file": {
-        "description": "Read the contents of a file at the given path",
-        "parameters": {
-            "path": {"type": "string", "description": "File path, e.g. /c/Dev/Agent1/agent.py", "required": True}
-        },
-        "example_args": {"path": "/c/Dev/Agent1/agent.py"}
-    },
-    "apply_patch": {
-        "description": "Apply a find-and-replace patch to a file. Find text must match exactly once.",
-        "parameters": {
-            "path": {"type": "string", "description": "Path to the file to patch", "required": True},
-            "find": {"type": "string", "description": "Exact text to find", "required": True},
-            "replace": {"type": "string", "description": "Replacement text", "required": True}
-        },
-        "example_args": {"path": "/c/Dev/Agent1/agent.py", "find": "old text", "replace": "new text"}
-    },
-    "edit_file": {
-        "description": "Create or overwrite a file with new content",
-        "parameters": {
-            "path": {"type": "string", "description": "Path to the file to write", "required": True},
-            "content": {"type": "string", "description": "Full file content", "required": True}
-        },
-        "example_args": {"path": "/c/Dev/Agent1/agent.py", "content": "full file"}
-    },
-    "search_file": {
-        "description": "Search for text in files within a directory",
-        "parameters": {
-            "query": {"type": "string", "description": "Text or pattern to search for", "required": True},
-            "path": {"type": "string", "description": "Directory to search, default is current directory", "required": False}
-        },
-        "example_args": {"query": "search term", "path": "/c/Dev/Agent1"}
-    }
-}
-
-def _build_system_prompt() -> str:
-    json_examples = "\n".join(
-        json.dumps({"tool": name, "args": d["example_args"]})
-        for name, d in TOOL_DEFINITIONS.items()
-    )
-    return f"""You are a coding agent. Think, then output a JSON tool call.
-
-{json_examples}
-
-Always read a file before editing it.
-Paths use /c/Dev/file.txt format"""
-
-def _build_tool_schemas() -> list[dict]:
-    schemas = []
-    for name, d in TOOL_DEFINITIONS.items():
-        properties = {}
-        required = []
-        for pname, pinfo in d["parameters"].items():
-            properties[pname] = {"type": pinfo["type"], "description": pinfo["description"]}
-            if pinfo.get("required", False):
-                required.append(pname)
-        schemas.append({
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": d["description"],
-                "parameters": {"type": "object", "properties": properties, "required": required}
-            }
-        })
-    return schemas
-
-SYSTEM_PROMPT = _build_system_prompt()
-TOOL_SCHEMAS = _build_tool_schemas()
+import json
+import subprocess
 
 
-def _normalize_path(path: str) -> str:
-    if path.startswith("/c/"):
-        return "C:\\" + path[3:].replace("/", "\\")
-    elif path.startswith("/d/"):
-        return "D:\\" + path[3:].replace("/", "\\")
-    elif path.startswith("/"):
-        return "C:\\" + path[1:].replace("/", "\\")
-    return path
+DEFAULT_MODEL = "qwen3.6-27b-mtp"
 
 
-def _safe_path(path: str) -> str:
-    """Validate and normalize a file path, blocking path traversal attempts.
+class LLMClient:
+    """LLM client for AI-powered analysis and conversation."""
+    
+    def __init__(self, model_name: str = None, api_key: str = None):
+        self.model_name = model_name or DEFAULT_MODEL
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
 
-    Converts Unix-style paths (e.g., /c/Users/...) to Windows format,
-    resolves the path to an absolute path, and checks for directory
-    traversal attempts using '..' components.
+        # LM Studio configuration - typically runs on localhost:1234
+        self.lmstudio_url = os.environ.get("LMSTUDIO_URL", "http://localhost:1234/v1")
+    
+    async def chat(self, messages: list[dict]) -> str:
+        """Send chat request to LLM via LM Studio."""
 
-    Args:
-        path: The file path to validate. Can be in Unix /c/... format
-              or Windows C:\\... format.
+        payload = {
+            "model": self.model_name,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 8192
+        }
 
-    Returns:
-        The resolved absolute path in Windows format.
-
-    Raises:
-        ValueError: If the path is empty, invalid, or contains traversal
-                    attempts (e.g., '..' components).
-    """
-    if not path or not isinstance(path, str):
-        raise ValueError("Path must be a non-empty string")
-
-    # Normalize to Windows format first for consistent checking
-    normalized = _normalize_path(path)
-
-    # Check for path traversal components before resolution
-    if ".." in Path(normalized).parts:
-        raise ValueError(f"Path traversal blocked: {path}")
-
-    # Resolve to absolute path (handles relative paths and symlinks)
-    try:
-        resolved = Path(normalized).resolve()
-    except (OSError, RuntimeError) as e:
-        raise ValueError(f"Invalid path: {path}") from e
-
-    return str(resolved)
-
-
-class ToolRegistry:
-    @staticmethod
-    async def read_file(path: str) -> str:
         try:
-            if not isinstance(path, str) or not path:
-                return "Error: Invalid path"
-            local_path = _safe_path(path)
-            if not os.path.exists(local_path):
-                return f"File not found: {path}"
-            if not os.path.isfile(local_path):
-                return f"Not a file: {path}"
-            with open(local_path, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
-            if len(content) > 16000:
-                return content[:16000] + "\n\n... [truncated]"
-            return content
-        except PermissionError:
-            return f"Permission denied: {path}"
-        except Exception as e:
-            logger.error("read_file failed for %s: %s", path, e)
-            return f"Error reading file: {e}"
+            import urllib.request
 
-    @staticmethod
-    async def apply_patch(path: str, find: str, replace: str) -> str:
-        try:
-            if not all(isinstance(x, str) for x in [path, find, replace]):
-                return "Error: All arguments must be strings"
-            if not find:
-                return "Error: find text cannot be empty"
-            local_path = _safe_path(path)
-            if not os.path.exists(local_path):
-                return f"File not found: {path}"
-            with open(local_path, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
-            if find not in content:
-                return f"ERROR: find text not found in {path}. Check whitespace and indentation."
-            count = content.count(find)
-            if count > 1:
-                return f"ERROR: find text matches {count} locations. Add more context to make it unique."
-            new_content = content.replace(find, replace, 1)
-            with open(local_path, "w", encoding="utf-8") as f:
-                f.write(new_content)
-            logger.info("Patch applied to %s (%d -> %d bytes)", path, len(content), len(new_content))
-            return f"Patch applied: {path} ({len(content)} -> {len(new_content)} bytes)"
-        except PermissionError:
-            return f"Permission denied: {path}"
-        except Exception as e:
-            logger.error("apply_patch failed for %s: %s", path, e)
-            return f"Error applying patch: {e}"
+            data = json.dumps(payload).encode('utf-8')
 
-    @staticmethod
-    async def edit_file(path: str, content: str) -> str:
-        try:
-            if not isinstance(path, str) or not path:
-                return "Error: Invalid path"
-            local_path = _safe_path(path)
-            dir_name = os.path.dirname(local_path)
-            if dir_name:
-                os.makedirs(dir_name, exist_ok=True)
-            with open(local_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            logger.info("File written: %s (%d bytes)", path, len(content))
-            return f"File written: {path} ({len(content)} bytes)"
-        except PermissionError:
-            return f"Permission denied: {path}"
-        except Exception as e:
-            logger.error("edit_file failed for %s: %s", path, e)
-            return f"Error writing file: {e}"
+            req = urllib.request.Request(
+                f"{self.lmstudio_url}/chat/completions",
+                data=data,
+                headers={
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {self.api_key}'
+                },
+                method='POST'
+            )
 
-    @staticmethod
-    async def search_file(query: str, path: str = ".") -> str:
-        try:
-            if not isinstance(query, str) or not query:
-                return "Error: Invalid query"
-            local_path = _safe_path(path) if path != "." else "."
-            import platform
-            if platform.system() == "Windows":
-                search_pattern = local_path + "\\*.*"
-                proc = await asyncio.create_subprocess_exec(
-                    "findstr", "/S", "/N", "/C:" + query, search_pattern,
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                )
-            else:
-                proc = await asyncio.create_subprocess_exec(
-                    "grep", "-rn", query, local_path,
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-            output = stdout.decode(errors="replace")
-            if output.strip():
-                return output.strip()[:8000]
-            err = stderr.decode(errors="replace").strip()
-            if err:
-                return f"Search error: {err}"
-            return f"No matches for '{query}' in {path}"
-        except FileNotFoundError:
-            return "Error: search command not available"
-        except asyncio.TimeoutError:
-            return "Error: search timed out"
-        except Exception as e:
-            logger.error("search_file failed for %s in %s: %s", query, path, e)
-            return f"Error searching: {e}"
+            with urllib.request.urlopen(req, timeout=600) as response:
+                result = json.loads(response.read().decode())
 
-    TOOLS = list(TOOL_DEFINITIONS.keys())
+                if 'choices' in result and len(result['choices']) > 0:
+                    message = result['choices'][0]['message']
+                    content = message.get('content') or message.get('reasoning_content') or ""
+                    return content
+
+        except (asyncio.TimeoutError, TimeoutError):
+            return "[Error: Request timed out - model is taking too long]"
+        except Exception as e:
+            return f"[LM Studio error: {e}]"
+
+        return "No response from LLM"
+    
+    async def analyze_code(self, code: str) -> str:
+        """Analyze code using LLM."""
+
+        prompt = f"""Analyze this Python code and identify:
+1. Bugs or issues
+2. Code quality concerns
+3. Potential improvements
+
+Code:
+{code}"""
+
+        messages = [
+            {"role": "system", "content": "You are an expert code reviewer. Analyze the provided code and give detailed feedback."},
+            {"role": "user", "content": prompt}
+        ]
+
+        return await self.chat(messages)
 
 
 class Agent:
-    def __init__(self, name: str, max_history: int = 20):
-        self.name = name
-        self._history: list[dict] = []
-        self._max_history = max_history
+    """Main agent class with workspace management and tool execution."""
 
+    DEFAULT_WORKSPACE = "/c/Dev/Agent1"
 
-class LMStudioAgent(Agent):
-    BASE_URL = "http://localhost:1234/v1/chat/completions"
+    def __init__(self, workspace: str = None, model_name: str = None):
+        self.workspace = workspace or self.DEFAULT_WORKSPACE
+        self.model_name = model_name or DEFAULT_MODEL
 
-    def __init__(self, name: str, model: str = "gpt-3.5-turbo", max_history: int = 20, checkpoint_dir: str | None = None):
-        super().__init__(name, max_history)
-        self.model = model
-        self._cancelled = False
-        self._last_tool_call = None
-        self._last_reasoning = None
+        self._semantic_index: dict[str, set[int]] = defaultdict(set)
         self._files_read: set[str] = set()
-        self._checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
-        if self._checkpoint_dir:
-            self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self._knowledge_graph: dict = {}
+        self._working_memory: list = []
+        self._history: list = []
 
-    async def _send(self, messages: list[dict]) -> str:
-        import urllib.request
-        self._last_tool_call = None
-        self._last_reasoning = None
-        payload = json.dumps({
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0.1,
-            "max_tokens": 2048,
-            "stop": ["\n\n"],
-        }).encode()
-        headers = {"Content-Type": "application/json"}
-        for attempt in range(3):
-            req = urllib.request.Request(self.BASE_URL, data=payload, headers=headers, method="POST")
-            try:
-                resp = await asyncio.get_running_loop().run_in_executor(None, lambda r=req: urllib.request.urlopen(r, timeout=300))
-                data = json.loads(resp.read())
-                msg = data["choices"][0]["message"]
-                content = msg.get("content") or ""
-                reasoning = msg.get("reasoning_content") or ""
-                tool_calls = msg.get("tool_calls") or []
-                if tool_calls:
-                    self._last_tool_call = tool_calls[0]
-                    return content or ""
-                if content:
-                    if "<think>" in content and not reasoning:
-                        import re
-                        think_match = re.search(r"<think>(.*?)</think>", content, re.DOTALL)
-                        if think_match:
-                            self._last_reasoning = think_match.group(1).strip()
-                    content = self._strip_thinking(content)
-                    if not content and not reasoning:
-                        if self._last_reasoning:
-                            nl_tool = self._parse_natural_language(self._last_reasoning)
-                            if nl_tool:
-                                tool_name, args = nl_tool
-                                if tool_name == "read_file" and args.get("path", "") in self._files_read:
-                                    return ""
-                                return json.dumps({"tool": tool_name, "args": args})
-                        return ""
-                    xml_tool = self._parse_minimax_tool_call(content) if content else None
-                    if xml_tool:
-                        return json.dumps({"tool": xml_tool[0], "args": xml_tool[1]})
-                if not content and reasoning:
-                    self._last_reasoning = reasoning
-                    extracted = self._parse_tool_call(reasoning)
-                    if extracted:
-                        tool_name, args = extracted
-                        return json.dumps({"tool": tool_name, "args": args})
-                    xml_tool = self._parse_minimax_tool_call(reasoning) if reasoning else None
-                    if xml_tool:
-                        return json.dumps({"tool": xml_tool[0], "args": xml_tool[1]})
-                    nl_tool = self._parse_natural_language(reasoning)
-                    if nl_tool:
-                        tool_name, args = nl_tool
-                        if tool_name == "read_file" and args.get("path", "") in self._files_read:
-                            return ""
-                        return json.dumps({"tool": tool_name, "args": args})
-                    return ""
-                return content
-            except urllib.error.HTTPError as e:
-                logger.warning("HTTP %d on attempt %d: %s", e.code, attempt + 1, e.reason)
-                if attempt == 2:
-                    return f"HTTP Error {e.code}: {e.reason}"
-            except urllib.error.URLError as e:
-                logger.warning("Connection error on attempt %d: %s", attempt + 1, e.reason)
-                if attempt == 2:
-                    return f"Connection error: {e.reason}"
-            except json.JSONDecodeError as e:
-                logger.error("Invalid JSON response: %s", e)
-                return "Error: Invalid response from model"
-            except Exception as e:
-                logger.error("Request failed on attempt %d: %s", attempt + 1, e)
-                if attempt == 2:
-                    return f"Error: {e}"
-            await asyncio.sleep(2 ** attempt)
+        # Initialize LLM client for AI analysis (LM Studio)
+        self.llm = LLMClient(model_name=self.model_name)
 
-    async def _execute_tool(self, tool_name: str, args: dict) -> str:
-        if tool_name not in ToolRegistry.TOOLS:
-            return f"Unknown tool: {tool_name}. Available: {', '.join(ToolRegistry.TOOLS)}"
-        handler = getattr(ToolRegistry, tool_name)
+        # Chat history for context
+        self.chat_history = []
+
+    def _normalize_path_strict(self, path: str) -> str:
+        """Normalize path and ensure consistent casing for comparison."""
+        if path.startswith("/c/"):
+            normalized = "C:\\" + path[3:].replace("/", "\\")
+        elif path.startswith("/d/"):
+            normalized = "D:\\" + path[3:].replace("/", "\\")
+        elif path.startswith("/"):
+            normalized = "C:\\" + path[1:].replace("/", "\\")
+        else:
+            normalized = path
+
+        # Resolve to absolute path for consistent comparison
         try:
-            return await handler(**args)
-        except TypeError as e:
-            return f"Invalid arguments for {tool_name}: {e}"
+            abs_path = Path(normalized).resolve()
+            return str(abs_path)
+        except (OSError, RuntimeError):
+            # Fallback: just return the normalized path
+            return normalized
+
+    def _normalize_path(self, path: str) -> str:
+        """Normalize and validate paths with security checks."""
+        if path.startswith("/c/"):
+            normalized = "C:\\" + path[3:].replace("/", "\\")
+        elif path.startswith("/d/"):
+            normalized = "D:\\" + path[3:].replace("/", "\\")
+        elif path.startswith("/"):
+            normalized = "C:\\" + path[1:].replace("/", "\\")
+        else:
+            normalized = path
+
+        try:
+            abs_path = Path(normalized).resolve()
+            return str(abs_path)
+        except (OSError, RuntimeError):
+            if normalized.startswith(("C:\\", "D:\\", "/")):
+                return normalized
+            raise ValueError(f"Invalid path: {path}")
+
+    def _safe_path(self, path: str) -> str:
+        """Validate and normalize path in one step."""
+        if path.startswith(("./", ".\\")):
+            path = path[2:]
+        return self._normalize_path(path)
+
+    async def read_file(self, path: str, track_read: bool = True) -> str:
+        local_path = self._safe_path(path)
+
+        try:
+            with open(local_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            if track_read:
+                self._files_read.add(local_path)
+
+            return content
+
+        except FileNotFoundError:
+            return f"File not found: {path}"
         except Exception as e:
-            logger.error("Tool %s failed: %s", tool_name, e)
-            return f"Error: {e}"
+            return f"Error reading file: {e}"
 
-    def _parse_tool_call(self, text: str) -> tuple[str, dict] | None:
-        text = text.strip()
+    async def write_file(self, path: str, content: str) -> str:
+        local_path = self._safe_path(path)
+
         try:
-            obj = json.loads(text)
-            if isinstance(obj, dict) and "tool" in obj and "args" in obj:
-                return (obj["tool"], obj["args"])
-        except json.JSONDecodeError:
-            pass
-        start = text.find('{')
-        while start != -1:
-            depth = 0
-            in_string = False
-            escape = False
-            for i in range(start, len(text)):
-                c = text[i]
-                if escape:
-                    escape = False
-                    continue
-                if c == '\\' and in_string:
-                    escape = True
-                    continue
-                if c == '"' and not escape:
-                    in_string = not in_string
-                    continue
-                if not in_string:
-                    if c == '{':
-                        depth += 1
-                    elif c == '}':
-                        depth -= 1
-                        if depth == 0:
-                            try:
-                                obj = json.loads(text[start:i+1])
-                                if isinstance(obj, dict) and "tool" in obj and "args" in obj:
-                                    return (obj["tool"], obj["args"])
-                            except json.JSONDecodeError:
-                                pass
-                            start = text.find('{', i+1)
-                            break
-            else:
-                break
-        return None
+            dir_name = os.path.dirname(local_path)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
 
-    def _parse_natural_language(self, text: str) -> tuple[str, dict] | None:
-        import re
-        text_lower = text.lower()
-        backtick_pattern = re.compile(r'`([^`]+\.(?:py|txt|json|md|js|ts|html|css))`')
-        files_mentioned = backtick_pattern.findall(text)
-        if not files_mentioned:
-            file_pattern = re.compile(r'(?:^|\s)([a-zA-Z_][\w-]*\.(?:py|txt|json|md|js|ts|html|css))\b')
-            files_mentioned = file_pattern.findall(text)
-        if not files_mentioned:
-            return None
-        filename = files_mentioned[0]
-        is_read = any(w in text_lower for w in ['read', 'see', 'show', 'view', 'check', 'open', 'cat', 'analyze', 'explain', 'describe', 'review'])
-        is_search = any(w in text_lower for w in ['search', 'find', 'grep', 'look for'])
-        is_edit = any(w in text_lower for w in ['edit', 'change', 'modify', 'update', 'fix', 'improve', 'add', 'remove', 'write', 'patch'])
-        if is_search:
-            query = filename.replace('.py', '').replace('_', ' ')
-            for word in ['def ', 'class ', 'import ', 'async ']:
-                if word in text_lower:
-                    idx = text_lower.index(word)
-                    end = text.find(' ', idx + len(word) + 5)
-                    if end == -1:
-                        end = len(text)
-                    query = text[idx:end].strip().strip('`')
-                    break
-            return ("search_file", {"query": query, "path": "/c/Dev/Agent1"})
-        if is_read or is_edit:
-            return ("read_file", {"path": f"/c/Dev/Agent1/{filename}"})
-        return ("read_file", {"path": f"/c/Dev/Agent1/{filename}"})
+            with open(local_path, 'w', encoding='utf-8') as f:
+                f.write(content)
 
-    @staticmethod
-    def _strip_thinking(text: str) -> str:
-        import re
-        text = re.sub(r'<think>.*?</think>\s*', '', text, count=1, flags=re.DOTALL)
-        return text.rstrip()
+            return f"Successfully wrote to {path}"
+        except PermissionError:
+            return f"Permission denied: {path}"
+        except Exception as e:
+            return f"Error writing file: {e}"
 
-    @staticmethod
-    def _parse_minimax_tool_call(text: str) -> tuple[str, dict] | None:
-        if "<minimax:tool_call>" not in text:
-            return None
-        import re
-        match = re.search(r"<minimax:tool_call>(.*?)</minimax:tool_call>", text, re.DOTALL)
-        if not match:
-            return None
-        block = match.group(1)
-        invoke_match = re.search(r'<invoke name="([^"]+)"\s*>(.*?)</invoke>', block, re.DOTALL)
-        if not invoke_match:
-            return None
-        tool_name = invoke_match.group(1)
-        args: dict = {}
-        for m in re.finditer(r'<parameter name="([^"]+)"\s*>(.*?)</parameter>', invoke_match.group(2), re.DOTALL):
-            args[m.group(1)] = m.group(2).strip()
-        return (tool_name, args)
+    async def apply_patch(self, path: str, find: str, replace: str) -> str:
+        local_path = self._safe_path(path)
 
-    def save_checkpoint(self):
-        if not self._checkpoint_dir:
+        try:
+            with open(local_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            if find not in content:
+                return "Pattern not found in file"
+
+            count = content.count(find)
+            if count > 1:
+                return f"Error: find text matches {count} locations. Add more context to make it unique."
+
+            new_content = content.replace(find, replace, 1)
+
+            with open(local_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+
+            return "Patch applied successfully"
+        except PermissionError:
+            return f"Permission denied: {path}"
+        except Exception as e:
+            return f"Error applying patch: {e}"
+
+    async def edit_file(self, path: str, content: str) -> str:
+        local_path = self._safe_path(path)
+
+        try:
+            with open(local_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            return f"Successfully edited {path}"
+        except PermissionError:
+            return f"Permission denied: {path}"
+        except Exception as e:
+            return f"Error editing file: {e}"
+
+    def _build_semantic_index(self, words: list[str], idx: int):
+        """Build semantic index with memory management."""
+        MAX_INDEX_SIZE = 10000
+        
+        if len(self._semantic_index) > MAX_INDEX_SIZE:
+            self._cleanup_semantic_index()
+        
+        for word in words:
+            normalized_word = word.lower()
+            self._semantic_index[normalized_word].add(idx)
+
+    def _cleanup_semantic_index(self):
+        """Remove oldest entries from semantic index."""
+        if not self._semantic_index:
             return
-        try:
-            import re
-            safe_name = re.sub(r'[^\w\-]', '_', self.name)
-            path = self._checkpoint_dir / f"{safe_name}_checkpoint.json"
-            path.write_text(json.dumps({"name": self.name, "model": self.model, "history": self._history}, indent=2))
-        except Exception as e:
-            logger.error("Failed to save checkpoint: %s", e)
+        
+        items = list(self._semantic_index.items())
+        keep_count = max(100, len(items) - 500)
+        
+        sorted_items = sorted(items, key=lambda x: len(x[1]), reverse=True)
+        
+        self._semantic_index.clear()
+        for word, idx_set in sorted_items[:keep_count]:
+            self._semantic_index[word] = idx_set
 
-    def load_checkpoint(self) -> bool:
-        if not self._checkpoint_dir:
-            return False
-        import re
-        safe_name = re.sub(r'[^\w\-]', '_', self.name)
-        path = self._checkpoint_dir / f"{safe_name}_checkpoint.json"
-        if not path.exists():
-            return False
-        try:
-            self._history = json.loads(path.read_text()).get("history", [])
-            return True
-        except Exception as e:
-            logger.error("Failed to load checkpoint: %s", e)
-            return False
+    async def execute_tool(self, tool_name: str, args: dict) -> str:
+        """Execute a tool with proper duplicate read prevention."""
 
-    def cancel(self):
-        self._cancelled = True
+        if tool_name == "read_file":
+            path = args.get("path", "")
+
+            try:
+                normalized_path = self._normalize_path(path)
+            except ValueError as e:
+                return f"Invalid path: {e}"
+
+            if normalized_path in self._files_read:
+                return f"File already read: {path}"
+
+            result = await self.read_file(path, track_read=False)
+            if not result.startswith("Error") and not result.startswith("File not found"):
+                self._files_read.add(normalized_path)
+            return result
+
+        elif tool_name == "write_file":
+            return await self.write_file(
+                args.get("path", ""),
+                args.get("content", "")
+            )
+
+        elif tool_name == "apply_patch":
+            return await self.apply_patch(
+                args.get("path", ""),
+                args.get("find", ""),
+                args.get("replace", "")
+            )
+
+        elif tool_name == "edit_file":
+            return await self.edit_file(
+                args.get("path", ""),
+                args.get("content", "")
+            )
+
+        elif tool_name == "search_file":
+            return await self.search_file(
+                args.get("query", ""),
+                args.get("path", None)
+            )
+
+        elif tool_name == "llm_analyze":
+            path = args.get("path", "")
+            file_content = await self.read_file(path, track_read=False)
+            if file_content.startswith("File not found:") or file_content.startswith("Error reading file:"):
+                return f"Could not analyze: {file_content}"
+            return await self.llm.analyze_code(file_content)
+
+        return f"Unknown tool: {tool_name}"
+
+    async def _search_files(self, query: str, local_path: str) -> list[str]:
+        """Search files with platform-appropriate command and fallback."""
+        results = []
+
+        if platform.system() == "Windows":
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "findstr", "/S", "/N", "/C:" + query, local_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                stdout, stderr = await proc.communicate()
+
+                if proc.returncode == 0:
+                    results = stdout.decode().splitlines()
+                else:
+                    results = await self._fallback_search(query, local_path)
+
+            except FileNotFoundError:
+                results = await self._fallback_search(query, local_path)
+        else:
+            proc = await asyncio.create_subprocess_exec(
+                "grep", "-rn", query, local_path,
+                stdout=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await proc.communicate()
+            results = stdout.decode().splitlines()
+
+        return results
+
+    async def _fallback_search(self, query: str, path: str) -> list[str]:
+        """Fallback search using Python's os.walk with chunked reading."""
+        results = []
+        chunk_size = 8192
+
+        for root, dirs, files in os.walk(path):
+            for file in files:
+                filepath = os.path.join(root, file)
+                try:
+                    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                        while True:
+                            chunk = f.read(chunk_size)
+                            if not chunk:
+                                break
+                            if query in chunk:
+                                results.append(filepath)
+                                break
+                except Exception:
+                    pass
+
+        return results
+
+    async def search_file(self, query: str, path: str = None) -> str:
+        local_path = self._safe_path(path or self.workspace)
+        
+        results = await self._search_files(query, local_path)
+        
+        if not results:
+            return "No matches found"
+        
+        return "\n".join(results)
+
+    def _parse_natural_language(self, query: str) -> tuple:
+        """Parse natural language into tool actions."""
+        workspace = self.workspace
+        query_lower = query.lower()
+
+        if "search" in query_lower and "file" in query_lower:
+            search_term = query.replace("search", "").replace("file", "").strip()
+            for prep in ["for", "in", "inside"]:
+                if prep in search_term:
+                    search_term = search_term.split(prep, 1)[1].strip()
+                    break
+            return ("search_file", {"query": search_term, "path": workspace})
+
+        if "read" in query_lower and ".py" in query:
+            filename = query.split()[-1] if query.split() else ""
+            return ("read_file", {"path": f"{workspace}/{filename}"})
+
+        if "write" in query_lower:
+            parts = query.replace("write", "").strip().split("to")
+            if len(parts) == 2:
+                path = parts[1].strip()
+                content = parts[0].strip()
+                return ("write_file", {"path": f"{workspace}/{path}", "content": content})
+
+        if "analyze" in query_lower or "explain" in query_lower:
+            parts = query.split()
+            file_path = None
+            for i, part in enumerate(parts):
+                if part.endswith((".py", ".txt", ".md", ".json", ".js", ".ts", ".html", ".css")) or part.startswith(("/", "./", ".\\")):
+                    file_path = part
+                    if file_path.startswith(("./", ".\\")):
+                        file_path = file_path[2:]
+                    if not file_path.startswith("/c/") and not file_path.startswith("C:") and not file_path.startswith("D:"):
+                        file_path = f"{workspace}/{file_path}"
+                    break
+            if file_path:
+                return ("llm_analyze", {"path": file_path})
+            return ("llm_analyze", {"path": workspace})
+
+        return ("unknown", {})
+
+    async def process_query(self, query: str) -> str:
+        tool_action, args = self._parse_natural_language(query)
+
+        if tool_action == "unknown":
+            return await self.llm.chat([{"role": "user", "content": query}])
+
+        if tool_action == "llm_analyze":
+            path = args.get("path", "")
+            file_content = await self.read_file(path, track_read=False)
+
+            if file_content.startswith("File not found:") or file_content.startswith("Error reading file:"):
+                return f"Could not analyze: {file_content}"
+
+            return await self.llm.analyze_code(file_content)
+
+        return await self.execute_tool(tool_action, args)
 
     def clear_history(self):
+        """Clear all agent state."""
         self._history = []
-        self._last_reasoning = None
-        self._last_tool_call = None
-        self._files_read = set()
-        if self._checkpoint_dir:
-            import re
-            safe_name = re.sub(r'[^\w\-]', '_', self.name)
-            path = self._checkpoint_dir / f"{safe_name}_checkpoint.json"
-            if path.exists():
-                path.unlink()
-                logger.info("Checkpoint deleted: %s", path)
-        logger.info("History cleared for %s", self.name)
+        self._files_read.clear()
+        self._knowledge_graph.clear()
+        self._working_memory.clear()
+        self._semantic_index.clear()
 
-    def _summarize_response(self, text: str) -> str:
-        text = text.strip()
-        if len(text) <= 100:
-            return text
-        sentences = text.replace("\n", " ").split(". ")
-        summary = sentences[0].strip()
-        if len(sentences) > 1 and len(summary) < 80:
-            summary += ". " + sentences[1].strip()
-        if len(summary) > 120:
-            summary = summary[:117] + "..."
-        return summary if summary else text[:100]
 
-    async def converse(self, prompt: str, max_rounds: int = 15) -> str:
-        self._cancelled = False
-        if not self._history:
-            self._history.append({"role": "system", "content": SYSTEM_PROMPT})
-        self._history.append({"role": "user", "content": prompt})
+class ToolRegistry:
+    """Registry for managing tool definitions and execution."""
 
-        last_response = None
-        no_tool_count = 0
-        reasoning_count = 0
-        for _ in range(max_rounds):
-            if self._cancelled:
-                return "[Cancelled]"
+    def __init__(self, workspace: str = None, model_name: str = None):
+        self.workspace = workspace or Agent.DEFAULT_WORKSPACE
+        self._agent = Agent(workspace=self.workspace, model_name=model_name or DEFAULT_MODEL)
 
-            if len(self._history) > self._max_history:
-                self._history = [self._history[0]] + self._history[-(self._max_history - 1):]
+    async def read_file(self, path: str) -> str:
+        return await self._agent.read_file(path)
 
-            response = await self._send(self._history)
+    async def write_file(self, path: str, content: str) -> str:
+        return await self._agent.write_file(path, content)
 
-            if self._last_tool_call:
-                tc = self._last_tool_call
-                self._last_tool_call = None
-                tool_name = tc["function"]["name"]
-                try:
-                    args = json.loads(tc["function"]["arguments"])
-                except json.JSONDecodeError:
-                    args = {}
-                if tool_name not in ToolRegistry.TOOLS:
-                    self._history.append({"role": "assistant", "content": None, "tool_calls": [tc]})
-                    self._history.append({"role": "tool", "tool_call_id": tc["id"], "content": f"Unknown tool: {tool_name}"})
+    async def apply_patch(self, path: str, find: str, replace: str) -> str:
+        return await self._agent.apply_patch(path, find, replace)
+
+    async def edit_file(self, path: str, content: str) -> str:
+        return await self._agent.edit_file(path, content)
+
+    async def search_file(self, query: str, path: str = None) -> str:
+        return await self._agent.search_file(query, path)
+
+    async def execute_tool(self, tool_name: str, args: dict) -> str:
+        return await self._agent.execute_tool(tool_name, args)
+
+
+async def run_interactive():
+    """Interactive mode - allows user to input commands."""
+    
+    print("=" * 50)
+    print("Agent Interactive Mode with LM Studio")
+    print(f"Workspace: {Agent.DEFAULT_WORKSPACE}")
+    print("Commands:")
+    print("  read <path>        - Read a file")
+    print("  write <path> <content> - Write content to file")
+    print("  search <query>     - Search for string in files")
+    print("  analyze <file> [output.md] - AI analysis via LM Studio")
+    print("  plan <output.md> <plan.md> - Generate coding plan from analysis")
+    print("  entities <analysis.md> <plan.md> [entities.md] - Generate shared entities")
+    print("  taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks")
+    print("  implement <taskplan.md> [analysis.md] [plan.md] [entities.md] - Implement all files")
+    print("  clear              - Clear agent memory")
+    print("  quit               - Exit")
+    print("=" * 50)
+    
+    # Create agent instance
+    agent = Agent(workspace=Agent.DEFAULT_WORKSPACE)
+    
+    while True:
+        try:
+            # Get user input
+            user_input = input("\n> ").strip()
+            
+            if not user_input:
+                continue
+            
+            # Check for quit command
+            if user_input.lower() in ["quit", "exit", "q"]:
+                print("Goodbye!")
+                break
+            
+            # Parse and execute commands
+            parts = user_input.split(maxsplit=5)
+            command = parts[0].lower()
+            
+            if command == "read":
+                if len(parts) < 2:
+                    print("Usage: read <path>")
                     continue
-                tool_key = f"{tool_name}:{json.dumps(args, sort_keys=True)}"
-                if tool_key == last_response:
-                    self._history.append({"role": "assistant", "content": None, "tool_calls": [tc]})
-                    self._history.append({"role": "tool", "tool_call_id": tc["id"], "content": "[STOP] Same tool call repeated. Analyze and respond to user."})
-                    last_response = None
+                    
+                path = parts[1]
+                result = await agent.read_file(path)
+                print(result)
+                
+            elif command == "write":
+                if len(parts) < 3:
+                    print("Usage: write <path> <content>")
                     continue
-                last_response = tool_key
-                no_tool_count = 0
-                reasoning_count = 0
-                print(f"  [{tool_name}] {json.dumps(args)}")
-                result = await self._execute_tool(tool_name, args)
-                if tool_name == "read_file":
-                    self._files_read.add(args.get("path", ""))
-                    lines = result.count("\n") + 1 if result else 0
-                    print(f"  <- {lines} lines read")
-                elif tool_name == "search_file":
-                    match_count = result.count("\n") + 1 if result else 0
-                    print(f"  <- {match_count} matches")
+                    
+                path = parts[1]
+                content = parts[2]
+                result = await agent.write_file(path, content)
+                print(result)
+                
+            elif command == "search":
+                if len(parts) < 2:
+                    print("Usage: search <query>")
+                    continue
+                    
+                query = parts[1]
+                result = await agent.search_file(query)
+                print(result)
+                
+            elif command in ["clear", "reset"]:
+                agent.clear_history()
+                print("Agent memory cleared.")
+                
+            # Analyze command - uses LM Studio LLM
+            elif command == "analyze":
+                if len(parts) < 2:
+                    print("Usage: analyze <path> [output.md]")
+                    continue
+                    
+                path = parts[1]
+                output_file = parts[2] if len(parts) > 2 else None
+                result = await agent.process_query(f"analyze {path}")
+                
+                if output_file:
+                    with open(output_file, "w", encoding="utf-8") as f:
+                        f.write(f"# Analysis of {path}\n\n")
+                        f.write(result)
+                    print(f"Analysis written to {output_file}")
                 else:
-                    print(f"  <- {result[:120]}{'...' if len(result) > 120 else ''}")
-                self._history.append({"role": "assistant", "content": response if response.strip() else None, "tool_calls": [tc]})
-                self._history.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
-                continue
-
-            if not response.strip():
-                reasoning_count += 1
-                if last_response is not None and self._last_reasoning:
-                    print(f"\n  {self._last_reasoning}")
-                    self._history.append({"role": "assistant", "content": self._last_reasoning})
-                    self.save_checkpoint()
-                    return self._last_reasoning
-                if reasoning_count >= 5:
-                    return "[No action after 5 reasoning rounds]"
-                if self._last_reasoning:
-                    preview = self._last_reasoning[:150]
-                    print(f"  (...) {preview}{'...' if len(self._last_reasoning) > 150 else ''}")
-                content = f"<think>\n{self._last_reasoning}\n</think>" if self._last_reasoning else "[thinking]"
-                self._last_reasoning = None
-                self._history.append({"role": "assistant", "content": content})
-                self._history.append({"role": "user", "content": "Now output the tool call."})
-                continue
-
-            reasoning_count = 0
-
-            tool_call = self._parse_tool_call(response)
-            if not tool_call:
-                tool_call = self._parse_minimax_tool_call(response)
-            if not tool_call:
-                tool_call = self._parse_natural_language(response)
-            if not tool_call:
-                no_tool_count += 1
-                if no_tool_count >= 3:
-                    if response.strip():
-                        print(f"  {response[:200]}")
-                    self._history.append({"role": "assistant", "content": self._summarize_response(response)})
-                    self.save_checkpoint()
-                    return self._summarize_response(response)
-                if response.strip():
-                    preview = response[:150]
-                    print(f"  ? {preview}{'...' if len(response) > 150 else ''}")
-                self._history.append({"role": "assistant", "content": self._summarize_response(response)})
-                self._history.append({"role": "user", "content": "Only respond with a JSON tool call."})
-                continue
-            no_tool_count = 0
-
-            tool_name, args = tool_call
-            tool_key = f"{tool_name}:{json.dumps(args, sort_keys=True)}"
-
-            if tool_key == last_response:
-                self._history.append({"role": "assistant", "content": response})
-                self._history.append({"role": "user", "content": "[STOP] Same tool call repeated. Analyze results and respond to user."})
-                last_response = None
-                continue
-
-            last_response = tool_key
-            print(f"  [{tool_name}] {json.dumps(args)}")
-            result = await self._execute_tool(tool_name, args)
-            if tool_name == "read_file":
-                lines = result.count("\n") + 1 if result else 0
-                print(f"  <- {lines} lines read")
-            elif tool_name == "search_file":
-                match_count = result.count("\n") + 1 if result else 0
-                print(f"  <- {match_count} matches")
+                    print(result)
+                
+            # Plan command - generates coding plan from analysis file
+            elif command == "plan":
+                if len(parts) < 3:
+                    print("Usage: plan <output.md> <plan.md>")
+                    continue
+                    
+                analysis_file = parts[1]
+                plan_file = parts[2]
+                
+                try:
+                    with open(analysis_file, "r", encoding="utf-8") as f:
+                        analysis_content = f.read()
+                except FileNotFoundError:
+                    print(f"Error: File not found: {analysis_file}")
+                    continue
+                
+                messages = [
+                    {"role": "system", "content": "You are an expert software architect. Based on the code analysis provided, create a detailed coding plan with specific implementation steps, prioritized by impact and dependencies."},
+                    {"role": "user", "content": f"Create a coding plan based on this analysis:\n\n{analysis_content}"}
+                ]
+                plan = await agent.llm.chat(messages)
+                
+                with open(plan_file, "w", encoding="utf-8") as f:
+                    f.write(f"# Coding Plan\n\n")
+                    f.write(plan)
+                print(f"Coding plan written to {plan_file}")
+                
+            # Entities command - generates entities.md from analysis and plan
+            elif command == "entities":
+                if len(parts) < 3:
+                    print("Usage: entities <analysis.md> <plan.md> [entities.md]")
+                    continue
+                    
+                analysis_file = parts[1]
+                plan_file = parts[2]
+                entities_file = parts[3] if len(parts) > 3 else "entities.md"
+                
+                try:
+                    with open(analysis_file, "r", encoding="utf-8") as f:
+                        analysis_content = f.read()
+                    with open(plan_file, "r", encoding="utf-8") as f:
+                        plan_content = f.read()
+                except FileNotFoundError as e:
+                    print(f"Error: File not found: {e}")
+                    continue
+                
+                messages = [
+                    {"role": "system", "content": "You are an expert Python developer. Create a comprehensive entities.md file that defines shared data structures, classes, and types that should be imported across multiple Python files. Include class definitions with attributes, types, and clear docstrings."},
+                    {"role": "user", "content": f"Extract and define all shared entities from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\nCreate an entities.md file with Python-ready entity definitions that can be centralized in an entities.py file for import across the project."}
+                ]
+                entities = await agent.llm.chat(messages)
+                
+                with open(entities_file, "w", encoding="utf-8") as f:
+                    f.write(f"# Shared Entities\n\n")
+                    f.write(entities)
+                print(f"Entities written to {entities_file}")
+                
+            # Taskplan command - generates implementation task plan
+            elif command == "taskplan":
+                if len(parts) < 3:
+                    print("Usage: taskplan <analysis.md> <plan.md> [tasks.md]")
+                    continue
+                    
+                analysis_file = parts[1]
+                plan_file = parts[2]
+                tasks_file = parts[3] if len(parts) > 3 else "tasks.md"
+                
+                try:
+                    with open(analysis_file, "r", encoding="utf-8") as f:
+                        analysis_content = f.read()
+                    with open(plan_file, "r", encoding="utf-8") as f:
+                        plan_content = f.read()
+                except FileNotFoundError as e:
+                    print(f"Error: File not found: {e}")
+                    continue
+                
+                entities_content = ""
+                entities_py = os.path.join(os.path.dirname(analysis_file), "entities.py")
+                if os.path.exists(entities_py):
+                    with open(entities_py, "r", encoding="utf-8") as f:
+                        entities_content = f.read()
+                
+                messages = [
+                    {"role": "system", "content": "You are an expert project manager. Create a detailed task plan for implementing code changes. Break down work into concrete, actionable tasks with clear descriptions. Include task dependencies and priority."},
+                    {"role": "user", "content": f"Create a task implementation plan from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\n## Existing entities.py:\n{entities_content if entities_content else 'No entities.py found'}\n\nGenerate a tasks.md file with specific implementation tasks, organized by file, with clear steps for new and existing files. Ensure tasks respect the entity definitions in entities.py."}
+                ]
+                tasks = await agent.llm.chat(messages)
+                
+                with open(tasks_file, "w", encoding="utf-8") as f:
+                    f.write(f"# Implementation Tasks\n\n")
+                    f.write(tasks)
+                print(f"Tasks written to {tasks_file}")
+                
+            # Implement command - implements all files from taskplan
+            elif command == "implement":
+                if len(parts) < 2:
+                    print("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md]")
+                    continue
+                    
+                taskplan_file = parts[1]
+                analysis_file = parts[2] if len(parts) > 2 else "analysis.md"
+                plan_file = parts[3] if len(parts) > 3 else "plan.md"
+                entities_file = parts[4] if len(parts) > 4 else "entities.md"
+                
+                try:
+                    with open(taskplan_file, "r", encoding="utf-8") as f:
+                        taskplan_content = f.read()
+                except FileNotFoundError:
+                    print(f"Error: File not found: {taskplan_file}")
+                    continue
+                
+                analysis_content = ""
+                plan_content = ""
+                entities_content = ""
+                
+                try:
+                    with open(analysis_file, "r", encoding="utf-8") as f:
+                        analysis_content = f.read()
+                except FileNotFoundError:
+                    print(f"Warning: {analysis_file} not found")
+                    
+                try:
+                    with open(plan_file, "r", encoding="utf-8") as f:
+                        plan_content = f.read()
+                except FileNotFoundError:
+                    print(f"Warning: {plan_file} not found")
+                    
+                try:
+                    with open(entities_file, "r", encoding="utf-8") as f:
+                        entities_content = f.read()
+                except FileNotFoundError:
+                    print(f"Warning: {entities_file} not found")
+                
+                print("Analyzing task plan to identify all files...")
+                
+                list_messages = [
+                    {"role": "system", "content": "You are an expert Python developer. List ALL files that need to be implemented from the task plan. Reply with ONLY a list of filenames, one per line, with the file path. Include .py, .json, .yaml, .yml, .env, .md files. No explanations, just the list."},
+                    {"role": "user", "content": f"List every file that needs to be created or modified from this task plan:\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}"}
+                ]
+                
+                file_list_response = await agent.llm.chat(list_messages)
+                
+                if not file_list_response or file_list_response.startswith("[") or "error" in file_list_response.lower():
+                    print(f"Error: LM Studio API not responding or returned an error: {file_list_response}")
+                    print("Please ensure LM Studio is running and try again.")
+                    continue
+                    
+                import re
+                file_lines = [line.strip() for line in file_list_response.strip().split('\n') if line.strip() and not line.startswith('#')]
+                all_files = [f for f in file_lines if f.endswith(('.py', '.json', '.yaml', '.yml', '.env', '.md', '.txt', '.cfg', '.ini', '.toml'))]
+                
+                if not all_files:
+                    all_files = re.findall(r'`([^`]+\.(?:py|json|yaml|yml|env|txt|cfg|ini|toml))`', file_list_response)
+                
+                print(f"Found {len(all_files)} files to implement: {', '.join(all_files)}")
+                
+                implemented = []
+                errors = []
+                batch_size = 2
+                
+                for i in range(0, len(all_files), batch_size):
+                    batch = all_files[i:i+batch_size]
+                    print(f"\nImplementing batch {i//batch_size + 1}/{(len(all_files) + batch_size - 1)//batch_size}: {batch}")
+                    
+                    batch_files_md = "\n".join([f"- {f}" for f in batch])
+                    
+                    impl_messages = [
+                        {"role": "system", "content": "You are an expert Python developer. Implement the specified files completely. For each Python file, output the complete, working code. Format each file as:\n\n[FILE: filename.py]\n```python\n# complete code\n```\n\nFor config files use:\n[FILE: config.json]\n```json\n# config here\n```\n\nFor yaml files:\n[FILE: config.yaml]\n```yaml\n# yaml content\n```\n\nEnsure all imports are correct, code is complete, and follows best practices."},
+                        {"role": "user", "content": f"Implement these files:\n{batch_files_md}\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}\n\nImplement ALL files in this batch with complete, working code."}
+                    ]
+                    
+                    impl_response = await agent.llm.chat(impl_messages)
+                    
+                    patterns = [
+                        r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```',
+                        r'\[FILE:\s*([^\]]+)\]\s*\n+(.*?)(?=\[FILE:|$)',
+                        r'File:\s*([^\.]+\.\w+)\s*\n+```\w*\n?(.*?)```',
+                    ]
+                    
+                    matches = []
+                    for pattern in patterns:
+                        matches = list(re.findall(pattern, impl_response, re.DOTALL))
+                        if matches:
+                            print(f"  Parsed {len(matches)} files using pattern")
+                            break
+                    
+                    if not matches:
+                        print(f"  Warning: Could not parse files from batch response")
+                        print(f"  Raw response (first 500 chars): {impl_response[:500]}")
+                        continue
+                    
+                    for filename, content in matches:
+                        content = content.strip()
+                        from pathlib import Path
+                        raw_workspace = agent.workspace
+                        if raw_workspace.startswith('/c/') or raw_workspace.startswith('/C/'):
+                            raw_workspace = 'C:' + raw_workspace[2:]
+                        workspace = Path(raw_workspace)
+                        filepath = workspace / filename
+                        
+                        filepath.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        with open(filepath, "w", encoding="utf-8") as f:
+                            f.write(content)
+                        implemented.append(filename)
+                        print(f"  Written: {filename}")
+                        
+                        if filename.endswith(".py"):
+                            filepath_str = os.path.realpath(filepath)
+                            result = subprocess.run(
+                                ["python", "-m", "py_compile", filepath_str],
+                                capture_output=True,
+                                text=True
+                            )
+                            if result.returncode != 0:
+                                errors.append(f"{filename}: {result.stderr}")
+                                print(f"  Compile error in {filename}")
+                            else:
+                                print(f"  Compiled OK: {filename}")
+                
+                print(f"\n{'='*50}")
+                print(f"Implementation complete: {len(implemented)}/{len(all_files)} files")
+                
+                if implemented:
+                    print(f"\nImplemented files:")
+                    for f in implemented:
+                        print(f"  - {f}")
+                
+                if errors:
+                    print(f"\nCompilation errors ({len(errors)}):")
+                    for err in errors:
+                        print(f"  - {err}")
+                else:
+                    print("\nAll Python files compiled successfully!")
+                
+                missing_files = set(all_files) - set(implemented)
+                if missing_files:
+                    print(f"\nMissing files ({len(missing_files)}):")
+                    for f in missing_files:
+                        print(f"  - {f}")
+                        
             else:
-                print(f"  <- {result[:120]}{'...' if len(result) > 120 else ''}")
-
-            tc = {"id": f"call_{tool_name}", "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}}
-            self._history.append({"role": "assistant", "content": None, "tool_calls": [tc]})
-            self._history.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
-
-        return "[Max rounds reached]"
-
-
-class SingletonMeta(type):
-    _instances: dict[type, Any] = {}
-    def __call__(cls, *args, **kwargs):
-        if cls not in cls._instances:
-            cls._instances[cls] = super().__call__(*args, **kwargs)
-        return cls._instances[cls]
-
-
-class LLMStudio(metaclass=SingletonMeta):
-    def __init__(self):
-        self.agents: dict[str, LMStudioAgent] = {}
-
-    async def add_agent(self, name: str, model: str = "gpt-3.5-turbo", **kwargs):
-        if name not in self.agents:
-            agent = LMStudioAgent(name, model, **kwargs)
-            agent.load_checkpoint()
-            self.agents[name] = agent
-
-    async def converse(self, prompt: str):
-        for name, agent in list(self.agents.items()):
-            yield f"{name}: {await agent.converse(prompt)}"
-
-    def cancel_all(self):
-        for agent in self.agents.values():
-            agent.cancel()
-
-    def clear_all(self):
-        for agent in self.agents.values():
-            agent.clear_history()
-
-    def shutdown(self):
-        for agent in self.agents.values():
-            agent.save_checkpoint()
+                # Try natural language processing with LLM
+                tool_action, args = agent._parse_natural_language(user_input)
+                
+                if tool_action == "unknown":
+                    # Use LM Studio for general conversation
+                    result = await agent.llm.chat([{"role": "user", "content": user_input}])
+                    print(result)
+                else:
+                    result = await agent.execute_tool(tool_action, args)
+                    print(result)
+                    
+        except KeyboardInterrupt:
+            print("\nInterrupted. Use 'quit' to exit.")
+        except EOFError:
+            break
 
 
 async def main():
-    llmstudio = LLMStudio()
-    await llmstudio.add_agent("Holger", "minimax-m2.5@q2_k", checkpoint_dir="checkpoints")
-    print("Agent ready. Type 'quit' to exit, 'cancel' to interrupt, 'clear' to reset.\n")
-    try:
-        while True:
-            prompt = await asyncio.get_running_loop().run_in_executor(None, input, "You: ")
-            if prompt.strip().lower() in ("quit", "exit"):
-                break
-            if prompt.strip().lower() == "cancel":
-                llmstudio.cancel_all()
-                print("Cancelled.\n")
-                continue
-            if prompt.strip().lower() == "clear":
-                llmstudio.clear_all()
-                print("History cleared.\n")
-                continue
-            async for msg in llmstudio.converse(prompt):
-                print(msg)
-    except (KeyboardInterrupt, EOFError):
-        print("\nInterrupted.")
-    finally:
-        llmstudio.shutdown()
-        print("Shutdown complete.")
+    """Main entry point - runs interactive mode."""
+    await run_interactive()
 
 
 if __name__ == "__main__":
