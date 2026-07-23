@@ -677,12 +677,13 @@ async def run_interactive():
             # Implement command - implements all files from taskplan
             elif command == "implement":
                 if len(parts) < 2:
-                    print("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--workspace <path>]")
+                    print("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--fix] [--workspace <path>]")
                     continue
 
                 keep_mode = "--keep" in parts
                 refresh_cache = "--refresh" in parts
                 force_mode = "--force" in parts
+                fix_mode = "--fix" in parts
                 
                 target_workspace = agent.workspace
                 if "--workspace" in parts:
@@ -690,7 +691,8 @@ async def run_interactive():
                     if ws_idx + 1 < len(parts):
                         target_workspace = parts[ws_idx + 1]
                 
-                filtered_parts = [p for p in parts if p not in ["--keep", "--refresh", "--force", "--workspace", target_workspace]]
+                skip_tokens = ["--keep", "--refresh", "--force", "--fix", "--workspace", target_workspace]
+                filtered_parts = [p for p in parts if p not in skip_tokens]
                 
                 taskplan_file = filtered_parts[1]
                 analysis_file = filtered_parts[2] if len(filtered_parts) > 2 else "analysis.md"
@@ -948,6 +950,73 @@ async def run_interactive():
                     print(f"\nMissing files ({len(missing_files)}):")
                     for f in missing_files:
                         print(f"  - {f}")
+                
+                if fix_mode and implemented:
+                    print(f"\n{'='*50}")
+                    print(f"[fix] Validating runtime errors...")
+                    print(f"{'='*50}")
+                    
+                    for fix_attempt in range(3):
+                        import_errors = []
+                        for fname in implemented:
+                            if not fname.endswith(".py"):
+                                continue
+                            ws = target_workspace
+                            if ws.startswith("/c/") or ws.startswith("/C/"):
+                                ws = "C:" + ws[2:]
+                            fp = Path(ws) / fname
+                            fpath_str = os.path.realpath(fp)
+                            result = subprocess.run(
+                                ["python", "-c", f"import importlib.util; spec=importlib.util.spec_from_file_location('x', r'{fpath_str}'); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)"],
+                                capture_output=True, text=True, cwd=str(Path(ws))
+                            )
+                            if result.returncode != 0:
+                                err_msg = result.stderr.strip()[-300:]
+                                import_errors.append((fname, fpath_str, err_msg))
+                        
+                        if not import_errors:
+                            print("[fix] All files import cleanly!")
+                            break
+                        
+                        print(f"\n[fix] Attempt {fix_attempt + 1}: {len(import_errors)} files with runtime errors")
+                        for fname, fpath, err in import_errors:
+                            print(f"  - {fname}: {err[:80]}")
+                        
+                        if fix_attempt >= 2:
+                            print("[fix] Max attempts reached.")
+                            break
+                        
+                        for fname, fpath, err in import_errors:
+                            print(f"\n[fix] Fixing {fname}...")
+                            with open(fpath, "r", encoding="utf-8") as f:
+                                current_code = f.read()
+                            
+                            fix_msgs = [
+                                {"role": "system", "content": "Fix the runtime import error in this code. Return the complete fixed file with [FILE: filename.py] format."},
+                                {"role": "user", "content": f"Fix this code:\n\nFile: {fname}\nError:\n{err}\n\nCurrent code:\n```python\n{current_code}\n```\n\nReturn the complete fixed file."}
+                            ]
+                            fixed = await agent.llm.chat(fix_msgs)
+                            if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
+                                print(f"  LLM error fixing {fname}: {fixed[:100]}")
+                                continue
+                            
+                            match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```', fixed, re.DOTALL)
+                            if match:
+                                with open(fpath, "w", encoding="utf-8") as f:
+                                    f.write(match.group(2).strip())
+                                print(f"  Fixed: {fname}")
+                                result = subprocess.run(
+                                    ["python", "-m", "py_compile", fpath],
+                                    capture_output=True, text=True
+                                )
+                                if result.returncode == 0:
+                                    print(f"  Compiled OK after fix")
+                                else:
+                                    print(f"  Still has errors: {result.stderr[:100]}")
+                            else:
+                                print(f"  Could not parse fix for {fname}")
+                    
+                    print(f"\n[fix] Complete")
                         
             elif command == "workflow":
                 if len(parts) < 2:

@@ -1,0 +1,19 @@
+# Agent Configuration
+agent:
+  name: "BeginnerAgent"
+  temperature: 0.2
+  max_tokens: 512
+  system_prompt: |
+    You are a helpful assistant. Think step-by-step. 
+    Use tools when needed. Keep responses concise.
+
+# Tool Registry & Schemas
+tools:
+  - name: calculator
+    description: "Evaluate math expressions"
+    args: ["expression"]
+    
+# Memory & Context Settings
+memory:
+  max_turns: 10
+  store_system_messages: false

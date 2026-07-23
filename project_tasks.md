@@ -1,128 +1,150 @@
-Since your specification was cut off after `"make`, I’ve generated a **production-ready task plan** structured strictly in dependency order. This follows the architectural flow you outlined (`shared ← domain ← application ← infrastructure ← interface`) and can be executed sequentially without circular imports or missing references.
+# 📋 Task Plan: Dependency-Ordered Implementation
 
-Replace placeholder entity names (e.g., `User`, `Post`) with your actual domains once you share the full spec. The file paths, dependency chains, and validation steps remain identical.
+This plan sequences files strictly by **code dependencies** first, then **pedagogical flow**. Each phase includes concrete implementation tasks, dependency prerequisites, and validation checkpoints to ensure safe progression.
 
 ---
-## 📋 Dependency-Ordered Task Plan
 
-### 🔁 Dependency Flow Rule
+## 🔹 Phase 1: Project Scaffolding & Configuration
+**Dependencies:** None  
+**Files:** `pyproject.toml`, `.env.example`, `config.yaml`, `src/__init__.py`, `tests/__init__.py`
+
+| Task | Details |
+|------|---------|
+| ✅ Create package metadata | Add `[project]`, dependencies (`rich`, `pyyaml`, `python-dotenv`, `pytest`), and CLI entry points to `pyproject.toml` |
+| ✅ Setup environment template | Copy `.env.example` with placeholder keys & `USE_MOCK_LLM=true` |
+| ✅ Externalize config | Write `config.yaml` with agent params, tool schemas, and memory limits |
+| ✅ Initialize modules | Create empty `__init__.py` in `src/` and `tests/` for Python package recognition |
+
+🔍 **Validation:** `python -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"` → Verify no import errors.
+
+---
+
+## 🔹 Phase 2: Shared Types & Contracts (Root Dependency)
+**Dependencies:** None  
+**Files:** `src/types.py`
+
+| Task | Details |
+|------|---------|
+| ✅ Implement type contracts | Paste provided `Message`, `ToolDefinition`, `LLMProvider`, `AgentBase`, `ReasoningStep`, `AgentConfig` |
+| ✅ Add stateless utilities | Implement `parse_json_safely()`, `format_tool_result()`, `build_context_window()` |
+| ✅ Enforce structural typing | Use `Protocol` + `TypedDict` to avoid inheritance chains & circular imports |
+
+🔍 **Validation:** `python -c "from src.types import *; print('Types loaded successfully')"` → Run `mypy src/types.py --ignore-missing-imports` for type safety.
+
+---
+
+## 🔹 Phase 3: Safe Execution Layer
+**Dependencies:** `src/types.py`  
+**Files:** `src/mock_llm.py`
+
+| Task | Details |
+|------|---------|
+| ✅ Implement `MockLLM` class | Satisfy `LLMProvider` protocol with deterministic `chat()` and `generate_tool_calls()` |
+| ✅ Simulate tool routing | Parse message content to return predictable JSON tool calls matching registered schemas |
+| ✅ Add temperature/seed mocking | Optional: support config-driven randomness for realistic testing |
+
+🔍 **Validation:** Unit test mock responses against expected formats. Verify zero external API calls.
+
+---
+
+## 🔹 Phase 4: Progressive Agent Implementations
+**Dependencies:** `src/types.py` (all), `src/mock_llm.py` (v1)  
+*Note: Files are structurally independent but pedagogically sequential.*
+
+### 📦 `src/agent_v1_basic.py`
+| Task | Details |
+|------|---------|
+| ✅ Implement `BasicAgent` | Satisfy `AgentBase`. Accept `llm` + `system_prompt`, return string response |
+| ✅ Message formatting | Build `[{"role":"system",...}, {"role":"user","content":input}]` → call `llm.chat()` |
+
+### 📦 `src/agent_v2_tools.py`
+| Task | Details |
+|------|---------|
+| ✅ Tool registry | `register_tool(name, func, desc)` storing `ToolDefinition` objects |
+| ✅ Parse & execute | Use `parse_json_safely()` to extract calls → run in isolated scope → inject results via `format_tool_result()` |
+
+### 📦 `src/agent_v3_memory.py`
+| Task | Details |
+|------|---------|
+| ✅ History buffer | Maintain `list[Message]`, enforce `max_turns` via `build_context_window()` |
+| ✅ Turn tracking | Alternate user/assistant roles, prune oldest pairs when limit exceeded |
+
+### 📦 `src/agent_v4_reasoning.py`
+| Task | Details |
+|------|---------|
+| ✅ ReAct loop | Max iterations → prompt LLM for `{thought, action, input}` → execute tool → append observation → repeat |
+| ✅ Step tracking | Return `ReasoningStep` objects; early exit on `is_final=True` or max steps reached |
+
+🔍 **Validation:** Run each agent independently with `MockLLM`. Verify outputs match expected mental models (Input→Process→Output, Tool→Result, Memory Pruning, Reasoning Trace).
+
+---
+
+## 🔹 Phase 5: Production Orchestrator
+**Dependencies:** All v1–v4 agents, `src/types.py`, `config.yaml`  
+**Files:** `src/agent_final.py`
+
+| Task | Details |
+|------|---------|
+| ✅ Compose features | Import capabilities from v1–v4 into `AgentOrchestrator` using composition (not inheritance) |
+| ✅ Config-driven init | Load `config.yaml`, apply to `AgentConfig`, initialize LLM provider based on `.env` flags |
+| ✅ Add observability | Structured logging (`rich.console`), error boundaries, graceful fallbacks for missing tools/parsing failures |
+| ✅ CLI entry point | `if __name__ == "__main__":` block accepting user input or streaming mode |
+
+🔍 **Validation:** `python -m src.agent_final` → Verify config loading, mock/live toggle, and clean error handling.
+
+---
+
+## 🔹 Phase 6: Test Suite & CLI Driver
+**Dependencies:** All agent files, `src/types.py`  
+**Files:** `tests/test_agent_tutorial.py`, `run_tutorial.py`
+
+| Task | Details |
+|------|---------|
+| ✅ Write parameterized tests | Cover each step (v1–v4) with clear assertions & pedagogical failure messages |
+| ✅ Add fill-in exercises | Stub functions like `student_implement_tool_parsing()` that fail until completed |
+| ✅ Build CLI driver | `argparse` + `rich` progress tracking. Support `--step N`, `--dry-run`, auto-test integration |
+
+🔍 **Validation:** `pytest tests/ -v` → All pass. `python run_tutorial.py --step all` → Executes sequentially with clear console output.
+
+---
+
+## 🔹 Phase 7: Documentation & Interactive Materials
+**Dependencies:** References all above (can be drafted in parallel during Phases 1–4)  
+**Files:** `README.md`, `notebooks/interactive_walkthrough.ipynb`
+
+| Task | Details |
+|------|---------|
+| ✅ Write tutorial guide | Setup instructions, mental models, step-by-step walkthroughs, cheat sheet table, troubleshooting |
+| ✅ Build Jupyter notebook | Cell-by-cell execution matching v1→v4 flow, visual memory window plots, tool-call trace outputs |
+
+🔍 **Validation:** Follow `README.md` from scratch on a clean machine. Run notebook cells sequentially → Verify all outputs match spec expectations.
+
+---
+
+## 🔗 Dependency Graph Summary
 ```
-shared/ (types, errors, constants) 
-   ↑
-domain/ (models, repository interfaces) 
-   ↑
-application/ (use-cases, service interfaces) 
-   ↑
-infrastructure/ (DB adapters, external clients, DI bindings) 
-   ↑
-interface/ (controllers, routes, CLI commands) 
-   ↑
-bootstrap/ (config, app wiring, entrypoint)
+pyproject.toml + config.yaml
+        ↓
+   src/types.py  (ROOT)
+     ↙    ↓    ↘
+mock_llm.py  agent_v1_basic.py  agent_v2_tools.py  agent_v3_memory.py  agent_v4_reasoning.py
+        ↖__________________________↙
+                     ↓
+              agent_final.py
+                ↙         ↘
+test_agent_tutorial.py   run_tutorial.py
+        ↖_______________↙
+            README.md + interactive_walkthrough.ipynb
 ```
-**Build Order:** Always create leaf nodes first. No file may be created until all its imports exist.
 
----
-
-### 🟢 Phase 1: Shared Contracts (Zero Dependencies)
-*Purpose:* Define pure types, error bases, and constants. No business logic or framework imports.
-
-| # | File Path | Dependencies | Implementation Steps | Acceptance Criteria |
-|---|-----------|--------------|----------------------|---------------------|
-| 1.1 | `packages/shared/src/types/common.ts` | None | Define `ApiResponse<T>`, `PaginatedResult<T>`, `IdType`, `Timestamps` | Exports only interfaces/types; compiles with strict TS |
-| 1.2 | `packages/shared/src/errors/base-error.ts` | None | Create `AppError extends Error` with `code`, `statusCode`, `isOperational` | Instance check works: `err instanceof AppError` |
-| 1.3 | `packages/shared/src/errors/http-errors.ts` | `base-error.ts` | Extend for `NotFoundError`, `ValidationError`, `UnauthorizedError` | All throw correct HTTP status & structured JSON |
-| 1.4 | `packages/shared/src/constants/index.ts` | None | Export pagination limits, rate thresholds, feature flags | Values are frozen (`Object.freeze`) or `as const` |
-
-✅ **Phase 1 Complete:** `npm run build:shared` passes with zero warnings. No imports outside `shared/`.
-
----
-
-### 🔵 Phase 2: Domain Layer (Models & Interfaces)
-*Purpose:* Define business entities and repository contracts. Depends only on `shared/`.
-
-| # | File Path | Dependencies | Implementation Steps | Acceptance Criteria |
-|---|-----------|--------------|----------------------|---------------------|
-| 2.1 | `packages/domain/src/models/user.model.ts` | `shared/types/common.ts` | Define `User` entity with fields, validation rules (Zod/Valibot), factory method | Type-safe construction; fails on invalid input |
-| 2.2 | `packages/domain/src/repositories/user.repository.interface.ts` | `user.model.ts`, `shared/types/common.ts` | Declare `IUserRepository` with `findById`, `create`, `update`, `delete` | Pure interface; no implementation details |
-| 2.3 | `packages/domain/src/models/post.model.ts` | `shared/types/common.ts`, `user.model.ts` (type-only) | Define `Post` entity, link to `User` via `authorId: IdType` | Circular reference avoided via type imports only |
-
-✅ **Phase 2 Complete:** Domain compiles independently. All repository files end in `.interface.ts`.
-
----
-
-### 🟡 Phase 3: Application Layer (Use Cases & Service Contracts)
-*Purpose:* Orchestrate business rules. Depends on `domain/` and `shared/`. No DB or framework code.
-
-| # | File Path | Dependencies | Implementation Steps | Acceptance Criteria |
-|---|-----------|--------------|----------------------|---------------------|
-| 3.1 | `packages/application/src/use-cases/create-user.use-case.ts` | `domain/repositories/user.repository.interface.ts`, `shared/errors/*` | Implement input validation, call repo interface, return DTO | Throws `ValidationError` on bad input; mocks pass |
-| 3.2 | `packages/application/src/services/auth.service.interface.ts` | `shared/types/common.ts` | Define `IAuthService.authenticate(payload) => TokenResponse` | Interface only; no JWT/crypto imports |
-| 3.3 | `packages/application/src/use-cases/get-posts.use-case.ts` | `domain/repositories/*`, `shared/constants/index.ts` | Handle pagination, filter mapping, return `PaginatedResult<Post>` | Respects max limit constant; type-safe filters |
-
-✅ **Phase 3 Complete:** All use cases are unit-testable without DB. Zero framework imports.
-
----
-
-### 🟠 Phase 4: Infrastructure & Adapters
-*Purpose:* Implement repository interfaces, external clients, and DI bindings. Depends on `application/`, `domain/`, `shared/`.
-
-| # | File Path | Dependencies | Implementation Steps | Acceptance Criteria |
-|---|-----------|--------------|----------------------|---------------------|
-| 4.1 | `packages/infrastructure/src/adapters/user.repository.prisma.ts` | `domain/repositories/user.repository.interface.ts`, `@prisma/client` | Map Prisma calls to interface; handle raw DB errors → `AppError` | Implements all interface methods; transaction-safe |
-| 4.2 | `packages/infrastructure/src/clients/jwt.client.ts` | `application/services/auth.service.interface.ts`, `jsonwebtoken` | Implement token generation/validation; wrap crypto ops | Matches `IAuthService`; handles expiry & revocation |
-| 4.3 | `packages/infrastructure/src/di/container.ts` | All adapters, all use-cases | Wire interfaces → implementations (TypeDI / Inversify / manual map) | Resolution returns correct instances; no circular DI |
-
-✅ **Phase 4 Complete:** Adapters pass integration tests with testcontainers/mock clients. DI resolves cleanly.
-
----
-
-### 🔴 Phase 5: Interface Layer (API/CLI Surface)
-*Purpose:* Expose endpoints or commands. Depends on `application/`, `shared/`, framework.
-
-| # | File Path | Dependencies | Implementation Steps | Acceptance Criteria |
-|---|-----------|--------------|----------------------|---------------------|
-| 5.1 | `packages/api/src/middleware/auth.middleware.ts` | `application/services/auth.service.interface.ts`, framework | Extract token, validate via DI service, attach user to context | Rejects invalid/missing tokens with 401 |
-| 5.2 | `packages/api/src/controllers/user.controller.ts` | `application/use-cases/create-user.use-case.ts`, `shared/types/*` | Map request → use case input; handle errors → HTTP responses | OpenAPI spec matches routes; error mapping complete |
-| 5.3 | `packages/api/src/routes/user.routes.ts` | `user.controller.ts`, framework router | Register paths, attach middleware, export router instance | Route table loads without circular requires |
-
-✅ **Phase 5 Complete:** API starts locally; Swagger/CLI help renders; all routes hit use cases.
-
----
-
-### ⚫ Phase 6: Bootstrap & Configuration
-*Purpose:* Wire everything together, load env, start server/CLI. Depends on all layers.
-
-| # | File Path | Dependencies | Implementation Steps | Acceptance Criteria |
-|---|-----------|--------------|----------------------|---------------------|
-| 6.1 | `src/config/env.config.ts` | `zod`, `.env.example` | Parse & validate env vars; export typed config object | Fails fast on missing/invalid vars in dev/prod |
-| 6.2 | `src/app.ts` | DI container, routes/middleware, error handler | Instantiate server, register routers, mount global middleware | Graceful shutdown hook registered |
-| 6.3 | `src/main.ts` | `app.ts`, `env.config.ts` | Load config → init DI → start app → log ready state | Exits cleanly on SIGTERM; health endpoint responds |
-
-✅ **Phase 6 Complete:** `npm run dev` boots in <2s. Health check returns `200 OK`. Zero runtime cycles.
-
----
-## 🔍 Dependency Validation & Enforcement
-
-| Tool | Command/Config | Purpose |
-|------|----------------|---------|
-| `madge` | `npx madge --circular src/ packages/*/src/` | Detect circular imports before commit |
-| ESLint | `"import/no-cycle": ["error", { "maxDepth": 3 }]` | Block cycles at lint time |
-| Build Order | `npm run build:shared → build:domain → build:application → ...` | Enforce via CI matrix or pnpm/turborepo pipelines |
-| Type-Only Imports | `import type { IRepo } from '...'` | Guarantee zero runtime dependency edges between layers |
-
----
 ## ✅ Execution Checklist
-- [ ] Run Phase 1 → verify zero external imports in `shared/`
-- [ ] Run Phase 2 → verify all repos are interfaces only
-- [ ] Run Phase 3 → verify use cases pass unit tests without DB
-- [ ] Run Phase 4 → verify adapters implement domain contracts exactly
-- [ ] Run Phase 5 → verify controllers never import infrastructure directly
-- [ ] Run Phase 6 → verify app boots, health check works, graceful shutdown triggers
-- [ ] Run `madge --circular` & CI pipeline → ensure green
+1. [ ] Phase 1: Scaffolding & Config
+2. [ ] Phase 2: `src/types.py` (paste & validate)
+3. [ ] Phase 3: `src/mock_llm.py`
+4. [ ] Phase 4: `agent_v1` → `v2` → `v3` → `v4`
+5. [ ] Phase 5: `agent_final.py`
+6. [ ] Phase 6: Tests + CLI driver
+7. [ ] Phase 7: Docs + Notebook
+8. [ ] Final: `pytest`, `mypy`, clean-room walkthrough
 
----
-**Next Step:** Reply with your complete spec (entities, features, deployment target, framework preference). I will:
-1. Replace placeholder paths with your exact domain names
-2. Generate precise Zod/Prisma/CLI configs
-3. Output a ready-to-run `turbo.json` / `pnpm-workspace.yaml` build order
-4. Provide exact test fixtures matching your data models
+Ready to implement phase-by-phase or generate full code for any specific file. Let me know your preferred starting point.
