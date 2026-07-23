@@ -878,9 +878,9 @@ async def run_interactive():
                         continue
                     
                     patterns = [
-                        r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```',
+                        r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```\s*$',
+                        r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```',
                         r'\[FILE:\s*([^\]]+)\]\s*\n+(.*?)(?=\[FILE:|$)',
-                        r'File:\s*([^\.]+\.\w+)\s*\n+```\w*\n?(.*?)```',
                     ]
                     
                     matches = []
@@ -961,7 +961,7 @@ async def run_interactive():
                                 ]
                                 retry_content = await agent.llm.chat(retry_msgs)
                                 if not retry_content.startswith("[Error"):
-                                    match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```', retry_content, re.DOTALL)
+                                    match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', retry_content, re.DOTALL)
                                     if match:
                                         new_content = match.group(2).strip()
                                         if len(new_content) > len(content) * 0.8:
@@ -1083,7 +1083,7 @@ async def run_interactive():
                                 print(f"  LLM error: {fixed}")
                                 continue
                             
-                            match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```', fixed, re.DOTALL)
+                            match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', fixed, re.DOTALL)
                             if match:
                                 new_code = match.group(2).strip()
                                 # Guard: must be actual Python code
