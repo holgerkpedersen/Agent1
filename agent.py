@@ -952,38 +952,45 @@ async def run_interactive():
             elif command == "workflow":
                 if len(parts) < 2:
                     print("Usage: workflow <target> [--from <spec.md>] [--force] [--workspace <path>]")
-                    print("  target: .  |  --from spec.md | --desc \"description\" | --features spec.md")
+                    print("  target: .  |  --desc/-from spec | --features spec (file or inline)")
                     continue
                 
                 force = "--force" in parts
                 
-                desc_text = None
+                spec_file = None
+                greenfield = False
+                features_file = None
+                
                 if "--desc" in parts:
                     di = parts.index("--desc")
                     if di + 1 < len(parts):
                         desc_text = parts[di + 1]
-                
-                spec_file = None
-                greenfield = False
-                if desc_text:
-                    import tempfile
-                    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
-                    tmp.write(f"# Project Specification\n\n{desc_text}")
-                    tmp.close()
-                    spec_file = tmp.name
-                    greenfield = True
-                    print(f"\n[desc] Specification: {desc_text[:100]}...")
+                        import tempfile
+                        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
+                        tmp.write(f"# Project Specification\n\n{desc_text}")
+                        tmp.close()
+                        spec_file = tmp.name
+                        greenfield = True
+                        print(f"\n[desc] Specification: {desc_text[:100]}...")
                 elif "--from" in parts:
                     fi = parts.index("--from")
                     if fi + 1 < len(parts):
                         spec_file = parts[fi + 1]
                         greenfield = True
                 
-                features_file = None
                 if "--features" in parts:
                     fi = parts.index("--features")
                     if fi + 1 < len(parts):
-                        features_file = parts[fi + 1]
+                        feat_val = parts[fi + 1]
+                        if os.path.isfile(feat_val):
+                            features_file = feat_val
+                        else:
+                            import tempfile
+                            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
+                            tmp.write(f"# Feature Requirements\n\n{feat_val}")
+                            tmp.close()
+                            features_file = tmp.name
+                            print(f"\n[features] Inline: {feat_val[:100]}...")
                 
                 target = [p for p in parts if not p.startswith("--") and p not in [spec_file, features_file]][1]
                 
