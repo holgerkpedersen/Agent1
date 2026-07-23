@@ -1027,10 +1027,11 @@ async def run_interactive():
                             
                             # Step 2: import test
                             import tempfile
-                            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tmp:
-                                tmp.write(f"import importlib.util\nspec=importlib.util.spec_from_file_location('_testmod', r'{fpath_str}')\nmod=importlib.util.module_from_spec(spec)\nspec.loader.exec_module(mod)\nprint('OK')\n")
-                            r = subprocess.run(["python", tmp.name], capture_output=True, text=True, cwd=str(Path(ws)))
-                            os.unlink(tmp.name)
+                            mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
+                            r = subprocess.run(
+                                ["python", "-c", f"import {mod_name}"],
+                                capture_output=True, text=True, cwd=str(Path(ws))
+                            )
                             if r.returncode != 0:
                                 errors_found.append((fname, fpath_str, f"IMPORT: {r.stderr.strip()}"))
                                 continue
@@ -1039,11 +1040,12 @@ async def run_interactive():
                             with open(fpath_str, "r", encoding="utf-8") as f:
                                 source = f.read()
                             class_names = re.findall(r'^class\s+(\w+)', source, re.MULTILINE)
+                            mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
                             for cn in class_names:
-                                with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tmp:
-                                    tmp.write(f"import importlib.util, sys\nspec=importlib.util.spec_from_file_location('_testmod', r'{fpath_str}')\nmod=importlib.util.module_from_spec(spec)\nsys.modules['_testmod']=mod\nspec.loader.exec_module(mod)\nc=getattr(mod, '{cn}')\nimport inspect\ntry:\n    sig=inspect.signature(c)\n    print(f'OK: {cn}'+str(list(sig.parameters.keys())))\nexcept (ValueError, TypeError):\n    print(f'OK: {cn} (builtin/Protocol/TypedDict)')\n")
-                                r = subprocess.run(["python", tmp.name], capture_output=True, text=True, cwd=str(Path(ws)))
-                                os.unlink(tmp.name)
+                                r = subprocess.run(
+                                    ["python", "-c", f"import {mod_name}; c={mod_name}.{cn}; import inspect; try: sig=inspect.signature(c); print(f'OK: {cn}'+str(list(sig.parameters.keys()))); except (ValueError, TypeError): print(f'OK: {cn} (builtin/Protocol/TypedDict)')"],
+                                    capture_output=True, text=True, cwd=str(Path(ws))
+                                )
                                 if r.returncode != 0:
                                     errors_found.append((fname, fpath_str, f"CLASS {cn}: {r.stderr.strip()}"))
                                 else:
