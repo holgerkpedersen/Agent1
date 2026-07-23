@@ -917,6 +917,7 @@ async def run_interactive():
                         implemented.append(filename)
                         print(f"  Written: {filename}")
                         
+                        retried = False
                         if filename.endswith(".py"):
                             filepath_str = os.path.realpath(filepath)
                             result = subprocess.run(
@@ -925,8 +926,30 @@ async def run_interactive():
                                 text=True
                             )
                             if result.returncode != 0:
-                                errors.append(f"{filename}: {result.stderr}")
-                                print(f"  Compile error in {filename}")
+                                err = result.stderr.strip()
+                                if "unterminated" in err or "unexpected EOF" in err or len(content) < 200:
+                                    print(f"  Detected truncated file, re-requesting {filename}...")
+                                    retry_msgs = [
+                                        {"role": "system", "content": "Generate ONLY the complete code for this file. Output as [FILE: filename.py]\n```python\n...\n```"},
+                                        {"role": "user", "content": f"Generate complete code for {filename} based on task plan. Previous version was truncated."}
+                                    ]
+                                    retry_content = await agent.llm.chat(retry_msgs)
+                                    if not retry_content.startswith("[Error"):
+                                        match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```', retry_content, re.DOTALL)
+                                        if match:
+                                            with open(filepath, "w", encoding="utf-8") as f:
+                                                f.write(match.group(2).strip())
+                                            result = subprocess.run(
+                                                ["python", "-m", "py_compile", filepath_str],
+                                                capture_output=True, text=True
+                                            )
+                                            retried = True
+                                
+                                if result.returncode != 0:
+                                    errors.append(f"{filename}: {result.stderr}")
+                                    print(f"  Compile error in {filename}")
+                                else:
+                                    print(f"  Compiled OK: {filename}")
                             else:
                                 print(f"  Compiled OK: {filename}")
                 

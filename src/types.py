@@ -9,8 +9,9 @@ without requiring inheritance chains or external framework dependencies.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Protocol, TypedDict
+from typing import Any, Callable, Dict, List, Optional, Protocol, TypedDict
 
 
 # ==============================================================================
@@ -43,7 +44,9 @@ class ToolDefinition:
     """
     name: str
     description: str
-    parameters: dict[str, Any]
+    # FIX: Use typing.Dict instead of built-in dict to prevent dataclasses._is_type 
+    # namespace resolution failures with postponed annotations in Python 3.12+
+    parameters: Dict[str, Any]
     func: Optional[Callable[..., Any]] = None
 
 
@@ -76,7 +79,8 @@ class AgentConfig(TypedDict, total=False):
     system_prompt: str
     max_turns: int
     max_steps: int
-    tools: list[ToolDefinition]
+    # FIX: Use typing.List for consistency & dataclass compatibility
+    tools: List[ToolDefinition]
 
 
 # ==============================================================================
