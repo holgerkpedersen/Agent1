@@ -1,121 +1,92 @@
-# Coding Plan
+# 📋 Strategic Refactoring & Modernization Plan
 
-# 🏗️ Software Architecture Implementation Plan
-**Project**: Agent Core Framework Refactoring & Hardening  
-**Target Python Version**: 3.10+ (leveraging modern union syntax, `pathlib`, `contextvars`)  
-**Priority Model**: P0 (Critical/Blocking) → P1 (High Impact) → P2 (Maintenance/Quality)
+Based on your expert code review, this plan transforms the fragmented prototype into a production-ready, maintainable AI agent framework. It is structured as a **4-phase roadmap** with clear deliverables, risk controls, and acceptance criteria.
 
 ---
 
-## 📊 Prioritization & Dependency Matrix
-| Phase | Focus Area | Priority | Dependencies | Estimated Effort |
-|-------|------------|----------|--------------|------------------|
-| 1     | Module Separation & Core Structure | **P0** | None | 2-3 days |
-| 2     | Path Security & Workspace Sandboxing | **P0** | Phase 1 | 3-4 days |
-| 3     | Async Context Management & Logging | **P1** | Phase 1, 2 | 2-3 days |
-| 4     | Type Safety, Linting & Cleanup | **P1** | Phase 1-3 | 2 days |
-| 5     | Testing Strategy & CI Integration | **P0** | Phase 1-4 | 3-4 days |
+## 🎯 Primary Objectives
+1. Eliminate blocking I/O & event loop starvation in async contexts
+2. Consolidate architecture around `agent_core/` as the single source of truth
+3. Replace fragile parsing, hardcoded paths, and string-based error handling with robust, typed patterns
+4. Establish automated testing, linting, and CI/CD guardrails
+5. Maintain backward compatibility during transition via deprecation layers
 
 ---
 
-## 📅 Phased Implementation Plan
+## 🗺️ Phased Implementation Roadmap
 
-### 🔹 Phase 1: Architectural Foundation & Module Separation (P0)
-**Goal**: Eliminate duplication, enforce single source of truth, establish clean package boundaries.
+### 🔹 Phase 1: Architecture Consolidation & Foundation (Days 1–3)
+| Task | Description | Deliverable |
+|------|-------------|-------------|
+| **Archive duplicates** | Move top-level `entities.py`, `exceptions.py`, `path_utils.py`, `logging_config.py` to `legacy/` or delete after verification | Clean root directory; `agent_core/` declared canonical |
+| **Unify exception hierarchy** | Define base `AgentError` + typed subclasses (`FileOperationError`, `ToolExecutionError`, `LLMClientError`) in `agent_core/exceptions.py` | Single, importable error module used across all modules |
+| **Add future annotations** | Prepend `from __future__ import annotations` to every `.py` file | Forward-compatible type hints; no eager evaluation crashes |
+| **Scaffold config layer** | Create `agent_core/config.py` using `pydantic-settings` with `.env` fallbacks for workspace, API URLs, timeouts, thresholds | Centralized, validated configuration object |
 
-| Step | Action | Deliverable |
-|------|--------|-------------|
-| 1.1 | Create `agent_core/` package structure with `__init__.py` exposing public API only | Clean namespace: `from agent_core import AgentError, validate_path, setup_logging` |
-| 1.2 | Extract all exception classes into `exceptions.py`. Remove built-in name shadows (`TimeoutError` → `ToolExecutionTimeoutError`) | Single inheritance tree: `Exception → AgentError → {FileOperation, SecurityViolation, ToolExecutionTimeout, ...}` |
-| 1.3 | Move path utilities to `path_utils.py`, models to `models.py`, logging config to `logging_config.py` | Modular structure with zero circular imports |
-| 1.4 | Remove inline spec tags `(Phase 4.1)`, `[PATH-01]`. Migrate to module-level docstrings & `pyproject.toml` metadata | Linter-clean codebase, improved readability |
+### 🔹 Phase 2: Async Migration & God Module Decomposition (Days 4–8)
+| Task | Description | Deliverable |
+|------|-------------|-------------|
+| **Replace `urllib` with `httpx.AsyncClient`** | Migrate `LLMClient.chat()` to async HTTP with connection pooling, retries (`tenacity`), and structured timeouts | Non-blocking LLM client; proper `asyncio.TimeoutError` handling |
+| **Extract God Module** | Split `agent.py` into: `llm_client.py`, `workspace_manager.py`, `tool_router.py`, `orchestrator.py`, `cache_manager.py` | Modular, testable components (~150 lines each) |
+| **Fix cross-OS path translation** | Replace string slicing with `pathlib.Path(workspace).resolve() / user_path`. Add sandbox validation via `agent_core/path_utils.py` | Secure, OS-agnostic path resolution with traversal guards |
+| **Offload blocking calls** | Wrap `subprocess.run()` and sync file reads in `asyncio.to_thread()` or migrate to `aiofiles` | Event loop remains responsive during compilation/file ops |
 
-✅ **Verification**: `python -m compileall agent_core/`, `importlib.util.find_spec("agent_core")` succeeds, zero import conflicts.
+### 🔹 Phase 3: CLI/Config Unification & Error Handling Standardization (Days 9–12)
+| Task | Description | Deliverable |
+|------|-------------|-------------|
+| **Modernize REPL** | Replace `input().split()` with `prompt_toolkit` or `cmd2`. Implement tab-completion, history, and flag parsing | Robust interactive CLI with predictable argument routing |
+| **Add script-mode parser** | Integrate `argparse` for headless/workflow execution (`--workspace`, `--task`, `--dry-run`) | Dual-mode interface (REPL + CLI) |
+| **Standardize error propagation** | Remove `except Exception: return f"[Error: {e}]"`. Raise typed exceptions or use `returns.Result[T, E]` for tool/LLM outputs | Consistent failure surfaces; stack traces preserved |
+| **Centralize constants** | Move `DEFAULT_WORKSPACE`, `TIMEOUT`, `SIMILARITY_THRESHOLD`, `MAX_INDEX_SIZE` to config/dataclass | No magic numbers; runtime overrides via `.env` or CLI |
 
----
-
-### 🔹 Phase 2: Secure Path Validation & Workspace Sandboxing (P0)
-**Goal**: Prevent directory traversal, handle symlinks deterministically, enforce strict workspace boundaries.
-
-| Step | Action | Deliverable |
-|------|--------|-------------|
-| 2.1 | Implement `_validate_path(raw: str, workspace_root: Path, follow_symlinks: bool = True) -> Path` using `Path.resolve()` + `relative_to()` | Secure path resolver with configurable symlink policy |
-| 2.2 | Add explicit boundary enforcement: raise `SecurityViolationError` on escape attempts or invalid inputs | Hardened sandboxing layer |
-| 2.3 | Create `WorkspaceSandbox(workspace_root, policies)` context manager that auto-validates all I/O operations | Declarative security wrapper for agent file ops |
-| 2.4 | Replace legacy string-based path checks across the codebase with `_validate_path()` | Zero raw `open()`, `Path()` usage outside validation layer |
-
-✅ **Verification**: Unit tests pass for: absolute/relative inputs, `../` traversal, symlink loops, empty/malformed paths, workspace boundary enforcement.
-
----
-
-### 🔹 Phase 3: Async Context Management & Structured Logging (P1)
-**Goal**: Ensure async-safe correlation tracking, robust JSON serialization, and observability readiness.
-
-| Step | Action | Deliverable |
-|------|--------|-------------|
-| 3.1 | Implement `CorrelationIdContext` with proper `contextvars.Token` lifecycle (`__enter__`/`__exit__`) | Thread/task-safe correlation scoping |
-| 3.2 | Build `SafeJsonEncoder(json.JSONEncoder)` handling `datetime`, `Path`, `Exception`, `UUID` | Crash-free JSON logging under all payloads |
-| 3.3 | Configure structured logger via `logging.config.dictConfig()` with `CorrelationIdFilter` and safe encoder | Production-ready log pipeline |
-| 3.4 | Inject correlation ID into async task names & error traces for distributed tracing compatibility | OpenTelemetry-ready context propagation |
-
-✅ **Verification**: Async isolation tests confirm no cross-task leakage; JSON logs parse without errors on edge payloads; `__exit__` cleanup verified under exceptions.
+### 🔹 Phase 4: Testing, CI/CD & Validation (Days 13–15)
+| Task | Description | Deliverable |
+|------|-------------|-------------|
+| **Setup test framework** | Configure `pytest`, `pytest-asyncio`, `respx`/`aioresponses` for mocking async HTTP | Automated test runner with async support |
+| **Write unit tests** | Cover path validation, config loading, exception routing, tool scoring logic | ≥80% coverage on `agent_core/` |
+| **Add integration tests** | Mock LLM responses + workspace I/O to validate full pipeline execution | End-to-end workflow verification |
+| **Configure CI/CD & pre-commit** | Add `ruff`, `mypy`, `black`, `pytest` via GitHub Actions / GitLab CI | Automated quality gates on PRs |
 
 ---
 
-### 🔹 Phase 4: Type Safety, Modern Idioms & Code Quality (P1)
-**Goal**: Enforce consistency, eliminate technical debt, prepare for static analysis pipelines.
-
-| Step | Action | Deliverable |
-|------|--------|-------------|
-| 4.1 | Standardize type hints: `str \| Path`, `datetime \| None`, explicit return types on all helpers | Fully typed public & internal APIs |
-| 4.2 | Replace legacy `typing.Union`/`Optional` with PEP 604 syntax (Python 3.10+) | Modern, readable type annotations |
-| 4.3 | Run `ruff check --fix`, `mypy --strict`, resolve all violations | Zero lint/type errors in CI |
-| 4.4 | Add module-level docstrings with responsibility boundaries & usage examples | Self-documenting codebase |
-
-✅ **Verification**: `mypy` passes at strict level, `ruff` clean, type coverage >90% via `coverage run --source=agent_core`.
-
----
-
-### 🔹 Phase 5: Testing Strategy & CI Integration (P0)
-**Goal**: Guarantee reliability, security validation, and automated quality gates.
-
-| Step | Action | Deliverable |
-|------|--------|-------------|
-| 5.1 | Write unit tests using `pytest`, `pyfakefs` for path resolution & sandbox enforcement | Deterministic FS mocking without real I/O |
-| 5.2 | Add async context propagation tests with `pytest-asyncio` and task isolation verification | Context leak prevention guarantees |
-| 5.3 | Integrate CI pipeline: lint → type-check → unit tests → coverage (>80%) → security scan (`bandit`) | Automated quality gate on PR/merge |
-| 5.4 | Add property-based tests (`hypothesis`) for path validation edge cases | Fuzz-resistant boundary checks |
-
-✅ **Verification**: CI green, coverage report generated, `bandit` clean, no flaky tests.
+## 🛠️ Recommended Tech Stack & Dependencies
+| Category | Library | Purpose |
+|----------|---------|---------|
+| Async HTTP | `httpx>=0.27`, `tenacity` | Native async, retries, timeouts |
+| Config | `pydantic-settings>=2.3` | `.env` parsing, validation, defaults |
+| CLI/REPL | `prompt_toolkit` or `cmd2` | History, completion, safe flag parsing |
+| Async I/O | `aiofiles`, `asyncio.to_thread()` | Non-blocking disk/process ops |
+| Error Pattern | `returns` (optional) or custom `Result[T, E]` | Explicit success/failure typing |
+| Testing | `pytest`, `pytest-asyncio`, `respx` | Async mocking & test automation |
+| Linting/Typing | `ruff`, `mypy`, `black` | Fast formatting, strict type checking |
 
 ---
 
-## 🔗 Dependency Graph & Parallelization Strategy
-```
-Phase 1 (Structure) 
-    ├──→ Phase 2 (Path Security) ──┐
-    ├──→ Phase 3 (Context/Logging) ├─→ Phase 4 (Type Safety/Linting) → Phase 5 (Tests/CI)
-    └──→ Phase 4 can start early on non-security modules once imports are stable
-```
-**Parallelization Tip**: Once Phase 1 is merged, developers can work on Phases 2 & 3 simultaneously. Phase 4 should run continuously as a pre-commit hook.
+## ⚠️ Risk Mitigation & Rollback Strategy
+| Risk | Mitigation | Rollback Plan |
+|------|------------|---------------|
+| Breaking existing workflows during refactor | Keep legacy `agent.py` as `agent_legacy.py` with deprecation warnings; run parallel for 1 sprint | Revert to `agent_legacy.py`; restore archived duplicates from `legacy/` |
+| Async migration introduces subtle race conditions | Use `asyncio.run()` in isolated test harnesses; add structured logging with correlation IDs | Fall back to `run_in_executor()` wrapper until stabilized |
+| CLI parsing changes break user muscle memory | Preserve shorthand aliases (`imp`, `wrk`) via `prompt_toolkit` completer | Keep old `input().split()` parser behind `--legacy-cli` flag temporarily |
 
 ---
 
-## ⚠️ Risk Mitigation & Architectural Decisions
-
-| Risk | Mitigation Strategy |
-|------|---------------------|
-| **Symlink traversal bypass** | `Path.resolve()` follows symlinks by default. Enforce boundary check on the *resolved* path. Add `follow_symlinks=False` policy mode that raises on symlink detection inside workspace. |
-| **Context variable leakage in async pools** | Use `contextvars.copy_context()` when submitting tasks to thread/async executors. Wrap agent dispatchers in `CorrelationIdContext`. |
-| **JSON logging performance overhead** | Batch log serialization, use `orjson` or `ujson` if throughput >10k req/s. Keep encoder lightweight; defer heavy object dumps to async sinks. |
-| **Breaking changes during refactor** | Maintain backward-compatible aliases temporarily (`TimeoutError = ToolExecutionTimeoutError`). Bump version to `v1.0.0` post-refactor with clear migration guide. |
+## ✅ Acceptance Criteria & Success Metrics
+- [ ] Event loop never blocks >10ms during LLM or file operations
+- [ ] Zero duplicate class/function definitions across codebase
+- [ ] All paths resolve safely with traversal guards (`..`, absolute escapes blocked)
+- [ ] Typed exceptions replace 100% of string-based error returns
+- [ ] `pytest` suite passes locally & in CI; core module coverage ≥80%
+- [ ] Configuration fully externalized; no hardcoded magic values remain
+- [ ] Documentation updated with new architecture diagram & usage examples
 
 ---
 
-## ✅ Immediate Next Steps (Sprint 1: Days 1-5)
-1. **Branch**: `refactor/core-architecture-v2`
-2. **Execute Phase 1**: Create package structure, extract modules, clean imports
-3. **Run baseline checks**: `ruff`, `mypy`, `python -c "import agent_core"`
-4. **Commit & PR**: Request architecture review before proceeding to security hardening
+## 🚀 Immediate Next Steps (Days 1–3)
+1. **Branch**: Create `refactor/core-modernization` from `main`
+2. **Archive duplicates**: Move top-level parallel files to `legacy/`
+3. **Scaffold config**: Implement `agent_core/config.py` with `pydantic-settings`
+4. **Add annotations**: Run sed/pre-commit to inject `from __future__ import annotations`
+5. **Verify baseline**: Ensure existing tests/scripts still run against legacy entry point before touching async code
 
-Would you like me to generate the complete production-ready source for any specific module (e.g., `agent_core/path_utils.py` with symlink policy enforcement, or `agent_core/logging_config.py` with async-safe JSON pipeline)? I can also provide a ready-to-use `pyproject.toml` + CI workflow template aligned with this plan.
+Would you like this exported as a GitHub Project board template, Jira epic breakdown, or accompanied by starter boilerplate for any specific phase?

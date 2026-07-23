@@ -506,7 +506,7 @@ async def run_interactive():
     print("  entities <analysis.md> <plan.md> [entities.md] - Generate shared entities")
     print("  taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks")
     print("  implement <taskplan.md> [--keep] [--force] [--workspace <path>] - Implement files")
-    print("  workflow <target> [--from spec.md] [--force] [--workspace <path>] - Full pipeline")
+    print("  workflow <target> [--from spec.md] [--features spec.md] [--force] [--workspace <path>] - Full pipeline")
     print("  clear              - Clear agent memory")
     print("  quit               - Exit")
     print("=" * 50)
@@ -952,18 +952,26 @@ async def run_interactive():
             elif command == "workflow":
                 if len(parts) < 2:
                     print("Usage: workflow <target> [--from <spec.md>] [--force] [--workspace <path>]")
-                    print("  target: . (existing code)  |  --from spec.md (greenfield)")
+                    print("  target: . (brownfield)  |  --from spec.md (greenfield)  |  --features spec.md (extend)")
                     continue
                 
                 force = "--force" in parts
                 
                 spec_file = None
+                greenfield = False
                 if "--from" in parts:
                     fi = parts.index("--from")
                     if fi + 1 < len(parts):
                         spec_file = parts[fi + 1]
+                        greenfield = True
                 
-                target = [p for p in parts if not p.startswith("--") and p != spec_file][1]
+                features_file = None
+                if "--features" in parts:
+                    fi = parts.index("--features")
+                    if fi + 1 < len(parts):
+                        features_file = parts[fi + 1]
+                
+                target = [p for p in parts if not p.startswith("--") and p not in [spec_file, features_file]][1]
                 
                 target_workspace = agent.workspace
                 if "--workspace" in parts:
@@ -975,6 +983,11 @@ async def run_interactive():
                     spec_file = os.path.join(target_workspace, spec_file)
                 if spec_file and (spec_file.startswith("/c/") or spec_file.startswith("/C/")):
                     spec_file = "C:" + spec_file[2:]
+                
+                if features_file and not os.path.isabs(features_file):
+                    features_file = os.path.join(target_workspace, features_file)
+                if features_file and (features_file.startswith("/c/") or features_file.startswith("/C/")):
+                    features_file = "C:" + features_file[2:]
                 
                 ws = target_workspace
                 if ws.startswith("/c/") or ws.startswith("/C/"):
@@ -1035,6 +1048,79 @@ async def run_interactive():
                         print(f"[taskplan] Written")
                     
                     print(f"\nNext: implement {tasks_md} {plan_md} {entities_md} --workspace {target_workspace} --force")
+                    
+                elif features_file:
+                    # --- BROWNFIELD EXTENSION: analyze existing + add features ---
+                    with open(features_file, "r", encoding="utf-8") as f:
+                        features = f.read()
+                    print(f"\n[features] Loaded from {features_file}")
+                    
+                    # Step 1: Analyze existing code
+                    if not force and os.path.exists(analysis_md):
+                        print(f"\n[Skipping analyze] exists")
+                    else:
+                        print(f"\n[analyze] Scanning existing py files...")
+                        py_files = []
+                        for dp, dn, filenames in os.walk(ws_path):
+                            if ".git" in dp or "__pycache__" in dp: continue
+                            for fn in filenames:
+                                if fn.endswith(".py"): py_files.append(os.path.join(dp, fn))
+                        if not py_files:
+                            print("[analyze] No py files. Use --from for greenfield.")
+                            continue
+                        combined = ""
+                        for pf in py_files:
+                            try:
+                                with open(pf, "r", encoding="utf-8") as f:
+                                    combined += f"\n\n# ---- {pf} ----\n{f.read()}"
+                            except: pass
+                        r = await agent.llm.analyze_code(combined)
+                        if not step_ok(r): print(f"[analyze] FAILED: {r[:200]}"); continue
+                        with open(analysis_md, "w", encoding="utf-8") as f: f.write(r)
+                        print(f"[analyze] Written")
+                    
+                    # Step 2: Plan that extends existing code with new features
+                    if not force and os.path.exists(plan_md):
+                        print(f"\n[Skipping plan] exists")
+                    else:
+                        with open(analysis_md, "r", encoding="utf-8") as f: analysis = f.read()
+                        r = await agent.llm.chat([
+                            {"role": "system", "content": "You are an expert software architect. Create a plan that extends the EXISTING codebase with these new features. Preserve existing architecture. Show what to ADD and what MINIMAL changes are needed in existing files."},
+                            {"role": "user", "content": f"## Existing code analysis:\n{analysis}\n\n## New features to add:\n{features}\n\nCreate a plan that integrates these features into the existing codebase."}
+                        ])
+                        if not step_ok(r): print(f"[plan] FAILED: {r[:200]}"); continue
+                        with open(plan_md, "w", encoding="utf-8") as f: f.write(r)
+                        print(f"[plan] Written")
+                    
+                    # Step 3: Extract new entities (preserve existing)
+                    if not force and os.path.exists(entities_md):
+                        print(f"\n[Skipping entities] exists")
+                    else:
+                        with open(plan_md, "r", encoding="utf-8") as f: plan = f.read()
+                        with open(entities_file, "r") as f: entities_existing = f.read()
+                        r = await agent.llm.chat([
+                            {"role": "system", "content": "Extract ONLY NEW shared entities needed for these features. Preserve existing entities. Avoid circular imports with existing code."},
+                            {"role": "user", "content": f"## Plan:\n{plan}\n\n## Existing entities:\n{entities_existing}\n\nExtract only new entities needed."}
+                        ])
+                        if not step_ok(r): print(f"[entities] FAILED: {r[:200]}"); continue
+                        with open(entities_md, "w", encoding="utf-8") as f: f.write(r)
+                        print(f"[entities] Written")
+                    
+                    # Step 4: Taskplan for adding features
+                    if not force and os.path.exists(tasks_md):
+                        print(f"\n[Skipping taskplan] exists")
+                    else:
+                        with open(analysis_md, "r", encoding="utf-8") as f: analysis = f.read()
+                        with open(plan_md, "r", encoding="utf-8") as f: plan = f.read()
+                        r = await agent.llm.chat([
+                            {"role": "system", "content": "Create task plan for ADDING these features to existing code. Mark existing files as 'modify' with only the necessary changes. New files as 'create'."},
+                            {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\nCreate implementation tasks."}
+                        ])
+                        if not step_ok(r): print(f"[taskplan] FAILED: {r[:200]}"); continue
+                        with open(tasks_md, "w", encoding="utf-8") as f: f.write(r)
+                        print(f"[taskplan] Written")
+                    
+                    print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
                     
                 else:
                     # --- BROWNFIELD from existing code ---
