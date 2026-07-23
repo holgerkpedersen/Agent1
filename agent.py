@@ -777,6 +777,15 @@ async def run_interactive():
                 
                 print(f"Found {len(all_files)} files to implement: {', '.join(all_files)}")
                 
+                protected_files = set()
+                if os.path.exists(".protected"):
+                    with open(".protected", "r", encoding="utf-8") as pf:
+                        for line in pf:
+                            line = line.strip()
+                            if line and not line.startswith("#"):
+                                protected_files.add(line)
+                    print(f"Protected files: {protected_files}")
+                
                 analyzed_file = ""
                 match = re.search(r'# Analysis of (\S+)', analysis_content)
                 if match:
@@ -913,6 +922,12 @@ async def run_interactive():
                         
                         if skip_reason:
                             print(f"  Skipping {filename}: {skip_reason}")
+                            if filename not in implemented:
+                                implemented.append(filename)
+                            continue
+                        
+                        if filename in protected_files:
+                            print(f"  Protected: {filename} (skipped)")
                             if filename not in implemented:
                                 implemented.append(filename)
                             continue

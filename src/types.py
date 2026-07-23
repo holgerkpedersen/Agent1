@@ -1,94 +1,126 @@
 """
-src/types.py
-Shared type contracts, structural typing protocols, and stateless utilities 
-for the progressive agent tutorial. Acts as the root dependency for all agent modules.
+src/types.py - Shared Type Contracts & Stateless Utilities for Agent Tutorial
+
+This module defines the core data structures, structural interfaces (Protocols),
+and helper functions used across all agent implementations. It enforces type safety
+without requiring inheritance chains or external framework dependencies.
 """
 
+from __future__ import annotations
+
 import json
-import logging
-import re
-from dataclasses import dataclass, field
-from typing import Any, Protocol
-
-logger = logging.getLogger(__name__)
+from dataclasses import dataclass
+from typing import Any, Callable, List, Optional, Protocol, TypedDict
 
 
 # ==============================================================================
-# DATA STRUCTURES (TypedDict / Dataclasses)
+# 📦 CORE DATA STRUCTURES
 # ==============================================================================
 
-@dataclass(frozen=True)
-class Message:
-    """Standard message format for LLM context windows."""
+class Message(TypedDict):
+    """Represents a single message in an LLM conversation.
+    
+    Attributes:
+        role: The sender ('system', 'user', 'assistant', or 'tool').
+        content: The text payload of the message.
+        name: Optional identifier, typically used to link tool responses back 
+              to their originating function call.
+    """
     role: str
     content: str
+    name: Optional[str]
 
 
 @dataclass
 class ToolDefinition:
-    """Schema definition for a callable tool available to the agent."""
+    """Schema and metadata for a callable agent tool.
+    
+    Attributes:
+        name: Unique identifier for the tool (e.g., 'calculator').
+        description: Human-readable explanation of what the tool does & when to use it.
+        parameters: JSON Schema-style dict describing expected arguments.
+        func: The actual Python function to execute. Can be None if registered later.
+    """
     name: str
     description: str
-    parameters: dict[str, Any] = field(default_factory=dict)
-    func: Any = None
+    parameters: dict[str, Any]
+    func: Optional[Callable[..., Any]] = None
 
 
 @dataclass
 class ReasoningStep:
-    """Single iteration in a ReAct-style reasoning loop."""
+    """Tracks a single iteration in a ReAct-style reasoning loop.
+    
+    Attributes:
+        thought: The agent's internal planning/logic for this step.
+        action: Name of the tool/function to call, or 'final_answer'.
+        action_input: Arguments passed to the action.
+        observation: Result returned from executing the action (filled after execution).
+        is_final: Flag indicating if this step concludes the reasoning process.
+    """
     thought: str
-    action: str | None = None
-    input_data: str | None = None
-    observation: str | None = None
+    action: str
+    action_input: str
+    observation: Optional[str] = None
     is_final: bool = False
 
 
-@dataclass
-class AgentConfig:
-    """Configuration parameters for agent initialization."""
-    system_prompt: str = "You are a helpful AI assistant."
-    max_turns: int = 10
-    temperature: float = 0.0
-    use_mock_llm: bool = True
-    tools: list[ToolDefinition] = field(default_factory=list)
+class AgentConfig(TypedDict, total=False):
+    """Configuration settings for initializing and tuning an agent.
+    
+    All fields are optional to allow partial overrides during composition/testing.
+    """
+    name: str
+    temperature: float
+    max_tokens: int
+    system_prompt: str
+    max_turns: int
+    max_steps: int
+    tools: list[ToolDefinition]
 
 
 # ==============================================================================
-# STRUCTURAL TYPING (Protocols)
+# 🧱 STRUCTURAL INTERFACES (PROTOCOLS)
 # ==============================================================================
 
 class LLMProvider(Protocol):
-    """Interface for any language model backend (mock or live)."""
+    """Structural interface for any Large Language Model wrapper.
     
-    def chat(self, messages: list[Message]) -> str: ...
-    
-    def generate_tool_calls(
-        self, 
-        messages: list[Message], 
-        tools: list[ToolDefinition]
-    ) -> list[dict[str, Any]]: ...
+    Any class implementing these methods can be passed to agents, 
+    enabling easy swapping between MockLLM, OpenAI, Anthropic, etc.
+    """
+    def chat(self, messages: List[Message]) -> str: ...
+    def generate_tool_calls(self, messages: List[Message], tools: list[ToolDefinition]) -> list[dict]: ...
 
 
 class AgentBase(Protocol):
-    """Interface that all agent implementations must satisfy."""
+    """Structural interface for all agent implementations.
     
-    def run(self, user_input: str) -> str: ...
-
-
-# ==============================================================================
-# STATELESS UTILITIES
-# ==============================================================================
-
-def parse_json_safely(text: str) -> dict | list[dict] | None:
+    Ensures every agent version (v1-v4) exposes a consistent `run()` method 
+    regardless of internal complexity.
     """
-    Attempts to extract and parse a JSON object or array from raw text.
-    Handles markdown code blocks, partial outputs, and malformed strings.
-    Returns parsed data or None on failure.
+    def run(self, user_input: str) -> Any: ...
+
+
+# ==============================================================================
+# 🛠️ STATELESS UTILITIES
+# ==============================================================================
+
+def parse_json_safely(text: str) -> dict | list | None:
+    """Attempts to extract and parse a JSON object or array from an LLM response.
+    
+    Handles common formatting issues like markdown code fences, surrounding prose, 
+    or trailing commas that often break strict parsers.
+    
+    Args:
+        text: Raw string output from the LLM.
+        
+    Returns:
+        Parsed dict/list if valid JSON is found, otherwise None.
     """
     if not isinstance(text, str):
         return None
     
     cleaned = text.strip()
     
-    # Strip markdown code block formatting if present
-    if cleaned.startswith("
+    # Strip markdown code fences (
