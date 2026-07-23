@@ -506,7 +506,7 @@ async def run_interactive():
     print("  entities <analysis.md> <plan.md> [entities.md] - Generate shared entities")
     print("  taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks")
     print("  implement <taskplan.md> [--keep] [--force] [--workspace <path>] - Implement files")
-    print("  workflow <target> [--from spec.md] [--features spec.md] [--force] [--workspace <path>] - Full pipeline")
+    print("  workflow <target> [--from spec.md] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] - Full pipeline")
     print("  clear              - Clear agent memory")
     print("  quit               - Exit")
     print("=" * 50)
@@ -952,14 +952,28 @@ async def run_interactive():
             elif command == "workflow":
                 if len(parts) < 2:
                     print("Usage: workflow <target> [--from <spec.md>] [--force] [--workspace <path>]")
-                    print("  target: . (brownfield)  |  --from spec.md (greenfield)  |  --features spec.md (extend)")
+                    print("  target: .  |  --from spec.md | --desc \"description\" | --features spec.md")
                     continue
                 
                 force = "--force" in parts
                 
+                desc_text = None
+                if "--desc" in parts:
+                    di = parts.index("--desc")
+                    if di + 1 < len(parts):
+                        desc_text = parts[di + 1]
+                
                 spec_file = None
                 greenfield = False
-                if "--from" in parts:
+                if desc_text:
+                    import tempfile
+                    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
+                    tmp.write(f"# Project Specification\n\n{desc_text}")
+                    tmp.close()
+                    spec_file = tmp.name
+                    greenfield = True
+                    print(f"\n[desc] Specification: {desc_text[:100]}...")
+                elif "--from" in parts:
                     fi = parts.index("--from")
                     if fi + 1 < len(parts):
                         spec_file = parts[fi + 1]
