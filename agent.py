@@ -987,18 +987,23 @@ async def run_interactive():
                             break
                         
                         for fname, fpath, err in import_errors:
-                            print(f"\n[fix] Fixing {fname}...")
+                            print(f"\n[fix] Analyzing {fname}...")
                             with open(fpath, "r", encoding="utf-8") as f:
                                 current_code = f.read()
                             
                             fix_msgs = [
-                                {"role": "system", "content": "Fix the runtime import error in this code. Return the complete fixed file with [FILE: filename.py] format."},
-                                {"role": "user", "content": f"Fix this code:\n\nFile: {fname}\nError:\n{err}\n\nCurrent code:\n```python\n{current_code}\n```\n\nReturn the complete fixed file."}
+                                {"role": "system", "content": "You are a Python expert. First explain WHY the error occurs (what is wrong and why it fails). Then output the fixed file. Format:\n\n## Why this error happens\nBrief explanation of root cause.\n\n## Fix\n[FILE: filename.py]\n```python\n# fixed code\n```"},
+                                {"role": "user", "content": f"File: {fname}\n\nError:\n{err}\n\nCurrent code:\n```python\n{current_code}\n```"}
                             ]
                             fixed = await agent.llm.chat(fix_msgs)
                             if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
                                 print(f"  LLM error fixing {fname}: {fixed[:100]}")
                                 continue
+                            
+                            # Show explanation to user
+                            if "## Why" in fixed:
+                                explanation = fixed.split("## Fix")[0].strip()
+                                print(f"  {explanation[:200]}")
                             
                             match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```', fixed, re.DOTALL)
                             if match:
