@@ -58,7 +58,7 @@ def _import_module(module_name: str):
 
 _STEP_DESCRIPTIONS = {
     1: ("Basic Chat", "src.agent_v1_basic", "BasicAgent"),
-    2: ("Tool Use", "src.agent_v2_tools", "ToolsAgent"),
+       2: ("Tool Use", "src.agent_v2_tools", "ToolAgent"),
     3: ("Memory / History", "src.agent_v3_memory", "MemoryAgent"),
     4: ("ReAct Reasoning", "src.agent_v4_reasoning", "ReasoningAgent"),
 }
@@ -124,9 +124,9 @@ def run_step_2_tools(dry_run: bool = False) -> None:
 
     llm = mock_mod.MockLLM()
     system_prompt = "You are a helpful assistant with access to tools."
-    agent_cls = getattr(agent_mod, "ToolsAgent", None)
+    agent_cls = getattr(agent_mod, "ToolAgent", None)
     if agent_cls is None:
-        console.print("[red]❌ ToolsAgent class not found in src.agent_v2_tools.[/red]")
+        console.print("[red]ToolAgent class not found in src.agent_v2_tools.[/red]")
         return
 
     agent = agent_cls(llm=llm, system_prompt=system_prompt)
@@ -226,17 +226,22 @@ def run_step_4_reasoning(dry_run: bool = False) -> None:
         return
 
     max_steps = 5
-    agent = agent_cls(llm=llm, system_prompt=system_prompt, max_steps=max_steps)
-
-    # Register a sample tool for reasoning
+    
     def calculator(expression: str) -> str:
         try:
-            result = eval(expression, {"__builtins__": {}}, {})  # noqa: S307
+            result = eval(expression, {"__builtins__": {}}, {})
             return str(result)
         except Exception as e:
             return f"Error: {e}"
+    
+    calc_tool = {
+        "name": "calculator",
+        "description": "Evaluate math expressions",
+        "func": calculator,
+    }
+    
+    agent = agent_cls(llm=llm, tools=[calc_tool], max_steps=max_steps)
 
-    agent.register_tool("calculator", calculator, "Evaluate a math expression.")
 
     user_input = "What is (42 * 3) + 15?"
     console.print(f"[blue]User:[/] {user_input}")
