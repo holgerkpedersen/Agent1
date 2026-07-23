@@ -1025,7 +1025,7 @@ async def run_interactive():
                             class_names = re.findall(r'^class\s+(\w+)', source, re.MULTILINE)
                             for cn in class_names:
                                 r = subprocess.run(
-                                    ["python", "-c", f"import importlib.util; spec=importlib.util.spec_from_file_location('x', r'{fpath_str}'); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); c=getattr(mod, '{cn}'); import inspect; sig=inspect.signature(c); print(f'OK: {cn}'+str(list(sig.parameters.keys())))"],
+                                    ["python", "-c", f"import importlib.util, importlib.machinery, sys; mod_name='{fname[:-3].replace(chr(47),chr(46)).replace(chr(92),chr(46))}'; spec=importlib.util.spec_from_file_location(mod_name, r'{fpath_str}'); mod=importlib.util.module_from_spec(spec); sys.modules[mod_name]=mod; spec.loader.exec_module(mod); c=getattr(mod, '{cn}'); import inspect; try: sig=inspect.signature(c); print(f'OK: {cn}'+str(list(sig.parameters.keys()))); except (ValueError, TypeError): print(f'OK: {cn} (builtin/Protocol/TypedDict, no signature)')"],
                                     capture_output=True, text=True, cwd=str(Path(ws))
                                 )
                                 if r.returncode != 0:
