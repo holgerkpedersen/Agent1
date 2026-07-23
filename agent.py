@@ -1027,6 +1027,7 @@ async def run_interactive():
                             
                             # Step 2: import test
                             import tempfile
+                            mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
                             with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
                                 tf.write(f"import sys; sys.path.insert(0, r'{ws}')\n")
                                 tf.write(f"import {mod_name}\n")
@@ -1042,7 +1043,6 @@ async def run_interactive():
                             with open(fpath_str, "r", encoding="utf-8") as f:
                                 source = f.read()
                             class_names = re.findall(r'^class\s+(\w+)', source, re.MULTILINE)
-                            mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
                             for cn in class_names:
                                 import tempfile
                                 with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
