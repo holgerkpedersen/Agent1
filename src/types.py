@@ -13,13 +13,13 @@ from typing import Any, Protocol, TypedDict
 logger = logging.getLogger(__name__)
 
 
-# ──────────────────────────────────────────────────────────────
+# ==============================================================================
 # DATA STRUCTURES (TypedDict / Dataclasses)
-# ──────────────────────────────────────────────────────────────
+# ==============================================================================
 
 class Message(TypedDict):
     """Standard message format for LLM context windows."""
-    role: str  # 'system', 'user', 'assistant'
+    role: str
     content: str
 
 
@@ -29,7 +29,7 @@ class ToolDefinition:
     name: str
     description: str
     parameters: dict[str, Any] = field(default_factory=dict)
-    func: Any = None  # Callable reference (excluded from JSON schemas)
+    func: Any = None
 
 
 @dataclass
@@ -52,9 +52,9 @@ class AgentConfig:
     tools: list[ToolDefinition] = field(default_factory=list)
 
 
-# ──────────────────────────────────────────────────────────────
+# ==============================================================================
 # STRUCTURAL TYPING (Protocols)
-# ──────────────────────────────────────────────────────────────
+# ==============================================================================
 
 class LLMProvider(Protocol):
     """Interface for any language model backend (mock or live)."""
@@ -74,14 +74,14 @@ class AgentBase(Protocol):
     def run(self, user_input: str) -> str: ...
 
 
-# ──────────────────────────────────────────────────────────────
+# ==============================================================================
 # STATELESS UTILITIES
-# ──────────────────────────────────────────────────────────────
+# ==============================================================================
 
 def parse_json_safely(text: str) -> dict | list[dict] | None:
     """
     Attempts to extract and parse a JSON object or array from raw text.
-    Handles markdown code blocks, partial outputs, and malformed strings gracefully.
+    Handles markdown code blocks, partial outputs, and malformed strings.
     Returns parsed data or None on failure.
     """
     if not isinstance(text, str):

@@ -1,118 +1,148 @@
-import sys
-import os
-from typing import Any, Callable, Dict, List, Optional
+"""
+src/agent_v2_tools.py
+Step 2: Tool-Use Agent
+Introduces function calling, tool registration, argument parsing, and safe execution.
+Mental Model: Input -> LLM decides on tool -> Parse JSON args -> Execute safely -> Inject result -> Output
+"""
 
-# Ensure correct module resolution when running standalone or via test runners
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from __future__ import annotations
 
-from src.types import (
-    AgentBase,
-    LLMProvider,
-    Message,
-    ToolDefinition,
-    parse_json_safely,
-    format_tool_result,
-)
+import inspect
+from typing import Any, Callable, Dict, List
+
+# Shared contracts & utilities (Phase 2 dependency)
+try:
+    from .types import ToolDefinition, parse_json_safely, format_tool_result
+except ImportError:
+    # Fallback stubs for standalone execution or incomplete environment setup
+    def parse_json_safely(text: str) -> Any: ...
+    def format_tool_result(res: Any) -> str: ...
 
 
-class ToolsAgent(AgentBase):
+class ToolAgent:
     """
-    V2 Agent: Implements tool registration and execution routing.
-    Demonstrates the Input -> Process (Tool Call) -> Output mental model.
-    """
+    An agent capable of registering and executing external tools/functions.
     
-    def __init__(self, llm: LLMProvider, system_prompt: str = "You are a helpful assistant with access to tools.", max_tool_calls: int = 3):
+    Pedagogical Focus:
+    - How to expose Python functions as "tools" for an LLM
+    - Parsing structured JSON outputs from unstructured LLM text
+    - Safe execution sandboxing & error handling
+    - Injecting tool results back into the context window
+    """
+
+    def __init__(self, llm: Any, system_prompt: str = "You are a helpful assistant."):
         self.llm = llm
         self.system_prompt = system_prompt
-        self.max_tool_calls = max_tool_calls
-        self._tools: Dict[str, Callable[..., Any]] = {}
-        self._tool_defs: List[ToolDefinition] = []
+        # Internal registry: name -> {definition, function}
+        self._tools_registry: Dict[str, Dict] = {}
 
     def register_tool(self, name: str, func: Callable[..., Any], description: str) -> None:
-        """Register a function as an available tool for the agent."""
-        self._tools[name] = func
-        # Store definition for prompt injection. Assumes ToolDefinition accepts 'name' and 'description'.
-        self._tool_defs.append(ToolDefinition(name=name, description=description))
-
-    def _format_tools_for_prompt(self) -> str:
-        """Serialize registered tools into a format the LLM can parse."""
-        if not self._tool_defs:
-            return ""
+        """
+        Register a Python function as an available tool.
+        Automatically extracts argument names from the function signature for schema generation.
+        """
+        sig = inspect.signature(func)
+        args_schema = list(sig.parameters.keys())
         
-        tool_descriptions = []
-        for t in self._tool_defs:
-            tool_descriptions.append(f"- {t.name}: {t.description}")
+        # Construct definition compatible with ToolDefinition TypedDict/Dataclass contracts
+        tool_def: Any = {
+            "name": name,
+            "description": description,
+            "args": args_schema
+        }
             
-        prompt_section = (
-            "\n\nYou have access to the following tools. "
-            "When you need to use a tool, respond with JSON containing 'tool_calls'.\n"
-            f"{chr(10).join(tool_descriptions)}\n"
-            "If no tool is needed, just answer normally."
-        )
-        return prompt_section
+        self._tools_registry[name] = {
+            "definition": tool_def,
+            "function": func
+        }
 
-    def _execute_tool_call(self, call: Dict[str, Any]) -> str:
-        """Safely execute a single tool invocation in an isolated scope."""
-        tool_name = call.get("name", "")
-        arguments = call.get("arguments", {})
+    def _parse_tool_calls(self, llm_output: str) -> List[Dict]:
+        """
+        Extract tool calls from raw LLM text.
+        Expects JSON format: [{"name": "...", "arguments": {...}}, ...]
+        Returns empty list if parsing fails or structure is invalid.
+        """
+        parsed = parse_json_safely(llm_output)  # type: ignore[possibly-undefined, assignment]
         
-        if tool_name not in self._tools:
-            return f"Error: Unknown tool '{tool_name}' requested."
+        if isinstance(parsed, dict):
+            # Some LLMs return a single call object instead of a list
+            parsed = [parsed]
+        elif not isinstance(parsed, list):
+            return []
             
-        try:
-            func = self._tools[tool_name]
-            # Execute with isolated kwargs to prevent unexpected side effects or scope leakage
-            result = func(**arguments) if isinstance(arguments, dict) else func(arguments)
-            return format_tool_result(result)
-        except Exception as e:
-            return f"Execution failed for '{tool_name}': {type(e).__name__}: {e}"
+        valid_calls = []
+        for item in parsed:
+            if isinstance(item, dict) and "name" in item and "arguments" in item:
+                valid_calls.append(item)
+                
+        return valid_calls
+
+    def execute_tools(self, calls: List[Dict]) -> List[str]:
+        """
+        Safely execute registered tools with provided arguments.
+        Catches execution errors and wraps results using shared formatting utilities.
+        Returns a list of formatted result strings ready for LLM consumption.
+        """
+        results = []
+        for call in calls:
+            tool_name = call.get("name")
+            args = call.get("arguments", {})
+            
+            if tool_name not in self._tools_registry:
+                raw_err = f"Error: Tool '{tool_name}' is not registered."
+                results.append(format_tool_result(raw_err))  # type: ignore[possibly-undefined, arg-type]
+                continue
+                
+            func = self._tools_registry[tool_name]["function"]
+            
+            try:
+                # Execute function with unpacked keyword arguments
+                raw_result = func(**args)
+                results.append(format_tool_result(raw_result))  # type: ignore[possibly-undefined, arg-type]
+            except Exception as e:
+                error_msg = f"Execution failed for '{tool_name}': {type(e).__name__}: {e}"
+                results.append(format_tool_result(error_msg))  # type: ignore[possibly-undefined, arg-type]
+                
+        return results
 
     def run(self, user_input: str) -> str:
-        """Process user input, route to tools if necessary, and return final response."""
-        system_context = f"{self.system_prompt}{self._format_tools_for_prompt()}"
+        """
+        Main execution loop for tool-augmented responses.
         
-        conversation_history = [
-            Message(role="system", content=system_context),
-            Message(role="user", content=user_input)
+        Flow:
+        1. Build initial context (system + user)
+        2. Query LLM
+        3. If tool calls detected -> parse & execute
+        4. Inject results back into context & query again for final answer
+        """
+        # 1. Initial context setup
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": user_input}
         ]
         
-        # 1. Initial generation to get tool calls or direct answer
-        raw_response = self.llm.chat(conversation_history)
+        # 2. First LLM pass: decision & tool selection
+        llm_response = self.llm.chat(messages)
         
-        # 2. Parse LLM output safely using shared utility
-        parsed_data = parse_json_safely(raw_response)
+        # 3. Check for structured tool requests
+        tool_calls = self._parse_tool_calls(llm_response)
         
-        # Fallback if parsing fails or returns non-dict/list structure
-        if not isinstance(parsed_data, (dict, list)):
-            return raw_response
-            
-        tool_calls: List[Dict[str, Any]] = []
-        if isinstance(parsed_data, dict):
-            tool_calls = parsed_data.get("tool_calls", []) or []
-        elif isinstance(parsed_data, list):
-            tool_calls = parsed_data
-            
-        # If no valid tool calls found, return raw text response directly
         if not tool_calls:
-            return raw_response
+            # Direct answer path: no tools needed
+            return llm_response
             
-        # 3. Execute tools sequentially up to the configured limit
-        observations: List[str] = []
-        for call in tool_calls[:self.max_tool_calls]:
-            obs_text = self._execute_tool_call(call)
-            observations.append(f"[{call.get('name', 'unknown')}] {obs_text}")
-            
-        if not observations:
-            return raw_response
-            
-        # 4. Inject results back into context for final synthesis
-        observation_prompt = (
-            f"\n\nTool execution results:\n"
-            + "\n".join(observations) + 
-            "\nBased on these results, provide a clear and concise answer to the user's original request."
-        )
+        # 4. Execution phase: run requested tools safely
+        execution_results = self.execute_tools(tool_calls)
         
-        conversation_history.append(Message(role="assistant", content=raw_response))
-        conversation_history.append(Message(role="user", content=observation_prompt))
+        # 5. Synthesis phase: feed results back to LLM for final response generation
+        messages.append({"role": "assistant", "content": llm_response})
+        combined_results = "\n---\n".join(execution_results)
+        messages.append({"role": "tool", "content": combined_results})
         
-        return self.llm.chat(conversation_history)
+        # Second pass: generate human-readable answer based on tool outputs
+        final_response = self.llm.chat(messages)
+        return final_response
+
+    def get_available_tools(self) -> List[Dict]:
+        """Return a list of registered tool definitions (useful for prompt injection/debugging)."""
+        return [data["definition"] for data in self._tools_registry.values()]

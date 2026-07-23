@@ -1032,6 +1032,14 @@ async def run_interactive():
                             print("\n[fix] All files pass deep validation (compile + import + class instantiation)!")
                             break
                         
+                        # Find root cause: file with COMPILE error (IMPORT errors are cascade)
+                        err_root = errors_found[0][0]
+                        for fname, _, err in errors_found:
+                            if "COMPILE:" in err:
+                                err_root = fname
+                                break
+                        print(f"\n[fix] Root error file: {err_root} (fixing this first)")
+                        
                         print(f"\n[fix] Attempt {fix_attempt + 1}: {len(errors_found)} errors")
                         for fname, fpath, err in errors_found:
                             print(f"  - {fname}: {err[:100]}")
@@ -1059,9 +1067,22 @@ async def run_interactive():
                             
                             match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```', fixed, re.DOTALL)
                             if match:
+                                new_code = match.group(2).strip()
+                                # Guard: must be actual Python code
+                                if not re.search(r'\b(import|def |class )\b', new_code):
+                                    print(f"  WARNING: Fix for {fname} is not valid Python code, skipping")
+                                    continue
+                                # Guard: must not be cascade error from another file
+                                if fname != err_root and len(new_code) < 100:
+                                    print(f"  Skipping cascade fix for {fname} (root issue is in {err_root})")
+                                    continue
+                                # Guard: new content must be at least 10% of original (don't replace with stub)
+                                if len(new_code) < len(current_code) * 0.1:
+                                    print(f"  WARNING: Fix is {len(new_code)} bytes vs original {len(current_code)} bytes, skipping")
+                                    continue
                                 with open(fpath, "w", encoding="utf-8") as f:
-                                    f.write(match.group(2).strip())
-                                print(f"  Fixed: {fname}")
+                                    f.write(new_code)
+                                print(f"  Fixed: {fname} ({len(new_code)} bytes)")
                     
                     print(f"\n[fix] Complete")
                         

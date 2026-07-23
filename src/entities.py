@@ -110,7 +110,7 @@ class ToolExecutionResult:
     output: str = ""
     error_message: str | None = None
     tool_name: str = ""
-    tool_call_id: str | ""
+    tool_call_id: str = ""
 
     def to_message(self) -> Message:
         content = self.output if self.success else f"Error ({self.tool_name}): {self.error_message}"
@@ -216,5 +216,22 @@ def parse_json_safely(text: str) -> dict[str, Any] | list[Any] | None:
     try:
         return json.loads(text)
     except (json.JSONDecodeError, TypeError):
-        # Fallback: look for a JSON block surrounded by markdown code fences
-        match = re.search(r"
+        pass
+    
+    # Fallback: look for a JSON block in markdown code fences
+    match = re.search(r'```(?:json)?\s*\n(.*?)\n```', text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except (json.JSONDecodeError, TypeError):
+            pass
+    
+    # Try to find any JSON-like structure
+    match = re.search(r'[\{\[].*[\}\]]', text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except (json.JSONDecodeError, TypeError):
+            pass
+    
+    return None
