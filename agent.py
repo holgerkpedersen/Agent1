@@ -917,39 +917,47 @@ async def run_interactive():
                         implemented.append(filename)
                         print(f"  Written: {filename}")
                         
-                        retried = False
                         if filename.endswith(".py"):
                             filepath_str = os.path.realpath(filepath)
+                            
+                            is_truncated = False
+                            stripped = content.rstrip()
+                            if stripped:
+                                last_line = stripped.splitlines()[-1].strip()
+                                # Heuristics for truncation: ends mid-expression
+                                if last_line.endswith(('(', '[', '{', ':', ',', '+', '-', '*', '/', '=', '\\')):
+                                    is_truncated = True
+                                elif not last_line.endswith((')', '}', ']', "'", '"', 'pass', '...', 'True', 'False', 'None')):
+                                    # Might be truncated mid-identifier or mid-string
+                                    if not last_line.endswith(('.py', '.md', '.json', '.yaml')) and not last_line.startswith(('#', '//', '"""')):
+                                        if last_line and last_line[-1].isalnum():
+                                            is_truncated = True
+                            
+                            if is_truncated:
+                                print(f"  WARNING: {filename} appears truncated, re-requesting...")
+                                retry_msgs = [
+                                    {"role": "system", "content": "Generate the COMPLETE and FULL code for this single file. Output as:\n[FILE: filename.py]\n```python\n# complete code here\n```\n\nIMPORTANT: Generate the ENTIRE file. Do not truncate. Every function, class, and method must be complete."},
+                                    {"role": "user", "content": f"Generate the complete code for {filename}. The previous generation was truncated."}
+                                ]
+                                retry_content = await agent.llm.chat(retry_msgs)
+                                if not retry_content.startswith("[Error"):
+                                    match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```', retry_content, re.DOTALL)
+                                    if match:
+                                        new_content = match.group(2).strip()
+                                        if len(new_content) > len(content) * 0.8:
+                                            with open(filepath, "w", encoding="utf-8") as f:
+                                                f.write(new_content)
+                                            print(f"  Re-written: {filename} ({len(new_content)} bytes)")
+                                            content = new_content
+                            
                             result = subprocess.run(
                                 ["python", "-m", "py_compile", filepath_str],
                                 capture_output=True,
                                 text=True
                             )
                             if result.returncode != 0:
-                                err = result.stderr.strip()
-                                if "unterminated" in err or "unexpected EOF" in err or len(content) < 200:
-                                    print(f"  Detected truncated file, re-requesting {filename}...")
-                                    retry_msgs = [
-                                        {"role": "system", "content": "Generate ONLY the complete code for this file. Output as [FILE: filename.py]\n```python\n...\n```"},
-                                        {"role": "user", "content": f"Generate complete code for {filename} based on task plan. Previous version was truncated."}
-                                    ]
-                                    retry_content = await agent.llm.chat(retry_msgs)
-                                    if not retry_content.startswith("[Error"):
-                                        match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```', retry_content, re.DOTALL)
-                                        if match:
-                                            with open(filepath, "w", encoding="utf-8") as f:
-                                                f.write(match.group(2).strip())
-                                            result = subprocess.run(
-                                                ["python", "-m", "py_compile", filepath_str],
-                                                capture_output=True, text=True
-                                            )
-                                            retried = True
-                                
-                                if result.returncode != 0:
-                                    errors.append(f"{filename}: {result.stderr}")
-                                    print(f"  Compile error in {filename}")
-                                else:
-                                    print(f"  Compiled OK: {filename}")
+                                errors.append(f"{filename}: {result.stderr}")
+                                print(f"  Compile error in {filename}")
                             else:
                                 print(f"  Compiled OK: {filename}")
                 
