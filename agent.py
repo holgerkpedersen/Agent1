@@ -1047,7 +1047,8 @@ async def run_interactive():
                         
                         print(f"\n[fix] Attempt {fix_attempt + 1}: {len(errors_found)} errors")
                         for fname, fpath, err in errors_found:
-                            print(f"  - {fname}: {err[:100]}")
+                            print(f"  - {fname}:")
+                            print(f"    {err}")
                         
                         if fix_attempt >= 2:
                             print("[fix] Max attempts reached.")
