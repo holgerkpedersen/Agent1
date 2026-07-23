@@ -1,0 +1,1 @@
+{"taskplan": "taskplan.md", "files": ["agent.py", "config.py", "exceptions.py", "path_utils.py", "tool_router.py", "logging_config.py", ".github/workflows/ci.yml", "entities.py"]}

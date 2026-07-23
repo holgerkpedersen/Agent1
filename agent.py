@@ -32,7 +32,7 @@ class LLMClient:
             "model": self.model_name,
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 8192
+            "max_tokens": 50000
         }
 
         try:
@@ -50,7 +50,7 @@ class LLMClient:
                 method='POST'
             )
 
-            with urllib.request.urlopen(req, timeout=600) as response:
+            with urllib.request.urlopen(req, timeout=1800) as response:
                 result = json.loads(response.read().decode())
 
                 if 'choices' in result and len(result['choices']) > 0:
@@ -411,6 +411,26 @@ class Agent:
 
         if tool_action == "llm_analyze":
             path = args.get("path", "")
+            
+            if os.path.isdir(path):
+                py_files = []
+                for root, _, files in os.walk(path):
+                    if ".git" in root or "__pycache__" in root:
+                        continue
+                    for f in files:
+                        if f.endswith(".py"):
+                            py_files.append(os.path.join(root, f))
+                
+                combined = ""
+                for pf in py_files:
+                    content = await self.read_file(pf, track_read=False)
+                    if not content.startswith("File not found:") and not content.startswith("Error"):
+                        combined += f"\n\n# ---- {pf} ----\n{content}"
+                
+                if not combined:
+                    return "No Python files found to analyze"
+                return await self.llm.analyze_code(combined)
+            
             file_content = await self.read_file(path, track_read=False)
 
             if file_content.startswith("File not found:") or file_content.startswith("Error reading file:"):
@@ -455,6 +475,20 @@ class ToolRegistry:
         return await self._agent.execute_tool(tool_name, args)
 
 
+def _is_similar(content1: str, content2: str, threshold: float = 0.8) -> bool:
+    """Check if two pieces of content are similar enough (based on line structure)."""
+    if not content1 or not content2:
+        return False
+    lines1 = set(content1.splitlines())
+    lines2 = set(content2.splitlines())
+    if not lines1 or not lines2:
+        return False
+    intersection = len(lines1 & lines2)
+    union = len(lines1 | lines2)
+    similarity = intersection / union if union > 0 else 0
+    return similarity >= threshold
+
+
 async def run_interactive():
     """Interactive mode - allows user to input commands."""
     
@@ -465,11 +499,11 @@ async def run_interactive():
     print("  read <path>        - Read a file")
     print("  write <path> <content> - Write content to file")
     print("  search <query>     - Search for string in files")
-    print("  analyze <file> [output.md] - AI analysis via LM Studio")
-    print("  plan <output.md> <plan.md> - Generate coding plan from analysis")
+    print("  analyze <file> [analysis.md] - AI analysis via LM Studio")
+    print("  plan <analysis.md> <plan.md> - Generate coding plan from analysis")
     print("  entities <analysis.md> <plan.md> [entities.md] - Generate shared entities")
     print("  taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks")
-    print("  implement <taskplan.md> [analysis.md] [plan.md] [entities.md] - Implement all files")
+    print("  implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] - Implement all files")
     print("  clear              - Clear agent memory")
     print("  quit               - Exit")
     print("=" * 50)
@@ -529,7 +563,7 @@ async def run_interactive():
             # Analyze command - uses LM Studio LLM
             elif command == "analyze":
                 if len(parts) < 2:
-                    print("Usage: analyze <path> [output.md]")
+                    print("Usage: analyze <path> [analysis.md]")
                     continue
                     
                 path = parts[1]
@@ -547,7 +581,7 @@ async def run_interactive():
             # Plan command - generates coding plan from analysis file
             elif command == "plan":
                 if len(parts) < 3:
-                    print("Usage: plan <output.md> <plan.md>")
+                    print("Usage: plan <analysis.md> <plan.md>")
                     continue
                     
                 analysis_file = parts[1]
@@ -640,13 +674,27 @@ async def run_interactive():
             # Implement command - implements all files from taskplan
             elif command == "implement":
                 if len(parts) < 2:
-                    print("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md]")
+                    print("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force]")
                     continue
-                    
-                taskplan_file = parts[1]
-                analysis_file = parts[2] if len(parts) > 2 else "analysis.md"
-                plan_file = parts[3] if len(parts) > 3 else "plan.md"
-                entities_file = parts[4] if len(parts) > 4 else "entities.md"
+
+                keep_mode = "--keep" in parts
+                refresh_cache = "--refresh" in parts
+                force_mode = "--force" in parts
+                filtered_parts = [p for p in parts if p not in ["--keep", "--refresh", "--force"]]
+                
+                taskplan_file = filtered_parts[1]
+                analysis_file = filtered_parts[2] if len(filtered_parts) > 2 else "analysis.md"
+                plan_file = filtered_parts[3] if len(filtered_parts) > 3 else "plan.md"
+                entities_file = filtered_parts[4] if len(filtered_parts) > 4 else "entities.md"
+                
+                cache_file = os.path.join(os.path.dirname(os.path.realpath(taskplan_file)) if os.path.isabs(taskplan_file) else ".", ".implement_cache.json")
+                if not os.path.isabs(taskplan_file):
+                    cache_file = os.path.join(".", ".implement_cache.json")
+                
+                analysis_content = ""
+                plan_content = ""
+                entities_content = ""
+                taskplan_content = ""
                 
                 try:
                     with open(taskplan_file, "r", encoding="utf-8") as f:
@@ -654,10 +702,6 @@ async def run_interactive():
                 except FileNotFoundError:
                     print(f"Error: File not found: {taskplan_file}")
                     continue
-                
-                analysis_content = ""
-                plan_content = ""
-                entities_content = ""
                 
                 try:
                     with open(analysis_file, "r", encoding="utf-8") as f:
@@ -677,32 +721,108 @@ async def run_interactive():
                 except FileNotFoundError:
                     print(f"Warning: {entities_file} not found")
                 
-                print("Analyzing task plan to identify all files...")
+                all_files = None
                 
-                list_messages = [
-                    {"role": "system", "content": "You are an expert Python developer. List ALL files that need to be implemented from the task plan. Reply with ONLY a list of filenames, one per line, with the file path. Include .py, .json, .yaml, .yml, .env, .md files. No explanations, just the list."},
-                    {"role": "user", "content": f"List every file that needs to be created or modified from this task plan:\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}"}
-                ]
+                if keep_mode and not refresh_cache and os.path.exists(cache_file):
+                    try:
+                        with open(cache_file, "r", encoding="utf-8") as f:
+                            cache_data = json.load(f)
+                        if cache_data.get("taskplan") == taskplan_file:
+                            all_files = cache_data.get("files", [])
+                            print(f"Using cached file list ({len(all_files)} files): {', '.join(all_files)}")
+                    except Exception:
+                        pass
                 
-                file_list_response = await agent.llm.chat(list_messages)
-                
-                if not file_list_response or file_list_response.startswith("[") or "error" in file_list_response.lower():
-                    print(f"Error: LM Studio API not responding or returned an error: {file_list_response}")
-                    print("Please ensure LM Studio is running and try again.")
-                    continue
+                if all_files is None:
                     
-                import re
-                file_lines = [line.strip() for line in file_list_response.strip().split('\n') if line.strip() and not line.startswith('#')]
-                all_files = [f for f in file_lines if f.endswith(('.py', '.json', '.yaml', '.yml', '.env', '.md', '.txt', '.cfg', '.ini', '.toml'))]
-                
-                if not all_files:
-                    all_files = re.findall(r'`([^`]+\.(?:py|json|yaml|yml|env|txt|cfg|ini|toml))`', file_list_response)
+                    print("Analyzing task plan to identify all files...")
+                    
+                    list_messages = [
+                        {"role": "system", "content": "You are an expert Python developer. List ALL files that need to be implemented from the task plan. Reply with ONLY a list of filenames, one per line, with the file path. Include .py, .json, .yaml, .yml, .env, .md files. No explanations, just the list."},
+                        {"role": "user", "content": f"List every file that needs to be created or modified from this task plan:\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}"}
+                    ]
+                    
+                    file_list_response = await agent.llm.chat(list_messages)
+                    
+                    if not file_list_response or file_list_response.startswith("[") or "error" in file_list_response.lower():
+                        print(f"Error: LM Studio API not responding or returned an error: {file_list_response}")
+                        print("Please ensure LM Studio is running and try again.")
+                        continue
+                        
+                    file_lines = [line.strip() for line in file_list_response.strip().split('\n') if line.strip() and not line.startswith('#')]
+                    all_files = [f for f in file_lines if f.endswith(('.py', '.json', '.yaml', '.yml', '.env', '.md', '.txt', '.cfg', '.ini', '.toml'))]
+                    
+                    if not all_files:
+                        all_files = re.findall(r'`([^`]+\.(?:py|json|yaml|yml|env|txt|cfg|ini|toml))`', file_list_response)
+                    
+                    cache_data = {"taskplan": taskplan_file, "files": all_files}
+                    try:
+                        with open(cache_file, "w", encoding="utf-8") as f:
+                            json.dump(cache_data, f)
+                        print(f"Cached file list to {cache_file}")
+                    except Exception:
+                        pass
                 
                 print(f"Found {len(all_files)} files to implement: {', '.join(all_files)}")
                 
+                analyzed_file = ""
+                match = re.search(r'# Analysis of (\S+)', analysis_content)
+                if match:
+                    analyzed_file = match.group(1)
+                    print(f"Analyzed file from analysis.md: {analyzed_file}")
+                
+                def file_needs_generation(fname):
+                    from pathlib import Path
+                    raw_ws = agent.workspace
+                    if raw_ws.startswith('/c/') or raw_ws.startswith('/C/'):
+                        raw_ws = 'C:' + raw_ws[2:]
+                    fpath = Path(raw_ws) / fname
+                    if not fpath.exists():
+                        return True, "not found"
+                    if fpath.stat().st_size == 0:
+                        return True, "empty"
+                    if fname.endswith(".py"):
+                        result = subprocess.run(
+                            ["python", "-m", "py_compile", os.path.realpath(fpath)],
+                            capture_output=True,
+                            text=True
+                        )
+                        if result.returncode != 0:
+                            return True, f"compile failed: {result.stderr[:100]}"
+                        return False, "OK"
+                    return False, "OK"
+                
                 implemented = []
+                if keep_mode and not force_mode:
+                    files_to_skip = []
+                    for fname in all_files:
+                        is_analyzed = analyzed_file and fname == analyzed_file
+                        if is_analyzed:
+                            files_to_skip.append(f"{fname}: force-regenerate (was analyzed)")
+                            continue
+                        needs_gen, reason = file_needs_generation(fname)
+                        if needs_gen:
+                            files_to_skip.append(f"{fname}: {reason}")
+                        else:
+                            files_to_skip.append(f"{fname}: already exists, compile OK")
+                            if fname not in implemented:
+                                implemented.append(fname)
+                    
+                    print(f"\nFiles to skip (already exist and compile): {len(files_to_skip)}")
+                    for f in files_to_skip:
+                        print(f"  - {f}")
+                    
+                    files_to_generate = [fname for fname in all_files if fname not in implemented]
+                    print(f"\nFiles to generate: {len(files_to_generate)}: {', '.join(files_to_generate)}")
+                    
+                    if not files_to_generate:
+                        print("All files already exist and compile. Nothing to do.")
+                        continue
+                    
+                    all_files = files_to_generate
+                
                 errors = []
-                batch_size = 2
+                batch_size = 1
                 
                 for i in range(0, len(all_files), batch_size):
                     batch = all_files[i:i+batch_size]
@@ -711,11 +831,25 @@ async def run_interactive():
                     batch_files_md = "\n".join([f"- {f}" for f in batch])
                     
                     impl_messages = [
-                        {"role": "system", "content": "You are an expert Python developer. Implement the specified files completely. For each Python file, output the complete, working code. Format each file as:\n\n[FILE: filename.py]\n```python\n# complete code\n```\n\nFor config files use:\n[FILE: config.json]\n```json\n# config here\n```\n\nFor yaml files:\n[FILE: config.yaml]\n```yaml\n# yaml content\n```\n\nEnsure all imports are correct, code is complete, and follows best practices."},
-                        {"role": "user", "content": f"Implement these files:\n{batch_files_md}\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}\n\nImplement ALL files in this batch with complete, working code."}
+                        {"role": "system", "content": "You are an expert Python developer. Implement or update the specified files.\n\nFor NEW files: create complete code.\nFor EXISTING files (given below): ONLY add necessary imports at the top and replace old logic with calls to the new modules. Keep all existing code that doesn't need changes. Do NOT rewrite from scratch.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
+                        {"role": "user", "content": f"Files to implement:\n{batch_files_md}\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\nImplement or update these files. For existing files, ONLY add imports and replace old implementations with new module calls."}
                     ]
                     
-                    impl_response = await agent.llm.chat(impl_messages)
+                    impl_response = None
+                    for attempt in range(3):
+                        try:
+                            impl_response = await agent.llm.chat(impl_messages)
+                            if impl_response and not impl_response.startswith("[Error:"):
+                                break
+                            print(f"  Attempt {attempt + 1} failed, retrying...")
+                        except Exception as e:
+                            print(f"  Attempt {attempt + 1} error: {e}, retrying...")
+                            if attempt == 2:
+                                impl_response = None
+                    
+                    if not impl_response or impl_response.startswith("[Error:"):
+                        print(f"  Failed after 3 attempts, skipping batch")
+                        continue
                     
                     patterns = [
                         r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```',
@@ -745,6 +879,27 @@ async def run_interactive():
                         filepath = workspace / filename
                         
                         filepath.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        skip_reason = None
+                        
+                        is_analyzed_file = analyzed_file and filename == analyzed_file
+                        
+                        if not force_mode and not is_analyzed_file and filepath.exists() and filepath.stat().st_size > 0:
+                            if filename.endswith(".py"):
+                                filepath_str = os.path.realpath(filepath)
+                                result = subprocess.run(
+                                    ["python", "-m", "py_compile", filepath_str],
+                                    capture_output=True,
+                                    text=True
+                                )
+                                if result.returncode == 0:
+                                    skip_reason = "Already exists and compiles OK"
+                        
+                        if skip_reason:
+                            print(f"  Skipping {filename}: {skip_reason}")
+                            if filename not in implemented:
+                                implemented.append(filename)
+                            continue
                         
                         with open(filepath, "w", encoding="utf-8") as f:
                             f.write(content)
