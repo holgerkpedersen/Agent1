@@ -1027,11 +1027,13 @@ async def run_interactive():
                             
                             # Step 2: import test
                             import tempfile
-                            mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
-                            r = subprocess.run(
-                                ["python", "-c", f"import {mod_name}"],
-                                capture_output=True, text=True, cwd=str(Path(ws))
-                            )
+                            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
+                                tf.write(f"import sys; sys.path.insert(0, r'{ws}')\n")
+                                tf.write(f"import {mod_name}\n")
+                                tf.write("print('OK')\n")
+                                tfpath = tf.name
+                            r = subprocess.run(["python", tfpath], capture_output=True, text=True, cwd=str(Path(ws)))
+                            os.unlink(tfpath)
                             if r.returncode != 0:
                                 errors_found.append((fname, fpath_str, f"IMPORT: {r.stderr.strip()}"))
                                 continue
@@ -1044,6 +1046,7 @@ async def run_interactive():
                             for cn in class_names:
                                 import tempfile
                                 with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
+                                    tf.write(f"import sys; sys.path.insert(0, r'{ws}')\n")
                                     tf.write(f"import {mod_name}\n")
                                     tf.write(f"c={mod_name}.{cn}\n")
                                     tf.write(f"import inspect\n")
