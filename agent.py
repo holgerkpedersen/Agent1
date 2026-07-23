@@ -1072,9 +1072,12 @@ async def run_interactive():
                                 
                                 # Try to actually run the file (catch syntax/logic errors)
                                 if fname in ("run_tutorial.py", "main.py"):
+                                    env = os.environ.copy()
+                                    env["PYTHONIOENCODING"] = "utf-8"
                                     r = subprocess.run(
                                         ["python", str(fp), "--step", "1"],
-                                        capture_output=True, text=True, cwd=str(Path(ws))
+                                        capture_output=True, text=True, cwd=str(Path(ws)),
+                                        env=env
                                     )
                                     if r.returncode != 0:
                                         runtime_errors.append((fname, r.stderr.strip()[-500:]))
