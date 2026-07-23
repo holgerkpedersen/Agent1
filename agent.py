@@ -1061,8 +1061,31 @@ async def run_interactive():
                                     print(f"  {fname}: {r.stdout.strip()}")
                         
                         if not errors_found:
-                            print("\n[fix] All files pass deep validation (compile + import + class instantiation)!")
-                            break
+                            print("\n[fix] All files pass deep validation!")
+                            print("\n[fix] Running runtime tests...")
+                            
+                            runtime_errors = []
+                            for fname in implemented:
+                                if not fname.endswith(".py"):
+                                    continue
+                                fp = Path(ws) / fname
+                                
+                                # Try to actually run the file (catch syntax/logic errors)
+                                if fname in ("run_tutorial.py", "main.py"):
+                                    r = subprocess.run(
+                                        ["python", str(fp), "--step", "1"],
+                                        capture_output=True, text=True, cwd=str(Path(ws))
+                                    )
+                                    if r.returncode != 0:
+                                        runtime_errors.append((fname, r.stderr.strip()[-500:]))
+                            
+                            if not runtime_errors:
+                                print("[fix] Runtime tests passed!")
+                                break
+                            
+                            print(f"[fix] {len(runtime_errors)} runtime errors found")
+                            for fname, err in runtime_errors:
+                                errors_found.append((fname, str(fp), f"RUNTIME: {err}"))
                         
                         # Find root cause: file with COMPILE error (IMPORT errors are cascade)
                         err_root = errors_found[0][0]
