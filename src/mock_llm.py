@@ -7,8 +7,6 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
-from src.types import ToolDefinition
-
 
 class MockLLM:
     """

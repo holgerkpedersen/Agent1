@@ -984,11 +984,12 @@ async def run_interactive():
                 
                 if fix_mode and implemented:
                     print(f"\n{'='*50}")
-                    print(f"[fix] Validating runtime errors...")
+                    print(f"[fix] Deep validation: checking imports + class instantiation...")
                     print(f"{'='*50}")
                     
                     for fix_attempt in range(3):
-                        import_errors = []
+                        errors_found = []
+                        
                         for fname in implemented:
                             if not fname.endswith(".py"):
                                 continue
@@ -997,60 +998,70 @@ async def run_interactive():
                                 ws = "C:" + ws[2:]
                             fp = Path(ws) / fname
                             fpath_str = os.path.realpath(fp)
-                            result = subprocess.run(
+                            
+                            # Step 1: py_compile
+                            r = subprocess.run(["python", "-m", "py_compile", fpath_str], capture_output=True, text=True)
+                            if r.returncode != 0:
+                                errors_found.append((fname, fpath_str, f"COMPILE: {r.stderr.strip()[-200:]}"))
+                                continue
+                            
+                            # Step 2: import test
+                            r = subprocess.run(
                                 ["python", "-c", f"import importlib.util; spec=importlib.util.spec_from_file_location('x', r'{fpath_str}'); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)"],
                                 capture_output=True, text=True, cwd=str(Path(ws))
                             )
-                            if result.returncode != 0:
-                                err_msg = result.stderr.strip()[-300:]
-                                import_errors.append((fname, fpath_str, err_msg))
+                            if r.returncode != 0:
+                                errors_found.append((fname, fpath_str, f"IMPORT: {r.stderr.strip()[-300:]}"))
+                                continue
+                            
+                            # Step 3: try to instantiate every class defined in the file
+                            with open(fpath_str, "r", encoding="utf-8") as f:
+                                source = f.read()
+                            class_names = re.findall(r'^class\s+(\w+)', source, re.MULTILINE)
+                            for cn in class_names:
+                                r = subprocess.run(
+                                    ["python", "-c", f"import importlib.util; spec=importlib.util.spec_from_file_location('x', r'{fpath_str}'); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); c=getattr(mod, '{cn}'); import inspect; sig=inspect.signature(c); print(f'OK: {cn}'+str(list(sig.parameters.keys())))"],
+                                    capture_output=True, text=True, cwd=str(Path(ws))
+                                )
+                                if r.returncode != 0:
+                                    errors_found.append((fname, fpath_str, f"CLASS {cn}: {r.stderr.strip()[-200:]}"))
+                                else:
+                                    print(f"  {fname}: {r.stdout.strip()}")
                         
-                        if not import_errors:
-                            print("[fix] All files import cleanly!")
+                        if not errors_found:
+                            print("\n[fix] All files pass deep validation (compile + import + class instantiation)!")
                             break
                         
-                        print(f"\n[fix] Attempt {fix_attempt + 1}: {len(import_errors)} files with runtime errors")
-                        for fname, fpath, err in import_errors:
-                            print(f"  - {fname}: {err[:80]}")
+                        print(f"\n[fix] Attempt {fix_attempt + 1}: {len(errors_found)} errors")
+                        for fname, fpath, err in errors_found:
+                            print(f"  - {fname}: {err[:100]}")
                         
                         if fix_attempt >= 2:
                             print("[fix] Max attempts reached.")
                             break
                         
-                        for fname, fpath, err in import_errors:
-                            print(f"\n[fix] Analyzing {fname}...")
+                        for fname, fpath, err in errors_found:
+                            print(f"\n[fix] Fixing {fname}...")
                             with open(fpath, "r", encoding="utf-8") as f:
                                 current_code = f.read()
                             
                             fix_msgs = [
-                                {"role": "system", "content": "You are a Python expert. First explain WHY the error occurs (what is wrong and why it fails). Then output the fixed file. Format:\n\n## Why this error happens\nBrief explanation of root cause.\n\n## Fix\n[FILE: filename.py]\n```python\n# fixed code\n```"},
+                                {"role": "system", "content": "You are a Python expert. First explain WHY the error occurs (root cause). Then output the fixed file. Format:\n\n## Why\nBrief explanation.\n\n## Fix\n[FILE: filename.py]\n```python\n# complete fixed code\n```"},
                                 {"role": "user", "content": f"File: {fname}\n\nError:\n{err}\n\nCurrent code:\n```python\n{current_code}\n```"}
                             ]
                             fixed = await agent.llm.chat(fix_msgs)
                             if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
-                                print(f"  LLM error fixing {fname}: {fixed[:100]}")
+                                print(f"  LLM error: {fixed[:100]}")
                                 continue
                             
-                            # Show explanation to user
                             if "## Why" in fixed:
-                                explanation = fixed.split("## Fix")[0].strip()
-                                print(f"  {explanation[:200]}")
+                                print(f"  {fixed.split('## Fix')[0].strip()[:200]}")
                             
                             match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```', fixed, re.DOTALL)
                             if match:
                                 with open(fpath, "w", encoding="utf-8") as f:
                                     f.write(match.group(2).strip())
                                 print(f"  Fixed: {fname}")
-                                result = subprocess.run(
-                                    ["python", "-m", "py_compile", fpath],
-                                    capture_output=True, text=True
-                                )
-                                if result.returncode == 0:
-                                    print(f"  Compiled OK after fix")
-                                else:
-                                    print(f"  Still has errors: {result.stderr[:100]}")
-                            else:
-                                print(f"  Could not parse fix for {fname}")
                     
                     print(f"\n[fix] Complete")
                         

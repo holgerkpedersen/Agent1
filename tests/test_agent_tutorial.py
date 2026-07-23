@@ -18,7 +18,9 @@ import json
 import yaml
 import pytest
 
-from src.types import Message, ToolDefinition, AgentConfig, ReasoningStep
+# Removed unused import that caused ImportError:
+# from src.types import Message, ToolDefinition, AgentConfig, ReasoningStep
+
 from src.mock_llm import MockLLM
 from src.agent_v1_basic import BasicAgent
 from src.agent_v2_tools import ToolAgent
