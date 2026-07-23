@@ -1060,16 +1060,13 @@ async def run_interactive():
                                 current_code = f.read()
                             
                             fix_msgs = [
-                                {"role": "system", "content": "You are a Python expert. First explain WHY the error occurs (root cause). Then output the fixed file. Format:\n\n## Why\nBrief explanation.\n\n## Fix\n[FILE: filename.py]\n```python\n# complete fixed code\n```"},
-                                {"role": "user", "content": f"File: {fname}\n\nError:\n{err}\n\nCurrent code:\n```python\n{current_code}\n```"}
+                                {"role": "system", "content": "Fix the error. Output ONLY the corrected file. Start with [FILE: filename.py] immediately. No explanations."},
+                                {"role": "user", "content": f"Error in {fname}:\n{err}\n\nCurrent code:\n```python\n{current_code}\n```\n\nOutput the fixed file."}
                             ]
                             fixed = await agent.llm.chat(fix_msgs)
                             if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
                                 print(f"  LLM error: {fixed[:100]}")
                                 continue
-                            
-                            if "## Why" in fixed:
-                                print(f"  {fixed.split('## Fix')[0].strip()}")
                             
                             match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```', fixed, re.DOTALL)
                             if match:
