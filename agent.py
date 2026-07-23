@@ -505,7 +505,8 @@ async def run_interactive():
     print("  plan <analysis.md> <plan.md> - Generate coding plan from analysis")
     print("  entities <analysis.md> <plan.md> [entities.md] - Generate shared entities")
     print("  taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks")
-    print("  implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] - Implement all files")
+    print("  implement <taskplan.md> [--keep] [--force] [--workspace <path>] - Implement files")
+    print("  workflow <target> [--from spec.md] [--force] [--workspace <path>] - Full pipeline")
     print("  clear              - Clear agent memory")
     print("  quit               - Exit")
     print("=" * 50)
@@ -527,7 +528,7 @@ async def run_interactive():
                 break
             
             # Parse and execute commands
-            parts = user_input.split(maxsplit=5)
+            parts = user_input.split(maxsplit=20)
             command = parts[0].lower()
             
             if command == "read":
@@ -676,13 +677,20 @@ async def run_interactive():
             # Implement command - implements all files from taskplan
             elif command == "implement":
                 if len(parts) < 2:
-                    print("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force]")
+                    print("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--workspace <path>]")
                     continue
 
                 keep_mode = "--keep" in parts
                 refresh_cache = "--refresh" in parts
                 force_mode = "--force" in parts
-                filtered_parts = [p for p in parts if p not in ["--keep", "--refresh", "--force"]]
+                
+                target_workspace = agent.workspace
+                if "--workspace" in parts:
+                    ws_idx = parts.index("--workspace")
+                    if ws_idx + 1 < len(parts):
+                        target_workspace = parts[ws_idx + 1]
+                
+                filtered_parts = [p for p in parts if p not in ["--keep", "--refresh", "--force", "--workspace", target_workspace]]
                 
                 taskplan_file = filtered_parts[1]
                 analysis_file = filtered_parts[2] if len(filtered_parts) > 2 else "analysis.md"
@@ -775,7 +783,7 @@ async def run_interactive():
                 
                 def file_needs_generation(fname):
                     from pathlib import Path
-                    raw_ws = agent.workspace
+                    raw_ws = target_workspace
                     if raw_ws.startswith('/c/') or raw_ws.startswith('/C/'):
                         raw_ws = 'C:' + raw_ws[2:]
                     fpath = Path(raw_ws) / fname
@@ -873,8 +881,7 @@ async def run_interactive():
                     
                     for filename, content in matches:
                         content = content.strip()
-                        from pathlib import Path
-                        raw_workspace = agent.workspace
+                        raw_workspace = target_workspace
                         if raw_workspace.startswith('/c/') or raw_workspace.startswith('/C/'):
                             raw_workspace = 'C:' + raw_workspace[2:]
                         workspace = Path(raw_workspace)
@@ -941,6 +948,158 @@ async def run_interactive():
                     print(f"\nMissing files ({len(missing_files)}):")
                     for f in missing_files:
                         print(f"  - {f}")
+                        
+            elif command == "workflow":
+                if len(parts) < 2:
+                    print("Usage: workflow <target> [--from <spec.md>] [--force] [--workspace <path>]")
+                    print("  target: . (existing code)  |  --from spec.md (greenfield)")
+                    continue
+                
+                force = "--force" in parts
+                
+                spec_file = None
+                if "--from" in parts:
+                    fi = parts.index("--from")
+                    if fi + 1 < len(parts):
+                        spec_file = parts[fi + 1]
+                
+                target = [p for p in parts if not p.startswith("--") and p != spec_file][1]
+                
+                target_workspace = agent.workspace
+                if "--workspace" in parts:
+                    ws_idx = parts.index("--workspace")
+                    if ws_idx + 1 < len(parts):
+                        target_workspace = parts[ws_idx + 1]
+                
+                if spec_file and not os.path.isabs(spec_file):
+                    spec_file = os.path.join(target_workspace, spec_file)
+                if spec_file and (spec_file.startswith("/c/") or spec_file.startswith("/C/")):
+                    spec_file = "C:" + spec_file[2:]
+                
+                ws = target_workspace
+                if ws.startswith("/c/") or ws.startswith("/C/"):
+                    ws = "C:" + ws[2:]
+                ws_path = Path(ws)
+                ws_path.mkdir(parents=True, exist_ok=True)
+                print(f"Workspace: {ws_path}")
+                
+                analysis_md = str(ws_path / "project_analysis.md")
+                plan_md = str(ws_path / "project_plan.md")
+                entities_md = str(ws_path / "project_entities.md")
+                tasks_md = str(ws_path / "project_tasks.md")
+                
+                def step_ok(result):
+                    return not (result.startswith("[Error") or result.startswith("[LM Studio"))
+                
+                if spec_file:
+                    # --- GREENFIELD from specification ---
+                    with open(spec_file, "r", encoding="utf-8") as f:
+                        spec_content = f.read()
+                    print(f"\n[spec] Loaded from {spec_file}")
+                    
+                    if not force and os.path.exists(plan_md):
+                        print(f"\n[Skipping plan] exists")
+                    else:
+                        print(f"\n[plan] Creating plan...")
+                        r = await agent.llm.chat([
+                            {"role": "system", "content": "You are an expert software architect. Create a detailed coding plan with ALL files needed."},
+                            {"role": "user", "content": f"Create coding plan:\n\n{spec_content}"}
+                        ])
+                        if not step_ok(r): print(f"[plan] FAILED: {r[:200]}"); continue
+                        with open(plan_md, "w", encoding="utf-8") as f: f.write(r)
+                        print(f"[plan] Written")
+                    
+                    if not force and os.path.exists(entities_md):
+                        print(f"\n[Skipping entities] exists")
+                    else:
+                        with open(plan_md, "r", encoding="utf-8") as f: plan = f.read()
+                        r = await agent.llm.chat([
+                            {"role": "system", "content": "Extract shared classes/types. Avoid circular imports."},
+                            {"role": "user", "content": f"Extract entities:\n\n## Spec:\n{spec_content}\n\n## Plan:\n{plan}"}
+                        ])
+                        if not step_ok(r): print(f"[entities] FAILED: {r[:200]}"); continue
+                        with open(entities_md, "w", encoding="utf-8") as f: f.write(r)
+                        print(f"[entities] Written")
+                    
+                    if not force and os.path.exists(tasks_md):
+                        print(f"\n[Skipping taskplan] exists")
+                    else:
+                        with open(plan_md, "r", encoding="utf-8") as f: plan = f.read()
+                        with open(entities_md, "r", encoding="utf-8") as f: entities = f.read()
+                        r = await agent.llm.chat([
+                            {"role": "system", "content": "Create task plan with files in dependency order."},
+                            {"role": "user", "content": f"Create task plan:\n\n## Spec:\n{spec_content}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}"}
+                        ])
+                        if not step_ok(r): print(f"[taskplan] FAILED: {r[:200]}"); continue
+                        with open(tasks_md, "w", encoding="utf-8") as f: f.write(r)
+                        print(f"[taskplan] Written")
+                    
+                    print(f"\nNext: implement {tasks_md} {plan_md} {entities_md} --workspace {target_workspace} --force")
+                    
+                else:
+                    # --- BROWNFIELD from existing code ---
+                    if not force and os.path.exists(analysis_md):
+                        print(f"\n[Skipping analyze] exists")
+                    else:
+                        print(f"\n[analyze] Scanning py files...")
+                        py_files = []
+                        for dp, dn, filenames in os.walk(ws_path):
+                            if ".git" in dp or "__pycache__" in dp: continue
+                            for fn in filenames:
+                                if fn.endswith(".py"): py_files.append(os.path.join(dp, fn))
+                        if not py_files:
+                            print("[analyze] No py files. Use --from spec.md for greenfield.")
+                            continue
+                        combined = ""
+                        for pf in py_files:
+                            try:
+                                with open(pf, "r", encoding="utf-8") as f:
+                                    combined += f"\n\n# ---- {pf} ----\n{f.read()}"
+                            except: pass
+                        r = await agent.llm.analyze_code(combined)
+                        if not step_ok(r): print(f"[analyze] FAILED: {r[:200]}"); continue
+                        with open(analysis_md, "w", encoding="utf-8") as f: f.write(r)
+                        print(f"[analyze] Written")
+                    
+                    if not force and os.path.exists(plan_md):
+                        print(f"\n[Skipping plan] exists")
+                    else:
+                        with open(analysis_md, "r", encoding="utf-8") as f: analysis = f.read()
+                        r = await agent.llm.chat([
+                            {"role": "system", "content": "Create a detailed coding plan."},
+                            {"role": "user", "content": f"Create plan:\n\n{analysis}"}
+                        ])
+                        if not step_ok(r): print(f"[plan] FAILED: {r[:200]}"); continue
+                        with open(plan_md, "w", encoding="utf-8") as f: f.write(r)
+                        print(f"[plan] Written")
+                    
+                    if not force and os.path.exists(entities_md):
+                        print(f"\n[Skipping entities] exists")
+                    else:
+                        with open(analysis_md, "r", encoding="utf-8") as f: analysis = f.read()
+                        with open(plan_md, "r", encoding="utf-8") as f: plan = f.read()
+                        r = await agent.llm.chat([
+                            {"role": "system", "content": "Extract shared entities. Avoid circular imports."},
+                            {"role": "user", "content": f"Extract entities:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
+                        ])
+                        if not step_ok(r): print(f"[entities] FAILED: {r[:200]}"); continue
+                        with open(entities_md, "w", encoding="utf-8") as f: f.write(r)
+                        print(f"[entities] Written")
+                    
+                    if not force and os.path.exists(tasks_md):
+                        print(f"\n[Skipping taskplan] exists")
+                    else:
+                        with open(analysis_md, "r", encoding="utf-8") as f: analysis = f.read()
+                        with open(plan_md, "r", encoding="utf-8") as f: plan = f.read()
+                        r = await agent.llm.chat([
+                            {"role": "system", "content": "Create task plan with files in dependency order."},
+                            {"role": "user", "content": f"Create task plan:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
+                        ])
+                        if not step_ok(r): print(f"[taskplan] FAILED: {r[:200]}"); continue
+                        with open(tasks_md, "w", encoding="utf-8") as f: f.write(r)
+                        print(f"[taskplan] Written")
+                    
+                    print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
                         
             else:
                 # Try natural language processing with LLM
