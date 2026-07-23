@@ -1,92 +1,102 @@
-# 📋 Strategic Refactoring & Modernization Plan
+Your specification appears to be cut off after `"make`. Please provide the complete project description (purpose, scope, target users, tech preferences, constraints, etc.), and I will generate a full architectural plan with every file, directory, dependency, configuration, and implementation step.
 
-Based on your expert code review, this plan transforms the fragmented prototype into a production-ready, maintainable AI agent framework. It is structured as a **4-phase roadmap** with clear deliverables, risk controls, and acceptance criteria.
+In the meantime, here is exactly how I structure my coding plans so you know what to expect once the spec is complete:
+
+---
+## 📐 Coding Plan Template (Ready for Your Spec)
+
+### 1. 🧠 Project Overview & Requirements
+- **Goal**: [Clear statement of purpose]
+- **Target Users/Consumers**: [Internal team, public API, CLI users, etc.]
+- **Core Features**: [Bulleted list from spec]
+- **Non-Functional Requirements**: Performance, security, scalability, compliance, deployment targets
+- **Out of Scope**: [Explicit boundaries to prevent scope creep]
+
+### 2. 🛠 Tech Stack & Justification
+| Layer | Technology | Why Chosen |
+|-------|------------|------------|
+| Language/Runtime | e.g., TypeScript/Node.js 20 LTS | Type safety, ecosystem, async model |
+| Framework | e.g., Fastify / Next.js / CLI (Commander) | Routing, middleware, DX |
+| Database/Storage | e.g., PostgreSQL + Prisma / SQLite / JSON files | ACID, schema enforcement, query complexity |
+| Caching | e.g., Redis / in-memory LRU | Latency reduction, rate limiting |
+| Testing | Vitest + Playwright + MSW | Fast unit/e2e, network mocking |
+| CI/CD | GitHub Actions + Docker + Helm/K8s or Vercel/Railway | Reproducible pipelines, staging/prod parity |
+| Observability | OpenTelemetry + Datadog/Prometheus/Grafana | Tracing, metrics, alerting |
+
+### 3. 🌳 Repository Structure (Monorepo or Single Repo)
+```
+project-root/
+├── .github/workflows/          # CI pipelines (lint, test, build, deploy)
+├── docs/                       # Architecture, ADRs, runbooks, API specs
+├── packages/                   # Monorepo workspaces (if applicable)
+│   ├── cli/                    # CLI entry point & commands
+│   ├── core/                   # Business logic, domain models, services
+│   ├── api/                    # REST/GraphQL/gRPC endpoints
+│   └── shared/                 # Types, utils, constants, error classes
+├── infra/                      # Dockerfiles, docker-compose, k8s manifests, IaC
+├── scripts/                    # Build, seed, migration, dev helpers
+├── test/                       # E2E, integration, fixtures, mocks
+├── .env.example                # Safe env template
+├── package.json / tsconfig.json / vitest.config.ts
+└── README.md                   # Setup, usage, contribution guidelines
+```
+
+### 4. 📦 Dependency & Configuration Manifests
+- `package.json` / `Cargo.toml` / `go.mod` (with exact versions or lockfiles)
+- `.editorconfig`, `.prettierrc`, `.eslintrc.js`, `tsconfig.base.json`
+- `docker-compose.yml` (dev/staging services: DB, cache, message broker)
+- CI workflow files with caching, matrix builds, artifact retention
+
+### 5. 🗺 Architecture & Data Flow
+- **Pattern**: Clean Architecture / Hexagonal / Modular Monolith / Microservices
+- **Component Diagram**: [Text-based or Mermaid syntax]
+- **Data Flow**: Request → Gateway/CLI → Auth/Middleware → Service Layer → Repository → DB/Caching → Response
+- **State Management**: [If applicable: Redux, Zustand, server-side sessions, etc.]
+
+### 6. 🧱 Phase-by-Phase Implementation Plan
+| Phase | Deliverables | Files Created/Modified | Acceptance Criteria |
+|-------|--------------|------------------------|---------------------|
+| 1. Foundation | Repo setup, linting, CI skeleton, env config | `.github/*`, `tsconfig.*`, `package.json`, `Dockerfile` | Pipeline green, `npm run lint/test/build` pass |
+| 2. Core Domain | Models, validators, service interfaces, error handling | `packages/core/src/`, `shared/types.ts` | Unit tests cover edge cases, no runtime type errors |
+| 3. API/CLI Surface | Routes, commands, middleware, auth, rate limiting | `packages/api/src/`, `packages/cli/src/` | OpenAPI/Swagger generated, CLI help/docs render |
+| 4. Data Layer | Migrations, repositories, caching strategy, seeds | `infra/db/`, `core/repositories/`, `scripts/seed.ts` | Schema matches spec, seed runs idempotently |
+| 5. Integration & E2E | Contract tests, Playwright/Cypress suites, load testing | `test/e2e/`, `test/integration/`, `.github/workflows/load.yml` | >90% coverage, p95 latency < X ms under Y RPS |
+| 6. Hardening & Deploy | Secrets mgmt, health checks, observability, rollback strategy | `infra/deploy/`, `docs/runbooks.md`, CI deploy jobs | Zero-downtime deploys, alerting configured, docs complete |
+
+### 7. 🧪 Testing Strategy
+- **Unit**: Pure functions, validators, utils (`vitest`/`jest`)
+- **Integration**: DB, cache, external APIs (testcontainers/MockServiceWorker)
+- **E2E**: Real user flows (Playwright/Cypress)
+- **Contract**: OpenAPI/Swagger validation, CLI output assertions
+- **Performance**: k6/Locust load tests in CI staging
+
+### 8. 🔒 Security & Compliance
+- Input sanitization & schema validation (Zod/Valibot/joi)
+- AuthN/AuthZ strategy (JWT/OIDC, RBAC, API keys)
+- Secrets management (env vars, vault integration, `.gitignore` enforcement)
+- Dependency scanning (`npm audit`, `trivy`, `snyk`)
+- OWASP Top 10 mitigations mapped to code paths
+
+### 9. 🚀 Deployment & Runbooks
+- Local dev: `docker compose up -d && npm run dev`
+- Staging/Prod: CI triggers → build image → push registry → deploy (K8s/Vercel/Railway/AWS)
+- Health/readiness endpoints, graceful shutdown, log aggregation
+- Rollback procedure & feature flag strategy
+
+### 10. 📚 Documentation Deliverables
+- `README.md` (setup, usage, examples)
+- `docs/ADRs/` (architectural decisions with context/consequences)
+- API reference / CLI help generation scripts
+- Runbooks: incident response, scaling, backup/restore
 
 ---
 
-## 🎯 Primary Objectives
-1. Eliminate blocking I/O & event loop starvation in async contexts
-2. Consolidate architecture around `agent_core/` as the single source of truth
-3. Replace fragile parsing, hardcoded paths, and string-based error handling with robust, typed patterns
-4. Establish automated testing, linting, and CI/CD guardrails
-5. Maintain backward compatibility during transition via deprecation layers
+## ✅ Next Step
+Reply with your complete project specification. Include:
+1. What the system does & who uses it
+2. Core features & data models
+3. Preferred language/framework (or "recommend best fit")
+4. Deployment target & scale expectations
+5. Any compliance, security, or performance constraints
 
----
-
-## 🗺️ Phased Implementation Roadmap
-
-### 🔹 Phase 1: Architecture Consolidation & Foundation (Days 1–3)
-| Task | Description | Deliverable |
-|------|-------------|-------------|
-| **Archive duplicates** | Move top-level `entities.py`, `exceptions.py`, `path_utils.py`, `logging_config.py` to `legacy/` or delete after verification | Clean root directory; `agent_core/` declared canonical |
-| **Unify exception hierarchy** | Define base `AgentError` + typed subclasses (`FileOperationError`, `ToolExecutionError`, `LLMClientError`) in `agent_core/exceptions.py` | Single, importable error module used across all modules |
-| **Add future annotations** | Prepend `from __future__ import annotations` to every `.py` file | Forward-compatible type hints; no eager evaluation crashes |
-| **Scaffold config layer** | Create `agent_core/config.py` using `pydantic-settings` with `.env` fallbacks for workspace, API URLs, timeouts, thresholds | Centralized, validated configuration object |
-
-### 🔹 Phase 2: Async Migration & God Module Decomposition (Days 4–8)
-| Task | Description | Deliverable |
-|------|-------------|-------------|
-| **Replace `urllib` with `httpx.AsyncClient`** | Migrate `LLMClient.chat()` to async HTTP with connection pooling, retries (`tenacity`), and structured timeouts | Non-blocking LLM client; proper `asyncio.TimeoutError` handling |
-| **Extract God Module** | Split `agent.py` into: `llm_client.py`, `workspace_manager.py`, `tool_router.py`, `orchestrator.py`, `cache_manager.py` | Modular, testable components (~150 lines each) |
-| **Fix cross-OS path translation** | Replace string slicing with `pathlib.Path(workspace).resolve() / user_path`. Add sandbox validation via `agent_core/path_utils.py` | Secure, OS-agnostic path resolution with traversal guards |
-| **Offload blocking calls** | Wrap `subprocess.run()` and sync file reads in `asyncio.to_thread()` or migrate to `aiofiles` | Event loop remains responsive during compilation/file ops |
-
-### 🔹 Phase 3: CLI/Config Unification & Error Handling Standardization (Days 9–12)
-| Task | Description | Deliverable |
-|------|-------------|-------------|
-| **Modernize REPL** | Replace `input().split()` with `prompt_toolkit` or `cmd2`. Implement tab-completion, history, and flag parsing | Robust interactive CLI with predictable argument routing |
-| **Add script-mode parser** | Integrate `argparse` for headless/workflow execution (`--workspace`, `--task`, `--dry-run`) | Dual-mode interface (REPL + CLI) |
-| **Standardize error propagation** | Remove `except Exception: return f"[Error: {e}]"`. Raise typed exceptions or use `returns.Result[T, E]` for tool/LLM outputs | Consistent failure surfaces; stack traces preserved |
-| **Centralize constants** | Move `DEFAULT_WORKSPACE`, `TIMEOUT`, `SIMILARITY_THRESHOLD`, `MAX_INDEX_SIZE` to config/dataclass | No magic numbers; runtime overrides via `.env` or CLI |
-
-### 🔹 Phase 4: Testing, CI/CD & Validation (Days 13–15)
-| Task | Description | Deliverable |
-|------|-------------|-------------|
-| **Setup test framework** | Configure `pytest`, `pytest-asyncio`, `respx`/`aioresponses` for mocking async HTTP | Automated test runner with async support |
-| **Write unit tests** | Cover path validation, config loading, exception routing, tool scoring logic | ≥80% coverage on `agent_core/` |
-| **Add integration tests** | Mock LLM responses + workspace I/O to validate full pipeline execution | End-to-end workflow verification |
-| **Configure CI/CD & pre-commit** | Add `ruff`, `mypy`, `black`, `pytest` via GitHub Actions / GitLab CI | Automated quality gates on PRs |
-
----
-
-## 🛠️ Recommended Tech Stack & Dependencies
-| Category | Library | Purpose |
-|----------|---------|---------|
-| Async HTTP | `httpx>=0.27`, `tenacity` | Native async, retries, timeouts |
-| Config | `pydantic-settings>=2.3` | `.env` parsing, validation, defaults |
-| CLI/REPL | `prompt_toolkit` or `cmd2` | History, completion, safe flag parsing |
-| Async I/O | `aiofiles`, `asyncio.to_thread()` | Non-blocking disk/process ops |
-| Error Pattern | `returns` (optional) or custom `Result[T, E]` | Explicit success/failure typing |
-| Testing | `pytest`, `pytest-asyncio`, `respx` | Async mocking & test automation |
-| Linting/Typing | `ruff`, `mypy`, `black` | Fast formatting, strict type checking |
-
----
-
-## ⚠️ Risk Mitigation & Rollback Strategy
-| Risk | Mitigation | Rollback Plan |
-|------|------------|---------------|
-| Breaking existing workflows during refactor | Keep legacy `agent.py` as `agent_legacy.py` with deprecation warnings; run parallel for 1 sprint | Revert to `agent_legacy.py`; restore archived duplicates from `legacy/` |
-| Async migration introduces subtle race conditions | Use `asyncio.run()` in isolated test harnesses; add structured logging with correlation IDs | Fall back to `run_in_executor()` wrapper until stabilized |
-| CLI parsing changes break user muscle memory | Preserve shorthand aliases (`imp`, `wrk`) via `prompt_toolkit` completer | Keep old `input().split()` parser behind `--legacy-cli` flag temporarily |
-
----
-
-## ✅ Acceptance Criteria & Success Metrics
-- [ ] Event loop never blocks >10ms during LLM or file operations
-- [ ] Zero duplicate class/function definitions across codebase
-- [ ] All paths resolve safely with traversal guards (`..`, absolute escapes blocked)
-- [ ] Typed exceptions replace 100% of string-based error returns
-- [ ] `pytest` suite passes locally & in CI; core module coverage ≥80%
-- [ ] Configuration fully externalized; no hardcoded magic values remain
-- [ ] Documentation updated with new architecture diagram & usage examples
-
----
-
-## 🚀 Immediate Next Steps (Days 1–3)
-1. **Branch**: Create `refactor/core-modernization` from `main`
-2. **Archive duplicates**: Move top-level parallel files to `legacy/`
-3. **Scaffold config**: Implement `agent_core/config.py` with `pydantic-settings`
-4. **Add annotations**: Run sed/pre-commit to inject `from __future__ import annotations`
-5. **Verify baseline**: Ensure existing tests/scripts still run against legacy entry point before touching async code
-
-Would you like this exported as a GitHub Project board template, Jira epic breakdown, or accompanied by starter boilerplate for any specific phase?
+I will immediately return a **production-ready coding plan** with every file path, dependency version, configuration snippet, test structure, and implementation sequence tailored to your spec.

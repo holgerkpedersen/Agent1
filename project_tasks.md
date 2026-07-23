@@ -1,82 +1,128 @@
-Here is a **strictly dependency-ordered task plan**. Tasks are arranged so that each step’s prerequisites are fully completed before it begins. This guarantees safe incremental refactoring without breaking imports or runtime behavior.
+Since your specification was cut off after `"make`, I’ve generated a **production-ready task plan** structured strictly in dependency order. This follows the architectural flow you outlined (`shared ← domain ← application ← infrastructure ← interface`) and can be executed sequentially without circular imports or missing references.
+
+Replace placeholder entity names (e.g., `User`, `Post`) with your actual domains once you share the full spec. The file paths, dependency chains, and validation steps remain identical.
 
 ---
-### 🧱 Layer 0: Foundation & Shared Contracts
-*Must be built first. All downstream modules import from these.*
+## 📋 Dependency-Ordered Task Plan
 
-| Step | Target File(s) | Dependencies | Key Actions |
-|------|----------------|--------------|-------------|
-| `0.1` | `legacy/` (new dir) | None | Move/archive top-level duplicates: `entities.py`, `exceptions.py`, `path_utils.py`, `logging_config.py`. Add `__init__.py` to mark as deprecated. |
-| `0.2` | `agent_core/config.py` | `0.1` | Scaffold with `pydantic-settings`. Define `.env`/CLI overrides for: `workspace_root`, `llm_api_url`, `timeout_sec`, `similarity_threshold`, `max_index_size`. Add validation & defaults. |
-| `0.3` | `agent_core/exceptions.py` | `0.1` | Unify error hierarchy: `AgentError(Base) → FileOperationError, ToolExecutionError, LLMClientError, ConfigValidationError`. Export cleanly in `__init__.py`. |
-| `0.4` | `agent_core/path_utils.py` | `0.3` | Finalize sandboxing logic using `pathlib.Path.resolve()`. Add traversal guards (`..`, absolute escapes). Remove manual string slicing. Return validated `Path` objects. |
-| `0.5` | `agent_core/__init__.py` | `0.2–0.4` | Export canonical APIs: `from .config import AgentConfig`, `from .exceptions import *`, `from .path_utils import safe_resolve_path`. Add `__future__` annotations to all files. |
-
----
-### ⚡ Layer 1: Async Services & I/O Managers
-*Consumes Layer 0. Replaces blocking/sync code in the old monolith.*
-
-| Step | Target File(s) | Dependencies | Key Actions |
-|------|----------------|--------------|-------------|
-| `1.1` | `agent_core/llm_client.py` | `0.2, 0.3` | Replace `urllib.request` with `httpx.AsyncClient`. Implement connection pooling, `tenacity` retries, structured timeouts (`asyncio.wait_for`). Raise typed `LLMClientError`. |
-| `1.2` | `agent_core/workspace_manager.py` | `0.4, 0.3, 0.2` | Wrap all disk I/O in `aiofiles` or `asyncio.to_thread()`. Use `safe_resolve_path()` for every read/write. Add sandbox boundary checks. Raise `FileOperationError`. |
-| `1.3` | `agent_core/cache_manager.py` | `1.2, 0.2` | Extract cache logic from old `agent.py`. Implement async-safe in-memory/disk cache with TTL & size limits (`max_index_size`). Use workspace manager for persistence. |
-
----
-### 🔄 Layer 2: Orchestration & Routing Engine
-*Consumes Layer 1. Replaces the workflow/scoring logic inside the monolith.*
-
-| Step | Target File(s) | Dependencies | Key Actions |
-|------|----------------|--------------|-------------|
-| `2.1` | `agent_core/tool_router.py` | `0.3, 1.1` | Unify tool routing & scoring. Remove duplicated error classes. Use `LLMClient` for semantic matching if needed. Return structured `ToolExecutionResult`. |
-| `2.2` | `agent_core/orchestrator.py` | `1.1, 1.2, 1.3, 2.1, 0.2` | Build async workflow engine: prompt → route → execute tool/cache → format response → update context. Replace `subprocess.run()` compilation checks with `asyncio.to_thread()`. Preserve correlation IDs in logs. |
-| `2.3` | `agent.py` (legacy wrapper) | `2.2, 0.5` | Slim down to a thin entry point that imports from `agent_core`. Add `DeprecationWarning` for direct usage. Keep backward-compatible CLI signatures temporarily. |
-
----
-### 🖥️ Layer 3: Interface & Entry Points
-*Consumes Layer 2. Replaces fragile `input().split()` parsing.*
-
-| Step | Target File(s) | Dependencies | Key Actions |
-|------|----------------|--------------|-------------|
-| `3.1` | `cli/repl.py` (new) | `2.2, 0.2` | Implement interactive REPL using `prompt_toolkit`. Add history, tab-completion, safe flag parsing (`--workspace`, `--dry-run`). Bind commands to orchestrator methods. |
-| `3.2` | `cli/script.py` or `main.py` (new) | `2.2, 0.2` | Implement headless execution with `argparse`. Support workflow queues, JSON output, and CI-friendly modes. Load config via CLI overrides. |
-| `3.3` | `pyproject.toml` / `setup.cfg` | `3.1, 3.2` | Define entry points: `console_scripts = {"agent-cli": "cli.repl:main", "agent-run": "cli.script:main"}`. Pin dependencies (`httpx`, `prompt_toolkit`, `pydantic-settings`, etc.). |
-
----
-### 🧪 Layer 4: Testing, Linting & CI/CD
-*Consumes Layers 0–3. Validates the entire refactored stack.*
-
-| Step | Target File(s) | Dependencies | Key Actions |
-|------|----------------|--------------|-------------|
-| `4.1` | `tests/conftest.py`, `tests/fixtures/` | All above | Configure `pytest-asyncio`, mock `httpx.AsyncClient`, create temp workspace sandbox, inject test config. |
-| `4.2` | `tests/test_config.py`, `test_path_utils.py`, `test_exceptions.py` | `0.2–0.4` | Unit tests for validation, traversal guards, error inheritance, and env override precedence. |
-| `4.3` | `tests/test_llm_client.py`, `test_workspace_manager.py` | `1.1, 1.2` | Async mocks (`respx`/`aioresponses`). Verify non-blocking behavior, retry logic, timeout handling, sandbox enforcement. |
-| `4.4` | `tests/test_orchestrator.py`, `test_tool_router.py` | `2.1, 2.2` | Integration tests: mock LLM + workspace I/O → validate full pipeline execution & cache hits. Assert typed exception propagation. |
-| `4.5` | `.github/workflows/ci.yml`, pre-commit hooks | All above | Add `ruff`, `mypy`, `black`, `pytest`. Enforce coverage ≥80% on `agent_core/`. Block PRs on type/lint failures or event-loop blocking warnings. |
-
----
-### 🔗 Dependency Graph (Topological Sort)
+### 🔁 Dependency Flow Rule
 ```
-legacy/ → config.py → exceptions.py → path_utils.py → __init__.py
-                                    ↓              ↓
-                              llm_client.py   workspace_manager.py
-                                    \                /
-                                     cache_manager.py
-                                            ↓
-                                      tool_router.py
-                                            ↓
-                                    orchestrator.py
-                                            ↓
-                               repl.py ←→ script.py (main entry)
-                                            ↓
-                                   tests/ + CI/CD pipeline
+shared/ (types, errors, constants) 
+   ↑
+domain/ (models, repository interfaces) 
+   ↑
+application/ (use-cases, service interfaces) 
+   ↑
+infrastructure/ (DB adapters, external clients, DI bindings) 
+   ↑
+interface/ (controllers, routes, CLI commands) 
+   ↑
+bootstrap/ (config, app wiring, entrypoint)
 ```
+**Build Order:** Always create leaf nodes first. No file may be created until all its imports exist.
 
 ---
-### ✅ Execution Guidelines
-1. **Branch Strategy**: Work on `refactor/core-modernization`. Merge layer-by-layer via feature branches (`feat/config`, `feat/async-client`, etc.).
-2. **Safety Net**: Until Layer 3 is complete, keep `agent.py` as a deprecated shim that delegates to `orchestrator.py`. Run both in parallel for 1 sprint.
-3. **Async Verification**: Use `pytest-asyncio` + `aiostream` or custom tracers to assert the event loop never blocks >10ms during LLM/file ops.
-4. **Rollback Point**: Each layer is independently testable. If Layer 2 breaks, revert to legacy shim without touching Layers 0–1.
 
-Would you like this exported as a Markdown checklist with checkboxes, or converted into a GitHub Projects/Jira-compatible CSV/JSON format?
+### 🟢 Phase 1: Shared Contracts (Zero Dependencies)
+*Purpose:* Define pure types, error bases, and constants. No business logic or framework imports.
+
+| # | File Path | Dependencies | Implementation Steps | Acceptance Criteria |
+|---|-----------|--------------|----------------------|---------------------|
+| 1.1 | `packages/shared/src/types/common.ts` | None | Define `ApiResponse<T>`, `PaginatedResult<T>`, `IdType`, `Timestamps` | Exports only interfaces/types; compiles with strict TS |
+| 1.2 | `packages/shared/src/errors/base-error.ts` | None | Create `AppError extends Error` with `code`, `statusCode`, `isOperational` | Instance check works: `err instanceof AppError` |
+| 1.3 | `packages/shared/src/errors/http-errors.ts` | `base-error.ts` | Extend for `NotFoundError`, `ValidationError`, `UnauthorizedError` | All throw correct HTTP status & structured JSON |
+| 1.4 | `packages/shared/src/constants/index.ts` | None | Export pagination limits, rate thresholds, feature flags | Values are frozen (`Object.freeze`) or `as const` |
+
+✅ **Phase 1 Complete:** `npm run build:shared` passes with zero warnings. No imports outside `shared/`.
+
+---
+
+### 🔵 Phase 2: Domain Layer (Models & Interfaces)
+*Purpose:* Define business entities and repository contracts. Depends only on `shared/`.
+
+| # | File Path | Dependencies | Implementation Steps | Acceptance Criteria |
+|---|-----------|--------------|----------------------|---------------------|
+| 2.1 | `packages/domain/src/models/user.model.ts` | `shared/types/common.ts` | Define `User` entity with fields, validation rules (Zod/Valibot), factory method | Type-safe construction; fails on invalid input |
+| 2.2 | `packages/domain/src/repositories/user.repository.interface.ts` | `user.model.ts`, `shared/types/common.ts` | Declare `IUserRepository` with `findById`, `create`, `update`, `delete` | Pure interface; no implementation details |
+| 2.3 | `packages/domain/src/models/post.model.ts` | `shared/types/common.ts`, `user.model.ts` (type-only) | Define `Post` entity, link to `User` via `authorId: IdType` | Circular reference avoided via type imports only |
+
+✅ **Phase 2 Complete:** Domain compiles independently. All repository files end in `.interface.ts`.
+
+---
+
+### 🟡 Phase 3: Application Layer (Use Cases & Service Contracts)
+*Purpose:* Orchestrate business rules. Depends on `domain/` and `shared/`. No DB or framework code.
+
+| # | File Path | Dependencies | Implementation Steps | Acceptance Criteria |
+|---|-----------|--------------|----------------------|---------------------|
+| 3.1 | `packages/application/src/use-cases/create-user.use-case.ts` | `domain/repositories/user.repository.interface.ts`, `shared/errors/*` | Implement input validation, call repo interface, return DTO | Throws `ValidationError` on bad input; mocks pass |
+| 3.2 | `packages/application/src/services/auth.service.interface.ts` | `shared/types/common.ts` | Define `IAuthService.authenticate(payload) => TokenResponse` | Interface only; no JWT/crypto imports |
+| 3.3 | `packages/application/src/use-cases/get-posts.use-case.ts` | `domain/repositories/*`, `shared/constants/index.ts` | Handle pagination, filter mapping, return `PaginatedResult<Post>` | Respects max limit constant; type-safe filters |
+
+✅ **Phase 3 Complete:** All use cases are unit-testable without DB. Zero framework imports.
+
+---
+
+### 🟠 Phase 4: Infrastructure & Adapters
+*Purpose:* Implement repository interfaces, external clients, and DI bindings. Depends on `application/`, `domain/`, `shared/`.
+
+| # | File Path | Dependencies | Implementation Steps | Acceptance Criteria |
+|---|-----------|--------------|----------------------|---------------------|
+| 4.1 | `packages/infrastructure/src/adapters/user.repository.prisma.ts` | `domain/repositories/user.repository.interface.ts`, `@prisma/client` | Map Prisma calls to interface; handle raw DB errors → `AppError` | Implements all interface methods; transaction-safe |
+| 4.2 | `packages/infrastructure/src/clients/jwt.client.ts` | `application/services/auth.service.interface.ts`, `jsonwebtoken` | Implement token generation/validation; wrap crypto ops | Matches `IAuthService`; handles expiry & revocation |
+| 4.3 | `packages/infrastructure/src/di/container.ts` | All adapters, all use-cases | Wire interfaces → implementations (TypeDI / Inversify / manual map) | Resolution returns correct instances; no circular DI |
+
+✅ **Phase 4 Complete:** Adapters pass integration tests with testcontainers/mock clients. DI resolves cleanly.
+
+---
+
+### 🔴 Phase 5: Interface Layer (API/CLI Surface)
+*Purpose:* Expose endpoints or commands. Depends on `application/`, `shared/`, framework.
+
+| # | File Path | Dependencies | Implementation Steps | Acceptance Criteria |
+|---|-----------|--------------|----------------------|---------------------|
+| 5.1 | `packages/api/src/middleware/auth.middleware.ts` | `application/services/auth.service.interface.ts`, framework | Extract token, validate via DI service, attach user to context | Rejects invalid/missing tokens with 401 |
+| 5.2 | `packages/api/src/controllers/user.controller.ts` | `application/use-cases/create-user.use-case.ts`, `shared/types/*` | Map request → use case input; handle errors → HTTP responses | OpenAPI spec matches routes; error mapping complete |
+| 5.3 | `packages/api/src/routes/user.routes.ts` | `user.controller.ts`, framework router | Register paths, attach middleware, export router instance | Route table loads without circular requires |
+
+✅ **Phase 5 Complete:** API starts locally; Swagger/CLI help renders; all routes hit use cases.
+
+---
+
+### ⚫ Phase 6: Bootstrap & Configuration
+*Purpose:* Wire everything together, load env, start server/CLI. Depends on all layers.
+
+| # | File Path | Dependencies | Implementation Steps | Acceptance Criteria |
+|---|-----------|--------------|----------------------|---------------------|
+| 6.1 | `src/config/env.config.ts` | `zod`, `.env.example` | Parse & validate env vars; export typed config object | Fails fast on missing/invalid vars in dev/prod |
+| 6.2 | `src/app.ts` | DI container, routes/middleware, error handler | Instantiate server, register routers, mount global middleware | Graceful shutdown hook registered |
+| 6.3 | `src/main.ts` | `app.ts`, `env.config.ts` | Load config → init DI → start app → log ready state | Exits cleanly on SIGTERM; health endpoint responds |
+
+✅ **Phase 6 Complete:** `npm run dev` boots in <2s. Health check returns `200 OK`. Zero runtime cycles.
+
+---
+## 🔍 Dependency Validation & Enforcement
+
+| Tool | Command/Config | Purpose |
+|------|----------------|---------|
+| `madge` | `npx madge --circular src/ packages/*/src/` | Detect circular imports before commit |
+| ESLint | `"import/no-cycle": ["error", { "maxDepth": 3 }]` | Block cycles at lint time |
+| Build Order | `npm run build:shared → build:domain → build:application → ...` | Enforce via CI matrix or pnpm/turborepo pipelines |
+| Type-Only Imports | `import type { IRepo } from '...'` | Guarantee zero runtime dependency edges between layers |
+
+---
+## ✅ Execution Checklist
+- [ ] Run Phase 1 → verify zero external imports in `shared/`
+- [ ] Run Phase 2 → verify all repos are interfaces only
+- [ ] Run Phase 3 → verify use cases pass unit tests without DB
+- [ ] Run Phase 4 → verify adapters implement domain contracts exactly
+- [ ] Run Phase 5 → verify controllers never import infrastructure directly
+- [ ] Run Phase 6 → verify app boots, health check works, graceful shutdown triggers
+- [ ] Run `madge --circular` & CI pipeline → ensure green
+
+---
+**Next Step:** Reply with your complete spec (entities, features, deployment target, framework preference). I will:
+1. Replace placeholder paths with your exact domain names
+2. Generate precise Zod/Prisma/CLI configs
+3. Output a ready-to-run `turbo.json` / `pnpm-workspace.yaml` build order
+4. Provide exact test fixtures matching your data models

@@ -961,36 +961,43 @@ async def run_interactive():
                 greenfield = False
                 features_file = None
                 
+                import tempfile
+                
                 if "--desc" in parts:
                     di = parts.index("--desc")
-                    if di + 1 < len(parts):
-                        desc_text = parts[di + 1]
-                        import tempfile
-                        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
-                        tmp.write(f"# Project Specification\n\n{desc_text}")
-                        tmp.close()
-                        spec_file = tmp.name
-                        greenfield = True
-                        print(f"\n[desc] Specification: {desc_text[:100]}...")
+                    end = di + 1
+                    while end < len(parts) and not parts[end].startswith("--"):
+                        end += 1
+                    desc_text = " ".join(parts[di + 1:end])
+                    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
+                    tmp.write(f"# Project Specification\n\n{desc_text}")
+                    tmp.close()
+                    spec_file = tmp.name
+                    greenfield = True
+                    print(f"\n[desc] {desc_text[:100]}...")
                 elif "--from" in parts:
                     fi = parts.index("--from")
-                    if fi + 1 < len(parts):
-                        spec_file = parts[fi + 1]
-                        greenfield = True
+                    end = fi + 1
+                    while end < len(parts) and not parts[end].startswith("--"):
+                        end += 1
+                    spec_file = " ".join(parts[fi + 1:end])
+                    greenfield = True
                 
                 if "--features" in parts:
                     fi = parts.index("--features")
-                    if fi + 1 < len(parts):
-                        feat_val = parts[fi + 1]
-                        if os.path.isfile(feat_val):
-                            features_file = feat_val
-                        else:
-                            import tempfile
-                            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
-                            tmp.write(f"# Feature Requirements\n\n{feat_val}")
-                            tmp.close()
-                            features_file = tmp.name
-                            print(f"\n[features] Inline: {feat_val[:100]}...")
+                    end = fi + 1
+                    while end < len(parts) and not parts[end].startswith("--"):
+                        end += 1
+                    feat_val = " ".join(parts[fi + 1:end])
+                    if os.path.isfile(feat_val):
+                        features_file = feat_val
+                    else:
+                        import tempfile
+                        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
+                        tmp.write(f"# Feature Requirements\n\n{feat_val}")
+                        tmp.close()
+                        features_file = tmp.name
+                        print(f"\n[features] {feat_val[:100]}...")
                 
                 target = [p for p in parts if not p.startswith("--") and p not in [spec_file, features_file]][1]
                 
