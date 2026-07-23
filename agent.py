@@ -800,7 +800,7 @@ async def run_interactive():
                             text=True
                         )
                         if result.returncode != 0:
-                            return True, f"compile failed: {result.stderr[:100]}"
+                            return True, f"compile failed: {result.stderr.strip()}"
                         return False, "OK"
                     return False, "OK"
                 
@@ -1007,7 +1007,7 @@ async def run_interactive():
                             # Step 1: py_compile
                             r = subprocess.run(["python", "-m", "py_compile", fpath_str], capture_output=True, text=True)
                             if r.returncode != 0:
-                                errors_found.append((fname, fpath_str, f"COMPILE: {r.stderr.strip()[-200:]}"))
+                                errors_found.append((fname, fpath_str, f"COMPILE: {r.stderr.strip()}"))
                                 continue
                             
                             # Step 2: import test
@@ -1016,7 +1016,7 @@ async def run_interactive():
                                 capture_output=True, text=True, cwd=str(Path(ws))
                             )
                             if r.returncode != 0:
-                                errors_found.append((fname, fpath_str, f"IMPORT: {r.stderr.strip()[-300:]}"))
+                                errors_found.append((fname, fpath_str, f"IMPORT: {r.stderr.strip()}"))
                                 continue
                             
                             # Step 3: try to instantiate every class defined in the file
@@ -1029,7 +1029,7 @@ async def run_interactive():
                                     capture_output=True, text=True, cwd=str(Path(ws))
                                 )
                                 if r.returncode != 0:
-                                    errors_found.append((fname, fpath_str, f"CLASS {cn}: {r.stderr.strip()[-200:]}"))
+                                    errors_found.append((fname, fpath_str, f"CLASS {cn}: {r.stderr.strip()}"))
                                 else:
                                     print(f"  {fname}: {r.stdout.strip()}")
                         
