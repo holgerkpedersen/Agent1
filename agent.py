@@ -829,7 +829,12 @@ async def run_interactive():
                     
                     if not files_to_generate:
                         print("All files already exist and compile. Nothing to do.")
-                        continue
+                        if not fix_mode:
+                            continue
+                        print("\n[fix] Running validation on existing files...")
+                        implemented = [f for f in all_files if f.endswith(".py")]
+                        all_files = implemented
+                        # Continue to fix logic below
                     
                     all_files = files_to_generate
                 
