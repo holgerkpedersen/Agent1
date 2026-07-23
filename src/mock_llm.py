@@ -1,129 +1,108 @@
-"""
-src/mock_llm.py
-Zero-API-key LLM simulator for safe practice and deterministic testing.
-Satisfies the LLMProvider contract with predictable outputs based on message content.
-"""
 import json
-import re
+import logging
 from typing import Any, Dict, List, Optional
 
+# Graceful imports to support both standalone execution and package-based runs
+try:
+    from src.types import LLMProvider
+except ImportError:
+    # Fallback base class for environments where types haven't been built yet
+    class LLMProvider: pass
 
-class MockLLM:
+logger = logging.getLogger(__name__)
+
+
+class MockLLM(LLMProvider):
     """
-    A deterministic, offline LLM simulator that routes responses based on input keywords.
-    Designed to mimic OpenAI-style chat and function-calling formats without external API calls.
+    Deterministic mock implementation of an LLM provider.
     
-    Attributes:
-        config (dict): Configuration dictionary supporting 'temperature' and 'seed'.
-        temperature (float): Simulated randomness factor (0.0 = fully deterministic).
-        seed (int): Base value for reproducible non-deterministic variations.
+    Used for testing agent pipelines without external API dependencies or rate limits.
+    Routes prompts to predictable tool calls or text responses based on keyword matching,
+    ensuring consistent unit test outcomes across v1-v4 agent implementations.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = config or {}
-        self.temperature = float(self.config.get("temperature", 0.2))
-        self.seed = int(self.config.get("seed", 42))
-        
-        # Pre-defined response templates for predictable simulation
-        self._templates: Dict[str, str] = {
-            "math": '{{"thought": "I will evaluate this math expression.", "action": "calculator", "input": "{expr}"}}',
-            "weather": '{{"thought": "Fetching weather data.", "action": "get_weather", "input": "{loc}"}}',
-        }
-
-    def chat(self, messages: List[Dict[str, str]]) -> str:
+    def __init__(self, seed: int = 42, temperature: float = 0.0) -> None:
         """
-        Simulates a standard LLM chat completion.
+        Initialize the mock provider with optional configuration knobs.
         
         Args:
-            messages: List of message dicts with 'role' and 'content' keys.
+            seed: Reserved for future deterministic randomness support.
+            temperature: Mock parameter; kept for API parity with real providers.
+        """
+        self.seed = seed
+        self.temperature = temperature
+        logger.debug(f"MockLLM initialized (seed={seed}, temp={temperature})")
+
+    def chat(self, messages: List[Dict[str, Any]]) -> str:
+        """Simulates a standard text-only LLM completion."""
+        if not messages:
+            return ""
+
+        # Extract last user message content
+        user_content = self._extract_last_user_text(messages)
+        
+        text = str(user_content).lower()
+
+        # Deterministic fallback responses based on intent keywords
+        if any(kw in text for kw in ("hello", "hi", "hey")):
+            return "Hello! How can I assist you today?"
+        elif "time" in text:
+            return "I don't have access to real-time clocks, but I can help with other things!"
+        elif "weather" in text:
+            return "I'm a mock LLM and don't know the weather. Try asking me to use tools!"
+        else:
+            return f"[Mock Response] You said: {user_content}"
+
+    def generate_tool_calls(self, messages: List[Dict[str, Any]], tools: Optional[List[Any]] = None) -> Dict[str, Any]:
+        """
+        Simulates LLM deciding whether to call a tool or respond with text.
+        
+        Returns a dict containing either 'tool_calls' (list of structured calls) 
+        or 'response' (plain string fallback).
+        
+        Args:
+            messages: Conversation history in standard role/content format.
+            tools: Optional list of registered tool definitions for routing context.
             
         Returns:
-            Deterministic text response based on the last user message content.
+            Dict with either "tool_calls" key or "response" key.
         """
         if not messages:
-            return "No input provided."
+            return {"response": "No input provided."}
 
-        last_msg = messages[-1]
-        content = last_msg.get("content", "").lower()
+        user_content = self._extract_last_user_text(messages)
+        text = str(user_content).lower()
 
-        # Keyword-based routing for predictable outputs
-        if re.search(r'\b(math|calculate|\d+\s*[\+\-\*/]\s*\d+)\b', content):
-            return self._templates["math"].format(expr="2 + 2")
-        elif re.search(r'\b(weather|forecast|temperature)\b', content):
-            return self._templates["weather"].format(loc="San Francisco")
-            
-        # Apply optional temperature noise to simulate non-determinism
-        base_response = "Here is a helpful response based on your input."
-        return self._apply_temperature_noise(base_response)
+        # Simulate tool routing based on keywords
+        if "time" in text:
+            return {
+                "tool_calls": [{
+                    "name": "get_current_time",
+                    "arguments": json.dumps({"timezone": "UTC"})
+                }]
+            }
+        elif "weather" in text:
+            return {
+                "tool_calls": [{
+                    "name": "get_weather",
+                    "arguments": json.dumps({"location": "New York", "unit": "celsius"})
+                }]
+            }
+        elif any(kw in text for kw in ("search", "look up", "find")):
+            return {
+                "tool_calls": [{
+                    "name": "web_search",
+                    "arguments": json.dumps({"query": user_content})
+                }]
+            }
 
-    def generate_tool_calls(
-        self, messages: List[Dict[str, str]], tools: List[Any]
-    ) -> List[Dict[str, Any]]:
-        """
-        Simulates OpenAI-style function calling.
-        
-        Parses message content to return predictable JSON tool calls matching 
-        registered schemas from the provided `tools` list.
-        
-        Args:
-            messages: Conversation history.
-            tools: List of ToolDefinition objects or dicts describing available functions.
-            
-        Returns:
-            List of simulated tool call dictionaries in standard function-calling format.
-        """
-        if not tools or not messages:
-            return []
+        # Default to text response if no tool matches or tools aren't registered for this intent
+        return {"response": self.chat(messages)}
 
-        last_msg = messages[-1]
-        content = last_msg.get("content", "").lower()
-
-        matched_tools = []
-        for tool in tools:
-            # Support both object-like and dict-like ToolDefinitions
-            name = getattr(tool, "name", tool.get("name", "")) if tool else ""
-            if isinstance(name, str) and name.lower() in content:
-                matched_tools.append(tool)
-
-        calls = []
-        for i, tool in enumerate(matched_tools):
-            name = getattr(tool, "name", tool.get("name", ""))
-            args_def = getattr(tool, "args", tool.get("args", [])) or []
-            
-            # Generate deterministic mock arguments matching the schema
-            mock_args = {arg: f"mock_{arg}_{i}" for arg in args_def}
-            
-            calls.append({
-                "id": f"call_mock_{self.seed}_{i}",
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "arguments": json.dumps(mock_args)
-                }
-            })
-
-        return calls
-
-    def _apply_temperature_noise(self, text: str) -> str:
-        """
-        Optional config-driven randomness to simulate non-deterministic LLM behavior.
-        Uses seed + temperature to deterministically alter output casing/punctuation.
-        
-        Args:
-            text: Base response string.
-            
-        Returns:
-            Slightly altered string if temperature > 0, otherwise original text.
-        """
-        if self.temperature == 0 or not text:
-            return text
-
-        import hashlib
-        noise = int(hashlib.md5(f"{self.seed}_{text}".encode()).hexdigest(), 16) % 3
-        
-        if noise == 1:
-            return f"Sure! {text}"
-        elif noise == 2:
-            return text.capitalize() + "?"
-            
-        return text
+    @staticmethod
+    def _extract_last_user_text(messages: List[Dict[str, Any]]) -> str:
+        """Helper to safely pull the most recent user message content."""
+        for msg in reversed(messages):
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                return msg.get("content", "")
+        return ""

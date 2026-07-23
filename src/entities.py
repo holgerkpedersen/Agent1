@@ -1,188 +1,220 @@
-"""
-Shared types, contracts, and stateless utilities for the agent framework.
-Implements structural typing (Protocol + TypedDict) to avoid inheritance chains & circular imports.
+"""Core entities and type contracts for the Agent Tutorial System.
+
+Provides dataclasses, TypedDicts, and Protocols used across all agent
+implementations (v1–v4) and the final orchestrator.  Designed to avoid
+circular imports by using structural typing (`Protocol`) instead of
+deep inheritance chains.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List, Optional, Protocol, TypedDict, Union
+import re
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, Callable, Protocol, TypedDict
 
 
-# =============================================================================
-# Data Structures (TypedDicts)
-# =============================================================================
+# ──────────────────────────────────────────────────────
+# 1. Message Types
+# ──────────────────────────────────────────────────────
 
-class Message(TypedDict):
-    """Standard message format for LLM context windows."""
-    role: str  # "system", "user", or "assistant"
-    content: str
+@dataclass(frozen=True)
+class Message:
+    """Immutable message exchanged between user, assistant, and tools."""
+
+    role: str = "user"             # "system" | "user" | "assistant" | "tool"
+    content: str = ""
+    tool_call_id: str | None = None   # links a tool result back to the call that produced it
+    name: str | None = None           # optional agent/tool identifier
+
+    def __str__(self) -> str:
+        tag = self.name or self.role
+        return f"[{tag}] {self.content}"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for LLM API payloads."""
+        d: dict[str, Any] = {"role": self.role, "content": self.content}
+        if self.tool_call_id is not None:
+            d["tool_call_id"] = self.tool_call_id
+        if self.name is not None:
+            d["name"] = self.name
+        return d
 
 
-class ToolCall(TypedDict):
-    """Represents a single tool invocation requested by an LLM."""
+# ──────────────────────────────────────────────────────
+# 2. Tool Definitions & Execution Results
+# ──────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ToolParameterSchema:
+    """JSON-Schema-like description for a single tool parameter."""
+
     name: str
-    arguments: Dict[str, Any]
+    param_type: str = "string"      # "string" | "number" | "integer" | "boolean" | "array" | "object"
+    description: str = ""
+    required: bool = True
 
 
-class ToolDefinition(TypedDict):
-    """Schema definition for a callable tool exposed to the LLM."""
+@dataclass(frozen=True)
+class ToolDefinition:
+    """Metadata describing a callable tool available to the agent."""
+
     name: str
     description: str
-    parameters: Optional[Dict[str, Any]]  # JSON Schema format
+    parameters: list[ToolParameterSchema] = field(default_factory=list)
+    func: Callable[..., Any] | None = None   # actual implementation (may be injected later)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Format for LLM tool-calling payloads."""
+        props: dict[str, Any] = {}
+        required: list[str] = []
+        for p in self.parameters:
+            props[p.name] = {"type": p.param_type, "description": p.description}
+            if p.required:
+                required.append(p.name)
+
+        payload: dict[str, Any] = {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": props,
+            },
+        }
+        if required:
+            payload["parameters"]["required"] = required
+        return payload
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2)
 
 
-class ReasoningStep(TypedDict):
-    """Tracks one iteration of a ReAct-style reasoning loop."""
-    thought: str
-    action: str
-    action_input: str
-    observation: Optional[str]
-    is_final: bool
+@dataclass(frozen=True)
+class ToolCallRequest:
+    """Parsed intent from the LLM indicating a tool should be invoked."""
+
+    id: str = field(default_factory=lambda: f"call_{uuid.uuid4().hex[:8]}")
+    name: str = ""
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"id": self.id, "name": self.name, "arguments": self.arguments}
 
 
-class AgentConfig(TypedDict, total=False):
-    """Configuration payload for agent initialization and runtime behavior."""
+@dataclass(frozen=True)
+class ToolExecutionResult:
+    """Outcome of executing a tool call."""
+
+    success: bool = True
+    output: str = ""
+    error_message: str | None = None
+    tool_name: str = ""
+    tool_call_id: str | ""
+
+    def to_message(self) -> Message:
+        content = self.output if self.success else f"Error ({self.tool_name}): {self.error_message}"
+        return Message(role="tool", content=content, tool_call_id=self.tool_call_id, name=self.tool_name)
+
+
+# ──────────────────────────────────────────────────────
+# 3. Reasoning Steps (ReAct loop)
+# ──────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ReasoningStep:
+    """One iteration inside a ReAct-style reasoning loop."""
+
+    thought: str = ""
+    action: str | None = None         # e.g. "search", "calculator"
+    action_input: str | None = None   # arguments for the action
+    observation: str | None = None    # result after executing the action
+    is_final: bool = False            # True when the agent has a final answer
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"thought": self.thought}
+        if self.action is not None:
+            d["action"] = self.action
+        if self.action_input is not None:
+            d["action_input"] = self.action_input
+        if self.observation is not None:
+            d["observation"] = self.observation
+        d["is_final"] = self.is_final
+        return d
+
+
+# ──────────────────────────────────────────────────────
+# 4. Agent Configuration
+# ──────────────────────────────────────────────────────
+
+@dataclass
+class AgentConfig:
+    """Runtime knobs shared across all agent versions."""
+
+    system_prompt: str = "You are a helpful assistant."
+    max_turns: int = 20              # memory buffer limit (pairs of user/assistant)
+    max_reasoning_steps: int = 15    # ReAct loop ceiling
+    temperature: float = 0.0         # passed to LLM provider when supported
+    seed: int | None = None          # deterministic behaviour for mocking/testing
+    use_tool_calling: bool = False   # whether the agent supports function calling
+    log_observations: bool = True    # include tool results in trace output
+
+
+# ──────────────────────────────────────────────────────
+# 5. Protocols (Structural Typing)
+# ──────────────────────────────────────────────────────
+
+class LLMProvider(Protocol):
+    """Minimal interface any language-model backend must satisfy."""
+
+    def chat(self, messages: list[Message], system_prompt: str | None = None) -> Message: ...  # noqa: E704
+
+    def generate_tool_calls(
+        self,
+        messages: list[Message],
+        tools: list[ToolDefinition],
+        system_prompt: str | None = None,
+    ) -> tuple[list[ToolCallRequest] | None, str]: ...  # noqa: E704
+
+
+class AgentBase(Protocol):
+    """Core contract for every agent version in the tutorial."""
+
+    def run(self, user_input: str) -> Message: ...  # noqa: E704
+
+    def reset_memory(self) -> None: ...  # noqa: E704
+
+
+# ──────────────────────────────────────────────────────
+# 6. TypedDict helpers (for external config / JSON payloads)
+# ──────────────────────────────────────────────────────
+
+class ToolSchemaDict(TypedDict, total=False):
+    """Shape of tool definitions as they appear in `config.yaml`."""
+    name: str
+    description: str
+    parameters: list[dict[str, Any]]
+
+
+class AgentConfigDict(TypedDict, total=False):
+    """Flat dictionary shape loaded from YAML / JSON config files."""
     system_prompt: str
     max_turns: int
     max_reasoning_steps: int
     temperature: float
-    use_mock_llm: bool
+    seed: int | None
+    use_tool_calling: bool
+    log_observations: bool
 
 
-# =============================================================================
-# Structural Protocols (Interfaces)
-# =============================================================================
+# ──────────────────────────────────────────────────────
+# 7. Stateless Utilities
+# ──────────────────────────────────────────────────────
 
-class LLMProvider(Protocol):
-    """Contract for any synchronous LLM backend (mock, OpenAI, Anthropic, etc.)."""
-
-    def chat(self, messages: List[Message], tools: Optional[List[ToolDefinition]] = None) -> str: ...
-
-    def generate_tool_calls(
-        self, messages: List[Message], tools: List[ToolDefinition]
-    ) -> List[ToolCall]: ...
-
-
-class AgentBase(Protocol):
-    """Contract for all progressive agent implementations."""
-
-    def run(self, user_input: str) -> Union[str, List[ReasoningStep]]: ...
-
-
-# =============================================================================
-# Stateless Utilities
-# =============================================================================
-
-def parse_json_safely(json_str: str) -> Any:
-    """
-    Safely parse a JSON string. 
-    Includes fallback logic to extract JSON from markdown code blocks or messy LLM outputs.
-    Returns `None` on complete failure.
-    """
-    if not isinstance(json_str, str):
-        return None
-
+def parse_json_safely(text: str) -> dict[str, Any] | list[Any] | None:
+    """Attempt to parse *text* as JSON; return `None` on failure."""
     try:
-        return json.loads(json_str)
+        return json.loads(text)
     except (json.JSONDecodeError, TypeError):
-        pass
-
-    # Fallback: attempt to isolate the first valid JSON object
-    start = json_str.find('{')
-    end = json_str.rfind('}') + 1
-    if start != -1 and end > start:
-        try:
-            return json.loads(json_str[start:end])
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # Fallback for JSON arrays
-    start_arr = json_str.find('[')
-    end_arr = json_str.rfind(']') + 1
-    if start_arr != -1 and end_arr > start_arr:
-        try:
-            return json.loads(json_str[start_arr:end_arr])
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    return None
-
-
-def format_tool_result(tool_name: str, result: Any) -> str:
-    """
-    Formats the output of a tool execution for safe injection back into the LLM context.
-    Ensures dict/list outputs are serialized and wrapped in a predictable prefix.
-    """
-    if isinstance(result, (dict, list)):
-        payload = json.dumps(result, ensure_ascii=False)
-    else:
-        payload = str(result)
-
-    return f"[Tool '{tool_name}' Result]: {payload}"
-
-
-def build_context_window(messages: List[Message], max_turns: int) -> List[Message]:
-    """
-    Prunes message history to fit within `max_turns`.
-    
-    Assumes turns are pairs of user/assistant messages. Preserves a leading 
-    system prompt if it exists at index 0. Returns an empty list on invalid input.
-    """
-    if not messages or max_turns <= 0:
-        return []
-
-    # Detect and preserve system prompt
-    has_system = len(messages) > 0 and messages[0].get("role") == "system"
-    context_start_index = 1 if has_system else 0
-    
-    history = messages[context_start_index:]
-    
-    # Each turn consists of a user message followed by an assistant message.
-    max_history_messages = max_turns * 2
-    pruned_history = history[-max_history_messages:]
-    
-    return (messages[:1] if has_system else []) + pruned_history
-
-
-# =============================================================================
-# Helper Classes
-# =============================================================================
-
-class ToolRegistry:
-    """
-    Simple registry to map tool names to executable functions and their definitions.
-    Used by v2+ agents to dynamically resolve LLM requests.
-    """
-
-    def __init__(self) -> None:
-        self._tools: Dict[str, Callable[..., Any]] = {}
-        self._definitions: List[ToolDefinition] = []
-
-    def register(
-        self,
-        name: str,
-        func: Callable[..., Any],
-        description: str = "",
-        parameters: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Register a callable function as an LLM-accessible tool."""
-        if name in self._tools:
-            raise ValueError(f"Tool '{name}' is already registered.")
-            
-        self._tools[name] = func
-        self._definitions.append({
-            "name": name,
-            "description": description,
-            "parameters": parameters or {},
-        })
-
-    def get_definitions(self) -> List[ToolDefinition]:
-        """Return a copy of all registered tool definitions."""
-        return self._definitions.copy()
-
-    def execute(self, tool_name: str, **kwargs) -> Any:
-        """Execute a registered tool by name with provided arguments."""
-        if tool_name not in self._tools:
-            raise ValueError(f"Unknown tool requested: '{tool_name}'")
-        return self._tools[tool_name](**kwargs)
+        # Fallback: look for a JSON block surrounded by markdown code fences
+        match = re.search(r"

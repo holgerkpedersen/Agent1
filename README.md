@@ -1,13 +1,21 @@
-# 🤖 AI Agent Tutorial: From Zero to Production
+# 🧠 Progressive LLM Agent Tutorial
 
-A **progressive, beginner-friendly** tutorial project that teaches you how to build, understand, and extend Python-based AI agents from first principles — no heavy frameworks required.
-
-> ✅ **Safe-by-default**: Uses a built-in `MockLLM` so you can practice locally without API keys or costs.  
-> 📈 **Progressive disclosure**: Each step adds exactly one new concept. No hidden complexity.  
-> 🧪 **Test-as-tutorial**: Exercises live in the test suite. Passing tests = mastery.
+A step-by-step, dependency-ordered guide to building production-ready LLM agents from scratch — with no frameworks required. Go from a basic chatbot to a fully orchestrated agent with tool use, memory, and reasoning traces.
 
 ---
 
-## 📖 What is an AI Agent?
+## 📚 What You'll Learn (Mental Models)
 
-An AI agent is a system that follows this loop:
+| Step | Agent Version | Mental Model | Key Concept |
+|------|--------------|-------------|-------------|
+| v1 | `BasicAgent` | Input → Process → Output | Prompt formatting & LLM chat interface |
+| v2 | `ToolsAgent` | Tool → Result Injection | Structured tool calling & execution isolation |
+| v3 | `MemoryAgent` | Context Window Pruning | Turn tracking & sliding history buffers |
+| v4 | `ReasoningAgent` | Thought → Action → Observation | ReAct loop with step-by-step traces |
+| Final | `AgentOrchestrator` | Composable Features | Config-driven init, observability, error boundaries |
+
+---
+
+## 🚀 Quick Start
+
+### 1. Clone & Setup Virtual Environment

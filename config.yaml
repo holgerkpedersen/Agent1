@@ -1,19 +1,82 @@
-# Agent Configuration
-agent:
-  name: "BeginnerAgent"
-  temperature: 0.2
-  max_tokens: 512
-  system_prompt: |
-    You are a helpful assistant. Think step-by-step. 
-    Use tools when needed. Keep responses concise.
+# ==============================================================================
+# Agent Configuration & Schemas
+# Loads via PyYAML in src/agent_final.py and other modules
+# ==============================================================================
 
-# Tool Registry & Schemas
-tools:
-  - name: calculator
-    description: "Evaluate math expressions"
-    args: ["expression"]
-    
-# Memory & Context Settings
+agent:
+  system_prompt: >-
+    You are a helpful, precise, and logical AI assistant. 
+    Always think step-by-step before answering. If you need external information or calculations, use the provided tools.
+  temperature: 0.2
+  max_tokens: 1024
+  seed: 42
+
+# Memory & Context Window Management
 memory:
   max_turns: 10
-  store_system_messages: false
+  max_context_tokens: 4096
+  prune_strategy: "oldest_first"  # oldest_first | summarize_oldest
+
+# Tool Registry Definitions (Schemas for v2, v4, and final agent)
+tools:
+  - name: "calculator"
+    description: "Performs mathematical calculations. Input must be a valid arithmetic expression."
+    parameters:
+      type: object
+      properties:
+        expression:
+          type: string
+          description: "The mathematical expression to evaluate (e.g., '(2 + 3) * 4')"
+      required: ["expression"]
+
+  - name: "search_web"
+    description: "Searches the internet for current information, news, or documentation."
+    parameters:
+      type: object
+      properties:
+        query:
+          type: string
+          description: "The search query to look up online"
+      required: ["query"]
+
+  - name: "get_weather"
+    description: "Retrieves current weather conditions and forecasts for a location."
+    parameters:
+      type: object
+      properties:
+        location:
+          type: string
+          description: "City, region, or coordinates (e.g., 'Tokyo, Japan')"
+      required: ["location"]
+
+  - name: "read_file"
+    description: "Reads and returns the contents of a local file."
+    parameters:
+      type: object
+      properties:
+        filepath:
+          type: string
+          description: "Absolute or relative path to the target file"
+      required: ["filepath"]
+
+# Reasoning / ReAct Loop Parameters (v4 & final)
+reasoning:
+  max_iterations: 5
+  stop_keywords: 
+    - "Final Answer:"
+    - "I have completed my task."
+  enable_tracing: true
+  fallback_action: "return_direct_answer"
+
+# LLM Provider Routing
+llm_provider:
+  default_type: "mock"   # mock | openai | anthropic | local
+  model_name: "tutorial-agent-base"
+  use_mock_llm: true     # Set to false in .env or override here for live API calls
+  api_base_url: ""       # Optional custom endpoint (e.g., vLLM, Ollama)
+
+# CLI & Observability Settings
+cli:
+  verbose_logging: true
+  colorized_output: true
+  default_step: "all"    # all | v1 | v2 | v3 | v4 | final
