@@ -8,7 +8,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 # DATA STRUCTURES (TypedDict / Dataclasses)
 # ==============================================================================
 
-class Message(TypedDict):
+@dataclass(frozen=True)
+class Message:
     """Standard message format for LLM context windows."""
     role: str
     content: str
@@ -90,20 +91,4 @@ def parse_json_safely(text: str) -> dict | list[dict] | None:
     cleaned = text.strip()
     
     # Strip markdown code block formatting if present
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r'^```[a-z]*\n?', '', cleaned)
-        cleaned = re.sub(r'\n?```$', '', cleaned)
-    
-    # Try to find JSON in the text
-    match = re.search(r'\{.*\}|\[.*\]', cleaned, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
-    
-    # Try the entire text as JSON
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        return None
+    if cleaned.startswith("

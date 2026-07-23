@@ -1069,7 +1069,7 @@ async def run_interactive():
                                 continue
                             
                             if "## Why" in fixed:
-                                print(f"  {fixed.split('## Fix')[0].strip()[:200]}")
+                                print(f"  {fixed.split('## Fix')[0].strip()}")
                             
                             match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```', fixed, re.DOTALL)
                             if match:
