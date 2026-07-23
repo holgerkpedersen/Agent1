@@ -72,6 +72,8 @@ class LLMClient:
 1. Bugs or issues
 2. Code quality concerns
 3. Potential improvements
+4. Circular imports - which modules import each other, creating cycles
+5. Missing or broken cross-module references
 
 Code:
 {code}"""
