@@ -1042,10 +1042,16 @@ async def run_interactive():
                             class_names = re.findall(r'^class\s+(\w+)', source, re.MULTILINE)
                             mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
                             for cn in class_names:
-                                r = subprocess.run(
-                                    ["python", "-c", f"import {mod_name}; c={mod_name}.{cn}; import inspect; try: sig=inspect.signature(c); print(f'OK: {cn}'+str(list(sig.parameters.keys()))); except (ValueError, TypeError): print(f'OK: {cn} (builtin/Protocol/TypedDict)')"],
-                                    capture_output=True, text=True, cwd=str(Path(ws))
-                                )
+                                import tempfile
+                                with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
+                                    tf.write(f"import {mod_name}\n")
+                                    tf.write(f"c={mod_name}.{cn}\n")
+                                    tf.write(f"import inspect\n")
+                                    tf.write(f"try:\n    sig=inspect.signature(c)\n    print(f'OK: {cn}'+str(list(sig.parameters.keys())))\n")
+                                    tf.write(f"except (ValueError, TypeError):\n    print(f'OK: {cn} (builtin/Protocol/TypedDict)')\n")
+                                    tfpath = tf.name
+                                r = subprocess.run(["python", tfpath], capture_output=True, text=True, cwd=str(Path(ws)))
+                                os.unlink(tfpath)
                                 if r.returncode != 0:
                                     errors_found.append((fname, fpath_str, f"CLASS {cn}: {r.stderr.strip()}"))
                                 else:
