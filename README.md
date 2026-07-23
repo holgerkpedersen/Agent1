@@ -17,13 +17,14 @@ It works as an **iterative improvement loop**: `workflow → implement → workf
 ## Commands
 
 ```
-workflow <target> [--from spec.md] [--force] [--workspace <path>]
+workflow <target> [--from spec.md] [--features spec.md] [--force] [--workspace <path>]
 ```
 
 Runs the full pipeline: analyze → plan → entities → taskplan.
 
-- **Brownfield**: `workflow .` (analyzes existing .py files)
+- **Brownfield**: `workflow .` (analyzes existing code)
 - **Greenfield**: `workflow . --from spec.md --workspace /c/Dev/newproject`
+- **Extend**: `workflow . --features spec.md --workspace /c/Dev/Agent1` (add features to existing codebase)
 
 ```
 implement <taskplan.md> [--keep] [--force] [--workspace <path>]
@@ -36,6 +37,14 @@ Implements files from a task plan in batches, compiling each .py file.
 - `--workspace`: Target directory for generated files
 
 Individual commands: `analyze`, `plan`, `entities`, `taskplan`
+
+## Modes
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| Brownfield | `workflow .` | Analyze existing code, find issues |
+| Greenfield | `workflow . --from spec.md --workspace /c/Dev/proj` | New project from specification |
+| Extend | `workflow . --features spec.md` | Add new features to existing codebase |
 
 ## Requirements
 
@@ -61,7 +70,7 @@ python agent.py
 - No API keys or cloud services needed - runs entirely local
 - Iterative: each pass improves the code until no issues remain
 - Compilation verified at every step
-- Greenfield support via specification file
+- Three modes: brownfield, greenfield, and brownfield extension
 - Cache avoids redundant LLM calls
 - All generated files are tracked and compilable
 
@@ -79,11 +88,16 @@ python agent.py
 1. **Start small**: `analyze agent.py` first, then gradually expand to the full project
 2. **Use `--keep`**: Avoids regenerating files that already compile correctly
 3. **Use `--workspace`**: Keep generated files separate from the agent's own code
-4. **Check `output.md`**: The analysis file tells you exactly what needs fixing
-5. **Greenfield projects**: Write a `spec.md` describing what you want, then:
+4. **Check analysis output**: The analysis file tells you exactly what needs fixing
+5. **Greenfield**: Write a `spec.md` describing what you want, then:
    ```
    workflow . --from spec.md --workspace /c/Dev/myproject
-   implement ... -workspace /c/Dev/myproject --force
+   implement ... --workspace /c/Dev/myproject --force
    ```
-6. **LM Studio timeout**: Close and reopen LM Studio if requests hang
-7. **Cache**: `.implement_cache.json` saves file lists between runs
+6. **Extend existing**: Write new feature requirements in `features.md`, then:
+   ```
+   workflow . --features features.md --workspace /c/Dev/Agent1
+   implement ... --workspace /c/Dev/Agent1 --keep
+   ```
+7. **LM Studio timeout**: Close and reopen LM Studio if requests hang
+8. **Cache**: `.implement_cache.json` saves file lists between runs
