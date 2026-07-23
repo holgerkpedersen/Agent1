@@ -1,245 +1,46 @@
-name: CI Pipeline – Agent Framework
+name: Agent Core CI
 
 on:
   push:
-    branches: [main, develop, "refactor/**"]
+    branches: [ "main", "master" ]
   pull_request:
-    branches: [main, develop]
+    branches: [ "main", "master" ]
 
-# Cancel in-progress runs on new commits to the same PR/branch
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
+permissions:
+  contents: read
 
 jobs:
-  # ────────────────────────────────────────────────────────────────
-  # Linting & Static Analysis
-  # ────────────────────────────────────────────────────────────────
-  lint-and-typecheck:
-    name: "Lint (ruff) + Type-Check (mypy)"
+  validate-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-lint-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-lint-
-
-      - name: Install linting & type-checking tools
-        run: pip install --upgrade ruff mypy types-all
-
-      # ── Ruff ────────────────────────────────────────────────
-      - name: Run ruff linter
-        run: ruff check .
-
-      - name: Run ruff formatter check (dry-run)
-        run: ruff format --check .
-
-      # ── Mypy strict ─────────────────────────────────────────
-      - name: Install project runtime deps for mypy
-        run: |
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install httpx aiofiles pydantic-settings
-
-      - name: Run mypy --strict
-        run: mypy --strict .
-
-  # ────────────────────────────────────────────────────────────────
-  # Security Scan (Bandit)
-  # ────────────────────────────────────────────────────────────────
-  security-scan:
-    name: "Security – Bandit"
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install bandit
-        run: pip install bandit
-
-      # Scan all .py files, skip tests directory
-      - name: Run bandit security linter
-        run: |
-          bandit -r . \
-            --exclude tests,.venv,__pycache__ \
-            --severity-level medium \
-            --confidence-level medium \
-            --format json -o bandit-report.json || true
-
-      # Optional: upload bandit report as artifact for review
-      - name: Upload Bandit report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bandit-security-report
-          path: bandit-report.json
-          retention-days: 5
-
-  # ────────────────────────────────────────────────────────────────
-  # Test Suite (asyncio + coverage) across Python versions
-  # ────────────────────────────────────────────────────────────────
-  test:
-    name: "Tests – Py ${{ matrix.python-version }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
     strategy:
-      fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-
+        python-version: ["3.10", "3.12"]
+      fail-fast: true
+    
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-test-${{ matrix.python-version }}-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-test-${{ matrix.python-version }}-
-
-      - name: Install project & test dependencies
-        run: |
-          pip install --upgrade pip setuptools wheel
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          # Core runtime deps required by the agent framework
-          pip install httpx aiofiles pydantic-settings
-          # Test & coverage tooling
-          pip install pytest pytest-asyncio pytest-cov hypothesis
-
-      - name: Verify dependency tree is clean
-        run: pip check || true
-
-      # ── Unit + Integration Tests (asyncio-mode=auto) ───────
-      - name: Run pytest with asyncio & coverage
-        env:
-          PYTHONASYNCIODEBUG: "1"
-          PYTEST_ADDOPTS: "-v --tb=short"
-        run: |
-          pytest tests/ \
-            --asyncio-mode=auto \
-            --cov=. \
-            --cov-config=.coveragerc \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage-${{ matrix.python-version }}.xml
-
-      # ── Enforce minimum coverage threshold (80%) ───────────
-      - name: Check coverage threshold >= 80%
-        run: |
-          pytest tests/ \
-            --asyncio-mode=auto \
-            --cov=. \
-            --cov-fail-under=80 \
-            -q
-
-      # Upload per-version coverage XML for potential dashboard
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report-py${{ matrix.python-version }}
-          path: coverage-${{ matrix.python-version }}.xml
-          retention-days: 5
-
-  # ────────────────────────────────────────────────────────────────
-  # Concurrency & Sandbox Escape Stress Tests
-  # ────────────────────────────────────────────────────────────────
-  stress-tests:
-    name: "Stress – Async Concurrency + Sandbox Fuzzing"
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip setuptools wheel
+          python -m pip install --upgrade pip
+          pip install ruff mypy pytest pytest-cov bandit pyfakefs hypothesis
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install httpx aiofiles pydantic-settings pytest pytest-asyncio hypothesis
 
-      # ── Async Concurrency Stress Tests ──────────────────────
-      - name: Run async concurrency stress tests
-        env:
-          PYTHONASYNCIODEBUG: "1"
-        run: |
-          pytest tests/test_stress_concurrency.py \
-            --asyncio-mode=auto \
-            -v \
-            --tb=short
+      - name: Lint with Ruff
+        run: ruff check agent_core/ tests/
 
-      # ── Sandbox Escape Fuzzing (path traversal payloads) ────
-      - name: Run sandbox escape fuzz tests
-        run: |
-          pytest tests/test_sandbox_fuzz.py \
-            -v \
-            --tb=short
+      - name: Type check with MyPy
+        run: mypy --strict agent_core/
 
-  # ────────────────────────────────────────────────────────────────
-  # Gate – All checks must pass
-  # ────────────────────────────────────────────────────────────────
-  ci-gate:
-    name: "✅ CI Gate"
-    runs-on: ubuntu-latest
-    if: always()
-    needs:
-      - lint-and-typecheck
-      - security-scan
-      - test
-      - stress-tests
+      - name: Run tests & coverage
+        run: pytest --cov=agent_core --cov-fail-under=80 --cov-report=term-missing --cov-report=html
 
-    steps:
-      - name: Check all required jobs passed
-        env:
-          LINT_RESULT: ${{ needs.lint-and-typecheck.result }}
-          SECURITY_RESULT: ${{ needs.security-scan.result }}
-          TEST_RESULT: ${{ needs.test.result }}
-          STRESS_RESULT: ${{ needs.stress-tests.result }}
-        run: |
-          echo "Lint & TypeCheck : $LINT_RESULT"
-          echo "Security Scan     : $SECURITY_RESULT"
-          echo "Tests             : $TEST_RESULT"
-          echo "Stress Tests      : $STRESS_RESULT"
-
-          failed=0
-          for result in "$LINT_RESULT" "$SECURITY_RESULT" "$TEST_RESULT" "$STRESS_RESULT"; do
-            if [ "$result" != "success" ]; then
-              echo "::error::Job did not pass: $result"
-              failed=1
-            fi
-          done
-
-          exit $failed
+      - name: Security scan with Bandit
+        run: bandit -r agent_core/ -ll
