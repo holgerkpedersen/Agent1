@@ -883,7 +883,7 @@ async def run_interactive():
                     
                     if not matches:
                         print(f"  Warning: Could not parse files from batch response")
-                        print(f"  Raw response (first 500 chars): {impl_response[:500]}")
+                        print(f"  Raw response: {impl_response}")
                         continue
                     
                     for filename, content in matches:
@@ -1065,7 +1065,7 @@ async def run_interactive():
                             ]
                             fixed = await agent.llm.chat(fix_msgs)
                             if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
-                                print(f"  LLM error: {fixed[:100]}")
+                                print(f"  LLM error: {fixed}")
                                 continue
                             
                             match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)```', fixed, re.DOTALL)
@@ -1114,7 +1114,7 @@ async def run_interactive():
                     tmp.close()
                     spec_file = tmp.name
                     greenfield = True
-                    print(f"\n[desc] {desc_text[:100]}...")
+                    print(f"\n[desc] {desc_text}")
                 elif "--from" in parts:
                     fi = parts.index("--from")
                     end = fi + 1
@@ -1137,7 +1137,7 @@ async def run_interactive():
                         tmp.write(f"# Feature Requirements\n\n{feat_val}")
                         tmp.close()
                         features_file = tmp.name
-                        print(f"\n[features] {feat_val[:100]}...")
+                        print(f"\n[features] {feat_val}")
                 
                 target = [p for p in parts if not p.startswith("--") and p not in [spec_file, features_file]][1]
                 
