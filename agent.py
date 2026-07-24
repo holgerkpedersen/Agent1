@@ -507,6 +507,7 @@ async def run_interactive():
     print("  entities <analysis.md> <plan.md> [entities.md] - Generate shared entities")
     print("  taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks")
     print("  implement <taskplan.md> [--keep] [--force] [--workspace <path>] - Implement files")
+    print("  fix \"<traceback>\"   - Paste a traceback to auto-fix the error")
     print("  cleanup             - Show unreferenced files and reference graph")
     print("  workflow <target> [--from spec.md] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] - Full pipeline")
     print("  clear              - Clear agent memory")
@@ -1192,6 +1193,87 @@ async def run_interactive():
                     
                     print(f"\n[fix] Complete")
             
+            elif command == "fix":
+                if len(parts) < 2:
+                    print('Usage: fix "<traceback>"')
+                    print('  Paste the full Python traceback and agent will fix it')
+                    continue
+                
+                traceback_text = " ".join(parts[1:]).strip('"')
+                print(f"\nParsing traceback ({len(traceback_text)} chars)...")
+                
+                # Extract file paths and line numbers from traceback
+                file_pattern = r'File "(.*?)", line (\d+)'
+                matches = re.findall(file_pattern, traceback_text)
+                
+                if not matches:
+                    print("Could not find file/line references in traceback. Paste the full error output.")
+                    continue
+                
+                # Focus on the last file (the one that actually raised the error)
+                fpath, line_num = matches[-1]
+                
+                if fpath.startswith("<"):
+                    print(f"Cannot fix built-in module: {fpath}")
+                    continue
+                
+                if not os.path.exists(fpath):
+                    print(f"File not found: {fpath}")
+                    continue
+                
+                # Also collect the error message (last line of traceback)
+                error_lines = traceback_text.strip().split('\n')
+                error_msg = error_lines[-1] if error_lines else "Unknown error"
+                
+                print(f"\nError in {fpath}:{line_num}")
+                print(f"  {error_msg}")
+                
+                with open(fpath, "r", encoding="utf-8") as f:
+                    current_code = f.read()
+                
+                # Show context around the error
+                lines = current_code.split('\n')
+                line_idx = int(line_num) - 1
+                start = max(0, line_idx - 3)
+                end = min(len(lines), line_idx + 4)
+                print(f"\n  Context (lines {start+1}-{end}):")
+                for i in range(start, end):
+                    marker = ">>>" if i == line_idx else "   "
+                    print(f"  {marker} {i+1}: {lines[i][:120]}")
+                
+                print(f"\nSending to LLM for fix...")
+                fix_msgs = [
+                    {"role": "system", "content": "Fix the error. Output ONLY the corrected file. Start with [FILE: filename.py].\n```python\n# complete fixed code\n```"},
+                    {"role": "user", "content": f"Fix this error:\n\nFile: {fpath}\nLine: {line_num}\nError: {error_msg}\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}
+                ]
+                fixed = await agent.llm.chat(fix_msgs)
+                
+                if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
+                    print(f"LLM error: {fixed[:200]}")
+                    continue
+                
+                match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', fixed, re.DOTALL)
+                if match:
+                    new_code = match.group(2).strip()
+                    if len(new_code) > len(current_code) * 0.1 and 'import' in new_code:
+                        with open(fpath, "w", encoding="utf-8") as f:
+                            f.write(new_code)
+                        print(f"\nFixed: {fpath} ({len(new_code)} bytes)")
+                        
+                        result = subprocess.run(
+                            ["python", "-m", "py_compile", fpath],
+                            capture_output=True, text=True
+                        )
+                        if result.returncode == 0:
+                            print("Compiled OK!")
+                        else:
+                            print(f"Still has errors:\n{result.stderr[:300]}")
+                    else:
+                        print("LLM returned invalid fix (too short or not code)")
+                else:
+                    print("Could not parse fix from LLM response")
+                    print(f"Raw: {fixed[:300]}")
+                    
             elif command == "cleanup":
                 ws = agent.workspace
                 if ws.startswith("/c/") or ws.startswith("/C/"):
