@@ -1194,18 +1194,17 @@ async def run_interactive():
                     print(f"\n[fix] Complete")
             
             elif command == "fix":
-                # Read multi-line traceback - keep reading lines until empty line
-                traceback_text = user_input[4:].strip()  # remove "fix " prefix
-                
-                # If traceback is wrapped in quotes, remove them
+                # Read multi-line traceback
+                traceback_text = user_input[4:].strip()
                 if traceback_text.startswith('"') and traceback_text.endswith('"'):
                     traceback_text = traceback_text[1:-1]
                 
-                if not traceback_text or len(traceback_text) < 10:
-                    print("Usage: fix <paste traceback here, end with empty line>")
-                    print("  Reading multi-line input now...")
-                    print("  (Paste traceback, then press Enter on an empty line)")
+                # If user typed "fix" alone, read multi-line input
+                if not traceback_text or "File \"" not in traceback_text:
+                    print("Paste the full traceback, then press Enter on an empty line:")
                     lines = []
+                    if traceback_text:
+                        lines.append(traceback_text)
                     while True:
                         try:
                             line = input()
