@@ -507,6 +507,7 @@ async def run_interactive():
     print("  entities <analysis.md> <plan.md> [entities.md] - Generate shared entities")
     print("  taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks")
     print("  implement <taskplan.md> [--keep] [--force] [--workspace <path>] - Implement files")
+    print("  cleanup             - Show unreferenced files and reference graph")
     print("  workflow <target> [--from spec.md] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] - Full pipeline")
     print("  clear              - Clear agent memory")
     print("  quit               - Exit")
@@ -854,6 +855,15 @@ async def run_interactive():
                 errors = []
                 batch_size = 1
                 
+                # Snapshot pre-existing files for change tracking
+                pre_snapshot = set()
+                ws = target_workspace
+                if ws.startswith("/c/") or ws.startswith("/C/"):
+                    ws = "C:" + ws[2:]
+                for fp in Path(ws).rglob("*"):
+                    if fp.is_file() and ".git" not in str(fp) and "__pycache__" not in str(fp):
+                        pre_snapshot.add(str(fp.relative_to(Path(ws))).replace("\\", "/"))
+                
                 for i in range(0, len(all_files), batch_size):
                     batch = all_files[i:i+batch_size]
                     print(f"\nImplementing batch {i//batch_size + 1}/{(len(all_files) + batch_size - 1)//batch_size}: {batch}")
@@ -941,6 +951,14 @@ async def run_interactive():
                         implemented.append(filename)
                         print(f"  Written: {filename}")
                         
+                        # Update manifest
+                        manifest_file = Path(ws) / ".generated_manifest.json"
+                        manifest = {}
+                        if manifest_file.exists():
+                            manifest = json.loads(manifest_file.read_text())
+                        manifest[filename] = {"date": str(datetime.now()), "size": len(content)}
+                        manifest_file.write_text(json.dumps(manifest, indent=2))
+                        
                         if filename.endswith(".py"):
                             filepath_str = os.path.realpath(filepath)
                             
@@ -1005,6 +1023,23 @@ async def run_interactive():
                     print(f"\nMissing files ({len(missing_files)}):")
                     for f in missing_files:
                         print(f"  - {f}")
+                
+                # Post-implementation diff: what changed?
+                post_snapshot = set()
+                for fp in Path(ws).rglob("*"):
+                    if fp.is_file() and ".git" not in str(fp) and "__pycache__" not in str(fp):
+                        post_snapshot.add(str(fp.relative_to(Path(ws))).replace("\\", "/"))
+                
+                new_files = post_snapshot - pre_snapshot
+                removed_files = pre_snapshot - post_snapshot
+                if new_files:
+                    print(f"\n  New files created: {len(new_files)}")
+                    for f in sorted(new_files):
+                        print(f"    + {f}")
+                if removed_files:
+                    print(f"\n  Files no longer present: {len(removed_files)}")
+                    for f in sorted(removed_files):
+                        print(f"    - {f}")
                 
                 if fix_mode and implemented:
                     print(f"\n{'='*50}")
@@ -1145,6 +1180,80 @@ async def run_interactive():
                                 print(f"  Fixed: {fname} ({len(new_code)} bytes)")
                     
                     print(f"\n[fix] Complete")
+            
+            elif command == "cleanup":
+                ws = agent.workspace
+                if ws.startswith("/c/") or ws.startswith("/C/"):
+                    ws = "C:" + ws[2:]
+                ws_path = Path(ws)
+                
+                if not ws_path.exists():
+                    print(f"Workspace not found: {ws_path}")
+                    continue
+                
+                print(f"\nScanning {ws_path} for generated files...")
+                
+                generated_files = {}
+                manifest_file = ws_path / ".generated_manifest.json"
+                if manifest_file.exists():
+                    with open(manifest_file, "r", encoding="utf-8") as f:
+                        generated_files = json.load(f)
+                    print(f"  Manifest: {len(generated_files)} previously generated files")
+                
+                all_files = {}
+                for fp in ws_path.rglob("*"):
+                    if fp.is_file() and ".git" not in str(fp) and "__pycache__" not in str(fp):
+                        rel = str(fp.relative_to(ws_path)).replace("\\", "/")
+                        all_files[rel] = {"size": fp.stat().st_size, "generated": rel in generated_files}
+                
+                references = {f: set() for f in all_files}
+                for fname in all_files:
+                    fp = ws_path / fname
+                    try:
+                        content = fp.read_text(encoding="utf-8", errors="ignore")
+                        for other in all_files:
+                            if other != fname and other in content:
+                                references[other].add(fname)
+                    except Exception:
+                        pass
+                
+                active_candidates = [f for f in all_files if f.startswith("project_") and f.endswith(".md")]
+                active = set()
+                for root in active_candidates:
+                    queue = [root]
+                    while queue:
+                        f = queue.pop()
+                        if f in active:
+                            continue
+                        active.add(f)
+                        for ref_by in references.get(f, set()):
+                            queue.append(ref_by)
+                
+                for f in active_candidates:
+                    active.add(f)
+                
+                unreferenced = [f for f in all_files if f not in active and f.endswith((".md", ".py", ".json"))]
+                external = [f for f in unreferenced if f in generated_files]
+                
+                print(f"\n  Total files scanned: {len(all_files)}")
+                print(f"  Active (referenced): {len(active)}")
+                print(f"  Unreferenced: {len(unreferenced)} ({'generated by agent' if external else 'external'})")
+                
+                if unreferenced:
+                    print(f"\n  Unreferenced files:")
+                    for f in sorted(unreferenced):
+                        tag = " [generated]" if f in generated_files else ""
+                        print(f"    {f} ({all_files[f]['size']} bytes){tag}")
+                    
+                    print(f"\n  Use --delete to remove them, or add to .protected to keep.")
+                else:
+                    print("  No unreferenced files found.")
+                
+                print(f"\n  Reference graph (active files):")
+                for f in sorted(active):
+                    refs = references.get(f, set())
+                    if refs:
+                        print(f"    {f} <- referenced by: {', '.join(sorted(refs))}")
                         
             elif command == "workflow":
                 if len(parts) < 2:
