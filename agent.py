@@ -1078,7 +1078,18 @@ async def run_interactive():
                                 errors_found.append((fname, fpath_str, f"IMPORT: {r.stderr.strip()}"))
                                 continue
                             
-                            # Step 3: try to instantiate every class defined in the file
+                            # Step 3: type check with mypy/pyright
+                            r = subprocess.run(
+                                ["python", "-m", "mypy", fpath_str, "--ignore-missing-imports"],
+                                capture_output=True, text=True, cwd=str(Path(ws))
+                            )
+                            if r.returncode != 0 and "No module named" not in r.stderr:
+                                type_errors = [l.strip() for l in r.stdout.split('\n') if l.strip() and ':' in l and not l.startswith('Found')]
+                                if type_errors:
+                                    errors_found.append((fname, fpath_str, f"TYPE: {'; '.join(type_errors[:5])}"))
+                            # mypy not installed is OK — skip type checking
+                            
+                            # Step 4: try to instantiate every class
                             with open(fpath_str, "r", encoding="utf-8") as f:
                                 source = f.read()
                             class_names = re.findall(r'^class\s+(\w+)', source, re.MULTILINE)
