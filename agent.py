@@ -865,9 +865,12 @@ async def run_interactive():
                     if fp.is_file() and ".git" not in str(fp) and "__pycache__" not in str(fp):
                         pre_snapshot.add(str(fp.relative_to(Path(ws))).replace("\\", "/"))
                 
+                # --- Phase 1: collect all generated content in memory ---
+                generated_content = {}
+                
                 for i in range(0, len(all_files), batch_size):
                     batch = all_files[i:i+batch_size]
-                    print(f"\nImplementing batch {i//batch_size + 1}/{(len(all_files) + batch_size - 1)//batch_size}: {batch}")
+                    print(f"\nGenerating batch {i//batch_size + 1}/{(len(all_files) + batch_size - 1)//batch_size}: {batch}")
                     
                     batch_files_md = "\n".join([f"- {f}" for f in batch])
                     
@@ -902,107 +905,182 @@ async def run_interactive():
                     for pattern in patterns:
                         matches = list(re.findall(pattern, impl_response, re.DOTALL))
                         if matches:
-                            print(f"  Parsed {len(matches)} files using pattern")
                             break
                     
                     if not matches:
                         print(f"  Warning: Could not parse files from batch response")
-                        print(f"  Raw response: {impl_response}")
+                        print(f"  Raw response: {impl_response[:500]}")
                         continue
                     
                     for filename, content in matches:
                         content = content.strip()
-                        raw_workspace = target_workspace
-                        if raw_workspace.startswith('/c/') or raw_workspace.startswith('/C/'):
-                            raw_workspace = 'C:' + raw_workspace[2:]
-                        workspace = Path(raw_workspace)
-                        filepath = workspace / filename
+                        generated_content[filename] = content
+                        print(f"  Generated: {filename} ({len(content)} bytes)")
+                
+                # --- Phase 2: build export map & validate imports ---
+                if generated_content:
+                    # Build export map from generated content
+                    export_map = {}
+                    for fname, content in generated_content.items():
+                        # Extract class and function names
+                        exports = set()
+                        for match in re.finditer(r'^(?:class|def)\s+(\w+)', content, re.MULTILINE):
+                            exports.add(match.group(1))
+                        export_map[fname] = exports
+                    
+                    # Also scan existing files for exports
+                    for fname in all_files:
+                        if fname not in export_map:
+                            fp = Path(ws) / fname
+                            if fp.exists():
+                                try:
+                                    existing = fp.read_text(encoding="utf-8")
+                                    exports = set()
+                                    for match in re.finditer(r'^(?:class|def)\s+(\w+)', existing, re.MULTILINE):
+                                        exports.add(match.group(1))
+                                    export_map[fname] = exports
+                                except Exception:
+                                    pass
+                    
+                    print(f"\nExport map built: {sum(len(v) for v in export_map.values())} exports across {len(export_map)} modules")
+                    for mod, exp in sorted(export_map.items()):
+                        if exp:
+                            print(f"  {mod}: {', '.join(sorted(exp))}")
+                    
+                    # Validate imports and fix broken ones
+                    broken_imports = {}
+                    for fname, content in generated_content.items():
+                        missing = []
+                        for match in re.finditer(r'from\s+(\S+)\s+import\s+(.+?)(?:\s*#|\s*$)', content):
+                            src_module = match.group(1)
+                            imported_names = [n.strip().split(' as ')[0].strip() for n in match.group(2).strip('()').split(',')]
+                            # Convert source module to relative path
+                            src_file = src_module.replace('.', '/') + '.py'
+                            for name in imported_names:
+                                if name.isupper():  # likely a constant/enum
+                                    continue
+                                src_exports = export_map.get(src_file, set())
+                                if name not in src_exports:
+                                    missing.append((src_module, name))
                         
-                        filepath.parent.mkdir(parents=True, exist_ok=True)
+                        if missing:
+                            broken_imports[fname] = missing
+                    
+                    # Fix broken imports via LLM
+                    if broken_imports:
+                        print(f"\nFound {sum(len(v) for v in broken_imports.values())} broken imports in {len(broken_imports)} files:")
+                        for fname, missing in broken_imports.items():
+                            print(f"  {fname}:")
+                            for mod, name in missing:
+                                print(f"    imports '{name}' from '{mod}' - NOT FOUND")
                         
-                        skip_reason = None
+                        # Build a compact export map for the LLM
+                        export_summary = "\n".join([
+                            f"{mod} exports: {', '.join(sorted(exps))}"
+                            for mod, exps in sorted(export_map.items())
+                        ])
                         
-                        is_analyzed_file = analyzed_file and filename == analyzed_file
-                        
-                        if not force_mode and not is_analyzed_file and filepath.exists() and filepath.stat().st_size > 0:
-                            if filename.endswith(".py"):
-                                filepath_str = os.path.realpath(filepath)
-                                result = subprocess.run(
-                                    ["python", "-m", "py_compile", filepath_str],
-                                    capture_output=True,
-                                    text=True
-                                )
-                                if result.returncode == 0:
-                                    skip_reason = "Already exists and compiles OK"
-                        
-                        if skip_reason:
-                            print(f"  Skipping {filename}: {skip_reason}")
-                            if filename not in implemented:
-                                implemented.append(filename)
-                            continue
-                        
-                        if filename in protected_files:
-                            print(f"  Protected: {filename} (skipped)")
-                            if filename not in implemented:
-                                implemented.append(filename)
-                            continue
-                        
-                        with open(filepath, "w", encoding="utf-8") as f:
-                            f.write(content)
-                        implemented.append(filename)
-                        print(f"  Written: {filename}")
-                        
-                        # Update manifest
-                        manifest_file = Path(ws) / ".generated_manifest.json"
-                        manifest = {}
-                        if manifest_file.exists():
-                            manifest = json.loads(manifest_file.read_text())
-                        manifest[filename] = {"date": str(datetime.now()), "size": len(content)}
-                        manifest_file.write_text(json.dumps(manifest, indent=2))
-                        
+                        for fname, missing in broken_imports.items():
+                            print(f"\nFixing imports in {fname}...")
+                            content = generated_content[fname]
+                            
+                            fix_msgs = [
+                                {"role": "system", "content": "Fix ONLY the import statements in this file. Use ONLY imports that exist in the export map below. Do not invent modules or names.\n\nFormat: [FILE: filename.py]\n```python\n# code\n```"},
+                                {"role": "user", "content": f"Fix imports in {fname} to match existing modules.\n\nEXPORT MAP (only these names exist):\n{export_summary}\n\nCurrent code:\n```python\n{content}\n```\n\nFix: replace missing imports with correct ones from the export map."}
+                            ]
+                            fixed = await agent.llm.chat(fix_msgs)
+                            if not fixed.startswith("[Error"):
+                                match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', fixed, re.DOTALL)
+                                if match:
+                                    new_content = match.group(2).strip()
+                                    if len(new_content) > len(content) * 0.3:
+                                        generated_content[fname] = new_content
+                                        print(f"  Fixed imports in {fname}")
+                else:
+                    print("No content generated.")
+                
+                # --- Phase 3: write files ---
+                for filename, content in generated_content.items():
+                    raw_workspace = target_workspace
+                    if raw_workspace.startswith('/c/') or raw_workspace.startswith('/C/'):
+                        raw_workspace = 'C:' + raw_workspace[2:]
+                    workspace = Path(raw_workspace)
+                    filepath = workspace / filename
+                    
+                    filepath.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    skip_reason = None
+                    is_analyzed_file = analyzed_file and filename == analyzed_file
+                    
+                    if not force_mode and not is_analyzed_file and filepath.exists() and filepath.stat().st_size > 0:
                         if filename.endswith(".py"):
                             filepath_str = os.path.realpath(filepath)
-                            
-                            is_truncated = False
-                            stripped = content.rstrip()
-                            if stripped:
-                                last_line = stripped.splitlines()[-1].strip()
-                                # Heuristics for truncation: ends mid-expression
-                                if last_line.endswith(('(', '[', '{', ':', ',', '+', '-', '*', '/', '=', '\\')):
-                                    is_truncated = True
-                                elif not last_line.endswith((')', '}', ']', "'", '"', 'pass', '...', 'True', 'False', 'None')):
-                                    # Might be truncated mid-identifier or mid-string
-                                    if not last_line.endswith(('.py', '.md', '.json', '.yaml')) and not last_line.startswith(('#', '//', '"""')):
-                                        if last_line and last_line[-1].isalnum():
-                                            is_truncated = True
-                            
-                            if is_truncated:
-                                print(f"  WARNING: {filename} appears truncated, re-requesting...")
-                                retry_msgs = [
-                                    {"role": "system", "content": "Generate the COMPLETE and FULL code for this single file. Output as:\n[FILE: filename.py]\n```python\n# complete code here\n```\n\nIMPORTANT: Generate the ENTIRE file. Do not truncate. Every function, class, and method must be complete."},
-                                    {"role": "user", "content": f"Generate the complete code for {filename}. The previous generation was truncated."}
-                                ]
-                                retry_content = await agent.llm.chat(retry_msgs)
-                                if not retry_content.startswith("[Error"):
-                                    match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', retry_content, re.DOTALL)
-                                    if match:
-                                        new_content = match.group(2).strip()
-                                        if len(new_content) > len(content) * 0.8:
-                                            with open(filepath, "w", encoding="utf-8") as f:
-                                                f.write(new_content)
-                                            print(f"  Re-written: {filename} ({len(new_content)} bytes)")
-                                            content = new_content
-                            
                             result = subprocess.run(
                                 ["python", "-m", "py_compile", filepath_str],
                                 capture_output=True,
                                 text=True
                             )
-                            if result.returncode != 0:
-                                errors.append(f"{filename}: {result.stderr}")
-                                print(f"  Compile error in {filename}")
-                            else:
-                                print(f"  Compiled OK: {filename}")
+                            if result.returncode == 0:
+                                skip_reason = "Already exists and compiles OK"
+                    
+                    if skip_reason:
+                        print(f"  Skipping {filename}: {skip_reason}")
+                        if filename not in implemented:
+                            implemented.append(filename)
+                        continue
+                    
+                    # Truncation check
+                    is_truncated = False
+                    stripped = content.rstrip()
+                    if stripped:
+                        last_line = stripped.splitlines()[-1].strip()
+                        if last_line.endswith(('(', '[', '{', ':', ',', '+', '-', '*', '/', '=', '\\')):
+                            is_truncated = True
+                        elif not last_line.endswith((')', '}', ']', "'", '"', 'pass', '...', 'True', 'False', 'None')):
+                            if not last_line.endswith(('.py', '.md', '.json', '.yaml')) and not last_line.startswith(('#', '//', '"""')):
+                                if last_line and last_line[-1].isalnum():
+                                    is_truncated = True
+                    
+                    if is_truncated:
+                        print(f"  WARNING: {filename} appears truncated, re-requesting...")
+                        retry_msgs = [
+                            {"role": "system", "content": "Generate the COMPLETE and FULL code for this single file. Output as:\n[FILE: filename.py]\n```python\n# complete code here\n```\n\nIMPORTANT: Generate the ENTIRE file. Do not truncate."},
+                            {"role": "user", "content": f"Generate the complete code for {filename}. The previous generation was truncated."}
+                        ]
+                        retry_content = await agent.llm.chat(retry_msgs)
+                        if not retry_content.startswith("[Error"):
+                            match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', retry_content, re.DOTALL)
+                            if match:
+                                new_content = match.group(2).strip()
+                                if len(new_content) > len(content) * 0.8:
+                                    content = new_content
+                                    print(f"  Re-written: {filename} ({len(content)} bytes)")
+                    
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    implemented.append(filename)
+                    print(f"  Written: {filename}")
+                    
+                    # Update manifest
+                    manifest_file = Path(ws) / ".generated_manifest.json"
+                    manifest = {}
+                    if manifest_file.exists():
+                        manifest = json.loads(manifest_file.read_text())
+                    manifest[filename] = {"date": str(datetime.now()), "size": len(content)}
+                    manifest_file.write_text(json.dumps(manifest, indent=2))
+                    
+                    if filename.endswith(".py"):
+                        filepath_str = os.path.realpath(filepath)
+                        result = subprocess.run(
+                            ["python", "-m", "py_compile", filepath_str],
+                            capture_output=True,
+                            text=True
+                        )
+                        if result.returncode != 0:
+                            errors.append(f"{filename}: {result.stderr}")
+                            print(f"  Compile error in {filename}")
+                        else:
+                            print(f"  Compiled OK: {filename}")
                 
                 print(f"\n{'='*50}")
                 print(f"Implementation complete: {len(implemented)}/{len(all_files)} files")
