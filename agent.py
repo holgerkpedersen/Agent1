@@ -949,13 +949,20 @@ async def run_interactive():
                     
                     # Validate imports and fix broken ones
                     broken_imports = {}
+                    stdlib_modules = set()  # skip validation for stdlib/third-party
+                    
                     for fname, content in generated_content.items():
                         missing = []
                         for match in re.finditer(r'from\s+(\S+)\s+import\s+(.+?)(?:\s*#|\s*$)', content):
                             src_module = match.group(1)
                             imported_names = [n.strip().split(' as ')[0].strip() for n in match.group(2).strip('()').split(',')]
-                            # Convert source module to relative path
                             src_file = src_module.replace('.', '/') + '.py'
+                            
+                            # Skip validation for stdlib/third-party modules
+                            if src_file not in export_map:
+                                stdlib_modules.add(src_module)
+                                continue
+                            
                             for name in imported_names:
                                 if name.isupper():  # likely a constant/enum
                                     continue
@@ -965,6 +972,9 @@ async def run_interactive():
                         
                         if missing:
                             broken_imports[fname] = missing
+                    
+                    if stdlib_modules:
+                        print(f"  Skipped stdlib/third-party imports from: {', '.join(sorted(stdlib_modules))}")
                     
                     # Fix broken imports via LLM
                     if broken_imports:
@@ -985,8 +995,8 @@ async def run_interactive():
                             content = generated_content[fname]
                             
                             fix_msgs = [
-                                {"role": "system", "content": "Fix ONLY the import statements in this file. Use ONLY imports that exist in the export map below. Do not invent modules or names.\n\nFormat: [FILE: filename.py]\n```python\n# code\n```"},
-                                {"role": "user", "content": f"Fix imports in {fname} to match existing modules.\n\nEXPORT MAP (only these names exist):\n{export_summary}\n\nCurrent code:\n```python\n{content}\n```\n\nFix: replace missing imports with correct ones from the export map."}
+                                {"role": "system", "content": "Fix ONLY broken imports between project files. Keep ALL stdlib/third-party imports (os, sys, typing, rich, pygame, etc.) exactly as they are. Only fix imports from project modules that don't exist.\n\nFormat: [FILE: filename.py]\n```python\n# code\n```"},
+                                {"role": "user", "content": f"Fix imports in {fname} to match existing project modules.\n\nProject module exports:\n{export_summary}\n\nCurrent code (DO NOT remove stdlib/third-party imports):\n```python\n{content}\n```"}
                             ]
                             fixed = await agent.llm.chat(fix_msgs)
                             if not fixed.startswith("[Error"):
