@@ -1204,6 +1204,7 @@ async def run_interactive():
                     ws_idx = parts.index("--workspace")
                     if ws_idx + 1 < len(parts):
                         target_workspace = parts[ws_idx + 1]
+                        print(f"  target_workspace set to: {target_workspace}")
                 
                 if spec_file and not os.path.isabs(spec_file):
                     spec_file = os.path.join(target_workspace, spec_file)
