@@ -1194,12 +1194,32 @@ async def run_interactive():
                     print(f"\n[fix] Complete")
             
             elif command == "fix":
-                if len(parts) < 2:
-                    print('Usage: fix "<traceback>"')
-                    print('  Paste the full Python traceback and agent will fix it')
+                # Read multi-line traceback - keep reading lines until empty line
+                traceback_text = user_input[4:].strip()  # remove "fix " prefix
+                
+                # If traceback is wrapped in quotes, remove them
+                if traceback_text.startswith('"') and traceback_text.endswith('"'):
+                    traceback_text = traceback_text[1:-1]
+                
+                if not traceback_text or len(traceback_text) < 10:
+                    print("Usage: fix <paste traceback here, end with empty line>")
+                    print("  Reading multi-line input now...")
+                    print("  (Paste traceback, then press Enter on an empty line)")
+                    lines = []
+                    while True:
+                        try:
+                            line = input()
+                            if not line.strip():
+                                break
+                            lines.append(line)
+                        except EOFError:
+                            break
+                    traceback_text = "\n".join(lines)
+                
+                if not traceback_text or "File \"" not in traceback_text:
+                    print("Could not find file references in traceback.")
                     continue
                 
-                traceback_text = " ".join(parts[1:]).strip('"')
                 print(f"\nParsing traceback ({len(traceback_text)} chars)...")
                 
                 # Extract file paths and line numbers from traceback
