@@ -530,7 +530,7 @@ async def run_interactive():
             
             # Parse and execute commands
             try:
-                parts = shlex.split(user_input)
+                parts = shlex.split(user_input, posix=False)
             except ValueError:
                 parts = user_input.split(maxsplit=20)
             command = parts[0].lower()
@@ -693,7 +693,7 @@ async def run_interactive():
                 if "--workspace" in parts:
                     ws_idx = parts.index("--workspace")
                     if ws_idx + 1 < len(parts):
-                        target_workspace = parts[ws_idx + 1]
+                        target_workspace = parts[ws_idx + 1].strip('"')
                 
                 skip_tokens = ["--keep", "--refresh", "--force", "--fix", "--workspace", target_workspace]
                 filtered_parts = [p for p in parts if p not in skip_tokens]
@@ -1163,7 +1163,7 @@ async def run_interactive():
                 if "--desc" in parts:
                     di = parts.index("--desc")
                     if di + 1 < len(parts):
-                        desc_text = parts[di + 1]
+                        desc_text = parts[di + 1].strip('"')
                         tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
                         tmp.write(f"# Project Specification\n\n{desc_text}")
                         tmp.close()
