@@ -1158,16 +1158,21 @@ async def run_interactive():
                 
                 if "--desc" in parts:
                     di = parts.index("--desc")
-                    end = di + 1
-                    while end < len(parts) and not parts[end].startswith("--"):
-                        end += 1
-                    desc_text = " ".join(parts[di + 1:end])
+                    # Find workspace and force flags AFTER --desc
+                    ws_end = di + 1
+                    for k in range(di + 1, len(parts)):
+                        if parts[k] == "--workspace" and k + 1 < len(parts):
+                            ws_end = k
+                            break
+                    if ws_end == di + 1:
+                        ws_end = len(parts)
+                    desc_text = " ".join(parts[di + 1:ws_end])
                     tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
                     tmp.write(f"# Project Specification\n\n{desc_text}")
                     tmp.close()
                     spec_file = tmp.name
                     greenfield = True
-                    print(f"\n[desc] {desc_text}")
+                    print(f"\n[desc] {desc_text[:120]}...")
                 elif "--from" in parts:
                     fi = parts.index("--from")
                     end = fi + 1

@@ -1,1 +1,0 @@
-{"taskplan": "project_tasks.md", "files": ["pyproject.toml", "config.yaml", "src/__init__.py", "tests/__init__.py", "src/types.py", "src/mock_llm.py", "src/agent_v1_basic.py", "src/agent_v2_tools.py", "src/agent_v3_memory.py", "src/agent_v4_reasoning.py", "src/agent_final.py", "tests/test_agent_tutorial.py", "run_tutorial.py", "README.md", "src/entities.py"]}
