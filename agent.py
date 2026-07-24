@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 import json
 import subprocess
+import shlex
 
 
 DEFAULT_MODEL = "qwen3.6-27b-mtp"
@@ -528,7 +529,10 @@ async def run_interactive():
                 break
             
             # Parse and execute commands
-            parts = user_input.split(maxsplit=20)
+            try:
+                parts = shlex.split(user_input)
+            except ValueError:
+                parts = user_input.split(maxsplit=20)
             command = parts[0].lower()
             
             if command == "read":
@@ -1158,21 +1162,14 @@ async def run_interactive():
                 
                 if "--desc" in parts:
                     di = parts.index("--desc")
-                    # Find workspace and force flags AFTER --desc
-                    ws_end = di + 1
-                    for k in range(di + 1, len(parts)):
-                        if parts[k] == "--workspace" and k + 1 < len(parts):
-                            ws_end = k
-                            break
-                    if ws_end == di + 1:
-                        ws_end = len(parts)
-                    desc_text = " ".join(parts[di + 1:ws_end])
-                    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
-                    tmp.write(f"# Project Specification\n\n{desc_text}")
-                    tmp.close()
-                    spec_file = tmp.name
-                    greenfield = True
-                    print(f"\n[desc] {desc_text[:120]}...")
+                    if di + 1 < len(parts):
+                        desc_text = parts[di + 1]
+                        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
+                        tmp.write(f"# Project Specification\n\n{desc_text}")
+                        tmp.close()
+                        spec_file = tmp.name
+                        greenfield = True
+                        print(f"\n[desc] {desc_text[:120]}...")
                 elif "--from" in parts:
                     fi = parts.index("--from")
                     end = fi + 1
@@ -1183,10 +1180,8 @@ async def run_interactive():
                 
                 if "--features" in parts:
                     fi = parts.index("--features")
-                    end = fi + 1
-                    while end < len(parts) and not parts[end].startswith("--"):
-                        end += 1
-                    feat_val = " ".join(parts[fi + 1:end])
+                    if fi + 1 < len(parts):
+                        feat_val = parts[fi + 1]
                     if os.path.isfile(feat_val):
                         features_file = feat_val
                     else:
@@ -1204,7 +1199,6 @@ async def run_interactive():
                     ws_idx = parts.index("--workspace")
                     if ws_idx + 1 < len(parts):
                         target_workspace = parts[ws_idx + 1]
-                        print(f"  target_workspace set to: {target_workspace}")
                 
                 if spec_file and not os.path.isabs(spec_file):
                     spec_file = os.path.join(target_workspace, spec_file)
