@@ -865,7 +865,25 @@ async def run_interactive():
                     if fp.is_file() and ".git" not in str(fp) and "__pycache__" not in str(fp):
                         pre_snapshot.add(str(fp.relative_to(Path(ws))).replace("\\", "/"))
                 
-                # --- Phase 1: collect all generated content in memory ---
+                # Build initial export map from existing files
+                export_map = {}
+                for fname in list(all_files):
+                    fp = Path(ws) / fname
+                    if fp.exists():
+                        try:
+                            existing = fp.read_text(encoding="utf-8")
+                            exports = set()
+                            for match in re.finditer(r'^(?:class|def)\s+(\w+)', existing, re.MULTILINE):
+                                exports.add(match.group(1))
+                            if exports:
+                                export_map[fname] = exports
+                        except Exception:
+                            pass
+                
+                if export_map:
+                    print(f"Initial export map: {sum(len(v) for v in export_map.values())} exports from {len(export_map)} existing files")
+                
+                # --- Phase 1: generate files incrementally with export context ---
                 generated_content = {}
                 
                 for i in range(0, len(all_files), batch_size):
@@ -874,9 +892,19 @@ async def run_interactive():
                     
                     batch_files_md = "\n".join([f"- {f}" for f in batch])
                     
+                    # Include export map in prompt
+                    export_context = ""
+                    if export_map:
+                        export_lines = []
+                        for mod, exps in sorted(export_map.items()):
+                            if exps:
+                                export_lines.append(f"  {mod} exports: {', '.join(sorted(exps))}")
+                        if export_lines:
+                            export_context = "\n\nAvailable imports from other project modules:\n" + "\n".join(export_lines)
+                    
                     impl_messages = [
-                        {"role": "system", "content": "You are an expert Python developer. Implement or update the specified files. All code MUST pass mypy strict type checking and py_compile.\n\nFor NEW files: create complete, type-safe code.\nFor EXISTING files: ONLY add necessary imports and replace old logic with calls to new modules. Keep unchanged code intact.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# type-safe code\n```"},
-                        {"role": "user", "content": f"Files to implement:\n{batch_files_md}\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\nImplement or update these files. For existing files, ONLY add imports and replace old implementations with new module calls."}
+                        {"role": "system", "content": "You are an expert Python developer. Implement the specified files. All code MUST pass mypy strict type checking and py_compile.\n\nCRITICAL: Use ONLY imports that match the available exports listed below. Do not invent module names or import names that don't exist.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
+                        {"role": "user", "content": f"Files to implement:\n{batch_files_md}\n{export_context}\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\nImplement these files using imports from the available modules listed above."}
                     ]
                     
                     impl_response = None
@@ -916,19 +944,16 @@ async def run_interactive():
                         content = content.strip()
                         generated_content[filename] = content
                         print(f"  Generated: {filename} ({len(content)} bytes)")
-                
-                # --- Phase 2: build export map & validate imports ---
-                if generated_content:
-                    # Build export map from generated content
-                    export_map = {}
-                    for fname, content in generated_content.items():
-                        # Extract class and function names
+                        
+                        # Update export map for next batch
                         exports = set()
                         for match in re.finditer(r'^(?:class|def)\s+(\w+)', content, re.MULTILINE):
                             exports.add(match.group(1))
-                        export_map[fname] = exports
-                    
-                    # Also scan existing files for exports
+                        if exports:
+                            export_map[filename] = exports
+                
+                # --- Phase 2: lightweight validation only for files not in export map ---
+                if generated_content:
                     for fname in all_files:
                         if fname not in export_map:
                             fp = Path(ws) / fname
@@ -938,18 +963,16 @@ async def run_interactive():
                                     exports = set()
                                     for match in re.finditer(r'^(?:class|def)\s+(\w+)', existing, re.MULTILINE):
                                         exports.add(match.group(1))
-                                    export_map[fname] = exports
+                                    if exports:
+                                        export_map[fname] = exports
                                 except Exception:
                                     pass
                     
-                    print(f"\nExport map built: {sum(len(v) for v in export_map.values())} exports across {len(export_map)} modules")
-                    for mod, exp in sorted(export_map.items()):
-                        if exp:
-                            print(f"  {mod}: {', '.join(sorted(exp))}")
+                    print(f"\nExport map: {sum(len(v) for v in export_map.values())} exports across {len(export_map)} modules")
                     
-                    # Validate imports and fix broken ones
+                    # Quick validation: find broken imports
                     broken_imports = {}
-                    stdlib_modules = set()  # skip validation for stdlib/third-party
+                    stdlib_modules = set()
                     
                     for fname, content in generated_content.items():
                         missing = []
@@ -958,13 +981,12 @@ async def run_interactive():
                             imported_names = [n.strip().split(' as ')[0].strip() for n in match.group(2).strip('()').split(',')]
                             src_file = src_module.replace('.', '/') + '.py'
                             
-                            # Skip validation for stdlib/third-party modules
                             if src_file not in export_map:
                                 stdlib_modules.add(src_module)
                                 continue
                             
                             for name in imported_names:
-                                if name.isupper():  # likely a constant/enum
+                                if name.isupper() or name.startswith('_'):
                                     continue
                                 src_exports = export_map.get(src_file, set())
                                 if name not in src_exports:
@@ -974,38 +996,15 @@ async def run_interactive():
                             broken_imports[fname] = missing
                     
                     if stdlib_modules:
-                        print(f"  Skipped stdlib/third-party imports from: {', '.join(sorted(stdlib_modules))}")
+                        print(f"  Skipped stdlib/third-party: {', '.join(sorted(stdlib_modules))}")
                     
-                    # Fix broken imports via LLM
                     if broken_imports:
-                        print(f"\nFound {sum(len(v) for v in broken_imports.values())} broken imports in {len(broken_imports)} files:")
+                        print(f"\n  Found {sum(len(v) for v in broken_imports.values())} broken imports in {len(broken_imports)} files:")
                         for fname, missing in broken_imports.items():
-                            print(f"  {fname}:")
                             for mod, name in missing:
-                                print(f"    imports '{name}' from '{mod}' - NOT FOUND")
-                        
-                        # Build a compact export map for the LLM
-                        export_summary = "\n".join([
-                            f"{mod} exports: {', '.join(sorted(exps))}"
-                            for mod, exps in sorted(export_map.items())
-                        ])
-                        
-                        for fname, missing in broken_imports.items():
-                            print(f"\nFixing imports in {fname}...")
-                            content = generated_content[fname]
-                            
-                            fix_msgs = [
-                                {"role": "system", "content": "Fix ONLY broken imports between project files. Keep ALL stdlib/third-party imports (os, sys, typing, rich, pygame, etc.) exactly as they are. Only fix imports from project modules that don't exist.\n\nFormat: [FILE: filename.py]\n```python\n# code\n```"},
-                                {"role": "user", "content": f"Fix imports in {fname} to match existing project modules.\n\nProject module exports:\n{export_summary}\n\nCurrent code (DO NOT remove stdlib/third-party imports):\n```python\n{content}\n```"}
-                            ]
-                            fixed = await agent.llm.chat(fix_msgs)
-                            if not fixed.startswith("[Error"):
-                                match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', fixed, re.DOTALL)
-                                if match:
-                                    new_content = match.group(2).strip()
-                                    if len(new_content) > len(content) * 0.3:
-                                        generated_content[fname] = new_content
-                                        print(f"  Fixed imports in {fname}")
+                                print(f"    {fname}: '{name}' from '{mod}' not found")
+                    else:
+                        print(f"  All imports verified!")
                 else:
                     print("No content generated.")
                 
