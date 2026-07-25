@@ -1494,15 +1494,48 @@ async def run_interactive():
                     
                     # Keyword match: include files whose name/content matches description keywords
                     keywords = {w.lower() for w in re.findall(r'\w+', desc_text) if len(w) > 3} - {'this', 'that', 'with', 'from', 'they', 'have', 'what', 'when', 'then', 'than', 'show', 'just', 'like'}
-                    for root, dirs, files in os.walk(ws_dir):
-                        if ".git" in root or "__pycache__" in root:
-                            continue
-                        for f in files:
-                            if not f.endswith(".py") or f == "__init__.py":
-                                continue
-                            fp = os.path.normpath(os.path.join(root, f))
-                            if any(kw in f.lower() for kw in keywords):
-                                candidate_files.add(fp)
+                    
+                    # --- Responsibility matching from project_tasks.md ---
+                    resp_matched = set()
+                    tasks_md_path = os.path.join(ws_dir, "project_tasks.md")
+                    if os.path.exists(tasks_md_path):
+                        current_file = None
+                        with open(tasks_md_path, "r", encoding="utf-8") as tf:
+                            for line in tf:
+                                m = re.search(r'`([^`]+\.py)`', line)
+                                if m:
+                                    current_file = m.group(1)
+                                elif current_file and line.strip().startswith('-'):
+                                    task_text = line.strip('- ').strip().lower()
+                                    if any(kw in task_text for kw in keywords):
+                                        fp = os.path.normpath(os.path.join(ws_dir, current_file))
+                                        if os.path.isfile(fp):
+                                            resp_matched.add(fp)
+                                            print(f"  Responsibility match: {current_file} → '{task_text[:80]}'")
+                        if resp_matched:
+                            candidate_files |= resp_matched
+                            print(f"  + {len(resp_matched)} files from project_tasks.md responsibility matching")
+                    
+                    # Also check project_plan.md for richer descriptions
+                    plan_md_path = os.path.join(ws_dir, "project_plan.md")
+                    if os.path.exists(plan_md_path):
+                        plan_matched = set()
+                        with open(plan_md_path, "r", encoding="utf-8") as pf:
+                            plan_text = pf.read()
+                        for root, dirs, files in os.walk(ws_dir):
+                            for f in files:
+                                if f.endswith(".py") and f != "__init__.py":
+                                    fp = os.path.normpath(os.path.join(root, f))
+                                    rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
+                                    # Find paragraph mentioning this file in plan
+                                    idx = plan_text.find(rel)
+                                    if idx > 0:
+                                        snippet = plan_text[max(0, idx-100):idx+200].lower()
+                                        if any(kw in snippet for kw in keywords):
+                                            plan_matched.add(fp)
+                                            print(f"  Plan match: {rel}")
+                        if plan_matched:
+                            candidate_files |= plan_matched
                     
                     print(f"  Tracing imports: {len(candidate_files)} relevant files")
                     
