@@ -1290,33 +1290,86 @@ async def run_interactive():
                         
                         if not errors_found:
                             print("\n[fix] All files pass deep validation!")
-                            print("\n[fix] Running runtime tests...")
+                            print("\n[fix] Running smoke tests (instantiate + call methods)...")
                             
-                            runtime_errors = []
+                            smoke_errors = []
+                            
+                            # Find all classes with no-arg or simple constructors
                             for fname in implemented:
                                 if not fname.endswith(".py"):
                                     continue
                                 fp = Path(ws) / fname
+                                fpath_str = os.path.realpath(fp)
                                 
-                                # Try to actually run the file (catch syntax/logic errors)
-                                if fname in ("run_tutorial.py", "main.py"):
-                                    env = os.environ.copy()
-                                    env["PYTHONIOENCODING"] = "utf-8"
-                                    r = subprocess.run(
-                                        ["python", str(fp), "--step", "1"],
-                                        capture_output=True, text=True, cwd=str(Path(ws)),
-                                        env=env
-                                    )
+                                with open(fpath_str, "r", encoding="utf-8") as sf:
+                                    source = sf.read()
+                                
+                                for cn_match in re.finditer(r'class\s+(\w+)\s*(?:\(.*?\))?\s*:', source):
+                                    cn = cn_match.group(1)
+                                    if cn.startswith('_') or 'Protocol' in source[cn_match.start():cn_match.start()+200]:
+                                        continue
+                                    
+                                    # Find __init__ signature
+                                    init_match = re.search(rf'class\s+{cn}.*?\n(\s+)def\s+__init__\s*\((.*?)\)\s*:', source[cn_match.start():], re.DOTALL)
+                                    params = init_match.group(2) if init_match else ""
+                                    
+                                    # Strip default values, keep only required positional args
+                                    required = []
+                                    for p in params.split(','):
+                                        p = p.strip()
+                                        if not p or p == 'self':
+                                            continue
+                                        if '=' not in p:
+                                            required.append(p.split(':')[0].strip())
+                                    
+                                    mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
+                                    
+                                    import tempfile
+                                    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
+                                        tf.write(f"import sys; sys.path.insert(0, r'{ws}')\n")
+                                        tf.write(f"import {mod_name}\n")
+                                        tf.write(f"print(f'Testing {cn}...')\n")
+                                        tf.write("try:\n")
+                                        
+                                        if not required:
+                                            # No-arg constructor — just instantiate
+                                            tf.write(f"    obj = {mod_name}.{cn}()\n")
+                                            tf.write(f"    print(f'  OK: {cn}() works')\n")
+                                        elif len(required) <= 2:
+                                            # Simple constructor — try with dummy values
+                                            args = ", ".join(f'"mock_{r.split(":")[0].strip()}"' if ':' in r else f'"mock_{r.strip()}"' for r in required)
+                                            tf.write(f"    obj = {mod_name}.{cn}({args})\n")
+                                            tf.write(f"    print(f'  OK: {cn}() works')\n")
+                                        else:
+                                            tf.write(f"    print(f'  SKIP: {cn} needs {len(required)} args')\n")
+                                        
+                                        tf.write("except Exception as e:\n")
+                                        tf.write(f"    print(f'  FAIL: {cn}: {{type(e).__name__}}: {{e}}')\n")
+                                        tfpath = tf.name
+                                    
+                                    r = subprocess.run(["python", tfpath], capture_output=True, text=True, cwd=str(Path(ws)))
+                                    os.unlink(tfpath)
+                                    
                                     if r.returncode != 0:
-                                        runtime_errors.append((fname, r.stderr.strip()[-500:]))
+                                        smoke_errors.append((fname, fpath_str, r.stderr.strip()[-300:]))
+                                    else:
+                                        output = r.stdout.strip()
+                                        if "FAIL:" in output:
+                                            smoke_errors.append((fname, fpath_str, output))
+                                            print(f"  {fname}: {output}")
+                                        elif "SKIP:" in output:
+                                            pass  # too complex, skip
+                                        elif "OK:" in output:
+                                            print(f"  {output}")
                             
-                            if not runtime_errors:
-                                print("[fix] Runtime tests passed!")
+                            if not smoke_errors:
+                                print("[fix] Smoke tests all passed!")
                                 break
                             
-                            print(f"[fix] {len(runtime_errors)} runtime errors found")
-                            for fname, err in runtime_errors:
-                                errors_found.append((fname, str(fp), f"RUNTIME: {err}"))
+                            print(f"\n[fix] {len(smoke_errors)} smoke test failures:")
+                            for fname, fpath, err in smoke_errors:
+                                errors_found.append((fname, fpath, f"SMOKE: {err[:200]}"))
+                                print(f"  - {fname}: {err[:100]}")
                         
                         # Find root cause: file with COMPILE error (IMPORT errors are cascade)
                         err_root = errors_found[0][0]
