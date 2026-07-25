@@ -51,7 +51,7 @@ class LLMClient:
                 method='POST'
             )
 
-            with urllib.request.urlopen(req, timeout=1800) as response:
+            with urllib.request.urlopen(req, timeout=3600) as response:
                 result = json.loads(response.read().decode())
 
                 if 'choices' in result and len(result['choices']) > 0:
@@ -1453,13 +1453,56 @@ async def run_interactive():
                     # Collect all Python source files
                     all_source = ""
                     py_files = []
-                    # Build export map (signatures only) + full source for key files
-                    all_source = "## Project Structure (signatures only)\n\n"
-                    key_files = []
                     
-                    # Build compact export map + full source only for the 3 most relevant files
-                    all_source = ""
-                    key_files = []
+                    # --- Import-chain tracing: find relevant files ---
+                    candidate_files = set()
+                    
+                    # Always include target file
+                    if os.path.isfile(ws_dir):
+                        candidate_files.add(ws_dir)
+                    elif target_file and os.path.isfile(target_file):
+                        candidate_files.add(target_file)
+                    
+                    def get_imported_files(filepath):
+                        """Parse a .py file and return set of {filepath} it imports from."""
+                        result = set()
+                        try:
+                            with open(filepath, "r") as f:
+                                content = f.read()
+                            for match in re.finditer(r'from\s+(\S+)\s+import\s+', content):
+                                module = match.group(1)
+                                path = module.replace('.', os.sep) + '.py'
+                                for search_dir in [ws_dir, str(Path(filepath).parent)]:
+                                    full = os.path.join(search_dir, path)
+                                    if os.path.isfile(full):
+                                        result.add(os.path.normpath(full))
+                                        break
+                        except Exception:
+                            pass
+                        return result
+                    
+                    # Trace imports: target → imports → imports of imports (2 levels)
+                    for f in list(candidate_files):
+                        candidate_files |= get_imported_files(f)
+                    for f in list(candidate_files):
+                        candidate_files |= get_imported_files(f)
+                    
+                    # Keyword match: include files whose name/content matches description keywords
+                    keywords = {w.lower() for w in re.findall(r'\w+', desc_text) if len(w) > 3} - {'this', 'that', 'with', 'from', 'they', 'have', 'what', 'when', 'then', 'than', 'show', 'just', 'like'}
+                    for root, dirs, files in os.walk(ws_dir):
+                        if ".git" in root or "__pycache__" in root:
+                            continue
+                        for f in files:
+                            if not f.endswith(".py") or f == "__init__.py":
+                                continue
+                            fp = os.path.normpath(os.path.join(root, f))
+                            if any(kw in f.lower() for kw in keywords):
+                                candidate_files.add(fp)
+                    
+                    print(f"  Tracing imports: {len(candidate_files)} relevant files")
+                    
+                    # Build output
+                    all_source = "## Project structure\n\n"
                     sig_map = {}
                     
                     for root, dirs, files in os.walk(ws_dir):
@@ -1468,41 +1511,27 @@ async def run_interactive():
                         for f in files:
                             if not f.endswith(".py") or f == "__init__.py":
                                 continue
-                            fp = os.path.join(root, f)
-                            try:
-                                size = os.path.getsize(fp)
-                                if size < 100:
-                                    continue
-                                rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
-                                py_files.append(fp)
-                                
-                                # Only include full source for main.py + target file + 1 more
-                                if rel == "main.py" or rel in desc_text or (len(key_files) < 3 and rel.count('/') <= 1):
+                            fp = os.path.normpath(os.path.join(root, f))
+                            rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
+                            py_files.append(fp)
+                            
+                            if fp in candidate_files:
+                                # Include full source for relevant files
+                                with open(fp, "r", encoding="utf-8") as sf:
+                                    all_source += f"\n\n# === {fp} ===\n{sf.read()}"
+                            else:
+                                # Signatures only
+                                try:
                                     with open(fp, "r", encoding="utf-8") as sf:
-                                        key_files.append((fp, sf.read()))
-                                else:
-                                    # Just signatures, truncated
-                                    with open(fp, "r", encoding="utf-8") as sf:
-                                        content = sf.read()
-                                    sigs = extract_signatures(content)
+                                        sigs = extract_signatures(sf.read())
                                     if sigs:
-                                        sig_lines = ", ".join(f"{n}(...)" for n in sorted(sigs.keys())[:8])
-                                        sig_map[rel] = sig_lines
-                            except Exception:
-                                pass
+                                        sig_map[rel] = ", ".join(f"{n}" for n in sorted(sigs.keys())[:8])
+                                except Exception:
+                                    pass
                     
-                    all_source += f"## Project files ({len(py_files)} total)\n\n"
+                    all_source += f"\n\n## Other project files (signatures only, {len(sig_map)} total)\n\n"
                     for rel, sigs in sorted(sig_map.items()):
                         all_source += f"  {rel}: {sigs}\n"
-                    
-                    if key_files:
-                        all_source += "\n## Key files (full source)\n"
-                        for fp, content in key_files:
-                            # Truncate to 3KB max per file
-                            if len(content) > 3000:
-                                all_source += f"\n# === {fp} (first 3KB) ===\n{content[:3000]}\n# ... truncated\n"
-                            else:
-                                all_source += f"\n# === {fp} ===\n{content}\n"
                     
                     print(f"  Collected {len(py_files)} Python files ({len(all_source)} bytes)")
                     
