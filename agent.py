@@ -1618,6 +1618,13 @@ async def run_interactive():
                             f.write(new_code)
                         fixed_count += 1
                         print(f"  Fixed: {fpath} ({len(new_code)} bytes)")
+                        
+                        # Write changelog
+                        changelog_path = os.path.join(ws_dir, "CHANGES.md")
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        entry = f"\n## {timestamp} — fix --desc\n\n**Change**: Modified `{os.path.basename(fpath)}`\n**Reason**: {desc_text[:200]}\n"
+                        with open(changelog_path, "a", encoding="utf-8") as cl:
+                            cl.write(entry)
                     
                     print(f"\nFixed {fixed_count}/{len(fixes)} files.")
                     continue
@@ -1769,6 +1776,13 @@ async def run_interactive():
                         with open(fpath, "w", encoding="utf-8") as f:
                             f.write(new_code)
                         print(f"\nFixed: {fpath} ({len(new_code)} bytes)")
+                        
+                        # Write changelog
+                        changelog_path = os.path.join(str(Path(fpath).parent), "CHANGES.md")
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        entry = f"\n## {timestamp} — fix\n\n**Change**: Modified `{os.path.basename(fpath)}`\n**Reason**: {error_msg[:200]}\n"
+                        with open(changelog_path, "a", encoding="utf-8") as cl:
+                            cl.write(entry)
                         
                         result = subprocess.run(
                             ["python", "-m", "py_compile", fpath],
