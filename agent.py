@@ -2021,7 +2021,10 @@ async def run_interactive():
                                 with open(pf, "r", encoding="utf-8") as f:
                                     combined += f"\n\n# ---- {pf} ----\n{f.read()}"
                             except: pass
-                        r = await agent.llm.analyze_code(combined)
+                        r = await agent.llm.chat([
+                            {"role": "system", "content": "You are an expert code reviewer. Analyze the existing code AND these new features. Find bugs, gaps, and what needs to change."},
+                            {"role": "user", "content": f"## Existing Code:\n{combined}\n\n## New Features:\n{features}\n\nAnalyze both existing issues and what must change for the new features."}
+                        ])
                         if not step_ok(r): print(f"[analyze] FAILED: {r[:200]}"); continue
                         with open(analysis_md, "w", encoding="utf-8") as f: f.write(r)
                         print(f"[analyze] Written")
