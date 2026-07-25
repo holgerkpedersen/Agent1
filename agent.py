@@ -1364,19 +1364,59 @@ async def run_interactive():
                     current_code = f.read()
                 
                 # Show context around the error
-                lines = current_code.split('\n')
+                lines_list = current_code.split('\n')
                 line_idx = int(line_num) - 1
                 start = max(0, line_idx - 3)
-                end = min(len(lines), line_idx + 4)
+                end = min(len(lines_list), line_idx + 4)
                 print(f"\n  Context (lines {start+1}-{end}):")
                 for i in range(start, end):
                     marker = ">>>" if i == line_idx else "   "
-                    print(f"  {marker} {i+1}: {lines[i][:120]}")
+                    print(f"  {marker} {i+1}: {lines_list[i][:120]}")
+                
+                # Build project export map and check ALL imports in this file
+                project_dir = str(Path(fpath).parent)
+                export_map = {}
+                for root, dirs, files in os.walk(project_dir):
+                    if ".git" in root or "__pycache__" in root:
+                        continue
+                    for fp_name in files:
+                        if fp_name.endswith(".py"):
+                            full = os.path.join(root, fp_name)
+                            try:
+                                with open(full, "r") as pf:
+                                    src = pf.read()
+                                exports = set()
+                                for m in re.finditer(r'^(?:class|def)\s+(\w+)', src, re.MULTILINE):
+                                    exports.add(m.group(1))
+                                if exports:
+                                    rel = os.path.relpath(full, project_dir).replace("\\", "/")
+                                    export_map[rel] = exports
+                            except Exception:
+                                pass
+                
+                all_broken = []
+                for match in re.finditer(r'from\s+(\S+)\s+import\s+(.+?)(?:\s*#|\s*$)', current_code):
+                    src_module = match.group(1)
+                    imported_names = [n.strip().split(' as ')[0].strip() for n in match.group(2).strip('()').split(',')]
+                    src_file = src_module.replace('.', '/') + '.py'
+                    if src_file not in export_map:
+                        continue
+                    src_exports = export_map.get(src_file, set())
+                    for name in imported_names:
+                        if name.isupper() or name.startswith('_'):
+                            continue
+                        if name not in src_exports:
+                            all_broken.append((src_module, name, src_file, sorted(src_exports)))
+                
+                if all_broken:
+                    print(f"\n  Found {len(all_broken)} broken imports in {fpath}:")
+                    for mod, name, src_file, avail in all_broken:
+                        print(f"    '{name}' from '{mod}' not found. Available: {', '.join(avail[:5])}")
                 
                 print(f"\nSending to LLM for fix...")
                 fix_msgs = [
-                    {"role": "system", "content": "Fix the error. Output ONLY the corrected file. Start with [FILE: filename.py].\n```python\n# complete fixed code\n```"},
-                    {"role": "user", "content": f"Fix this error:\n\nFile: {fpath}\nLine: {line_num}\nError: {error_msg}\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}
+                    {"role": "system", "content": "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged.\n\nOutput as: [FILE: filename.py]\n```python\n# complete fixed code\n```"},
+                    {"role": "user", "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n" + chr(10).join([f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}" for m, n, s, a in all_broken]) + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}
                 ]
                 fixed = await agent.llm.chat(fix_msgs)
                 
