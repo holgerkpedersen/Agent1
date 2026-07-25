@@ -2052,7 +2052,10 @@ async def run_interactive():
                         print(f"\n[Skipping entities] exists")
                     else:
                         with open(plan_md, "r", encoding="utf-8") as f: plan = f.read()
-                        with open(entities_file, "r") as f: entities_existing = f.read()
+                        entities_existing = ""
+                        if os.path.exists(entities_md):
+                            with open(entities_md, "r", encoding="utf-8") as f:
+                                entities_existing = f.read()[:3000]
                         r = await agent.llm.chat([
                             {"role": "system", "content": "Extract ONLY NEW shared entities needed for these features. Preserve existing entities. Avoid circular imports. All types must pass mypy strict type checking."},
                             {"role": "user", "content": f"## Plan:\n{plan}\n\n## Existing entities:\n{entities_existing}\n\nExtract only new entities needed."}
