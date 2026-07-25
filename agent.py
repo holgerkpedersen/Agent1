@@ -1453,18 +1453,43 @@ async def run_interactive():
                     # Collect all Python source files
                     all_source = ""
                     py_files = []
+                    # Build export map (signatures only) + full source for key files
+                    all_source = "## Project Structure (signatures only)\n\n"
+                    key_files = []
+                    
                     for root, dirs, files in os.walk(ws_dir):
                         if ".git" in root or "__pycache__" in root:
                             continue
                         for f in files:
-                            if f.endswith(".py"):
-                                fp = os.path.join(root, f)
+                            if not f.endswith(".py") or f == "__init__.py" or "test" in f.lower():
+                                continue
+                            fp = os.path.join(root, f)
+                            try:
+                                size = os.path.getsize(fp)
+                                if size < 100:
+                                    continue
+                                with open(fp, "r", encoding="utf-8") as sf:
+                                    content = sf.read()
+                                
+                                rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
                                 py_files.append(fp)
-                                try:
-                                    with open(fp, "r", encoding="utf-8") as sf:
-                                        all_source += f"\n\n# === {fp} ===\n{sf.read()}"
-                                except Exception:
-                                    pass
+                                
+                                # For top-level and core files, include full source
+                                if rel.count('/') <= 2 and "test" not in rel.lower():
+                                    key_files.append((fp, content))
+                                else:
+                                    # For others, just include signatures
+                                    sigs = extract_signatures(content)
+                                    if sigs:
+                                        sig_lines = "\n  ".join(f"{n}: {s}" for n, s in sorted(sigs.items()))
+                                        all_source += f"# {rel}\n  {sig_lines}\n\n"
+                            except Exception:
+                                pass
+                    
+                    # Add full source for key files
+                    all_source += "\n## Key Files (full source)\n\n"
+                    for fp, content in key_files:
+                        all_source += f"\n# === {fp} ===\n{content}\n"
                     
                     print(f"  Collected {len(py_files)} Python files ({len(all_source)} bytes)")
                     
