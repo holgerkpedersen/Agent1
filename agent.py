@@ -929,6 +929,26 @@ async def run_interactive():
                 if export_map:
                     total_exports = sum(len(v) for v in export_map.values())
                     print(f"Initial export map: {total_exports} signatures from {len(export_map)} existing files")
+                    
+                    # Validate existing files: try to import them, report broken ones
+                    broken_existing = []
+                    for fname in export_map:
+                        fp = Path(ws) / fname
+                        if not fp.exists() or not fname.endswith(".py"):
+                            continue
+                        # Quick compile check
+                        r = subprocess.run(
+                            ["python", "-c", f"import py_compile; py_compile.compile(r'{os.path.realpath(fp)}', doraise=True)"],
+                            capture_output=True, text=True, cwd=str(Path(ws))
+                        )
+                        if r.returncode != 0:
+                            broken_existing.append((fname, r.stderr.strip()[-150:]))
+                    
+                    if broken_existing:
+                        print(f"\n  WARNING: {len(broken_existing)} existing files fail py_compile:")
+                        for fname, err in broken_existing:
+                            print(f"    {fname}: {err[:100]}")
+                        print(f"  These exports may be incomplete. Consider running --fix first.")
                 
                 # --- Phase 1: generate files incrementally with export context ---
                 generated_content = {}
