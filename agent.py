@@ -972,7 +972,7 @@ async def run_interactive():
                             export_context = "\n\nAvailable project modules (use only these names with these exact signatures):\n" + "\n".join(export_lines)
                     
                     impl_messages = [
-                        {"role": "system", "content": "You are an expert Python developer. Implement the specified files. All code MUST pass mypy strict type checking and py_compile.\n\nCRITICAL: Use ONLY imports that match the available exports listed below. Do not invent module names or import names that don't exist.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
+                        {"role": "system", "content": "You are an expert Python developer. Implement the specified files concisely.\n\nRULES:\n1. All code MUST pass mypy strict type checking and py_compile.\n2. Use ONLY imports that match the available exports listed below. Do not invent names.\n3. NEVER create duplicate functions or classes. One implementation per concept. No _v1, _v2, _clean, _final variants.\n4. Keep files under 200 lines. Refactor if longer.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
                         {"role": "user", "content": f"Files to implement:\n{batch_files_md}\n{export_context}\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\nImplement these files using imports from the available modules listed above."}
                     ]
                     
@@ -1395,7 +1395,7 @@ async def run_interactive():
                                 current_code = f.read()
                             
                             fix_msgs = [
-                                {"role": "system", "content": "Fix the error. Output ONLY the corrected file. Start with [FILE: filename.py] immediately. No explanations."},
+                                {"role": "system", "content": "Fix the error. Output ONLY the corrected file. Start with [FILE: filename.py] immediately. No explanations. No duplicate functions. No _v1/_v2 variants."},
                                 {"role": "user", "content": f"Error in {fname}:\n{err}\n\nCurrent code:\n```python\n{current_code}\n```\n\nOutput the fixed file."}
                             ]
                             fixed = await agent.llm.chat(fix_msgs)
@@ -1583,7 +1583,7 @@ async def run_interactive():
                     
                     # Send to LLM for analysis + fix
                     msgs = [
-                        {"role": "system", "content": "You are an expert Python debugger. Analyze the ENTIRE codebase below. Find why the described issue occurs. Fix ALL files needed. Output each fixed file as:\n\n[FILE: absolute/path/to/file.py]\n```python\n# complete fixed code\n```"},
+                        {"role": "system", "content": "You are an expert Python debugger. Analyze the codebase below. Fix ALL files needed. Keep code concise. NEVER create duplicate functions or classes (_v1, _v2, _clean, _final variants). One implementation per concept.\n\nOutput each fixed file as:\n[FILE: absolute/path/to/file.py]\n```python\n# complete fixed code\n```"},
                         {"role": "user", "content": f"The user reports this issue:\n\n{desc_text}\n\nFull project codebase:\n\n{all_source}\n\nAnalyze the issue, find the root cause, and fix ALL affected files. Output each fixed file with its full path."}
                     ]
                     
@@ -1763,7 +1763,7 @@ async def run_interactive():
                 
                 print(f"\nSending to LLM for fix...")
                 fix_msgs = [
-                    {"role": "system", "content": "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged.\n\nOutput as: [FILE: filename.py]\n```python\n# complete fixed code\n```"},
+                    {"role": "system", "content": "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged. No duplicate functions. No _v1/_v2 variants.\n\nOutput as: [FILE: filename.py]\n```python\n# complete fixed code\n```"},
                     {"role": "user", "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n" + chr(10).join([f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}" for m, n, s, a in all_broken]) + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}
                 ]
                 fixed = await agent.llm.chat(fix_msgs)
