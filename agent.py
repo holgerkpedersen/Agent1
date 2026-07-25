@@ -1441,11 +1441,16 @@ async def run_interactive():
                         print("Usage: fix <file> --desc \"describe what's wrong\"")
                         continue
                     
-                    project_dir = target_file if target_file else "."
-                    if os.path.isdir(project_dir):
-                        ws_dir = project_dir
+                    # Resolve target file to absolute path
+                    if target_file:
+                        target_file = os.path.abspath(target_file)
+                        if not os.path.exists(target_file):
+                            print(f"Target file not found: {target_file}")
+                            print("Run this command from the project directory, or use full path.")
+                            continue
+                        ws_dir = str(Path(target_file).parent)
                     else:
-                        ws_dir = str(Path(target_file).parent) if target_file else "."
+                        ws_dir = os.path.abspath(".")
                     
                     print(f"\nAnalyzing project in {ws_dir}...")
                     print(f"Problem: {desc_text[:120]}...")
