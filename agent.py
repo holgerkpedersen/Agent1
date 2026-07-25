@@ -1457,39 +1457,52 @@ async def run_interactive():
                     all_source = "## Project Structure (signatures only)\n\n"
                     key_files = []
                     
+                    # Build compact export map + full source only for the 3 most relevant files
+                    all_source = ""
+                    key_files = []
+                    sig_map = {}
+                    
                     for root, dirs, files in os.walk(ws_dir):
                         if ".git" in root or "__pycache__" in root:
                             continue
                         for f in files:
-                            if not f.endswith(".py") or f == "__init__.py" or "test" in f.lower():
+                            if not f.endswith(".py") or f == "__init__.py":
                                 continue
                             fp = os.path.join(root, f)
                             try:
                                 size = os.path.getsize(fp)
                                 if size < 100:
                                     continue
-                                with open(fp, "r", encoding="utf-8") as sf:
-                                    content = sf.read()
-                                
                                 rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
                                 py_files.append(fp)
                                 
-                                # For top-level and core files, include full source
-                                if rel.count('/') <= 2 and "test" not in rel.lower():
-                                    key_files.append((fp, content))
+                                # Only include full source for main.py + target file + 1 more
+                                if rel == "main.py" or rel in desc_text or (len(key_files) < 3 and rel.count('/') <= 1):
+                                    with open(fp, "r", encoding="utf-8") as sf:
+                                        key_files.append((fp, sf.read()))
                                 else:
-                                    # For others, just include signatures
+                                    # Just signatures, truncated
+                                    with open(fp, "r", encoding="utf-8") as sf:
+                                        content = sf.read()
                                     sigs = extract_signatures(content)
                                     if sigs:
-                                        sig_lines = "\n  ".join(f"{n}: {s}" for n, s in sorted(sigs.items()))
-                                        all_source += f"# {rel}\n  {sig_lines}\n\n"
+                                        sig_lines = ", ".join(f"{n}(...)" for n in sorted(sigs.keys())[:8])
+                                        sig_map[rel] = sig_lines
                             except Exception:
                                 pass
                     
-                    # Add full source for key files
-                    all_source += "\n## Key Files (full source)\n\n"
-                    for fp, content in key_files:
-                        all_source += f"\n# === {fp} ===\n{content}\n"
+                    all_source += f"## Project files ({len(py_files)} total)\n\n"
+                    for rel, sigs in sorted(sig_map.items()):
+                        all_source += f"  {rel}: {sigs}\n"
+                    
+                    if key_files:
+                        all_source += "\n## Key files (full source)\n"
+                        for fp, content in key_files:
+                            # Truncate to 3KB max per file
+                            if len(content) > 3000:
+                                all_source += f"\n# === {fp} (first 3KB) ===\n{content[:3000]}\n# ... truncated\n"
+                            else:
+                                all_source += f"\n# === {fp} ===\n{content}\n"
                     
                     print(f"  Collected {len(py_files)} Python files ({len(all_source)} bytes)")
                     
