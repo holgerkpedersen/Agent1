@@ -13,7 +13,7 @@ import subprocess
 import shlex
 
 
-DEFAULT_MODEL = "google/gemma-4-31b" #"qwen3.6-27b-mtp"
+DEFAULT_MODEL = "laguna-s-2.1" #"google/gemma-4-31b" #"qwen3.6-27b-mtp"
 
 
 class LLMClient:

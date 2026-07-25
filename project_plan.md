@@ -1,248 +1,376 @@
-# 📘 Coding Plan: Beginner-Friendly `agent.py` Tutorial Project
+# Detailed Coding Plan: Agent Codebase Refactoring & Fixes
 
-This plan delivers a **progressive, self-contained tutorial** designed to teach beginners how to build, understand, and extend a Python-based AI agent. The architecture is intentionally framework-agnostic, uses lightweight dependencies, and emphasizes core agent concepts over boilerplate.
-
----
-
-## 📁 1. Complete File Tree
-```
-agent-tutorial/
-├── README.md                          # Main tutorial guide & cheat sheet
-├── pyproject.toml                     # Dependencies, scripts, environment config
-├── .env.example                       # Template for API keys / local settings
-├── config.yaml                        # Agent configuration (model params, tools, memory)
-├── src/
-│   ├── __init__.py
-│   ├── mock_llm.py                    # Zero-API-key LLM simulator for safe practice
-│   ├── agent_v1_basic.py              # Step 1: Minimal agent loop & anatomy
-│   ├── agent_v2_tools.py              # Step 2: Function calling & tool registration
-│   ├── agent_v3_memory.py             # Step 3: Context window & conversation history
-│   ├── agent_v4_reasoning.py          # Step 4: ReAct-style planning loop
-│   └── agent_final.py                 # Polished, production-ready structure
-├── tests/
-│   ├── __init__.py
-│   └── test_agent_tutorial.py         # Validation suite + fill-in-the-blank exercises
-├── run_tutorial.py                    # CLI driver to execute steps sequentially
-└── notebooks/
-    └── interactive_walkthrough.ipynb  # Jupyter version for visual learners
-```
+## Overview
+This plan addresses critical bugs, architectural issues, and code quality concerns identified in the review. The approach prioritizes **mypy strict compliance**, modularization, consistency improvements, and safe concurrency practices.
 
 ---
 
-## 📄 2. File-by-File Specification
+## Phase 1: Immediate Bug Fixes (Critical Issues)
 
-### `README.md`
-- **Purpose**: Central tutorial document. Progressive lessons, setup instructions, mental models, troubleshooting.
-- **Key Sections**:
-  - What is an AI Agent? (Input → Reasoning → Action → Output loop)
-  - How to use this repo (`python run_tutorial.py --step 1`, etc.)
-  - Step-by-step walkthroughs with explanations
-  - Exercises & expected outputs
-  - Common beginner mistakes & debugging tips
-  - "Cheat Sheet" table mapping concepts to code patterns
+### Task 1.1 – Fix Path Normalization Logic (`agent.py`)
+**Problem**: Incorrectly maps Unix paths like `/tmp/file` to Windows-style `C:\tmp\file`.
 
-### `pyproject.toml`
-- **Purpose**: Modern Python packaging, dependency management, CLI scripts.
-- **Contents**:
-  ```toml
-  [project]
-  name = "agent-tutorial"
-  version = "0.1.0"
-  requires-python = ">=3.9"
-  dependencies = [
-      "rich>=13.0",
-      "pyyaml>=6.0",
-      "python-dotenv>=1.0",
-      "pytest>=7.4"
-  ]
+#### Changes Required:
+- Replace hardcoded logic with platform-aware normalization using `os.name == 'nt'` or detect WSL via environment variables.
+- Use standard libraries such as [`pathlib`](https://docs.python.org/3/library/pathlib.html), [`shutil.which()`](https://docs.python.org/3/library/shutil.html#shutil.which) where applicable.
 
-  [project.scripts]
-  run-tutorial = "run_tutorial:main"
-  ```
-- **Why**: Keeps dependencies minimal. `rich` for pretty CLI output, `pyyaml` for config parsing, `dotenv` for safe env vars.
+```python
+import os
+from pathlib import Path
 
-### `.env.example`
-```env
-# Copy to .env and fill if using real LLMs later
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-USE_MOCK_LLM=true  # Set to false when ready for live APIs
-```
-
-### `config.yaml`
-```yaml
-agent:
-  name: "BeginnerAgent"
-  temperature: 0.2
-  max_tokens: 512
-  system_prompt: |
-    You are a helpful assistant. Think step-by-step. 
-    Use tools when needed. Keep responses concise.
-
-tools:
-  - name: calculator
-    description: "Evaluate math expressions"
-    args: ["expression"]
+def _normalize_path_strict(self, path: str) -> Optional[Path]:
+    if not isinstance(path, str):
+        raise TypeError("Expected string for path")
     
-memory:
-  max_turns: 10
-  store_system_messages: false
+    p = Path(path).resolve(strict=False)  # Safe resolution without requiring existence
+    
+    if os.name == "nt" and path.startswith("/"):
+        normalized_path = self._convert_unix_to_windows(p)
+        return normalized_path.resolve()
+
+    elif sys.platform.startswith('linux'):
+        # Assume native Linux behavior; no conversion needed unless explicitly configured otherwise.
+        pass
+
+    try:
+        resolved = p.absolute().resolve(strict=True)  # Resolve symlinks safely
+        if not self._is_within_workspace(resolved):
+            logger.warning("Path outside workspace detected.")
+            return None
+        return resolved
+    except FileNotFoundError as e:
+        logger.error(f"File not found during strict resolve: {e}")
+        return None
 ```
-- **Purpose**: Centralized, human-readable configuration. Teaches beginners how to externalize magic numbers and prompts.
 
-### `src/mock_llm.py`
-- **Purpose**: Safe, offline LLM simulator that mimics OpenAI-style responses without API keys.
-- **Key Concepts**: Deterministic outputs, tool-call simulation, temperature mocking.
-- **Structure**:
-  ```python
-  class MockLLM:
-      def __init__(self, config: dict):
-          self.config = config
-      def chat(self, messages: list[dict]) -> str:
-          # Returns predictable responses based on message content
-          pass
-      def generate_tool_calls(self, messages: list[dict], tools: list) -> list[dict]:
-          # Simulates function calling format
-          pass
-  ```
-
-### `src/agent_v1_basic.py`
-- **Purpose**: Minimal agent loop. Teaches anatomy: prompt → LLM call → output parsing → response.
-- **Key Concepts**: System/user messages, basic I/O, type hints, docstrings.
-- **Structure**:
-  ```python
-  class BasicAgent:
-      def __init__(self, llm, system_prompt: str): ...
-      def run(self, user_input: str) -> str: ...
-  # Includes clear comments mapping to the "Input → Process → Output" mental model
-  ```
-
-### `src/agent_v2_tools.py`
-- **Purpose**: Add tool/function calling. Teaches registration, argument parsing, execution, and result injection.
-- **Key Concepts**: Tool schema, JSON argument extraction, safe execution sandbox, fallback behavior.
-- **Structure**:
-  ```python
-  class ToolAgent:
-      def register_tool(self, name, func, description): ...
-      def _parse_tool_calls(self, llm_output): ...
-      def execute_tools(self, calls): ...
-      def run(self, user_input: str) -> str: ...
-  ```
-
-### `src/agent_v3_memory.py`
-- **Purpose**: Context management. Teaches conversation history, windowing, and system prompt persistence.
-- **Key Concepts**: Message list immutability, sliding window, turn counting, memory serialization.
-- **Structure**:
-  ```python
-  class MemoryAgent:
-      def __init__(self, llm, max_turns=5): ...
-      def add_to_history(self, role, content): ...
-      def get_context_window(self) -> list[dict]: ...
-      def run(self, user_input: str) -> str: ...
-  ```
-
-### `src/agent_v4_reasoning.py`
-- **Purpose**: Multi-step reasoning loop (simplified ReAct). Teaches planning → tool use → reflection → final answer.
-- **Key Concepts**: Loop control, max iterations, thought/action/observation pattern, early exit conditions.
-- **Structure**:
-  ```python
-  class ReasoningAgent:
-      def __init__(self, llm, tools, max_steps=5): ...
-      def _format_react_prompt(self, history, observations): ...
-      def run(self, user_input: str) -> dict: # Returns {thoughts, actions, final_answer}
-  ```
-
-### `src/agent_final.py`
-- **Purpose**: Production-ready structure combining all concepts with logging, error handling, config loading, and clean CLI.
-- **Key Concepts**: Composition over inheritance, graceful degradation, structured logging, environment-aware initialization.
-- **Structure**: Modular imports from v1-v4, wrapped in `AgentOrchestrator` class with `__main__` block for direct execution.
-
-### `tests/test_agent_tutorial.py`
-- **Purpose**: Validation + interactive exercises. Beginners run tests to verify understanding.
-- **Key Concepts**: pytest fixtures, assert patterns, fill-in-the-blank challenges (e.g., `_ = student_implement_tool_parsing()`).
-- **Structure**: Parametrized tests for each step, clear failure messages pointing to tutorial sections.
-
-### `run_tutorial.py`
-- **Purpose**: CLI driver that executes steps sequentially with progress tracking and interactive prompts.
-- **Key Concepts**: argparse, rich console output, step validation, auto-test integration.
-- **Usage**: 
-  ```bash
-  python run_tutorial.py --step all   # Run full tutorial
-  python run_tutorial.py --step 2    # Jump to tools
-  python run_tutorial.py --dry-run   # Show code without executing
-  ```
-
-### `notebooks/interactive_walkthrough.ipynb`
-- **Purpose**: Jupyter alternative for visual learners. Cell-by-cell execution with markdown explanations, plots of memory window, and tool-call traces.
-- **Key Concepts**: `%run`, interactive widgets, output capture, pedagogical pacing.
+> ✅ Ensure all functions have proper type annotations (`Optional[Path]`, etc.)  
+> 🔒 Add unit tests covering edge cases (symlinks, traversal attempts)
 
 ---
 
-## 🧭 3. Tutorial Execution Flow (Pedagogical Path)
+### Task 1.2 – Secure Subprocess Execution With Timeouts
+**Problem**: `subprocess.run(...)` calls can block indefinitely.
 
-| Step | File              | Learning Objective                          | Beginner Exercise                          |
-|------|-------------------|---------------------------------------------|--------------------------------------------|
-| 0    | `README.md`       | Setup environment, understand agent anatomy | Create `.env`, run `python -m pytest`      |
-| 1    | `agent_v1_basic.py` | Message structure, basic LLM call         | Change system prompt, observe output shift |
-| 2    | `agent_v2_tools.py` | Tool registration & JSON argument parsing | Add a `weather` tool, test with query      |
-| 3    | `agent_v3_memory.py`| Context windowing & history management     | Set `max_turns=2`, verify message pruning  |
-| 4    | `agent_v4_reasoning.py`| Planning loop & observation injection   | Trace step-by-step reasoning in console    |
-| 5    | `agent_final.py`  | Composition, logging, production patterns  | Swap `MockLLM` → real API key, run live    |
+#### Changes Required:
+- Wrap all subprocess invocations with explicit timeouts and error handling.
 
----
+```python
+import asyncio.subprocess as async_subprocess
 
-## ⚙️ 4. Setup & Execution Instructions
+async def _run_compilation_check(self, filepath_str: str) -> bool:
+    proc = await async_subprocess.create_exec(
+        ["python", "-m", "py_compile", filepath_str],
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+    except asyncio.TimeoutError:
+        logger.error("Compilation timed out after 30 seconds.")
+        return False
 
-1. **Clone & Install**
-   ```bash
-   git clone <repo> && cd agent-tutorial
-   python -m venv .venv && source .venv/bin/activate
-   pip install -e ".[dev]"
-   cp .env.example .env  # Set USE_MOCK_LLM=true initially
-   ```
+    if proc.returncode != 0:
+        logger.debug(stderr.decode())
+        return False
+    return True
+```
 
-2. **Run Tutorial**
-   ```bash
-   python run_tutorial.py --step 1  # Start basic agent
-   python run_tutorial.py --step all  # Full progressive run
-   ```
-
-3. **Validate Learning**
-   ```bash
-   pytest tests/ -v --tb=short
-   ```
-
-4. **Go Live (Optional)**
-   - Set `USE_MOCK_LLM=false` in `.env`
-   - Add real API key
-   - Update `src/mock_llm.py` import to use `openai.OpenAI()` or `langchain.llms`
+> ⚠️ Migrate blocking calls to async equivalents or use executors with timeouts.  
+> 🧪 Write mock-based tests simulating slow/hanging processes.
 
 ---
 
-## 🧠 5. Architectural & Pedagogical Design Notes
+### Task 1.3 – Improve LLMClient.chat() Return Consistency
+**Problem**: Inconsistent error reporting via strings instead of structured exceptions/types.
 
-| Principle                  | Implementation                                                                 |
-|---------------------------|--------------------------------------------------------------------------------|
-| **Progressive Disclosure** | Each file adds exactly one new concept. No hidden complexity.                  |
-| **Safe-by-Default**        | `MockLLM` prevents accidental API costs. Tools run in isolated scope.          |
-| **Explicit Over Implicit** | All prompts, configs, and tool schemas are externalized & documented.          |
-| **Test-as-Tutorial**       | Exercises live in `test_agent_tutorial.py`. Passing = mastery.                 |
-| **Framework Agnostic**     | Zero LangChain/CrewAI dependency. Easy to port to any ecosystem later.         |
-| **Debuggable by Design**   | Structured logging, step tracing, and `--dry-run` mode for safe exploration.   |
+#### Changes Required:
+- Define a typed result object or union type indicating success/failure states.
+
+```python
+from typing import Union, NamedTuple
+
+class LlmResponse(NamedTuple):
+    content: str
+    is_error: bool = False
+
+def chat(self, prompt: str) -> Union[LlmResponse, Exception]:
+    try:
+        response = requests.post(...)  # Or httpx/aiohttp for async support
+        if not response.ok:
+            return LlmResponse(content=str(response.text), is_error=True)
+        
+        data = response.json()
+        choices = data.get("choices", [])
+        if len(choices) == 0:
+            return LlmResponse(content="No response from LLM.", is_error=True)
+
+        first_choice = choices[0]
+        text_response = first_choice["message"]["content"]
+        return LlmResponse(content=text_response.strip(), is_error=False)
+
+    except RequestException as e:
+        logger.exception("HTTP request failed")
+        return LlmResponse(content=f"[LM Studio error: {str(e)}]", is_error=True)
+```
+
+> 💡 Consider integrating with a unified exception hierarchy defined below.  
+> 📊 Update callers to check `.is_error` flag rather than matching substrings.
 
 ---
 
-## 🔮 6. Extensibility Path (Post-Tutorial)
+### Task 1.4 – Fix Method Signature Regex Extraction (`extract_signatures`)
+**Problem**: Regex only matches single-space indentation before `def`.
 
-Once beginners complete the tutorial, they can extend:
-- Add streaming responses (`asyncio` + token-by-token output)
-- Implement tool validation with Pydantic schemas
-- Swap `MockLLM` for OpenAI, Anthropic, or local Llama.cpp
-- Add evaluation harness (accuracy, hallucination checks, cost tracking)
-- Package as CLI tool or FastAPI backend
+#### Changes Required:
+- Broaden regex pattern to accept any whitespace including tabs/multiple spaces.
+
+Before:
+```regex
+r'^\s+def\s+(\w+)\s*\((.*?)\)\s*(?:->\s*(.+?))?\s*:'
+```
+
+After:
+```regex
+r'^[\t ]+(async )?def\s+(\w+)\s*\(([^)]*)\)(?:\s*->\s*(.*))?:\s*$'
+```
+
+Also, ensure that `re.MULTILINE` mode is enabled when scanning large files.
+
+> ✅ Test against various Python formatting styles (PEP8-compliant vs tab-indented).  
+> 🛠 Consider leveraging AST parsing as alternative strategy for robustness.
 
 ---
 
-✅ **This plan delivers a complete, production-grade tutorial structure that teaches agent fundamentals intuitively, safely, and progressively. Every file serves a pedagogical purpose, and the architecture scales from beginner exercises to real-world deployment.** 
+## Phase 2: Structural Improvements & Modularization
 
-Ready for implementation. Let me know if you want any file fully coded or adapted to a specific framework (LangChain, AutoGen, CrewAI, etc.).
+### Task 2.1 – Consolidate Duplicate Exception Definitions
+**Problem**: Multiple modules define overlapping exception classes causing confusion and potential shadowing issues.
+
+#### Strategy:
+Create a centralized `exceptions.py` module inside `agent_core/` that defines all domain-specific exceptions once. Migrate other files to import from this location exclusively.
+
+Example structure:
+
+```python
+# agent_core/exceptions.py
+class AgentBaseError(Exception): ...
+class FileOperationError(AgentBaseError): ...
+class SecurityViolationError(AgentBaseError): ...
+
+# In agent.py or anywhere else needing an error:
+from .agent_core.exceptions import FileOperationError
+raise FileOperationError("Invalid file access attempt")
+```
+
+> 🗑 Deprecate duplicate definitions in legacy modules (`entities.py`, `path_utils.py`).  
+> ⚖️ Introduce backward compatibility shims temporarily if needed.
+
+---
+
+### Task 2.2 – Refactor Monolithic Functions Into Handlers
+**Problem**: Massive functions like `run_interactive()` violate SRP and are hard to maintain/test.
+
+#### Strategy:
+Break down monolithic logic into discrete handler classes implementing a common interface.
+
+```python
+from abc import ABC, abstractmethod
+from typing import List
+
+class CommandHandler(ABC):
+    @abstractmethod
+    async def handle(self, args: List[str]) -> int: ...  # Returns exit code
+
+class AnalyzeCommand(CommandHandler):
+    async def handle(self, args: List[str]) -> int:
+        ...
+
+class ImplementCommand(CommandHandler):
+    async def handle(self, args: List[str]) -> int:
+        ...
+
+COMMAND_REGISTRY = {
+    "analyze": AnalyzeCommand(),
+    "implement": ImplementCommand()
+}
+```
+
+Update main entry point to route based on registry lookup.
+
+> 🧵 Maintain backward compatibility with existing CLI usage patterns.  
+> 📦 Encapsulate each subcommand in its own file/module for clarity.
+
+---
+
+### Task 2.3 – Centralize Configuration Management Using Dataclasses/Pydantic
+**Problem**: Scattered constants and magic values make configuration brittle.
+
+#### Strategy:
+Define immutable settings class using `@dataclass(frozen=True)` or Pydantic BaseModel depending on validation needs.
+
+```python
+from dataclasses import dataclass, field
+from pathlib import Path
+
+@dataclass(frozen=True)
+class AgentSettings:
+    workspace_root: Path = field(default_factory=lambda: Path.cwd())
+    llm_api_url: str = "http://localhost:1234/v1"
+    max_concurrent_tools: int = 5
+    search_command_timeout_sec: float = 30.0
+
+settings = AgentSettings()
+```
+
+Pass instances around constructors or context managers instead of global access.
+
+> 🛡 Validate inputs at startup time (e.g., check URL format, valid directories).  
+> 📋 Document defaults clearly in docstrings/comments.
+
+---
+
+### Task 2.4 – Structured Logging Integration Across Modules
+**Problem**: Print statements scattered throughout codebase hinder debugging and monitoring capabilities.
+
+#### Strategy:
+Replace `print()` with structured logging using Python’s built-in `logging` module integrated with existing config (`logging_config.py`).
+
+```python
+import logging
+logger = logging.getLogger(__name__)
+
+# Old way:
+print("Processing file...")
+
+# New way:
+logger.info("Started processing", extra={"filename": filename})
+```
+
+Ensure consistent log levels (INFO/WARNING/ERROR) and structured metadata fields.
+
+> 📈 Enable JSON-formatted logs for easier ingestion into observability stacks.  
+> 🕵️‍♂️ Avoid logging sensitive information like full file contents or credentials.
+
+---
+
+### Task 2.5 – Async File I/O Migration Using `aiofiles`
+**Problem**: Blocking disk operations inside async contexts degrade performance and responsiveness.
+
+#### Strategy:
+Replace synchronous reads/writes with `aiofiles.open()` wrapper functions.
+
+```python
+import aiofiles
+
+async def read_file_async(filepath: str) -> Optional[str]:
+    try:
+        async with aiofiles.open(filepath, 'r', encoding='utf-8') as f:
+            return await f.read()
+    except FileNotFoundError:
+        logger.warning(f"File not found: {filepath}")
+        return None
+```
+
+Apply this consistently across all I/O-heavy sections.
+
+> 🔄 Audit entire codebase for remaining blocking calls and migrate them gradually.  
+> 📊 Benchmark before/after to measure impact on throughput/latency.
+
+---
+
+## Phase 3: Testing Infrastructure Setup
+
+### Task 3.1 – Establish Unit Tests for Core Components
+**Problem**: Zero test coverage exposes risk in future changes.
+
+#### Targets for Initial Coverage:
+- Path normalization/validation logic (traversal protection, symlink resolution)
+- LLM response parsing/error handling branches
+- Tool execution dispatch flow (mock external dependencies)
+- Semantic index cleanup behaviors under memory pressure scenarios
+
+Use `pytest`, `unittest.mock` for mocks/stubs.
+
+Sample test scaffold:
+
+```python
+import pytest
+from unittest import mock
+from agent_core.path_utils import _normalize_path_strict
+
+@pytest.fixture
+def temp_workspace(tmpdir):
+    return tmpdir.mkdir("workspace")
+
+def test_normalize_valid_absolute(temp_workspace):
+    path = str(temp_workspace.joinpath("file.txt"))
+    result = _normalize_path_strict(path)
+    assert result is not None
+```
+
+> 🧪 Automate test runs via CI pipelines (GitHub Actions, GitLab CI).  
+> 📈 Track coverage metrics using `coverage.py`.
+
+---
+
+## Phase 4: Cleanup & Finalization Tasks
+
+### Task 4.1 – Resolve Circular Imports & Cross-Module Reference Issues
+**Problem**: Implicit dependencies between modules create fragile import order requirements.
+
+#### Strategy:
+Audit all inter-module imports and restructure to avoid cycles:
+
+- Move shared types/constants into lower-level utility packages (`agent_core/types.py`)
+- Use lazy imports where necessary (only when actually used)
+- Enforce unidirectional dependency graph through linting tools like `importchecker` or manual audits
+
+> 🔄 Review `__init__.py` files carefully—avoid importing too much eagerly.  
+> 📜 Apply PEP 484 typing discipline rigorously to catch mismatches early.
+
+---
+
+### Task 4.2 – Eliminate Bare Except Clauses & Improve Error Handling Granularity
+**Problem**: Broad exception catches hide real bugs and complicate debugging.
+
+#### Strategy:
+Replace generic `except Exception:` blocks with specific ones targeting known failure modes.
+
+```python
+# Bad:
+try:
+    content = fp.read_text(...)
+except Exception:
+    pass
+
+# Good:
+try:
+    content = fp.read_text(encoding="utf-8")
+except FileNotFoundError as e:
+    logger.warning(f"File disappeared unexpectedly: {e}")
+except PermissionError as e:
+    logger.error(f"Permission denied reading file: {e}")
+else:
+    process(content)
+```
+
+> 🚨 Never silently ignore unexpected exceptions.  
+> 📋 Log contextual info whenever catching broad categories like `OSError`.
+
+---
+
+## Summary Checklist Before Merging
+
+| Item | Status |
+|------|--------|
+| All modified functions pass mypy strict checks | ❏ |
+| No bare except clauses remain unhandled | ❏ |
+| Async file I/O replaces all blocking operations | ❏ |
+| Unified exception hierarchy adopted across modules | ❏ |
+| Structured logging replaces print statements | ❏ |
+| Unit tests cover critical components (>70% coverage goal) | ❏ |
+| Documentation updated for new APIs/configurations | ❏ |
+
+--- 
+
+Let me know which phase/task you'd like to start working on next!
