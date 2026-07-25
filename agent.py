@@ -508,6 +508,7 @@ async def run_interactive():
     print("  taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks")
     print("  implement <taskplan.md> [--keep] [--force] [--workspace <path>] - Implement files")
     print("  fix \"<traceback>\"   - Paste a traceback to auto-fix the error")
+    print("  fix <file> --desc \"text\" - Describe an issue, LLM analyzes full codebase and fixes it")
     print("  cleanup             - Show unreferenced files and reference graph")
     print("  workflow <target> [--from spec.md] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] - Full pipeline")
     print("  clear              - Clear agent memory")
@@ -1424,10 +1425,91 @@ async def run_interactive():
                     print(f"\n[fix] Complete")
             
             elif command == "fix":
-                # Read multi-line traceback
-                traceback_text = user_input[4:].strip()
-                if traceback_text.startswith('"') and traceback_text.endswith('"'):
-                    traceback_text = traceback_text[1:-1]
+                # Check for --desc mode: analyze full codebase with description
+                if "--desc" in parts:
+                    di = parts.index("--desc")
+                    desc_text = parts[di + 1].strip('"') if di + 1 < len(parts) else ""
+                    
+                    # Find the target file (first non-flag arg after "fix")
+                    target_file = None
+                    for p in parts[1:]:
+                        if not p.startswith("--") and p != desc_text:
+                            target_file = p
+                            break
+                    
+                    if not desc_text:
+                        print("Usage: fix <file> --desc \"describe what's wrong\"")
+                        continue
+                    
+                    project_dir = target_file if target_file else "."
+                    if os.path.isdir(project_dir):
+                        ws_dir = project_dir
+                    else:
+                        ws_dir = str(Path(target_file).parent) if target_file else "."
+                    
+                    print(f"\nAnalyzing project in {ws_dir}...")
+                    print(f"Problem: {desc_text[:120]}...")
+                    
+                    # Collect all Python source files
+                    all_source = ""
+                    py_files = []
+                    for root, dirs, files in os.walk(ws_dir):
+                        if ".git" in root or "__pycache__" in root:
+                            continue
+                        for f in files:
+                            if f.endswith(".py"):
+                                fp = os.path.join(root, f)
+                                py_files.append(fp)
+                                try:
+                                    with open(fp, "r", encoding="utf-8") as sf:
+                                        all_source += f"\n\n# === {fp} ===\n{sf.read()}"
+                                except Exception:
+                                    pass
+                    
+                    print(f"  Collected {len(py_files)} Python files ({len(all_source)} bytes)")
+                    
+                    # Send to LLM for analysis + fix
+                    msgs = [
+                        {"role": "system", "content": "You are an expert Python debugger. Analyze the ENTIRE codebase below. Find why the described issue occurs. Fix ALL files needed. Output each fixed file as:\n\n[FILE: absolute/path/to/file.py]\n```python\n# complete fixed code\n```"},
+                        {"role": "user", "content": f"The user reports this issue:\n\n{desc_text}\n\nFull project codebase:\n\n{all_source}\n\nAnalyze the issue, find the root cause, and fix ALL affected files. Output each fixed file with its full path."}
+                    ]
+                    
+                    print("Sending to LLM for deep analysis...")
+                    response = await agent.llm.chat(msgs)
+                    
+                    if response.startswith("[Error") or response.startswith("[LM Studio"):
+                        print(f"LLM error: {response[:200]}")
+                        continue
+                    
+                    # Parse fixed files from response
+                    file_pattern = r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```'
+                    fixes = re.findall(file_pattern, response, re.DOTALL)
+                    
+                    if not fixes:
+                        print("Could not parse fixes. Raw response saved.")
+                        print(response[:1000])
+                        continue
+                    
+                    fixed_count = 0
+                    for fpath, new_code in fixes:
+                        fpath = fpath.strip()
+                        new_code = new_code.strip()
+                        if not os.path.exists(fpath):
+                            print(f"  Skipping {fpath} (not found)")
+                            continue
+                        if len(new_code) < 50 or "import" not in new_code:
+                            print(f"  Skipping {fpath} (invalid content)")
+                            continue
+                        
+                        with open(fpath, "w", encoding="utf-8") as f:
+                            f.write(new_code)
+                        fixed_count += 1
+                        print(f"  Fixed: {fpath} ({len(new_code)} bytes)")
+                    
+                    print(f"\nFixed {fixed_count}/{len(fixes)} files.")
+                    continue
+                
+                # Read multi-line traceback (existing traceback mode)
                 
                 # If user typed "fix" alone, read multi-line input
                 if not traceback_text or "File \"" not in traceback_text:
