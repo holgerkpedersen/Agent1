@@ -1445,10 +1445,13 @@ async def run_interactive():
                     if target_file:
                         target_file = os.path.abspath(target_file)
                         if not os.path.exists(target_file):
-                            print(f"Target file not found: {target_file}")
-                            print("Run this command from the project directory, or use full path.")
+                            print(f"Target not found: {target_file}")
                             continue
-                        ws_dir = str(Path(target_file).parent)
+                        if os.path.isdir(target_file):
+                            ws_dir = target_file
+                            target_file = None  # No single target file
+                        else:
+                            ws_dir = str(Path(target_file).parent)
                     else:
                         ws_dir = os.path.abspath(".")
                     
@@ -1463,10 +1466,15 @@ async def run_interactive():
                     candidate_files = set()
                     
                     # Always include target file
-                    if os.path.isfile(ws_dir):
-                        candidate_files.add(ws_dir)
-                    elif target_file and os.path.isfile(target_file):
+                    if target_file and os.path.isfile(target_file):
                         candidate_files.add(target_file)
+                    elif not target_file:
+                        # No specific file — seed from all top-level .py files
+                        for f in os.listdir(ws_dir):
+                            fp = os.path.join(ws_dir, f)
+                            if f.endswith(".py") and os.path.isfile(fp):
+                                candidate_files.add(fp)
+                                print(f"  Seed: {f}")
                     
                     def get_imported_files(filepath):
                         """Parse a .py file and return set of {filepath} it imports from."""
