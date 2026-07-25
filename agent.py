@@ -1404,6 +1404,32 @@ async def run_interactive():
                 print(f"\nError in {fpath}:{line_num}")
                 print(f"  {error_msg}")
                 
+                # Root cause detection: is this a cascade error from an import?
+                is_import_error = "ImportError" in error_msg or "ModuleNotFoundError" in error_msg or "cannot import" in error_msg
+                root_path = fpath
+                root_line = line_num
+                
+                if is_import_error:
+                    # Search the traceback for earlier files that might be the root cause
+                    all_files_in_trace = matches
+                    if len(all_files_in_trace) > 1:
+                        print(f"\n  Cascade detected! {len(all_files_in_trace)} files in trace:")
+                        for i, (fp, ln) in enumerate(all_files_in_trace):
+                            marker = " → ROOT" if i == 0 else ""
+                            print(f"    {i+1}. {fp}:{ln}{marker}")
+                        
+                        # The FIRST file in the traceback is where the actual error originates
+                        root_file = all_files_in_trace[0][0]
+                        root_ln = all_files_in_trace[0][1]
+                        
+                        if root_file != fpath and os.path.exists(root_file):
+                            print(f"\n  Root cause is in {root_file}:{root_ln}, not in {fpath}")
+                            print(f"  Fixing {root_file} instead...")
+                            fpath = root_file
+                            line_num = root_ln
+                            error_msg = f"Cascading ImportError from {fpath}"
+                
+                # Read the file (either original or root cause)
                 with open(fpath, "r", encoding="utf-8") as f:
                     current_code = f.read()
                 
