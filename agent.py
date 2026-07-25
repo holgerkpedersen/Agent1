@@ -865,6 +865,54 @@ async def run_interactive():
                     if fp.is_file() and ".git" not in str(fp) and "__pycache__" not in str(fp):
                         pre_snapshot.add(str(fp.relative_to(Path(ws))).replace("\\", "/"))
                 
+                def extract_signatures(source: str) -> dict:
+                    """Extract function/class signatures from Python source."""
+                    sigs = {}
+                    # Match class definitions
+                    for m in re.finditer(r'^class\s+(\w+)\s*(?:\((.*?)\))?\s*:', source, re.MULTILINE):
+                        cls_name = m.group(1)
+                        bases = m.group(2).strip() if m.group(2) else ""
+                        sigs[cls_name] = f"class {cls_name}({bases})" if bases else f"class {cls_name}"
+                    
+                    # Match def inside these classes or at module level
+                    for m in re.finditer(r'^\s+def\s+(\w+)\s*\((.*?)\)\s*(?:->\s*(.+?))?\s*:', source, re.MULTILINE):
+                        func_name = m.group(1)
+                        params = m.group(2).strip() if m.group(2) else ""
+                        returns = m.group(3).strip() if m.group(3) else ""
+                        sig = f"{func_name}({params})"
+                        if returns:
+                            sig += f" -> {returns}"
+                        sigs[func_name] = sig
+                    
+                    # TypedDict/Protocol fields
+                    for td_match in re.finditer(r'class\s+(\w+)\s*\(\s*(?:TypedDict|Protocol)\b', source):
+                        td_name = td_match.group(1)
+                        # Find the ':' that starts the class body
+                        pos = td_match.end()
+                        paren_depth = 0
+                        while pos < len(source) and source[pos] != ':':
+                            if source[pos] == '(': paren_depth += 1
+                            elif source[pos] == ')': paren_depth -= 1
+                            pos += 1
+                        if pos < len(source) and source[pos] == ':':
+                            body_start = pos + 1
+                            fields = []
+                            lines = source[body_start:].split('\n')
+                            for line in lines:
+                                stripped = line.strip()
+                                if not stripped or stripped.startswith('#') or stripped.startswith('"""'):
+                                    continue
+                                if not line.startswith('    ') and stripped:
+                                    break
+                                if ':' in stripped and not stripped.startswith('def ') and not stripped.startswith('class '):
+                                    field_name = stripped.split(':')[0].strip()
+                                    field_type = ':'.join(stripped.split(':')[1:]).strip()
+                                    fields.append(f"{field_name}: {field_type}")
+                            if fields:
+                                sigs[td_name] = f"{td_name} fields: {{{', '.join(fields[:8])}}}"
+                    
+                    return sigs
+                
                 # Build initial export map from existing files
                 export_map = {}
                 for fname in list(all_files):
@@ -872,16 +920,15 @@ async def run_interactive():
                     if fp.exists():
                         try:
                             existing = fp.read_text(encoding="utf-8")
-                            exports = set()
-                            for match in re.finditer(r'^(?:class|def)\s+(\w+)', existing, re.MULTILINE):
-                                exports.add(match.group(1))
-                            if exports:
-                                export_map[fname] = exports
+                            sigs = extract_signatures(existing)
+                            if sigs:
+                                export_map[fname] = sigs
                         except Exception:
                             pass
                 
                 if export_map:
-                    print(f"Initial export map: {sum(len(v) for v in export_map.values())} exports from {len(export_map)} existing files")
+                    total_exports = sum(len(v) for v in export_map.values())
+                    print(f"Initial export map: {total_exports} signatures from {len(export_map)} existing files")
                 
                 # --- Phase 1: generate files incrementally with export context ---
                 generated_content = {}
@@ -892,15 +939,16 @@ async def run_interactive():
                     
                     batch_files_md = "\n".join([f"- {f}" for f in batch])
                     
-                    # Include export map in prompt
+                    # Include export map with signatures in prompt
                     export_context = ""
                     if export_map:
                         export_lines = []
-                        for mod, exps in sorted(export_map.items()):
-                            if exps:
-                                export_lines.append(f"  {mod} exports: {', '.join(sorted(exps))}")
+                        for mod, sigs in sorted(export_map.items()):
+                            if sigs:
+                                sig_list = ", ".join(f"{name}: {sig}" for name, sig in sorted(sigs.items()))
+                                export_lines.append(f"  {mod} → {sig_list}")
                         if export_lines:
-                            export_context = "\n\nAvailable imports from other project modules:\n" + "\n".join(export_lines)
+                            export_context = "\n\nAvailable project modules (use only these names with these exact signatures):\n" + "\n".join(export_lines)
                     
                     impl_messages = [
                         {"role": "system", "content": "You are an expert Python developer. Implement the specified files. All code MUST pass mypy strict type checking and py_compile.\n\nCRITICAL: Use ONLY imports that match the available exports listed below. Do not invent module names or import names that don't exist.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
@@ -945,12 +993,10 @@ async def run_interactive():
                         generated_content[filename] = content
                         print(f"  Generated: {filename} ({len(content)} bytes)")
                         
-                        # Update export map for next batch
-                        exports = set()
-                        for match in re.finditer(r'^(?:class|def)\s+(\w+)', content, re.MULTILINE):
-                            exports.add(match.group(1))
-                        if exports:
-                            export_map[filename] = exports
+                        # Update export map with signatures for next batch
+                        sigs = extract_signatures(content)
+                        if sigs:
+                            export_map[filename] = sigs
                 
                 # --- Phase 2: lightweight validation only for files not in export map ---
                 if generated_content:
@@ -960,11 +1006,9 @@ async def run_interactive():
                             if fp.exists():
                                 try:
                                     existing = fp.read_text(encoding="utf-8")
-                                    exports = set()
-                                    for match in re.finditer(r'^(?:class|def)\s+(\w+)', existing, re.MULTILINE):
-                                        exports.add(match.group(1))
-                                    if exports:
-                                        export_map[fname] = exports
+                                    sigs = extract_signatures(existing)
+                                    if sigs:
+                                        export_map[fname] = sigs
                                 except Exception:
                                     pass
                     
@@ -988,7 +1032,7 @@ async def run_interactive():
                             for name in imported_names:
                                 if name.isupper() or name.startswith('_'):
                                     continue
-                                src_exports = export_map.get(src_file, set())
+                                src_exports = export_map.get(src_file, {})
                                 if name not in src_exports:
                                     missing.append((src_module, name))
                         
