@@ -2031,13 +2031,21 @@ async def run_interactive():
                         print(f"\n[Skipping plan] exists")
                     else:
                         with open(analysis_md, "r", encoding="utf-8") as f: analysis = f.read()
+                        
+                        # Include existing plan as context
+                        existing_plan = ""
+                        if os.path.exists(plan_md):
+                            with open(plan_md, "r", encoding="utf-8") as f:
+                                existing_plan = f.read()[:3000]  # cap to keep prompt size reasonable
+                        
                         r = await agent.llm.chat([
-                            {"role": "system", "content": "You are an expert software architect. Create a plan that extends the EXISTING codebase with these new features. Preserve existing architecture. Show what to ADD and what MINIMAL changes are needed in existing files."},
-                            {"role": "user", "content": f"## Existing code analysis:\n{analysis}\n\n## New features to add:\n{features}\n\nCreate a plan that integrates these features into the existing codebase."}
+                            {"role": "system", "content": "You are an expert software architect. Create a plan that extends the EXISTING codebase with these new features. \n\nIMPORTANT: \n- Start with '## Feature Addition: <summary>' \n- List NEW files to create\n- List EXISTING files to modify and what minimal changes are needed\n- Explain WHY each change is needed\n- Preserve existing architecture"},
+                            {"role": "user", "content": f"## Existing code analysis:\n{analysis}\n\n## Existing plan:\n{existing_plan if existing_plan else 'No existing plan'}\n\n## New features to add:\n{features}\n\nCreate a plan that integrates these features into the existing codebase."}
                         ])
                         if not step_ok(r): print(f"[plan] FAILED: {r[:200]}"); continue
-                        with open(plan_md, "w", encoding="utf-8") as f: f.write(r)
-                        print(f"[plan] Written")
+                        with open(plan_md, "a", encoding="utf-8") as f:
+                            f.write(f"\n\n---\n\n{r}")
+                        print(f"[plan] Appended to {plan_md}")
                     
                     # Step 3: Extract new entities (preserve existing)
                     if not force and os.path.exists(entities_md):
@@ -2050,8 +2058,9 @@ async def run_interactive():
                             {"role": "user", "content": f"## Plan:\n{plan}\n\n## Existing entities:\n{entities_existing}\n\nExtract only new entities needed."}
                         ])
                         if not step_ok(r): print(f"[entities] FAILED: {r[:200]}"); continue
-                        with open(entities_md, "w", encoding="utf-8") as f: f.write(r)
-                        print(f"[entities] Written")
+                        with open(entities_md, "a", encoding="utf-8") as f:
+                            f.write(f"\n\n---\n\n{r}")
+                        print(f"[entities] Appended")
                     
                     # Step 4: Taskplan for adding features
                     if not force and os.path.exists(tasks_md):
@@ -2064,8 +2073,9 @@ async def run_interactive():
                             {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\nCreate implementation tasks."}
                         ])
                         if not step_ok(r): print(f"[taskplan] FAILED: {r[:200]}"); continue
-                        with open(tasks_md, "w", encoding="utf-8") as f: f.write(r)
-                        print(f"[taskplan] Written")
+                        with open(tasks_md, "a", encoding="utf-8") as f:
+                            f.write(f"\n\n---\n\n{r}")
+                        print(f"[taskplan] Appended")
                     
                     print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
                     
