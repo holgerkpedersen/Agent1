@@ -1630,6 +1630,9 @@ async def run_interactive():
                     continue
                 
                 # Read multi-line traceback (existing traceback mode)
+                traceback_text = user_input[4:].strip()
+                if traceback_text.startswith('"') and traceback_text.endswith('"'):
+                    traceback_text = traceback_text[1:-1]
                 
                 # If user typed "fix" alone, read multi-line input
                 if not traceback_text or "File \"" not in traceback_text:
