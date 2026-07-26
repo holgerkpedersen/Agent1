@@ -2009,7 +2009,7 @@ async def run_interactive():
                         with open(plan_md, "r", encoding="utf-8") as f: plan = f.read()
                         with open(entities_md, "r", encoding="utf-8") as f: entities = f.read()
                         r = await agent.llm.chat([
-                            {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. No intro text. No code blocks."},
+                            {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text. No code blocks."},
                             {"role": "user", "content": f"Create task plan:\n\n## Spec:\n{spec_content}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}"}
                         ])
                         if not step_ok(r): print(f"[taskplan] FAILED: {r[:200]}"); continue
@@ -2097,7 +2097,7 @@ async def run_interactive():
                         with open(analysis_md, "r", encoding="utf-8") as f: analysis = f.read()
                         with open(plan_md, "r", encoding="utf-8") as f: plan = f.read()
                         r = await agent.llm.chat([
-                            {"role": "system", "content": "Create task plan for adding these features. Format: mark/type the file, then '— what to do'. No intro text."},
+                            {"role": "system", "content": "Create task plan for adding these features. Format: mark file as [NEW] or [MODIFY], then '— what to do'. Include type-checking validation. No intro text."},
                             {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\nCreate implementation tasks."}
                         ])
                         if not step_ok(r): print(f"[taskplan] FAILED: {r[:200]}"); continue
@@ -2163,7 +2163,7 @@ async def run_interactive():
                         with open(analysis_md, "r", encoding="utf-8") as f: analysis = f.read()
                         with open(plan_md, "r", encoding="utf-8") as f: plan = f.read()
                         r = await agent.llm.chat([
-                            {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. No intro text."},
+                            {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text."},
                             {"role": "user", "content": f"Create task plan:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
                         ])
                         if not step_ok(r): print(f"[taskplan] FAILED: {r[:200]}"); continue
