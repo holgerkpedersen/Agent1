@@ -635,7 +635,7 @@ async def run_interactive():
                     continue
                 
                 messages = [
-                    {"role": "system", "content": "Create entities.md. Output ONLY Python code with class/function definitions. No intro text. Start with ```python."},
+                    {"role": "system", "content": "Create entities.md with ONLY Python code — no intro text. Start with ```python. All types must be valid — no unbound TypeVars, no forward-ref errors. Must pass mypy strict. Avoid circular imports."},
                     {"role": "user", "content": f"Extract and define all shared entities from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\nCreate an entities.md file with Python-ready entity definitions that can be centralized in an entities.py file for import across the project."}
                 ]
                 entities = await agent.llm.chat(messages)
@@ -1996,7 +1996,7 @@ async def run_interactive():
                     else:
                         with open(plan_md, "r", encoding="utf-8") as f: plan = f.read()
                         r = await agent.llm.chat([
-                            {"role": "system", "content": "Extract shared classes/types. Output ONLY Python code. No explanations, no markdown intro. Start with ```python immediately. Avoid circular imports."},
+                            {"role": "system", "content": "Extract shared classes/types. Output ONLY Python code — no intro text. Start with ```python. All types must be valid — no unbound TypeVars, no forward-ref errors. Must pass mypy strict. Avoid circular imports."},
                             {"role": "user", "content": f"Extract entities:\n\n## Spec:\n{spec_content}\n\n## Plan:\n{plan}"}
                         ])
                         if not step_ok(r): print(f"[entities] FAILED: {r[:200]}"); continue
@@ -2082,7 +2082,7 @@ async def run_interactive():
                             with open(entities_md, "r", encoding="utf-8") as f:
                                 entities_existing = f.read()[:3000]
                         r = await agent.llm.chat([
-                            {"role": "system", "content": "Extract ONLY NEW shared entities. Output ONLY Python code. No intro text. Start with ```python immediately."},
+                            {"role": "system", "content": "Extract ONLY NEW shared entities. Output ONLY Python code — no intro text. Start with ```python. All types must pass mypy strict."},
                             {"role": "user", "content": f"## Plan:\n{plan}\n\n## Existing entities:\n{entities_existing}\n\nExtract only new entities needed."}
                         ])
                         if not step_ok(r): print(f"[entities] FAILED: {r[:200]}"); continue
@@ -2150,7 +2150,7 @@ async def run_interactive():
                         with open(analysis_md, "r", encoding="utf-8") as f: analysis = f.read()
                         with open(plan_md, "r", encoding="utf-8") as f: plan = f.read()
                         r = await agent.llm.chat([
-                            {"role": "system", "content": "Extract shared entities. Output ONLY Python code. No intro text. Start with ```python immediately."},
+                            {"role": "system", "content": "Extract shared entities. Output ONLY Python code — no intro text. Start with ```python. All types must pass mypy strict. Avoid circular imports."},
                             {"role": "user", "content": f"Extract entities:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
                         ])
                         if not step_ok(r): print(f"[entities] FAILED: {r[:200]}"); continue
