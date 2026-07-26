@@ -17,7 +17,7 @@ import difflib
 KNOWN_MODELS = {
     "qwen3.6-27b-mtp": {"desc": "Qwen 3.6 27B - chat, codegen, large context", "max_tokens": 50000},
     "google/gemma-4-31b": {"desc": "Gemma 4 31B - chat, reasoning, fast token gen", "max_tokens": 50000},
-    "laguna-s-2.1": {"desc": "Laguna S 2.1 MoE A8B - fast, smaller (may repeat)", "max_tokens": 50000, "thinking": False},
+    "laguna-s-2.1": {"desc": "Laguna S 2.1 MoE A8B - fast, smaller (may repeat)", "max_tokens": 100000, "thinking": False},
 }
 
 DEFAULT_MODEL = os.environ.get("AGENT_MODEL", "laguna-s-2.1")
@@ -1839,7 +1839,7 @@ async def run_interactive():
                             print(f"    > fix ... --desc \"...\"")
                         continue
                     
-                    response = await agent.llm.chat_stream(msgs)
+                    response = await agent.llm.chat_with_continuation(msgs)
                     
                     if response.startswith("[Error") or response.startswith("[LM Studio"):
                         print(f"LLM error: {response[:200]}")
