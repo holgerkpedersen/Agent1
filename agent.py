@@ -11,9 +11,16 @@ from pathlib import Path
 import json
 import subprocess
 import shlex
+import difflib
 
 
-DEFAULT_MODEL = "laguna-s-2.1" #"google/gemma-4-31b" #"qwen3.6-27b-mtp"
+KNOWN_MODELS = {
+    "qwen3.6-27b-mtp": "Qwen 3.6 27B - chat, codegen, large context",
+    "google/gemma-4-31b": "Gemma 4 31B - chat, reasoning, fast token gen",
+    "laguna-s-2.1": "Laguna S 2.1 118B - chat, fast, smaller",
+}
+
+DEFAULT_MODEL = os.environ.get("AGENT_MODEL", "laguna-s-2.1")
 
 
 class LLMClient:
@@ -511,6 +518,7 @@ async def run_interactive():
     print("  fix <file> --desc \"text\" - Describe an issue, LLM analyzes full codebase and fixes it")
     print("  cleanup             - Show unreferenced files and reference graph")
     print("  workflow <target> [--from spec.md] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] - Full pipeline")
+    print("  model [name]        - Switch LLM model (fuzzy search supported)")
     print("  clear              - Clear agent memory")
     print("  quit               - Exit")
     print("=" * 50)
@@ -569,6 +577,77 @@ async def run_interactive():
             elif command in ["clear", "reset"]:
                 agent.clear_history()
                 print("Agent memory cleared.")
+                
+            elif command == "model":
+                if len(parts) < 2:
+                    print(f"Current model: {agent.llm.model_name}")
+                    print(f"Known models ({len(KNOWN_MODELS)}):")
+                    for name, desc in sorted(KNOWN_MODELS.items()):
+                        marker = " ← current" if name == agent.llm.model_name else ""
+                        print(f"  {name}{marker}\n    {desc}")
+                    continue
+                
+                query = parts[1].strip()
+                
+                if query == "list":
+                    print(f"Known models ({len(KNOWN_MODELS)}):")
+                    for name, desc in sorted(KNOWN_MODELS.items()):
+                        marker = " ← current" if name == agent.llm.model_name else ""
+                        print(f"  {name}{marker}\n    {desc}")
+                    continue
+                
+                # Fuzzy match
+                exact_match = next((m for m in KNOWN_MODELS if m == query), None)
+                if exact_match:
+                    best_match = exact_match
+                else:
+                    # Try substring match first
+                    substring_matches = [m for m in KNOWN_MODELS if query.lower() in m.lower()]
+                    if substring_matches:
+                        best_match = substring_matches[0]
+                    else:
+                        # Try difflib fuzzy match
+                        close = difflib.get_close_matches(query, KNOWN_MODELS.keys(), n=1, cutoff=0.3)
+                        best_match = close[0] if close else None
+                
+                if not best_match:
+                    print(f"No match for '{query}'. Known models:")
+                    for name in KNOWN_MODELS:
+                        print(f"  {name}")
+                    continue
+                
+                if best_match == agent.llm.model_name:
+                    print(f"Already using: {best_match}")
+                    continue
+                
+                # Confirm and switch
+                desc = KNOWN_MODELS.get(best_match, "")
+                print(f"Match: {best_match} - {desc}")
+                print(f"Switch from {agent.llm.model_name} to {best_match}? (y/n)")
+                confirm = input().strip().lower()
+                if confirm in ["y", "yes"]:
+                    agent.llm.model_name = best_match
+                    print(f"Model set to: {best_match}")
+                    
+                    # Save to .env
+                    env_path = ".env"
+                    lines = []
+                    found = False
+                    if os.path.exists(env_path):
+                        with open(env_path, "r") as ef:
+                            lines = ef.readlines()
+                    with open(env_path, "w") as ef:
+                        for line in lines:
+                            if line.startswith("AGENT_MODEL="):
+                                ef.write(f"AGENT_MODEL={best_match}\n")
+                                found = True
+                            else:
+                                ef.write(line)
+                        if not found:
+                            ef.write(f"\nAGENT_MODEL={best_match}\n")
+                    print(f"Saved to {env_path}")
+                else:
+                    print("Cancelled.")
                 
             # Analyze command - uses LM Studio LLM
             elif command == "analyze":
