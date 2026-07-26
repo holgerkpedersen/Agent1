@@ -17,7 +17,7 @@ import difflib
 KNOWN_MODELS = {
     "qwen3.6-27b-mtp": {"desc": "Qwen 3.6 27B - chat, codegen, large context", "max_tokens": 50000},
     "google/gemma-4-31b": {"desc": "Gemma 4 31B - chat, reasoning, fast token gen", "max_tokens": 50000},
-    "laguna-s-2.1": {"desc": "Laguna S 2.1 MoE A8B - fast, smaller (may repeat)", "max_tokens": 50000},
+    "laguna-s-2.1": {"desc": "Laguna S 2.1 MoE A8B - fast, smaller (may repeat)", "max_tokens": 50000, "thinking": False},
 }
 
 DEFAULT_MODEL = os.environ.get("AGENT_MODEL", "laguna-s-2.1")
@@ -36,12 +36,15 @@ class LLMClient:
     async def chat(self, messages: list[dict]) -> str:
         """Send chat request to LLM via LM Studio."""
 
+        model_info = KNOWN_MODELS.get(self.model_name, {})
         payload = {
             "model": self.model_name,
             "messages": messages,
             "temperature": 0.7 if "laguna" not in self.model_name.lower() else 1.0,
-            "max_tokens": KNOWN_MODELS.get(self.model_name, {}).get("max_tokens", 50000)
+            "max_tokens": model_info.get("max_tokens", 50000)
         }
+        if model_info.get("thinking") is False:
+            payload["thinking"] = {"type": "disabled"}
 
         try:
             import urllib.request
