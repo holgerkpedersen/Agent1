@@ -116,7 +116,7 @@ class LLMClient:
             return f"[LM Studio stream error: {e}]"
 
     async def _chat_internal(self, messages: list[dict]) -> str:
-        """Internal chat implementation."""
+        """Internal chat implementation with retry on transient errors."""
 
         model_info = KNOWN_MODELS.get(self.model_name, {})
         payload = {
@@ -128,44 +128,65 @@ class LLMClient:
         if model_info.get("thinking") is False:
             payload["thinking"] = {"type": "disabled"}
 
-        try:
-            import urllib.request
+        max_retries = 3
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                import urllib.request
+                import urllib.error
+                import socket
 
-            data = json.dumps(payload).encode('utf-8')
+                data = json.dumps(payload).encode('utf-8')
 
-            req = urllib.request.Request(
-                f"{self.lmstudio_url}/chat/completions",
-                data=data,
-                headers={
-                    'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {self.api_key}'
-                },
-                method='POST'
-            )
+                req = urllib.request.Request(
+                    f"{self.lmstudio_url}/chat/completions",
+                    data=data,
+                    headers={
+                        'Content-Type': 'application/json',
+                        'Authorization': f'Bearer {self.api_key}'
+                    },
+                    method='POST'
+                )
 
-            with urllib.request.urlopen(req, timeout=3600) as response:
-                result = json.loads(response.read().decode())
+                with urllib.request.urlopen(req, timeout=3600) as response:
+                    result = json.loads(response.read().decode())
 
-                if 'choices' in result and len(result['choices']) > 0:
-                    message = result['choices'][0]['message']
-                    content = message.get('content') or ""
-                    reasoning = message.get('reasoning_content') or ""
-                    
-                    # Model got stuck in reasoning — no code output
-                    if not content and reasoning and len(reasoning) > 500:
-                        model = self.model_name
-                        alternates = [m for m in KNOWN_MODELS if m != model]
-                        alt_hint = f" Try: model {alternates[0]}" if alternates else ""
-                        return f"[Error: {model} used all tokens thinking, zero code output. Use 'model reload' or switch model.{alt_hint}]"
-                    
-                    return content or reasoning
+                    if 'choices' in result and len(result['choices']) > 0:
+                        message = result['choices'][0]['message']
+                        content = message.get('content') or ""
+                        reasoning = message.get('reasoning_content') or ""
+                        
+                        if not content and reasoning and len(reasoning) > 500:
+                            model = self.model_name
+                            alternates = [m for m in KNOWN_MODELS if m != model]
+                            alt_hint = f" Try: model {alternates[0]}" if alternates else ""
+                            return f"[Error: {model} used all tokens thinking, zero code output. Use 'model reload' or switch model.{alt_hint}]"
+                        
+                        return content or reasoning
 
-        except (asyncio.TimeoutError, TimeoutError):
-            return "[Error: Request timed out - model is taking too long]"
-        except Exception as e:
-            return f"[LM Studio error: {e}]"
+            except (asyncio.TimeoutError, TimeoutError, socket.timeout):
+                last_error = "Request timed out"
+            except urllib.error.URLError as e:
+                reason_str = str(e.reason) if hasattr(e, 'reason') else str(e)
+                last_error = f"Connection error: {reason_str}"
+            except ConnectionResetError:
+                last_error = "Server disconnected"
+            except ConnectionRefusedError:
+                last_error = "LM Studio not running"
+            except json.JSONDecodeError as e:
+                last_error = f"Invalid JSON response: {e}"
+                # Don't retry on JSON errors — the response is broken
+                return f"[Error: {last_error}]"
+            except Exception as e:
+                last_error = str(e)
 
-        return "No response from LLM"
+            if attempt < max_retries - 1:
+                wait = 2 ** attempt
+                print(f"  [retry {attempt+1}/{max_retries}] {last_error}, waiting {wait}s...")
+                await asyncio.sleep(wait)
+
+        return f"[Error after {max_retries} retries: {last_error}]"
     
     async def analyze_code(self, code: str) -> str:
         """Analyze code using LLM."""
