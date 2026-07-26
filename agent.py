@@ -1826,6 +1826,15 @@ async def run_interactive():
                     
                     print("Sending to LLM for deep analysis...")
                     
+                    # Auto-switch: if current model disables thinking (laguna), use a no-reasoning model for complex tasks
+                    original_model = agent.llm.model_name
+                    model_info = KNOWN_MODELS.get(original_model, {})
+                    if model_info.get("thinking") is False and len(all_source) > 20000:
+                        alternates = [m for m in KNOWN_MODELS if not KNOWN_MODELS[m].get("thinking") is False and m != original_model]
+                        if alternates:
+                            agent.llm.model_name = alternates[0]
+                            print(f"  (switched to {alternates[0]} for complex analysis, will restore {original_model})")
+                    
                     # Check if payload fits current model
                     payload_size = len(all_source)
                     model_max = KNOWN_MODELS.get(agent.llm.model_name, {}).get("max_tokens", 50000)
@@ -1878,6 +1887,10 @@ async def run_interactive():
                             cl.write(entry)
                     
                     print(f"\nFixed {fixed_count}/{len(fixes)} files.")
+                    
+                    if agent.llm.model_name != original_model:
+                        agent.llm.model_name = original_model
+                        print(f"Model restored to: {original_model}")
                     continue
                 
                 # Read multi-line traceback (existing traceback mode)
