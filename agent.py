@@ -63,8 +63,17 @@ class LLMClient:
 
                 if 'choices' in result and len(result['choices']) > 0:
                     message = result['choices'][0]['message']
-                    content = message.get('content') or message.get('reasoning_content') or ""
-                    return content
+                    content = message.get('content') or ""
+                    reasoning = message.get('reasoning_content') or ""
+                    
+                    # Model got stuck in reasoning — no code output
+                    if not content and reasoning and len(reasoning) > 500:
+                        model = self.model_name
+                        alternates = [m for m in KNOWN_MODELS if m != model]
+                        alt_hint = f" Try: model {alternates[0]}" if alternates else ""
+                        return f"[Error: {model} used all tokens thinking, zero code output. Use 'model reload' or switch model.{alt_hint}]"
+                    
+                    return content or reasoning
 
         except (asyncio.TimeoutError, TimeoutError):
             return "[Error: Request timed out - model is taking too long]"
@@ -1731,6 +1740,20 @@ async def run_interactive():
                     ]
                     
                     print("Sending to LLM for deep analysis...")
+                    
+                    # Check if payload fits current model
+                    payload_size = len(all_source)
+                    model_max = KNOWN_MODELS.get(agent.llm.model_name, {}).get("max_tokens", 50000)
+                    if payload_size > 50000 and model_max < 20000:
+                        print(f"\n  WARNING: {payload_size} byte payload exceeds {agent.llm.model_name}'s effective capacity ({model_max} max tokens).")
+                        alternates = [m for m in KNOWN_MODELS if KNOWN_MODELS[m].get("max_tokens", 0) > 20000]
+                        if alternates:
+                            alt = alternates[0]
+                            print(f"  Recommendation: switch model first.")
+                            print(f"    > model {alt}")
+                            print(f"    > fix ... --desc \"...\"")
+                        continue
+                    
                     response = await agent.llm.chat(msgs)
                     
                     if response.startswith("[Error") or response.startswith("[LM Studio"):
