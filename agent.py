@@ -35,6 +35,38 @@ class LLMClient:
     
     async def chat(self, messages: list[dict]) -> str:
         """Send chat request to LLM via LM Studio."""
+        return await self._chat_internal(messages)
+
+    async def chat_with_continuation(self, messages: list[dict], max_continues: int = 3) -> str:
+        """Chat with auto-resume if response gets truncated at token limit."""
+        full_response = ""
+        current_messages = [dict(m) for m in messages]  # shallow copy
+        
+        for i in range(max_continues):
+            result = await self._chat_internal(current_messages)
+            
+            if result.startswith("[Error") or result.startswith("[LM Studio"):
+                if full_response:
+                    return full_response  # return what we have so far
+                return result
+            
+            full_response += result
+            
+            # Check if the response was truncated (ends mid-expression)
+            stripped = full_response.rstrip()
+            if stripped and not stripped.endswith(('```', '}', ')', ']', '"', "'", '.', '\n')):
+                # Likely truncated — request continuation
+                print(f"      [auto-resume] Response truncated at {len(result)} chars, continuing ({i+1}/{max_continues})...")
+                current_messages.append({"role": "assistant", "content": result})
+                current_messages.append({"role": "user", "content": "Continue exactly where you stopped. Output the remaining code without repeating anything."})
+                continue
+            else:
+                break  # looks complete
+        
+        return full_response
+
+    async def _chat_internal(self, messages: list[dict]) -> str:
+        """Internal chat implementation."""
 
         model_info = KNOWN_MODELS.get(self.model_name, {})
         payload = {
@@ -1757,7 +1789,7 @@ async def run_interactive():
                             print(f"    > fix ... --desc \"...\"")
                         continue
                     
-                    response = await agent.llm.chat(msgs)
+                    response = await agent.llm.chat_with_continuation(msgs)
                     
                     if response.startswith("[Error") or response.startswith("[LM Studio"):
                         print(f"LLM error: {response[:200]}")
