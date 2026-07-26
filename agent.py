@@ -1103,6 +1103,25 @@ async def run_interactive():
                             implemented.append(filename)
                         continue
                     
+                    # Anti-duplication: reject files with excessive duplicate patterns
+                    if filename.endswith(".py"):
+                        func_names = re.findall(r'def\s+(\w+)', content)
+                        if len(func_names) > 20:
+                            from collections import Counter
+                            counts = Counter(func_names)
+                            # If more than 60% of functions are near-duplicates of each other
+                            similar_prefixes = {}
+                            for name in func_names:
+                                prefix = re.sub(r'_\d+$|_v\d+$|_clean$|_final$', '', name)
+                                similar_prefixes[prefix] = similar_prefixes.get(prefix, 0) + 1
+                            max_dupes = max(similar_prefixes.values()) if similar_prefixes else 1
+                            if max_dupes > 10:
+                                print(f"  REJECTED: {filename} has {max_dupes} near-duplicate functions")
+                                continue
+                        if len(content) > 50000:
+                            print(f"  REJECTED: {filename} is {len(content)} bytes (max 50KB)")
+                            continue
+                    
                     with open(filepath, "w", encoding="utf-8") as f:
                         f.write(content)
                     
