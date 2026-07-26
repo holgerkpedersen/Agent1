@@ -1869,7 +1869,7 @@ async def run_interactive():
                             print(f"    > fix ... --desc \"...\"")
                         continue
                     
-                    response = await agent.llm.chat_with_continuation(msgs)
+                    response = await agent.llm.chat_stream(msgs)
                     
                     if response.startswith("[Error") or response.startswith("[LM Studio"):
                         print(f"LLM error: {response[:200]}")
