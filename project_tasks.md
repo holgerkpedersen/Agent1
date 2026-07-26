@@ -1,349 +1,265 @@
-# Task Plan: Agent Codebase Refactoring & Fixes  
-**Dependency Order with Type-Checking Validation**
+I'll create a task plan with files in dependency order, including type-checking validation. Let me analyze the structure first.
 
-## Phase 1: Foundation Layer (No Dependencies)
+Based on the analysis provided, here's my understanding of the file dependencies:
 
-### Task 1.1 – Create Centralized Exception Hierarchy (`agent_core/exceptions.py`) ⭐ **FOUNDATION**
-```python
-from __future__ import annotations
-from typing import Final, Optional
+1. `agent_core/exceptions.py` - Centralized exception definitions (new module)
+2. `agent_core/path_utils.py` - Path utilities with `normalize_path` function
+3. `agent_core/entities.py` - Entity/data class definitions using exceptions and result types
+4. `agent_core/__init__.py` - Package exports referencing path_utils, entities, config, etc.
+5. `handlers/analyze_handler.py` - Handler that imports from core modules (depends on fixes above)
+6. Tests for handlers
 
-class AgentBaseError(Exception):
-    """Base exception for all agent-related errors."""
-    
-class FileOperationError(AgentBaseError):
-    def __init__(self, message: str, path: Optional[str] = None) -> None:
-        self.path = path
-        super().__init__(message)
+Let me create the detailed task plan:
 
-class SecurityViolationError(AgentBaseError): pass
-class ConfigurationError(AgentBaseError): pass
-class ToolExecutionError(AgentBaseError): 
-    def __init__(self, tool_name: str, message: str) -> None:
-        self.tool_name = tool_name
-        super().__init__(f"Tool '{tool_name}' failed: {message}")
+```markdown
+# Task Plan with Dependency Order & Type Checking Validation
 
-# Type alias for consistent error handling
-ErrorHandlerResult = tuple[bool, Optional[str]]  # (success, optional_error_message)
-```
+## File Dependencies in Build Order
 
-**Type Checking Validation:** ✅ Run `mypy --strict agent_core/exceptions.py`  
-✅ **Status**: Ready for implementation
+1. agent_core/exceptions.py ← [NEW] Centralized exception definitions
+2. agent_core/path_utils.py ← Depends on exceptions.py (SecurityViolationError, FileOperationError)
+3. agent_core/entities.py ← Depends on exceptions.py, Result types from entities itself
+4. agent_core/__init__.py ← Exports normalize_path from path_utils.py
+5. handlers/analyze_handler.py ← Imports normalize_path, AgentSettings, FileOperationError
+6. tests/test_handlers/test_analyze_handler.py ← Tests handler functionality
 
----
+## Phase 1: Critical Runtime Fixes (Dependency Order)
 
-### Task 1.2 – Create Configuration Management (`agent_core/config.py`) ⭐ **FOUNDATION**
-```python
-from __future__ import annotations
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Final
+### Task 1.1 — Create Centralized Exceptions Module
+**File**: agent_core/exceptions.py [NEW]
 
-@dataclass(frozen=True)
-class AgentSettings:
-    workspace_root: Path = field(default_factory=lambda: Path.cwd())
-    llm_api_url: str = "http://localhost:1234/v1"
-    max_concurrent_tools: int = 5
-    search_command_timeout_sec: float = 30.0
-    compilation_check_timeout_sec: float = 30.0
-
-# Global instance with validation at import time
-def _validate_settings(settings: AgentSettings) -> None:
-    if not settings.workspace_root.exists():
-        raise ConfigurationError(f"Workspace root does not exist: {settings.workspace_root}")
-    if settings.max_concurrent_tools <= 0:
-        raise ConfigurationError("max_concurrent_tools must be positive")
-
-DEFAULT_SETTINGS: Final[AgentSettings] = AgentSettings()
-_validate_settings(DEFAULT_SETTINGS)
-```
-
-**Type Checking Validation:** ✅ Run `mypy --strict agent_core/config.py`  
-✅ **Status**: Ready for implementation
-
----
-
-## Phase 2: Core Utilities (Depends on Foundation)
-
-### Task 2.1 – Fix Path Normalization (`agent_core/path_utils.py`) ⭐ **DEPENDS ON TASKS 1.1, 1.2**
-```python
-from __future__ import annotations
-import os
-import sys
-from pathlib import Path
-from typing import Final, Optional, Union
-
-from .exceptions import SecurityViolationError
-from .config import AgentSettings
-
-PLATFORM_WINDOWS: Final[bool] = sys.platform.startswith("win") or os.name == "nt"
-
-def normalize_path(path_input: Union[str, Path], settings: AgentSettings) -> Optional[Path]:
-    """Normalize and validate a path within the workspace."""
-    if not isinstance(path_input, (str, Path)):
-        raise TypeError(f"Expected str or Path, got {type(path_input).__name__}")
-    
-    raw_path = Path(str(path_input))
-    
-    # Handle Unix-style absolute paths on Windows/WSL
-    if PLATFORM_WINDOWS and path_input.startswith("/"):
-        normalized_path = _convert_unix_to_windows(raw_path)
-    else:
-        normalized_path = raw_path
-    
-    try:
-        resolved = normalized_path.absolute().resolve(strict=False)
-        if not _is_within_workspace(resolved, settings.workspace_root):
-            raise SecurityViolationError(f"Path outside workspace: {resolved}")
-        return resolved
-    except FileNotFoundError as e:
-        raise FileOperationError(f"File not found during resolution", str(raw_path)) from e
-
-def _convert_unix_to_windows(path: Path) -> Path:
-    """Convert Unix-style path to Windows equivalent."""
-    # Implementation here...
-    pass
-
-def _is_within_workspace(resolved_path: Path, workspace_root: Path) -> bool:
-    try:
-        resolved_path.relative_to(workspace_root.resolve())
-        return True
-    except ValueError:
-        return False
-```
-
-**Type Checking Validation:** ✅ Run `mypy --strict agent_core/path_utils.py`  
-✅ **Status**: Ready for implementation
-
----
-
-### Task 2.2 – Secure Async Subprocess Execution (`agent_core/subprocess_utils.py`) ⭐ **DEPENDS ON TASKS 1.1, 1.2**
-```python
-from __future__ import annotations
-import asyncio
-import logging
-from typing import Final, Optional, Tuple
-
-logger = logging.getLogger(__name__)
-
-async def run_subprocess_with_timeout(
-    cmd: list[str], 
-    timeout_sec: float,
-    cwd: Optional[str] = None
-) -> Tuple[int, bytes, bytes]:
-    """Run subprocess with timeout and return (returncode, stdout, stderr)."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
-        return (proc.returncode or 0), stdout, stderr
-    except asyncio.TimeoutError as e:
-        logger.warning(f"Subprocess timed out after {timeout_sec}s: {' '.join(cmd)}")
-        raise ToolExecutionError("subprocess", f"Timed out after {timeout_sec} seconds") from e
-```
-
-**Type Checking Validation:** ✅ Run `mypy --strict agent_core/subprocess_utils.py`  
-✅ **Status**: Ready for implementation
-
----
-
-## Phase 3: LLM Integration (Depends on Foundation)
-
-### Task 3.1 – Consistent LLM Response Handling (`agent_core/llm_client.py`) ⭐ **DEPENDS ON TASKS 1.1, 2.2**
-```python
-from __future__ import annotations
-import logging
-from dataclasses import dataclass
-from typing import Final, Optional
-
-logger = logging.getLogger(__name__)
-
-@dataclass(frozen=True)
-class LlmResponse:
-    content: str
-    is_error: bool = False
-    error_code: Optional[str] = None
-
-class LLMClient:
-    def __init__(self, api_url: str, timeout_sec: float = 30.0) -> None:
-        self.api_url = api_url
-        self.timeout_sec = timeout_sec
-    
-    async def chat(self, prompt: str) -> LlmResponse:
-        """Send message to LLM and return structured response."""
-        try:
-            # Implementation using httpx/aiohttp for true async support
-            pass
-        except Exception as e:
-            logger.exception("LLM request failed")
-            return LlmResponse(
-                content=f"Service error occurred", 
-                is_error=True, 
-                error_code="SERVICE_ERROR"
-            )
-```
-
-**Type Checking Validation:** ✅ Run `mypy --strict agent_core/llm_client.py`  
-✅ **Status**: Ready for implementation
-
----
-
-## Phase 4: Command Handlers (Depends on Core Layers)
-
-### Task 4.1 – Base Handler Interface (`agent_core/handlers/base_handler.py`) ⭐ **DEPENDS ON ALL PREVIOUS**
-```python
-from __future__ import annotations
-from abc import ABC, abstractmethod
-from typing import Final, List, Protocol
-
-class CommandHandler(Protocol):
-    @abstractmethod
-    async def handle(self, args: List[str]) -> int: ...  # Returns exit code
-
-class BaseCommandHandler(ABC):
-    """Abstract base class for command handlers."""
-    
-    @property
-    @abstractmethod
-    def name(self) -> str: ...
-    
-    @abstractmethod
-    async def handle(self, args: List[str]) -> int: ...
-```
-
-**Type Checking Validation:** ✅ Run `mypy --strict agent_core/handlers/base_handler.py`  
-✅ **Status**: Ready for implementation
-
----
-
-### Task 4.2 – Analyze Command Handler (`agent_core/handlers/analyze_handler.py`) ⭐ **DEPENDS ON TASKS 1.1, 2.1, 3.1**
-```python
-from __future__ import annotations
-import ast
-import re
-from pathlib import Path
-from typing import Final, List
-
-from ..base_handler import BaseCommandHandler
-from ...path_utils import normalize_path
-from ...config import AgentSettings
-from ...exceptions import FileOperationError
-
-class AnalyzeCommand(BaseCommandHandler):
-    @property
-    def name(self) -> str: return "analyze"
-    
-    async def handle(self, args: List[str]) -> int:
-        # Implementation with proper error handling and logging
-        pass
-```
-
-**Type Checking Validation:** ✅ Run `mypy --strict agent_core/handlers/analyze_handler.py`  
-✅ **Status**: Ready for implementation
-
----
-
-## Phase 5: Integration & Testing (Final Layer)
-
-### Task 5.1 – Main Agent Entry Point Refactor (`agent.py`) ⭐ **DEPENDS ON ALL HANDLERS**
-```python
-from __future__ import annotations
-import logging
-from typing import Final, Dict, List
-
-from agent_core.config import DEFAULT_SETTINGS
-from agent_core.handlers.analyze_handler import AnalyzeCommand
-# Import other handlers...
-
-COMMAND_REGISTRY: Final[Dict[str, BaseCommandHandler]] = {
-    "analyze": AnalyzeCommand(),
-    # Add others...
-}
-
-async def run_interactive(args: List[str]) -> int:
-    """Main entry point with clean delegation."""
-    if not args:
-        logging.error("No command provided")
-        return 1
-    
-    command = args[0]
-    handler = COMMAND_REGISTRY.get(command)
-    if not handler:
-        logging.error(f"Unknown command: {command}")
-        return 1
-    
-    try:
-        return await handler.handle(args[1:])
-    except Exception as e:
-        logging.exception("Command execution failed")
-        return 1
-```
-
-**Type Checking Validation:** ✅ Run `mypy --strict agent.py`  
-✅ **Status**: Ready for implementation
-
----
-
-### Task 5.2 – Comprehensive Unit Test Suite ⭐ **DEPENDS ON ALL IMPLEMENTATIONS**
-Create test files in parallel:
-- `tests/test_path_utils.py` - Path normalization edge cases
-- `tests/test_subprocess_utils.py` - Timeout handling verification
-- `tests/test_llm_client.py` - Response parsing validation
-- `tests/test_handlers/` - Individual handler testing
+Dependencies: None (base layer)
+Type-checking validation: All exceptions inherit from Exception, properly annotated
 
 ```python
-# Example test structure for path utils
-import pytest
-from pathlib import Path
-from agent_core.path_utils import normalize_path, SecurityViolationError
-from agent_core.config import AgentSettings
-
-@pytest.fixture
-def temp_workspace(tmp_path: Path) -> tuple[AgentSettings, Path]:
-    settings = AgentSettings(workspace_root=tmp_path)
-    return settings, tmp_path
-
-def test_normalize_valid_path(temp_workspace):
-    settings, workspace = temp_workspace
-    target_file = workspace / "test.txt"
-    target_file.touch()  # Create empty file
-    
-    result = normalize_path(target_file, settings)
-    assert result is not None
-    assert result.resolve() == target_file.resolve()
-
-def test_block_traversal_attack(temp_workspace):
-    settings, _ = temp_workspace
-    malicious_path = "../../../etc/passwd"
-    
-    with pytest.raises(SecurityViolationError):
-        normalize_path(malicious_path, settings)
+# Contents to create:
+class AgentError(Exception): ...
+class FileOperationError(AgentError): ...
+class SecurityViolationError(AgentError): ...
+# Other exception classes moved here centrally
 ```
 
-**Type Checking Validation:** ✅ Run `mypy --strict tests/` after writing all tests  
-✅ **Status**: Ready for implementation
+Validation steps:
+- mypy strict check on new module with `mypy agent_core/exceptions.py --strict`
 
----
+### Task 1.2 — Fix normalize_path Symbol in Path Utilities
+**File**: agent_core/path_utils.py ← Depends on exceptions.py for SecurityViolationError, FileOperationError
 
-## Execution Priority Matrix:
+Dependencies: agent_core/exceptions.py (Task 1.1)
+Type-checking validation: Function renamed to normalize_path with proper annotations
 
-| Task ID | Description | Dependencies | Complexity | Type-Check Risk |
-|---------|-------------|--------------|------------|------------------|
-| 1.1, 1.2 | Foundation layer | None | Low-Medium | ✅ Low |
-| 2.1, 2.2 | Core utilities | 1.1, 1.2 | Medium-High | ⚠️ Medium |
-| 3.1 | LLM integration | 1.1, 2.2 | Medium | ⚠️ Medium |
-| 4.1-4.2 | Command handlers | All previous | High | ❌ High (complex types) |
-| 5.1-5.2 | Integration & tests | Complete implementation | Highest | ✅ Low (tests validate typing) |
+```python
+# Before: _validate_path function exists but not exported as normalize_path
+# After: Rename _validate_path → normalize_path and export correctly
+def normalize_path(path: Union[str, os.PathLike]) -> str: ...
+```
 
-## Recommended Implementation Order:
-1. **Tasks 1.1 → 1.2** (Parallelizable foundation work)
-2. **Tasks 2.1, 2.2** (Core utilities with strict validation)
-3. **Task 3.1** (LLM client building on secure subprocess layer)
-4. **Tasks 4.1→4.2** (Handler pattern enabling modular design)
-5. **Tasks 5.1→5.2** (Final integration + comprehensive testing)
+Validation steps:
+- mypy strict check on path_utils module with `mypy agent_core/path_utils.py --strict`
 
-Each task includes explicit mypy validation steps to ensure type safety throughout the refactoring process.
+### Task 1.3 — Update Package Exports in __init__.py
+**File**: agent_core/__init__.py ← Depends on path_utils.py for normalize_path export
+
+Dependencies: agent_core/path_utils.py (Task 1.2)
+Type-checking validation: Correct exports defined, no undefined symbols referenced
+
+```python
+# Before: from .path_utils import _validate_path as validate_path  
+# After: from .path_utils import normalize_path as validate_path  
+# Also add centralized exception imports for convenience access
+from .exceptions import AgentError, FileOperationError  # NEW
+```
+
+Validation steps:
+- mypy strict check on __init__.py with `mypy agent_core/__init__.py --strict`
+
+### Task 1.4 — Fix Handler Import Depths & Undefined References
+**File**: handlers/analyze_handler.py ← Depends on path_utils.py, config.py, exceptions.py exports
+
+Dependencies: All core modules fixed in Tasks 1.1-1.3
+Type-checking validation: Correct relative imports with proper depth (.., not ...) and defined symbols
+
+```python
+# Before (broken):  
+from ...path_utils import normalize_path          # Wrong depth + undefined symbol  
+from ...config import AgentSettings               # Wrong depth  
+from ...exceptions import FileOperationError      # Wrong path  
+
+# After (fixed):  
+from ..path_utils import normalize_path  # Correct depth + symbol exists now  
+from ..config import AgentSettings      # Correct depth  
+from ..exceptions import FileOperationError  # Centralized module  
+```
+
+Validation steps:
+- mypy strict check on handler with `mypy handlers/analyze_handler.py --strict`
+
+### Task 1.5 — Fix Async Blocking I/O in _fallback_search Method
+**File**: handlers/analyze_handler.py ← Depends on asyncio infrastructure already present
+
+Dependencies: Handler file modified in Task 1.4 (same file)
+Type-checking validation: Async-safe pattern implemented with proper Optional[str] return types
+
+```python
+# Replace synchronous open() calls with async executor pattern  
+async def _read_chunk_async(filepath: str, chunk_size: int) -> Optional[str]:  
+    loop = asyncio.get_running_loop()  
+    try:  
+        return await loop.run_in_executor(  
+            None, lambda: Path(filepath).open('r', encoding='utf-8').read(chunk_size)  
+        )  
+    except Exception as exc:  
+        logger.error("Failed to read chunk asynchronously", exc_info=exc)  
+        return None  
+```
+
+Validation steps:
+- mypy strict check on async method implementation with `mypy handlers/analyze_handler.py --strict`
+
+### Task 1.6 — Fix shlex.split POSIX Mode Misuse
+**File**: Command dispatchers wherever user input parsing occurs (likely in agent.py or command modules)
+
+Dependencies: None specific beyond standard library usage  
+Type-checking validation: POSIX mode explicitly enabled with List[str] return annotation
+
+```python
+# Before: parts = shlex.split(user_input, posix=False)  # Breaks quoted handling  
+# After: def parse_user_input(user_input: str) -> List[str]:  
+parts = shlex.split(user_input, posix=True)  # Ensures correct quote semantics  
+if len(parts) == 0: raise ValueError("Empty input")  
+return parts[:20]  
+```
+
+Validation steps:
+- mypy strict check on parsing function with `mypy command_modules.py --strict`
+
+### Task 1.7 — Remove Redundant Compile Check in Implement Phase
+**File**: Builder/writer modules where file compilation occurs (likely implement phase logic)
+
+Dependencies: None specific beyond subprocess usage  
+Type-checking validation: State tracking flag prevents duplicate calls, proper bool annotations
+
+```python
+# Add state tracking to prevent redundant compilation  
+@dataclass(frozen=True)  
+class CompilationState:  
+    already_compiled: bool = False  # Track single call per file cycle  
+  
+if not state.already_compiled:  
+    compile_file(filepath)  
+    log.debug("Single compile-check completed")  
+else:  
+    log.debug("Redundant attempt skipped")  
+```
+
+Validation steps:
+- mypy strict check on compilation logic with `mypy builder_modules.py --strict`
+
+## Phase 2: Structural Refactoring (Dependency Order)
+
+### Task 2.1 — Remove Local Exception Redefinitions Across Codebase
+**Files**: agent.py and all submodules ← Depends on centralized exceptions.py module existing
+
+Dependencies: agent_core/exceptions.py created in Task 1.1  
+Type-checking validation: No duplicate class definitions remain, imports from central module only
+
+```python
+# Before (BAD pattern): class AgentError(Exception): ... defined locally multiple times  
+# After (GOOD): from agent_core.exceptions import AgentError, FileOperationError  
+```
+
+Validation steps:
+- grep search for remaining local exception definitions across codebase  
+- mypy strict check on all modified files individually with `mypy <file>.py --strict`
+
+### Task 2.2 — Resolve Circular Import Risks in Logging Configuration
+**File**: logging_config.py ← Depends on context_management module being available via explicit injection
+
+Dependencies: agent_core modules stable after Tasks 1.x fixes  
+Type-checking validation: Deterministic load order via dependency injection pattern, no fallback guessing
+
+```python
+# Before (fragile): try/except conditional imports creating divergent paths  
+# After (robust): import inject; @inject.params(correlation_ctx='CORRELATION_ID_CTX') configure_logging(...)  
+```
+
+Validation steps:
+- mypy strict check on logging_config.py with `mypy agent_core/logging_config.py --strict`
+
+## Phase 3: Typing & Safety Enhancements (Dependency Order)
+
+### Task 3.1 — Adopt Structured Result[T] Pattern Across Public APIs
+**Files**: handlers, parsers, validators ← Depends on entities.py defining Result types properly
+
+Dependencies: agent_core/entities.py updated with frozen dataclass defaults in Task 3.2  
+Type-checking validation: Generic parameterized correctly, discriminated unions supported exhaustively
+
+```python
+# Define consistent Success/Failure pattern already partially implemented elsewhere  
+@dataclass(frozen=True) class Success(Result): value: T  
+@dataclass(frozen=True) class Failure(Result): error: str; details: Optional[dict[str, Any]] = None  
+```
+
+Validation steps:
+- mypy strict check on Result type definitions with `mypy agent_core/entities.py --strict`
+
+### Task 3.2 — Standardize Frozen Dataclass Defaults in Entities
+**File**: entities.py ← Depends on exceptions.py for inherited exception types if needed
+
+Dependencies: None specific beyond dataclass usage  
+Type-checking validation: All mutable defaults replaced with field(default_factory=...) pattern consistently
+
+```python
+# Before violation: @dataclass(frozen=True) class SomeEntity: tags = []  # Mutable default breaks immutability  
+# After compliance: @dataclass(frozen=True) class SomeEntity: tags: List[str] = field(default_factory=list)  
+```
+
+Validation steps:
+- mypy strict check on entities module with `mypy agent_core/entities.py --strict`
+
+## Phase 4: Cleanup Pass (Dependency Order)
+
+### Task 4.1 — Consolidate Path Conversion Logic Duplication
+**Files**: Multiple files containing /c/ → C:\ conversion logic (~7+) ← Depends on path_utils.py providing unified utility function
+
+Dependencies: agent_core/path_utils.py updated with normalize_path in Task 1.2  
+Type-checking validation: Single canonical implementation accepted by mypy strict checker without ambiguity
+
+```python
+# Extract shared normalization routine into dedicated helper method within path_utils.py  
+def convert_to_windows_path(path_str: str) -> str: ...  
+```
+
+Validation steps:
+- grep search for remaining inline conversion logic blocks across codebase  
+- mypy strict check on consolidated utility function with `mypy agent_core/path_utils.py --strict`
+
+## Final Verification Checklist (All Files Must Pass Type Checking)
+
+| Item | Validation Command Required | Status Requirement |
+|------|------------------------------|--------------------|
+| ✅ normalize_path exists & importable from correct path in handlers/tests | mypy handlers/analyze_handler.py tests/test_handlers/test_analyze_handler.py --strict | Must pass |
+| ✅ No blocking I/O inside async coroutines anywhere | grep for synchronous open() calls within async functions | Must pass |
+| ✅ Proper POSIX mode enabled for all shlex operations | grep for posix=False usage in shlex.split calls | Must pass |
+| ✅ Only one compile-check invocation per file write cycle | grep for duplicate compilation logic blocks | Must pass |
+| ✅ All exceptions imported centrally—not locally redefined | grep search for local exception class definitions remaining | Must pass |
+| ✅ Relative import depths aligned with actual package structure | mypy strict check on all handler/test files --strict | Must pass |
+| ✅ Logging configuration deterministic via dependency injection—not fallback guessing | mypy agent_core/logging_config.py --strict | Must pass |
+| ✅ Result[T] pattern adopted consistently across public APIs | grep search for inconsistent return types in public functions | Must pass |
+| ✅ Frozen dataclasses avoid mutable defaults entirely | grep for bare mutable default assignments in frozen dataclasses | Must pass |
+| ✅ mypy strict passes cleanly on entire codebase after changes applied | Run full project type check `mypy . --strict` | Must pass |
+
+## Execution Order Summary (Strict Dependency Chain)
+
+1. Create agent_core/exceptions.py [NEW] → Validate with mypy --strict  
+2. Update agent_core/path_utils.py → Rename normalize_path, fix SecurityViolationError import path → Validate with mypy --strict  
+3. Update agent_core/__init__.py → Fix exports referencing new symbols → Validate with mypy --strict  
+4. Update handlers/analyze_handler.py → Fix imports + async I/O + shlex misuse → Validate with mypy --strict  
+5. Remove local exception redefinitions across codebase → Validate each file individually with mypy --strict  
+6. Resolve circular import risks in logging_config.py → Validate with mypy --strict  
+7. Adopt Result[T] pattern consistently → Update entities.py + public APIs → Validate with mypy --strict  
+8. Standardize frozen dataclass defaults → Update entities.py and all entity definitions → Validate with mypy --strict  
+9. Consolidate path conversion logic duplication → Add utility function in path_utils.py → Validate with mypy --strict  
+
+Final validation: `mypy . --strict` must pass cleanly on entire codebase after all changes applied.
+```

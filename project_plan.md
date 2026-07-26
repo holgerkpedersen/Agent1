@@ -1,376 +1,268 @@
-# Detailed Coding Plan: Agent Codebase Refactoring & Fixes
+# Detailed Coding Plan: Fix Critical Bugs & Refactor Agent Core Module
 
 ## Overview
-This plan addresses critical bugs, architectural issues, and code quality concerns identified in the review. The approach prioritizes **mypy strict compliance**, modularization, consistency improvements, and safe concurrency practices.
+This plan addresses all identified issues from the code review analysis, prioritizing critical bugs that cause immediate runtime failures. The implementation must pass **mypy strict type checking**.
 
 ---
 
-## Phase 1: Immediate Bug Fixes (Critical Issues)
+## Phase 1: Immediate Fixes (Critical Runtime Failures)
 
-### Task 1.1 – Fix Path Normalization Logic (`agent.py`)
-**Problem**: Incorrectly maps Unix paths like `/tmp/file` to Windows-style `C:\tmp\file`.
+### Task 1.1 — Fix `normalize_path` Undefined Symbol  
+**File**: `agent_core/path_utils.py`, `handlers/analyze_handler.py`
 
-#### Changes Required:
-- Replace hardcoded logic with platform-aware normalization using `os.name == 'nt'` or detect WSL via environment variables.
-- Use standard libraries such as [`pathlib`](https://docs.python.org/3/library/pathlib.html), [`shutil.which()`](https://docs.python.org/3/library/shutil.html#shutil.which) where applicable.
+#### Action Steps:
+1. Rename `_validate_path()` function to `normalize_path()` in `path_utils.py`.
+2. Update export alias in `__init__.py`: 
+   ```python
+   from .path_utils import normalize_path as validate_path
+   ```
+3. Change handler imports to use correct name and relative depth:
+   ```python
+   # Before (broken):
+   from ...path_utils import normalize_path
 
+   # After (fixed):
+   from ..path_utils import normalize_path  # Correct depth + symbol exists now
+   ```
+
+#### Mypy Compliance Notes:
+- Ensure return type annotation is `str`.
+- Add explicit parameter types (`Union[str, os.PathLike]`).
+
+---
+
+### Task 1.2 — Fix Async Blocking I/O in `_fallback_search`  
+**File**: `handlers/analyze_handler.py`
+
+#### Action Steps:
+Replace synchronous file reading with async-safe pattern using executor:
 ```python
-import os
-from pathlib import Path
-
-def _normalize_path_strict(self, path: str) -> Optional[Path]:
-    if not isinstance(path, str):
-        raise TypeError("Expected string for path")
-    
-    p = Path(path).resolve(strict=False)  # Safe resolution without requiring existence
-    
-    if os.name == "nt" and path.startswith("/"):
-        normalized_path = self._convert_unix_to_windows(p)
-        return normalized_path.resolve()
-
-    elif sys.platform.startswith('linux'):
-        # Assume native Linux behavior; no conversion needed unless explicitly configured otherwise.
-        pass
-
+async def _read_chunk_async(filepath: str, chunk_size: int) -> Optional[str]:
+    loop = asyncio.get_running_loop()
     try:
-        resolved = p.absolute().resolve(strict=True)  # Resolve symlinks safely
-        if not self._is_within_workspace(resolved):
-            logger.warning("Path outside workspace detected.")
-            return None
-        return resolved
-    except FileNotFoundError as e:
-        logger.error(f"File not found during strict resolve: {e}")
+        return await loop.run_in_executor(
+            None, lambda: Path(filepath).open('r', encoding='utf-8').read(chunk_size)
+        )
+    except Exception as exc:
+        logger.error("Failed to read chunk asynchronously", exc_info=exc)
         return None
 ```
 
-> ✅ Ensure all functions have proper type annotations (`Optional[Path]`, etc.)  
-> 🔒 Add unit tests covering edge cases (symlinks, traversal attempts)
+Update `_fallback_search()` accordingly.
+
+#### Mypy Compliance Notes:
+- Use `Optional[str]` instead of raw strings where nullability possible.
+- Avoid untyped lambda expressions; wrap logic in typed helper function.
 
 ---
 
-### Task 1.2 – Secure Subprocess Execution With Timeouts
-**Problem**: `subprocess.run(...)` calls can block indefinitely.
+### Task 1.3 — Fix `shlex.split` Misuse  
+**File**: Anywhere user input parsing occurs (likely command dispatchers)
 
-#### Changes Required:
-- Wrap all subprocess invocations with explicit timeouts and error handling.
-
+#### Action Steps:
+Use POSIX mode explicitly for proper quote handling:
 ```python
-import asyncio.subprocess as async_subprocess
-
-async def _run_compilation_check(self, filepath_str: str) -> bool:
-    proc = await async_subprocess.create_exec(
-        ["python", "-m", "py_compile", filepath_str],
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
-    except asyncio.TimeoutError:
-        logger.error("Compilation timed out after 30 seconds.")
-        return False
-
-    if proc.returncode != 0:
-        logger.debug(stderr.decode())
-        return False
-    return True
+def parse_user_input(user_input: str) -> List[str]:
+    parts = shlex.split(user_input, posix=True)  # Ensures quoted args handled correctly
+    if len(parts) == 0:
+        raise ValueError("Empty input after parsing")
+    return parts[:20]  # Truncate safely without losing semantics
 ```
 
-> ⚠️ Migrate blocking calls to async equivalents or use executors with timeouts.  
-> 🧪 Write mock-based tests simulating slow/hanging processes.
+#### Mypy Compliance Notes:
+- Return `List[str]`, never bare list.
+- Catch specific exception types rather than generic catch-all.
 
 ---
 
-### Task 1.3 – Improve LLMClient.chat() Return Consistency
-**Problem**: Inconsistent error reporting via strings instead of structured exceptions/types.
+### Task 1.4 — Remove Redundant Compile Check  
+**File**: Implement phase logic (likely in builder or writer modules)
 
-#### Changes Required:
-- Define a typed result object or union type indicating success/failure states.
+#### Action Steps:
+Remove second compilation step post-write unless conditional difference exists. If retained, ensure only one call per file modification cycle.
 
+#### Mypy Compliance Notes:
+- Guard against duplicate calls via state tracking flags (`bool` field).
+- Log redundant attempts to debug level for audit trail visibility.
+
+---
+
+## Phase 2: Structural Refactoring (High Priority)
+
+### Task 2.1 — Centralize Exceptions  
+**Files**: `agent.py`, all submodules defining exceptions locally
+
+#### Action Steps:
+Create single source-of-truth module: `agent_core/exceptions.py`. Move definitions there and replace local redefinitions with centralized imports across project.
+
+Example migration snippet:
 ```python
-from typing import Union, NamedTuple
+# In each affected file BEFORE refactor:
+class AgentError(Exception): ...
 
-class LlmResponse(NamedTuple):
-    content: str
-    is_error: bool = False
-
-def chat(self, prompt: str) -> Union[LlmResponse, Exception]:
-    try:
-        response = requests.post(...)  # Or httpx/aiohttp for async support
-        if not response.ok:
-            return LlmResponse(content=str(response.text), is_error=True)
-        
-        data = response.json()
-        choices = data.get("choices", [])
-        if len(choices) == 0:
-            return LlmResponse(content="No response from LLM.", is_error=True)
-
-        first_choice = choices[0]
-        text_response = first_choice["message"]["content"]
-        return LlmResponse(content=text_response.strip(), is_error=False)
-
-    except RequestException as e:
-        logger.exception("HTTP request failed")
-        return LlmResponse(content=f"[LM Studio error: {str(e)}]", is_error=True)
+# AFTER refactor:
+from agent_core.exceptions import AgentError, FileOperationError
 ```
 
-> 💡 Consider integrating with a unified exception hierarchy defined below.  
-> 📊 Update callers to check `.is_error` flag rather than matching substrings.
+#### Mypy Compliance Notes:
+- All exception classes inherit from `Exception`.
+- Provide full docstrings and inheritance chain clarity.
+- Export list maintained in `__init__.py` for convenience access.
 
 ---
 
-### Task 1.4 – Fix Method Signature Regex Extraction (`extract_signatures`)
-**Problem**: Regex only matches single-space indentation before `def`.
+### Task 2.2 — Correct Import Depth Errors  
+**Files**: Handlers referencing core modules incorrectly (`handlers/analyze_handler.py`, tests)
 
-#### Changes Required:
-- Broaden regex pattern to accept any whitespace including tabs/multiple spaces.
+#### Action Steps:
+Audit all triple-dot imports (`...`) and adjust to double-dot (`..`) when targeting parent package level correctly. Validate actual module locations match expected paths.
 
-Before:
-```regex
-r'^\s+def\s+(\w+)\s*\((.*?)\)\s*(?:->\s*(.+?))?\s*:'
-```
-
-After:
-```regex
-r'^[\t ]+(async )?def\s+(\w+)\s*\(([^)]*)\)(?:\s*->\s*(.*))?:\s*$'
-```
-
-Also, ensure that `re.MULTILINE` mode is enabled when scanning large files.
-
-> ✅ Test against various Python formatting styles (PEP8-compliant vs tab-indented).  
-> 🛠 Consider leveraging AST parsing as alternative strategy for robustness.
-
----
-
-## Phase 2: Structural Improvements & Modularization
-
-### Task 2.1 – Consolidate Duplicate Exception Definitions
-**Problem**: Multiple modules define overlapping exception classes causing confusion and potential shadowing issues.
-
-#### Strategy:
-Create a centralized `exceptions.py` module inside `agent_core/` that defines all domain-specific exceptions once. Migrate other files to import from this location exclusively.
-
-Example structure:
-
+Corrected example block:
 ```python
-# agent_core/exceptions.py
-class AgentBaseError(Exception): ...
-class FileOperationError(AgentBaseError): ...
-class SecurityViolationError(AgentBaseError): ...
+# Before (wrong depth):
+from ...config import AgentSettings  
+from ...exceptions import FileOperationError  
 
-# In agent.py or anywhere else needing an error:
-from .agent_core.exceptions import FileOperationError
-raise FileOperationError("Invalid file access attempt")
+# After (corrected):
+from ..config import AgentSettings  
+from ..exceptions import FileOperationError  
 ```
 
-> 🗑 Deprecate duplicate definitions in legacy modules (`entities.py`, `path_utils.py`).  
-> ⚖️ Introduce backward compatibility shims temporarily if needed.
+#### Mypy Compliance Notes:
+- No relative imports beyond valid package boundaries.
+- Static verification through mypy `--strict` mode confirms resolution success.
 
 ---
 
-### Task 2.2 – Refactor Monolithic Functions Into Handlers
-**Problem**: Massive functions like `run_interactive()` violate SRP and are hard to maintain/test.
+### Task 2.3 — Resolve Circular Import Risks  
+**Files**: `agent_core/__init__.py`, dependencies involving logging/context/config interplay
 
-#### Strategy:
-Break down monolithic logic into discrete handler classes implementing a common interface.
+#### Action Steps:
+Refactor implicit fallback logic in `logging_config.py`: replace conditional imports with explicit dependency injection pattern ensuring deterministic load order.
 
+Proposed approach:
 ```python
-from abc import ABC, abstractmethod
-from typing import List
+# In logging_config.py BEFORE refactor:
+try:
+    from context_management import CORRELATION_ID_CTX  
+except ImportError: ...  # Fragile divergence path introduced here
 
-class CommandHandler(ABC):
-    @abstractmethod
-    async def handle(self, args: List[str]) -> int: ...  # Returns exit code
-
-class AnalyzeCommand(CommandHandler):
-    async def handle(self, args: List[str]) -> int:
-        ...
-
-class ImplementCommand(CommandHandler):
-    async def handle(self, args: List[str]) -> int:
-        ...
-
-COMMAND_REGISTRY = {
-    "analyze": AnalyzeCommand(),
-    "implement": ImplementCommand()
-}
+# AFTER refactor:
+import inject
+@inject.params(correlation_ctx='CORRELATION_ID_CTX')
+def configure_logging(correlation_ctx: ContextType) -> None:
+    ...  # Unified behavior regardless of standalone execution context
 ```
 
-Update main entry point to route based on registry lookup.
-
-> 🧵 Maintain backward compatibility with existing CLI usage patterns.  
-> 📦 Encapsulate each subcommand in its own file/module for clarity.
+#### Mypy Compliance Notes:
+- Explicit interface contracts defined via abstract base classes or protocols.
+- Type annotations enforced even under dynamic injection scenarios.
 
 ---
 
-### Task 2.3 – Centralize Configuration Management Using Dataclasses/Pydantic
-**Problem**: Scattered constants and magic values make configuration brittle.
+## Phase 3: Typing & Safety Enhancements (Medium Priority)
 
-#### Strategy:
-Define immutable settings class using `@dataclass(frozen=True)` or Pydantic BaseModel depending on validation needs.
+### Task 3.1 — Enforce Structured Result Types  
+**Files**: Public API functions returning raw strings/lists/objects inconsistently
 
+#### Action Steps:
+Adopt `Result[T]` pattern already partially implemented elsewhere—standardize usage everywhere applicable including handlers, parsers, validators.
+
+Implementation scaffold:
 ```python
-from dataclasses import dataclass, field
-from pathlib import Path
+@dataclass(frozen=True)
+class Success(Result):
+    value: T
 
 @dataclass(frozen=True)
-class AgentSettings:
-    workspace_root: Path = field(default_factory=lambda: Path.cwd())
-    llm_api_url: str = "http://localhost:1234/v1"
-    max_concurrent_tools: int = 5
-    search_command_timeout_sec: float = 30.0
-
-settings = AgentSettings()
+class Failure(Result):
+    error: str
+    details: Optional[dict[str, Any]] = None
 ```
 
-Pass instances around constructors or context managers instead of global access.
+Apply consistently across interfaces previously returning ambiguous outputs.
 
-> 🛡 Validate inputs at startup time (e.g., check URL format, valid directories).  
-> 📋 Document defaults clearly in docstrings/comments.
+#### Mypy Compliance Notes:
+- Generics parameterized properly (`Generic[T]`).
+- Discriminated unions supported with exhaustive pattern matching guarantees.
 
 ---
 
-### Task 2.4 – Structured Logging Integration Across Modules
-**Problem**: Print statements scattered throughout codebase hinder debugging and monitoring capabilities.
+### Task 3.2 — Standardize Frozen Dataclass Defaults  
+**File**: `entities.py` and other entity definitions violating immutability contract
 
-#### Strategy:
-Replace `print()` with structured logging using Python’s built-in `logging` module integrated with existing config (`logging_config.py`).
+#### Action Steps:
+Audit all mutable default factories (e.g., lists) used inside frozen dataclasses—replace inconsistent patterns uniformly with `field(default_factory=list)` syntax compliant everywhere.
 
+Before vs after comparison:
 ```python
-import logging
-logger = logging.getLogger(__name__)
+# Before violation:
+@dataclass(frozen=True)
+class SomeEntity:
+    tags = []  # Mutable default violates immutability!
 
-# Old way:
-print("Processing file...")
-
-# New way:
-logger.info("Started processing", extra={"filename": filename})
+# After compliance:
+@dataclass(frozen=True)
+class SomeEntity:
+    tags: List[str] = field(default_factory=list)  # Safe immutable instantiation guaranteed
 ```
 
-Ensure consistent log levels (INFO/WARNING/ERROR) and structured metadata fields.
-
-> 📈 Enable JSON-formatted logs for easier ingestion into observability stacks.  
-> 🕵️‍♂️ Avoid logging sensitive information like full file contents or credentials.
+#### Mypy Compliance Notes:
+- All fields annotated explicitly with appropriate generic container types.
+- Zero runtime mutations allowed due to `frozen=True` enforcement combined with safe defaults strategy.
 
 ---
 
-### Task 2.5 – Async File I/O Migration Using `aiofiles`
-**Problem**: Blocking disk operations inside async contexts degrade performance and responsiveness.
+## Phase 4: Cleanup Pass (Low Priority Recommendations)
 
-#### Strategy:
-Replace synchronous reads/writes with `aiofiles.open()` wrapper functions.
+### Task 4.1 — Eliminate Duplicate Exception Class Definitions  
+**Scope**: Full codebase sweep for redundant exception declarations post-centralized refactor completion.
 
+#### Action Steps:
+Run grep-based search identifying remaining instances of duplicated class definitions—remove them once confirmed superseded by central module imports established earlier in Phase 2.1.
+
+#### Mypy Compliance Notes:
+- Zero duplicate symbol occurrences detected after cleanup run completes successfully.
+
+---
+
+### Task 4.2 — Normalize Path Conversion Logic Duplication  
+**Scope**: Identify repeated `/c/` → `C:\` conversion logic blocks scattered across multiple files (~7+). Consolidate into reusable utility function within `path_utils.py`.
+
+#### Action Steps:
+Extract shared normalization routine into dedicated helper method—invoke centrally from all call sites replacing inline copy-paste implementations previously present.
+
+New consolidated signature proposal:
 ```python
-import aiofiles
-
-async def read_file_async(filepath: str) -> Optional[str]:
-    try:
-        async with aiofiles.open(filepath, 'r', encoding='utf-8') as f:
-            return await f.read()
-    except FileNotFoundError:
-        logger.warning(f"File not found: {filepath}")
-        return None
+def convert_to_windows_path(path_str: str) -> str:
+    if path_str.startswith('/c/') or path_str.startswith('/C/'):
+        return 'C:\\' + path_str.lstrip('/').replace('/', '\\')
+    else:
+        # Handle other drive-letter mappings similarly...
+        pass
 ```
 
-Apply this consistently across all I/O-heavy sections.
-
-> 🔄 Audit entire codebase for remaining blocking calls and migrate them gradually.  
-> 📊 Benchmark before/after to measure impact on throughput/latency.
-
----
-
-## Phase 3: Testing Infrastructure Setup
-
-### Task 3.1 – Establish Unit Tests for Core Components
-**Problem**: Zero test coverage exposes risk in future changes.
-
-#### Targets for Initial Coverage:
-- Path normalization/validation logic (traversal protection, symlink resolution)
-- LLM response parsing/error handling branches
-- Tool execution dispatch flow (mock external dependencies)
-- Semantic index cleanup behaviors under memory pressure scenarios
-
-Use `pytest`, `unittest.mock` for mocks/stubs.
-
-Sample test scaffold:
-
-```python
-import pytest
-from unittest import mock
-from agent_core.path_utils import _normalize_path_strict
-
-@pytest.fixture
-def temp_workspace(tmpdir):
-    return tmpdir.mkdir("workspace")
-
-def test_normalize_valid_absolute(temp_workspace):
-    path = str(temp_workspace.joinpath("file.txt"))
-    result = _normalize_path_strict(path)
-    assert result is not None
-```
-
-> 🧪 Automate test runs via CI pipelines (GitHub Actions, GitLab CI).  
-> 📈 Track coverage metrics using `coverage.py`.
+#### Mypy Compliance Notes:
+- Single canonical implementation accepted by mypy strict checker without ambiguity.
+- All callers updated to delegate transparently to unified service layer abstraction above.
 
 ---
 
-## Phase 4: Cleanup & Finalization Tasks
+## Verification Checklist Pre-Merge Submission
 
-### Task 4.1 – Resolve Circular Imports & Cross-Module Reference Issues
-**Problem**: Implicit dependencies between modules create fragile import order requirements.
-
-#### Strategy:
-Audit all inter-module imports and restructure to avoid cycles:
-
-- Move shared types/constants into lower-level utility packages (`agent_core/types.py`)
-- Use lazy imports where necessary (only when actually used)
-- Enforce unidirectional dependency graph through linting tools like `importchecker` or manual audits
-
-> 🔄 Review `__init__.py` files carefully—avoid importing too much eagerly.  
-> 📜 Apply PEP 484 typing discipline rigorously to catch mismatches early.
-
----
-
-### Task 4.2 – Eliminate Bare Except Clauses & Improve Error Handling Granularity
-**Problem**: Broad exception catches hide real bugs and complicate debugging.
-
-#### Strategy:
-Replace generic `except Exception:` blocks with specific ones targeting known failure modes.
-
-```python
-# Bad:
-try:
-    content = fp.read_text(...)
-except Exception:
-    pass
-
-# Good:
-try:
-    content = fp.read_text(encoding="utf-8")
-except FileNotFoundError as e:
-    logger.warning(f"File disappeared unexpectedly: {e}")
-except PermissionError as e:
-    logger.error(f"Permission denied reading file: {e}")
-else:
-    process(content)
-```
-
-> 🚨 Never silently ignore unexpected exceptions.  
-> 📋 Log contextual info whenever catching broad categories like `OSError`.
-
----
-
-## Summary Checklist Before Merging
-
-| Item | Status |
-|------|--------|
-| All modified functions pass mypy strict checks | ❏ |
-| No bare except clauses remain unhandled | ❏ |
-| Async file I/O replaces all blocking operations | ❏ |
-| Unified exception hierarchy adopted across modules | ❏ |
-| Structured logging replaces print statements | ❏ |
-| Unit tests cover critical components (>70% coverage goal) | ❏ |
-| Documentation updated for new APIs/configurations | ❏ |
+| Item | Status Required |
+|------|----------------|
+| ✅ `normalize_path` exists and importable from correct path in handlers/tests | Must pass |
+| ✅ No blocking I/O inside async coroutines anywhere | Must pass |
+| ✅ Proper POSIX mode enabled for all shlex operations | Must pass |
+| ✅ Only one compile-check invocation per file write cycle | Must pass |
+| ✅ All exceptions imported centrally—not locally redefined | Must pass |
+| ✅ Relative import depths aligned with actual package structure | Must pass |
+| ✅ Logging configuration deterministic via dependency injection—not fallback guessing | Must pass |
+| ✅ Result[T] pattern adopted consistently across public APIs | Must pass |
+| ✅ Frozen dataclasses avoid mutable defaults entirely | Must pass |
+| ✅ mypy strict passes cleanly on entire codebase after changes applied | Must pass |
 
 --- 
 
-Let me know which phase/task you'd like to start working on next!
+Let me know if you'd like this converted into actionable tickets or automated scripts targeting these fixes directly!

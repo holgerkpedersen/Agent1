@@ -38,5 +38,9 @@
   "tests/test_handlers/__init__.py": {
     "date": "2026-07-26 02:03:19.856964",
     "size": 239
+  },
+  "tests/test_handlers/test_analyze_handler.py": {
+    "date": "2026-07-26 02:12:55.300042",
+    "size": 2010
   }
 }
