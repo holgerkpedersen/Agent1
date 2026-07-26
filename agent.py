@@ -15,9 +15,9 @@ import difflib
 
 
 KNOWN_MODELS = {
-    "qwen3.6-27b-mtp": "Qwen 3.6 27B - chat, codegen, large context",
-    "google/gemma-4-31b": "Gemma 4 31B - chat, reasoning, fast token gen",
-    "laguna-s-2.1": "Laguna S 2.1 118B - chat, fast, smaller",
+    "qwen3.6-27b-mtp": {"desc": "Qwen 3.6 27B - chat, codegen, large context", "max_tokens": 50000},
+    "google/gemma-4-31b": {"desc": "Gemma 4 31B - chat, reasoning, fast token gen", "max_tokens": 50000},
+    "laguna-s-2.1": {"desc": "Laguna S 2.1 118B - chat, fast (may repeat)", "max_tokens": 8192},
 }
 
 DEFAULT_MODEL = os.environ.get("AGENT_MODEL", "laguna-s-2.1")
@@ -39,8 +39,8 @@ class LLMClient:
         payload = {
             "model": self.model_name,
             "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 50000
+            "temperature": 0.7 if "laguna" not in self.model_name.lower() else 1.0,
+            "max_tokens": KNOWN_MODELS.get(self.model_name, {}).get("max_tokens", 50000)
         }
 
         try:
@@ -582,18 +582,18 @@ async def run_interactive():
                 if len(parts) < 2:
                     print(f"Current model: {agent.llm.model_name}")
                     print(f"Known models ({len(KNOWN_MODELS)}):")
-                    for name, desc in sorted(KNOWN_MODELS.items()):
-                        marker = " ← current" if name == agent.llm.model_name else ""
-                        print(f"  {name}{marker}\n    {desc}")
+                    for name, info in sorted(KNOWN_MODELS.items()):
+                        marker = " <- current" if name == agent.llm.model_name else ""
+                        print(f"  {name}{marker}\n    {info['desc']}")
                     continue
                 
                 query = parts[1].strip()
                 
                 if query == "list":
                     print(f"Known models ({len(KNOWN_MODELS)}):")
-                    for name, desc in sorted(KNOWN_MODELS.items()):
-                        marker = " ← current" if name == agent.llm.model_name else ""
-                        print(f"  {name}{marker}\n    {desc}")
+                    for name, info in sorted(KNOWN_MODELS.items()):
+                        marker = " <- current" if name == agent.llm.model_name else ""
+                        print(f"  {name}{marker}\n    {info['desc']}")
                     continue
                 
                 # Fuzzy match
@@ -621,8 +621,8 @@ async def run_interactive():
                     continue
                 
                 # Confirm and switch
-                desc = KNOWN_MODELS.get(best_match, "")
-                print(f"Match: {best_match} - {desc}")
+                info = KNOWN_MODELS.get(best_match, {"desc": ""})
+                print(f"Match: {best_match} - {info['desc']}")
                 print(f"Switch from {agent.llm.model_name} to {best_match}? (y/n)")
                 confirm = input().strip().lower()
                 if confirm in ["y", "yes"]:
@@ -1187,18 +1187,33 @@ async def run_interactive():
                         func_names = re.findall(r'def\s+(\w+)', content)
                         if len(func_names) > 20:
                             from collections import Counter
-                            counts = Counter(func_names)
-                            # If more than 60% of functions are near-duplicates of each other
                             similar_prefixes = {}
                             for name in func_names:
-                                prefix = re.sub(r'_\d+$|_v\d+$|_clean$|_final$', '', name)
+                                prefix = re.sub(r'_\d+$|_v\d+$|_clean$|_final$|_at_error_level$|_safe_no_raise.*', '', name)
                                 similar_prefixes[prefix] = similar_prefixes.get(prefix, 0) + 1
                             max_dupes = max(similar_prefixes.values()) if similar_prefixes else 1
                             if max_dupes > 10:
                                 print(f"  REJECTED: {filename} has {max_dupes} near-duplicate functions")
                                 continue
-                        if len(content) > 50000:
-                            print(f"  REJECTED: {filename} is {len(content)} bytes (max 50KB)")
+                        
+                        # Detect repeated blocks of code (>3 identical lines repeated >5 times)
+                        lines = [l.strip() for l in content.split('\n') if l.strip() and not l.strip().startswith('#')]
+                        if len(lines) > 50:
+                            block_counts = Counter()
+                            for i in range(len(lines) - 3):
+                                block = '\n'.join(lines[i:i+4])
+                                if len(block) > 40:  # skip trivial blocks
+                                    block_counts[block] += 1
+                            if block_counts and block_counts.most_common(1)[0][1] > 5:
+                                repeated_block = block_counts.most_common(1)[0][0][:80]
+                                print(f"  REJECTED: {filename} repeats the same {block_counts.most_common(1)[0][1]}x: '{repeated_block}...'")
+                                continue
+                        
+                        # Model-specific size limits
+                        model_info = KNOWN_MODELS.get(agent.llm.model_name, {})
+                        max_size = model_info.get("max_size", 50000)
+                        if len(content) > max_size:
+                            print(f"  REJECTED: {filename} is {len(content)} bytes (max {max_size} for {agent.llm.model_name})")
                             continue
                     
                     with open(filepath, "w", encoding="utf-8") as f:
