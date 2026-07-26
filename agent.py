@@ -2016,7 +2016,36 @@ async def run_interactive():
                         with open(tasks_md, "w", encoding="utf-8") as f: f.write(r)
                         print(f"[taskplan] Written")
                     
-                    print(f"\nNext: implement {tasks_md} {plan_md} {entities_md} --workspace {target_workspace} --force")
+                    # Build suggested commands
+                    print(f"\n{'='*40}")
+                    print(f"Workflow complete. Choose how to execute:")
+                    print(f"{'='*40}")
+                    
+                    # Slow path: implement (N LLM calls, thorough)
+                    print(f"\n  SLOW (per-file generation):")
+                    print(f"  implement {tasks_md} {plan_md} {entities_md} --workspace {target_workspace} --force")
+                    
+                    # Fast path: fix --desc (1 LLM call)
+                    try:
+                        with open(tasks_md, "r", encoding="utf-8") as tf:
+                            task_text = tf.read()
+                        # Extract task summaries: "Task N: file.py — what to do"
+                        summaries = []
+                        for line in task_text.split('\n'):
+                            stripped = line.strip()
+                            if stripped and not stripped.startswith('#') and '—' in stripped:
+                                summaries.append(stripped)
+                            elif stripped.startswith('Task ') and ':' in stripped:
+                                summaries.append(stripped)
+                        # Compact: join summaries with "; "
+                        compact = "; ".join(summaries[:10])  # max 10 tasks
+                        if len(summaries) > 10:
+                            compact += f" (and {len(summaries)-10} more)"
+                        if compact:
+                            print(f"\n  FAST (one LLM call — recommended):")
+                            print(f'  fix {target_workspace} --desc "Fix all issues: {compact}"')
+                    except Exception:
+                        pass
                     
                 elif features_file:
                     # --- BROWNFIELD EXTENSION: analyze existing + add features ---
@@ -2105,7 +2134,19 @@ async def run_interactive():
                             f.write(f"\n\n---\n\n{r}")
                         print(f"[taskplan] Appended")
                     
-                    print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
+                    print(f"\n{'='*40}")
+                    print(f"Workflow complete. Choose how to execute:")
+                    print(f"{'='*40}")
+                    print(f"\n  SLOW: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
+                    try:
+                        with open(tasks_md, "r", encoding="utf-8") as tf:
+                            task_text = tf.read()
+                        summaries = [line.strip() for line in task_text.split('\n') if line.strip() and not line.startswith('#') and ('—' in line or line.startswith('Task'))]
+                        compact = "; ".join(summaries[:10])
+                        if compact:
+                            print(f'  FAST: fix {target_workspace} --desc "Fix all issues: {compact}"')
+                    except Exception:
+                        pass
                     
                 else:
                     # --- BROWNFIELD from existing code ---
@@ -2170,7 +2211,19 @@ async def run_interactive():
                         with open(tasks_md, "w", encoding="utf-8") as f: f.write(r)
                         print(f"[taskplan] Written")
                     
-                    print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
+                    print(f"\n{'='*40}")
+                    print(f"Workflow complete. Choose how to execute:")
+                    print(f"{'='*40}")
+                    print(f"\n  SLOW: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
+                    try:
+                        with open(tasks_md, "r", encoding="utf-8") as tf:
+                            task_text = tf.read()
+                        summaries = [line.strip() for line in task_text.split('\n') if line.strip() and not line.startswith('#') and ('—' in line or line.startswith('Task'))]
+                        compact = "; ".join(summaries[:10])
+                        if compact:
+                            print(f'  FAST: fix {target_workspace} --desc "Fix all issues: {compact}"')
+                    except Exception:
+                        pass
                         
             else:
                 # Try natural language processing with LLM
