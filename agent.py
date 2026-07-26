@@ -76,44 +76,65 @@ class LLMClient:
         if model_info.get("thinking") is False:
             payload["thinking"] = {"type": "disabled"}
         
-        try:
-            import urllib.request
-            
-            data = json.dumps(payload).encode('utf-8')
-            req = urllib.request.Request(
-                f"{self.lmstudio_url}/chat/completions",
-                data=data,
-                headers={
-                    'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {self.api_key}'
-                },
-                method='POST'
-            )
-            
-            full_content = ""
-            with urllib.request.urlopen(req, timeout=3600) as response:
-                for line in response.read().decode('utf-8').split('\n'):
-                    line = line.strip()
-                    if not line.startswith('data: '):
-                        continue
-                    data_str = line[6:]
-                    if data_str == '[DONE]':
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        delta = chunk.get('choices', [{}])[0].get('delta', {})
-                        token = delta.get('content', '')
-                        if token:
-                            print(token, end='', flush=True)
-                            full_content += token
-                    except json.JSONDecodeError:
-                        pass
-            
-            print()  # final newline after streaming
-            return full_content
-            
-        except Exception as e:
-            return f"[LM Studio stream error: {e}]"
+        max_retries = 2
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                import urllib.request
+
+                data = json.dumps(payload).encode('utf-8')
+                req = urllib.request.Request(
+                    f"{self.lmstudio_url}/chat/completions",
+                    data=data,
+                    headers={
+                        'Content-Type': 'application/json',
+                        'Authorization': f'Bearer {self.api_key}'
+                    },
+                    method='POST'
+                )
+
+                full_content = ""
+                reasoning_content = ""
+                with urllib.request.urlopen(req, timeout=3600) as response:
+                    for line_bytes in response:
+                        line = line_bytes.decode('utf-8').strip()
+                        if not line.startswith('data: '):
+                            continue
+                        data_str = line[6:]
+                        if data_str == '[DONE]':
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                            delta = chunk.get('choices', [{}])[0].get('delta', {})
+                            token = delta.get('content', '')
+                            reasoning = delta.get('reasoning_content', '')
+                            if reasoning:
+                                reasoning_content += reasoning
+                            if token:
+                                print(token, end='', flush=True)
+                                full_content += token
+                        except json.JSONDecodeError:
+                            pass
+
+                print()  # final newline after streaming
+                
+                if not full_content and reasoning_content and len(reasoning_content) > 500:
+                    model = self.model_name
+                    alternates = [m for m in KNOWN_MODELS if m != model]
+                    alt_hint = f" Try: model {alternates[0]}" if alternates else ""
+                    return f"[Error: {model} used all tokens thinking, zero code output. Use 'model reload' or switch model.{alt_hint}]"
+                
+                return full_content
+
+            except Exception as e:
+                last_error = str(e)
+                if attempt < max_retries - 1:
+                    wait = 2 ** attempt
+                    print(f"\n  [retry {attempt+1}/{max_retries}] {last_error}, waiting {wait}s...")
+                    await asyncio.sleep(wait)
+
+        return f"[LM Studio stream error: {last_error}]"
 
     async def _chat_internal(self, messages: list[dict]) -> str:
         """Internal chat implementation with retry on transient errors."""
