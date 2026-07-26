@@ -596,6 +596,36 @@ async def run_interactive():
                         print(f"  {name}{marker}\n    {info['desc']}")
                     continue
                 
+                if query == "reload":
+                    current = agent.llm.model_name
+                    # Find an alternate model to cycle through (unloads current via LM Studio)
+                    alternates = [m for m in KNOWN_MODELS if m != current]
+                    if not alternates:
+                        print("No alternate model available for reload cycle.")
+                        continue
+                    
+                    temp_model = alternates[0]
+                    info = KNOWN_MODELS.get(current, {})
+                    print(f"Reloading {current} via {temp_model} cycle...")
+                    print(f"  1. Switching to {temp_model}...")
+                    
+                    # Switch to alternate
+                    agent.llm.model_name = temp_model
+                    try:
+                        await agent.llm.chat([{"role": "user", "content": "ping"}])
+                    except Exception:
+                        pass  # ping may fail, that's OK — it forces LM Studio to switch
+                    
+                    print(f"  2. Switching back to {current}...")
+                    agent.llm.model_name = current
+                    try:
+                        await agent.llm.chat([{"role": "user", "content": "ping"}])
+                    except Exception:
+                        pass
+                    
+                    print(f"Reload complete. Model: {current}")
+                    continue
+                
                 # Fuzzy match
                 exact_match = next((m for m in KNOWN_MODELS if m == query), None)
                 if exact_match:
