@@ -6,6 +6,24 @@ import os
 import platform
 import re
 from collections import defaultdict
+from agent_core import to_windows_path
+from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL
+from agent_core.llm.lmstudio import LMStudioProvider
+from agent_core.file_system import FileSystem
+from agent_core.file_searcher import FileSearcher
+from agent_core.tool_dispatcher import ToolDispatcher
+from agent_core.commands.base import Command
+from agent_core.commands.registry import CommandRegistry
+from agent_core.commands.read_cmd import ReadCommand
+from agent_core.commands.write_cmd import WriteCommand
+from agent_core.commands.search_cmd import SearchCommand
+from agent_core.commands.clear_cmd import ClearCommand
+from agent_core.commands.model_cmd import ModelCommand
+from agent_core.commands.analyze_cmd import AnalyzeCommand
+from agent_core.commands.plan_cmd import PlanCommand
+from agent_core.commands.entities_cmd import EntitiesCommand
+from agent_core.commands.taskplan_cmd import TaskplanCommand
+from agent_core.commands.cleanup_cmd import CleanupCommand
 from datetime import datetime
 from pathlib import Path
 import json
@@ -14,96 +32,25 @@ import shlex
 import difflib
 
 
-KNOWN_MODELS = {
-    "qwen3.6-27b-mtp": {"desc": "Qwen 3.6 27B - chat, codegen, large context", "max_tokens": 100000},
-    "google/gemma-4-31b": {"desc": "Gemma 4 31B - chat, reasoning, fast token gen", "max_tokens": 100000},
-    "laguna-s-2.1": {"desc": "Laguna S 2.1 MoE A8B - fast, smaller (may repeat)", "max_tokens": 100000, "thinking": False},
-}
-
-DEFAULT_MODEL = os.environ.get("AGENT_MODEL", "laguna-s-2.1")
-
-
 class LLMClient:
-    """LLM client for AI-powered analysis and conversation."""
+    """Thin wrapper around LMStudioProvider for backward compatibility.
+    
+    Delegates to LMStudioProvider for all LLM operations.
+    """
     
     def __init__(self, model_name: str = None, api_key: str = None):
         self.model_name = model_name or DEFAULT_MODEL
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-
-        # LM Studio configuration - typically runs on localhost:1234
-        self.lmstudio_url = os.environ.get("LMSTUDIO_URL", "http://localhost:1234/v1")
+        self._provider = LMStudioProvider(model_name=self.model_name, api_key=self.api_key)
     
-    async def chat(self, messages: list[dict]) -> str:
-        """Send chat request to LLM via LM Studio with retry on transient errors."""
-        model_info = KNOWN_MODELS.get(self.model_name, {})
-        payload = {
-            "model": self.model_name,
-            "messages": messages,
-            "temperature": 0.7 if "laguna" not in self.model_name.lower() else 1.0,
-            "max_tokens": model_info.get("max_tokens", 50000)
-        }
-        if model_info.get("thinking") is False:
-            payload["thinking"] = {"type": "disabled"}
-
-        max_retries = 3
-        last_error = None
-
-        for attempt in range(max_retries):
-            try:
-                import urllib.request
-                import urllib.error
-                import socket
-
-                data = json.dumps(payload).encode('utf-8')
-
-                req = urllib.request.Request(
-                    f"{self.lmstudio_url}/chat/completions",
-                    data=data,
-                    headers={
-                        'Content-Type': 'application/json',
-                        'Authorization': f'Bearer {self.api_key}'
-                    },
-                    method='POST'
-                )
-
-                with urllib.request.urlopen(req, timeout=3600) as response:
-                    result = json.loads(response.read().decode())
-
-                    if 'choices' in result and len(result['choices']) > 0:
-                        message = result['choices'][0]['message']
-                        content = message.get('content') or ""
-                        reasoning = message.get('reasoning_content') or ""
-
-                        if not content and reasoning and len(reasoning) > 500:
-                            model = self.model_name
-                            alternates = [m for m in KNOWN_MODELS if m != model]
-                            alt_hint = f" Try: model {alternates[0]}" if alternates else ""
-                            return f"[Error: {model} used all tokens thinking, zero code output. Use 'model reload' or switch model.{alt_hint}]"
-
-                        return content or reasoning
-
-            except (asyncio.TimeoutError, TimeoutError, socket.timeout):
-                last_error = "Request timed out"
-            except urllib.error.URLError as e:
-                reason_str = str(e.reason) if hasattr(e, 'reason') else str(e)
-                last_error = f"Connection error: {reason_str}"
-            except ConnectionResetError:
-                last_error = "Server disconnected"
-            except ConnectionRefusedError:
-                last_error = "LM Studio not running"
-            except json.JSONDecodeError as e:
-                last_error = f"Invalid JSON response: {e}"
-                return f"[Error: {last_error}]"
-            except Exception as e:
-                last_error = str(e)
-
-            if attempt < max_retries - 1:
-                wait = 2 ** attempt
-                print(f"  [retry {attempt+1}/{max_retries}] {last_error}, waiting {wait}s...")
-                await asyncio.sleep(wait)
-
-        return f"[Error after {max_retries} retries: {last_error}]"
-
+    async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> str:
+        """Send chat request to LLM via LM Studio."""
+        return await self._provider.chat(messages, tools)
+    
+    async def chat_stream(self, messages: list[dict]) -> str:
+        """Chat with real-time token streaming to console."""
+        return await self._provider.chat_stream(messages)
+    
     async def chat_with_continuation(self, messages: list[dict], max_continues: int = 3) -> str:
         """Chat with auto-resume if response gets truncated at token limit."""
         full_response = ""
@@ -127,99 +74,10 @@ class LLMClient:
                 break
 
         return full_response
-
-    async def chat_stream(self, messages: list[dict]) -> str:
-        """Chat with real-time token streaming to console."""
-        import urllib.request
-
-        model_info = KNOWN_MODELS.get(self.model_name, {})
-        payload = {
-            "model": self.model_name,
-            "messages": messages,
-            "temperature": 0.7 if "laguna" not in self.model_name.lower() else 1.0,
-            "max_tokens": model_info.get("max_tokens", 50000),
-            "stream": True
-        }
-        if model_info.get("thinking") is False:
-            payload["thinking"] = {"type": "disabled"}
-
-        max_retries = 2
-        last_error = None
-
-        for attempt in range(max_retries):
-            try:
-                data = json.dumps(payload).encode('utf-8')
-                req = urllib.request.Request(
-                    f"{self.lmstudio_url}/chat/completions",
-                    data=data,
-                    headers={
-                        'Content-Type': 'application/json',
-                        'Authorization': f'Bearer {self.api_key}'
-                    },
-                    method='POST'
-                )
-
-                full_content = ""
-                reasoning_content = ""
-                with urllib.request.urlopen(req, timeout=3600) as response:
-                    for line_bytes in response:
-                        line = line_bytes.decode('utf-8').strip()
-                        if not line.startswith('data: '):
-                            continue
-                        data_str = line[6:]
-                        if data_str == '[DONE]':
-                            break
-                        try:
-                            chunk = json.loads(data_str)
-                            delta = chunk.get('choices', [{}])[0].get('delta', {})
-                            token = delta.get('content', '')
-                            reasoning = delta.get('reasoning_content', '')
-                            if reasoning:
-                                reasoning_content += reasoning
-                            if token:
-                                print(token, end='', flush=True)
-                                full_content += token
-                        except json.JSONDecodeError:
-                            pass
-
-                print()
-
-                if not full_content and reasoning_content and len(reasoning_content) > 500:
-                    model = self.model_name
-                    alternates = [m for m in KNOWN_MODELS if m != model]
-                    alt_hint = f" Try: model {alternates[0]}" if alternates else ""
-                    return f"[Error: {model} used all tokens thinking, zero code output. Use 'model reload' or switch model.{alt_hint}]"
-
-                return full_content
-
-            except Exception as e:
-                last_error = str(e)
-                if attempt < max_retries - 1:
-                    wait = 2 ** attempt
-                    print(f"\n  [retry {attempt+1}/{max_retries}] {last_error}, waiting {wait}s...")
-                    await asyncio.sleep(wait)
-
-        return f"[LM Studio stream error: {last_error}]"
     
     async def analyze_code(self, code: str) -> str:
         """Analyze code using LLM."""
-
-        prompt = f"""Analyze this Python code and identify:
-1. Bugs or issues
-2. Code quality concerns
-3. Potential improvements
-4. Circular imports - which modules import each other, creating cycles
-5. Missing or broken cross-module references
-
-Code:
-{code}"""
-
-        messages = [
-            {"role": "system", "content": "You are an expert code reviewer. Analyze the provided code and give detailed feedback."},
-            {"role": "user", "content": prompt}
-        ]
-
-        return await self.chat(messages)
+        return await self._provider.analyze_code(code)
 
 
 class Agent:
@@ -243,16 +101,57 @@ class Agent:
         # Chat history for context
         self.chat_history = []
 
+        # Initialize extracted components
+        self.fs = FileSystem(self.workspace)
+        self.searcher = FileSearcher(self.workspace)
+        self.dispatcher = ToolDispatcher()
+        self._register_tool_handlers()
+
+    def _register_tool_handlers(self):
+        """Register tool handlers with the dispatcher."""
+        self.dispatcher.register("read_file", lambda args: self._tool_read_file(**args))
+        self.dispatcher.register("write_file", lambda args: self._tool_write_file(**args))
+        self.dispatcher.register("apply_patch", lambda args: self._tool_apply_patch(**args))
+        self.dispatcher.register("edit_file", lambda args: self._tool_edit_file(**args))
+        self.dispatcher.register("search", lambda args: self._tool_search(**args))
+        self.dispatcher.register("list_files", lambda args: self._tool_list_files(**args))
+        self.dispatcher.register("delete_file", lambda args: self._tool_delete_file(**args))
+        self.dispatcher.register("analyze_file", lambda args: self._tool_analyze_file(**args))
+
+    async def _tool_read_file(self, path: str, **kwargs) -> str:
+        result = await self.fs.read(path)
+        if not result.startswith("File not found") and not result.startswith("Error"):
+            self._files_read.add(self.fs.safe_path(path))
+        return result
+
+    async def _tool_write_file(self, path: str, content: str, **kwargs) -> str:
+        return await self.fs.write(path, content)
+
+    async def _tool_apply_patch(self, path: str, find: str, replace: str, **kwargs) -> str:
+        return await self.fs.apply_patch(path, find, replace)
+
+    async def _tool_edit_file(self, path: str, content: str, **kwargs) -> str:
+        return await self.fs.edit(path, content)
+
+    async def _tool_search(self, query: str, path: str = ".", **kwargs) -> str:
+        return await self.searcher.search(query, path)
+
+    async def _tool_list_files(self, path: str = ".", pattern: str = "*", **kwargs) -> str:
+        return await self._list_files(path, pattern)
+
+    async def _tool_delete_file(self, path: str, **kwargs) -> str:
+        return await self._delete_file(path)
+
+    async def _tool_analyze_file(self, path: str, **kwargs) -> str:
+        return await self._analyze_file(path)
+
+    async def execute_tool(self, tool_name: str, arguments: dict) -> str:
+        """Execute a tool by name using the dispatcher."""
+        return await self.dispatcher.execute(tool_name, arguments)
+
     def _normalize_path(self, path: str) -> str:
         """Normalize and validate paths with security checks."""
-        if path.startswith("/c/"):
-            normalized = "C:\\" + path[3:].replace("/", "\\")
-        elif path.startswith("/d/"):
-            normalized = "D:\\" + path[3:].replace("/", "\\")
-        elif path.startswith("/"):
-            normalized = "C:\\" + path[1:].replace("/", "\\")
-        else:
-            normalized = path
+        normalized = to_windows_path(path)
 
         try:
             abs_path = Path(normalized).resolve()
@@ -513,7 +412,8 @@ class Agent:
                     file_path = part
                     if file_path.startswith(("./", ".\\")):
                         file_path = file_path[2:]
-                    if not file_path.startswith("/c/") and not file_path.startswith("C:") and not file_path.startswith("D:"):
+                    file_path = to_windows_path(file_path)
+                    if not file_path.startswith(("C:", "D:")):
                         file_path = f"{workspace}/{file_path}"
                     break
             if file_path:
@@ -633,7 +533,20 @@ async def run_interactive():
     
     # Create agent instance
     agent = Agent(workspace=Agent.DEFAULT_WORKSPACE)
-    
+
+    # Set up command registry with simple commands
+    registry = CommandRegistry()
+    registry.register(ReadCommand())
+    registry.register(WriteCommand())
+    registry.register(SearchCommand())
+    registry.register(ClearCommand())
+    registry.register(ModelCommand())
+    registry.register(AnalyzeCommand())
+    registry.register(PlanCommand())
+    registry.register(EntitiesCommand())
+    registry.register(TaskplanCommand())
+    registry.register(CleanupCommand())
+
     while True:
         try:
             # Get user input
@@ -653,238 +566,11 @@ async def run_interactive():
             except ValueError:
                 parts = user_input.split(maxsplit=20)
             command = parts[0].lower()
-            
-            if command == "read":
-                if len(parts) < 2:
-                    print("Usage: read <path>")
-                    continue
-                    
-                path = parts[1]
-                result = await agent.read_file(path)
-                print(result)
-                
-            elif command == "write":
-                if len(parts) < 3:
-                    print("Usage: write <path> <content>")
-                    continue
-                    
-                path = parts[1]
-                content = parts[2]
-                result = await agent.write_file(path, content)
-                print(result)
-                
-            elif command == "search":
-                if len(parts) < 2:
-                    print("Usage: search <query>")
-                    continue
-                    
-                query = parts[1]
-                result = await agent.search_file(query)
-                print(result)
-                
-            elif command == "model":
-                if len(parts) < 2:
-                    print(f"Current model: {agent.llm.model_name}")
-                    print(f"Known models ({len(KNOWN_MODELS)}):")
-                    for name, info in sorted(KNOWN_MODELS.items()):
-                        marker = " <- current" if name == agent.llm.model_name else ""
-                        print(f"  {name}{marker}\n    {info['desc']}")
-                    continue
 
-                query = parts[1].strip()
-
-                if query == "list":
-                    print(f"Known models ({len(KNOWN_MODELS)}):")
-                    for name, info in sorted(KNOWN_MODELS.items()):
-                        marker = " <- current" if name == agent.llm.model_name else ""
-                        print(f"  {name}{marker}\n    {info['desc']}")
-                    continue
-
-                if query == "reload":
-                    current = agent.llm.model_name
-                    alternates = [m for m in KNOWN_MODELS if m != current]
-                    if not alternates:
-                        print("No alternate model available for reload cycle.")
-                        continue
-
-                    temp_model = alternates[0]
-                    print(f"Reloading {current} via {temp_model} cycle...")
-                    print(f"  1. Switching to {temp_model}...")
-                    agent.llm.model_name = temp_model
-                    try:
-                        await agent.llm.chat([{"role": "user", "content": "ping"}])
-                    except Exception:
-                        pass
-                    print(f"  2. Switching back to {current}...")
-                    agent.llm.model_name = current
-                    try:
-                        await agent.llm.chat([{"role": "user", "content": "ping"}])
-                    except Exception:
-                        pass
-                    print(f"Reload complete. Model: {current}")
-                    continue
-
-                exact_match = next((m for m in KNOWN_MODELS if m == query), None)
-                if exact_match:
-                    best_match = exact_match
-                else:
-                    substring_matches = [m for m in KNOWN_MODELS if query.lower() in m.lower()]
-                    if substring_matches:
-                        best_match = substring_matches[0]
-                    else:
-                        close = difflib.get_close_matches(query, KNOWN_MODELS.keys(), n=1, cutoff=0.3)
-                        best_match = close[0] if close else None
-
-                if not best_match:
-                    print(f"No match for '{query}'. Known models:")
-                    for name in KNOWN_MODELS:
-                        print(f"  {name}")
-                    continue
-
-                if best_match == agent.llm.model_name:
-                    print(f"Already using: {best_match}")
-                    continue
-
-                info = KNOWN_MODELS.get(best_match, {"desc": ""})
-                print(f"Match: {best_match} - {info['desc']}")
-                print(f"Switch from {agent.llm.model_name} to {best_match}? (y/n)")
-                confirm = input().strip().lower()
-                if confirm in ["y", "yes"]:
-                    agent.llm.model_name = best_match
-                    print(f"Model set to: {best_match}")
-                    env_path = ".env"
-                    lines = []
-                    found = False
-                    if os.path.exists(env_path):
-                        with open(env_path, "r") as ef:
-                            lines = ef.readlines()
-                    with open(env_path, "w") as ef:
-                        for line in lines:
-                            if line.startswith("AGENT_MODEL="):
-                                ef.write(f"AGENT_MODEL={best_match}\n")
-                                found = True
-                            else:
-                                ef.write(line)
-                        if not found:
-                            ef.write(f"\nAGENT_MODEL={best_match}\n")
-                    print(f"Saved to {env_path}")
-                else:
-                    print("Cancelled.")
-
-            elif command in ["clear", "reset"]:
-                agent.clear_history()
-                print("Agent memory cleared.")
-                
-            # Analyze command - uses LM Studio LLM
-            elif command == "analyze":
-                if len(parts) < 2:
-                    print("Usage: analyze <path> [analysis.md]")
-                    continue
-                    
-                path = parts[1]
-                output_file = parts[2] if len(parts) > 2 else None
-                result = await agent.process_query(f"analyze {path}")
-                
-                if output_file:
-                    with open(output_file, "w", encoding="utf-8") as f:
-                        f.write(f"# Analysis of {path}\n\n")
-                        f.write(result)
-                    print(f"Analysis written to {output_file}")
-                else:
-                    print(result)
-                
-            # Plan command - generates coding plan from analysis file
-            elif command == "plan":
-                if len(parts) < 3:
-                    print("Usage: plan <analysis.md> <plan.md>")
-                    continue
-                    
-                analysis_file = parts[1]
-                plan_file = parts[2]
-                
-                try:
-                    with open(analysis_file, "r", encoding="utf-8") as f:
-                        analysis_content = f.read()
-                except FileNotFoundError:
-                    print(f"Error: File not found: {analysis_file}")
-                    continue
-                
-                messages = [
-                    {"role": "system", "content": "You are an expert software architect. Based on the code analysis provided, create a detailed coding plan with specific implementation steps, prioritized by impact and dependencies."},
-                    {"role": "user", "content": f"Create a coding plan based on this analysis:\n\n{analysis_content}"}
-                ]
-                plan = await agent.llm.chat(messages)
-                
-                with open(plan_file, "w", encoding="utf-8") as f:
-                    f.write(f"# Coding Plan\n\n")
-                    f.write(plan)
-                print(f"Coding plan written to {plan_file}")
-                
-            # Entities command - generates entities.md from analysis and plan
-            elif command == "entities":
-                if len(parts) < 3:
-                    print("Usage: entities <analysis.md> <plan.md> [entities.md]")
-                    continue
-                    
-                analysis_file = parts[1]
-                plan_file = parts[2]
-                entities_file = parts[3] if len(parts) > 3 else "entities.md"
-                
-                try:
-                    with open(analysis_file, "r", encoding="utf-8") as f:
-                        analysis_content = f.read()
-                    with open(plan_file, "r", encoding="utf-8") as f:
-                        plan_content = f.read()
-                except FileNotFoundError as e:
-                    print(f"Error: File not found: {e}")
-                    continue
-                
-                messages = [
-                    {"role": "system", "content": "Create entities.md with ONLY Python code — no intro text. Start with ```python. All types must be valid — no unbound TypeVars, no forward-ref errors. Must pass mypy strict. Avoid circular imports."},
-                    {"role": "user", "content": f"Extract and define all shared entities from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\nCreate an entities.md file with Python-ready entity definitions that can be centralized in an entities.py file for import across the project."}
-                ]
-                entities = await agent.llm.chat(messages)
-                
-                with open(entities_file, "w", encoding="utf-8") as f:
-                    f.write(f"# Shared Entities\n\n")
-                    f.write(entities)
-                print(f"Entities written to {entities_file}")
-                
-            # Taskplan command - generates implementation task plan
-            elif command == "taskplan":
-                if len(parts) < 3:
-                    print("Usage: taskplan <analysis.md> <plan.md> [tasks.md]")
-                    continue
-                    
-                analysis_file = parts[1]
-                plan_file = parts[2]
-                tasks_file = parts[3] if len(parts) > 3 else "tasks.md"
-                
-                try:
-                    with open(analysis_file, "r", encoding="utf-8") as f:
-                        analysis_content = f.read()
-                    with open(plan_file, "r", encoding="utf-8") as f:
-                        plan_content = f.read()
-                except FileNotFoundError as e:
-                    print(f"Error: File not found: {e}")
-                    continue
-                
-                entities_content = ""
-                entities_py = os.path.join(os.path.dirname(analysis_file), "entities.py")
-                if os.path.exists(entities_py):
-                    with open(entities_py, "r", encoding="utf-8") as f:
-                        entities_content = f.read()
-                
-                messages = [
-                    {"role": "system", "content": "You are an expert project manager. Create a detailed task plan for implementing code changes. Break down work into concrete, actionable tasks with clear descriptions. Include task dependencies and priority."},
-                    {"role": "user", "content": f"Create a task implementation plan from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\n## Existing entities.py:\n{entities_content if entities_content else 'No entities.py found'}\n\nGenerate a tasks.md file with specific implementation tasks, organized by file, with clear steps for new and existing files. Ensure tasks respect the entity definitions in entities.py."}
-                ]
-                tasks = await agent.llm.chat(messages)
-                
-                with open(tasks_file, "w", encoding="utf-8") as f:
-                    f.write(f"# Implementation Tasks\n\n")
-                    f.write(tasks)
-                print(f"Tasks written to {tasks_file}")
+            # Try commands from registry
+            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup"]:
+                result = await registry.execute(command, parts[1:], agent)
+                continue
                 
             # Implement command - implements all files from taskplan
             elif command == "implement":
@@ -1065,8 +751,7 @@ async def run_interactive():
                 # Snapshot pre-existing files for change tracking
                 pre_snapshot = set()
                 ws = target_workspace
-                if ws.startswith("/c/") or ws.startswith("/C/"):
-                    ws = "C:" + ws[2:]
+                ws = to_windows_path(ws)
                 for fp in Path(ws).rglob("*"):
                     if fp.is_file() and ".git" not in str(fp) and "__pycache__" not in str(fp):
                         pre_snapshot.add(str(fp.relative_to(Path(ws))).replace("\\", "/"))
@@ -2025,80 +1710,6 @@ async def run_interactive():
                     print("Could not parse fix from LLM response")
                     print(f"Raw: {fixed[:300]}")
                     
-            elif command == "cleanup":
-                ws = agent.workspace
-                if ws.startswith("/c/") or ws.startswith("/C/"):
-                    ws = "C:" + ws[2:]
-                ws_path = Path(ws)
-                
-                if not ws_path.exists():
-                    print(f"Workspace not found: {ws_path}")
-                    continue
-                
-                print(f"\nScanning {ws_path} for generated files...")
-                
-                generated_files = {}
-                manifest_file = ws_path / ".generated_manifest.json"
-                if manifest_file.exists():
-                    with open(manifest_file, "r", encoding="utf-8") as f:
-                        generated_files = json.load(f)
-                    print(f"  Manifest: {len(generated_files)} previously generated files")
-                
-                all_files = {}
-                for fp in ws_path.rglob("*"):
-                    if fp.is_file() and ".git" not in str(fp) and "__pycache__" not in str(fp):
-                        rel = str(fp.relative_to(ws_path)).replace("\\", "/")
-                        all_files[rel] = {"size": fp.stat().st_size, "generated": rel in generated_files}
-                
-                references = {f: set() for f in all_files}
-                for fname in all_files:
-                    fp = ws_path / fname
-                    try:
-                        content = fp.read_text(encoding="utf-8", errors="ignore")
-                        for other in all_files:
-                            if other != fname and other in content:
-                                references[other].add(fname)
-                    except Exception:
-                        pass
-                
-                active_candidates = [f for f in all_files if f.startswith("project_") and f.endswith(".md")]
-                active = set()
-                for root in active_candidates:
-                    queue = [root]
-                    while queue:
-                        f = queue.pop()
-                        if f in active:
-                            continue
-                        active.add(f)
-                        for ref_by in references.get(f, set()):
-                            queue.append(ref_by)
-                
-                for f in active_candidates:
-                    active.add(f)
-                
-                unreferenced = [f for f in all_files if f not in active and f.endswith((".md", ".py", ".json"))]
-                external = [f for f in unreferenced if f in generated_files]
-                
-                print(f"\n  Total files scanned: {len(all_files)}")
-                print(f"  Active (referenced): {len(active)}")
-                print(f"  Unreferenced: {len(unreferenced)} ({'generated by agent' if external else 'external'})")
-                
-                if unreferenced:
-                    print(f"\n  Unreferenced files:")
-                    for f in sorted(unreferenced):
-                        tag = " [generated]" if f in generated_files else ""
-                        print(f"    {f} ({all_files[f]['size']} bytes){tag}")
-                    
-                    print(f"\n  Use --delete to remove them, or add to .protected to keep.")
-                else:
-                    print("  No unreferenced files found.")
-                
-                print(f"\n  Reference graph (active files):")
-                for f in sorted(active):
-                    refs = references.get(f, set())
-                    if refs:
-                        print(f"    {f} <- referenced by: {', '.join(sorted(refs))}")
-                        
             elif command == "workflow":
                 if len(parts) < 2:
                     print("Usage: workflow <target> [--from <spec.md>] [--force] [--workspace <path>]")
@@ -2155,17 +1766,14 @@ async def run_interactive():
                 
                 if spec_file and not os.path.isabs(spec_file):
                     spec_file = os.path.join(target_workspace, spec_file)
-                if spec_file and (spec_file.startswith("/c/") or spec_file.startswith("/C/")):
-                    spec_file = "C:" + spec_file[2:]
+                spec_file = to_windows_path(spec_file)
                 
                 if features_file and not os.path.isabs(features_file):
                     features_file = os.path.join(target_workspace, features_file)
-                if features_file and (features_file.startswith("/c/") or features_file.startswith("/C/")):
-                    features_file = "C:" + features_file[2:]
+                features_file = to_windows_path(features_file)
                 
                 ws = target_workspace
-                if ws.startswith("/c/") or ws.startswith("/C/"):
-                    ws = "C:" + ws[2:]
+                ws = to_windows_path(ws)
                 ws_path = Path(ws)
                 ws_path.mkdir(parents=True, exist_ok=True)
                 print(f"Workspace: {ws_path}")

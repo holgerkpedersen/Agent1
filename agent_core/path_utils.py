@@ -13,6 +13,27 @@ from pathlib import Path
 from .entities import SecurityViolationError, FileOperationError
 
 
+def to_windows_path(path: str) -> str:
+    """Convert Unix-style paths to Windows paths.
+    
+    Converts /c/... to C:\\..., /d/... to D:\\..., etc.
+    Used for cross-platform path compatibility in LM Studio interactions.
+    
+    Args:
+        path: Input path string (Unix or Windows format)
+        
+    Returns:
+        Windows-format path string
+    """
+    if path.startswith("/c/") or path.startswith("/C/"):
+        return "C:\\" + path[3:].replace("/", "\\")
+    elif path.startswith("/d/") or path.startswith("/D/"):
+        return "D:\\" + path[3:].replace("/", "\\")
+    elif path.startswith("/"):
+        return "C:\\" + path[1:].replace("/", "\\")
+    return path
+
+
 def normalize_path(raw: str, workspace_root: Path, follow_symlinks: bool = True) -> Path:
     """Validate and resolve a path strictly within the given workspace boundary.
     
