@@ -12,7 +12,23 @@ from typing import Any
 
 
 # ---------------------------------------------------------------------------
-# Question Bank  (~25 per category × 5 categories = ~125 total)
+# Custom Exceptions for Benchmarking
+# ---------------------------------------------------------------------------
+
+class BenchmarkError(Exception):
+    """Base exception for benchmark-related failures."""
+
+    pass
+
+
+class ModelAPIError(BenchmarkError):
+    """Raised when the model API returns an error or fails to respond."""
+
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Question Bank  (~25 per category x 5 categories = ~125 total)
 # Each entry: (prompt, expected_answer_or_checker_key)
 # ---------------------------------------------------------------------------
 
@@ -33,7 +49,7 @@ REASONING_QUESTIONS = [
     ("If 3 cats catch 3 mice in 3 minutes, how many cats are needed to catch 100 mice in 100 minutes?", "3"),
     ("What is the next prime number after 29?", "31"),
     ("A snail is at the bottom of a 10-meter well. Each day it climbs 3 meters, but each night it slips back 2 meters. How many days to get out?", "8"),
-    ("If you have a 3×3×3 cube painted red on all outside faces and cut into 1×1×1 cubes, how many small cubes have exactly two red faces?", "12"),
+    ("If you have a 3x3x3 cube painted red on all outside faces and cut into 1x1x1 cubes, how many small cubes have exactly two red faces?", "12"),
     ("Which does not belong: Apple, Banana, Carrot, Date, Elderberry? Answer with one word.", "Carrot"),
     ("If you flip a fair coin twice, what is the probability of getting at least one head? Give answer as a fraction.", "3/4"),
     ("What comes next: J, F, M, A, M, J, ?", "J"),
@@ -45,8 +61,8 @@ REASONING_QUESTIONS = [
 ]
 
 MATH_QUESTIONS = [
-    ("What is 17 × 23?", "391"),
-    ("Simplify: (12 + 8) ÷ 5", "4"),
+    ("What is 17 x 23?", "391"),
+    ("Simplify: (12 + 8) / 5", "4"),
     ("What is the square root of 2025?", "45"),
     ("Calculate: 15% of 240", "36"),
     ("If x + 7 = 15, what is x?", "8"),
@@ -56,7 +72,7 @@ MATH_QUESTIONS = [
     ("What is the sum of interior angles of a pentagon in degrees?", "540"),
     ("Solve: 3x - 9 = 12. What is x?", "7"),
     ("What is the greatest common divisor of 48 and 36?", "12"),
-    ("A circle has radius 7. What is its area? Use π ≈ 3.14, round to nearest whole number.", "154"),
+    ("A circle has radius 7. What is its area? Use pi approx 3.14, round to nearest whole number.", "154"),
     ("What is 0.375 as a fraction in simplest form?", "3/8"),
     ("If a triangle has sides 5, 12, and 13, what type of triangle is it? Answer with one word.", "right"),
     ("Calculate the factorial of 6 (6!)", "720"),
@@ -64,11 +80,11 @@ MATH_QUESTIONS = [
     ("A store offers a 20% discount on an item priced at $85. What is the sale price? Give just the number.", "68"),
     ("What is log base 10 of 1000?", "3"),
     ("How many degrees are in a full circle?", "360"),
-    ("If f(x) = 2x² + 3, what is f(4)?", "35"),
+    ("If f(x) = 2x^2 + 3, what is f(4)?", "35"),
     ("What is the least common multiple of 8 and 12?", "24"),
     ("A right triangle has legs 9 and 12. What is its area?", "54"),
     ("Convert 3/7 to a decimal, rounded to two decimal places.", "0.43"),
-    ("What is the derivative of x³ at x = 2? Give just the number.", "12"),
+    ("What is the derivative of x^3 at x = 2? Give just the number.", "12"),
     ("If you invest $1000 at 5% annual interest compounded yearly, how much after 2 years? Round to nearest dollar.", "1103"),
 ]
 
@@ -84,7 +100,7 @@ CODING_QUESTIONS = [
     ("Write a Python one-liner to find all even numbers from 1 to 20.", "[x for x in range(1, 21) if x % 2 == 0]"),
     ("What does this output?\nprint(bool(''))", "False"),
     ("Write a Python function 'count_vowels(s)' that returns the number of vowels in string s. Return only the function.", None),
-    ("In Python, what keyword is used to define a constant? (Hint: there isn't one — explain briefly.)", None),
+    ("In Python, what keyword is used to define a constant? (Hint: there isn't one - explain briefly.)", None),
     ("What does this code output?\na = {1: 'one', 2: 'two'}\nprint(a.get(3, 'missing'))", "missing"),
     ("Write a Python function 'binary_search(arr, target)' on a sorted list. Return only the function.", None),
     ("What is the output of: print(0.1 + 0.2 == 0.3)", "False"),
@@ -251,8 +267,8 @@ class ModelResult:
 
 def normalize_answer(text: str) -> str:
     text = text.strip().lower()
-    text = re.sub(r'[^\w\s./]', ' ', text)
-    text = re.sub(r'\s+', ' ', text).strip()
+    text = re.sub(r"[^\w\s./]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
@@ -271,8 +287,8 @@ def answers_match(response: str, expected: str) -> bool:
 
     # Numeric tolerance for math answers
     try:
-        r_val = float(norm_resp.replace(',', ''))
-        e_val = float(norm_exp.replace(',', ''))
+        r_val = float(norm_resp.replace(",", ""))
+        e_val = float(norm_exp.replace(",", ""))
         if abs(r_val - e_val) < 0.5:
             return True
     except (ValueError, TypeError):
@@ -280,12 +296,14 @@ def answers_match(response: str, expected: str) -> bool:
 
     # Fraction equivalence
     for frac in [norm_resp, norm_exp]:
-        if '/' in frac:
+        if "/" in frac:
             try:
-                num, den = frac.split('/')
+                num, den = frac.split("/")
                 fval = float(num) / float(den)
-                other = normalize_answer(norm_exp if frac == norm_resp else norm_resp)
-                oval = float(other.replace(',', ''))
+                other = normalize_answer(
+                    norm_exp if frac == norm_resp else norm_resp
+                )
+                oval = float(other.replace(",", ""))
                 if abs(fval - oval) < 0.01:
                     return True
             except (ValueError, ZeroDivisionError):
@@ -294,10 +312,69 @@ def answers_match(response: str, expected: str) -> bool:
     # Keyword overlap for knowledge questions
     resp_words = set(norm_resp.split())
     exp_words = set(norm_exp.split())
-    if len(exp_words) > 0 and len(resp_words & exp_words) / len(exp_words) >= 0.7:
+    if len(exp_words) > 0 and len(resp_words & exp_words) / len(
+        exp_words
+    ) >= 0.7:
         return True
 
     return False
+
+
+def _count_syllables(word: str) -> int:
+    """Improved English syllable estimator using common rules.
+
+    Handles silent-e, vowel clusters, and common exceptions.
+    """
+    word = word.lower().strip(".,;:!?\"'()-")
+    if not word:
+        return 0
+
+    # Common single-syllable words that would otherwise be miscounted
+    exceptions_map: dict[str, int] = {
+        "the": 1, "a": 1, "i": 1, "is": 1, "it": 1, "to": 1,
+        "of": 1, "and": 1, "in": 1, "for": 1, "on": 1, "be": 1,
+        "as": 1, "with": 1, "that": 1, "this": 1, "are": 1,
+        "was": 1, "has": 1, "had": 1, "but": 1, "not": 1,
+    }
+    if word in exceptions_map:
+        return exceptions_map[word]
+
+    # Count vowel groups
+    vowels = set("aeiouy")
+    count = 0
+    prev_vowel = False
+    for ch in word:
+        is_vowel = ch in vowels
+        if is_vowel and not prev_vowel:
+            count += 1
+        prev_vowel = is_vowel
+
+    # Silent final 'e' (but not '-le', '-ve', '-ne' endings)
+    if (
+        word.endswith("e")
+        and len(word) > 2
+        and not word[-3:] in ("le", "ve", "ne")
+        and count > 1
+    ):
+        count -= 1
+
+    # '-ed' adds a syllable only when pronounced as /id/ (after t/d)
+    if word.endswith("ed"):
+        base = word[:-2]
+        if not base:
+            pass
+        elif base[-1:] in ("t", "d") and count > 1:
+            pass  # already counted
+        else:
+            count -= 1
+
+    return max(1, count)
+
+
+def _count_line_syllables(line: str) -> int:
+    """Count syllables for a single line of text."""
+    words = re.findall(r"[a-zA-Z]+", line.lower())
+    return sum(_count_syllables(w) for w in words)
 
 
 def score_instruction_following(prompt: str, response: str) -> float:
@@ -307,85 +384,98 @@ def score_instruction_following(prompt: str, response: str) -> float:
     rl = response.lower().strip()
 
     # "exactly three words" / "exactly N words"
-    m = re.search(r'exactly\s+(\d+)\s+word', pl)
+    m = re.search(r"exactly\s+(\d+)\s+word", pl)
     if m:
         n = int(m.group(1))
         actual = len(rl.split())
         if actual != n:
             score -= 0.5
 
-    # "nothing else" / "only" constraints — penalize extra text
-    if 'nothing else' in pl or 'and nothing else' in pl:
-        expected_match = re.search(r'(?:output|respond|repeat)\s+(?:with\s+)?(?:exactly\s+)?["\']?([^"\']+?)["\']?\s*(?:\.|$)', pl, re.IGNORECASE)
+    # "nothing else" / "only" constraints -- penalize extra text
+    if "nothing else" in pl or "and nothing else" in pl:
+        expected_match = re.search(
+            r"(?:output|respond|repeat)\s+(?:with\s+)?(?:exactly\s+)?"
+            r'["\']?([^"\']+?)["\']?\s*(?:\.|$)',
+            pl,
+            re.IGNORECASE,
+        )
         if expected_match:
             target = expected_match.group(1).strip().lower()
             if rl != target and not (target in rl and len(rl.split()) <= 3):
                 score -= 0.5
 
     # "no punctuation" constraint
-    if 'do not use any punctuation' in pl:
-        punct_chars = set('.,!?;:"\'()-')
+    if "do not use any punctuation" in pl:
+        punct_chars = set(".,!?;:\"'()-")
         if any(c in punct_chars for c in response):
             score -= 0.3
 
     # "exactly one word"
-    if 'exactly one word' in pl or 'one word that means' in pl:
+    if "exactly one word" in pl or "one word that means" in pl:
         if len(rl.split()) != 1:
             score -= 0.5
 
-    # Syllable count for haiku (rough check)
-    if 'haiku' in pl and '5-7-5' in pl:
-        lines = [l.strip() for l in rl.split('\n') if l.strip()]
+    # Syllable count for haiku (improved estimator)
+    if "haiku" in pl and "5-7-5" in pl:
+        lines = [l.strip() for l in rl.split("\n") if l.strip()]
         if len(lines) == 3:
-            syllables = []
-            vowels = 'aeiouy'
-            for line in lines:
-                count = sum(1 for c in line.lower() if c in vowels)
-                syllables.append(count)
-            # Rough check: each line should have ~5,7,5 vowel counts (imperfect but indicative)
-            if not (4 <= syllables[0] <= 6 and 6 <= syllables[1] <= 8 and 4 <= syllables[2] <= 6):
+            syllables = [_count_line_syllables(line) for line in lines]
+            if not (
+                4 <= syllables[0] <= 6
+                and 6 <= syllables[1] <= 8
+                and 4 <= syllables[2] <= 6
+            ):
                 score -= 0.3
 
     # "no numbering or bullets"
-    if 'no numbering' in pl or 'no bullets' in pl:
-        if re.search(r'^\d+[\.\)]', rl, re.MULTILINE) or re.search(r'^[-*•]', rl, re.MULTILINE):
+    if "no numbering" in pl or "no bullets" in pl:
+        if re.search(r"^\d+[\.\)]", rl, re.MULTILINE) or re.search(
+            r"^[-*]", rl, re.MULTILINE
+        ):
             score -= 0.3
 
     # "lowercase only" / "all lowercase"
-    if 'only lowercase' in pl:
+    if "only lowercase" in pl:
         if rl != rl.lower():
             score -= 0.3
 
     return max(0.0, min(1.0, round(score, 2)))
 
 
-def score_question(prompt: str, response: str, expected: str | None, category: str) -> tuple[bool | None, float]:
+def score_question(
+    prompt: str, response: str, expected: str | None, category: str
+) -> tuple[bool | None, float]:
     """Returns (correct_bool_or_None, score_0_to_1)."""
 
     if category == "instruction_following":
         inst_score = score_instruction_following(prompt, response)
         if expected:
-            match = answers_match(response, expected)
-            return match, max(inst_score, 1.0 if match else 0.0)
+            match_result = answers_match(response, expected)
+            return match_result, max(inst_score, 1.0 if match_result else 0.0)
         return None, inst_score
 
     if category == "coding":
         # For code-generation questions (expected is None), check syntax
         if expected is None:
-            code_match = re.search(r'```(?:python)?\s*(.*?)```', response, re.DOTALL)
-            code = code_match.group(1).strip() if code_match else response.strip()
+            code_match = re.search(
+                r"```(?:python)?\s*(.*?)```", response, re.DOTALL
+            )
+            code = (
+                code_match.group(1).strip() if code_match else response.strip()
+            )
             try:
-                compile(code, '<benchmark>', 'exec')
-                return None, 0.7  # Valid syntax — partial credit
+                compile(code, "<benchmark>", "exec")
+                return None, 0.7  # Valid syntax -- partial credit
             except SyntaxError:
                 return False, 0.0
 
         # For output-prediction questions
-        return answers_match(response, expected), 1.0 if answers_match(response, expected) else 0.0
+        matched = answers_match(response, expected)
+        return matched, 1.0 if matched else 0.0
 
     # Reasoning / Math / Knowledge
     if expected is None:
-        return None, 0.5  # Unscoreable — give neutral score
+        return None, 0.5  # Unscoreable -- give neutral score
 
     correct = answers_match(response, expected)
     return correct, 1.0 if correct else 0.0
@@ -404,16 +494,18 @@ async def query_model(
     max_retries: int = 3,
     base_delay: float = 1.0,
 ) -> tuple[str, float, int | None]:
-    """Returns (response_text, latency_ms, tokens_used)."""
+    """Returns (response_text, latency_ms, tokens_used). Raises ModelAPIError on failure."""
     import urllib.request
     import urllib.error
 
-    payload = json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1,
-        "max_tokens": 512,
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 512,
+        }
+    ).encode("utf-8")
 
     req = urllib.request.Request(
         BASE_URL,
@@ -422,7 +514,7 @@ async def query_model(
         method="POST",
     )
 
-    last_error = None
+    last_error: str | None = None
     for attempt in range(max_retries):
         start = time.monotonic()
         try:
@@ -439,22 +531,28 @@ async def query_model(
         except urllib.error.HTTPError as e:
             last_error = f"HTTP {e.code}"
             if e.code >= 500:
-                delay = base_delay * (2 ** attempt)
-                print(f"    [retry {attempt+1}/{max_retries}] Server error, waiting {delay:.0f}s...")
+                delay = base_delay * (2**attempt)
+                print(
+                    f"    [retry {attempt + 1}/{max_retries}] Server error, "
+                    f"waiting {delay:.0f}s..."
+                )
                 await asyncio.sleep(delay)
                 continue
-            return f"[Error: HTTP {e.code}]", latency_ms, None
+            raise ModelAPIError(f"HTTP Error: {e.code}") from e
 
         except urllib.error.URLError as e:
-            last_error = str(e.reason)
-            delay = base_delay * (2 ** attempt)
-            print(f"    [retry {attempt+1}/{max_retries}] Connection error, waiting {delay:.0f}s...")
+            last_error = str(e.reason) if hasattr(e, "reason") else str(e)
+            delay = base_delay * (2**attempt)
+            print(
+                f"    [retry {attempt + 1}/{max_retries}] Connection error, "
+                f"waiting {delay:.0f}s..."
+            )
             await asyncio.sleep(delay)
 
         except Exception as e:
-            return f"[Error: {e}]", latency_ms, None
+            raise ModelAPIError(str(e)) from e
 
-    return f"[Error after {max_retries} retries: {last_error}]", 0.0, None
+    raise ModelAPIError(f"Failed after {max_retries} retries: {last_error}")
 
 
 async def run_category(
@@ -471,20 +569,29 @@ async def run_category(
         sys.stdout.write(f"\r    Question {idx}/{total}")
         sys.stdout.flush()
 
-        response, latency_ms, tokens = await query_model(model, prompt)
-        correct, score = score_question(prompt, response, expected, category)
+        try:
+            response, latency_ms, tokens = await query_model(model, prompt)
+            correct, score = score_question(prompt, response, expected, category)
+        except ModelAPIError as e:
+            response = str(e)
+            latency_ms = 0.0
+            tokens = None
+            correct = False
+            score = 0.0
 
-        cat_result.results.append(QuestionResult(
-            question_idx=idx - 1,
-            prompt=prompt,
-            response=response[:500],
-            correct=correct,
-            score=score,
-            latency_ms=latency_ms,
-            tokens_used=tokens,
-        ))
+        cat_result.results.append(
+            QuestionResult(
+                question_idx=idx - 1,
+                prompt=prompt,
+                response=response[:500],
+                correct=correct,
+                score=score,
+                latency_ms=latency_ms,
+                tokens_used=tokens,
+            )
+        )
 
-    print(f"\r    Question {total}/{total} — done              ")
+    print(f"\r    Question {total}/{total} -- done              ")
     return cat_result
 
 
@@ -496,9 +603,9 @@ async def run_benchmark(
     results = []
 
     for model in models:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  Benchmarking: {model}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         model_result = ModelResult(model=model)
         for cat_name, questions in categories.items():
@@ -507,34 +614,52 @@ async def run_benchmark(
                 model_result.categories[cat_name] = cat_res
             else:
                 # Run multiple times and average scores
-                all_cat_results = []
+                all_cat_results: list[CategoryResult] = []
                 for rep in range(repetitions):
-                    print(f"\n  --- Repetition {rep+1}/{repetitions} ---")
-                    cr = await run_category(model, cat_name, questions, repetition=rep)
+                    print(f"\n  --- Repetition {rep + 1}/{repetitions} ---")
+                    cr = await run_category(
+                        model, cat_name, questions, repetition=rep
+                    )
                     all_cat_results.append(cr)
 
                 # Merge: average scores per question
                 merged = CategoryResult(category=cat_name)
                 n_questions = len(questions)
                 for q_idx in range(n_questions):
-                    reps = [cr.results[q_idx] for cr in all_cat_results if q_idx < len(cr.results)]
+                    reps = [
+                        cr.results[q_idx]
+                        for cr in all_cat_results
+                        if q_idx < len(cr.results)
+                    ]
                     avg_score = statistics.mean(r.score for r in reps)
-                    avg_latency = statistics.mean(r.latency_ms for r in reps)
+                    avg_latency = statistics.mean(
+                        r.latency_ms for r in reps
+                    )
                     any_correct = any(r.correct is True for r in reps)
                     all_correct = all(r.correct is True for r in reps)
-                    merged.results.append(QuestionResult(
-                        question_idx=q_idx,
-                        prompt=reps[0].prompt,
-                        response=reps[0].response[:500],
-                        correct=all_correct if any(r.correct is not None for r in reps) else None,
-                        score=round(avg_score, 2),
-                        latency_ms=avg_latency,
-                    ))
+                    merged.results.append(
+                        QuestionResult(
+                            question_idx=q_idx,
+                            prompt=reps[0].prompt,
+                            response=reps[0].response[:500],
+                            correct=(
+                                all_correct
+                                if any(r.correct is not None for r in reps)
+                                else None
+                            ),
+                            score=round(avg_score, 2),
+                            latency_ms=avg_latency,
+                        )
+                    )
                 model_result.categories[cat_name] = merged
 
         results.append(model_result)
-        print(f"\n  {model} summary: {model_result.total_correct}/{model_result.total_scoreable} correct "
-              f"({model_result.overall_accuracy}%), avg latency {model_result.avg_latency_ms}ms\n")
+        print(
+            f"\n  {model} summary: "
+            f"{model_result.total_correct}/{model_result.total_scoreable} correct "
+            f"({model_result.overall_accuracy}%), "
+            f"avg latency {model_result.avg_latency_ms}ms\n"
+        )
 
     return results
 
@@ -543,9 +668,9 @@ async def run_benchmark(
 # Reporter
 # ---------------------------------------------------------------------------
 
-def print_report(results: list[ModelResult]):
+def print_report(results: list[ModelResult]) -> None:
     """Print a formatted comparison table to the console."""
-    cat_names = []
+    cat_names: list[str] = []
     for r in results:
         for c in r.categories:
             if c not in cat_names:
@@ -553,12 +678,12 @@ def print_report(results: list[ModelResult]):
 
     header = f"{'Model':<30}"
     for cat in cat_names:
-        short = cat.replace('_', ' ').title()[:12]
+        short = cat.replace("_", " ").title()[:12]
         header += f"  {short:<14}"
     header += f"  {'Overall':<10}  {'Avg Latency':>12}"
-    print(f"\n{'='*len(header)}")
+    print(f"\n{'=' * len(header)}")
     print(header)
-    print('-' * len(header))
+    print("-" * len(header))
 
     for r in results:
         line = f"{r.model:<30}"
@@ -582,9 +707,9 @@ def print_report(results: list[ModelResult]):
     print()
 
 
-def build_model_json(model_result: ModelResult) -> dict:
+def build_model_json(model_result: ModelResult) -> dict[str, Any]:
     """Build a JSON-serializable dict for a single model's results."""
-    model_data = {
+    model_data: dict[str, Any] = {
         "model": model_result.model,
         "overall_accuracy": model_result.overall_accuracy,
         "total_correct": model_result.total_correct,
@@ -594,7 +719,7 @@ def build_model_json(model_result: ModelResult) -> dict:
     }
 
     for cat_name, cr in model_result.categories.items():
-        cat_data = {
+        cat_data: dict[str, Any] = {
             "accuracy": cr.accuracy,
             "correct_count": cr.correct_count,
             "scoreable_count": cr.scoreable_count,
@@ -604,28 +729,28 @@ def build_model_json(model_result: ModelResult) -> dict:
         }
 
         for qr in cr.results:
-            cat_data["questions"].append({
-                "index": qr.question_idx,
-                "prompt": qr.prompt,
-                "response": qr.response,
-                "correct": qr.correct,
-                "score": qr.score,
-                "latency_ms": qr.latency_ms,
-                "tokens_used": qr.tokens_used,
-            })
+            cat_data["questions"].append(
+                {
+                    "index": qr.question_idx,
+                    "prompt": qr.prompt,
+                    "response": qr.response,
+                    "correct": qr.correct,
+                    "score": qr.score,
+                    "latency_ms": qr.latency_ms,
+                    "tokens_used": qr.tokens_used,
+                }
+            )
 
         model_data["categories"][cat_name] = cat_data
 
     return model_data
 
 
-def save_models_json(results: list[ModelResult], path: str):
-    """Save all model results to a single models.json file.
-    Each model is stored under its own top-level key for easy lookup."""
+def save_models_json(results: list[ModelResult], path: str) -> None:
+    """Save all model results to a single models.json file."""
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Load existing file to append/merge new results
     existing: dict[str, Any] = {}
     if out_path.exists():
         try:
@@ -636,11 +761,13 @@ def save_models_json(results: list[ModelResult], path: str):
     for r in results:
         existing[r.model] = build_model_json(r)
 
-    out_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     print(f"  models.json saved to: {out_path} ({len(existing)} model(s) total)")
 
 
-def save_json_report(results: list[ModelResult], path: str):
+def save_json_report(results: list[ModelResult], path: str) -> None:
     """Save detailed results to a JSON file (all models combined)."""
     data = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -649,7 +776,9 @@ def save_json_report(results: list[ModelResult], path: str):
 
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     print(f"  JSON report saved to: {out_path}")
 
 
@@ -657,33 +786,32 @@ def save_json_report(results: list[ModelResult], path: str):
 # CLI
 # ---------------------------------------------------------------------------
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Benchmark local LLMs via LM Studio API",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
             '  python benchmark.py --model qwen2.5-coder-7b\n'
-            '  python benchmark.py --model qwen2.5-coder-7b llama3.1-8b --categories reasoning math\n'
-            '  python benchmark.py --model m1 m2 --repetitions 3 --output report.json\n'
+            '  python benchmark.py --model m1 m2 --repetitions 3\n',
         ),
     )
     parser.add_argument(
         "--model", nargs="+", required=True,
-        help="Model name(s) as registered in LM Studio (e.g., qwen2.5-coder-7b-instruct)",
+        help="Model name(s) as registered in LM Studio",
     )
     parser.add_argument(
         "--categories", nargs="+", default=list(ALL_CATEGORIES.keys()),
         choices=list(ALL_CATEGORIES.keys()),
-        help="Categories to run (default: all). Options: reasoning math coding knowledge instruction_following",
+        help="Categories to run (default: all)",
     )
     parser.add_argument(
         "--repetitions", type=int, default=1,
-        help="Number of times to repeat each test for consistency measurement (default: 1)",
+        help="Number of times to repeat each test (default: 1)",
     )
     parser.add_argument(
         "--output", "-o", type=str, default=None,
-        help="Path to save JSON report (e.g., reports/benchmark.json)",
+        help="Path to save JSON report",
     )
     parser.add_argument(
         "--url", type=str, default=BASE_URL,
@@ -692,20 +820,26 @@ def parse_args():
     return parser.parse_args()
 
 
-async def main():
+async def main() -> None:
     args = parse_args()
 
-    global BASE_URL
+    global BASE_URL  # noqa: PLW0603
     BASE_URL = args.url.rstrip("/")
 
     categories = {k: v for k, v in ALL_CATEGORIES.items() if k in args.categories}
-    total_q = sum(len(qs) for qs in categories.values()) * len(args.model) * args.repetitions
+    total_q = sum(len(qs) for qs in categories.values()) * len(
+        args.model
+    ) * args.repetitions
 
     print(f"\n  Benchmark Configuration")
-    print(f"  {'─'*40}")
+    print(f"  {'-' * 40}")
     print(f"  Models:        {', '.join(args.model)}")
     print(f"  Categories:    {', '.join(categories.keys())}")
-    print(f"  Questions:     {total_q // (len(args.model) * args.repetitions)} per model ({total_q} total with repetitions)")
+    print(
+        f"  Questions:     "
+        f"{total_q // (len(args.model) * args.repetitions)} per model "
+        f"({total_q} total with repetitions)"
+    )
     print(f"  Repetitions:   {args.repetitions}")
     print(f"  API URL:       {BASE_URL}")
     print()
@@ -717,7 +851,6 @@ async def main():
     if args.output:
         save_json_report(results, args.output)
 
-    # Always save to models.json (per-model keys, accumulates over runs)
     models_path = Path("reports") / "models.json"
     save_models_json(results, str(models_path))
 

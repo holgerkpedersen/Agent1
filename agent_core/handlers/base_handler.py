@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Protocol
+from typing import Protocol
 
 
 class CommandHandler(Protocol):
     """Structural protocol describing the command handler interface."""
 
     @abstractmethod
-    async def handle(self, args: List[str]) -> int: ...  # Returns exit code
+    async def handle(self, args: list[str]) -> int: ...  # Returns exit code
 
 
 class BaseCommandHandler(ABC):
@@ -23,4 +23,4 @@ class BaseCommandHandler(ABC):
     def name(self) -> str: ...
 
     @abstractmethod
-    async def handle(self, args: List[str]) -> int: ...
+    async def handle(self, args: list[str]) -> int: ...

@@ -1,12 +1,12 @@
 from __future__ import annotations
-from typing import Final, Optional
+from typing import Final
 
 class AgentBaseError(Exception):
     """Base exception for all agent-related errors."""
 
 
 class FileOperationError(AgentBaseError):
-    def __init__(self, message: str, path: Optional[str] = None) -> None:
+    def __init__(self, message: str, path: str | None = None) -> None:
         self.path = path
         super().__init__(message)
 
@@ -26,7 +26,7 @@ class ToolExecutionError(AgentBaseError):
 
 
 # Type alias for consistent error handling
-ErrorHandlerResult = tuple[bool, Optional[str]]  # (success, optional_error_message)
+ErrorHandlerResult = tuple[bool, str | None]  # (success, optional_error_message)
 
 __all__: Final[list[str]] = [
     "AgentBaseError",

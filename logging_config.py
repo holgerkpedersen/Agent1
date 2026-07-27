@@ -13,7 +13,6 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Union
 
 
 # ---------------------------------------------------------------------------
@@ -32,9 +31,9 @@ def get_correlation_id() -> str:
 class CorrelationIdContext:
     """Context manager to scope correlation IDs per request/tool call."""
     
-    def __init__(self, corr_id: Optional[str] = None):
+    def __init__(self, corr_id: str | None = None):
         self._corr_id = corr_id or str(uuid.uuid4())
-        self._token: Optional[contextvars.Token[str]] = None
+        self._token: contextvars.Token[str] | None = None
         
     def __enter__(self) -> str:
         self._token = CORRELATION_ID_CTX.set(self._corr_id)
@@ -122,9 +121,9 @@ class CorrelationIdFilter(logging.Filter):
 # ---------------------------------------------------------------------------
 
 def setup_logging(
-    level: Union[str, int] = "INFO",
+    level: str | int = "INFO",
     mode: str = "dev",
-    log_file: Optional[Union[str, Path]] = None,
+    log_file: str | Path | None = None,
     propagate: bool = False
 ) -> logging.Logger:
     """

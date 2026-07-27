@@ -1,5 +1,6 @@
 """Unit tests for agent_core.subprocess_utils timeout handling verification."""
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -40,7 +41,11 @@ def test_stderr_capture() -> None:
 def test_cwd_parameter() -> None:
     """Test subprocess execution with cwd parameter."""
     returncode, stdout, stderr = asyncio.run(
-        run_subprocess_with_timeout(["pwd"], timeout_sec=5.0, cwd="/tmp")
+        run_subprocess_with_timeout(
+            ["python", "-c", "import os; print(os.getcwd())"],
+            timeout_sec=5.0,
+            cwd=str(Path(__file__).parent),
+        )
     )
     assert returncode == 0
 

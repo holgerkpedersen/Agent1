@@ -15,8 +15,8 @@ import difflib
 
 
 KNOWN_MODELS = {
-    "qwen3.6-27b-mtp": {"desc": "Qwen 3.6 27B - chat, codegen, large context", "max_tokens": 50000},
-    "google/gemma-4-31b": {"desc": "Gemma 4 31B - chat, reasoning, fast token gen", "max_tokens": 50000},
+    "qwen3.6-27b-mtp": {"desc": "Qwen 3.6 27B - chat, codegen, large context", "max_tokens": 100000},
+    "google/gemma-4-31b": {"desc": "Gemma 4 31B - chat, reasoning, fast token gen", "max_tokens": 100000},
     "laguna-s-2.1": {"desc": "Laguna S 2.1 MoE A8B - fast, smaller (may repeat)", "max_tokens": 100000, "thinking": False},
 }
 
@@ -34,24 +34,89 @@ class LLMClient:
         self.lmstudio_url = os.environ.get("LMSTUDIO_URL", "http://localhost:1234/v1")
     
     async def chat(self, messages: list[dict]) -> str:
-        """Send chat request to LLM via LM Studio."""
-        return await self._chat_internal(messages)
+        """Send chat request to LLM via LM Studio with retry on transient errors."""
+        model_info = KNOWN_MODELS.get(self.model_name, {})
+        payload = {
+            "model": self.model_name,
+            "messages": messages,
+            "temperature": 0.7 if "laguna" not in self.model_name.lower() else 1.0,
+            "max_tokens": model_info.get("max_tokens", 50000)
+        }
+        if model_info.get("thinking") is False:
+            payload["thinking"] = {"type": "disabled"}
+
+        max_retries = 3
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                import urllib.request
+                import urllib.error
+                import socket
+
+                data = json.dumps(payload).encode('utf-8')
+
+                req = urllib.request.Request(
+                    f"{self.lmstudio_url}/chat/completions",
+                    data=data,
+                    headers={
+                        'Content-Type': 'application/json',
+                        'Authorization': f'Bearer {self.api_key}'
+                    },
+                    method='POST'
+                )
+
+                with urllib.request.urlopen(req, timeout=3600) as response:
+                    result = json.loads(response.read().decode())
+
+                    if 'choices' in result and len(result['choices']) > 0:
+                        message = result['choices'][0]['message']
+                        content = message.get('content') or ""
+                        reasoning = message.get('reasoning_content') or ""
+
+                        if not content and reasoning and len(reasoning) > 500:
+                            model = self.model_name
+                            alternates = [m for m in KNOWN_MODELS if m != model]
+                            alt_hint = f" Try: model {alternates[0]}" if alternates else ""
+                            return f"[Error: {model} used all tokens thinking, zero code output. Use 'model reload' or switch model.{alt_hint}]"
+
+                        return content or reasoning
+
+            except (asyncio.TimeoutError, TimeoutError, socket.timeout):
+                last_error = "Request timed out"
+            except urllib.error.URLError as e:
+                reason_str = str(e.reason) if hasattr(e, 'reason') else str(e)
+                last_error = f"Connection error: {reason_str}"
+            except ConnectionResetError:
+                last_error = "Server disconnected"
+            except ConnectionRefusedError:
+                last_error = "LM Studio not running"
+            except json.JSONDecodeError as e:
+                last_error = f"Invalid JSON response: {e}"
+                return f"[Error: {last_error}]"
+            except Exception as e:
+                last_error = str(e)
+
+            if attempt < max_retries - 1:
+                wait = 2 ** attempt
+                print(f"  [retry {attempt+1}/{max_retries}] {last_error}, waiting {wait}s...")
+                await asyncio.sleep(wait)
+
+        return f"[Error after {max_retries} retries: {last_error}]"
 
     async def chat_with_continuation(self, messages: list[dict], max_continues: int = 3) -> str:
         """Chat with auto-resume if response gets truncated at token limit."""
         full_response = ""
         current_messages = [dict(m) for m in messages]
-        
+
         for i in range(max_continues):
-            result = await self._chat_internal(current_messages)
-            
+            result = await self.chat(current_messages)
+
             if result.startswith("[Error") or result.startswith("[LM Studio"):
-                if full_response:
-                    return full_response
-                return result
-            
+                return full_response or result
+
             full_response += result
-            
+
             stripped = full_response.rstrip()
             if stripped and not stripped.endswith(('```', '}', ')', ']', '"', "'", '.', '\n')):
                 print(f"\n[auto-resume] Truncated ({len(result)} chars), continuing ({i+1}/{max_continues})...")
@@ -60,11 +125,13 @@ class LLMClient:
                 continue
             else:
                 break
-        
+
         return full_response
 
     async def chat_stream(self, messages: list[dict]) -> str:
         """Chat with real-time token streaming to console."""
+        import urllib.request
+
         model_info = KNOWN_MODELS.get(self.model_name, {})
         payload = {
             "model": self.model_name,
@@ -75,14 +142,12 @@ class LLMClient:
         }
         if model_info.get("thinking") is False:
             payload["thinking"] = {"type": "disabled"}
-        
+
         max_retries = 2
         last_error = None
-        
+
         for attempt in range(max_retries):
             try:
-                import urllib.request
-
                 data = json.dumps(payload).encode('utf-8')
                 req = urllib.request.Request(
                     f"{self.lmstudio_url}/chat/completions",
@@ -117,14 +182,14 @@ class LLMClient:
                         except json.JSONDecodeError:
                             pass
 
-                print()  # final newline after streaming
-                
+                print()
+
                 if not full_content and reasoning_content and len(reasoning_content) > 500:
                     model = self.model_name
                     alternates = [m for m in KNOWN_MODELS if m != model]
                     alt_hint = f" Try: model {alternates[0]}" if alternates else ""
                     return f"[Error: {model} used all tokens thinking, zero code output. Use 'model reload' or switch model.{alt_hint}]"
-                
+
                 return full_content
 
             except Exception as e:
@@ -135,79 +200,6 @@ class LLMClient:
                     await asyncio.sleep(wait)
 
         return f"[LM Studio stream error: {last_error}]"
-
-    async def _chat_internal(self, messages: list[dict]) -> str:
-        """Internal chat implementation with retry on transient errors."""
-
-        model_info = KNOWN_MODELS.get(self.model_name, {})
-        payload = {
-            "model": self.model_name,
-            "messages": messages,
-            "temperature": 0.7 if "laguna" not in self.model_name.lower() else 1.0,
-            "max_tokens": model_info.get("max_tokens", 50000)
-        }
-        if model_info.get("thinking") is False:
-            payload["thinking"] = {"type": "disabled"}
-
-        max_retries = 3
-        last_error = None
-        
-        for attempt in range(max_retries):
-            try:
-                import urllib.request
-                import urllib.error
-                import socket
-
-                data = json.dumps(payload).encode('utf-8')
-
-                req = urllib.request.Request(
-                    f"{self.lmstudio_url}/chat/completions",
-                    data=data,
-                    headers={
-                        'Content-Type': 'application/json',
-                        'Authorization': f'Bearer {self.api_key}'
-                    },
-                    method='POST'
-                )
-
-                with urllib.request.urlopen(req, timeout=3600) as response:
-                    result = json.loads(response.read().decode())
-
-                    if 'choices' in result and len(result['choices']) > 0:
-                        message = result['choices'][0]['message']
-                        content = message.get('content') or ""
-                        reasoning = message.get('reasoning_content') or ""
-                        
-                        if not content and reasoning and len(reasoning) > 500:
-                            model = self.model_name
-                            alternates = [m for m in KNOWN_MODELS if m != model]
-                            alt_hint = f" Try: model {alternates[0]}" if alternates else ""
-                            return f"[Error: {model} used all tokens thinking, zero code output. Use 'model reload' or switch model.{alt_hint}]"
-                        
-                        return content or reasoning
-
-            except (asyncio.TimeoutError, TimeoutError, socket.timeout):
-                last_error = "Request timed out"
-            except urllib.error.URLError as e:
-                reason_str = str(e.reason) if hasattr(e, 'reason') else str(e)
-                last_error = f"Connection error: {reason_str}"
-            except ConnectionResetError:
-                last_error = "Server disconnected"
-            except ConnectionRefusedError:
-                last_error = "LM Studio not running"
-            except json.JSONDecodeError as e:
-                last_error = f"Invalid JSON response: {e}"
-                # Don't retry on JSON errors — the response is broken
-                return f"[Error: {last_error}]"
-            except Exception as e:
-                last_error = str(e)
-
-            if attempt < max_retries - 1:
-                wait = 2 ** attempt
-                print(f"  [retry {attempt+1}/{max_retries}] {last_error}, waiting {wait}s...")
-                await asyncio.sleep(wait)
-
-        return f"[Error after {max_retries} retries: {last_error}]"
     
     async def analyze_code(self, code: str) -> str:
         """Analyze code using LLM."""
@@ -250,25 +242,6 @@ class Agent:
 
         # Chat history for context
         self.chat_history = []
-
-    def _normalize_path_strict(self, path: str) -> str:
-        """Normalize path and ensure consistent casing for comparison."""
-        if path.startswith("/c/"):
-            normalized = "C:\\" + path[3:].replace("/", "\\")
-        elif path.startswith("/d/"):
-            normalized = "D:\\" + path[3:].replace("/", "\\")
-        elif path.startswith("/"):
-            normalized = "C:\\" + path[1:].replace("/", "\\")
-        else:
-            normalized = path
-
-        # Resolve to absolute path for consistent comparison
-        try:
-            abs_path = Path(normalized).resolve()
-            return str(abs_path)
-        except (OSError, RuntimeError):
-            # Fallback: just return the normalized path
-            return normalized
 
     def _normalize_path(self, path: str) -> str:
         """Normalize and validate paths with security checks."""
@@ -654,7 +627,6 @@ async def run_interactive():
     print("  fix <file> --desc \"text\" - Describe an issue, LLM analyzes full codebase and fixes it")
     print("  cleanup             - Show unreferenced files and reference graph")
     print("  workflow <target> [--from spec.md] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] - Full pipeline")
-    print("  model [name]        - Switch LLM model (fuzzy search supported)")
     print("  clear              - Clear agent memory")
     print("  quit               - Exit")
     print("=" * 50)
@@ -710,10 +682,6 @@ async def run_interactive():
                 result = await agent.search_file(query)
                 print(result)
                 
-            elif command in ["clear", "reset"]:
-                agent.clear_history()
-                print("Agent memory cleared.")
-                
             elif command == "model":
                 if len(parts) < 2:
                     print(f"Current model: {agent.llm.model_name}")
@@ -722,71 +690,61 @@ async def run_interactive():
                         marker = " <- current" if name == agent.llm.model_name else ""
                         print(f"  {name}{marker}\n    {info['desc']}")
                     continue
-                
+
                 query = parts[1].strip()
-                
+
                 if query == "list":
                     print(f"Known models ({len(KNOWN_MODELS)}):")
                     for name, info in sorted(KNOWN_MODELS.items()):
                         marker = " <- current" if name == agent.llm.model_name else ""
                         print(f"  {name}{marker}\n    {info['desc']}")
                     continue
-                
+
                 if query == "reload":
                     current = agent.llm.model_name
-                    # Find an alternate model to cycle through (unloads current via LM Studio)
                     alternates = [m for m in KNOWN_MODELS if m != current]
                     if not alternates:
                         print("No alternate model available for reload cycle.")
                         continue
-                    
+
                     temp_model = alternates[0]
-                    info = KNOWN_MODELS.get(current, {})
                     print(f"Reloading {current} via {temp_model} cycle...")
                     print(f"  1. Switching to {temp_model}...")
-                    
-                    # Switch to alternate
                     agent.llm.model_name = temp_model
                     try:
                         await agent.llm.chat([{"role": "user", "content": "ping"}])
                     except Exception:
-                        pass  # ping may fail, that's OK — it forces LM Studio to switch
-                    
+                        pass
                     print(f"  2. Switching back to {current}...")
                     agent.llm.model_name = current
                     try:
                         await agent.llm.chat([{"role": "user", "content": "ping"}])
                     except Exception:
                         pass
-                    
                     print(f"Reload complete. Model: {current}")
                     continue
-                
-                # Fuzzy match
+
                 exact_match = next((m for m in KNOWN_MODELS if m == query), None)
                 if exact_match:
                     best_match = exact_match
                 else:
-                    # Try substring match first
                     substring_matches = [m for m in KNOWN_MODELS if query.lower() in m.lower()]
                     if substring_matches:
                         best_match = substring_matches[0]
                     else:
-                        # Try difflib fuzzy match
                         close = difflib.get_close_matches(query, KNOWN_MODELS.keys(), n=1, cutoff=0.3)
                         best_match = close[0] if close else None
-                
+
                 if not best_match:
                     print(f"No match for '{query}'. Known models:")
                     for name in KNOWN_MODELS:
                         print(f"  {name}")
                     continue
-                
+
                 if best_match == agent.llm.model_name:
                     print(f"Already using: {best_match}")
                     continue
-                
-                # Confirm and switch
+
                 info = KNOWN_MODELS.get(best_match, {"desc": ""})
                 print(f"Match: {best_match} - {info['desc']}")
                 print(f"Switch from {agent.llm.model_name} to {best_match}? (y/n)")
@@ -794,8 +752,6 @@ async def run_interactive():
                 if confirm in ["y", "yes"]:
                     agent.llm.model_name = best_match
                     print(f"Model set to: {best_match}")
-                    
-                    # Save to .env
                     env_path = ".env"
                     lines = []
                     found = False
@@ -814,6 +770,10 @@ async def run_interactive():
                     print(f"Saved to {env_path}")
                 else:
                     print("Cancelled.")
+
+            elif command in ["clear", "reset"]:
+                agent.clear_history()
+                print("Agent memory cleared.")
                 
             # Analyze command - uses LM Studio LLM
             elif command == "analyze":
@@ -1353,33 +1313,18 @@ async def run_interactive():
                         func_names = re.findall(r'def\s+(\w+)', content)
                         if len(func_names) > 20:
                             from collections import Counter
+                            counts = Counter(func_names)
+                            # If more than 60% of functions are near-duplicates of each other
                             similar_prefixes = {}
                             for name in func_names:
-                                prefix = re.sub(r'_\d+$|_v\d+$|_clean$|_final$|_at_error_level$|_safe_no_raise.*', '', name)
+                                prefix = re.sub(r'_\d+$|_v\d+$|_clean$|_final$', '', name)
                                 similar_prefixes[prefix] = similar_prefixes.get(prefix, 0) + 1
                             max_dupes = max(similar_prefixes.values()) if similar_prefixes else 1
                             if max_dupes > 10:
                                 print(f"  REJECTED: {filename} has {max_dupes} near-duplicate functions")
                                 continue
-                        
-                        # Detect repeated blocks of code (>3 identical lines repeated >5 times)
-                        lines = [l.strip() for l in content.split('\n') if l.strip() and not l.strip().startswith('#')]
-                        if len(lines) > 50:
-                            block_counts = Counter()
-                            for i in range(len(lines) - 3):
-                                block = '\n'.join(lines[i:i+4])
-                                if len(block) > 40:  # skip trivial blocks
-                                    block_counts[block] += 1
-                            if block_counts and block_counts.most_common(1)[0][1] > 5:
-                                repeated_block = block_counts.most_common(1)[0][0][:80]
-                                print(f"  REJECTED: {filename} repeats the same {block_counts.most_common(1)[0][1]}x: '{repeated_block}...'")
-                                continue
-                        
-                        # Model-specific size limits
-                        model_info = KNOWN_MODELS.get(agent.llm.model_name, {})
-                        max_size = model_info.get("max_size", 50000)
-                        if len(content) > max_size:
-                            print(f"  REJECTED: {filename} is {len(content)} bytes (max {max_size} for {agent.llm.model_name})")
+                        if len(content) > 50000:
+                            print(f"  REJECTED: {filename} is {len(content)} bytes (max 50KB)")
                             continue
                     
                     with open(filepath, "w", encoding="utf-8") as f:
@@ -1867,30 +1812,7 @@ async def run_interactive():
                     ]
                     
                     print("Sending to LLM for deep analysis...")
-                    
-                    # Auto-switch: if current model disables thinking (laguna), use a no-reasoning model for complex tasks
-                    original_model = agent.llm.model_name
-                    model_info = KNOWN_MODELS.get(original_model, {})
-                    if model_info.get("thinking") is False and len(all_source) > 20000:
-                        alternates = [m for m in KNOWN_MODELS if not KNOWN_MODELS[m].get("thinking") is False and m != original_model]
-                        if alternates:
-                            agent.llm.model_name = alternates[0]
-                            print(f"  (switched to {alternates[0]} for complex analysis, will restore {original_model})")
-                    
-                    # Check if payload fits current model
-                    payload_size = len(all_source)
-                    model_max = KNOWN_MODELS.get(agent.llm.model_name, {}).get("max_tokens", 50000)
-                    if payload_size > 50000 and model_max < 20000:
-                        print(f"\n  WARNING: {payload_size} byte payload exceeds {agent.llm.model_name}'s effective capacity ({model_max} max tokens).")
-                        alternates = [m for m in KNOWN_MODELS if KNOWN_MODELS[m].get("max_tokens", 0) > 20000]
-                        if alternates:
-                            alt = alternates[0]
-                            print(f"  Recommendation: switch model first.")
-                            print(f"    > model {alt}")
-                            print(f"    > fix ... --desc \"...\"")
-                        continue
-                    
-                    response = await agent.llm.chat_stream(msgs)
+                    response = await agent.llm.chat(msgs)
                     
                     if response.startswith("[Error") or response.startswith("[LM Studio"):
                         print(f"LLM error: {response[:200]}")
@@ -1929,10 +1851,6 @@ async def run_interactive():
                             cl.write(entry)
                     
                     print(f"\nFixed {fixed_count}/{len(fixes)} files.")
-                    
-                    if agent.llm.model_name != original_model:
-                        agent.llm.model_name = original_model
-                        print(f"Model restored to: {original_model}")
                     continue
                 
                 # Read multi-line traceback (existing traceback mode)
@@ -2303,36 +2221,7 @@ async def run_interactive():
                         with open(tasks_md, "w", encoding="utf-8") as f: f.write(r)
                         print(f"[taskplan] Written")
                     
-                    # Build suggested commands
-                    print(f"\n{'='*40}")
-                    print(f"Workflow complete. Choose how to execute:")
-                    print(f"{'='*40}")
-                    
-                    # Slow path: implement (N LLM calls, thorough)
-                    print(f"\n  SLOW (per-file generation):")
-                    print(f"  implement {tasks_md} {plan_md} {entities_md} --workspace {target_workspace} --force")
-                    
-                    # Fast path: fix --desc (1 LLM call)
-                    try:
-                        with open(tasks_md, "r", encoding="utf-8") as tf:
-                            task_text = tf.read()
-                        # Extract task summaries: "Task N: file.py — what to do"
-                        summaries = []
-                        for line in task_text.split('\n'):
-                            stripped = line.strip()
-                            if stripped and not stripped.startswith('#') and '—' in stripped:
-                                summaries.append(stripped)
-                            elif stripped.startswith('Task ') and ':' in stripped:
-                                summaries.append(stripped)
-                        # Compact: join summaries with "; "
-                        compact = "; ".join(summaries[:10])  # max 10 tasks
-                        if len(summaries) > 10:
-                            compact += f" (and {len(summaries)-10} more)"
-                        if compact:
-                            print(f"\n  FAST (one LLM call — recommended):")
-                            print(f'  fix {target_workspace} --desc "Fix all issues: {compact}"')
-                    except Exception:
-                        pass
+                    print(f"\nNext: implement {tasks_md} {plan_md} {entities_md} --workspace {target_workspace} --force")
                     
                 elif features_file:
                     # --- BROWNFIELD EXTENSION: analyze existing + add features ---
@@ -2421,19 +2310,7 @@ async def run_interactive():
                             f.write(f"\n\n---\n\n{r}")
                         print(f"[taskplan] Appended")
                     
-                    print(f"\n{'='*40}")
-                    print(f"Workflow complete. Choose how to execute:")
-                    print(f"{'='*40}")
-                    print(f"\n  SLOW: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
-                    try:
-                        with open(tasks_md, "r", encoding="utf-8") as tf:
-                            task_text = tf.read()
-                        summaries = [line.strip() for line in task_text.split('\n') if line.strip() and not line.startswith('#') and ('—' in line or line.startswith('Task'))]
-                        compact = "; ".join(summaries[:10])
-                        if compact:
-                            print(f'  FAST: fix {target_workspace} --desc "Fix all issues: {compact}"')
-                    except Exception:
-                        pass
+                    print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
                     
                 else:
                     # --- BROWNFIELD from existing code ---
@@ -2498,19 +2375,7 @@ async def run_interactive():
                         with open(tasks_md, "w", encoding="utf-8") as f: f.write(r)
                         print(f"[taskplan] Written")
                     
-                    print(f"\n{'='*40}")
-                    print(f"Workflow complete. Choose how to execute:")
-                    print(f"{'='*40}")
-                    print(f"\n  SLOW: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
-                    try:
-                        with open(tasks_md, "r", encoding="utf-8") as tf:
-                            task_text = tf.read()
-                        summaries = [line.strip() for line in task_text.split('\n') if line.strip() and not line.startswith('#') and ('—' in line or line.startswith('Task'))]
-                        compact = "; ".join(summaries[:10])
-                        if compact:
-                            print(f'  FAST: fix {target_workspace} --desc "Fix all issues: {compact}"')
-                    except Exception:
-                        pass
+                    print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
                         
             else:
                 # Try natural language processing with LLM

@@ -32,18 +32,28 @@ class AgentError(Exception):
 
 class FileOperationError(AgentError):
     """Raised when a file system operation fails."""
+    def __init__(self, path: Path | str, message: str = "File operation failed"):
+        self.path = Path(path) if isinstance(path, str) else path
+        super().__init__(f"{message}: {self.path}")
 
 
 class ToolExecutionError(AgentError):
     """Raised when an external tool execution fails."""
+    def __init__(self, tool_name: str, message: str = "Tool execution failed"):
+        self.tool_name = tool_name
+        super().__init__(f"[{tool_name}] {message}")
 
 
 class SecurityViolationError(AgentError):
     """Raised when a security boundary or sandbox constraint is violated."""
+    def __init__(self, attempted_path: str, reason: str = "Path outside workspace boundary"):
+        self.attempted_path = attempted_path
+        super().__init__(f"Security violation ({reason}): {attempted_path}")
 
 
 class SemanticIndexError(AgentError):
     """Raised when semantic search or indexing operations fail."""
+    pass
 
 
 # =========================================================================== #

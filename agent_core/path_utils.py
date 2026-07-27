@@ -13,7 +13,7 @@ from pathlib import Path
 from .entities import SecurityViolationError, FileOperationError
 
 
-def _validate_path(raw: str, workspace_root: Path, follow_symlinks: bool = True) -> Path:
+def normalize_path(raw: str, workspace_root: Path, follow_symlinks: bool = True) -> Path:
     """Validate and resolve a path strictly within the given workspace boundary.
     
     Args:
@@ -30,9 +30,14 @@ def _validate_path(raw: str, workspace_root: Path, follow_symlinks: bool = True)
     """
     if not isinstance(raw, str) or not raw.strip():
         raise FileOperationError("Empty or invalid path provided")
-        
-    target = Path(raw).resolve(strict=False)
+
     resolved_ws = workspace_root.resolve()
+    raw_path = Path(raw)
+    # Resolve relative paths against workspace_root, not CWD
+    if raw_path.is_absolute():
+        target = raw_path.resolve(strict=False)
+    else:
+        target = (resolved_ws / raw_path).resolve(strict=False)
     
     # Enforce strict workspace boundary containment
     try:
@@ -62,7 +67,7 @@ class WorkspaceSandbox:
 
     def resolve_path(self, raw: str) -> Path:
         """Resolve a relative/absolute path string strictly within the sandbox boundary."""
-        return _validate_path(raw, self.workspace_root, self.follow_symlinks)
+        return normalize_path(raw, self.workspace_root, self.follow_symlinks)
 
     def __enter__(self) -> "WorkspaceSandbox":
         return self

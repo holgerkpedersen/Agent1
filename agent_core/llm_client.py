@@ -1,7 +1,9 @@
 from __future__ import annotations
 import logging
 from dataclasses import dataclass
-from typing import Final, Optional
+from typing import Final
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +12,7 @@ logger = logging.getLogger(__name__)
 class LlmResponse:
     content: str
     is_error: bool = False
-    error_code: Optional[str] = None
+    error_code: str | None = None
 
 
 class LLMClient:
@@ -21,7 +23,6 @@ class LLMClient:
     async def chat(self, prompt: str) -> LlmResponse:
         """Send message to LLM and return structured response."""
         try:
-            import httpx
             async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
                 resp = await client.post(
                     self.api_url + "/chat/completions",

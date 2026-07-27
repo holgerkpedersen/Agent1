@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Final, NoReturn
+from typing import Final
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -45,37 +46,18 @@ def test_llm_client_init_stores_config() -> None:
     assert configured.timeout_sec == 7.5
 
 
-def _patch_http_client(
-    monkeypatch: pytest.MonkeyPatch, transport_handler: object
-) -> None:
-    """Replace httpx.AsyncClient construction in llm_client with a mocked transport."""
-    def factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=transport_handler)  # type: ignore[arg-type]
-
-    monkeypatch.setattr("agent_core.llm_client.httpx.AsyncClient", factory)
-
-
-def _success_handler(request: httpx.Request) -> httpx.Response:
-    """Mock transport returning a valid LLM chat completion."""
-    payload = {"choices": [{"message": {"content": "Hello from LLM"}}]}
-    return httpx.Response(
-        status_code=200,
-        headers={"content-type": "application/json"},
-        content=json.dumps(payload).encode("utf-8"),
-        request=request,
-    )
-
-
-def _failure_handler(request: httpx.Request) -> NoReturn:
-    """Mock transport that simulates a network/service failure."""
-    raise httpx.ConnectError("connection refused")
-
-
 def test_chat_returns_success_response(
     client: LLMClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """chat() parses a successful completion into a non-error LlmResponse."""
-    _patch_http_client(monkeypatch, _success_handler)
+    mock_response = httpx.Response(
+        status_code=200,
+        json={"choices": [{"message": {"content": "Hello from LLM"}}]},
+        request=httpx.Request("POST", "http://localhost:1234/v1/chat/completions"),
+    )
+    mock_post = AsyncMock(return_value=mock_response)
+    monkeypatch.setattr("agent_core.llm_client.httpx.AsyncClient.post", mock_post)
+
     result = asyncio.run(client.chat("Say hello"))
     assert isinstance(result, LlmResponse)
     assert result.is_error is False
@@ -86,8 +68,11 @@ def test_chat_returns_success_response(
 def test_chat_handles_service_error(
     client: LLMClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """chat() recovers from a service failure into an error LlmResponse."""
-    _patch_http_client(monkeypatch, _failure_handler)
+    """chat() recovers from a network failure into an error LlmResponse."""
+    monkeypatch.setattr(
+        "agent_core.llm_client.httpx.AsyncClient.post",
+        AsyncMock(side_effect=httpx.ConnectError("connection refused")),
+    )
     result = asyncio.run(client.chat("Say hello"))
     assert isinstance(result, LlmResponse)
     assert result.is_error is True
@@ -98,7 +83,15 @@ def test_chat_returns_llm_response_type(
     client: LLMClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """chat() always returns an LlmResponse instance regardless of outcome."""
-    _patch_http_client(monkeypatch, _success_handler)
+    mock_response = httpx.Response(
+        status_code=200,
+        json={"choices": [{"message": {"content": "Hello from LLM"}}]},
+        request=httpx.Request("POST", "http://localhost:1234/v1/chat/completions"),
+    )
+    monkeypatch.setattr(
+        "agent_core.llm_client.httpx.AsyncClient.post",
+        AsyncMock(return_value=mock_response),
+    )
     result = asyncio.run(client.chat("ping"))
     assert isinstance(result, LlmResponse)
 

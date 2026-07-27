@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Final, Optional, Tuple
+from typing import Final
+
+from .exceptions import ToolExecutionError
 
 logger = logging.getLogger(__name__)
 
 async def run_subprocess_with_timeout(
     cmd: list[str], 
     timeout_sec: float,
-    cwd: Optional[str] = None
-) -> Tuple[int, bytes, bytes]:
+    cwd: str | None = None
+) -> tuple[int, bytes, bytes]:
     """Run subprocess with timeout and return (returncode, stdout, stderr)."""
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -26,4 +28,4 @@ async def run_subprocess_with_timeout(
         raise ToolExecutionError("subprocess", f"Timed out after {timeout_sec} seconds") from e
 
 # Type alias for consistent subprocess result handling
-SubprocessResult = Tuple[int, bytes, bytes]  # (returncode, stdout, stderr)
+SubprocessResult = tuple[int, bytes, bytes]  # (returncode, stdout, stderr)

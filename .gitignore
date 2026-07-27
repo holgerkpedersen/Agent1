@@ -111,4 +111,11 @@ Desktop.ini
 # Editor
 *~
 *.swp
-*.swo.github/workflows/
+*.swo
+
+# Generated/cache files
+.implement_cache.json
+.generated_manifest.json
+.project_memory.json
+
+.github/workflows/
