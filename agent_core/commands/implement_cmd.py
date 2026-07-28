@@ -302,7 +302,7 @@ class ImplementCommand(Command):
                     export_context = "\n\nAvailable project modules (use only these names with these exact signatures):\n" + "\n".join(export_lines)
 
             impl_messages = [
-                {"role": "system", "content": "You are an expert Python developer. Implement the specified files concisely.\n\nRULES:\n1. All code MUST pass mypy strict type checking and py_compile.\n2. Use ONLY imports that match the available exports listed below. Do not invent names.\n3. NEVER create duplicate functions or classes. One implementation per concept. No _v1, _v2, _clean, _final variants.\n4. Keep files under 200 lines. Refactor if longer.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
+                {"role": "system", "content": "You are an expert Python developer. Implement the specified files concisely.\n\nRULES:\n0. NEVER use <tool_call>, <function_call>, or XML tags. Respond in plain text with [FILE:] blocks only.\n1. All code MUST pass mypy strict type checking and py_compile.\n2. Use ONLY imports that match the available exports listed below. Do not invent names.\n3. NEVER create duplicate functions or classes. One implementation per concept. No _v1, _v2, _clean, _final variants.\n4. Keep files under 200 lines. Refactor if longer.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
                 {"role": "user", "content": f"Files to implement:\n{batch_files_md}\n{export_context}\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\nImplement these files using imports from the available modules listed above."}
             ]
 
@@ -333,6 +333,15 @@ class ImplementCommand(Command):
                 matches = list(re.findall(pattern, impl_response, re.DOTALL))
                 if matches:
                     break
+
+            if not matches and ("<tool_call" in impl_response or "</tool_call>" in impl_response):
+                print(f"  Detected tool calls, retrying with plain text instruction...")
+                impl_messages.append({"role": "user", "content": "Respond ONLY in [FILE: filename.py] format. No <tool_call> tags."})
+                impl_response = await agent.llm.chat(impl_messages)
+                for pattern in patterns:
+                    matches = list(re.findall(pattern, impl_response, re.DOTALL))
+                    if matches:
+                        break
 
             if not matches:
                 print(f"  Warning: Could not parse files from batch response")

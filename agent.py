@@ -94,6 +94,7 @@ class Agent:
 
         self._semantic_index: dict[str, set[int]] = defaultdict(set)
         self._files_read: set[str] = set()
+        self._file_mtimes: dict[str, float] = {}
         self._knowledge_graph: dict = {}
         self._working_memory: list = []
         self._history: list = []
@@ -124,7 +125,12 @@ class Agent:
     async def _tool_read_file(self, path: str, **kwargs) -> str:
         result = await self.fs.read(path)
         if not result.startswith("File not found") and not result.startswith("Error"):
-            self._files_read.add(self.fs.safe_path(path))
+            safe = self.fs.safe_path(path)
+            self._files_read.add(safe)
+            try:
+                self._file_mtimes[safe] = os.path.getmtime(safe)
+            except OSError:
+                pass
         return result
 
     async def _tool_write_file(self, path: str, content: str, **kwargs) -> str:
@@ -179,6 +185,10 @@ class Agent:
 
             if track_read:
                 self._files_read.add(local_path)
+                try:
+                    self._file_mtimes[local_path] = os.path.getmtime(local_path)
+                except OSError:
+                    pass
 
             return content
 
@@ -462,10 +472,47 @@ class Agent:
 
         return await self.execute_tool(tool_action, args)
 
+    def check_stale_files(self) -> list[str]:
+        """Return files whose mtime has changed since last read."""
+        stale = []
+        for path in list(self._file_mtimes):
+            try:
+                if os.path.getmtime(path) != self._file_mtimes[path]:
+                    stale.append(path)
+            except FileNotFoundError:
+                stale.append(path)
+            except OSError:
+                pass
+        return stale
+
+    def invalidate_stale(self) -> int:
+        """Remove stale entries from memory. Returns count of invalidated files."""
+        stale = self.check_stale_files()
+        for path in stale:
+            self._file_mtimes.pop(path, None)
+            self._files_read.discard(path)
+        if stale:
+            self._semantic_index.clear()
+        return len(stale)
+
+    def memory_stats(self) -> dict:
+        """Return summary of current memory state."""
+        stale = self.check_stale_files()
+        return {
+            "chat_history": len(self.chat_history),
+            "files_read": len(self._files_read),
+            "stale_files": len(stale),
+            "history": len(self._history),
+            "working_memory": len(self._working_memory),
+            "semantic_index": len(self._semantic_index),
+            "knowledge_graph": len(self._knowledge_graph),
+        }
+
     def clear_history(self):
         """Clear all agent state."""
         self._history = []
         self._files_read.clear()
+        self._file_mtimes.clear()
         self._knowledge_graph.clear()
         self._working_memory.clear()
         self._semantic_index.clear()

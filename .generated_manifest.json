@@ -42,5 +42,93 @@
   "tests/test_handlers/test_analyze_handler.py": {
     "date": "2026-07-26 02:12:55.300042",
     "size": 2010
+  },
+  ".opencode/plans/agent_restored.py": {
+    "date": "2026-07-28 00:03:37.585020",
+    "size": 7736
+  },
+  "src/agent1/core/__init__.py": {
+    "date": "2026-07-28 13:10:51.944427",
+    "size": 6297
+  },
+  "src/agent1/core/message_bus.py": {
+    "date": "2026-07-28 13:13:52.182300",
+    "size": 17010
+  },
+  "src/agent1/core/context_manager.py": {
+    "date": "2026-07-28 13:13:52.370634",
+    "size": 8427
+  },
+  "src/agent1/core/agent.py": {
+    "date": "2026-07-28 13:15:51.242676",
+    "size": 11645
+  },
+  "src/agent1/memory/__init__.py": {
+    "date": "2026-07-28 13:15:51.410339",
+    "size": 489
+  },
+  "src/agent1/memory/memory_store.py": {
+    "date": "2026-07-28 13:15:51.583194",
+    "size": 3460
+  },
+  "src/agent1/memory/semantic_search.py": {
+    "date": "2026-07-28 13:15:51.762336",
+    "size": 2279
+  },
+  "src/agent1/orchestration/task_scheduler.py": {
+    "date": "2026-07-28 13:35:57.844065",
+    "size": 9612
+  },
+  "src/agent1/orchestration/workflow_engine.py": {
+    "date": "2026-07-28 13:36:55.200290",
+    "size": 4738
+  },
+  "src/agent1/orchestration/dependency_graph.py": {
+    "date": "2026-07-28 13:41:10.386070",
+    "size": 22294
+  },
+  "src/agent1/plugins/__init__.py": {
+    "date": "2026-07-28 13:41:10.559258",
+    "size": 3762
+  },
+  "src/agent1/plugins/base_plugin.py": {
+    "date": "2026-07-28 13:41:10.726368",
+    "size": 2796
+  },
+  "src/agent1/plugins/registry.py": {
+    "date": "2026-07-28 13:41:10.905612",
+    "size": 1279
+  },
+  "src/agent1/monitoring/__init__.py": {
+    "date": "2026-07-28 13:41:11.078339",
+    "size": 813
+  },
+  "src/agent1/monitoring/metrics_collector.py": {
+    "date": "2026-07-28 13:41:11.253424",
+    "size": 4509
+  },
+  "src/agent1/monitoring/dashboard_api.py": {
+    "date": "2026-07-28 13:41:11.443132",
+    "size": 6391
+  },
+  "src/agent1/monitoring/alert_system.py": {
+    "date": "2026-07-28 13:41:11.618116",
+    "size": 4940
+  },
+  "tests/unit/test_memory.py": {
+    "date": "2026-07-28 13:41:11.794734",
+    "size": 4375
+  },
+  "tests/unit/test_orchestration.py": {
+    "date": "2026-07-28 13:41:11.969449",
+    "size": 4474
+  },
+  "tests/unit/test_plugins.py": {
+    "date": "2026-07-28 13:44:07.417679",
+    "size": 16162
+  },
+  "tests/performance/test_scaling.py": {
+    "date": "2026-07-28 13:44:07.594842",
+    "size": 5761
   }
 }
