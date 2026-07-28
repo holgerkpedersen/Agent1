@@ -133,7 +133,7 @@ async def execute_tool(self, tool_name, arguments):
 to_windows_path() ──> _normalize_path() ──> _safe_path() ──> FileSystem.read()/write()
 ```
 
-- `to_windows_path()`: Converts `/c/Dev/...` to `C:\Dev\...`
+- `to_windows_path()`: Converts POSIX-style paths (`/c/Dev/Agent1`) to Windows paths (`C:\Dev\Agent1`)
 - `_normalize_path()`: Resolves to absolute, validates
 - `_safe_path()`: Strips `./` prefix, delegates to normalize
 
