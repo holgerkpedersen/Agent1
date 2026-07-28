@@ -12,6 +12,9 @@ class FileSearcher:
     Extracted from Agent class to separate search concerns.
     """
     
+    def __init__(self, workspace: str = None):
+        self.workspace = workspace
+    
     async def search(self, query: str, path: str) -> str:
         """Search for text pattern in files."""
         local_path = self._safe_path(path)
