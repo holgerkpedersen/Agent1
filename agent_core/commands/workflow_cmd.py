@@ -20,17 +20,18 @@ class WorkflowCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "workflow <target> [--from spec.md] [--features spec.md] - Full pipeline"
+        return "workflow <target> [--from spec.md] [--brainstorm] [--features spec.md] - Full pipeline"
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         parts = args
 
         if len(parts) < 1:
-            self.error("Usage: workflow <target> [--from <spec.md>] [--force] [--workspace <path>]")
+            self.error("Usage: workflow <target> [--from <spec.md>] [--force] [--brainstorm] [--workspace <path>]")
             self.error("  target: .  |  --desc/-from spec | --features spec (file or inline)")
             return True
 
         force = "--force" in parts
+        brainstorm = "--brainstorm" in parts
 
         spec_file = None
         greenfield = False
@@ -275,7 +276,21 @@ class WorkflowCommand(Command):
                             combined += f"\n\n# ---- {pf} ----\n{f.read()}"
                     except Exception:
                         pass
-                r = await agent.llm.analyze_code(combined)
+                analyze_system = (
+                    "You are an expert software architect. Evaluate this codebase across 5 dimensions."
+                    "\n\n1. CODE QUALITY — bugs, edge cases, type safety issues, error handling gaps"
+                    "\n2. COMPLETENESS — missing tests, missing docs, missing error handling, underdeveloped features"
+                    "\n3. ARCHITECTURE — DRY violations, circular dependencies, coupling, single-responsibility breaks"
+                    "\n4. INNOVATION — what new capabilities would make this system significantly more useful or powerful?"
+                    "\n5. PRODUCTION — logging, monitoring, configuration, security, deployment readiness"
+                    + ("\n6. BRAINSTORMING — propose bold, creative, unconventional features that push the boundaries of what this system could do. Think outside the box."
+                       if brainstorm else "")
+                    + "\n\nFor each dimension, list concrete findings with file paths. Be specific but concise."
+                )
+                r = await agent.llm.chat([
+                    {"role": "system", "content": analyze_system},
+                    {"role": "user", "content": combined}
+                ])
                 if not step_ok(r):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
@@ -289,7 +304,14 @@ class WorkflowCommand(Command):
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create a detailed coding plan. All Python code must pass mypy strict type checking."},
+                    {"role": "system", "content": (
+                        "Create a prioritized implementation plan from this analysis. "
+                        "Categorize every change: [FIX] for bugs, [FEATURE] for new capabilities, "
+                        "[ARCH] for structural improvements, [OPS] for production concerns. "
+                        "Order by impact: MUST HAVE (bugs/security), SHOULD HAVE (tests/docs/features), "
+                        "COULD HAVE (innovation/nice-to-haves). List concrete files to create or modify. "
+                        "All Python code must pass mypy strict type checking."
+                    )},
                     {"role": "user", "content": f"Create plan:\n\n{analysis}"}
                 ])
                 if not step_ok(r):
@@ -325,7 +347,7 @@ class WorkflowCommand(Command):
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text."},
+                    {"role": "system", "content": "Create task plan. List files in dependency order with category tags from the plan: [FIX], [FEATURE], [ARCH], [OPS]. Format: 'Task N: `file.py` [TAG] — what to do'. Include type-checking validation. No intro text."},
                     {"role": "user", "content": f"Create task plan:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
                 ])
                 if not step_ok(r):
