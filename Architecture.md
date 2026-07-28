@@ -25,10 +25,10 @@ Agent1 is a Python AI agent framework with LLM integration via LM Studio (local)
 │  │              src/agent1  (Multi-Agent Framework)           │   │
 │  │                                                             │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │   │
-│  │  │   Core   │  │  Memory  │  │  Orchest │  │  Monitor │  │   │
-│  │  │ agent    │  │ store    │  │ scheduler│  │ metrics  │  │   │
-│  │  │ messages │  │ vector db│  │ workflow │  │ dashboard│  │   │
-│  │  │ context  │  │ semantic │  │ dep graph│  │ alerts   │  │   │
+│  │  │   Core    │  │  Memory   │  │Orchestrat │  │Monitor   │  │   │
+│  │  │ Agent     │  │ Store     │  │Scheduler  │  │Metrics   │  │   │
+│  │  │ Messages  │  │ Vector DB │  │Workflow   │  │Dashboard │  │   │
+│  │  │ Context   │  │ Semantic  │  │DepGraph   │  │Alerts    │  │   │
 │  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │   │
 │  └───────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────┘
@@ -61,9 +61,9 @@ LMStudioProvider.chat(messages, tools?) ──> _build_payload() ──> POST /c
 
 ```python
 KNOWN_MODELS = {
-    "laguna-s-2.1": {"desc": "...", "max_tokens": 100000, "tool_calling": False},
-    "qwen3.6-27b-mtp": {"desc": "...", "max_tokens": 100000},
-    "google/gemma-4-31b": {"desc": "...", "max_tokens": 100000},
+    "laguna-s-2.1": {"desc": "Laguna S 2.1 MoE A8B - fast agentic coding", "max_tokens": 100000, "tool_calling": False},
+    "qwen3.6-27b-mtp": {"desc": "Qwen 3.6 27B - chat, codegen, large context", "max_tokens": 100000},
+    "google/gemma-4-31b": {"desc": "Gemma 4 31B - chat, reasoning, fast generation", "max_tokens": 100000},
 }
 ```
 
@@ -101,7 +101,8 @@ Tools are registered via `ToolDispatcher` (registry pattern, OCP-compliant):
 dispatcher.register("read_file", lambda args: self._tool_read_file(**args))
 dispatcher.register("write_file", lambda args: self._tool_write_file(**args))
 dispatcher.register("search", lambda args: self._tool_search(**args))
-# ... 8 tools total
+# All 8 tools registered: read_file, write_file, apply_patch, edit_file,
+# search, list_files, delete_file, analyze_file
 ```
 
 Execution is a one-liner:
