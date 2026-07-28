@@ -1,187 +1,315 @@
-# Architecture of an Agentic Loop with Tool Calling
-
-We need an agentic loop to be able to solve long-running tasks, so we need to adopt a memory system, which can support long contexts.
+# Architecture of Agent1
 
 ## Overview
 
-The system is built around a **ReAct-style agentic loop** (Reasoning + Acting) that iteratively:
-1. Observes the current state (user input, tool results, memory)
-2. Reasons about what to do next
-3. Executes a tool call or produces a final response
-4. Stores the interaction in memory
+Agent1 is a Python AI agent framework with LLM integration via LM Studio (local), workspace management, tool execution, and a multi-agent orchestration layer. The system follows **SOLID** principles with clear separation of concerns.
 
 ```
-┌─────────────────────────────────────────────────┐
-│                  Agentic Loop                     │
-│                                                   │
-│  ┌──────┐    ┌──────────┐    ┌────────────┐      │
-│  │Observe│───>│  Reason  │───>│   Act      │      │
-│  └──────┘    └──────────┘    └────────────┘      │
-│       ^                           │               │
-│       │                           v               │
-│       └───────────────────┐       │               │
-│                           │       │               │
-│                    ┌──────┴───────┴──┐            │
-│                    │  Memory Store   │            │
-│                    └─────────────────┘            │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        Agent1 System                              │
+│                                                                   │
+│  ┌─────────────┐   ┌──────────────┐   ┌──────────────────────┐  │
+│  │   LLM Layer  │   │  Agent Core  │   │   Command Layer      │  │
+│  │  (lmstudio)  │──>│  (agent.py)  │<──│  (commands/)         │  │
+│  └─────────────┘   └──────┬───────┘   └──────────────────────┘  │
+│                            │                                       │
+│          ┌─────────────────┼─────────────────┐                    │
+│          │                 │                 │                    │
+│   ┌──────┴──────┐  ┌──────┴──────┐  ┌──────┴──────────┐        │
+│   │ FileSystem  │  │FileSearcher │  │ ToolDispatcher  │        │
+│   │ read/write/ │  │ findstr/    │  │ registry-based  │        │
+│   │ patch/edit  │  │ grep/fallback│ │ tool dispatch   │        │
+│   └─────────────┘  └─────────────┘  └─────────────────┘        │
+│                                                                   │
+│  ┌───────────────────────────────────────────────────────────┐   │
+│  │              src/agent1  (Multi-Agent Framework)           │   │
+│  │                                                             │   │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │   │
+│  │  │   Core   │  │  Memory  │  │  Orchest │  │  Monitor │  │   │
+│  │  │ agent    │  │ store    │  │ scheduler│  │ metrics  │  │   │
+│  │  │ messages │  │ vector db│  │ workflow │  │ dashboard│  │   │
+│  │  │ context  │  │ semantic │  │ dep graph│  │ alerts   │  │   │
+│  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │   │
+│  └───────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-## 1. Memory System
+## 1. LLM Layer (`agent_core/llm/`)
 
-The memory system is **layered** to balance context window limits with long-term retention.
+Communicates with LM Studio's OpenAI-compatible API endpoint.
 
-### Layers
+### Components
 
-| Layer | Scope | Storage | Eviction Policy |
-|-------|-------|---------|-----------------|
-| **Working Memory** | Current turn | In-memory dict | Cleared after turn |
-| **Episodic Buffer** | Last N turns | Sliding window (queue) | FIFO when full |
-| **Summary Store** | Compressed history | LLM-generated summaries | LRU |
-| **Persistent Store** | Cross-session | File / Vector DB | Manual / TTL |
+| Component | File | Role |
+|---|---|---|
+| `LLMProvider` | `provider.py` | Protocol defining the LLM interface |
+| `LMStudioProvider` | `lmstudio.py` | Concrete implementation with chat, stream, analyze |
+| `RetryPolicy` | `retry.py` | Exponential backoff retry on transient errors |
+| `ToolLoopRunner` | `tool_loop.py` | Multi-step LLM interaction with tool result injection |
 
-### Episodic Buffer
+### Data Flow
 
-Stores the last N (e.g., 20) turns as raw message pairs (user + assistant). Managed as a fixed-size deque:
+```
+LMStudioProvider.chat(messages, tools?) ──> _build_payload() ──> POST /chat/completions
+                                          │
+                                          ├── payload["tool_choice"] = "none" (if model disables tools)
+                                          ├── payload["thinking"] = {"type": "disabled"} (if model flag set)
+                                          └── RetryPolicy.execute_with_retry() on transient errors
+```
+
+### Model Configuration (`agent_core/constants.py`)
 
 ```python
-class EpisodicBuffer:
-    def __init__(self, max_turns: int = 20):
-        self.turns: deque[dict] = deque(maxlen=max_turns)
-
-    def add(self, turn: dict) -> None:
-        self.turns.append(turn)
-
-    def get_context(self) -> list[dict]:
-        return list(self.turns)
-```
-
-### Summary Store
-
-When the episodic buffer is full and older turns need to be evicted, they are **summarized** by the LLM and stored in the summary store. Summaries are injected into the system prompt on subsequent turns:
-
-```
-[System]
-You are an agent. Below is a summary of earlier context:
-{summary}
-
-Current conversation:
-{turns}
-```
-
-### Persistent Store
-
-For cross-session memory, summaries and key facts are persisted to a file or vector database keyed by session/conversation ID.
-
-## 2. Tool Calling Mechanism
-
-Tools are registered with a **name**, **description**, and **JSON Schema** for parameters. The LLM emits structured tool calls which are dispatched to registered handlers.
-
-### Registration
-
-```python
-@tool_registry.register(
-    name="search_web",
-    description="Search the web for information",
-    params={
-        "type": "object",
-        "properties": {
-            "query": {"type": "string"},
-            "num_results": {"type": "integer", "default": 5}
-        },
-        "required": ["query"]
-    }
-)
-async def search_web(query: str, num_results: int = 5) -> str:
-    ...
-```
-
-### Dispatch Loop
-```
-LLM output ──> Parse tool call ──> Validate params ──> Execute handler ──> Return result ──> Feed back to LLM
-```
-
-### Error Handling
-- **Validation errors**: Return a structured error message to the LLM so it can retry with corrected params.
-- **Execution errors**: Catch exceptions, return error description to LLM.
-- **Max retries**: Limit consecutive tool call retries (e.g., 3) to prevent infinite loops.
-
-## 3. Agentic Loop (Main Orchestrator)
-
-```python
-class AgenticLoop:
-    def __init__(self, llm, tool_registry, memory, max_iterations=20):
-        self.llm = llm
-        self.tools = tool_registry
-        self.memory = memory
-        self.max_iterations = max_iterations
-
-    async def run(self, user_input: str) -> str:
-        turn_count = 0
-        self.memory.add_user_turn(user_input)
-
-        while turn_count < self.max_iterations:
-            context = self.memory.build_context()
-            response = await self.llm.generate(context, tools=self.tools.schemas())
-
-            if response.tool_call:
-                result = await self.tools.dispatch(response.tool_call)
-                self.memory.add_tool_result(response.tool_call, result)
-            else:
-                final = response.text
-                self.memory.add_assistant_turn(final)
-                return final
-
-            turn_count += 1
-
-        return "Max iterations reached."
-```
-
-## 4. Context Budget Management
-
-To avoid exceeding context limits:
-
-1. **Always include**: System prompt, latest user input, tool definitions
-2. **Priority inclusion**: Recent turns from episodic buffer (most recent first)
-3. **Fallback**: If buffer exceeds budget, replace oldest turns with the summary
-4. **Token counting**: Use a tokenizer-aware counter before assembling context
-
-```
-┌──────────────────────────────────────────────┐
-│               Context Window                  │
-├──────────────────────────────────────────────┤
-│ System Prompt (fixed)                        │
-│ Summary (if needed)                          │
-│ Recent Turns (sliding window)                │
-│ Current User Input                           │
-│ Tool Results (from current turn)             │
-│ Tool Definitions (schema registry)           │
-└──────────────────────────────────────────────┘
-```
-
-## 5. State Persistence
-
-The full agent state (memory buffer, summary store, turn count) can be serialized and restored for resumability:
-
-```json
-{
-  "session_id": "abc-123",
-  "episodic_buffer": [...],
-  "summary": "...",
-  "turn_count": 7,
-  "created_at": "...",
-  "updated_at": "..."
+KNOWN_MODELS = {
+    "laguna-s-2.1": {"desc": "...", "max_tokens": 100000, "tool_calling": False},
+    "qwen3.6-27b-mtp": {"desc": "...", "max_tokens": 100000},
+    "google/gemma-4-31b": {"desc": "...", "max_tokens": 100000},
 }
 ```
 
+Models carry flags (`thinking`, `tool_calling`) that influence payload construction. `tool_calling=False` suppresses Laguna's native tool call output via `tool_choice: "none"`.
+
+## 2. Agent Core (`agent.py`)
+
+The `Agent` class is the central orchestrator. It composes extracted components and delegates operations.
+
+### Constructor
+
+```python
+class Agent:
+    def __init__(self, workspace, model_name):
+        self.fs = FileSystem(workspace)       # file I/O
+        self.searcher = FileSearcher()        # file search
+        self.dispatcher = ToolDispatcher()    # tool dispatch
+        self.llm = LLMClient(model_name)      # LLM wrapper
+
+        # Memory
+        self._files_read: set[str]            # tracked file paths
+        self._file_mtimes: dict[str, float]   # mtime per tracked file
+        self._semantic_index: dict[str, set]  # word → positions
+        self._knowledge_graph: dict           # entity relationships
+        self._working_memory: list            # task items
+        self._history: list                   # interaction log
+        self.chat_history: list               # LLM conversation
+```
+
+### Tool Dispatch
+
+Tools are registered via `ToolDispatcher` (registry pattern, OCP-compliant):
+
+```python
+dispatcher.register("read_file", lambda args: self._tool_read_file(**args))
+dispatcher.register("write_file", lambda args: self._tool_write_file(**args))
+dispatcher.register("search", lambda args: self._tool_search(**args))
+# ... 8 tools total
+```
+
+Execution is a one-liner:
+```python
+async def execute_tool(self, tool_name, arguments):
+    return await self.dispatcher.execute(tool_name, arguments)
+```
+
+### Memory System
+
+| Store | Type | Purpose | Detection |
+|---|---|---|---|
+| `_files_read` | `set[str]` | Tracks which files were read | — |
+| `_file_mtimes` | `dict[str, float]` | mtime per tracked file | `check_stale_files()` |
+| `_semantic_index` | `dict[str, set[int]]` | Word → position index | Invalidated on stale |
+| `_knowledge_graph` | `dict` | Entity relationship graph | — |
+| `_working_memory` | `list` | Active task items | — |
+| `_history` | `list` | Interaction log | — |
+| `chat_history` | `list` | LLM conversation context | — |
+
+**Stale file detection**: Every file read stores its `os.path.getmtime()`. `check_stale_files()` compares current mtime vs stored — returns paths changed externally. `invalidate_stale()` purges stale entries and clears the semantic index.
+
+**Memory stats** via `memory_stats()` returns a dict with all sizes + stale count for the `clear` command.
+
+### Path Handling
+
+```
+to_windows_path() ──> _normalize_path() ──> _safe_path() ──> FileSystem.read()/write()
+```
+
+- `to_windows_path()`: Converts `/c/Dev/...` to `C:\Dev\...`
+- `_normalize_path()`: Resolves to absolute, validates
+- `_safe_path()`: Strips `./` prefix, delegates to normalize
+
+## 3. Command Layer (`agent_core/commands/`)
+
+Commands follow the **Command pattern** with a registry for OCP-compliant dispatch.
+
+### Architecture
+
+```
+                 ┌──────────────────┐
+User input ──>   │ CommandRegistry  │
+                 │  _commands: dict │
+                 │  register()      │
+                 │  execute()       │
+                 └───────┬──────────┘
+                         │
+         ┌───────────────┼───────────────┐
+         │               │               │
+    ┌────┴────┐    ┌─────┴──────┐   ┌───┴──────────┐
+    │ReadCmd  │    │ImplementCmd│   │WorkflowCmd   │
+    │execute()│    │execute()   │   │execute()     │
+    └─────────┘    └────────────┘   └──────────────┘
+```
+
+### Command ABC
+
+```python
+class Command(ABC):
+    @property
+    def name(self) -> str: ...
+    @property
+    def help_text(self) -> str: ...
+    async def execute(self, args: list[str], agent: Agent) -> bool: ...
+```
+
+### Commands (13 total)
+
+| Command | Class | Purpose |
+|---|---|---|
+| `read` | `ReadCommand` | Read file contents |
+| `write` | `WriteCommand` | Write content to file |
+| `search` | `SearchCommand` | Search files for text |
+| `clear` | `ClearCommand` | Show memory stats + clear |
+| `model` | `ModelCommand` | List/reload/switch LLM models |
+| `analyze` | `AnalyzeCommand` | AI code analysis |
+| `plan` | `PlanCommand` | Generate coding plan |
+| `entities` | `EntitiesCommand` | Extract shared entities |
+| `taskplan` | `TaskplanCommand` | Generate task list |
+| `implement` | `ImplementCommand` | Generate files from taskplan |
+| `fix` | `FixCommand` | Fix from traceback or description |
+| `cleanup` | `CleanupCommand` | Show unreferenced files |
+| `workflow` | `WorkflowCommand` | Full pipeline: analyze→plan→entities→tasks→implement |
+
+### REPL Loop (`run_interactive()`)
+
+```
+while True:
+    input ──> shlex.split() ──> command
+                                  │
+                    ┌─────────────┼─────────────┐
+                    │             │             │
+              registry cmd    quit/exit    natural language
+              (13 commands)               ──> agent.process_query()
+                                                  │
+                                          _parse_natural_language()
+                                          execute_tool()
+```
+
+## 4. File Operations
+
+### FileSystem (`agent_core/file_system.py`)
+
+```python
+class FileSystem:
+    normalize_path(path)    # resolve + validate
+    safe_path(path)         # strip ./ then normalize
+    read(path)              # read file contents
+    write(path, content)    # create/write (mkdirs parents)
+    apply_patch(path, f, r) # find-and-replace (unique match enforced)
+    edit(path, content)     # overwrite
+```
+
+### FileSearcher (`agent_core/file_searcher.py`)
+
+Platform-aware search with fallback:
+
+```
+Windows: findstr /S /N /C:query path ──> Python os.walk fallback
+Linux:   grep -rn query path
+```
+
+## 5. LLMClient Wrapper
+
+Thin wrapper around `LMStudioProvider` for backward compatibility:
+
+```python
+class LLMClient:
+    def __init__(self, model_name, api_key):
+        self._provider = LMStudioProvider(model_name, api_key)
+
+    async def chat(self, messages, tools=None):     # -> self._provider.chat()
+    async def chat_stream(self, messages):           # -> self._provider.chat_stream()
+    async def chat_with_continuation(self, msgs, n): # auto-resume truncated
+    async def analyze_code(self, code):              # -> self._provider.analyze_code()
+```
+
+## 6. Multi-Agent Framework (`src/agent1/`)
+
+Generated via the `workflow → implement` pipeline. A composable framework for building multi-agent systems.
+
+```
+src/agent1/
+├── core/
+│   ├── __init__.py           # Shared types: AgentMessage, TaskNode, StorageBackend,
+│   │                         #   VectorDatabase, EmbeddingService, PluginInterface, MetricType
+│   ├── agent.py              # Agent class with message bus, memory, plugins
+│   ├── message_bus.py        # Publish/subscribe inter-agent messaging
+│   └── context_manager.py    # Shared context with locking
+├── memory/
+│   ├── __init__.py           # Re-exports core + MemoryStore, SemanticSearchEngine
+│   ├── memory_store.py       # Persistent storage with cache + optional semantic search
+│   ├── vector_db.py          # VectorDatabase + EmbeddingService facade
+│   └── semantic_search.py    # Combine embedding + vector DB for semantic queries
+├── orchestration/
+│   ├── __init__.py           # Re-exports TaskScheduler, WorkflowEngine, DependencyGraph
+│   ├── task_scheduler.py     # Schedule tasks with executors, timing, handlers
+│   ├── workflow_engine.py    # Execute concurrent ready tasks via executor map
+│   └── dependency_graph.py   # Directed graph with topological sort, cycle detection
+├── plugins/
+│   ├── __init__.py           # BasePlugin, PluginRegistry, PluginManager
+│   ├── base_plugin.py        # Lifecycle: initialize → execute → cleanup
+│   ├── plugin_manager.py     # Load/unload/execute lifecycle management
+│   └── registry.py           # Plugin class registration + metadata
+└── monitoring/
+    ├── __init__.py           # Re-exports MetricsCollector, DashboardAPIServer, AlertSystem
+    ├── metrics_collector.py  # Counters, gauges, histograms, timers (thread-safe)
+    ├── dashboard_api.py      # HTTP API on port 8080 for querying metrics
+    └── alert_system.py       # Alert rules with threshold checking + cooldown
+```
+
+### Key Design Decisions
+
+- **Centralized types**: `core/__init__.py` defines all shared types (dataclasses, protocols, enums) to avoid circular imports.
+- **Protocol-based interfaces**: `StorageBackend`, `PluginInterface`, `VectorEmbeddingModel` are Protocols for mypy-strict compliance.
+- **Composition over inheritance**: Components like `MemoryStore` compose `SQLiteStorage`, `EmbeddingService`, `VectorDatabase` rather than inheriting.
+- **Lifecycle management**: Plugins follow `initialize → execute → cleanup`, managed by `PluginManager`.
+
+## 7. Test Architecture
+
+```
+tests/
+├── test_agent_paths.py        # Path normalization + security
+├── test_llm_client.py         # LLM client response types
+├── test_path_utils.py         # to_windows_path edge cases
+├── test_subprocess_utils.py   # Subprocess execution + timeout
+├── test_tool_router.py        # Tool parsing, validation, dispatch
+├── test_handlers/             # Analyze handler tests
+├── unit/
+│   ├── test_memory.py         # MemoryStore save/load/forget
+│   ├── test_orchestration.py  # DependencyGraph, TaskScheduler
+│   └── test_plugins.py        # PluginRegistry, PluginManager
+├── integration/
+│   └── test_multi_agent.py    # AgentMessage routing, multi-store isolation
+└── performance/
+    └── test_scaling.py        # Metrics throughput, vector DB search latency
+```
+
+86 tests, all passing.
+
 ## Summary
 
-| Component | Responsibility |
-|-----------|---------------|
-| **Episodic Buffer** | Keep recent turn history for coherent multi-step reasoning |
-| **Summary Store** | Compress older context to stay within token limits |
-| **Tool Registry** | Define, validate, and dispatch tool calls |
-| **Agentic Loop** | Orchestrate observe-reason-act cycles |
-| **State Persistence** | Enable pause/resume across sessions |
-
-This architecture scales from simple single-turn tool use to complex multi-hour agentic sessions by intelligently managing memory and context.
+| Layer | Responsibility | Pattern |
+|---|---|---|
+| **LLM** (`llm/`) | Model communication, retry, streaming | Provider protocol + DIP |
+| **Agent Core** (`agent.py`) | State, tool dispatch, memory | Composition + SRP |
+| **Commands** (`commands/`) | User-facing REPL commands | Command pattern + Registry |
+| **File Ops** (`file_system.py`, `file_searcher.py`) | Read/write/search with path safety | Extracted utility classes |
+| **Src Agent1** (`src/agent1/`) | Multi-agent framework | Centralized types, protocols, composition |
+| **Tests** (`tests/`) | Unit, integration, performance | pytest with anyio |
