@@ -46,10 +46,10 @@ class ImplementCommand(Command):
         skip_tokens = ["--keep", "--refresh", "--force", "--fix", "--workspace", target_workspace]
         filtered_parts = [p for p in parts if p not in skip_tokens]
 
-        taskplan_file = filtered_parts[1] if len(filtered_parts) > 1 else filtered_parts[0]
-        analysis_file = filtered_parts[2] if len(filtered_parts) > 2 else "analysis.md"
-        plan_file = filtered_parts[3] if len(filtered_parts) > 3 else "plan.md"
-        entities_file = filtered_parts[4] if len(filtered_parts) > 4 else "entities.md"
+        taskplan_file = filtered_parts[0] if filtered_parts else ""
+        analysis_file = filtered_parts[1] if len(filtered_parts) > 1 else "analysis.md"
+        plan_file = filtered_parts[2] if len(filtered_parts) > 2 else "plan.md"
+        entities_file = filtered_parts[3] if len(filtered_parts) > 3 else "entities.md"
 
         cache_file = os.path.join(os.path.dirname(os.path.realpath(taskplan_file)) if os.path.isabs(taskplan_file) else ".", ".implement_cache.json")
         if not os.path.isabs(taskplan_file):
@@ -107,7 +107,7 @@ class ImplementCommand(Command):
 
             file_list_response = await agent.llm.chat(list_messages)
 
-            if not file_list_response or file_list_response.startswith("[") or "error" in file_list_response.lower():
+            if not file_list_response or file_list_response.startswith("[Error") or file_list_response.startswith("[LM Studio"):
                 self.error(f"LM Studio API not responding or returned an error: {file_list_response}")
                 return True
 

@@ -50,7 +50,7 @@ class FixCommand(Command):
             desc_text = parts[di + 1].strip('"') if di + 1 < len(parts) else ""
 
             target_file = None
-            for p in parts[1:]:
+            for p in parts:
                 if not p.startswith("--") and p != desc_text:
                     target_file = p
                     break

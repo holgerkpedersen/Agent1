@@ -118,9 +118,11 @@ class Agent:
         self.dispatcher.register("apply_patch", lambda args: self._tool_apply_patch(**args))
         self.dispatcher.register("edit_file", lambda args: self._tool_edit_file(**args))
         self.dispatcher.register("search", lambda args: self._tool_search(**args))
+        self.dispatcher.register("search_file", lambda args: self._tool_search(**args))
         self.dispatcher.register("list_files", lambda args: self._tool_list_files(**args))
         self.dispatcher.register("delete_file", lambda args: self._tool_delete_file(**args))
         self.dispatcher.register("analyze_file", lambda args: self._tool_analyze_file(**args))
+        self.dispatcher.register("llm_analyze", lambda args: self._tool_llm_analyze(**args))
 
     async def _tool_read_file(self, path: str, **kwargs) -> str:
         result = await self.fs.read(path)
@@ -153,6 +155,12 @@ class Agent:
 
     async def _tool_analyze_file(self, path: str, **kwargs) -> str:
         return await self._analyze_file(path)
+
+    async def _tool_llm_analyze(self, path: str, **kwargs) -> str:
+        file_content = await self.read_file(path, track_read=False)
+        if file_content.startswith("File not found:") or file_content.startswith("Error reading file:"):
+            return f"Could not analyze: {file_content}"
+        return await self.llm.analyze_code(file_content)
 
     async def execute_tool(self, tool_name: str, arguments: dict) -> str:
         """Execute a tool by name using the dispatcher."""
@@ -276,59 +284,6 @@ class Agent:
         self._semantic_index.clear()
         for word, idx_set in sorted_items[:keep_count]:
             self._semantic_index[word] = idx_set
-
-    async def execute_tool(self, tool_name: str, args: dict) -> str:
-        """Execute a tool with proper duplicate read prevention."""
-
-        if tool_name == "read_file":
-            path = args.get("path", "")
-
-            try:
-                normalized_path = self._normalize_path(path)
-            except ValueError as e:
-                return f"Invalid path: {e}"
-
-            if normalized_path in self._files_read:
-                return f"File already read: {path}"
-
-            result = await self.read_file(path, track_read=False)
-            if not result.startswith("Error") and not result.startswith("File not found"):
-                self._files_read.add(normalized_path)
-            return result
-
-        elif tool_name == "write_file":
-            return await self.write_file(
-                args.get("path", ""),
-                args.get("content", "")
-            )
-
-        elif tool_name == "apply_patch":
-            return await self.apply_patch(
-                args.get("path", ""),
-                args.get("find", ""),
-                args.get("replace", "")
-            )
-
-        elif tool_name == "edit_file":
-            return await self.edit_file(
-                args.get("path", ""),
-                args.get("content", "")
-            )
-
-        elif tool_name == "search_file":
-            return await self.search_file(
-                args.get("query", ""),
-                args.get("path", None)
-            )
-
-        elif tool_name == "llm_analyze":
-            path = args.get("path", "")
-            file_content = await self.read_file(path, track_read=False)
-            if file_content.startswith("File not found:") or file_content.startswith("Error reading file:"):
-                return f"Could not analyze: {file_content}"
-            return await self.llm.analyze_code(file_content)
-
-        return f"Unknown tool: {tool_name}"
 
     async def _search_files(self, query: str, local_path: str) -> list[str]:
         """Search files with platform-appropriate command and fallback."""
@@ -516,32 +471,6 @@ class Agent:
         self._knowledge_graph.clear()
         self._working_memory.clear()
         self._semantic_index.clear()
-
-
-class ToolRegistry:
-    """Registry for managing tool definitions and execution."""
-
-    def __init__(self, workspace: str = None, model_name: str = None):
-        self.workspace = workspace or Agent.DEFAULT_WORKSPACE
-        self._agent = Agent(workspace=self.workspace, model_name=model_name or DEFAULT_MODEL)
-
-    async def read_file(self, path: str) -> str:
-        return await self._agent.read_file(path)
-
-    async def write_file(self, path: str, content: str) -> str:
-        return await self._agent.write_file(path, content)
-
-    async def apply_patch(self, path: str, find: str, replace: str) -> str:
-        return await self._agent.apply_patch(path, find, replace)
-
-    async def edit_file(self, path: str, content: str) -> str:
-        return await self._agent.edit_file(path, content)
-
-    async def search_file(self, query: str, path: str = None) -> str:
-        return await self._agent.search_file(query, path)
-
-    async def execute_tool(self, tool_name: str, args: dict) -> str:
-        return await self._agent.execute_tool(tool_name, args)
 
 
 def _is_similar(content1: str, content2: str, threshold: float = 0.8) -> bool:

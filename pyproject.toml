@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-framework"
+version = "0.1.0"
+description = "Consolidated agent framework with unified command system, LLM client, and vector memory."
+readme = { content-type = "text/markdown", text = "Agent Framework - a modular agent orchestration library." }
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Agent Framework Team" }]
+keywords = ["agent", "llm", "framework", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "pydantic>=2.0",
+    "httpx>=0.24",
+    "numpy>=1.24",
+    "networkx>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.0",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "types-networkx>=3.0",
+    "types-pyyaml>=6.0",
+]
+
+[project.urls]
+Homepage = "https://example.com/agent-framework"
+Repository = "https://example.com/agent-framework/repo"
+
+[tool.setuptools.packages.find]
+include = ["agent_core*"]
+exclude = ["tests*", "src.agent1*"]
+
+[tool.mypy]
+strict = true
+warn_return_any = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+show_error_codes = true
+namespace_packages = false
+
+[[tool.mypy.overrides]]
+module = "numpy.*"
+ignore_missing_imports = false
+follow_imports = "normal"
+
+[[tool.mypy.overrides]]
+module = "networkx.*"
+ignore_missing_imports = false
+follow_imports = "normal"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = "-v --cov=agent_core --cov-report=term-missing"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["agent_core"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
