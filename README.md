@@ -20,21 +20,55 @@ Python AI agent framework with LLM integration, tool execution, workspace manage
 
 ### Commands (`agent_core/commands/`)
 ```
-read <path>                  Read a file
-write <path> <content>       Write content to file
-search <query>               Search files for string
-analyze <file> [output]      AI analysis via LLM
-plan <analysis> <plan>       Generate coding plan
-entities <analysis> <plan>   Generate shared entities
-taskplan <analysis> <plan>   Generate implementation tasks
-implement <taskplan> [opts]  Implement files from task plan
-fix <traceback>              Auto-fix from traceback
-fix <file> --desc "text"     Describe issue, LLM fixes it
-cleanup                      Show unreferenced files
-workflow <target> [opts]     Full pipeline (analyze→plan→entities→tasks→implement)
-model [list|reload|name]     Manage LLM models
-clear [stats|--force]        Show/clear agent memory
+read <path>                   Read a file
+write <path> <content>        Write content to file
+search <query>                Search files for string
+analyze <file> [output]       AI analysis via LLM
+plan <analysis> <plan>        Generate coding plan
+entities <analysis> <plan>    Generate shared entities
+taskplan <analysis> <plan>    Generate implementation tasks
+implement <taskplan> [opts]   Implement files from task plan
+fix <traceback>               Auto-fix from traceback
+fix <file> --desc "text"      Describe issue, LLM fixes it
+cleanup                       Show unreferenced files
+workflow <target> [opts]      Full pipeline: analyze → plan → entities → tasks → implement
+                               --from spec.md    Greenfield from specification
+                               --desc "text"     Greenfield from description
+                               --features spec.md  Brownfield extension
+                               --brainstorm       Add 6th dimension: creative features
+                               --force            Skip existing file checks
+                               --workspace <path> Target workspace
+model [list|reload|name]      Manage LLM models
+clear [stats|--force]         Show memory stats, confirm then clear
 ```
+
+### Workflow Pipeline
+
+The `workflow` command runs a full analysis-to-implementation pipeline. Brownfield mode (`workflow .`) now uses multi-dimensional analysis across 5 dimensions:
+
+| Dimension | Scope |
+|---|---|
+| **CODE QUALITY** | Bugs, edge cases, type safety, error handling gaps |
+| **COMPLETENESS** | Missing tests, docs, error handling, underdeveloped features |
+| **ARCHITECTURE** | DRY violations, circular dependencies, coupling, SRP breaks |
+| **INNOVATION** | New capabilities that would make the system more useful/powerful |
+| **PRODUCTION** | Logging, monitoring, configuration, security, deployment readiness |
+
+Add `--brainstorm` for a 6th dimension: bold, creative, unconventional features.
+
+The `implement` command uses smart context truncation: per-file excerpts (±400 chars around filename mentions) instead of repeating the full analysis/plan for every batch. Reduces context from ~50K to ~4K tokens per batch.
+
+### Memory Management
+
+The `clear` command shows what's stored before clearing:
+- **chat history**: LLM conversation context
+- **files read**: Tracked with mtime for staleness detection
+- **stale files**: Files changed externally since last read
+- **working memory**: Active task items
+- **semantic index**: Word → position index for fast search
+- **knowledge graph**: Entity relationships
+
+Use `clear stats` to view without clearing, `clear --force` to skip confirmation.
 
 ### Src Agent1 — Multi-Agent Framework (`src/agent1/`)
 | Module | Purpose |
