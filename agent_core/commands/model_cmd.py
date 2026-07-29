@@ -246,6 +246,16 @@ class ModelCommand(Command):
             matches = difflib.get_close_matches(query, KNOWN_MODELS.keys(), n=1, cutoff=0.3)
             resolved = matches[0] if matches else query
 
+        # Check if already loaded — skip API call if so
+        models, loaded_ids = self._fetch_models()
+        loaded_keys = [m["key"] for m in models if m["loaded"]]
+        if resolved in loaded_keys:
+            print(f"  Already loaded: {resolved}")
+            agent.llm.model_name = resolved
+            self._persist_model(resolved)
+            print(f"  Switched to: {resolved}")
+            return
+
         print(f"  Loading: {resolved} ...")
         ok, msg = _lms.load_model(resolved)
         if ok:
