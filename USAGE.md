@@ -159,6 +159,8 @@ Flags:
 | `--force` | Overwrite existing files |
 | `--keep` | Skip files that already compile OK |
 | `--fix` | Retry compilation errors with the LLM |
+| `--retry` | Re-generate only files missing from disk (uses cached file list) |
+| `--workspace <path>` | Target a different workspace |
 | `--workspace <path>` | Target a different workspace |
 
 Example with supporting documents:

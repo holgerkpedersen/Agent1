@@ -134,19 +134,20 @@ class ImplementCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "implement <taskplan.md> [--keep|--force|--fix] - Implement files from task plan"
+        return "implement <taskplan.md> [--keep|--force|--fix|--retry] - Implement files from task plan"
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         parts = args
 
         if len(parts) < 1:
-            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--fix] [--workspace <path>]")
+            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--fix] [--retry] [--workspace <path>]")
             return True
 
         keep_mode = "--keep" in parts
         refresh_cache = "--refresh" in parts
         force_mode = "--force" in parts
         fix_mode = "--fix" in parts
+        retry_mode = "--retry" in parts
 
         target_workspace = agent.workspace
         if "--workspace" in parts:
@@ -154,7 +155,7 @@ class ImplementCommand(Command):
             if ws_idx + 1 < len(parts):
                 target_workspace = parts[ws_idx + 1].strip('"')
 
-        skip_tokens = ["--keep", "--refresh", "--force", "--fix", "--workspace", target_workspace]
+        skip_tokens = ["--keep", "--refresh", "--force", "--fix", "--retry", "--workspace", target_workspace]
         filtered_parts = [p for p in parts if p not in skip_tokens]
 
         taskplan_file = filtered_parts[0] if filtered_parts else ""
@@ -238,6 +239,21 @@ class ImplementCommand(Command):
 
         print(f"Found {len(all_files)} files to implement: {', '.join(all_files)}")
 
+        if retry_mode:
+            missing = []
+            for fname in all_files:
+                needs_gen, reason = file_needs_generation(fname)
+                if needs_gen:
+                    missing.append(fname)
+                else:
+                    print(f"  OK: {fname} ({reason})")
+            if not missing:
+                print("  All files present and compile OK — nothing to retry.")
+                return True
+            print(f"\n  Retrying {len(missing)} missing file(s): {', '.join(missing)}\n")
+            all_files = missing
+            force_mode = True  # Overwrite anything that exists but doesn't compile
+
         protected_files = set()
         if os.path.exists(".protected"):
             with open(".protected", "r", encoding="utf-8") as pf:
@@ -275,6 +291,7 @@ class ImplementCommand(Command):
             return False, "OK"
 
         implemented = []
+        file_outcomes: dict[str, str] = {}  # filename -> reason/status
         if keep_mode and not force_mode:
             files_to_skip = []
             for fname in all_files:
@@ -285,8 +302,10 @@ class ImplementCommand(Command):
                 needs_gen, reason = file_needs_generation(fname)
                 if needs_gen:
                     files_to_skip.append(f"{fname}: {reason}")
+                    file_outcomes[fname] = f"needs generation — {reason}"
                 else:
                     files_to_skip.append(f"{fname}: already exists, compile OK")
+                    file_outcomes[fname] = "already exists and compiles OK"
                     if fname not in implemented:
                         implemented.append(fname)
 
@@ -558,6 +577,7 @@ class ImplementCommand(Command):
 
             if skip_reason:
                 print(f"  Skipping {filename}: {skip_reason}")
+                file_outcomes.setdefault(filename, skip_reason)
                 if filename not in implemented:
                     implemented.append(filename)
                 continue
@@ -574,9 +594,11 @@ class ImplementCommand(Command):
                     max_dupes = max(similar_prefixes.values()) if similar_prefixes else 1
                     if max_dupes > 10:
                         print(f"  REJECTED: {filename} has {max_dupes} near-duplicate functions")
+                        file_outcomes[filename] = f"rejected — {max_dupes} near-duplicate functions"
                         continue
                 if len(content) > 50000:
                     print(f"  REJECTED: {filename} is {len(content)} bytes (max 50KB)")
+                    file_outcomes[filename] = f"rejected — {len(content)} bytes, max 50KB"
                     continue
 
             dangerous, reason = _is_dangerous_filename(filename, workspace)
@@ -590,15 +612,19 @@ class ImplementCommand(Command):
                     if not new_dangerous:
                         if new_filepath.exists() and new_filepath.stat().st_size > 100:
                             print(f"  Skipped: {new_filename} already exists (avoiding overwrite)")
+                            file_outcomes[filename] = f"skipped — {new_filename} already exists"
                             continue
                         print(f"  Auto-repaired: {filename} -> {new_filename}")
+                        file_outcomes[filename] = f"auto-repaired → {new_filename}"
                         filename = new_filename
                         filepath = new_filepath
                     else:
                         print(f"  REJECTED: {reason}")
+                        file_outcomes[filename] = f"rejected — {reason}"
                         continue
                 else:
                     print(f"  REJECTED: {reason}")
+                    file_outcomes[filename] = f"rejected — {reason}"
                     continue
 
             with open(filepath, "w", encoding="utf-8") as f:
@@ -692,10 +718,31 @@ class ImplementCommand(Command):
             print("\nAll Python files compiled successfully!")
 
         missing_files = set(all_files) - set(implemented)
-        if missing_files:
-            print(f"\nMissing files ({len(missing_files)}):")
-            for f in missing_files:
-                print(f"  - {f}")
+        repaired = {k: v for k, v in file_outcomes.items() if "auto-repaired" in v}
+        rejected = {k: v for k, v in file_outcomes.items() if "rejected" in v}
+        skipped = {k: v for k, v in file_outcomes.items() if "skipped" in v}
+        truly_missing = missing_files - set(repaired) - set(rejected) - set(skipped)
+
+        if repaired:
+            print(f"\nAuto-repaired ({len(repaired)}):")
+            for f, how in sorted(repaired.items()):
+                print(f"  {f}  — {how}")
+
+        if truly_missing:
+            print(f"\nMissing — could not generate ({len(truly_missing)}):")
+            for f in sorted(truly_missing):
+                reason = file_outcomes.get(f, "unknown")
+                print(f"  - {f}  ({reason})")
+
+        if rejected:
+            print(f"\nRejected ({len(rejected)}):")
+            for f, why in sorted(rejected.items()):
+                print(f"  - {f}: {why}")
+
+        if skipped:
+            print(f"\nSkipped — target exists ({len(skipped)}):")
+            for f, why in sorted(skipped.items()):
+                print(f"  - {why}")
 
         post_snapshot = set()
         for fp in Path(ws).rglob("*"):
