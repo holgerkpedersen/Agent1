@@ -143,7 +143,7 @@ class WorkflowCommand(Command):
                 with open(entities_md, "r", encoding="utf-8") as f:
                     entities = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text. No code blocks.\n\nIMPORTANT: All new files MUST use sub-package paths (e.g. `agent_core/thing.py`, `agent1/module.py`, `src/agent1/foo.py`). Never list bare filenames like `types.py` or `config.py` at workspace root — they shadow stdlib modules."},
+                    {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text. No code blocks.\n\nCRITICAL RULE: Every file path MUST have a directory prefix. Good: `agent1/logger.py`, `src/agent1/memory.py`. BAD: `logger.py`, `memory.py`, `utils.py`. Never emit bare filenames at workspace root — they will be REJECTED."},
                     {"role": "user", "content": f"Create task plan:\n\n## Spec:\n{spec_content}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}"}
                 ])
                 if not step_ok(r):
@@ -242,7 +242,7 @@ class WorkflowCommand(Command):
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan for adding these features. Format: mark file as [NEW] or [MODIFY], then '— what to do'. Include type-checking validation. No intro text.\n\nIMPORTANT: All new files MUST use sub-package paths (e.g. `agent_core/thing.py`, `agent1/module.py`). Never list bare filenames at workspace root."},
+                    {"role": "system", "content": "Create task plan for adding these features. Format: mark file as [NEW] or [MODIFY], then '— what to do'. Include type-checking validation. No intro text.\n\nCRITICAL RULE: Every file path MUST have a directory prefix. Good: `agent1/logger.py`. BAD: `logger.py`. Never emit bare filenames at workspace root."},
                     {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\nCreate implementation tasks."}
                 ])
                 if not step_ok(r):
@@ -345,7 +345,7 @@ class WorkflowCommand(Command):
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan. Format: 'Task N: `file.py` [TAG] — what to do'. List in dependency order. Be concise — one line per task. No intro text.\n\nIMPORTANT: All new files MUST use sub-package paths (e.g. `agent_core/thing.py`, `agent1/module.py`). Never list bare filenames at workspace root."},
+                    {"role": "system", "content": "Create task plan. Format: 'Task N: `file.py` [TAG] — what to do'. List in dependency order. Be concise — one line per task. No intro text.\n\nCRITICAL RULE: Every file path MUST have a directory prefix. Good: `agent1/logger.py`. BAD: `logger.py`. Never emit bare filenames at workspace root."},
                     {"role": "user", "content": f"Create task plan:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
                 ])
                 if not step_ok(r):

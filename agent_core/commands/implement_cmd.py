@@ -58,7 +58,7 @@ _EXISTING_ROOT_PACKAGES = frozenset({
     "agent_core", "agent1", "agent",
 })
 
-_SAFE_SUBPACKAGE_CANDIDATES = ("agent1", "agent_core", "src/agent1")
+_SAFE_SUBPACKAGE_CANDIDATES = ("agent1", "src/agent1")
 
 
 def _find_safe_subpackage(workspace: Path) -> str:
@@ -90,25 +90,11 @@ def _is_dangerous_filename(filename: str, workspace: Path) -> tuple[bool, str]:
     if name == "__init__" and dest.parent.resolve() == workspace.resolve():
         return True, f"__init__.py at workspace root would turn the entire repo into a package"
 
-    # Shallow names (no directory prefix) at workspace root are the most
-    # dangerous — they shadow whatever Python finds first on sys.path.
+    # Shallow names (no directory prefix) at workspace root are always
+    # dangerous — they shadow stdlib, collide with packages, or pollute the
+    # repo root.  Auto-repair will prefix them with a safe sub-package.
     if "/" not in filename and "\\" not in filename:
-        # Check against the known stdlib / common collision set.
-        if name in _STDLIB_COMMON:
-            return True, f"{filename!r} shadows a stdlib/common module name"
-
-        # Check whether a package directory with this name already exists in
-        # the workspace (e.g. writing agent.py over a live agent_core/ package
-        # root is unsafe; writing types.py next to it is also unsafe).
-        for pkg in _EXISTING_ROOT_PACKAGES:
-            if name == pkg:
-                return True, f"{filename!r} conflicts with existing package {pkg!r}"
-            if name.startswith(pkg + "_") or name.endswith("_" + pkg):
-                return True, f"{filename!r} may collide with existing package {pkg!r}"
-
-        # Dynamic stdlib check via importlib.
-        if importlib.util.find_spec(name) is not None:
-            return True, f"{filename!r} shadows an importable stdlib/third-party module"
+        return True, f"bare workspace-root file {filename!r} — needs sub-package prefix"
 
     return False, ""
 
@@ -226,7 +212,7 @@ class ImplementCommand(Command):
             print("Analyzing task plan to identify all files...")
 
             list_messages = [
-                {"role": "system", "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations.\n\nIMPORTANT: All files MUST include their sub-package path (e.g. agent_core/thing.py, agent1/module.py). Never list bare root-level names like types.py or config.py."},
+                {"role": "system", "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations.\n\nCRITICAL: Every file path MUST include a directory prefix. Good: agent1/logger.py, src/agent1/memory.py. BAD: logger.py, utils.py. Never emit bare root-level names."},
                 {"role": "user", "content": f"List every file that needs to be created or modified from this task plan:\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}"}
             ]
 
@@ -602,6 +588,9 @@ class ImplementCommand(Command):
                     new_filepath = workspace / new_filename
                     new_dangerous, _ = _is_dangerous_filename(new_filename, workspace)
                     if not new_dangerous:
+                        if new_filepath.exists() and new_filepath.stat().st_size > 100:
+                            print(f"  Skipped: {new_filename} already exists (avoiding overwrite)")
+                            continue
                         print(f"  Auto-repaired: {filename} -> {new_filename}")
                         filename = new_filename
                         filepath = new_filepath
