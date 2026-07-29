@@ -277,20 +277,20 @@ class WorkflowCommand(Command):
                     except Exception:
                         pass
                 analyze_system = (
-                    "You are an expert software architect. Evaluate this codebase across 5 dimensions."
-                    "\n\n1. CODE QUALITY — bugs, edge cases, type safety issues, error handling gaps"
-                    "\n2. COMPLETENESS — missing tests, missing docs, missing error handling, underdeveloped features"
-                    "\n3. ARCHITECTURE — DRY violations, circular dependencies, coupling, single-responsibility breaks"
-                    "\n4. INNOVATION — what new capabilities would make this system significantly more useful or powerful?"
-                    "\n5. PRODUCTION — logging, monitoring, configuration, security, deployment readiness"
-                    + ("\n6. BRAINSTORMING — propose bold, creative, unconventional features that push the boundaries of what this system could do. Think outside the box."
+                    "You are an expert software architect. Evaluate this codebase across 5 dimensions. "
+                    "For each dimension, limit to 3 bullet points max 50 words each. Be concise."
+                    "\n\n1. CODE QUALITY — bugs, edge cases, type safety, error handling gaps"
+                    "\n2. COMPLETENESS — missing tests, missing docs, missing features"
+                    "\n3. ARCHITECTURE — DRY violations, coupling, SRP breaks"
+                    "\n4. INNOVATION — new capabilities that would make this system more useful"
+                    "\n5. PRODUCTION — logging, monitoring, config, security gaps"
+                    + ("\n6. BRAINSTORMING — bold creative features (3 bullets max)"
                        if brainstorm else "")
-                    + "\n\nFor each dimension, list concrete findings with file paths. Be specific but concise."
                 )
-                r = await agent.llm.chat_with_continuation([
+                r = await agent.llm.chat([
                     {"role": "system", "content": analyze_system},
                     {"role": "user", "content": combined}
-                ], max_continues=1, max_tokens=15000)
+                ])
                 if not step_ok(r):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
@@ -303,17 +303,15 @@ class WorkflowCommand(Command):
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
-                r = await agent.llm.chat_with_continuation([
+                r = await agent.llm.chat([
                     {"role": "system", "content": (
-                        "Create a prioritized implementation plan from this analysis. "
-                        "Categorize every change: [FIX] for bugs, [FEATURE] for new capabilities, "
-                        "[ARCH] for structural improvements, [OPS] for production concerns. "
-                        "Order by impact: MUST HAVE (bugs/security), SHOULD HAVE (tests/docs/features), "
-                        "COULD HAVE (innovation/nice-to-haves). List concrete files to create or modify. "
-                        "All Python code must pass mypy strict type checking."
+                        "Create a prioritized implementation plan. "
+                        "Categorize: [FIX], [FEATURE], [ARCH], [OPS]. "
+                        "Priorities: MUST, SHOULD, COULD. Max 3 items per category. "
+                        "Be concise — one line per item."
                     )},
                     {"role": "user", "content": f"Create plan:\n\n{analysis}"}
-                ], max_continues=1, max_tokens=10000)
+                ])
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
@@ -328,10 +326,10 @@ class WorkflowCommand(Command):
                     analysis = f.read()
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
-                r = await agent.llm.chat_with_continuation([
-                    {"role": "system", "content": "Extract shared entities. Output ONLY Python code — no intro text. Start with ```python. All types must pass mypy strict. Avoid circular imports. Be concise."},
+                r = await agent.llm.chat([
+                    {"role": "system", "content": "Extract shared entities. Output ONLY Python code. Start with ```python. No intro text. Include only new/modified types — skip types that already exist unchanged. Avoid circular imports."},
                     {"role": "user", "content": f"Extract entities:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
-                ], max_continues=1, max_tokens=8000)
+                ])
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
@@ -347,9 +345,9 @@ class WorkflowCommand(Command):
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan. List files in dependency order with category tags: [FIX], [FEATURE], [ARCH], [OPS]. Format: 'Task N: `file.py` [TAG] — what to do'. Be concise. No intro text."},
+                    {"role": "system", "content": "Create task plan. Format: 'Task N: `file.py` [TAG] — what to do'. List in dependency order. Be concise — one line per task. No intro text."},
                     {"role": "user", "content": f"Create task plan:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
-                ], max_tokens=8000)
+                ])
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
