@@ -10,6 +10,147 @@ from .retry import RetryPolicy
 from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL
 
 
+def _management_url() -> str:
+    """Return the LM Studio model-management base URL (REST API, not OpenAI-compat)."""
+    base = os.environ.get("LMSTUDIO_URL", "http://localhost:1234/v1")
+    # Strip trailing /v1 and construct /api/v1
+    if base.endswith("/v1"):
+        base = base[:-3]
+    elif base.endswith("/v1/"):
+        base = base[:-4]
+    return f"{base}/api/v1"
+
+
+def _http_get_json(url: str, timeout: int = 10) -> dict | None:
+    """Synchronous HTTP GET that returns parsed JSON, or None on failure."""
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+
+def _http_post_json(url: str, body: dict, timeout: int = 30) -> dict | None:
+    """Synchronous HTTP POST that returns parsed JSON, or None on failure."""
+    try:
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+
+def get_models_status() -> list[dict]:
+    """Return every LLM model from LM Studio with loaded status, size, and params.
+
+    Each dict has keys: key, display_name, size_bytes, params_string,
+    loaded (bool), instance_id (str or None), context_length.
+    """
+    base = _management_url()
+    data = _http_get_json(f"{base}/models")
+    if not data or "models" not in data:
+        return []
+
+    result = []
+    for m in data["models"]:
+        if m.get("type") != "llm":
+            continue
+        instances = m.get("loaded_instances", [])
+        result.append({
+            "key": m["key"],
+            "display_name": m.get("display_name", m["key"]),
+            "size_bytes": m.get("size_bytes", 0),
+            "params_string": m.get("params_string", "?"),
+            "loaded": len(instances) > 0,
+            "instance_id": instances[0]["id"] if instances else None,
+            "context_length": instances[0].get("config", {}).get("context_length", 0) if instances else m.get("max_context_length", 0),
+            "architecture": m.get("architecture"),
+        })
+    return result
+
+
+def get_vram_info() -> dict:
+    """Return VRAM usage summary.
+
+    Returns: {"total_bytes": int, "loaded_count": int, "models": [dict, ...]}
+    """
+    models = get_models_status()
+    loaded = [m for m in models if m["loaded"]]
+    return {
+        "total_bytes": sum(m["size_bytes"] for m in loaded),
+        "loaded_count": len(loaded),
+        "models": models,
+    }
+
+
+def load_model(model_key: str, parallel: int = 4) -> tuple[bool, str]:
+    """Load a model via LM Studio REST API.
+
+    Returns (success, message).
+    """
+    base = _management_url()
+    resp = _http_post_json(f"{base}/models/load", {
+        "model": model_key,
+        "eval_batch_size": parallel,
+    })
+    if resp and resp.get("status") == "loaded":
+        return True, f"loaded ({resp.get('load_time_seconds', '?')}s) — {resp.get('instance_id', model_key)}"
+    return False, resp.get("error", "unknown") if resp else "could not reach LM Studio"
+
+
+def unload_model(instance_id: str | None = None) -> tuple[bool, str]:
+    """Unload a model instance, or all if *instance_id* is None.
+
+    Returns (success, message).
+    """
+    base = _management_url()
+    models = get_models_status()
+    loaded = [m for m in models if m["loaded"]]
+    if not loaded:
+        return True, "nothing to unload"
+
+    target = instance_id
+    if not target:
+        target = loaded[0]["instance_id"]
+
+    resp = _http_post_json(f"{base}/models/unload", {"instance_id": target})
+    if resp and resp.get("instance_id"):
+        return True, f"unloaded {resp['instance_id']}"
+    return False, resp.get("error", "unknown") if resp else "could not reach LM Studio"
+
+
+def resolve_model_name(query: str) -> str | None:
+    """Fuzzy-match *query* against real LM Studio model keys.
+
+    Returns the matched model key, or None.
+    """
+    import difflib
+    models = get_models_status()
+    if not models:
+        return None
+
+    keys = [m["key"] for m in models]
+    # Exact match
+    if query in keys:
+        return query
+    # Substring match
+    sub = [k for k in keys if query.lower() in k.lower()]
+    if len(sub) == 1:
+        return sub[0]
+    # difflib fuzzy match
+    matches = difflib.get_close_matches(query, keys, n=1, cutoff=0.3)
+    if matches:
+        return matches[0]
+    return None
+
+
 class LMStudioProvider:
     """Concrete LLM provider for LM Studio.
     

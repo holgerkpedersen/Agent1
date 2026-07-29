@@ -1,114 +1,323 @@
-"""Model command for agent interactive mode."""
+"""Model command — list, switch, load, and unload LLM models via LM Studio API."""
+
 import os
 import difflib
 
 from .base import Command
-from agent_core.constants import KNOWN_MODELS
+from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, load_model_json, save_model_json
+from agent_core.llm import lmstudio as _lms
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent import Agent
 
 
+def _format_size(bytes_val: int) -> str:
+    """Return a human-readable size string."""
+    gb = bytes_val / (1024 ** 3)
+    if gb >= 1:
+        return f"{gb:.1f} GB"
+    mb = bytes_val / (1024 ** 2)
+    if mb >= 1:
+        return f"{mb:.0f} MB"
+    return f"{bytes_val} B"
+
+
 class ModelCommand(Command):
-    """Manage LLM models - list, reload, switch."""
-    
+    """Manage LLM models via the LM Studio REST API."""
+
     @property
     def name(self) -> str:
         return "model"
-    
+
     @property
     def help_text(self) -> str:
-        return "model [list|reload|name] - Manage LLM models"
-    
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
-        if len(args) < 1:
+        return "model [list|load|unload|reload|name] — Manage LLM models"
+
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
+        sub = args[0].strip().lower() if args else ""
+        rest = args[1:] if len(args) > 1 else []
+
+        if not args:
+            self._list_models(agent, interactive=True)
+            return True
+
+        if sub in ("list", "ls"):
             self._list_models(agent)
             return True
-        
-        query = args[0].strip()
-        
-        if query == "list":
-            self._list_models(agent)
+
+        if sub == "load":
+            await self._load_model(rest, agent)
             return True
-        
-        if query == "reload":
-            await self._reload_model(agent)
+
+        if sub == "unload":
+            await self._unload_model(rest, agent)
             return True
-        
-        # Switch to matching model
-        await self._switch_model(query, agent)
+
+        if sub == "reload":
+            # Resolve what is actually loaded and sync
+            self._sync_with_lmstudio(agent)
+            return True
+
+        # Subcommand not matched — treat as model name
+        await self._switch_model(args, agent)
         return True
-    
-    def _list_models(self, agent: 'Agent'):
-        """List all known models."""
-        print(f"Current model: {agent.llm.model_name}")
-        print(f"Known models ({len(KNOWN_MODELS)}):")
-        for name, info in sorted(KNOWN_MODELS.items()):
-            marker = " <- current" if name == agent.llm.model_name else ""
-            print(f"  {name}{marker}\n    {info['desc']}")
-    
-    async def _reload_model(self, agent: 'Agent'):
-        """Reload current model by cycling through alternate."""
+
+    # ------------------------------------------------------------------
+    #  Internal helpers
+    # ------------------------------------------------------------------
+
+    def _fetch_models(self) -> tuple[list[dict], list[str]]:
+        """Return (all_models, loaded_instance_ids) from the LM Studio API."""
+        models = _lms.get_models_status()
+        loaded_ids = [m["instance_id"] for m in models if m["loaded"] and m["instance_id"]]
+        return models, loaded_ids
+
+    def _get_vram_display(self, models: list[dict]) -> str:
+        """Build a one-line VRAM summary string."""
+        loaded = [m for m in models if m["loaded"]]
+        total_bytes = sum(m["size_bytes"] for m in loaded)
+        if not loaded:
+            return "VRAM: 0 GB — no models loaded"
+        return f"VRAM: {_format_size(total_bytes)} — {len(loaded)} model(s) loaded"
+
+    # ------------------------------------------------------------------
+    #  List
+    # ------------------------------------------------------------------
+
+    def _list_models(self, agent: "Agent", interactive: bool = False) -> None:
+        """Show available models from the LM Studio API."""
+        models, loaded_ids = self._fetch_models()
+
+        if not models:
+            print("  (LM Studio not reachable — showing cached list)")
+            self._list_known_only(agent)
+            return
+
+        print(f"\n  {self._get_vram_display(models)}\n")
         current = agent.llm.model_name
-        alternates = [m for m in KNOWN_MODELS if m != current]
-        if not alternates:
-            print("No alternate model available for reload cycle.")
+
+        for i, m in enumerate(models, 1):
+            key = m["key"]
+            name = m["display_name"]
+            params = m["params_string"] or "?"
+            size = _format_size(m["size_bytes"]) if m["size_bytes"] else "?"
+            loaded = m["loaded"]
+            is_current = key == current
+
+            markers = []
+            if loaded:
+                markers.append("loaded")
+            if is_current:
+                markers.append("current")
+
+            marker_str = f"  [{', '.join(markers)}]" if markers else ""
+            prefix = " *" if is_current else "  "
+            print(f" {prefix}{i:>3}. {name:<40} {params:<10} {size:<8}{marker_str}")
+
+        kinfo = KNOWN_MODELS.get(current, {})
+        print(f"\n  Current model: {current}  ({kinfo.get('desc', '')})")
+        print(f"  {len(models)} models available from LM Studio API")
+
+    def _list_known_only(self, agent: "Agent") -> None:
+        """Fallback: show the hardcoded KNOWN_MODELS."""
+        current = agent.llm.model_name
+        for name, info in sorted(KNOWN_MODELS.items()):
+            marker = " <- current" if name == current else ""
+            print(f"    {name}{marker}\n      {info['desc']}")
+        print()
+
+    # ------------------------------------------------------------------
+    #  Switch
+    # ------------------------------------------------------------------
+
+    async def _switch_model(self, args: list[str], agent: "Agent") -> None:
+        """Fuzzy-match args against real API model keys and switch."""
+        query = " ".join(args).strip()
+        models, loaded_ids = self._fetch_models()
+
+        if not models:
+            print("  LM Studio not reachable — trying hardcoded list.")
+            await self._switch_known(query, agent)
             return
-        
-        temp_model = alternates[0]
-        print(f"Reloading {current} via {temp_model} cycle...")
-        print(f"  1. Switching to {temp_model}...")
-        agent.llm.model_name = temp_model
-        try:
-            await agent.llm.chat([{"role": "user", "content": "ping"}])
-        except Exception:
-            pass
-        print(f"  2. Switching back to {current}...")
-        agent.llm.model_name = current
-        try:
-            await agent.llm.chat([{"role": "user", "content": "ping"}])
-        except Exception:
-            pass
-        print(f"Reload complete. Model: {current}")
-    
-    async def _switch_model(self, query: str, agent: 'Agent'):
-        """Switch to a matching model."""
-        # Find best match
-        exact_match = next((m for m in KNOWN_MODELS if m == query), None)
-        if exact_match:
-            best_match = exact_match
+
+        current = agent.llm.model_name
+        keys = [m["key"] for m in models]
+        matched = self._resolve_match(query, keys)
+
+        if not matched:
+            print(f"  No model matching '{query}'")
+            self._list_models(agent)
+            return
+
+        if matched == current:
+            print(f"  Already using: {matched}")
+            return
+
+        target = next((m for m in models if m["key"] == matched), None)
+
+        if target and not target["loaded"]:
+            print(f"  Loading {matched} ...")
+            ok, msg = _lms.load_model(matched)
+            if not ok:
+                print(f"  Could not load: {msg}")
+                return
+            print(f"  {msg}")
+
+        # Update the agent's model name
+        info = KNOWN_MODELS.get(matched, {})
+        old = agent.llm.model_name
+        agent.llm.model_name = matched
+        self._persist_model(matched)
+        print(f"  Switched: {old} -> {matched}  ({info.get('desc', '')})")
+
+    async def _switch_known(self, query: str, agent: "Agent") -> None:
+        """Fallback switch using hardcoded KNOWN_MODELS."""
+        current = agent.llm.model_name
+        if query == current:
+            print(f"  Already using: {current}")
+            return
+        if query in KNOWN_MODELS:
+            agent.llm.model_name = query
+            self._persist_model(query)
+            print(f"  Switched: {current} -> {query}")
+            return
+        sub_matches = [m for m in KNOWN_MODELS if query.lower() in m.lower()]
+        if sub_matches:
+            best = sub_matches[0]
+            agent.llm.model_name = best
+            self._persist_model(best)
+            print(f"  Switched: {current} -> {best}")
+            return
+        close = difflib.get_close_matches(query, KNOWN_MODELS.keys(), n=1, cutoff=0.3)
+        if close:
+            agent.llm.model_name = close[0]
+            self._persist_model(close[0])
+            print(f"  Switched: {current} -> {close[0]}")
+            return
+        print(f"  No match for '{query}'")
+
+    # ------------------------------------------------------------------
+    #  Sync (reload)
+    # ------------------------------------------------------------------
+
+    def _sync_with_lmstudio(self, agent: "Agent") -> None:
+        """Check what LM Studio has loaded and align agent's model_name."""
+        models, loaded_ids = self._fetch_models()
+        current = agent.llm.model_name
+
+        if not models:
+            print("  LM Studio not reachable.")
+            return
+
+        loaded = [m for m in models if m["loaded"]]
+        if not loaded:
+            print(f"  No models loaded in LM Studio. Agent is set to: {current}")
+            return
+
+        active = loaded[0]
+        active_key = active["key"]
+        active_id = active.get("instance_id", active_key)
+
+        if active_key == current:
+            print(f"  Agent matches LM Studio: {current}  ({_format_size(active['size_bytes'])})")
         else:
-            substring_matches = [m for m in KNOWN_MODELS if query.lower() in m.lower()]
-            if substring_matches:
-                best_match = substring_matches[0]
-            else:
-                close = difflib.get_close_matches(query, KNOWN_MODELS.keys(), n=1, cutoff=0.3)
-                best_match = close[0] if close else None
-        
-        if not best_match:
-            print(f"No match for '{query}'. Known models:")
-            for name in KNOWN_MODELS:
-                print(f"  {name}")
+            print(f"  Agent: {current}  |  LM Studio has: {active_key}")
+            print(f"  Syncing agent to match LM Studio...")
+            agent.llm.model_name = active_key
+            self._persist_model(active_key)
+            print(f"  Done: {active_key}")
+
+    # ------------------------------------------------------------------
+    #  Load / Unload
+    # ------------------------------------------------------------------
+
+    async def _load_model(self, rest: list[str], agent: "Agent") -> None:
+        """Load a model into LM Studio and optionally switch to it."""
+        query = " ".join(rest).strip()
+        if not query:
+            print("  Usage: model load <name>")
             return
-        
-        if best_match == agent.llm.model_name:
-            print(f"Already using: {best_match}")
-            return
-        
-        info = KNOWN_MODELS.get(best_match, {"desc": ""})
-        print(f"Match: {best_match} - {info['desc']}")
-        print(f"Switch from {agent.llm.model_name} to {best_match}? (y/n)")
-        confirm = input().strip().lower()
-        if confirm in ["y", "yes"]:
-            agent.llm.model_name = best_match
-            print(f"Model set to: {best_match}")
-            self._save_to_env(best_match)
+
+        resolved = _lms.resolve_model_name(query)
+        if not resolved:
+            # Try hardcoded
+            matches = difflib.get_close_matches(query, KNOWN_MODELS.keys(), n=1, cutoff=0.3)
+            resolved = matches[0] if matches else query
+
+        print(f"  Loading: {resolved} ...")
+        ok, msg = _lms.load_model(resolved)
+        if ok:
+            print(f"  {msg}")
+            # Auto-switch to the loaded model
+            agent.llm.model_name = resolved
+            self._persist_model(resolved)
+            print(f"  Switched to: {resolved}")
         else:
-            print("Cancelled.")
-    
-    def _save_to_env(self, model_name: str):
-        """Save model to .env file."""
+            print(f"  Error: {msg}")
+
+    async def _unload_model(self, rest: list[str], agent: "Agent") -> None:
+        """Unload a model from LM Studio."""
+        query = " ".join(rest).strip()
+        models, loaded_ids = self._fetch_models()
+
+        if not loaded_ids:
+            print("  No models loaded in LM Studio.")
+            return
+
+        if not query or query in ("--all", "-a"):
+            print(f"  Unloading all ({len(loaded_ids)} model(s)) ...")
+            for lid in loaded_ids:
+                ok, msg = _lms.unload_model(lid)
+                print(f"    {msg}")
+            return
+
+        # Fuzzy-match against loaded instance IDs
+        matches = difflib.get_close_matches(query, loaded_ids, n=1, cutoff=0.3)
+        if not matches:
+            sub = [lid for lid in loaded_ids if query.lower() in lid.lower()]
+            if sub:
+                matches = [sub[0]]
+        if not matches:
+            # Try matching model keys
+            keys = [m["key"] for m in models if m["loaded"]]
+            key_match = difflib.get_close_matches(query, keys, n=1, cutoff=0.3)
+            if key_match:
+                target = next((m for m in models if m["key"] == key_match[0]), None)
+                if target and target["instance_id"]:
+                    matches = [target["instance_id"]]
+
+        if not matches:
+            print(f"  No loaded model matching '{query}'")
+            print(f"  Loaded: {', '.join(loaded_ids)}")
+            return
+
+        print(f"  Unloading: {matches[0]} ...")
+        ok, msg = _lms.unload_model(matches[0])
+        print(f"  {msg}")
+
+    # ------------------------------------------------------------------
+    #  Helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_match(self, query: str, keys: list[str]) -> str | None:
+        """Fuzzy-match *query* against a list of model keys."""
+        if not query:
+            return None
+        if query in keys:
+            return query
+        sub = [k for k in keys if query.lower() in k.lower()]
+        if len(sub) == 1:
+            return sub[0]
+        matches = difflib.get_close_matches(query, keys, n=1, cutoff=0.3)
+        return matches[0] if matches else None
+
+    def _persist_model(self, model_name: str) -> None:
+        """Write the current model to model.json and .env."""
+        data = load_model_json()
+        data["model"] = model_name
+        save_model_json(data)
+
         env_path = ".env"
         lines = []
         found = False
@@ -124,4 +333,3 @@ class ModelCommand(Command):
                     ef.write(line)
             if not found:
                 ef.write(f"\nAGENT_MODEL={model_name}\n")
-        print(f"Saved to {env_path}")

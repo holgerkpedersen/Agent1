@@ -2,24 +2,24 @@
 
 Run: `python agent.py`
 
-| Command | Purpose |
-|---|---|
-| `read <path>` | Read a file |
-| `write <path> <text>` | Write content to a file |
-| `search <text>` | Search files for a string |
-| `analyze <target>` | AI analysis of code |
-| `plan <analysis> <plan>` | Generate coding plan |
-| `entities <analysis> <plan>` | Extract shared entities |
-| `taskplan <analysis> <plan>` | Generate task list |
-| `workflow <target>` | Full pipeline (analyze → implement) |
-| `implement <taskplan>` | Implement files from task plan |
-| `fix <traceback>` | Auto-fix from error traceback |
-| `fix <file> --desc "..."` | Describe an issue, LLM fixes it |
-| `model <name>` | Switch LLM model |
-| `model list` | List available models |
-| `clear` | View and clear memory |
-| `cleanup` | Find orphaned files |
-| `quit` / `exit` / `q` | Exit the REPL |
+| Command                      | Purpose                             |
+| ---------------------------- | ----------------------------------- |
+| `read <path>`                | Read a file                         |
+| `write <path> <text>`        | Write content to a file             |
+| `search <text>`              | Search files for a string           |
+| `analyze <target>`           | AI analysis of code                 |
+| `plan <analysis> <plan>`     | Generate coding plan                |
+| `entities <analysis> <plan>` | Extract shared entities             |
+| `taskplan <analysis> <plan>` | Generate task list                  |
+| `workflow <target>`          | Full pipeline (analyze → implement) |
+| `implement <taskplan>`       | Implement files from task plan      |
+| `fix <traceback>`            | Auto-fix from error traceback       |
+| `fix <file> --desc "..."`    | Describe an issue, LLM fixes it     |
+| `model <name>`               | Switch LLM model                    |
+| `model list`                 | List available models               |
+| `clear`                      | View and clear memory               |
+| `cleanup`                    | Find orphaned files                 |
+| `quit` / `exit` / `q`        | Exit the REPL                       |
 
 Any input not matching a command is treated as natural language and sent directly to the LLM.
 
@@ -240,27 +240,54 @@ Skipping LLM fix — this is a naming conflict, not a code error.
 ## Model management
 
 ```
+> model
+# Shows all models from LM Studio API with loaded status, sizes, and VRAM usage
+
+  VRAM: 15.8 GB — 1 model(s) loaded
+
+    1. laguna-s-2.1          8B-MoE     4.2 GB   [loaded, current]
+    2. qwen3.6-27b-mtp       27B        15.8 GB
+    3. google/gemma-4-31b    31B        18.1 GB
+
+  Current model: laguna-s-2.1  (Laguna S 2.1 MoE A8B — agentic coding, thinking)
+  3 models available from LM Studio API
+```
+
+```
 > model list
-Available models:
-  laguna-s-2.1          (current)
-  qwen3.6-27b-mtp
-  google/gemma-4-31b
+# Same table without interactive prompt
 
-> model qwen3.6-27b-mtp
-Switching from laguna-s-2.1 to qwen3.6-27b-mtp
-Model changed and saved to .env
-Reload agent to apply.
+> model 27b
+  Loading qwen3.6-27b-mtp ...
+  loaded (9.1s) — qwen3.6-27b-mtp
+  Switched: laguna-s-2.1 -> qwen3.6-27b-mtp  (Qwen 3.6 27B — chat, codegen, large context)
+```
 
+```
+> model load google/gemma-4-31b
+  Loading: google/gemma-4-31b ...
+  loaded (12.3s) — google/gemma-4-31b
+  Switched to: google/gemma-4-31b
+```
+
+```
+> model unload qwen
+  Unloading: qwen3.6-27b-mtp
+  unloaded qwen3.6-27b-mtp
+
+> model unload --all
+  Unloading all (2 model(s)) ...
+    unloaded google/gemma-4-31b
+```
+
+```
 > model reload
-Reloading model...
+  Agent: laguna-s-2.1  |  LM Studio has: qwen3.6-27b-mtp
+  Syncing agent to match LM Studio...
+  Done: qwen3.6-27b-mtp
 ```
 
-Prefix matches work:
-
-```
-> model qwen
-Switching from laguna-s-2.1 to qwen3.6-27b-mtp
-```
+Fuzzy matching works with partial names: `model 27b`, `model gemma`, `model laguna`.
 
 ---
 

@@ -506,7 +506,7 @@ async def run_interactive():
     print("  fix <file> --desc \"text\" - Describe an issue, LLM analyzes full codebase and fixes it")
     print("  cleanup             - Show unreferenced files and reference graph")
     print("  workflow <target> [--from spec.md] [--brainstorm] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] - Full pipeline")
-    print("  model [list|reload|name] - Manage LLM models")
+    print("  model [list|load|unload|reload|name] — Manage models via LM Studio API")
     print("  clear              - Clear agent memory")
     print("  quit               - Exit")
     print("=" * 50)
