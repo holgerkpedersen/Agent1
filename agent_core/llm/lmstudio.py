@@ -40,18 +40,18 @@ def _http_get_json(url: str, timeout: int = 10) -> dict | None:
 
 
 def _http_post_json(url: str, body: dict, timeout: int = 30) -> dict | None:
-    """Synchronous HTTP POST that returns parsed JSON, or None on failure."""
+    """Synchronous HTTP POST that returns parsed JSON, or None on connection failure.
+
+    HTTP error responses (4xx, 5xx) are returned as-is so callers can inspect
+    the error body (e.g. LM Studio's ``{"error": {"message": "..."}}``).
+    Only connection failures return None.
+    """
     try:
         resp = httpx.post(url, json=body, timeout=timeout)
-        resp.raise_for_status()
         return resp.json()
     except (httpx.ConnectError, httpx.ConnectTimeout):
         return None
-    except httpx.HTTPStatusError as e:
-        print(f"  LM Studio API error: {e.response.status_code} at {url}")
-        return None
-    except Exception as e:
-        print(f"  LM Studio API error: {e}")
+    except Exception:
         return None
 
 
@@ -110,7 +110,12 @@ def load_model(model_key: str, parallel: int = 4) -> tuple[bool, str]:
     })
     if resp and resp.get("status") == "loaded":
         return True, f"loaded ({resp.get('load_time_seconds', '?')}s) — {resp.get('instance_id', model_key)}"
-    return False, resp.get("error", "unknown") if resp else "could not reach LM Studio"
+    if resp:
+        err = resp.get("error", "unknown")
+        if isinstance(err, dict):
+            err = err.get("message", str(err))
+        return False, str(err)
+    return False, "could not reach LM Studio"
 
 
 def unload_model(instance_id: str | None = None) -> tuple[bool, str]:
@@ -135,7 +140,7 @@ def unload_model(instance_id: str | None = None) -> tuple[bool, str]:
 
 
 def resolve_model_name(query: str) -> str | None:
-    """Fuzzy-match *query* against real LM Studio model keys.
+    """Fuzzy-match *query* against real LM Studio model keys and display names.
 
     Returns the matched model key, or None.
     """
@@ -145,17 +150,49 @@ def resolve_model_name(query: str) -> str | None:
         return None
 
     keys = [m["key"] for m in models]
-    # Exact match
+    qlo = query.lower()
+
+    # Exact key match
     if query in keys:
         return query
-    # Substring match
-    sub = [k for k in keys if query.lower() in k.lower()]
-    if len(sub) == 1:
-        return sub[0]
-    # difflib fuzzy match
+
+    # Search display names and params as well, but return the key
+    by_display = {m["display_name"].lower(): m["key"] for m in models if m["display_name"]}
+    by_params = {m["params_string"].lower(): m["key"] for m in models if m["params_string"]}
+
+    # Exact display name match
+    if qlo in by_display:
+        return by_display[qlo]
+
+    # Exact params match (e.g. "9b")
+    if qlo in by_params:
+        return by_params[qlo]
+
+    # Substring match on keys
+    sub_keys = [k for k in keys if qlo in k.lower()]
+    if len(sub_keys) == 1:
+        return sub_keys[0]
+
+    # Substring match on display names
+    sub_display = [v for k, v in by_display.items() if qlo in k]
+    if len(sub_display) == 1:
+        return sub_display[0]
+
+    # Substring match on params
+    sub_params = [v for k, v in by_params.items() if qlo in k]
+    if len(sub_params) == 1:
+        return sub_params[0]
+
+    # difflib fuzzy on keys
     matches = difflib.get_close_matches(query, keys, n=1, cutoff=0.3)
     if matches:
         return matches[0]
+
+    # difflib on display names
+    matches = difflib.get_close_matches(query, list(by_display.keys()), n=1, cutoff=0.3)
+    if matches:
+        return by_display[matches[0]]
+
     return None
 
 

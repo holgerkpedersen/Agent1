@@ -144,8 +144,7 @@ class ModelCommand(Command):
             return
 
         current = agent.llm.model_name
-        keys = [m["key"] for m in models]
-        matched = self._resolve_match(query, keys)
+        matched = self._resolve_match(query, models)
 
         if not matched:
             print(f"  No model matching '{query}'")
@@ -302,17 +301,47 @@ class ModelCommand(Command):
     #  Helpers
     # ------------------------------------------------------------------
 
-    def _resolve_match(self, query: str, keys: list[str]) -> str | None:
-        """Fuzzy-match *query* against a list of model keys."""
+    def _resolve_match(self, query: str, models: list[dict]) -> str | None:
+        """Fuzzy-match *query* against model keys and display names."""
         if not query:
             return None
-        if query in keys:
-            return query
-        sub = [k for k in keys if query.lower() in k.lower()]
-        if len(sub) == 1:
-            return sub[0]
+        qlo = query.lower()
+
+        # Search keys and display names (return the key)
+        for m in models:
+            if qlo == m["key"].lower() or qlo == m["display_name"].lower():
+                return m["key"]
+
+        # Substring match on keys
+        sub_keys = [m for m in models if qlo in m["key"].lower()]
+        if len(sub_keys) == 1:
+            return sub_keys[0]["key"]
+
+        # Substring match on display names
+        sub_disp = [m for m in models if qlo in m["display_name"].lower()]
+        if len(sub_disp) == 1:
+            return sub_disp[0]["key"]
+
+        # Substring match on params (e.g. "9b", "27b")
+        sub_params = [m for m in models if m["params_string"] and qlo in m["params_string"].lower()]
+        if len(sub_params) == 1:
+            return sub_params[0]["key"]
+
+        # difflib on keys
+        keys = [m["key"] for m in models]
         matches = difflib.get_close_matches(query, keys, n=1, cutoff=0.3)
-        return matches[0] if matches else None
+        if matches:
+            return matches[0]
+
+        # difflib on display names
+        names = [m["display_name"] for m in models]
+        matches = difflib.get_close_matches(query, names, n=1, cutoff=0.3)
+        if matches:
+            for m in models:
+                if m["display_name"] == matches[0]:
+                    return m["key"]
+
+        return None
 
     def _persist_model(self, model_name: str) -> None:
         """Write the current model to model.json and .env."""
