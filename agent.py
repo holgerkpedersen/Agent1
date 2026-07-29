@@ -42,9 +42,18 @@ class LLMClient:
     """
     
     def __init__(self, model_name: str = None, api_key: str = None):
-        self.model_name = model_name or DEFAULT_MODEL
+        self._model_name = model_name or DEFAULT_MODEL
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        self._provider = LMStudioProvider(model_name=self.model_name, api_key=self.api_key)
+        self._provider = LMStudioProvider(model_name=self._model_name, api_key=self.api_key)
+    
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+    
+    @model_name.setter
+    def model_name(self, value: str) -> None:
+        self._model_name = value
+        self._provider.model_name = value
     
     async def chat(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int | None = None) -> str:
         """Send chat request to LLM via LM Studio."""
