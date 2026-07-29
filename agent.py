@@ -7,7 +7,7 @@ import platform
 import re
 from collections import defaultdict
 from agent_core import to_windows_path
-from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL
+from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, load_model_json
 from agent_core.llm.lmstudio import LMStudioProvider
 from agent_core.file_system import FileSystem
 from agent_core.file_searcher import FileSearcher
@@ -90,7 +90,7 @@ class Agent:
 
     def __init__(self, workspace: str = None, model_name: str = None):
         self.workspace = workspace or self.DEFAULT_WORKSPACE
-        self.model_name = model_name or DEFAULT_MODEL
+        self.model_name = model_name or self._detect_default_model()
 
         self._semantic_index: dict[str, set[int]] = defaultdict(set)
         self._files_read: set[str] = set()
@@ -123,6 +123,28 @@ class Agent:
         self.dispatcher.register("delete_file", lambda args: self._tool_delete_file(**args))
         self.dispatcher.register("analyze_file", lambda args: self._tool_analyze_file(**args))
         self.dispatcher.register("llm_analyze", lambda args: self._tool_llm_analyze(**args))
+
+    @staticmethod
+    def _detect_default_model() -> str:
+        """Query LM Studio to find the currently loaded model, or fall back to DEFAULT_MODEL."""
+        try:
+            from agent_core.llm.lmstudio import get_models_status
+            models = get_models_status()
+            loaded = [m for m in models if m["loaded"]]
+            if loaded:
+                key = loaded[0]["key"]
+                if key in KNOWN_MODELS:
+                    return key
+        except Exception:
+            pass
+        # Check persisted model.json
+        try:
+            persisted = load_model_json()
+            if persisted.get("model") in KNOWN_MODELS:
+                return persisted["model"]
+        except Exception:
+            pass
+        return DEFAULT_MODEL
 
     async def _tool_read_file(self, path: str, **kwargs) -> str:
         result = await self.fs.read(path)

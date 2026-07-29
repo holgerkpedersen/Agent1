@@ -6,6 +6,8 @@ import urllib.request
 import urllib.error
 import socket
 
+import httpx
+
 from .retry import RetryPolicy
 from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL
 
@@ -24,26 +26,32 @@ def _management_url() -> str:
 def _http_get_json(url: str, timeout: int = 10) -> dict | None:
     """Synchronous HTTP GET that returns parsed JSON, or None on failure."""
     try:
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode())
-    except Exception:
+        resp = httpx.get(url, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        return None
+    except httpx.HTTPStatusError as e:
+        print(f"  LM Studio API error: {e.response.status_code} at {url}")
+        return None
+    except Exception as e:
+        print(f"  LM Studio API error: {e}")
         return None
 
 
 def _http_post_json(url: str, body: dict, timeout: int = 30) -> dict | None:
     """Synchronous HTTP POST that returns parsed JSON, or None on failure."""
     try:
-        data = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode())
-    except Exception:
+        resp = httpx.post(url, json=body, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        return None
+    except httpx.HTTPStatusError as e:
+        print(f"  LM Studio API error: {e.response.status_code} at {url}")
+        return None
+    except Exception as e:
+        print(f"  LM Studio API error: {e}")
         return None
 
 

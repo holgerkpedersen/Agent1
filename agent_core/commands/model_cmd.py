@@ -90,7 +90,9 @@ class ModelCommand(Command):
         models, loaded_ids = self._fetch_models()
 
         if not models:
-            print("  (LM Studio not reachable — showing cached list)")
+            print("  (LM Studio server not reachable at localhost:1234)")
+            print("  Is the LM Studio server running? Developer tab > Start Server, or 'lms server start'")
+            print("  Showing cached model list instead:\n")
             self._list_known_only(agent)
             return
 
