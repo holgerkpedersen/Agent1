@@ -290,7 +290,7 @@ class WorkflowCommand(Command):
                 r = await agent.llm.chat([
                     {"role": "system", "content": analyze_system},
                     {"role": "user", "content": combined}
-                ])
+                ], max_tokens=15000)
                 if not step_ok(r):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
@@ -313,7 +313,7 @@ class WorkflowCommand(Command):
                         "All Python code must pass mypy strict type checking."
                     )},
                     {"role": "user", "content": f"Create plan:\n\n{analysis}"}
-                ])
+                ], max_tokens=10000)
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
@@ -329,9 +329,9 @@ class WorkflowCommand(Command):
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Extract shared entities. Output ONLY Python code — no intro text. Start with ```python. All types must pass mypy strict. Avoid circular imports."},
+                    {"role": "system", "content": "Extract shared entities. Output ONLY Python code — no intro text. Start with ```python. All types must pass mypy strict. Avoid circular imports. Be concise."},
                     {"role": "user", "content": f"Extract entities:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
-                ])
+                ], max_tokens=8000)
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
@@ -347,9 +347,9 @@ class WorkflowCommand(Command):
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan. List files in dependency order with category tags from the plan: [FIX], [FEATURE], [ARCH], [OPS]. Format: 'Task N: `file.py` [TAG] — what to do'. Include type-checking validation. No intro text."},
+                    {"role": "system", "content": "Create task plan. List files in dependency order with category tags: [FIX], [FEATURE], [ARCH], [OPS]. Format: 'Task N: `file.py` [TAG] — what to do'. Be concise. No intro text."},
                     {"role": "user", "content": f"Create task plan:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
-                ])
+                ], max_tokens=8000)
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
