@@ -1,149 +1,102 @@
-"""
-Core entities for the Agent Framework.
+"""Core entity definitions for the agent system.
 
-This module serves as the single source of truth for all domain models,
-configuration dataclasses, exception hierarchies, and shared type aliases.
-All downstream modules must import from this file; zero redefinition is allowed.
-
-Target: Python 3.10+ (PEP 604 unions, modern pathlib, strict typing)
+This module provides configuration dataclasses and serialization helpers used
+across the agent infrastructure. Exception hierarchies have been consolidated
+into ``agent_core/exceptions`` to avoid duplicate/conflicting signatures; this
+module re-exports them so existing import paths remain valid.
 """
 
-import contextvars
+from __future__ import annotations
+
 import json
-import logging
-import traceback
-import uuid
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol
 
-# =========================================================================== #
-# Exception Hierarchy
-# =========================================================================== #
-
-class AgentError(Exception):
-    """Base exception for all agent-related errors."""
-
-    def __init__(self, message: str = "An unexpected agent error occurred", details: dict[str, Any] | None = None) -> None:
-        self.message = message
-        self.details = details or {}
-        super().__init__(self.message)
-
-
-class FileOperationError(AgentError):
-    """Raised when a file system operation fails."""
-    def __init__(self, path: Path | str, message: str = "File operation failed"):
-        self.path = Path(path) if isinstance(path, str) else path
-        super().__init__(f"{message}: {self.path}")
-
-
-class ToolExecutionError(AgentError):
-    """Raised when an external tool execution fails."""
-    def __init__(self, tool_name: str, message: str = "Tool execution failed"):
-        self.tool_name = tool_name
-        super().__init__(f"[{tool_name}] {message}")
-
-
-class SecurityViolationError(AgentError):
-    """Raised when a security boundary or sandbox constraint is violated."""
-    def __init__(self, attempted_path: str, reason: str = "Path outside workspace boundary"):
-        self.attempted_path = attempted_path
-        super().__init__(f"Security violation ({reason}): {attempted_path}")
-
-
-class SemanticIndexError(AgentError):
-    """Raised when semantic search or indexing operations fail."""
-    pass
-
-
-# =========================================================================== #
-# Configuration Models (Frozen Dataclasses)
-# =========================================================================== #
-
-@dataclass(frozen=True)
-class FileSystemConfig:
-    """Configuration for workspace and file system behavior."""
-    workspace_root: Path = field(default_factory=lambda: Path.cwd())
-    follow_symlinks: bool = True
-    max_file_size_bytes: int = 10 * 1024 * 1024  # 10MB default
-
-
-@dataclass(frozen=True)
-class LLMConfig:
-    """Configuration for Large Language Model interactions."""
-    model_name: str = "gpt-4o"
-    temperature: float = 0.7
-    max_tokens: int = 4096
-    timeout_seconds: float = 30.0
-
-
-@dataclass(frozen=True)
-class AgentConfig:
-    """Top-level configuration aggregating subsystem settings."""
-    fs_config: FileSystemConfig = field(default_factory=FileSystemConfig)
-    llm_config: LLMConfig = field(default_factory=LLMConfig)
-    log_level: int = logging.INFO
-    enable_sandbox: bool = True
-
-
-# =========================================================================== #
-# Type Aliases & Protocols
-# =========================================================================== #
-
-T = TypeVar("T")
-
-class Serializable(Protocol):
-    """Protocol for objects that can be safely serialized to JSON."""
-    def as_dict(self) -> dict[str, Any]: ...
-
-
-# =========================================================================== #
-# Shared Context Variables
-# =========================================================================== #
-
-CORRELATION_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "correlation_id", default=str(uuid.uuid4())
+# Re-export canonical exceptions from the single source-of-truth module.
+from agent_core.exceptions import (  # noqa: F401
+    AgentBaseError as AgentError,
+    ConfigurationError,
+    FileOperationError,
+    SecurityViolationError,
+    ToolExecutionError,
+    SemanticIndexError,
 )
 
 
-# =========================================================================== #
-# Utilities
-# =========================================================================== #
+class Serializable(Protocol):
+    """Structural protocol for objects that can be serialized to dicts."""
+
+    def as_dict(self) -> dict[str, Any]: ...
+
+
+def _default_encoder(o: Any) -> Any:
+    """Fallback encoder used by ``safe_json_dumps`` for non-native types."""
+    if hasattr(o, "as_dict"):
+        return o.as_dict()
+    if isinstance(o, Exception):
+        return {"type": type(o).__name__, "message": str(o)}
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
 
 def safe_json_dumps(obj: Any, **kwargs: Any) -> str:
-    """Serialize an object to JSON with fallback string conversion for unknown types."""
-    def _default_encoder(o: Any) -> Any:
-        if hasattr(o, "__dict__"):
-            return o.__dict__
-        return str(o)
-
+    """Serialize ``obj`` to a JSON string with graceful fallback handling."""
     return json.dumps(obj, default=_default_encoder, **kwargs)
 
 
 def enrich_exception_with_traceback(exc: Exception) -> None:
-    """Safely attach a formatted traceback string to an exception for structured logging."""
-    exc.traceback_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))  # type: ignore[attr-defined]
+    """Attach traceback context to an exception for richer diagnostics."""
+    import traceback
+
+    exc.__traceback__ = traceback.format_exc()  # type: ignore[attr-defined]
+    if not hasattr(exc, "_agent_trace"):
+        setattr(exc, "_agent_trace", traceback.format_exc())
 
 
-# =========================================================================== #
-# Public API Surface
-# =========================================================================== #
+class LLMConfig:
+    """Configuration container for LLM client settings."""
+
+    def __init__(self) -> None:
+        self.model_name: str = "gpt-3.5-turbo"
+        self.temperature: float = 0.7
+        self.max_tokens: int = 2048
+
+
+class FileSystemConfig:
+    """Configuration container for filesystem/workspace settings."""
+
+    def __init__(self) -> None:
+        self.workspace: str = "."
+        self.allow_create: bool = True
+        self.encoding: str = "utf-8"
+
+
+class AgentConfig(Serializable):
+    """Top-level configuration aggregating LLM and filesystem sub-configs."""
+
+    def __init__(self, workspace: str | None = None) -> None:
+        self.llm: LLMConfig = LLMConfig()
+        self.fs: FileSystemConfig = FileSystemConfig()
+        if workspace is not None:
+            self.fs.workspace = workspace
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a serializable dictionary representation of the config."""
+        return {
+            "llm": {"model_name": self.llm.model_name},
+            "fs": {"workspace": self.fs.workspace},
+        }
+
 
 __all__ = [
-    # Exceptions
+    "AgentConfig",
     "AgentError",
+    "ConfigurationError",
     "FileOperationError",
-    "ToolExecutionError",
-    "SecurityViolationError",
-    "SemanticIndexError",
-    # Configs
     "FileSystemConfig",
     "LLMConfig",
-    "AgentConfig",
-    # Context & Types
-    "CORRELATION_ID_CTX",
+    "SemanticIndexError",
+    "SecurityViolationError",
     "Serializable",
-    # Utilities
-    "safe_json_dumps",
+    "ToolExecutionError",
     "enrich_exception_with_traceback",
+    "safe_json_dumps",
 ]

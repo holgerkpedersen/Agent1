@@ -25,6 +25,10 @@ class ToolExecutionError(AgentBaseError):
         super().__init__(f"Tool '{tool_name}' failed: {message}")
 
 
+class SemanticIndexError(AgentBaseError):
+    """Raised when semantic search or indexing operations fail."""
+
+
 # Type alias for consistent error handling
 ErrorHandlerResult = tuple[bool, str | None]  # (success, optional_error_message)
 
@@ -34,5 +38,6 @@ __all__: Final[list[str]] = [
     "SecurityViolationError",
     "ConfigurationError",
     "ToolExecutionError",
+    "SemanticIndexError",
     "ErrorHandlerResult",
 ]

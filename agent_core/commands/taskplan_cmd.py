@@ -45,7 +45,7 @@ class TaskplanCommand(Command):
                 entities_content = f.read()
         
         messages = [
-            {"role": "system", "content": "You are an expert project manager. Create a detailed task plan for implementing code changes. Break down work into concrete, actionable tasks with clear descriptions. Include task dependencies and priority."},
+            {"role": "system", "content": "You are an expert project manager. Create a detailed task plan for implementing code changes. Break down work into concrete, actionable tasks with clear descriptions. Include task dependencies and priority.\n\nIMPORTANT: All new files MUST use sub-package paths (e.g. `agent_core/thing.py`, `agent1/module.py`). Never list bare filenames like `types.py` or `config.py` at workspace root — they shadow stdlib modules."},
             {"role": "user", "content": f"Create a task implementation plan from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\n## Existing entities.py:\n{entities_content if entities_content else 'No entities.py found'}\n\nGenerate a tasks.md file with specific implementation tasks, organized by file, with clear steps for new and existing files. Ensure tasks respect the entity definitions in entities.py."}
         ]
         tasks = await agent.llm.chat(messages)

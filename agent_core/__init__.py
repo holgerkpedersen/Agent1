@@ -8,11 +8,11 @@ from .entities import (
     FileSystemConfig,
     LLMConfig,
     AgentConfig,
-    CORRELATION_ID_CTX,
     Serializable,
     safe_json_dumps,
     enrich_exception_with_traceback,
 )
+from .context_management import CORRELATION_ID_CTX
 from .path_utils import normalize_path, to_windows_path, WorkspaceSandbox
 from .constants import KNOWN_MODELS, DEFAULT_MODEL
 from .file_system import FileSystem

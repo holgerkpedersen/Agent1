@@ -1,8 +1,10 @@
 """Implement command for agent interactive mode."""
+import importlib.util
 import json
 import os
 import re
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +14,103 @@ from agent_core import to_windows_path
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent import Agent
+
+
+_STDLIB_COMMON = frozenset({
+    "abc", "aifc", "argparse", "array", "ast", "asynchat", "asyncio",
+    "asyncore", "atexit", "audioop", "base64", "bdb", "binascii", "binhex",
+    "bisect", "builtins", "bz2", "calendar", "cgi", "cgitb", "chunk", "cmath",
+    "cmd", "code", "codecs", "codeop", "collections", "colorsys", "compileall",
+    "concurrent", "config", "configparser", "contextlib", "contextvars",
+    "copy", "copyreg", "cProfile", "crypt", "csv", "ctypes", "curses",
+    "dataclasses", "datetime", "dbm", "decimal", "difflib", "dis",
+    "distutils", "doctest", "email", "encodings", "enum", "errno", "faulthandler",
+    "fcntl", "filecmp", "fileinput", "fnmatch", "formatter", "fractions",
+    "ftplib", "functools", "gc", "getopt", "getpass", "gettext", "glob",
+    "graphlib", "grp", "gzip", "hashlib", "heapq", "hmac", "html", "http",
+    "idlelib", "imaplib", "imghdr", "imp", "importlib", "inspect", "io",
+    "ipaddress", "itertools", "json", "keyword", "lib2to3", "linecache",
+    "locale", "logging", "lzma", "mailbox", "mailcap", "marshal",
+    "math", "mimetypes", "mmap", "modulefinder", "multiprocessing", "netrc",
+    "nis", "nntplib", "numbers", "operator", "optparse", "os", "ossaudiodev",
+    "parser", "pathlib", "pdb", "pickle", "pickletools", "pipes", "pkgutil",
+    "platform", "plistlib", "poplib", "posix", "posixpath", "pprint",
+    "profile", "pstats", "pty", "pwd", "py_compile", "pyclbr", "pydoc",
+    "queue", "quopri", "random", "re", "readline", "reprlib", "resource",
+    "rlcompleter", "runpy", "sched", "secrets", "select", "selectors",
+    "shelve", "shlex", "shutil", "signal", "site", "smtpd", "smtplib",
+    "sndhdr", "socket", "socketserver", "sqlite3", "ssl", "stat",
+    "statistics", "string", "stringprep", "struct", "subprocess",
+    "sunau", "symtable", "sys", "sysconfig", "syslog", "tabnanny",
+    "tarfile", "telnetlib", "tempfile", "termios", "test", "textwrap",
+    "threading", "time", "timeit", "tkinter", "token", "tokenize",
+    "trace", "traceback", "tracemalloc", "tty", "turtle", "turtledemo",
+    "types", "typing", "unicodedata", "unittest", "urllib", "uu",
+    "uuid", "venv", "warnings", "wave", "weakref", "webbrowser",
+    "winreg", "winsound", "wsgiref", "xdrlib", "xml", "xmlrpc",
+    "zipapp", "zipfile", "zipimport", "zlib",
+    # Non-stdlib but very common collision targets
+    "logger", "utils", "helpers", "common", "base", "core",
+    "memory", "cache", "settings", "constants",
+})
+
+_EXISTING_ROOT_PACKAGES = frozenset({
+    "agent_core", "agent1", "agent",
+})
+
+_SAFE_SUBPACKAGE_CANDIDATES = ("agent1", "agent_core", "src/agent1")
+
+
+def _find_safe_subpackage(workspace: Path) -> str:
+    """Return an existing or newly created safe sub-package path under *workspace*."""
+    for cand in _SAFE_SUBPACKAGE_CANDIDATES:
+        d = workspace / cand
+        if d.is_dir():
+            return cand
+    # If none exist, automatically create agent1/
+    if not (workspace / "agent1").exists():
+        (workspace / "agent1").mkdir(parents=True, exist_ok=True)
+        (workspace / "agent1" / "__init__.py").touch(exist_ok=True)
+    return "agent1"
+
+
+def _is_dangerous_filename(filename: str, workspace: Path) -> tuple[bool, str]:
+    """Check whether *filename* would shadow a stdlib module, collide with an
+    existing package, or create a package at the workspace root.
+
+    Returns (is_dangerous, reason).
+    """
+    name = filename.removesuffix(".py")
+    if not name or name == filename or name.endswith("/"):
+        return True, f"invalid target name: {filename!r}"
+
+    # __init__.py at the workspace root turns the entire repo into a package
+    # and breaks relative imports for all top-level modules.
+    dest = (workspace / filename).resolve()
+    if name == "__init__" and dest.parent.resolve() == workspace.resolve():
+        return True, f"__init__.py at workspace root would turn the entire repo into a package"
+
+    # Shallow names (no directory prefix) at workspace root are the most
+    # dangerous — they shadow whatever Python finds first on sys.path.
+    if "/" not in filename and "\\" not in filename:
+        # Check against the known stdlib / common collision set.
+        if name in _STDLIB_COMMON:
+            return True, f"{filename!r} shadows a stdlib/common module name"
+
+        # Check whether a package directory with this name already exists in
+        # the workspace (e.g. writing agent.py over a live agent_core/ package
+        # root is unsafe; writing types.py next to it is also unsafe).
+        for pkg in _EXISTING_ROOT_PACKAGES:
+            if name == pkg:
+                return True, f"{filename!r} conflicts with existing package {pkg!r}"
+            if name.startswith(pkg + "_") or name.endswith("_" + pkg):
+                return True, f"{filename!r} may collide with existing package {pkg!r}"
+
+        # Dynamic stdlib check via importlib.
+        if importlib.util.find_spec(name) is not None:
+            return True, f"{filename!r} shadows an importable stdlib/third-party module"
+
+    return False, ""
 
 
 def _extract_file_context(source: str, filename: str, radius: int = 400) -> str:
@@ -127,7 +226,7 @@ class ImplementCommand(Command):
             print("Analyzing task plan to identify all files...")
 
             list_messages = [
-                {"role": "system", "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations."},
+                {"role": "system", "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations.\n\nIMPORTANT: All files MUST include their sub-package path (e.g. agent_core/thing.py, agent1/module.py). Never list bare root-level names like types.py or config.py."},
                 {"role": "user", "content": f"List every file that needs to be created or modified from this task plan:\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}"}
             ]
 
@@ -492,6 +591,25 @@ class ImplementCommand(Command):
                         continue
                 if len(content) > 50000:
                     print(f"  REJECTED: {filename} is {len(content)} bytes (max 50KB)")
+                    continue
+
+            dangerous, reason = _is_dangerous_filename(filename, workspace)
+            if dangerous:
+                # Try auto-repair: prefix bare root-level filenames with a safe sub-package.
+                if "/" not in filename and "\\" not in filename:
+                    safe_dir = _find_safe_subpackage(workspace)
+                    new_filename = f"{safe_dir}/{filename}"
+                    new_filepath = workspace / new_filename
+                    new_dangerous, _ = _is_dangerous_filename(new_filename, workspace)
+                    if not new_dangerous:
+                        print(f"  Auto-repaired: {filename} -> {new_filename}")
+                        filename = new_filename
+                        filepath = new_filepath
+                    else:
+                        print(f"  REJECTED: {reason}")
+                        continue
+                else:
+                    print(f"  REJECTED: {reason}")
                     continue
 
             with open(filepath, "w", encoding="utf-8") as f:

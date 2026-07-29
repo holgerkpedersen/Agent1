@@ -1,6 +1,7 @@
 """Fix command for agent interactive mode."""
 import os
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -10,6 +11,28 @@ from agent_core import to_windows_path
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent import Agent
+
+
+def _is_stdlib_path(p: str) -> bool:
+    """True when *p* lives under the Python installation (stdlib or site-packages)."""
+    prefixes = [sys.prefix, sys.base_prefix]
+    try:
+        prefixes.append(sys._base_executable or "")
+    except AttributeError:
+        pass
+    norm = os.path.normpath(p).lower()
+    return any(norm.startswith(os.path.normpath(pr).lower()) for pr in prefixes if pr)
+
+
+def _is_trackable_file(p: str) -> bool:
+    """A real file that we are allowed to modify (not frozen, not stdlib)."""
+    if p.startswith("<"):
+        return False
+    if not os.path.exists(p):
+        return False
+    if _is_stdlib_path(p):
+        return False
+    return True
 
 
 def extract_signatures(source: str) -> dict:
@@ -214,6 +237,10 @@ class FixCommand(Command):
                     print(f"  Skipping {fpath} (invalid content)")
                     continue
 
+                if _is_stdlib_path(fpath):
+                    print(f"  Skipping {fpath} (stdlib — cannot modify)")
+                    continue
+
                 with open(fpath, "w", encoding="utf-8") as f:
                     f.write(new_code)
                 fixed_count += 1
@@ -287,19 +314,54 @@ class FixCommand(Command):
             all_files_in_trace = matches
             if len(all_files_in_trace) > 1:
                 print(f"\n  Cascade detected! {len(all_files_in_trace)} files in trace:")
+                # Find the first trackable file to mark as ROOT in the listing.
+                root_idx: int | None = None
+                for idx, (fp, _ln) in enumerate(all_files_in_trace):
+                    if _is_trackable_file(fp):
+                        root_idx = idx
+                        break
                 for i, (fp, ln) in enumerate(all_files_in_trace):
-                    marker = " → ROOT" if i == 0 else ""
+                    marker = " → ROOT" if i == root_idx else ""
                     print(f"    {i+1}. {fp}:{ln}{marker}")
 
-                root_file = all_files_in_trace[0][0]
-                root_ln = all_files_in_trace[0][1]
+                # Walk from the start to find the first *user* file that actually
+                # exists and isn't frozen or under the Python installation.
+                for root_file, root_ln in all_files_in_trace:
+                    if not _is_trackable_file(root_file):
+                        continue
+                    if root_file != fpath:
+                        print(f"\n  Root cause is in {root_file}:{root_ln}, not in {fpath}")
+                        print(f"  Fixing {root_file} instead...")
+                        fpath = root_file
+                        line_num = root_ln
+                        error_msg = f"Cascading ImportError from {fpath}"
+                    break
 
-                if root_file != fpath and os.path.exists(root_file):
-                    print(f"\n  Root cause is in {root_file}:{root_ln}, not in {fpath}")
-                    print(f"  Fixing {root_file} instead...")
-                    fpath = root_file
-                    line_num = root_ln
-                    error_msg = f"Cascading ImportError from {fpath}"
+                # Shadowed stdlib module detection (e.g. local types.py shadowing
+                # the stdlib types module).
+                shadow_match = re.search(
+                    r"partially initialized module ['\"](\S+?)['\"]",
+                    error_msg,
+                )
+                if shadow_match:
+                    shadowed = shadow_match.group(1)
+                    print(f"\n  Shadow warning: local file is conflicting with stdlib module '{shadowed}'")
+                    ws = os.path.dirname(os.path.abspath(fpath))
+                    for root, _dirs, files in os.walk(ws):
+                        for fn in files:
+                            if fn == f"{shadowed}.py":
+                                candidate = os.path.normpath(os.path.join(root, fn))
+                                print(f"  The local file {candidate} shadows '{shadowed}' from the Python stdlib.")
+                                print(f"  Fix: rename or move it (e.g. {shadowed}_defs.py or put it inside a package).")
+                        _dirs[:] = []
+                        break
+                    print(f"  Skipping LLM fix — this is a naming conflict, not a code error.")
+                    return True
+
+        if _is_stdlib_path(fpath):
+            print(f"\n  Skipping: {fpath} is a stdlib file (under Python installation).")
+            print(f"  The root cause is likely a local file shadowing a stdlib module name.")
+            return True
 
         with open(fpath, "r", encoding="utf-8") as f:
             current_code = f.read()
@@ -368,6 +430,9 @@ class FixCommand(Command):
         if match:
             new_code = match.group(2).strip()
             if len(new_code) > len(current_code) * 0.1 and 'import' in new_code:
+                if _is_stdlib_path(fpath):
+                    print(f"\nSkipping: {fpath} is a stdlib file.")
+                    return True
                 with open(fpath, "w", encoding="utf-8") as f:
                     f.write(new_code)
                 print(f"\nFixed: {fpath} ({len(new_code)} bytes)")

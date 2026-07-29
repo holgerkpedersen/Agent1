@@ -58,6 +58,20 @@ Add `--brainstorm` for a 6th dimension: bold, creative, unconventional features.
 
 The `implement` command uses smart context truncation: per-file excerpts (±400 chars around filename mentions) instead of repeating the full analysis/plan for every batch. Reduces context from ~50K to ~4K tokens per batch.
 
+### Safety Guards
+
+The `fix` and `implement` commands include automatic protections against common failure modes:
+
+**fix** — Traceback cascade analysis:
+- Finds the **first user file** in the import chain (skips stdlib and `<frozen>` entries) rather than the last frame where the error manifested
+- Detects **stdlib shadowing**: when a local file (e.g. `types.py`) shadows a stdlib module, suggests renaming instead of trying to modify Python's own files
+- **Refuses writes** to files under the Python installation directory to prevent `PermissionError`
+
+**implement** — File safety (3 layers):
+- **Prevention**: LLM prompts instruct the LLM to use sub-package paths (`agent_core/thing.py`) and avoid bare root-level filenames
+- **Auto-repair**: Bare filenames like `types.py` are automatically prefixed with an existing safe sub-package (`agent_core/types.py`) instead of rejected
+- **Rejection**: Files that shadow stdlib/common modules, conflict with existing packages, or create `__init__.py` at workspace root are rejected with a clear error message
+
 ### Memory Management
 
 The `clear` command shows what's stored before clearing:
