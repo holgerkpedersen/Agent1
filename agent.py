@@ -54,13 +54,13 @@ class LLMClient:
         """Chat with real-time token streaming to console."""
         return await self._provider.chat_stream(messages)
     
-    async def chat_with_continuation(self, messages: list[dict], max_continues: int = 3) -> str:
+    async def chat_with_continuation(self, messages: list[dict], max_continues: int = 3, max_tokens: int | None = None) -> str:
         """Chat with auto-resume if response gets truncated at token limit."""
         full_response = ""
         current_messages = [dict(m) for m in messages]
 
         for i in range(max_continues):
-            result = await self.chat(current_messages)
+            result = await self.chat(current_messages, max_tokens=max_tokens)
 
             if result.startswith("[Error") or result.startswith("[LM Studio"):
                 return full_response or result

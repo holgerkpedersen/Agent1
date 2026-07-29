@@ -287,10 +287,10 @@ class WorkflowCommand(Command):
                        if brainstorm else "")
                     + "\n\nFor each dimension, list concrete findings with file paths. Be specific but concise."
                 )
-                r = await agent.llm.chat([
+                r = await agent.llm.chat_with_continuation([
                     {"role": "system", "content": analyze_system},
                     {"role": "user", "content": combined}
-                ], max_tokens=15000)
+                ], max_continues=1, max_tokens=15000)
                 if not step_ok(r):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
@@ -303,7 +303,7 @@ class WorkflowCommand(Command):
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
-                r = await agent.llm.chat([
+                r = await agent.llm.chat_with_continuation([
                     {"role": "system", "content": (
                         "Create a prioritized implementation plan from this analysis. "
                         "Categorize every change: [FIX] for bugs, [FEATURE] for new capabilities, "
@@ -313,7 +313,7 @@ class WorkflowCommand(Command):
                         "All Python code must pass mypy strict type checking."
                     )},
                     {"role": "user", "content": f"Create plan:\n\n{analysis}"}
-                ], max_tokens=10000)
+                ], max_continues=1, max_tokens=10000)
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
@@ -328,10 +328,10 @@ class WorkflowCommand(Command):
                     analysis = f.read()
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
-                r = await agent.llm.chat([
+                r = await agent.llm.chat_with_continuation([
                     {"role": "system", "content": "Extract shared entities. Output ONLY Python code — no intro text. Start with ```python. All types must pass mypy strict. Avoid circular imports. Be concise."},
                     {"role": "user", "content": f"Extract entities:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
-                ], max_tokens=8000)
+                ], max_continues=1, max_tokens=8000)
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
