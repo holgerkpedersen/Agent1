@@ -4,7 +4,7 @@ import os
 import difflib
 
 from .base import Command
-from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, load_model_json, save_model_json
+from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, persist_model_choice
 from agent_core.llm import lmstudio as _lms
 
 from typing import TYPE_CHECKING
@@ -169,7 +169,7 @@ class ModelCommand(Command):
         info = KNOWN_MODELS.get(matched, {})
         old = agent.llm.model_name
         agent.llm.model_name = matched
-        self._persist_model(matched)
+        persist_model_choice(matched)
         print(f"  Switched: {old} -> {matched}  ({info.get('desc', '')})")
 
     async def _switch_known(self, query: str, agent: "Agent") -> None:
@@ -352,25 +352,3 @@ class ModelCommand(Command):
                     return m["key"]
 
         return None
-
-    def _persist_model(self, model_name: str) -> None:
-        """Write the current model to model.json and .env."""
-        data = load_model_json()
-        data["model"] = model_name
-        save_model_json(data)
-
-        env_path = ".env"
-        lines = []
-        found = False
-        if os.path.exists(env_path):
-            with open(env_path, "r") as ef:
-                lines = ef.readlines()
-        with open(env_path, "w") as ef:
-            for line in lines:
-                if line.startswith("AGENT_MODEL="):
-                    ef.write(f"AGENT_MODEL={model_name}\n")
-                    found = True
-                else:
-                    ef.write(line)
-            if not found:
-                ef.write(f"\nAGENT_MODEL={model_name}\n")

@@ -27,7 +27,47 @@ KNOWN_MODELS = {
 
 DEFAULT_MODEL = os.environ.get("AGENT_MODEL", "laguna-s-2.1")
 
-MODEL_JSON_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "model.json")
+_MODEL_JSON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "model.json")
+
+
+# ---------------------------------------------------------------------------
+#  Single-source-of-truth model resolution
+# ---------------------------------------------------------------------------
+
+def resolve_model(explicit: str | None = None) -> str:
+    """Return the best model name to use, checking sources in priority order.
+
+    1. Explicit argument (caller override)
+    2. What is actually loaded in LM Studio right now (via API)
+    3. Persisted model.json (set by ``model`` command)
+    4. ``AGENT_MODEL`` environment variable
+    5. Hardcoded fallback (``laguna-s-2.1``)
+    """
+    if explicit:
+        return explicit
+
+    # Query LM Studio — what model is actually in VRAM?
+    try:
+        from agent_core.llm.lmstudio import get_models_status
+        models = get_models_status()
+        loaded = [m["key"] for m in models if m["loaded"]]
+        if loaded and loaded[0] in KNOWN_MODELS:
+            return loaded[0]
+    except Exception:
+        pass
+
+    # Persisted choice from model.json
+    persisted = load_model_json()
+    if persisted.get("model") in KNOWN_MODELS:
+        return persisted["model"]
+
+    return DEFAULT_MODEL
+
+
+# ---------------------------------------------------------------------------
+#  Persistence
+# ---------------------------------------------------------------------------
 
 def load_model_json() -> dict:
     """Load persisted model state from model.json."""
@@ -38,6 +78,7 @@ def load_model_json() -> dict:
     except (FileNotFoundError, _json.JSONDecodeError):
         return {}
 
+
 def save_model_json(data: dict) -> None:
     """Persist model state to model.json."""
     import json as _json
@@ -46,3 +87,26 @@ def save_model_json(data: dict) -> None:
             _json.dump(data, f, indent=2)
     except OSError:
         pass
+
+
+def persist_model_choice(model_name: str) -> None:
+    """Write *model_name* to model.json and .env so it survives restarts."""
+    data = load_model_json()
+    data["model"] = model_name
+    save_model_json(data)
+
+    env_path = ".env"
+    lines = []
+    found = False
+    if os.path.exists(env_path):
+        with open(env_path, "r") as ef:
+            lines = ef.readlines()
+    with open(env_path, "w") as ef:
+        for line in lines:
+            if line.startswith("AGENT_MODEL="):
+                ef.write(f"AGENT_MODEL={model_name}\n")
+                found = True
+            else:
+                ef.write(line)
+        if not found:
+            ef.write(f"\nAGENT_MODEL={model_name}\n")

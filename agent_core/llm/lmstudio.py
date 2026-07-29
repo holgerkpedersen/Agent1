@@ -9,7 +9,7 @@ import socket
 import httpx
 
 from .retry import RetryPolicy
-from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL
+from agent_core.constants import KNOWN_MODELS, resolve_model
 
 
 def _management_url() -> str:
@@ -209,7 +209,7 @@ class LMStudioProvider:
         api_key: str | None = None,
         retry_policy: RetryPolicy | None = None
     ):
-        self.model_name = model_name or DEFAULT_MODEL
+        self.model_name = resolve_model(model_name)
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self.lmstudio_url = os.environ.get("LMSTUDIO_URL", "http://localhost:1234/v1")
         self.retry_policy = retry_policy or RetryPolicy(max_retries=3, base_delay=2.0)
