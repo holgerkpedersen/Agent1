@@ -46,9 +46,9 @@ class LLMClient:
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self._provider = LMStudioProvider(model_name=self.model_name, api_key=self.api_key)
     
-    async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> str:
+    async def chat(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int | None = None) -> str:
         """Send chat request to LLM via LM Studio."""
-        return await self._provider.chat(messages, tools)
+        return await self._provider.chat(messages, tools, max_tokens=max_tokens)
     
     async def chat_stream(self, messages: list[dict]) -> str:
         """Chat with real-time token streaming to console."""

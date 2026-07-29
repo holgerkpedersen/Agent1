@@ -32,7 +32,8 @@ class LMStudioProvider:
         self, 
         messages: list[dict], 
         tools: list[dict] | None = None,
-        stream: bool = False
+        stream: bool = False,
+        override_max_tokens: int | None = None,
     ) -> dict:
         """Build request payload for LM Studio API."""
         model_info = KNOWN_MODELS.get(self.model_name, {})
@@ -40,7 +41,7 @@ class LMStudioProvider:
             "model": self.model_name,
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": model_info.get("max_tokens", 50000),
+            "max_tokens": override_max_tokens or model_info.get("max_tokens", 50000),
         }
         if tools:
             payload["tools"] = tools
@@ -77,10 +78,11 @@ class LMStudioProvider:
     async def chat(
         self, 
         messages: list[dict], 
-        tools: list[dict] | None = None
+        tools: list[dict] | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         """Send chat request to LLM via LM Studio with retry."""
-        payload = self._build_payload(messages, tools)
+        payload = self._build_payload(messages, tools, override_max_tokens=max_tokens)
         
         async def _do_request():
             result = self._make_request(payload)

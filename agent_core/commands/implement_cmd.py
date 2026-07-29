@@ -14,6 +14,32 @@ if TYPE_CHECKING:
     from agent import Agent
 
 
+def _extract_file_context(source: str, filename: str, radius: int = 400) -> str:
+    """Extract paragraphs mentioning a file from analysis/plan text."""
+    if not source or not filename:
+        return ""
+    name = os.path.basename(filename)
+    parts = []
+    for match in re.finditer(re.escape(name), source):
+        start = max(0, match.start() - radius)
+        end = min(len(source), match.end() + radius)
+        snippet = source[start:end].strip()
+        if snippet and snippet not in parts:
+            parts.append(snippet)
+    if not parts:
+        return ""
+    return "\n\n...\n\n".join(parts[:3])
+
+
+def _extract_task_line(taskplan: str, filename: str) -> str:
+    """Extract the task line for a specific file from the task plan."""
+    name = os.path.basename(filename)
+    for line in taskplan.split('\n'):
+        if name in line and ('Task' in line or line.strip().startswith('-')):
+            return line.strip()
+    return ""
+
+
 class ImplementCommand(Command):
     """Implement files from task plan using LLM."""
 
@@ -290,6 +316,7 @@ class ImplementCommand(Command):
             print(f"\nGenerating batch {i//batch_size + 1}/{(len(all_files) + batch_size - 1)//batch_size}: {batch}")
 
             batch_files_md = "\n".join([f"- {f}" for f in batch])
+            target_file = batch[0]
 
             export_context = ""
             if export_map:
@@ -301,15 +328,27 @@ class ImplementCommand(Command):
                 if export_lines:
                     export_context = "\n\nAvailable project modules (use only these names with these exact signatures):\n" + "\n".join(export_lines)
 
+            task_context = _extract_task_line(taskplan_content, target_file)
+            analysis_context = _extract_file_context(analysis_content, target_file)
+            plan_context = _extract_file_context(plan_content, target_file)
+
+            user_context = f"Implement this file:\n{batch_files_md}\n{export_context}"
+            if task_context:
+                user_context += f"\n\nTask: {task_context}"
+            if analysis_context:
+                user_context += f"\n\nRelevant analysis:\n{analysis_context}"
+            if plan_context:
+                user_context += f"\n\nRelevant plan:\n{plan_context}"
+
             impl_messages = [
                 {"role": "system", "content": "You are an expert Python developer. Implement the specified files concisely.\n\nRULES:\n0. NEVER use <tool_call>, <function_call>, or XML tags. Respond in plain text with [FILE:] blocks only.\n1. All code MUST pass mypy strict type checking and py_compile.\n2. Use ONLY imports that match the available exports listed below. Do not invent names.\n3. NEVER create duplicate functions or classes. One implementation per concept. No _v1, _v2, _clean, _final variants.\n4. Keep files under 200 lines. Refactor if longer.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
-                {"role": "user", "content": f"Files to implement:\n{batch_files_md}\n{export_context}\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\nImplement these files using imports from the available modules listed above."}
+                {"role": "user", "content": user_context}
             ]
 
             impl_response = None
             for attempt in range(3):
                 try:
-                    impl_response = await agent.llm.chat(impl_messages)
+                    impl_response = await agent.llm.chat(impl_messages, max_tokens=12000)
                     if impl_response and not impl_response.startswith("[Error:"):
                         break
                     print(f"  Attempt {attempt + 1} failed, retrying...")
