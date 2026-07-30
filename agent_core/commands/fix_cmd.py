@@ -276,6 +276,12 @@ class FixCommand(Command):
                 context += f"  ... and {len(sig_map) - 20} more files.\n"
 
             print(f"  On-demand: {len(top_files)} full files + {len(rest_files)} candidate sigs + {len(sig_map)} other sigs ({len(context)} bytes)")
+            print(f"  Full source: {', '.join(os.path.basename(fp) for fp, _, _ in top_files)}")
+            if rest_files:
+                print(f"  Candidates (sigs only): {', '.join(os.path.basename(fp) for fp, _, _ in rest_files[:8])}", end="")
+                if len(rest_files) > 8:
+                    print(f" ... +{len(rest_files) - 8} more", end="")
+                print()
 
             read_paths: set[str] = {fp for fp, _, _ in top_files}
             system = ("You are an expert Python debugger.\n\n"
