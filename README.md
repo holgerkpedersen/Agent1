@@ -23,7 +23,9 @@ Python AI agent framework with LLM integration, tool execution, workspace manage
 read <path>                      Read a file
 write <path> <content>           Write content to file
 search <query>                   Search files for string
-analyze <file> [--desc "q"]      AI analysis via LLM (with optional guiding question)
+analyze <file> [--desc "q"]      AI analysis — follows imports, answers specific questions
+         --stdin [--desc "q"]   Paste multi-line text for analysis (--- to finish)
+         --deep                  Follow imports with deep analysis
 plan <analysis> <plan>           Generate coding plan
 entities <analysis> <plan>       Generate shared entities
 taskplan <analysis> <plan>       Generate implementation tasks
@@ -34,10 +36,12 @@ implement <taskplan> [opts]      Implement files from task plan
                                  --retry            Re-generate only missing files
                                  --workspace <path> Target workspace
 fix <traceback>                  Paste traceback to auto-fix root cause
-fix <file> --desc "text"         Describe an issue, LLM fixes it
+    <file> --desc "text"        On-demand analysis — only sends top-5 files by relevance
+    <file> --desc "text" --full  Send entire project context (old behavior)
 cleanup                          Show unreferenced files
 workflow <target> [opts]         Full pipeline: analyze → plan → entities → tasks → implement
                                  --from spec.md    Greenfield from specification
+                                 --stdin           Paste multi-line spec (--- to finish)
                                  --desc "text"     Greenfield from description
                                  --features spec   Brownfield extension
                                  --brainstorm      Add 6th dimension: creative features
@@ -71,6 +75,7 @@ The `fix` and `implement` commands include automatic protections against common 
 - Finds the **first user file** in the import chain (skips stdlib and `<frozen>` entries) rather than the last frame where the error manifested
 - Detects **stdlib shadowing**: when a local file (e.g. `types.py`) shadows a stdlib module, suggests renaming instead of trying to modify Python's own files
 - **Refuses writes** to files under the Python installation directory to prevent `PermissionError`
+- **On-demand mode** (`fix <file> --desc`): scores candidate files by keyword relevance, sends only the top 5 files as full source. The LLM can request additional files with `[READ: path]` and iterates up to 3 rounds. Use `--full` for the legacy "send everything" behavior.
 
 **implement** — File safety (3 layers):
 - **Prevention**: LLM prompts instruct the LLM to use sub-package paths (`agent_core/thing.py`) and avoid bare root-level filenames

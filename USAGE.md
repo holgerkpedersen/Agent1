@@ -66,12 +66,27 @@ With a specific question:
 
 ```
 > analyze agent.py --desc "How does the fix command work?"
-[LLM reads agent.py and fix_cmd.py, answers with detailed explanation]
+[LLM reads agent.py, follows imports to fix_cmd.py, answers with full analysis]
 
 > analyze agent_core/commands/implement_cmd.py --desc "What safety guards prevent file collisions?"
 [LLM answers about _is_dangerous_filename, auto-repair, etc.]
+```
 
-> analyze agent.py --desc "List every class and its responsibility"
+Analyze pasted text (no file needed):
+
+```
+> analyze --stdin --desc "What approach works best?"
+Paste text to analyze. Type --- on its own line when done:
+[Paste any multi-line content with as many blank lines as you want]
+---
+[LLM analyzes the pasted text with your question]
+```
+
+Deep analysis (follows imports without a question):
+
+```
+> analyze agent.py --deep
+# Reads agent.py + all local imports, sends combined analysis
 ```
 
 ### Natural language
@@ -125,6 +140,19 @@ Inline specification with `--desc`:
 
 ```
 > workflow . --desc "A CLI tool that converts CSV to JSON with streaming support"
+```
+
+Or paste a multi-line spec with `--stdin`:
+
+```
+> workflow . --stdin --brainstorm --force
+Paste spec or description. Type --- on its own line when done:
+Build me a CLI tool that converts CSV to JSON
+with streaming support and chunked file handling.
+It should handle files up to 10GB.
+---
+[stdin] 120 chars
+[plan] Creating plan...
 ```
 
 ### 3. Brownfield: add features to existing code
@@ -237,10 +265,27 @@ Fix: rename or move it (e.g. types_defs.py or put it inside a package).
 Skipping LLM fix — this is a naming conflict, not a code error.
 ```
 
-### From a description
+### From a description (on-demand)
 
 ```
-> fix agent_core/config.py --desc "The ConfigManager.load() method doesn't validate that the loaded file is actually a YAML file before parsing"
+> fix agent_core/config.py --desc "The ConfigManager.load() method doesn't validate YAML files"
+```
+
+On-demand mode (default): sends only the top 5 most relevant files by keyword match, plus signatures for the rest. The LLM can request additional files with `[READ: path.py]` and iterates up to 3 rounds.
+
+```
+  On-demand: 5 full files + 12 candidate sigs + 86 other sigs (48KB)
+  Full source: config.py, fix_cmd.py, implement_cmd.py, workflow_cmd.py, model_cmd.py
+  Round 1 (48KB)...
+    Read: agent_core/constants.py, agent_core/exceptions.py
+  Round 2 (65KB)...
+  Fixed: agent_core/config.py (2340 bytes)
+```
+
+Use `--full` for the legacy "send everything" mode:
+
+```
+> fix agent.py --desc "..." --full
 ```
 
 ---
@@ -391,6 +436,9 @@ Unreferenced .py files (candidates for deletion):
 
 - **`quit`** or `Ctrl+C` to exit anytime.
 - **`analyze --desc`** gives targeted answers — skip the generic review and ask exactly what you want to know.
+- **`analyze --stdin`** analyzes any pasted text — feed LLM output back for critique.
+- **`fix --desc`** is now on-demand — sends only relevant files, uses `[READ:]` to fetch more as needed.
+- **`workflow --stdin`** accepts multi-line specs pasted directly.
 - **Use natural language** for exploration — ask questions about the codebase without memorizing command syntax.
 - **The workflow pipeline** handles everything: `workflow . --brainstorm` → review `project_analysis.md` → `implement ...`.
 - **Paste full tracebacks** into `fix` — it finds the root cause across import chains, even when the error manifests deep in stdlib.
