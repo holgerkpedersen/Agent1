@@ -34,6 +34,19 @@ def to_windows_path(path: str) -> str:
     return path
 
 
+def workspace_path(path: str) -> str:
+    """Normalize a workspace path for reliable cross-platform use.
+
+    Returns a forward-slash-separated absolute path (e.g. ``C:/Dev/Agent1``)
+    suitable for ``Path()`` construction and string operations.
+    """
+    if path.startswith("/c/") or path.startswith("/C/"):
+        return "C:/" + path[3:]
+    if path.startswith("/"):
+        return "C:/" + path[1:]
+    return path.replace("\\", "/")
+
+
 def normalize_path(raw: str, workspace_root: Path, follow_symlinks: bool = True) -> Path:
     """Validate and resolve a path strictly within the given workspace boundary.
     

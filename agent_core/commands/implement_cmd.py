@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .base import Command
-from agent_core import to_windows_path
+from agent_core import to_windows_path, workspace_path
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -240,9 +240,7 @@ class ImplementCommand(Command):
         print(f"Found {len(all_files)} files to implement: {', '.join(all_files)}")
 
         def file_needs_generation(fname):
-            raw_ws = target_workspace
-            if raw_ws.startswith('/c/') or raw_ws.startswith('/C/'):
-                raw_ws = 'C:' + raw_ws[2:]
+            raw_ws = workspace_path(target_workspace)
             fpath = Path(raw_ws) / fname
             if not fpath.exists():
                 return True, "not found"
@@ -552,9 +550,7 @@ class ImplementCommand(Command):
             print("No content generated.")
 
         for filename, content in generated_content.items():
-            raw_workspace = target_workspace
-            if raw_workspace.startswith('/c/') or raw_workspace.startswith('/C/'):
-                raw_workspace = 'C:' + raw_workspace[2:]
+            raw_workspace = workspace_path(target_workspace)
             workspace = Path(raw_workspace)
             filepath = workspace / filename
 

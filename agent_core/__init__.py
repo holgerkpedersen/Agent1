@@ -13,7 +13,7 @@ from .entities import (
     enrich_exception_with_traceback,
 )
 from .context_management import CORRELATION_ID_CTX
-from .path_utils import normalize_path, to_windows_path, WorkspaceSandbox
+from .path_utils import normalize_path, to_windows_path, workspace_path, WorkspaceSandbox
 from .constants import KNOWN_MODELS, DEFAULT_MODEL
 from .file_system import FileSystem
 from .file_searcher import FileSearcher
@@ -34,6 +34,7 @@ __all__ = [
     "enrich_exception_with_traceback",
     "normalize_path",
     "to_windows_path",
+    "workspace_path",
     "WorkspaceSandbox",
     "KNOWN_MODELS",
     "DEFAULT_MODEL",

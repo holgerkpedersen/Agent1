@@ -3,6 +3,7 @@ import os
 import re
 
 from .base import Command
+from agent_core import workspace_path
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -47,24 +48,6 @@ def _parse_file_refs(text: str) -> list[str]:
         refs.append(m.group(0))
 
     return sorted(set(refs))
-
-
-def _collect_files(path: str, content: str, ws: str, agent: "Agent", max_files: int = 5) -> tuple[str, list[str]]:
-    """Read *path* + its local imports, return combined content + list of read files."""
-    read = [os.path.abspath(path)]
-    combined = content
-    imports = _parse_imports(content)
-
-    for imp_path in imports:
-        full = os.path.normpath(os.path.join(ws, imp_path))
-        if os.path.isfile(full) and full not in read:
-            try:
-                imp_content = agent.read_file(full, track_read=False)
-                # TODO: need await — handled by caller
-            except Exception:
-                pass
-
-    return combined, read
 
 
 class AnalyzeCommand(Command):
@@ -119,7 +102,7 @@ class AnalyzeCommand(Command):
     async def _deep_analyze(self, path: str, question: str | None, agent: "Agent") -> str:
         """Iteratively read files and deepen analysis, following import chains
         and file references in LLM responses."""
-        ws = agent.workspace.replace("/c/", "C:/").replace("/C/", "C:").replace("\\", "/")
+        ws = workspace_path(agent.workspace)
         content = await agent.read_file(path, track_read=False)
         if content.startswith("File not found:") or content.startswith("Error"):
             return content
