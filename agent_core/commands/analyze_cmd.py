@@ -22,7 +22,6 @@ def _parse_imports(source: str) -> list[str]:
         top = module.split(".", 1)[0]
         if top in ("agent_core", "agent1", "tests", "src"):
             path = module.replace(".", "/")
-            # Top-level package import ('from agent_core import X') → __init__.py
             if path == top:
                 path += "/__init__.py"
             else:
@@ -31,8 +30,45 @@ def _parse_imports(source: str) -> list[str]:
     return sorted(set(result))
 
 
+def _parse_file_refs(text: str) -> list[str]:
+    """Extract project file references from a text response.
+
+    Matches patterns like ``agent_core/commands/fix_cmd.py``,
+    backtick-wrapped filenames, and bare ``.py`` filenames.
+    """
+    refs: list[str] = []
+
+    # Backtick-wrapped paths: `agent_core/commands/fix_cmd.py`
+    for m in re.finditer(r"`([^`]+\.py)`", text):
+        refs.append(m.group(1))
+
+    # Explicit relative paths: agent_core/commands/fix_cmd.py or src/agent1/...
+    for m in re.finditer(r"(?:agent_core|agent1|src|tests)/[\w/]+\.py", text):
+        refs.append(m.group(0))
+
+    return sorted(set(refs))
+
+
+def _collect_files(path: str, content: str, ws: str, agent: "Agent", max_files: int = 5) -> tuple[str, list[str]]:
+    """Read *path* + its local imports, return combined content + list of read files."""
+    read = [os.path.abspath(path)]
+    combined = content
+    imports = _parse_imports(content)
+
+    for imp_path in imports:
+        full = os.path.normpath(os.path.join(ws, imp_path))
+        if os.path.isfile(full) and full not in read:
+            try:
+                imp_content = agent.read_file(full, track_read=False)
+                # TODO: need await — handled by caller
+            except Exception:
+                pass
+
+    return combined, read
+
+
 class AnalyzeCommand(Command):
-    """AI analysis of a file via LM Studio — follows imports with --desc."""
+    """AI analysis of a file via LM Studio — follows imports and iterates with --desc."""
 
     @property
     def name(self) -> str:
@@ -51,7 +87,7 @@ class AnalyzeCommand(Command):
             di = parts.index("--desc")
             if di + 1 < len(parts):
                 desc_text = parts[di + 1].strip('"')
-                deep_mode = True  # --desc automatically follows imports
+                deep_mode = True
             parts = [p for p in parts if p not in (parts[di], args[di + 1] if di + 1 < len(args) else "")]
 
         if "--deep" in parts:
@@ -65,71 +101,8 @@ class AnalyzeCommand(Command):
         path = parts[0]
         output_file = parts[1] if len(parts) > 1 else None
 
-        if desc_text:
-            content = await agent.read_file(path, track_read=False)
-            if content.startswith("File not found:") or content.startswith("Error"):
-                self.error(content)
-                return True
-
-            combined = content
-            related: list[str] = []
-
-            if deep_mode:
-                imports = _parse_imports(content)
-                base_dir = os.path.dirname(os.path.abspath(path))
-                ws = agent.workspace.replace("/c/", "C:/").replace("\\", "/")
-
-                for imp_path in imports:
-                    if len(related) >= 5:
-                        break
-                    full = os.path.normpath(os.path.join(ws, imp_path))
-                    if os.path.isfile(full) and full != os.path.abspath(path):
-                        try:
-                            imp_content = await agent.read_file(full, track_read=False)
-                            if not imp_content.startswith("File not found:") and not imp_content.startswith("Error"):
-                                combined += f"\n\n# === {imp_path} ===\n{imp_content}"
-                                related.append(imp_path)
-                        except Exception:
-                            pass
-
-                if related:
-                    print(f"  Followed imports: {', '.join(related)}")
-
-            result = await agent.llm.chat([
-                {"role": "system", "content": "You are an expert code reviewer. Answer the question concisely using the provided code as reference."},
-                {"role": "user", "content": f"## Code:\n\n{combined}\n\n## Question:\n{desc_text}"},
-            ])
-        elif deep_mode:
-            content = await agent.read_file(path, track_read=False)
-            if content.startswith("File not found:") or content.startswith("Error"):
-                self.error(content)
-                return True
-
-            combined = content
-            imports = _parse_imports(content)
-            ws = agent.workspace.replace("/c/", "C:/").replace("\\", "/")
-            follow_count = 0
-
-            for imp_path in imports:
-                if follow_count >= 5:
-                    break
-                full = os.path.normpath(os.path.join(ws, imp_path))
-                if os.path.isfile(full) and full != os.path.abspath(path):
-                    try:
-                        imp_content = await agent.read_file(full, track_read=False)
-                        if not imp_content.startswith("File not found:") and not imp_content.startswith("Error"):
-                            combined += f"\n\n# === {imp_path} ===\n{imp_content}"
-                            follow_count += 1
-                    except Exception:
-                        pass
-
-            if follow_count:
-                print(f"  Followed imports: {follow_count} files")
-
-            result = await agent.llm.chat([
-                {"role": "system", "content": "You are an expert code reviewer. Analyze this code thoroughly."},
-                {"role": "user", "content": f"## Code:\n\n{combined}"},
-            ])
+        if deep_mode:
+            result = await self._deep_analyze(path, desc_text, agent)
         else:
             result = await agent.process_query(f"analyze {path}")
 
@@ -142,3 +115,74 @@ class AnalyzeCommand(Command):
             print(result)
 
         return True
+
+    async def _deep_analyze(self, path: str, question: str | None, agent: "Agent") -> str:
+        """Iteratively read files and deepen analysis, following import chains
+        and file references in LLM responses."""
+        ws = agent.workspace.replace("/c/", "C:/").replace("/C/", "C:").replace("\\", "/")
+        content = await agent.read_file(path, track_read=False)
+        if content.startswith("File not found:") or content.startswith("Error"):
+            return content
+
+        # Round 0: collect the target file + its imports
+        combined = content
+        read_paths: set[str] = set()
+        read_paths.add(os.path.normpath(os.path.join(ws, path.replace("/", os.sep))) if not os.path.isabs(path) else os.path.normpath(path))
+
+        # Follow imports from the target file
+        initial_followed: list[str] = []
+        for imp_path in _parse_imports(content):
+            if len(initial_followed) >= 5:
+                break
+            full = os.path.normpath(os.path.join(ws, imp_path))
+            if os.path.isfile(full) and full not in read_paths:
+                try:
+                    imp_content = await agent.read_file(full, track_read=False)
+                    if not imp_content.startswith("File not found:") and not imp_content.startswith("Error"):
+                        combined += f"\n\n# === {imp_path} ===\n{imp_content}"
+                        read_paths.add(full)
+                        initial_followed.append(imp_path)
+                except Exception:
+                    pass
+
+        if initial_followed:
+            print(f"  Round 0: followed imports — {', '.join(initial_followed)}")
+
+        # Round 1: first answer
+        system = "You are an expert code reviewer. Answer the question concisely using the provided code as reference."
+        user = f"## Code:\n\n{combined}\n\n## Question:\n{question}" if question else f"## Code:\n\n{combined}\n\nAnalyze thoroughly."
+        answer = await agent.llm.chat([
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ])
+
+        # Iterate: follow file references mentioned in each answer
+        for round_num in range(2, 5):  # rounds 2, 3, 4
+            refs = _parse_file_refs(answer)
+            new_files: list[str] = []
+
+            for ref in refs:
+                if len(new_files) >= 4:
+                    break
+                full = os.path.normpath(os.path.join(ws, ref))
+                if os.path.isfile(full) and full not in read_paths:
+                    try:
+                        ref_content = await agent.read_file(full, track_read=False)
+                        if not ref_content.startswith("File not found:") and not ref_content.startswith("Error"):
+                            combined += f"\n\n# === {ref} (referenced in previous answer) ===\n{ref_content}"
+                            read_paths.add(full)
+                            new_files.append(ref)
+                    except Exception:
+                        pass
+
+            if not new_files:
+                break  # Nothing new to follow
+
+            print(f"  Round {round_num}: followed references — {', '.join(new_files)}")
+
+            answer = await agent.llm.chat([
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"## All code seen so far:\n\n{combined}\n\n## Question:\n{question}\n\nYour previous answer mentioned files listed above as 'referenced in previous answer'. Now that you have their full content, deepen your analysis with more detail about these referenced files."},
+            ])
+
+        return answer
