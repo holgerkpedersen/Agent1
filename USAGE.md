@@ -380,6 +380,9 @@ Unreferenced .py files (candidates for deletion):
 
 > analyze src/agent1/graph/dependency_visualizer.py
 # Full AI analysis of a specific file
+
+> analyze agent.py --desc "How does the fix command work?"
+# LLM reads agent.py and answers the specific question
 ```
 
 ---
@@ -387,8 +390,10 @@ Unreferenced .py files (candidates for deletion):
 ## Tips
 
 - **`quit`** or `Ctrl+C` to exit anytime.
+- **`analyze --desc`** gives targeted answers — skip the generic review and ask exactly what you want to know.
 - **Use natural language** for exploration — ask questions about the codebase without memorizing command syntax.
 - **The workflow pipeline** handles everything: `workflow . --brainstorm` → review `project_analysis.md` → `implement ...`.
 - **Paste full tracebacks** into `fix` — it finds the root cause across import chains, even when the error manifests deep in stdlib.
 - **`--keep`** avoids overwriting files that already compile OK — safe for brownfield work.
 - **`--force`** regenerates everything — use for greenfield or when you want a clean slate.
+- **`--retry`** with implement re-generates only files missing from disk after a previous run.

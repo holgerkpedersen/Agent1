@@ -20,26 +20,31 @@ Python AI agent framework with LLM integration, tool execution, workspace manage
 
 ### Commands (`agent_core/commands/`)
 ```
-read <path>                   Read a file
-write <path> <content>        Write content to file
-search <query>                Search files for string
-analyze <file> [output]       AI analysis via LLM
-plan <analysis> <plan>        Generate coding plan
-entities <analysis> <plan>    Generate shared entities
-taskplan <analysis> <plan>    Generate implementation tasks
-implement <taskplan> [opts]   Implement files from task plan
-fix <traceback>               Auto-fix from traceback
-fix <file> --desc "text"      Describe issue, LLM fixes it
-cleanup                       Show unreferenced files
-workflow <target> [opts]      Full pipeline: analyze → plan → entities → tasks → implement
-                               --from spec.md    Greenfield from specification
-                               --desc "text"     Greenfield from description
-                               --features spec.md  Brownfield extension
-                               --brainstorm       Add 6th dimension: creative features
-                               --force            Skip existing file checks
-                               --workspace <path> Target workspace
-model [list|reload|name]      Manage LLM models
-clear [stats|--force]         Show memory stats, confirm then clear
+read <path>                      Read a file
+write <path> <content>           Write content to file
+search <query>                   Search files for string
+analyze <file> [--desc "q"]      AI analysis via LLM (with optional guiding question)
+plan <analysis> <plan>           Generate coding plan
+entities <analysis> <plan>       Generate shared entities
+taskplan <analysis> <plan>       Generate implementation tasks
+implement <taskplan> [opts]      Implement files from task plan
+                                 --force            Overwrite existing files
+                                 --keep             Skip files that compile OK
+                                 --fix              Retry compilation errors
+                                 --retry            Re-generate only missing files
+                                 --workspace <path> Target workspace
+fix <traceback>                  Paste traceback to auto-fix root cause
+fix <file> --desc "text"         Describe an issue, LLM fixes it
+cleanup                          Show unreferenced files
+workflow <target> [opts]         Full pipeline: analyze → plan → entities → tasks → implement
+                                 --from spec.md    Greenfield from specification
+                                 --desc "text"     Greenfield from description
+                                 --features spec   Brownfield extension
+                                 --brainstorm      Add 6th dimension: creative features
+                                 --force           Skip existing file checks
+                                 --workspace <p>   Target workspace
+model [list|load|unload|reload|name]  Manage models via LM Studio API
+clear [stats|--force]            Show memory stats, confirm then clear
 ```
 
 ### Workflow Pipeline
@@ -69,8 +74,9 @@ The `fix` and `implement` commands include automatic protections against common 
 
 **implement** — File safety (3 layers):
 - **Prevention**: LLM prompts instruct the LLM to use sub-package paths (`agent_core/thing.py`) and avoid bare root-level filenames
-- **Auto-repair**: Bare filenames like `types.py` are automatically prefixed with an existing safe sub-package (`agent_core/types.py`) instead of rejected
-- **Rejection**: Files that shadow stdlib/common modules, conflict with existing packages, or create `__init__.py` at workspace root are rejected with a clear error message
+- **Auto-repair**: All bare root-level filenames are auto-prefixed with `agent1/` — `config.py` → `agent1/config.py`. No file is written at workspace root.
+- **Target protection**: Auto-repair skips overwriting files that already exist (>100 bytes), preventing accidental overwrite of project packages.
+- **Categorized outcomes**: Final report groups files by status: auto-repaired, rejected (with reasons), skipped (target exists), and truly missing.
 
 ### Memory Management
 
