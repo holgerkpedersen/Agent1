@@ -134,13 +134,13 @@ class ImplementCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "implement <taskplan.md> [--keep|--force|--fix|--retry] - Implement files from task plan"
+        return "implement <taskplan.md> [--keep|--force|--fix|--retry|--review] - Implement files from task plan"
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         parts = args
 
         if len(parts) < 1:
-            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--fix] [--retry] [--workspace <path>]")
+            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--fix] [--retry] [--review] [--workspace <path>]")
             return True
 
         keep_mode = "--keep" in parts
@@ -148,6 +148,7 @@ class ImplementCommand(Command):
         force_mode = "--force" in parts
         fix_mode = "--fix" in parts
         retry_mode = "--retry" in parts
+        review_mode = "--review" in parts
 
         target_workspace = agent.workspace
         if "--workspace" in parts:
@@ -155,7 +156,7 @@ class ImplementCommand(Command):
             if ws_idx + 1 < len(parts):
                 target_workspace = parts[ws_idx + 1].strip('"')
 
-        skip_tokens = ["--keep", "--refresh", "--force", "--fix", "--retry", "--workspace", target_workspace]
+        skip_tokens = ["--keep", "--refresh", "--force", "--fix", "--retry", "--review", "--workspace", target_workspace]
         filtered_parts = [p for p in parts if p not in skip_tokens]
 
         taskplan_file = filtered_parts[0] if filtered_parts else ""
@@ -942,5 +943,44 @@ class ImplementCommand(Command):
                         print(f"  Fixed: {fname} ({len(new_code)} bytes)")
 
             print(f"\n[fix] Complete")
+
+        if review_mode and new_files:
+            print(f"\n{'='*50}")
+            print(f"[review] Reviewing {len(new_files)} new file(s): {', '.join(sorted(new_files)[:10])}")
+            print(f"{'='*50}")
+
+            py_new = sorted(f for f in new_files if f.endswith(".py"))
+            for fname in py_new[:8]:  # limit to 8 files to keep context manageable
+                fpath = Path(ws) / fname
+                if not fpath.exists() or fpath.stat().st_size == 0:
+                    continue
+                try:
+                    content = fpath.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+
+                print(f"\n  Reviewing {fname} ({len(content)} bytes)...")
+                review_msg = [
+                    {"role": "system", "content": (
+                        "Review this code for correctness. Check for:\n"
+                        "1. Broken imports (importing from modules/paths that don't exist)\n"
+                        "2. Missing __init__.py in new packages\n"
+                        "3. Invalid API schemas (missing type:object, properties, required)\n"
+                        "4. Off-by-one errors (e.g. 0-index vs 1-index line numbers)\n"
+                        "5. Empty except blocks or silent error swallowing\n"
+                        "6. Unused imports, missing imports, or type mismatches\n"
+                        "7. Circular imports within the new files\n\n"
+                        "Be concise. List only actual bugs. Skip style concerns."
+                    )},
+                    {"role": "user", "content": f"Review this file for bugs:\n\n```python\n{content}\n```"},
+                ]
+                review = await agent.llm.chat(review_msg)
+                if review.startswith("[Error") or review.startswith("[LM Studio"):
+                    continue
+                # Only show results that actually report issues
+                if any(kw in review.lower() for kw in ("bug", "issue", "error", "broken", "missing", "invalid", "fix", "should", "incorrect", "fails")):
+                    print(f"  {review}")
+                else:
+                    print(f"  No bugs found.")
 
         return True
