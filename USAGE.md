@@ -19,6 +19,8 @@ Run: `python agent.py`
 | `model list`                 | List available models               |
 | `clear`                      | View and clear memory               |
 | `cleanup`                    | Find orphaned files                 |
+| `optimize <file>`            | Find speed/memory/quality issues    |
+| `perf`                       | Command performance dashboard       |
 | `quit` / `exit` / `q`        | Exit the REPL                       |
 
 Any input not matching a command is treated as natural language and sent directly to the LLM.
@@ -439,6 +441,49 @@ Unreferenced .py files (candidates for deletion):
 
 > analyze agent.py --desc "How does the fix command work?"
 # LLM reads agent.py and answers the specific question
+```
+
+---
+
+## Optimizing code
+
+```
+> optimize agent_core/commands/fix_cmd.py
+  Static analysis found 12 issue(s):
+  fix_cmd.py:
+    line   21: [silent_except] Replace 'pass' with logging or re-raise
+    line  134: [regex_in_loop] Move re.compile() to module level
+  Sending to LLM for deeper analysis...
+  [OPTIMIZE: fix_cmd.py:134] Speed: regex compiled inside loop
+
+> optimize agent_core/ --apply
+  # Analyzes all .py files, asks y/N before applying each fix
+
+> optimize agent.py --apply --yes
+  # Analyzes and applies all suggestions without asking
+```
+
+## Performance dashboard
+
+Every command is automatically timed. View stats anytime:
+
+```
+> perf
+  Commands: 23  |  Runtime: 342.1s  |  Input: 824 chars  |  LLM calls: ~12
+  ────────────────────────────────────────────────────────────────────────
+  command      calls    total      avg      max      last
+  workflow        2    228.5s    114.3s   198.2s    30.3s
+  implement       1     98.4s     98.4s    98.4s    98.4s
+  analyze         8      8.2s      1.0s     3.2s     0.8s
+
+> perf --detail
+  # Shows every individual command execution with timestamp
+
+> perf --reset
+  # Clears all collected stats
+
+> perf --html
+  # Exports self-contained HTML dashboard
 ```
 
 ---

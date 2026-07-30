@@ -49,6 +49,8 @@ workflow <target> [opts]         Full pipeline: analyze → plan → entities �
                                  --force           Skip existing file checks
                                  --workspace <p>   Target workspace
 model [list|load|unload|reload|name]  Manage models via LM Studio API
+optimize <file|dir> [--apply] [--stdin] Find and apply performance/memory optimizations
+perf [--detail|--reset|--html]       Command performance dashboard (timing per command)
 clear [stats|--force]            Show memory stats, confirm then clear
 ```
 
