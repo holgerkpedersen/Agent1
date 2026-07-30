@@ -285,11 +285,12 @@ class FixCommand(Command):
 
             read_paths: set[str] = {fp for fp, _, _ in top_files}
             system = ("You are an expert Python debugger.\n\n"
-                      "FORMAT:\n"
+                      "FORMAT (plain text only — NO XML or <tool_call> tags):\n"
                       "  To view a file:  [READ: agent_core/commands/fix_cmd.py]\n"
                       "  To submit a fix: [FILE: agent_core/commands/fix_cmd.py]\n"
                       "    ```python\n    # complete corrected code here\n    ```\n\n"
                       "Use REAL paths from the context above. Do NOT write placeholder filenames.\n"
+                      "Do NOT wrap commands in <tool_call> or any XML tags.\n"
                       "If you cannot determine the exact file, explain without [READ:] or [FILE:] tags.")
 
             response = ""
@@ -307,8 +308,11 @@ class FixCommand(Command):
                     self.error(f"LLM error: {response[:200]}")
                     return True
 
-                # Check for [READ:] directives — only accept real-looking file paths
-                raw_reads = re.findall(r'\[READ:\s*([^\]]+)\]', response)
+                # Check for [READ:] directives — handle both plain and <tool_call> wrapped
+                raw = response
+                # Strip <tool_call> / </tool_call> wrappers if present
+                raw = re.sub(r'</?tool_call>', '', raw)
+                raw_reads = re.findall(r'\[READ:\s*([^\]]+)\]', raw)
                 read_requests = [
                     r.strip() for r in raw_reads
                     if ".py" in r and "\\" not in r and "$" not in r
@@ -350,7 +354,8 @@ class FixCommand(Command):
                 return True
 
             # Display response if it's informational (no file fixes)
-            fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', response, re.DOTALL)
+            clean = re.sub(r'</?tool_call>', '', response)
+            fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', clean, re.DOTALL)
             valid_fixes = []
             for fpath, new_code in fixes:
                 full = os.path.normpath(os.path.join(ws_dir, fpath.strip()))
@@ -399,7 +404,8 @@ class FixCommand(Command):
         if response.startswith("[Error") or response.startswith("[LM Studio"):
             print(f"LLM error: {response[:200]}")
             return
-        fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', response, re.DOTALL)
+        clean = re.sub(r'</?tool_call>', '', response)
+        fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', clean, re.DOTALL)
         if not fixes:
             print("Could not parse fixes.")
             print(response[:1000])
