@@ -596,6 +596,10 @@ class ImplementCommand(Command):
                     print(f"  REJECTED: {filename} is {len(content)} bytes (max 50KB)")
                     file_outcomes[filename] = f"rejected — {len(content)} bytes, max 50KB"
                     continue
+                if len(content) < 10:
+                    print(f"  REJECTED: {filename} is empty (0 bytes) — LLM returned no content")
+                    file_outcomes[filename] = "rejected — empty response from LLM"
+                    continue
 
             dangerous, reason = _is_dangerous_filename(filename, workspace)
             if dangerous:
@@ -623,13 +627,14 @@ class ImplementCommand(Command):
                     file_outcomes[filename] = f"rejected — {reason}"
                     continue
 
-            with open(filepath, "w", encoding="utf-8") as f:
+            # Write to temp → compile → rename on success, delete on failure
+            tmp_path = str(filepath) + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
             if filename.endswith(".py"):
-                filepath_str = os.path.realpath(filepath)
                 r = subprocess.run(
-                    ["python", "-m", "py_compile", filepath_str],
+                    ["python", "-m", "py_compile", tmp_path],
                     capture_output=True, text=True
                 )
 
@@ -647,7 +652,12 @@ class ImplementCommand(Command):
 
                     is_truncated = ends_mid or (incomplete and unbalanced) or (incomplete and len(content) < 500)
 
-                    if is_truncated and "unterminated" in r.stderr or "unexpected EOF" in r.stderr or "SyntaxError" in r.stderr:
+                    if is_truncated and (
+                        "unterminated" in r.stderr or "unexpected EOF" in r.stderr
+                        or "was never closed" in r.stderr or "invalid syntax" in r.stderr
+                        or "SyntaxError" in r.stderr
+                    ):
+                        os.unlink(tmp_path)
                         print(f"  WARNING: {filename} appears truncated, re-requesting...")
                         retry_msgs = [
                             {"role": "system", "content": "Generate ONLY the complete code for this file. Output as:\n[FILE: filename.py]\n```python\n# complete code here\n```"},
@@ -663,17 +673,21 @@ class ImplementCommand(Command):
                                         f.write(new_content)
                                     content = new_content
                                     print(f"  Re-written: {filename} ({len(content)} bytes)")
+                                    filepath_str = os.path.realpath(filepath)
                                     r = subprocess.run(
                                         ["python", "-m", "py_compile", filepath_str],
                                         capture_output=True, text=True
                                     )
 
                     if r.returncode != 0:
+                        os.unlink(tmp_path)
                         errors.append(f"{filename}: {r.stderr}")
                         print(f"  Compile error in {filename}")
                     else:
+                        os.replace(tmp_path, filepath)
                         print(f"  Compiled OK: {filename}")
                 else:
+                    os.replace(tmp_path, filepath)
                     print(f"  Compiled OK: {filename}")
             implemented.append(filename)
             print(f"  Written: {filename}")
