@@ -6,6 +6,25 @@ if TYPE_CHECKING:
     from agent import Agent
 
 
+def read_stdin(prompt: str = "Paste text. Type --- on its own line when done, or Ctrl+Z to finish:") -> str:
+    """Read multi-line text from stdin until a sentinel line or EOF.
+
+    Blank lines are preserved.  The sentinel line ``---`` (three dashes,
+    alone on a line) terminates input.  Ctrl+Z / Ctrl+D also works.
+    """
+    print(prompt)
+    lines: list[str] = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        if line.strip() == "---":
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
+
 class Command(ABC):
     """Abstract base class for interactive commands.
     

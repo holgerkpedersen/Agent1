@@ -2,7 +2,7 @@
 import os
 import re
 
-from .base import Command
+from .base import Command, read_stdin
 from agent_core import workspace_path
 
 from typing import TYPE_CHECKING
@@ -81,17 +81,7 @@ class AnalyzeCommand(Command):
 
         if stdin_mode:
             parts = [p for p in parts if p != "--stdin"]
-            print("Paste text to analyze. Type --- on its own line when done, or Ctrl+Z to finish:")
-            lines = []
-            while True:
-                try:
-                    line = input()
-                except EOFError:
-                    break
-                if line.strip() == "---":
-                    break
-                lines.append(line)
-            content = "\n".join(lines)
+            content = read_stdin("Paste text to analyze. Type --- on its own line when done, or Ctrl+Z to finish:")
             if not content.strip():
                 self.error("No text provided.")
                 return True

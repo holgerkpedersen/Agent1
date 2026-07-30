@@ -3,7 +3,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from .base import Command
+from .base import Command, read_stdin
 from agent_core import to_windows_path
 
 from typing import TYPE_CHECKING
@@ -20,13 +20,13 @@ class WorkflowCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "workflow <target> [--from spec.md] [--brainstorm] [--features spec.md] - Full pipeline"
+        return "workflow <target> [--from spec.md] [--stdin] [--brainstorm] [--features spec.md] — Full pipeline"
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         parts = args
 
         if len(parts) < 1:
-            self.error("Usage: workflow <target> [--from <spec.md>] [--force] [--brainstorm] [--workspace <path>]")
+            self.error("Usage: workflow <target> [--from <spec.md>] [--stdin] [--force] [--brainstorm] [--workspace <path>]")
             self.error("  target: .  |  --desc/-from spec | --features spec (file or inline)")
             return True
 
@@ -47,6 +47,16 @@ class WorkflowCommand(Command):
                 spec_file = tmp.name
                 greenfield = True
                 print(f"\n[desc] {desc_text[:120]}...")
+        elif "--stdin" in parts:
+            text = read_stdin("Paste spec or description. Type --- on its own line when done:")
+            parts = [p for p in parts if p != "--stdin"]
+            if text.strip():
+                tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
+                tmp.write(f"# Project Specification\n\n{text}")
+                tmp.close()
+                spec_file = tmp.name
+                greenfield = True
+                print(f"\n[stdin] {len(text)} chars")
         elif "--from" in parts:
             fi = parts.index("--from")
             end = fi + 1
