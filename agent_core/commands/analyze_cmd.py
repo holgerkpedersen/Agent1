@@ -106,6 +106,11 @@ class AnalyzeCommand(Command):
             result = await agent.process_query(f"analyze {path}")
 
         if output_file:
+            invalid = set('<>:"/\\|?*')
+            if any(c in output_file for c in invalid) or len(output_file) < 2:
+                self.error(f"Invalid output filename: {output_file!r}")
+                print(result)
+                return True
             with open(output_file, "w", encoding="utf-8") as f:
                 f.write(f"# Analysis of {path}\n\n")
                 f.write(result)
