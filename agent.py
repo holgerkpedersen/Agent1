@@ -27,6 +27,7 @@ from agent_core.commands.cleanup_cmd import CleanupCommand
 from agent_core.commands.implement_cmd import ImplementCommand
 from agent_core.commands.fix_cmd import FixCommand
 from agent_core.commands.workflow_cmd import WorkflowCommand
+from agent_core.commands.optimize_cmd import OptimizeCommand
 from datetime import datetime
 from pathlib import Path
 import json
@@ -516,6 +517,7 @@ async def run_interactive():
     print("  cleanup             - Show unreferenced files and reference graph")
     print("  workflow <target> [--from spec.md] [--stdin] [--brainstorm] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] — Full pipeline")
     print("  model [list|load|unload|reload|name] — Manage models via LM Studio API")
+    print("  optimize <file|dir> [--apply] [--yes] [--stdin] — Find and apply optimizations")
     print("  clear              - Clear agent memory")
     print("  quit               - Exit")
     print("=" * 50)
@@ -538,6 +540,7 @@ async def run_interactive():
     registry.register(ImplementCommand())
     registry.register(FixCommand())
     registry.register(WorkflowCommand())
+    registry.register(OptimizeCommand())
 
     while True:
         try:
@@ -560,7 +563,7 @@ async def run_interactive():
             command = parts[0].lower()
 
             # Try commands from registry
-            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow"]:
+            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize"]:
                 result = await registry.execute(command, parts[1:], agent)
                 continue
 
