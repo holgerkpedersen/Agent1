@@ -239,6 +239,26 @@ class ImplementCommand(Command):
 
         print(f"Found {len(all_files)} files to implement: {', '.join(all_files)}")
 
+        def file_needs_generation(fname):
+            raw_ws = target_workspace
+            if raw_ws.startswith('/c/') or raw_ws.startswith('/C/'):
+                raw_ws = 'C:' + raw_ws[2:]
+            fpath = Path(raw_ws) / fname
+            if not fpath.exists():
+                return True, "not found"
+            if fpath.stat().st_size == 0:
+                return True, "empty"
+            if fname.endswith(".py"):
+                result = subprocess.run(
+                    ["python", "-m", "py_compile", os.path.realpath(fpath)],
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode != 0:
+                    return True, f"compile failed: {result.stderr.strip()}"
+                return False, "OK"
+            return False, "OK"
+
         if retry_mode:
             missing = []
             for fname in all_files:
@@ -268,27 +288,6 @@ class ImplementCommand(Command):
         if match:
             analyzed_file = match.group(1)
             print(f"Analyzed file from analysis.md: {analyzed_file}")
-
-        def file_needs_generation(fname):
-            from pathlib import Path
-            raw_ws = target_workspace
-            if raw_ws.startswith('/c/') or raw_ws.startswith('/C/'):
-                raw_ws = 'C:' + raw_ws[2:]
-            fpath = Path(raw_ws) / fname
-            if not fpath.exists():
-                return True, "not found"
-            if fpath.stat().st_size == 0:
-                return True, "empty"
-            if fname.endswith(".py"):
-                result = subprocess.run(
-                    ["python", "-m", "py_compile", os.path.realpath(fpath)],
-                    capture_output=True,
-                    text=True
-                )
-                if result.returncode != 0:
-                    return True, f"compile failed: {result.stderr.strip()}"
-                return False, "OK"
-            return False, "OK"
 
         implemented = []
         file_outcomes: dict[str, str] = {}  # filename -> reason/status
