@@ -62,10 +62,16 @@ description-based fixes. The dependency tracing via imports
 is thorough but could be optimized by caching the import graph...
 ```
 
+With a specific question:
+
 ```
-> analyze agent_core/
-# Scans all .py files in agent_core/ and sends combined code
-# to LLM for multi-dimensional analysis
+> analyze agent.py --desc "How does the fix command work?"
+[LLM reads agent.py and fix_cmd.py, answers with detailed explanation]
+
+> analyze agent_core/commands/implement_cmd.py --desc "What safety guards prevent file collisions?"
+[LLM answers about _is_dangerous_filename, auto-repair, etc.]
+
+> analyze agent.py --desc "List every class and its responsibility"
 ```
 
 ### Natural language
