@@ -512,7 +512,7 @@ async def run_interactive():
     print("  taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks")
     print("  implement <taskplan.md> [--keep] [--force] [--fix] [--retry] [--workspace <path>] - Implement files")
     print("  fix \"<traceback>\"   - Paste a traceback to auto-fix the error")
-    print("  fix <file> --desc \"text\" - Describe an issue, LLM analyzes full codebase and fixes it")
+    print("  fix <file> --desc \"text\" [--full] - Describe an issue, LLM analyzes full codebase and fixes it")
     print("  cleanup             - Show unreferenced files and reference graph")
     print("  workflow <target> [--from spec.md] [--brainstorm] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] - Full pipeline")
     print("  model [list|load|unload|reload|name] — Manage models via LM Studio API")

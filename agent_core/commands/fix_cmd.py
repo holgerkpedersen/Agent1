@@ -63,7 +63,7 @@ class FixCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return 'fix "<traceback>" | <file> --desc "issue" - Fix code errors'
+        return 'fix "<traceback>" | <file> --desc "issue" [--full] - Fix code errors'
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         parts = args
@@ -174,10 +174,67 @@ class FixCommand(Command):
 
             print(f"  Tracing imports: {len(candidate_files)} relevant files")
 
-            all_source = "## Project structure\n\n"
-            py_files = []
-            sig_map = {}
+            full_mode = "--full" in parts
 
+            if full_mode:
+                all_source = "## Project structure\n\n"
+                py_files = []
+                sig_map = {}
+                for root, dirs, files in os.walk(ws_dir):
+                    if ".git" in root or "__pycache__" in root:
+                        continue
+                    for f in files:
+                        if not f.endswith(".py") or f == "__init__.py":
+                            continue
+                        fp = os.path.normpath(os.path.join(root, f))
+                        rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
+                        py_files.append(fp)
+                        if fp in candidate_files:
+                            with open(fp, "r", encoding="utf-8") as sf:
+                                all_source += f"\n\n# === {fp} ===\n{sf.read()}"
+                        else:
+                            try:
+                                with open(fp, "r", encoding="utf-8") as sf:
+                                    sigs = extract_signatures(sf.read())
+                                if sigs:
+                                    sig_map[rel] = ", ".join(f"{n}" for n in sorted(sigs.keys())[:8])
+                            except Exception:
+                                pass
+                all_source += f"\n\n## Other project files (signatures only, {len(sig_map)} total)\n\n"
+                for rel, sigs in sorted(sig_map.items()):
+                    all_source += f"  {rel}: {sigs}\n"
+                print(f"  Collected {len(py_files)} Python files ({len(all_source)} bytes)")
+                msgs = [
+                    {"role": "system", "content": "You are an expert Python debugger. Analyze the codebase below. Fix ALL files needed. Keep code concise. NEVER create duplicate functions or classes (_v1, _v2, _clean, _final variants). One implementation per concept.\n\nOutput each fixed file as:\n[FILE: absolute/path/to/file.py]\n```python\n# complete fixed code\n```"},
+                    {"role": "user", "content": f"The user reports this issue:\n\n{desc_text}\n\nFull project codebase:\n\n{all_source}\n\nAnalyze the issue, find the root cause, and fix ALL affected files. Output each fixed file with its full path."}
+                ]
+                print("Sending to LLM for deep analysis...")
+                response = await agent.llm.chat(msgs)
+                self._apply_fix_response(response, ws_dir, desc_text)
+                return True
+
+            # ---- On-demand path (default) ----
+
+            # Score candidate files by keyword relevance
+            scored = []
+            for fp in candidate_files:
+                if not os.path.isfile(fp) or not fp.endswith(".py"):
+                    continue
+                try:
+                    with open(fp, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except Exception:
+                    continue
+                score = sum(1 for kw in keywords if kw in content.lower())
+                scored.append((fp, score, content))
+            scored.sort(key=lambda x: -x[1])
+
+            top_count = min(5, len(scored))
+            top_files = scored[:top_count]
+            rest_files = scored[top_count:]
+
+            # Build signature map for ALL project files (for reference)
+            sig_map = {}
             for root, dirs, files in os.walk(ws_dir):
                 if ".git" in root or "__pycache__" in root:
                     continue
@@ -186,62 +243,118 @@ class FixCommand(Command):
                         continue
                     fp = os.path.normpath(os.path.join(root, f))
                     rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
-                    py_files.append(fp)
-
-                    if fp in candidate_files:
+                    # Skip files already in top_files (we have full source)
+                    if fp in {t[0] for t in top_files}:
+                        continue
+                    try:
                         with open(fp, "r", encoding="utf-8") as sf:
-                            all_source += f"\n\n# === {fp} ===\n{sf.read()}"
+                            sigs = extract_signatures(sf.read())
+                        if sigs:
+                            sig_map[rel] = ", ".join(f"{n}" for n in sorted(sigs.keys())[:8])
+                    except Exception:
+                        pass
+
+            # Build initial context: full source for top-N, signatures for rest
+            context = f"## Issue\n{desc_text}\n\n"
+            context += "## Relevant files (full source — highest keyword match)\n"
+            for fp, score, content in top_files:
+                rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
+                context += f"\n# === {rel} (relevance: {score} keywords) ===\n{content}\n"
+
+            if rest_files:
+                context += f"\n## Other candidate files ({len(rest_files)} more — signatures only)\n"
+                for fp, score, content in rest_files[:15]:
+                    rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
+                    sigs = extract_signatures(content)
+                    names = ", ".join(sorted(sigs.keys())[:8]) if sigs else "(empty)"
+                    context += f"  {rel}  [{names}]\n"
+
+            context += f"\n## Other project files ({len(sig_map)} total — signatures only)\n"
+            for rel, names in sorted(sig_map.items())[:30]:
+                context += f"  {rel}: {names}\n"
+            if len(sig_map) > 30:
+                context += f"  ... and {len(sig_map) - 30} more files.\n"
+
+            print(f"  On-demand: {len(top_files)} full files + {len(rest_files)} candidate sigs + {len(sig_map)} other sigs ({len(context)} bytes)")
+
+            read_paths: set[str] = {fp for fp, _, _ in top_files}
+            system = ("You are an expert Python debugger. Analyze the issue and fix the root cause.\n\n"
+                      "If you need to see additional files, write [READ: relative/path.py].\n"
+                      "When ready to provide fixes, write [FILE: relative/path.py]```python\n# fixed code\n```.\n"
+                      "One fix per [FILE:] block. No duplicate functions, no _v1/_v2 variants.")
+
+            response = ""
+            for round_num in range(1, 4):
+                user = (f"Issue: {desc_text}\n\n## Context\n{context}\n\n"
+                        "Find the root cause. Request files with [READ: path] or provide fixes with [FILE: path].")
+
+                print(f"  Round {round_num} ({len(context)} bytes)...")
+                response = await agent.llm.chat([
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ])
+
+                if response.startswith("[Error") or response.startswith("[LM Studio"):
+                    self.error(f"LLM error: {response[:200]}")
+                    return True
+
+                # Check for [READ:] directives
+                read_requests = re.findall(r'\[READ:\s*([^\]]+)\]', response)
+                if read_requests:
+                    new_files = []
+                    for req_path in read_requests:
+                        req_path = req_path.strip()
+                        full = os.path.normpath(os.path.join(ws_dir, req_path))
+                        if full in read_paths:
+                            continue
+                        if os.path.isfile(full) and full.endswith(".py"):
+                            try:
+                                with open(full, "r", encoding="utf-8") as f:
+                                    fcontent = f.read()
+                                rel = os.path.relpath(full, ws_dir).replace("\\", "/")
+                                context += f"\n\n# === {rel} (requested by LLM) ===\n{fcontent}\n"
+                                read_paths.add(full)
+                                new_files.append(rel)
+                            except Exception:
+                                pass
+                        else:
+                            print(f"    [READ] not found: {req_path}")
+                    if new_files:
+                        print(f"    Read: {', '.join(new_files)}")
+                        continue  # re-query with more context
                     else:
-                        try:
-                            with open(fp, "r", encoding="utf-8") as sf:
-                                sigs = extract_signatures(sf.read())
-                            if sigs:
-                                sig_map[rel] = ", ".join(f"{n}" for n in sorted(sigs.keys())[:8])
-                        except Exception:
-                            pass
+                        print(f"    [READ] no new files found, stopping iteration")
+                        break
 
-            all_source += f"\n\n## Other project files (signatures only, {len(sig_map)} total)\n\n"
-            for rel, sigs in sorted(sig_map.items()):
-                all_source += f"  {rel}: {sigs}\n"
+                # No [READ:] — check for [FILE:] or show raw response
+                break
 
-            print(f"  Collected {len(py_files)} Python files ({len(all_source)} bytes)")
-
-            msgs = [
-                {"role": "system", "content": "You are an expert Python debugger. Analyze the codebase below. Fix ALL files needed. Keep code concise. NEVER create duplicate functions or classes (_v1, _v2, _clean, _final variants). One implementation per concept.\n\nOutput each fixed file as:\n[FILE: absolute/path/to/file.py]\n```python\n# complete fixed code\n```"},
-                {"role": "user", "content": f"The user reports this issue:\n\n{desc_text}\n\nFull project codebase:\n\n{all_source}\n\nAnalyze the issue, find the root cause, and fix ALL affected files. Output each fixed file with its full path."}
-            ]
-
-            print("Sending to LLM for deep analysis...")
-            response = await agent.llm.chat(msgs)
-
-            if response.startswith("[Error") or response.startswith("[LM Studio"):
-                self.error(f"LLM error: {response[:200]}")
+            if not response:
                 return True
 
-            file_pattern = r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```'
-            fixes = re.findall(file_pattern, response, re.DOTALL)
-
+            # Display response if it's informational (no file fixes)
+            fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', response, re.DOTALL)
             if not fixes:
-                self.error("Could not parse fixes.")
-                print(response[:1000])
+                print(response)
                 return True
 
+            # Apply fixes
             fixed_count = 0
             for fpath, new_code in fixes:
                 fpath = fpath.strip()
                 new_code = new_code.strip()
-                if not os.path.exists(fpath):
+                full = os.path.normpath(os.path.join(ws_dir, fpath))
+                if not os.path.exists(full):
                     print(f"  Skipping {fpath} (not found)")
                     continue
                 if len(new_code) < 50 or "import" not in new_code:
                     print(f"  Skipping {fpath} (invalid content)")
                     continue
-
-                if _is_stdlib_path(fpath):
+                if _is_stdlib_path(full):
                     print(f"  Skipping {fpath} (stdlib — cannot modify)")
                     continue
 
-                with open(fpath, "w", encoding="utf-8") as f:
+                with open(full, "w", encoding="utf-8") as f:
                     f.write(new_code)
                 fixed_count += 1
                 print(f"  Fixed: {fpath} ({len(new_code)} bytes)")
@@ -255,6 +368,40 @@ class FixCommand(Command):
             print(f"\nFixed {fixed_count}/{len(fixes)} files.")
             return True
 
+        else:
+            return await self._fix_traceback(parts, agent)
+
+    def _apply_fix_response(self, response: str, ws_dir: str, desc_text: str) -> None:
+        """Parse [FILE:] blocks from *response* and apply them to disk."""
+        if response.startswith("[Error") or response.startswith("[LM Studio"):
+            print(f"LLM error: {response[:200]}")
+            return
+        fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', response, re.DOTALL)
+        if not fixes:
+            print("Could not parse fixes.")
+            print(response[:1000])
+            return
+        fixed_count = 0
+        for fpath, new_code in fixes:
+            fpath = fpath.strip()
+            new_code = new_code.strip()
+            full = os.path.normpath(os.path.join(ws_dir, fpath)) if not os.path.isabs(fpath) else fpath
+            if not os.path.exists(full):
+                print(f"  Skipping {fpath} (not found)")
+                continue
+            if len(new_code) < 50 or "import" not in new_code:
+                print(f"  Skipping {fpath} (invalid content)")
+                continue
+            if _is_stdlib_path(full):
+                print(f"  Skipping {fpath} (stdlib — cannot modify)")
+                continue
+            with open(full, "w", encoding="utf-8") as f:
+                f.write(new_code)
+            fixed_count += 1
+            print(f"  Fixed: {fpath} ({len(new_code)} bytes)")
+        print(f"\nFixed {fixed_count}/{len(fixes)} files.")
+
+    async def _fix_traceback(self, parts: list[str], agent: 'Agent') -> bool:
         traceback_text = ""
         if parts:
             traceback_text = " ".join(parts)
