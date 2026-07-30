@@ -34,6 +34,7 @@ implement <taskplan> [opts]      Implement files from task plan
                                  --keep             Skip files that compile OK
                                  --fix              Retry compilation errors
                                  --retry            Re-generate only missing files
+                                 --review           Review new files for bugs + DRY violations
                                  --workspace <path> Target workspace
 fix <traceback>                  Paste traceback to auto-fix root cause
     <file> --desc "text"        On-demand analysis — only sends top-5 files by relevance

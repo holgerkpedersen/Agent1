@@ -194,13 +194,24 @@ Flags:
 | `--keep` | Skip files that already compile OK |
 | `--fix` | Retry compilation errors with the LLM |
 | `--retry` | Re-generate only files missing from disk (uses cached file list) |
-| `--workspace <path>` | Target a different workspace |
+| `--review` | After generation, review new files for bugs + DRY violations |
 | `--workspace <path>` | Target a different workspace |
 
 Example with supporting documents:
 
 ```
-> implement project_tasks.md project_analysis.md project_plan.md project_entities.md --workspace /c/Dev/MyProject --force
+> implement project_tasks.md project_analysis.md project_plan.md project_entities.md --workspace /c/Dev/MyProject --force --review
+```
+
+The `--review` flag performs a post-generation audit:
+
+```
+  [review] Reviewing 8 new file(s): fixcommand/...
+  [review] Duplicate functions across files:
+    parse_tool_calls() in: parser/__init__.py, parser/structured.py
+
+  Reviewing fixcommand/core/tools/definitions.py (1200 bytes)...
+  Invalid API schema: missing "type":"object" and "required" fields
 ```
 
 Safety: implement automatically refuses to write files that shadow stdlib modules (e.g., `types.py`, `config.py`) or conflict with existing packages. Bare filenames are auto-repaired into sub-packages (e.g., `types.py` → `agent_core/types.py`).
@@ -445,3 +456,4 @@ Unreferenced .py files (candidates for deletion):
 - **`--keep`** avoids overwriting files that already compile OK — safe for brownfield work.
 - **`--force`** regenerates everything — use for greenfield or when you want a clean slate.
 - **`--retry`** with implement re-generates only files missing from disk after a previous run.
+- **`--review`** with implement audits generated code for bugs, duplicates, and DRY violations.
