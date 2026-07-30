@@ -28,6 +28,7 @@ from agent_core.commands.implement_cmd import ImplementCommand
 from agent_core.commands.fix_cmd import FixCommand
 from agent_core.commands.workflow_cmd import WorkflowCommand
 from agent_core.commands.optimize_cmd import OptimizeCommand
+from agent_core.commands.perf_cmd import PerfCommand, PerfTracker
 from datetime import datetime
 from pathlib import Path
 import json
@@ -518,6 +519,7 @@ async def run_interactive():
     print("  workflow <target> [--from spec.md] [--stdin] [--brainstorm] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] — Full pipeline")
     print("  model [list|load|unload|reload|name] — Manage models via LM Studio API")
     print("  optimize <file|dir> [--apply] [--yes] [--stdin] — Find and apply optimizations")
+    print("  perf [--detail|--reset|--html] — Command performance dashboard")
     print("  clear              - Clear agent memory")
     print("  quit               - Exit")
     print("=" * 50)
@@ -541,6 +543,7 @@ async def run_interactive():
     registry.register(FixCommand())
     registry.register(WorkflowCommand())
     registry.register(OptimizeCommand())
+    registry.register(PerfCommand())
 
     while True:
         try:
@@ -563,8 +566,11 @@ async def run_interactive():
             command = parts[0].lower()
 
             # Try commands from registry
-            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize"]:
+            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf"]:
+                import time as _time
+                _start = _time.perf_counter()
                 result = await registry.execute(command, parts[1:], agent)
+                PerfTracker.record(command, _time.perf_counter() - _start, user_input)
                 continue
 
             else:
