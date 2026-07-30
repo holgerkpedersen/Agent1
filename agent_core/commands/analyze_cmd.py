@@ -59,13 +59,15 @@ class AnalyzeCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return 'analyze <file> [analysis.md] [--desc "question"] [--deep] — AI analysis via LM Studio'
+        return 'analyze <file> [--desc "q"] [--stdin] [--deep] — AI analysis via LM Studio'
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         parts = list(args)
 
         desc_text = None
         deep_mode = False
+        stdin_mode = "--stdin" in parts
+
         if "--desc" in parts:
             di = parts.index("--desc")
             if di + 1 < len(parts):
@@ -77,8 +79,32 @@ class AnalyzeCommand(Command):
             deep_mode = True
             parts = [p for p in parts if p != "--deep"]
 
+        if stdin_mode:
+            parts = [p for p in parts if p != "--stdin"]
+            print("Paste text to analyze, then press Enter on an empty line:")
+            lines = []
+            while True:
+                try:
+                    line = input()
+                    if not line.strip():
+                        break
+                    lines.append(line)
+                except EOFError:
+                    break
+            content = "\n".join(lines)
+            if not content.strip():
+                self.error("No text provided.")
+                return True
+            question = desc_text or "Analyze the text above thoroughly."
+            result = await agent.llm.chat([
+                {"role": "system", "content": "You are an expert analyst. Answer the question concisely based on the provided text."},
+                {"role": "user", "content": f"## Text:\n\n{content}\n\n## Question:\n{question}"},
+            ])
+            print(result)
+            return True
+
         if len(parts) < 1:
-            self.error('Usage: analyze <path> [analysis.md] [--desc "question"] [--deep]')
+            self.error('Usage: analyze <path> [--desc "q"] [--stdin] [--deep]')
             return True
 
         path = parts[0]

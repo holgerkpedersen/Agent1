@@ -506,7 +506,7 @@ async def run_interactive():
     print("  read <path>        - Read a file")
     print("  write <path> <content> - Write content to file")
     print("  search <query>     - Search for string in files")
-    print("  analyze <file> [analysis.md] [--desc \"question\"] [--deep] — AI analysis via LM Studio")
+    print("  analyze <file> [--desc \"q\"] [--stdin] [--deep] — AI analysis via LM Studio")
     print("  plan <analysis.md> <plan.md> - Generate coding plan from analysis")
     print("  entities <analysis.md> <plan.md> [entities.md] - Generate shared entities")
     print("  taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks")
