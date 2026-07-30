@@ -81,13 +81,18 @@ class AnalyzeCommand(Command):
 
         if stdin_mode:
             parts = [p for p in parts if p != "--stdin"]
-            print("Paste text to analyze, then press Enter on an empty line:")
+            print("Paste text to analyze, then press Enter twice (empty line twice) to finish:")
             lines = []
+            blanks = 0
             while True:
                 try:
                     line = input()
                     if not line.strip():
-                        break
+                        blanks += 1
+                        if blanks >= 2:
+                            break
+                    else:
+                        blanks = 0
                     lines.append(line)
                 except EOFError:
                     break
