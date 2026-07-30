@@ -270,18 +270,21 @@ class FixCommand(Command):
                     context += f"  {rel}  [{names}]\n"
 
             context += f"\n## Other project files ({len(sig_map)} total — signatures only)\n"
-            for rel, names in sorted(sig_map.items())[:30]:
+            for rel, names in sorted(sig_map.items())[:20]:
                 context += f"  {rel}: {names}\n"
-            if len(sig_map) > 30:
-                context += f"  ... and {len(sig_map) - 30} more files.\n"
+            if len(sig_map) > 20:
+                context += f"  ... and {len(sig_map) - 20} more files.\n"
 
             print(f"  On-demand: {len(top_files)} full files + {len(rest_files)} candidate sigs + {len(sig_map)} other sigs ({len(context)} bytes)")
 
             read_paths: set[str] = {fp for fp, _, _ in top_files}
-            system = ("You are an expert Python debugger. Analyze the issue and fix the root cause.\n\n"
-                      "If you need to see additional files, write [READ: relative/path.py].\n"
-                      "When ready to provide fixes, write [FILE: relative/path.py]```python\n# fixed code\n```.\n"
-                      "One fix per [FILE:] block. No duplicate functions, no _v1/_v2 variants.")
+            system = ("You are an expert Python debugger.\n\n"
+                      "FORMAT:\n"
+                      "  To view a file:  [READ: agent_core/commands/fix_cmd.py]\n"
+                      "  To submit a fix: [FILE: agent_core/commands/fix_cmd.py]\n"
+                      "    ```python\n    # complete corrected code here\n    ```\n\n"
+                      "Use REAL paths from the context above. Do NOT write placeholder filenames.\n"
+                      "If you cannot determine the exact file, explain without [READ:] or [FILE:] tags.")
 
             response = ""
             for round_num in range(1, 4):
@@ -298,10 +301,16 @@ class FixCommand(Command):
                     self.error(f"LLM error: {response[:200]}")
                     return True
 
-                # Check for [READ:] directives
-                read_requests = re.findall(r'\[READ:\s*([^\]]+)\]', response)
+                # Check for [READ:] directives — only accept real-looking file paths
+                raw_reads = re.findall(r'\[READ:\s*([^\]]+)\]', response)
+                read_requests = [
+                    r.strip() for r in raw_reads
+                    if ".py" in r and "\\" not in r and "$" not in r
+                    and "^" not in r and "(" not in r and not r.startswith("\\")
+                ]
                 if read_requests:
                     new_files = []
+                    bad_reads = []
                     for req_path in read_requests:
                         req_path = req_path.strip()
                         full = os.path.normpath(os.path.join(ws_dir, req_path))
@@ -318,12 +327,14 @@ class FixCommand(Command):
                             except Exception:
                                 pass
                         else:
-                            print(f"    [READ] not found: {req_path}")
+                            bad_reads.append(req_path)
                     if new_files:
                         print(f"    Read: {', '.join(new_files)}")
-                        continue  # re-query with more context
+                        continue
+                    elif bad_reads:
+                        print(f"    [READ] could not resolve: {', '.join(bad_reads[:3])} — stopping")
+                        break
                     else:
-                        print(f"    [READ] no new files found, stopping iteration")
                         break
 
                 # No [READ:] — check for [FILE:] or show raw response
@@ -334,16 +345,22 @@ class FixCommand(Command):
 
             # Display response if it's informational (no file fixes)
             fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', response, re.DOTALL)
-            if not fixes:
+            valid_fixes = []
+            for fpath, new_code in fixes:
+                full = os.path.normpath(os.path.join(ws_dir, fpath.strip()))
+                if os.path.exists(full):
+                    valid_fixes.append((full, new_code.strip()))
+
+            if not valid_fixes:
+                if fixes:
+                    print(f"  (ignored {len(fixes)} [FILE:] blocks — no matching files on disk)")
                 print(response)
                 return True
 
             # Apply fixes
             fixed_count = 0
-            for fpath, new_code in fixes:
-                fpath = fpath.strip()
-                new_code = new_code.strip()
-                full = os.path.normpath(os.path.join(ws_dir, fpath))
+            for full, new_code in valid_fixes:
+                fpath = os.path.relpath(full, ws_dir).replace("\\", "/")
                 if not os.path.exists(full):
                     print(f"  Skipping {fpath} (not found)")
                     continue
@@ -387,7 +404,6 @@ class FixCommand(Command):
             new_code = new_code.strip()
             full = os.path.normpath(os.path.join(ws_dir, fpath)) if not os.path.isabs(fpath) else fpath
             if not os.path.exists(full):
-                print(f"  Skipping {fpath} (not found)")
                 continue
             if len(new_code) < 50 or "import" not in new_code:
                 print(f"  Skipping {fpath} (invalid content)")
