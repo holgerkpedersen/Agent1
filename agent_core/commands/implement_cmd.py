@@ -950,15 +950,60 @@ class ImplementCommand(Command):
             print(f"{'='*50}")
 
             py_new = sorted(f for f in new_files if f.endswith(".py"))
-            for fname in py_new[:8]:  # limit to 8 files to keep context manageable
+            all_content: dict[str, str] = {}
+            for fname in py_new:
                 fpath = Path(ws) / fname
-                if not fpath.exists() or fpath.stat().st_size == 0:
-                    continue
-                try:
-                    content = fpath.read_text(encoding="utf-8")
-                except Exception:
-                    continue
+                if fpath.exists() and fpath.stat().st_size > 0:
+                    try:
+                        all_content[fname] = fpath.read_text(encoding="utf-8")
+                    except Exception:
+                        pass
 
+            # ---- Static cross-file analysis ----
+            func_locations: dict[str, list[str]] = {}
+            class_locations: dict[str, list[str]] = {}
+            for fname, content in all_content.items():
+                for m in re.finditer(r'^\s*def\s+(\w+)', content, re.MULTILINE):
+                    func_locations.setdefault(m.group(1), []).append(fname)
+                for m in re.finditer(r'^\s*class\s+(\w+)', content, re.MULTILINE):
+                    class_locations.setdefault(m.group(1), []).append(fname)
+
+            dup_funcs = {n: fs for n, fs in func_locations.items() if len(fs) > 1}
+            dup_classes = {n: fs for n, fs in class_locations.items() if len(fs) > 1}
+            near_dupes: list[tuple[str, str]] = []
+            filenames_list = list(all_content.items())
+            for i in range(len(filenames_list)):
+                for j in range(i + 1, len(filenames_list)):
+                    fa, ca = filenames_list[i]
+                    fb, cb = filenames_list[j]
+                    if ca == cb and len(ca) > 100:
+                        near_dupes.append((fa, fb))
+
+            issues_found = []
+            if dup_funcs:
+                print(f"\n  [review] Duplicate functions across files:")
+                for name, files in sorted(dup_funcs.items()):
+                    print(f"    {name}() in: {', '.join(files)}")
+                    issues_found.append(f"Duplicate function `{name}()` defined in {len(files)} files: {', '.join(files)}")
+            if dup_classes:
+                print(f"\n  [review] Duplicate classes across files:")
+                for name, files in sorted(dup_classes.items()):
+                    print(f"    {name} in: {', '.join(files)}")
+                    issues_found.append(f"Duplicate class `{name}` defined in {len(files)} files: {', '.join(files)}")
+            if near_dupes:
+                print(f"\n  [review] Near-identical files:")
+                for fa, fb in near_dupes:
+                    print(f"    {fa} ≈ {fb} ({len(all_content[fa])} bytes each)")
+                    issues_found.append(f"Nearly identical files: {fa} and {fb} — consider merging")
+
+            static_summary = ""
+            if issues_found:
+                static_summary = "\n".join(f"- {i}" for i in issues_found)
+                static_summary = f"## Static analysis found {len(issues_found)} issue(s):\n\n{static_summary}\n\n"
+
+            # ---- Per-file LLM review ----
+            for fname in list(all_content.keys())[:8]:
+                content = all_content[fname]
                 print(f"\n  Reviewing {fname} ({len(content)} bytes)...")
                 review_msg = [
                     {"role": "system", "content": (
@@ -969,16 +1014,16 @@ class ImplementCommand(Command):
                         "4. Off-by-one errors (e.g. 0-index vs 1-index line numbers)\n"
                         "5. Empty except blocks or silent error swallowing\n"
                         "6. Unused imports, missing imports, or type mismatches\n"
-                        "7. Circular imports within the new files\n\n"
+                        "7. Duplicated code — functions/classes redefined across files instead of imported\n"
+                        "8. DRY violations — repeated logic that should be extracted into a shared utility\n\n"
                         "Be concise. List only actual bugs. Skip style concerns."
                     )},
-                    {"role": "user", "content": f"Review this file for bugs:\n\n```python\n{content}\n```"},
+                    {"role": "user", "content": f"{static_summary}Review this file for bugs:\n\n```python\n{content}\n```"},
                 ]
                 review = await agent.llm.chat(review_msg)
                 if review.startswith("[Error") or review.startswith("[LM Studio"):
                     continue
-                # Only show results that actually report issues
-                if any(kw in review.lower() for kw in ("bug", "issue", "error", "broken", "missing", "invalid", "fix", "should", "incorrect", "fails")):
+                if any(kw in review.lower() for kw in ("bug", "issue", "error", "broken", "missing", "invalid", "fix", "should", "incorrect", "fails", "dup", "duplicate", "dry", "repeat", "same as")):
                     print(f"  {review}")
                 else:
                     print(f"  No bugs found.")
