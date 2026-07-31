@@ -577,7 +577,23 @@ async def run_interactive():
                 tool_action, args = agent._parse_natural_language(user_input)
                 
                 if tool_action == "unknown":
-                    # Use LM Studio for general conversation with history
+                    # Inject project context on first NLP message
+                    if not agent._chat_history:
+                        agent._chat_history.append({
+                            "role": "system",
+                            "content": (
+                                "You are an assistant embedded in the Agent1 AI coding tool "
+                                "(repo: github.com/holgerkpedersen/Agent1).\n"
+                                "The user interacts with you through a REPL that has these commands:\n"
+                                "- workflow, implement, fix, analyze, optimize — LLM-assisted code generation/repair\n"
+                                "- model, clear, cleanup, perf, read, write, search, plan, entities, taskplan — utilities\n"
+                                "- Any text not matching a command is sent to you as natural language.\n"
+                                "Answer questions about the Agent1 tool itself based on this context. "
+                                "The user's current question is about the Agent1 REPL, not a generic terminal.\n"
+                                "Be concise."
+                            ),
+                        })
+
                     agent._chat_history.append({"role": "user", "content": user_input})
                     result = await agent.llm.chat(agent._chat_history[-20:])  # keep last 20
                     agent._chat_history.append({"role": "assistant", "content": result})
