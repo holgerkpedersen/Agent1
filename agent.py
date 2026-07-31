@@ -109,6 +109,7 @@ class Agent:
         self._knowledge_graph: dict = {}
         self._working_memory: list = []
         self._history: list = []
+        self._chat_history: list[dict] = []  # NLP conversation context
 
         # Initialize LLM client for AI analysis (LM Studio)
         self.llm = LLMClient(model_name=self.model_name)
@@ -578,8 +579,10 @@ async def run_interactive():
                 tool_action, args = agent._parse_natural_language(user_input)
                 
                 if tool_action == "unknown":
-                    # Use LM Studio for general conversation
-                    result = await agent.llm.chat([{"role": "user", "content": user_input}])
+                    # Use LM Studio for general conversation with history
+                    agent._chat_history.append({"role": "user", "content": user_input})
+                    result = await agent.llm.chat(agent._chat_history[-20:])  # keep last 20
+                    agent._chat_history.append({"role": "assistant", "content": result})
                     print(result)
                 else:
                     result = await agent.execute_tool(tool_action, args)
