@@ -47,6 +47,8 @@ class LLMClient:
         self._model_name = resolve_model(model_name)
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self._provider = LMStudioProvider(model_name=self._model_name, api_key=self.api_key)
+        self._profile_name: str | None = None
+        self._profile = None  # ProfileMetadata or None
     
     @property
     def model_name(self) -> str:

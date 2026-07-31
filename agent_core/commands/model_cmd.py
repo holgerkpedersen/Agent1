@@ -6,6 +6,7 @@ import difflib
 from .base import Command
 from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, persist_model_choice
 from agent_core.llm import lmstudio as _lms
+from agent_core.llm import model_profiles as _profiles
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ class ModelCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "model [list|load|unload|reload|name] — Manage LLM models"
+        return "model [list|load|unload|reload|profile|name] — Manage LLM models"
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         sub = args[0].strip().lower() if args else ""
@@ -48,6 +49,10 @@ class ModelCommand(Command):
 
         if sub == "load":
             await self._load_model(rest, agent)
+            return True
+
+        if sub == "profile":
+            await self._handle_profile(rest, agent)
             return True
 
         if sub == "unload":
@@ -299,6 +304,83 @@ class ModelCommand(Command):
             print(f"  Switched to: {resolved}")
         else:
             print(f"  Error: {msg}")
+
+    async def _handle_profile(self, rest: list[str], agent: "Agent") -> None:
+        """model profile [list|save|delete|name] — manage model profiles."""
+        sub = rest[0].strip().lower() if rest else "list"
+        args = rest[1:] if len(rest) > 1 else []
+
+        if sub == "list":
+            profiles = _profiles.list_profiles()
+            if not profiles:
+                print("  No profiles.")
+                return
+            current_profile = getattr(agent.llm, "_profile_name", None)
+            print(f"\n  Profiles ({len(profiles)}):")
+            for p in sorted(profiles, key=lambda x: x.name):
+                marker = " *" if p.name == current_profile else "  "
+                print(f" {marker} {p.name:<20} temp={p.temperature}  max_tok={p.max_tokens}  {p.description}")
+            print()
+            return
+
+        if sub == "save":
+            name = args[0].strip().lower() if args else ""
+            if not name:
+                print("  Usage: model profile save <name> [--temp 0.3] [--max-tokens 8000] [--desc \"text\"]")
+                return
+            model = agent.llm.model_name
+            temp = 0.7
+            max_tok = 50000
+            desc = ""
+            for i, a in enumerate(args):
+                if a == "--temp" and i + 1 < len(args):
+                    temp = float(args[i + 1])
+                if a == "--max-tokens" and i + 1 < len(args):
+                    max_tok = int(args[i + 1])
+                if a == "--desc" and i + 1 < len(args):
+                    desc = args[i + 1]
+            profile = _profiles.ProfileMetadata(
+                name=name, description=desc, model=model,
+                temperature=temp, max_tokens=max_tok,
+            )
+            _profiles.save_profile(profile)
+            print(f"  Saved: {name} (model={model}, temp={temp}, max_tok={max_tok})")
+            return
+
+        if sub == "delete":
+            name = args[0].strip().lower() if args else ""
+            if not name:
+                print("  Usage: model profile delete <name>")
+                return
+            if _profiles.delete_profile(name):
+                print(f"  Deleted: {name}")
+            else:
+                print(f"  Cannot delete built-in profile: {name}")
+            return
+
+        if sub == "use":
+            name = args[0].strip().lower() if args else ""
+            if not name:
+                print("  Usage: model profile use <name>")
+                return
+            try:
+                profile = _profiles.get_profile(name)
+            except KeyError:
+                print(f"  No profile: {name}")
+                return
+            agent.llm._profile_name = name
+            agent.llm._profile = profile
+            agent.llm._provider._profile = profile  # propagate to provider
+            print(f"  Profile active: {name} ({profile.description})")
+            return
+
+        # Default: show specific profile
+        try:
+            profile = _profiles.get_profile(sub)
+            print(f"  {profile.name}: {profile.description}")
+            print(f"    model={profile.model or '(any)'}  temp={profile.temperature}  max_tok={profile.max_tokens}")
+        except KeyError:
+            print(f"  No profile: {sub}")
 
     async def _unload_model(self, rest: list[str], agent: "Agent") -> None:
         """Unload a model from LM Studio."""
