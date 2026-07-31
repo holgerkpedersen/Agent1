@@ -132,6 +132,8 @@ class ModelCommand(Command):
             print(f"\n  ⚠ {current} not loaded, switching to {loaded_keys[0]}")
             agent.llm.model_name = loaded_keys[0]
             persist_model_choice(loaded_keys[0])
+        elif not loaded_keys and current:
+            print(f"\n  ⚠ No models loaded in LM Studio. Agent is set to: {current}")
 
     def _list_known_only(self, agent: "Agent") -> None:
         """Fallback: show the hardcoded KNOWN_MODELS."""

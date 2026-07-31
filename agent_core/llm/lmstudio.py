@@ -50,8 +50,10 @@ def _http_post_json(url: str, body: dict, timeout: int = 30) -> dict | None:
         resp = httpx.post(url, json=body, timeout=timeout)
         return resp.json()
     except (httpx.ConnectError, httpx.ConnectTimeout):
+        print(f"    LM Studio POST error: could not connect to {url}")
         return None
-    except Exception:
+    except Exception as e:
+        print(f"    LM Studio POST error at {url}: {e}")
         return None
 
 
