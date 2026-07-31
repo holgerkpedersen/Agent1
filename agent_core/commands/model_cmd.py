@@ -2,8 +2,6 @@
 
 import os
 import difflib
-import subprocess
-import sys
 
 from .base import Command
 from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, persist_model_choice
@@ -12,45 +10,6 @@ from agent_core.llm import lmstudio as _lms
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent import Agent
-
-
-def _get_vram_capacity() -> int:
-    """Return total GPU VRAM in bytes, or 0 if undetectable.
-
-    Checks ``VRAM_GB`` env var first, then platform-specific GPU queries.
-    """
-    env_gb = os.environ.get("VRAM_GB")
-    if env_gb:
-        try:
-            return int(float(env_gb) * (1024 ** 3))
-        except ValueError:
-            pass
-
-    try:
-        if sys.platform == "win32":
-            r = subprocess.run(
-                ["wmic", "path", "win32_VideoController", "get", "AdapterRAM"],
-                capture_output=True, text=True, timeout=5,
-            )
-            for line in r.stdout.splitlines():
-                val = line.strip()
-                if val.isdigit():
-                    return int(val)
-
-        elif sys.platform == "linux":
-            r = subprocess.run(
-                ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=5,
-            )
-            for line in r.stdout.splitlines():
-                try:
-                    return int(float(line.strip()) * 1024 * 1024)
-                except ValueError:
-                    pass
-    except Exception:
-        pass
-
-    return 0
 
 
 def _format_size(bytes_val: int) -> str:
@@ -293,26 +252,13 @@ class ModelCommand(Command):
         """Try to load *model_key*.  If it fails with a space/memory error,
         unload current models and retry once.
         """
-        # Pre-check: if we know GPU VRAM and it won't fit, unload first
-        capacity = _get_vram_capacity()
-        if capacity > 0:
-            models, _ = self._fetch_models()
-            loaded = [m for m in models if m["loaded"] and m["key"] != model_key]
-            loaded_total = sum(m["size_bytes"] for m in loaded)
-            new_size = next((m["size_bytes"] for m in models if m["key"] == model_key), 0)
-            if new_size > 0 and new_size + loaded_total > capacity * 0.9:
-                if loaded:
-                    print(f"    VRAM: {_format_size(loaded_total)} used + {_format_size(new_size)} needed > {_format_size(capacity)}")
-                    self._unload_current_if_needed(models, model_key)
-                    return _lms.load_model(model_key)
-
         ok, msg = _lms.load_model(model_key)
         if ok:
             return True, msg
 
         if any(kw in msg.lower() for kw in ("space", "memory", "vram", "failed to load", "allocation")):
             models, _ = self._fetch_models()
-            loaded = [m for m in models if m["loaded"]]
+            loaded = [m for m in models if m["loaded"] and m["key"] != model_key]
             if loaded:
                 print(f"    Not enough VRAM — unloading {len(loaded)} model(s) first")
                 self._unload_current_if_needed(models, model_key)
