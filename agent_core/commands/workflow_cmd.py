@@ -187,7 +187,7 @@ class WorkflowCommand(Command):
                 with open(entities_md, "r", encoding="utf-8") as f:
                     entities = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text. No code blocks.\n\nCRITICAL RULE: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/`. Good: `agent1/logger.py`, `agent_core/file_context.py`, `src/agent1/new.py`. BAD: `logger.py`, `src/config.py` (bare src/ without subpackage). Never emit bare filenames at workspace root — they will be REJECTED."},
+                    {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text. No code blocks.\n\nPATH RULES:\n- [NEW] files: MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. Good: `agent1/logger.py`, `agent_core/file_context.py`, `src/agent1/new.py`.\n- [MODIFY] existing files: use the file's actual path (e.g. `agent.py` at root, `agent_core/commands/fix_cmd.py`).\n- BAD: `logger.py` as [NEW], `src/config.py` (bare src/ without subpackage)."},
                     {"role": "user", "content": f"Create task plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}"}
                 ])
                 if not step_ok(r):
