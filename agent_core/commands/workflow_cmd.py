@@ -11,47 +11,55 @@ if TYPE_CHECKING:
     from agent import Agent
 
 
-def _collect_existing_names(workspace: str) -> dict[str, list[str]]:
-    """Scan workspace for class/function names grouped by directory.
+def _collect_existing_names(workspace: str) -> tuple[dict[str, list[str]], list[str]]:
+    """Scan workspace for class/function names + filenames grouped by directory.
 
-    Returns ``{directory: [name, ...]}`` so prompts can warn about collisions.
+    Returns ``(names_by_dir, existing_filenames)``.
     """
     taken: dict[str, list[str]] = {}
+    filenames: list[str] = []
     if not os.path.isdir(workspace):
-        return taken
+        return taken, filenames
     for root, dirs, files in os.walk(workspace):
         dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
         for f in files:
             if not f.endswith(".py"):
                 continue
             fp = os.path.join(root, f)
+            rel = os.path.relpath(fp, workspace).replace("\\", "/")
+            filenames.append(rel)
             try:
                 with open(fp, "r", encoding="utf-8") as fh:
                     src = fh.read()
             except Exception:
                 continue
-            names = set()
-            for m in re.finditer(r'^(?:class|def)\s+(\w+)', src, re.MULTILINE):
-                if not m.group(1).startswith("__"):
-                    names.add(m.group(1))
+            names = {m.group(1) for m in re.finditer(r'^(?:class|def)\s+(\w+)', src, re.MULTILINE)
+                     if not m.group(1).startswith("__")}
             if names:
                 rel_dir = os.path.relpath(root, workspace).replace("\\", "/").rstrip(".")
                 taken.setdefault(rel_dir, []).extend(sorted(names)[:20])
-    return taken
+    return taken, filenames
 
 
-def _collision_warning(taken: dict[str, list[str]], max_dirs: int = 4) -> str:
-    """Build a brief collision warning string for LLM prompts."""
-    if not taken:
-        return ""
-    lines = ["",
-             "CRITICAL: These class and function names already exist in the project.",
-             "DO NOT create new files that define these same names in the same directory:",
-    ]
-    for d, names in sorted(taken.items())[:max_dirs]:
-        lines.append(f"  {d or 'root'}: {', '.join(names[:12])}")
-    lines.append("If you need to add functionality to these, modify the existing file.")
-    return "\n\n".join(lines)
+def _collision_warning(taken: dict[str, list[str]], filenames: list[str]) -> str:
+    """Build a collision warning string for LLM prompts."""
+    parts = []
+    if taken:
+        parts.append("CRITICAL: DO NOT create new files defining these class/function names.\n"
+                      "They already exist — modify the existing file instead:")
+        for d, names in sorted(taken.items())[:4]:
+            parts.append(f"  {d or 'root'}: {', '.join(names[:12])}")
+    if filenames:
+        # Flag similar filenames per directory
+        by_dir: dict[str, list[str]] = {}
+        for f in filenames:
+            d = os.path.dirname(f).replace("\\", "/")
+            by_dir.setdefault(d or "root", []).append(os.path.basename(f))
+        parts.append("CRITICAL: Avoid filenames too similar to existing ones in the same directory:")
+        for d, names in sorted(by_dir.items())[:4]:
+            parts.append(f"  {d}: {', '.join(sorted(names)[:12])}")
+        parts.append("Example: don't create retry_policy.py if retry.py already exists.")
+    return "\n\n".join(parts) if parts else ""
 
 
 class WorkflowCommand(Command):
@@ -151,8 +159,8 @@ class WorkflowCommand(Command):
         print(f"Workspace: {ws_path}")
 
         # Pre-scan existing names to warn about collisions
-        taken_names = _collect_existing_names(str(ws_path))
-        collision_warning = _collision_warning(taken_names) if taken_names else ""
+        taken_names, existing_filenames = _collect_existing_names(str(ws_path))
+        collision_warning = _collision_warning(taken_names, existing_filenames) if taken_names or existing_filenames else ""
 
         analysis_md = str(ws_path / "project_analysis.md")
         plan_md = str(ws_path / "project_plan.md")
