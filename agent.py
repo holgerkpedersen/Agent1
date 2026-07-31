@@ -629,13 +629,13 @@ async def run_interactive():
                                 "- workflow, implement, fix, analyze, optimize — LLM-assisted code generation/repair\n"
                                 "- model, clear, cleanup, perf, read, write, search, plan, entities, taskplan — utilities\n"
                                 "- Any text not matching a command is sent to you as natural language.\n\n"
-                                "You can use tools to read files and search the project. Format:\n"
-                                "<tool_call>search <query></tool_call>\n"
-                                "<tool_call>read <filepath></tool_call>\n"
-                                "<tool_call>list_files [directory]</tool_call>\n\n"
-                                "Use tools when you need to see actual code or find files. "
-                                "After getting tool results, continue your answer.\n"
-                                "Keep tool calls on their own line. Only use one per response.\n"
+                                "To use a tool, write it on its OWN SEPARATE LINE wrapped in tags:\n"
+                                "\n<tool_call>search <query></tool_call>\n"
+                                "\n<tool_call>read <filepath></tool_call>\n"
+                                "\n<tool_call>list_files [directory]</tool_call>\n"
+                                "\nNOTHING else on that line. Not part of a sentence. "
+                                "The result will be fed back to you automatically.\n"
+                                "Use tools when you need to see actual code.\n"
                                 "Be concise."
                             ),
                         })
@@ -646,18 +646,35 @@ async def run_interactive():
                     for _ in range(5):
                         result = await agent.llm.chat(agent._chat_history[-20:])
 
-                        # Parse tool calls from response
+                        # Parse tool calls from response — tagged or bare
+                        tool_text: str | None = None
                         tool_match = re.search(r'<tool_call>(.+?)</tool_call>', result, re.DOTALL)
-                        if not tool_match:
+                        if tool_match:
+                            tool_text = tool_match.group(1).strip()
+                        else:
+                            # Fallback: any line that starts with a known tool command
+                            for line in result.strip().split('\n'):
+                                bare_cmd = re.match(r'^(search|read|list_files|list)\s+(.+)', line.strip(), re.IGNORECASE)
+                                if bare_cmd:
+                                    tool_text = line.strip()
+                                    break
+                            # Also check if the LLM appended a tool command after a period
+                            if not tool_text:
+                                for sentence in re.split(r'[.!?]\s+', result):
+                                    s = sentence.strip()
+                                    if re.match(r'^(search|read|list_files|list)\s+', s, re.IGNORECASE):
+                                        tool_text = s
+                                        break
+
+                        if not tool_text:
                             # No tool call — display and store
                             agent._chat_history.append({"role": "assistant", "content": result})
-                            # Strip any remaining XML artifacts
                             clean = re.sub(r'</?tool_call>', '', result)
                             clean = re.sub(r'</?function_call>', '', clean)
                             print(clean)
                             break
 
-                        tool_text = tool_match.group(1).strip()
+                        tool_text = re.sub(r'</?tool_call>', '', tool_text).strip()
                         tool_result = agent._execute_nlp_tool(tool_text)
                         print(f"  [tool] {tool_text[:80]} -> {len(tool_result)} bytes")
 
