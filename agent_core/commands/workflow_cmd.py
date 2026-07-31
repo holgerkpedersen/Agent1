@@ -1,6 +1,5 @@
 """Workflow command for agent interactive mode."""
 import os
-import tempfile
 from pathlib import Path
 
 from .base import Command, read_stdin
@@ -41,20 +40,18 @@ class WorkflowCommand(Command):
             di = parts.index("--desc")
             if di + 1 < len(parts):
                 desc_text = parts[di + 1].strip('"')
-                tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
-                tmp.write(f"# Project Specification\n\n{desc_text}")
-                tmp.close()
-                spec_file = tmp.name
+                spec_file = str(ws_path / "project_spec.md")
+                with open(spec_file, "w", encoding="utf-8") as f:
+                    f.write(f"# Project Specification\n\n{desc_text}")
                 greenfield = True
                 print(f"\n[desc] {desc_text[:120]}...")
         elif "--stdin" in parts:
             text = read_stdin("Paste spec or description. Type --- on its own line when done:")
             parts = [p for p in parts if p != "--stdin"]
             if text.strip():
-                tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
-                tmp.write(f"# Project Specification\n\n{text}")
-                tmp.close()
-                spec_file = tmp.name
+                spec_file = str(ws_path / "project_spec.md")
+                with open(spec_file, "w", encoding="utf-8") as f:
+                    f.write(f"# Project Specification\n\n{text}")
                 greenfield = True
                 print(f"\n[stdin] {len(text)} chars")
         elif "--from" in parts:
@@ -73,10 +70,9 @@ class WorkflowCommand(Command):
             if feat_val is not None and os.path.isfile(feat_val):
                 features_file = feat_val
             elif feat_val is not None:
-                tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
-                tmp.write(f"# Feature Requirements\n\n{feat_val}")
-                tmp.close()
-                features_file = tmp.name
+                features_file = str(ws_path / "project_features.md")
+                with open(features_file, "w", encoding="utf-8") as f:
+                    f.write(f"# Feature Requirements\n\n{feat_val}")
                 print(f"\n[features] {feat_val}")
 
         filtered = [p for p in parts if not p.startswith("--") and p not in [spec_file, features_file]]
