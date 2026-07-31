@@ -47,7 +47,7 @@ def _collision_warning(taken: dict[str, list[str]], filenames: list[str]) -> str
     if taken:
         parts.append("CRITICAL: DO NOT create new files defining these class/function names.\n"
                       "They already exist — modify the existing file instead:")
-        for d, names in sorted(taken.items())[:4]:
+        for d, names in sorted(taken.items())[:12]:
             parts.append(f"  {d or 'root'}: {', '.join(names[:12])}")
     if filenames:
         # Flag similar filenames per directory
@@ -56,7 +56,7 @@ def _collision_warning(taken: dict[str, list[str]], filenames: list[str]) -> str
             d = os.path.dirname(f).replace("\\", "/")
             by_dir.setdefault(d or "root", []).append(os.path.basename(f))
         parts.append("CRITICAL: Avoid filenames too similar to existing ones in the same directory:")
-        for d, names in sorted(by_dir.items())[:4]:
+        for d, names in sorted(by_dir.items())[:12]:
             parts.append(f"  {d}: {', '.join(sorted(names)[:12])}")
         parts.append("Example: don't create retry_policy.py if retry.py already exists.")
     return "\n\n".join(parts) if parts else ""

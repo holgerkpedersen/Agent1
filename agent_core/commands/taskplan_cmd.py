@@ -33,7 +33,7 @@ def _collision_scan(workspace: str) -> str:
              "CRITICAL: These class and function names already exist in the project.",
              "DO NOT create new files that define these same names in the same directory:",
     ]
-    for d, names in sorted(taken.items())[:4]:
+    for d, names in sorted(taken.items())[:12]:
         lines.append(f"  {d or 'root'}: {', '.join(names[:12])}")
     lines.append("If you need to add functionality to these, modify the existing file.")
     return "\n\n".join(lines)
