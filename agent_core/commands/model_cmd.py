@@ -121,6 +121,13 @@ class ModelCommand(Command):
         print(f"\n  Current model: {current}  ({kinfo.get('desc', '')})")
         print(f"  {len(models)} models available from LM Studio API")
 
+        # Auto-sync: if agent's model isn't loaded in LM Studio, switch to what is
+        loaded_keys = [m["key"] for m in models if m["loaded"]]
+        if loaded_keys and current not in loaded_keys:
+            print(f"\n  ⚠ {current} not loaded, switching to {loaded_keys[0]}")
+            agent.llm.model_name = loaded_keys[0]
+            persist_model_choice(loaded_keys[0])
+
     def _list_known_only(self, agent: "Agent") -> None:
         """Fallback: show the hardcoded KNOWN_MODELS."""
         current = agent.llm.model_name

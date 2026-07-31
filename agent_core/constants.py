@@ -52,7 +52,7 @@ def resolve_model(explicit: str | None = None) -> str:
         from agent_core.llm.lmstudio import get_models_status
         models = get_models_status()
         loaded = [m["key"] for m in models if m["loaded"]]
-        if loaded and loaded[0] in KNOWN_MODELS:
+        if loaded:
             return loaded[0]
     except Exception:
         pass
