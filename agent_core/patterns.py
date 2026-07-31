@@ -368,6 +368,63 @@ def detect_unwired_modules(generated_files: list[str], project_root: str) -> lis
     return findings
 
 
+def detect_class_conflicts(generated_files: list[str], project_root: str) -> list[dict]:
+    """Flag generated class/function names that collide with existing production code
+    in the *same directory*.  Cross-package name reuse is intentional.
+    """
+    import os as _os
+    import ast
+
+    findings: list[dict] = []
+    skip = {"__init__", "__str__", "__repr__", "__eq__", "__hash__", "__call__",
+            "__enter__", "__exit__", "__getitem__", "__setitem__", "__iter__", "__len__",
+            "get", "set", "run", "main", "execute", "record", "start", "stop"}
+
+    existing: dict[str, tuple[str, str]] = {}  # name → (rel_path, dir)
+    for root, dirs, files in _os.walk(project_root):
+        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
+        for f in files:
+            if not f.endswith(".py"):
+                continue
+            fp = _os.path.join(root, f)
+            rel = _os.path.relpath(fp, project_root).replace("\\", "/")
+            if rel in generated_files:
+                continue
+            try:
+                with open(fp, "r", encoding="utf-8") as fh:
+                    tree = ast.parse(fh.read())
+                pkg_dir = _os.path.dirname(rel)
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name not in skip:
+                        existing[node.name] = (rel, pkg_dir)
+            except Exception:
+                pass
+
+    for fname in generated_files:
+        if not fname.endswith(".py"):
+            continue
+        try:
+            with open(_os.path.join(project_root, fname), "r", encoding="utf-8") as fh:
+                tree = ast.parse(fh.read())
+        except Exception:
+            continue
+        gen_dir = _os.path.dirname(fname)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.ClassDef, ast.FunctionDef)):
+                continue
+            if node.name in skip:
+                continue
+            if node.name in existing:
+                ex_rel, ex_dir = existing[node.name]
+                if ex_dir == gen_dir:
+                    findings.append({
+                        "file": fname, "line": node.lineno, "pattern": "class_conflict",
+                        "suggestion": f"'{node.name}' already defined in {ex_rel} (same directory). Rename in {fname} to avoid import collision.",
+                    })
+
+    return findings
+
+
 DETECTORS = [
     detect_regex_in_loop,
     detect_string_concat_in_loop,

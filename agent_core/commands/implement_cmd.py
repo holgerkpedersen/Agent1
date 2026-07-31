@@ -765,6 +765,8 @@ class ImplementCommand(Command):
             print(f"\n  New files created: {len(new_files)}")
             for f in sorted(new_files):
                 print(f"    + {f}")
+            if not review_mode:
+                print(f"\n  Tip: run 'implement --review' to audit new files for bugs and wiring issues.")
         if removed_files:
             print(f"\n  Files no longer present: {len(removed_files)}")
             for f in sorted(removed_files):
@@ -1011,7 +1013,7 @@ class ImplementCommand(Command):
                     issues_found.append(f"Nearly identical files: {fa} and {fb} — consider merging")
 
             # ---- Cross-file attribute & wiring checks ----
-            from agent_core.patterns import detect_module_collisions, detect_attribute_errors, detect_unwired_modules
+            from agent_core.patterns import detect_module_collisions, detect_attribute_errors, detect_unwired_modules, detect_class_conflicts
 
             collisions = detect_module_collisions(py_new, existing_files=list(all_content.keys()))
             if collisions:
@@ -1033,6 +1035,13 @@ class ImplementCommand(Command):
                 for uw in unwired:
                     print(f"    {uw['file']}: {uw['suggestion']}")
                     issues_found.append(f"{uw['file']}: {uw['suggestion']}")
+
+            class_conflicts = detect_class_conflicts(py_new, ws)
+            if class_conflicts:
+                print(f"\n  [review] Class/function name conflicts with existing code:")
+                for cc in class_conflicts:
+                    print(f"    {cc['file']}:{cc['line']}: {cc['suggestion']}")
+                    issues_found.append(f"{cc['file']}: {cc['suggestion']}")
 
             static_summary = ""
             if issues_found:
