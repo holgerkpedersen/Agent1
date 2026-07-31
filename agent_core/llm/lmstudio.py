@@ -109,7 +109,7 @@ def load_model(model_key: str, parallel: int = 4) -> tuple[bool, str]:
     resp = _http_post_json(f"{base}/models/load", {
         "model": model_key,
         "eval_batch_size": parallel,
-    }, timeout=60)  # Load can take a while
+    }, timeout=120)  # Load can take a while
     if resp and resp.get("status") == "loaded":
         return True, f"loaded ({resp.get('load_time_seconds', '?')}s) — {resp.get('instance_id', model_key)}"
     if resp:
