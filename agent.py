@@ -48,7 +48,20 @@ class LLMClient:
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self._provider = LMStudioProvider(model_name=self._model_name, api_key=self.api_key)
         self._profile_name: str | None = None
-        self._profile = None  # ProfileMetadata or None
+        # Restore active profile from model.json on startup
+        try:
+            from agent_core.constants import load_model_json
+            data = load_model_json()
+            prof_name = data.get("profile")
+            if prof_name:
+                from agent_core.llm.model_profiles import get_profile
+                profile = get_profile(prof_name)
+                self._profile_name = prof_name
+                self._provider._profile_name = prof_name
+                self._provider.temperature = profile.temperature
+                self._provider.max_tokens = profile.max_tokens
+        except Exception:
+            pass
     
     @property
     def model_name(self) -> str:

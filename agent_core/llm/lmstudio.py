@@ -215,7 +215,9 @@ class LMStudioProvider:
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self.lmstudio_url = os.environ.get("LMSTUDIO_URL", "http://localhost:1234/v1")
         self.retry_policy = retry_policy or RetryPolicy(max_retries=3, base_delay=2.0)
-        self._profile = None  # ProfileMetadata or None, set by LLMClient
+        self.temperature: float = 0.7
+        self.max_tokens: int = 50000
+        self._profile_name: str | None = None
     
     def _build_payload(
         self, 
@@ -226,16 +228,11 @@ class LMStudioProvider:
     ) -> dict:
         """Build request payload for LM Studio API."""
         model_info = KNOWN_MODELS.get(self.model_name, {})
-        temp = 0.7
-        max_tok = override_max_tokens or model_info.get("max_tokens", 50000)
-        if self._profile is not None:
-            temp = self._profile.temperature
-            max_tok = self._profile.max_tokens
         payload = {
             "model": self.model_name,
             "messages": messages,
-            "temperature": temp,
-            "max_tokens": max_tok,
+            "temperature": self.temperature,
+            "max_tokens": override_max_tokens or self.max_tokens,
         }
         if tools:
             payload["tools"] = tools
@@ -243,9 +240,6 @@ class LMStudioProvider:
             payload["stream"] = True
         if model_info.get("thinking") is False:
             payload["thinking"] = {"type": "disabled"}
-        if self._profile is not None:
-            from agent_core.llm.model_profiles import apply_profile
-            payload = apply_profile(payload, self._profile)
         return payload
     
     def _make_request(self, payload: dict, timeout: int = 3600) -> dict:
@@ -281,8 +275,8 @@ class LMStudioProvider:
         """Send chat request to LLM via LM Studio with retry."""
         payload = self._build_payload(messages, tools, override_max_tokens=max_tokens)
         label = f"[model: {payload['model']}]"
-        if self._profile is not None:
-            label = f"[model: {payload['model']} | profile={self._profile.name} t={self._profile.temperature} tok={self._profile.max_tokens}]"
+        if self._profile_name:
+            label = f"[model: {payload['model']} | profile={self._profile_name} t={self.temperature} tok={self.max_tokens}]"
         print(f"  {label}", end="", flush=True)
         
         async def _do_request():

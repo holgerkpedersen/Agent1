@@ -123,7 +123,8 @@ class ModelCommand(Command):
             print(f" {prefix}{i:>3}. {name:<40} {params:<10} {size:<8}{marker_str}")
 
         kinfo = KNOWN_MODELS.get(current, {})
-        print(f"\n  Current model: {current}  ({kinfo.get('desc', '')})")
+        profile_info = f" | profile={agent.llm._provider._profile_name}" if agent.llm._provider._profile_name else ""
+        print(f"\n  Current model: {current}{profile_info}  ({kinfo.get('desc', '')})")
         print(f"  {len(models)} models available from LM Studio API")
 
         # Auto-sync: if agent's model isn't loaded in LM Studio, switch to what is
@@ -371,8 +372,15 @@ class ModelCommand(Command):
                 print(f"  No profile: {name}")
                 return
             agent.llm._profile_name = name
-            agent.llm._profile = profile
-            agent.llm._provider._profile = profile  # propagate to provider
+            agent.llm._provider._profile_name = name
+            agent.llm._provider.temperature = profile.temperature
+            agent.llm._provider.max_tokens = profile.max_tokens
+            persist_model_choice(agent.llm.model_name)
+            # Persist profile name in model.json
+            from agent_core.constants import load_model_json, save_model_json
+            data = load_model_json()
+            data["profile"] = name
+            save_model_json(data)
             print(f"  Profile active: {name} ({profile.description})")
             return
 
