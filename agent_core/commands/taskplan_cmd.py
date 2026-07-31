@@ -1,11 +1,38 @@
 """Taskplan command for agent interactive mode."""
 import os
+import re
 
 from .base import Command
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent import Agent
+
+
+def _collision_scan(workspace: str) -> str:
+    """Brief collision warning for LLM prompts."""
+    if not os.path.isdir(workspace):
+        return ""
+    taken: dict[str, list[str]] = {}
+    for root, dirs, files in os.walk(workspace):
+        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
+        for f in files:
+            if not f.endswith(".py"):
+                continue
+            try:
+                with open(os.path.join(root, f), "r", encoding="utf-8") as fh:
+                    names = {m.group(1) for m in re.finditer(r'^(?:class|def)\s+(\w+)', fh.read(), re.MULTILINE) if not m.group(1).startswith("__")}
+                if names:
+                    rel_dir = os.path.relpath(root, workspace).replace("\\", "/").rstrip(".")
+                    taken.setdefault(rel_dir, []).extend(sorted(names)[:20])
+            except Exception:
+                pass
+    if not taken:
+        return ""
+    lines = ["\n\n⚠ AVOID class/function name collisions with these existing names:"]
+    for d, names in sorted(taken.items())[:4]:
+        lines.append(f"  {d or 'root'}: {', '.join(names[:12])}")
+    return "\n".join(lines)
 
 
 class TaskplanCommand(Command):
@@ -44,9 +71,13 @@ class TaskplanCommand(Command):
             with open(entities_py, "r", encoding="utf-8") as f:
                 entities_content = f.read()
         
+        # Build collision warning from workspace
+        ws_dir = os.path.dirname(os.path.abspath(analysis_file))
+        collision_warning = _collision_scan(ws_dir)
+
         messages = [
             {"role": "system", "content": "You are an expert project manager. Create a detailed task plan for implementing code changes. Break down work into concrete, actionable tasks with clear descriptions. Include task dependencies and priority.\n\nCRITICAL RULE: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare filenames, bare `src/`, or any other directory."},
-            {"role": "user", "content": f"Create a task implementation plan from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\n## Existing entities.py:\n{entities_content if entities_content else 'No entities.py found'}\n\nGenerate a tasks.md file with specific implementation tasks, organized by file, with clear steps for new and existing files. Ensure tasks respect the entity definitions in entities.py."}
+            {"role": "user", "content": f"Create a task implementation plan from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\n## Existing entities.py:\n{entities_content if entities_content else 'No entities.py found'}\n\nGenerate a tasks.md file with specific implementation tasks, organized by file, with clear steps for new and existing files. Ensure tasks respect the entity definitions in entities.py.{collision_warning}"}
         ]
         tasks = await agent.llm.chat(messages)
         

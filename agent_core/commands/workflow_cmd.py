@@ -1,5 +1,6 @@
 """Workflow command for agent interactive mode."""
 import os
+import re
 from pathlib import Path
 
 from .base import Command, read_stdin
@@ -8,6 +9,45 @@ from agent_core import to_windows_path
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent import Agent
+
+
+def _collect_existing_names(workspace: str) -> dict[str, list[str]]:
+    """Scan workspace for class/function names grouped by directory.
+
+    Returns ``{directory: [name, ...]}`` so prompts can warn about collisions.
+    """
+    taken: dict[str, list[str]] = {}
+    if not os.path.isdir(workspace):
+        return taken
+    for root, dirs, files in os.walk(workspace):
+        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
+        for f in files:
+            if not f.endswith(".py"):
+                continue
+            fp = os.path.join(root, f)
+            try:
+                with open(fp, "r", encoding="utf-8") as fh:
+                    src = fh.read()
+            except Exception:
+                continue
+            names = set()
+            for m in re.finditer(r'^(?:class|def)\s+(\w+)', src, re.MULTILINE):
+                if not m.group(1).startswith("__"):
+                    names.add(m.group(1))
+            if names:
+                rel_dir = os.path.relpath(root, workspace).replace("\\", "/").rstrip(".")
+                taken.setdefault(rel_dir, []).extend(sorted(names)[:20])
+    return taken
+
+
+def _collision_warning(taken: dict[str, list[str]], max_dirs: int = 4) -> str:
+    """Build a brief collision warning string for LLM prompts."""
+    if not taken:
+        return ""
+    lines = ["\n\n⚠ AVOID class/function name collisions with these existing names:"]
+    for d, names in sorted(taken.items())[:max_dirs]:
+        lines.append(f"  {d or 'root'}: {', '.join(names[:12])}")
+    return "\n".join(lines)
 
 
 class WorkflowCommand(Command):
@@ -106,6 +146,10 @@ class WorkflowCommand(Command):
         ws_path.mkdir(parents=True, exist_ok=True)
         print(f"Workspace: {ws_path}")
 
+        # Pre-scan existing names to warn about collisions
+        taken_names = _collect_existing_names(str(ws_path))
+        collision_warning = _collision_warning(taken_names) if taken_names else ""
+
         analysis_md = str(ws_path / "project_analysis.md")
         plan_md = str(ws_path / "project_plan.md")
         entities_md = str(ws_path / "project_entities.md")
@@ -188,7 +232,7 @@ class WorkflowCommand(Command):
                     entities = f.read()
                 r = await agent.llm.chat([
                     {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text. No code blocks.\n\nPATH RULES:\n- [NEW] files: MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. Good: `agent1/logger.py`, `agent_core/file_context.py`, `src/agent1/new.py`.\n- [MODIFY] existing files: use the file's actual path (e.g. `agent.py` at root, `agent_core/commands/fix_cmd.py`).\n- BAD: `logger.py` as [NEW], `src/config.py` (bare src/ without subpackage)."},
-                    {"role": "user", "content": f"Create task plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}"}
+                    {"role": "user", "content": f"Create task plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}{collision_warning}"}
                 ])
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
@@ -287,7 +331,7 @@ class WorkflowCommand(Command):
                     plan = f.read()
                 r = await agent.llm.chat([
                     {"role": "system", "content": "Create task plan for adding these features. Format: mark file as [NEW] or [MODIFY], then '— what to do'. Include type-checking validation. No intro text.\n\nCRITICAL RULE: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare filenames or bare `src/`."},
-                    {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\nCreate implementation tasks."}
+                    {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\nCreate implementation tasks.{collision_warning}"}
                 ])
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
@@ -390,7 +434,7 @@ class WorkflowCommand(Command):
                     plan = f.read()
                 r = await agent.llm.chat([
                     {"role": "system", "content": "Create task plan. Format: 'Task N: `file.py` [TAG] — what to do'. List in dependency order. Be concise — one line per task. No intro text.\n\nCRITICAL RULE: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare filenames or bare `src/`."},
-                    {"role": "user", "content": f"Create task plan:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
+                    {"role": "user", "content": f"Create task plan:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}{collision_warning}"}
                 ])
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
