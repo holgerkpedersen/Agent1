@@ -133,7 +133,7 @@ class Agent:
         self.dispatcher.register("analyze_file", lambda args: self._tool_analyze_file(**args))
         self.dispatcher.register("llm_analyze", lambda args: self._tool_llm_analyze(**args))
 
-    def _execute_nlp_tool(self, tool_text: str) -> str:
+    async def _execute_nlp_tool(self, tool_text: str) -> str:
         """Execute a tool call from the NLP conversation and return the result."""
         parts = shlex.split(tool_text) if tool_text else []
         if not parts:
@@ -153,10 +153,10 @@ class Agent:
         if cmd == "read":
             path = " ".join(parts[1:]).strip('"').strip("'")
             try:
-                content = self.fs.read(path)
+                content = await self.read_file(path, track_read=False)
                 if content.startswith("File not found") or content.startswith("Error"):
                     return content
-                return content[:5000]  # limit to avoid context overflow
+                return content[:5000]
             except Exception as e:
                 return f"Read error: {e}"
 
@@ -684,7 +684,7 @@ async def run_interactive():
                             break
 
                         tool_text = re.sub(r'</?tool_call>', '', tool_text).strip()
-                        tool_result = agent._execute_nlp_tool(tool_text)
+                        tool_result = await agent._execute_nlp_tool(tool_text)
                         print(f"  [tool] {tool_text[:80]} -> {len(tool_result)} bytes")
 
                         # Append tool call + result to history for context
@@ -696,7 +696,12 @@ async def run_interactive():
                             "role": "user",
                             "content": f"Tool result:\n{tool_result[:3000]}\n\nContinue your answer based on this.",
                         })
-                    # end tool loop
+                    else:
+                        # Loop exhausted without final answer — print last response
+                        if agent._chat_history:
+                            last = agent._chat_history[-1].get("content", "")
+                            if last and not last.startswith("Tool result:"):
+                                print(last)
                 else:
                     result = await agent.execute_tool(tool_action, args)
                     print(result)
