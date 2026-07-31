@@ -2,6 +2,8 @@
 
 import os
 import difflib
+import subprocess
+import sys
 
 from .base import Command
 from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, persist_model_choice
@@ -10,6 +12,45 @@ from agent_core.llm import lmstudio as _lms
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent import Agent
+
+
+def _get_vram_capacity() -> int:
+    """Return total GPU VRAM in bytes, or 0 if undetectable.
+
+    Checks ``VRAM_GB`` env var first, then platform-specific GPU queries.
+    """
+    env_gb = os.environ.get("VRAM_GB")
+    if env_gb:
+        try:
+            return int(float(env_gb) * (1024 ** 3))
+        except ValueError:
+            pass
+
+    try:
+        if sys.platform == "win32":
+            r = subprocess.run(
+                ["wmic", "path", "win32_VideoController", "get", "AdapterRAM"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in r.stdout.splitlines():
+                val = line.strip()
+                if val.isdigit():
+                    return int(val)
+
+        elif sys.platform == "linux":
+            r = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in r.stdout.splitlines():
+                try:
+                    return int(float(line.strip()) * 1024 * 1024)
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+
+    return 0
 
 
 def _format_size(bytes_val: int) -> str:
@@ -165,11 +206,8 @@ class ModelCommand(Command):
         target = next((m for m in models if m["key"] == matched), None)
 
         if target and not target["loaded"]:
-            loaded = [m for m in models if m["loaded"]]
-            if loaded:
-                self._unload_current_if_needed(models, matched)
             print(f"  Loading {matched} ...")
-            ok, msg = _lms.load_model(matched)
+            ok, msg = self._try_load_or_unload(matched)
             if not ok:
                 print(f"  Could not load: {msg}")
                 return
@@ -244,22 +282,43 @@ class ModelCommand(Command):
     # ------------------------------------------------------------------
 
     def _unload_current_if_needed(self, models: list[dict], new_key: str) -> None:
-        """Unload currently loaded models only if VRAM likely can't fit both."""
-        new_size = next((m["size_bytes"] for m in models if m["key"] == new_key), 0)
+        """Unload currently loaded models to free VRAM before loading a new one."""
         loaded = [m for m in models if m["loaded"] and m["key"] != new_key]
-        if not loaded:
-            return
+        for m in loaded:
+            ok, msg = _lms.unload_model(m["instance_id"])
+            if ok:
+                print(f"    Freed {_format_size(m['size_bytes'])} — {msg}")
 
-        loaded_total = sum(m["size_bytes"] for m in loaded)
-        # Heuristic: if the new model alone is >40% of total loaded size,
-        # it probably won't fit alongside the current one. Unload first.
-        threshold = loaded_total * 0.4
-        if new_size > threshold:
-            for m in loaded:
-                ok, msg = _lms.unload_model(m["instance_id"])
-                print(f"    Unloaded: {m['key']} ({_format_size(m['size_bytes'])}) — {msg}")
-        else:
-            print(f"    Keeping {len(loaded)} loaded model(s) — (enough VRAM for both)")
+    def _try_load_or_unload(self, model_key: str) -> tuple[bool, str]:
+        """Try to load *model_key*.  If it fails with a space/memory error,
+        unload current models and retry once.
+        """
+        # Pre-check: if we know GPU VRAM and it won't fit, unload first
+        capacity = _get_vram_capacity()
+        if capacity > 0:
+            models, _ = self._fetch_models()
+            loaded = [m for m in models if m["loaded"] and m["key"] != model_key]
+            loaded_total = sum(m["size_bytes"] for m in loaded)
+            new_size = next((m["size_bytes"] for m in models if m["key"] == model_key), 0)
+            if new_size > 0 and new_size + loaded_total > capacity * 0.9:
+                if loaded:
+                    print(f"    VRAM: {_format_size(loaded_total)} used + {_format_size(new_size)} needed > {_format_size(capacity)}")
+                    self._unload_current_if_needed(models, model_key)
+                    return _lms.load_model(model_key)
+
+        ok, msg = _lms.load_model(model_key)
+        if ok:
+            return True, msg
+
+        if any(kw in msg.lower() for kw in ("space", "memory", "vram", "failed to load", "allocation")):
+            models, _ = self._fetch_models()
+            loaded = [m for m in models if m["loaded"]]
+            if loaded:
+                print(f"    Not enough VRAM — unloading {len(loaded)} model(s) first")
+                self._unload_current_if_needed(models, model_key)
+                return _lms.load_model(model_key)
+
+        return False, msg
 
     async def _load_model(self, rest: list[str], agent: "Agent") -> None:
         """Load a model into LM Studio and optionally switch to it."""
@@ -284,12 +343,8 @@ class ModelCommand(Command):
             print(f"  Switched to: {resolved}")
             return
 
-        # Unload current models to free VRAM before loading (if needed)
-        if loaded_keys:
-            self._unload_current_if_needed(models, resolved)
-
         print(f"  Loading: {resolved} ...")
-        ok, msg = _lms.load_model(resolved)
+        ok, msg = self._try_load_or_unload(resolved)
         if ok:
             print(f"  {msg}")
             # Auto-switch to the loaded model
