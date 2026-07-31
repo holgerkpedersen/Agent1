@@ -214,7 +214,7 @@ class ImplementCommand(Command):
             print("Analyzing task plan to identify all files...")
 
             list_messages = [
-                {"role": "system", "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations.\n\nCRITICAL: Every file path MUST include a directory prefix. Good: agent1/logger.py, src/agent1/memory.py. BAD: logger.py, utils.py. Never emit bare root-level names."},
+                {"role": "system", "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations.\n\nCRITICAL: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare names, bare `src/`, or any other directory."},
                 {"role": "user", "content": f"List every file that needs to be created or modified from this task plan:\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}"}
             ]
 
