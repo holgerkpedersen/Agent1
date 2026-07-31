@@ -466,7 +466,22 @@ class ImplementCommand(Command):
             analysis_context = _extract_file_context(analysis_content, target_file)
             plan_context = _extract_file_context(plan_content, target_file)
 
-            user_context = f"Implement this file:\n{batch_files_md}\n{export_context}"
+            # Build a collision warning: class/function names already in the target directory
+            collision_warning = ""
+            target_dir = os.path.dirname(target_file) if "/" in target_file or "\\" in target_file else ""
+            if target_dir:
+                taken: dict[str, list[str]] = {}
+                for mod, sigs in export_map.items():
+                    mod_dir = mod.split("/", 1)[0] if "/" in mod else ""
+                    if mod_dir and (mod.startswith(target_dir + "/") or mod_dir == target_dir.split("/")[-1]):
+                        for name in sigs:
+                            if not name.startswith("__"):
+                                taken.setdefault(name, []).append(mod)
+                if taken:
+                    taken_list = ", ".join(f"{n} (in {', '.join(fs[:2])})" for n, fs in sorted(taken.items())[:15])
+                    collision_warning = f"\n\n⚠ DO NOT create these names — they already exist in this directory: {taken_list}"
+
+            user_context = f"Implement this file:\n{batch_files_md}\n{export_context}{collision_warning}"
             if task_context:
                 user_context += f"\n\nTask: {task_context}"
             if analysis_context:
