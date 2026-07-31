@@ -127,6 +127,7 @@ def load_model(model_key: str, parallel: int = 4) -> tuple[bool, str]:
             r = subprocess.run(
                 [str(lms), "load", model_key, "--yes"],
                 capture_output=True, text=True, timeout=120,
+                encoding="utf-8", errors="replace",
             )
             if r.returncode == 0:
                 return True, f"loaded via lms — {model_key}"
