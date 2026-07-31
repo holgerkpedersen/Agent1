@@ -130,10 +130,12 @@ Add `--brainstorm` for a 6th dimension (bold creative features):
 ```
 > workflow . --from spec.md
 [spec] Loaded from spec.md
-[plan] Creating plan...
+[analyze] Analyzing spec...    ← NEW: scope, assumptions, risks, dependencies
+[analyze] Written
+[plan] Creating plan...        ← now uses spec + analysis as context
 [plan] Written
-[entities] Written
-[taskplan] Written
+[entities] Written             ← uses spec + analysis + plan
+[taskplan] Written             ← uses spec + analysis + plan + entities
 
 Next: implement project_tasks.md ... --workspace C:/Dev/Agent1 --force
 ```
@@ -143,6 +145,7 @@ Inline specification with `--desc`:
 ```
 > workflow . --desc "A CLI tool that converts CSV to JSON with streaming support"
 ```
+Specs are saved to `project_spec.md` (not temp files) for traceability.
 
 Or paste a multi-line spec with `--stdin`:
 
@@ -354,6 +357,10 @@ Use `--full` for the legacy "send everything" mode:
 ```
 
 Fuzzy matching works with partial names: `model 27b`, `model gemma`, `model laguna`.
+
+**Auto-sync**: Running `model` without args automatically detects if the agent's configured model isn't loaded and switches to what LM Studio actually has in VRAM.
+
+**VRAM-aware**: `model load` tries to load directly. If LM Studio returns a space/memory error, it automatically unloads the current model and retries — no manual unload needed.
 
 ---
 

@@ -56,7 +56,9 @@ clear [stats|--force]            Show memory stats, confirm then clear
 
 ### Workflow Pipeline
 
-The `workflow` command runs a full analysis-to-implementation pipeline. Brownfield mode (`workflow .`) now uses multi-dimensional analysis across 5 dimensions:
+The `workflow` command runs a full analysis-to-implementation pipeline. **Greenfield mode** (`--desc`/`--stdin`/`--from`) now includes a spec analysis step (scope, assumptions, risks, dependencies) before plan generation. All spec/feature text is saved to persistent project files (`project_spec.md`, `project_features.md`) — no temporary files.
+
+Brownfield mode (`workflow .`) uses multi-dimensional analysis across 5 dimensions:
 
 | Dimension | Scope |
 |---|---|
