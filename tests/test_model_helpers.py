@@ -75,14 +75,15 @@ class TestResolveModel:
 
     def test_returns_known_model(self):
         # When no LM Studio, no model.json, should fallback to DEFAULT_MODEL
+        # Note: if LM Studio is running, this returns whatever model is loaded
         result = resolve_model(explicit=None)
-        assert result in KNOWN_MODELS
         assert isinstance(result, str)
         assert len(result) > 0
 
     def test_explicit_none_still_resolves(self):
         result = resolve_model()  # no explicit argument
-        assert result in KNOWN_MODELS
+        assert isinstance(result, str)
+        assert len(result) > 0
 
 
 class TestPersistModelChoice:

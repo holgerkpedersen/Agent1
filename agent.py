@@ -563,7 +563,7 @@ async def run_interactive():
     print("  fix <file> --desc \"text\" [--full] - Describe an issue, LLM analyzes full codebase and fixes it")
     print("  cleanup             - Show unreferenced files and reference graph")
     print("  workflow <target> [--from spec.md] [--stdin] [--brainstorm] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] — Full pipeline")
-    print("  model [list|load|unload|reload|name] — Manage models via LM Studio API")
+    print("  model [list|load|unload|reload|name|profile] — Manage models via LM Studio API")
     print("  optimize <file|dir> [--apply] [--yes] [--stdin] — Find and apply optimizations")
     print("  perf [--detail|--reset|--html] — Command performance dashboard")
     print("  clear              - Clear agent memory")
@@ -633,7 +633,11 @@ async def run_interactive():
                                 "(repo: github.com/holgerkpedersen/Agent1).\n"
                                 "The user interacts with you through a REPL that has these commands:\n"
                                 "- workflow, implement, fix, analyze, optimize — LLM-assisted code generation/repair\n"
-                                "- model, clear, cleanup, perf, read, write, search, plan, entities, taskplan — utilities\n"
+                                "- model [list|load|unload|reload|name] — manage LLM models via LM Studio API\n"
+                                "- model profile [list|save|delete|use|name] — manage model profiles (presets for temp/tokens)\n"
+                                "  Built-in profiles: fast-codegen (temp=0.1), deep-analysis (temp=0.7), precise (temp=0.3)\n"
+                                "  Usage: model profile list | use <name> | save <name> --temp 0.3 --max-tokens 8000\n"
+                                "- clear, cleanup, perf, read, write, search, plan, entities, taskplan — utilities\n"
                                 "- Any text not matching a command is sent to you as natural language.\n\n"
                                 "To use a tool, write it on its OWN SEPARATE LINE wrapped in tags:\n"
                                 "\n<tool_call>search <query></tool_call>\n"
