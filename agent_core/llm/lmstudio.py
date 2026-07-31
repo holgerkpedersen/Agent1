@@ -278,7 +278,10 @@ class LMStudioProvider:
     ) -> str:
         """Send chat request to LLM via LM Studio with retry."""
         payload = self._build_payload(messages, tools, override_max_tokens=max_tokens)
-        print(f"  [model: {payload['model']}]", end="", flush=True)
+        label = f"[model: {payload['model']}]"
+        if self._profile is not None:
+            label = f"[model: {payload['model']} | profile={self._profile.name} t={self._profile.temperature} tok={self._profile.max_tokens}]"
+        print(f"  {label}", end="", flush=True)
         
         async def _do_request():
             result = self._make_request(payload)
