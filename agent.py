@@ -662,13 +662,18 @@ async def run_interactive():
                                 if bare_cmd:
                                     tool_text = line.strip()
                                     break
-                            # Also check if the LLM appended a tool command after a period
+                            # Also check if the LLM appended a tool command after a period (with or without space)
                             if not tool_text:
-                                for sentence in re.split(r'[.!?]\s+', result):
+                                for sentence in re.split(r'[.!?]\s*', result):
                                     s = sentence.strip()
                                     if re.match(r'^(search|read|list_files|list)\s+', s, re.IGNORECASE):
                                         tool_text = s
                                         break
+                            # Last resort: any occurrence of tool command pattern anywhere
+                            if not tool_text:
+                                m = re.search(r'\b(search|read|list_files|list)\s+(\S.+)', result, re.IGNORECASE)
+                                if m:
+                                    tool_text = m.group(0).strip()
 
                         if not tool_text:
                             # No tool call — display and store
