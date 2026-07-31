@@ -36,11 +36,21 @@ class WorkflowCommand(Command):
         greenfield = False
         features_file = None
 
+        # Use agent's workspace as default — --workspace overrides after parsing
+        def _ws_dir() -> Path:
+            tw = agent.workspace
+            idx = parts.index("--workspace") if "--workspace" in parts else -1
+            if idx >= 0 and idx + 1 < len(parts):
+                tw = parts[idx + 1]
+            if tw.startswith('/c/') or tw.startswith('/C/'):
+                tw = 'C:' + tw[2:]
+            return Path(tw)
+
         if "--desc" in parts:
             di = parts.index("--desc")
             if di + 1 < len(parts):
                 desc_text = parts[di + 1].strip('"')
-                spec_file = str(ws_path / "project_spec.md")
+                spec_file = str(_ws_dir() / "project_spec.md")
                 with open(spec_file, "w", encoding="utf-8") as f:
                     f.write(f"# Project Specification\n\n{desc_text}")
                 greenfield = True
@@ -49,7 +59,7 @@ class WorkflowCommand(Command):
             text = read_stdin("Paste spec or description. Type --- on its own line when done:")
             parts = [p for p in parts if p != "--stdin"]
             if text.strip():
-                spec_file = str(ws_path / "project_spec.md")
+                spec_file = str(_ws_dir() / "project_spec.md")
                 with open(spec_file, "w", encoding="utf-8") as f:
                     f.write(f"# Project Specification\n\n{text}")
                 greenfield = True
@@ -70,7 +80,7 @@ class WorkflowCommand(Command):
             if feat_val is not None and os.path.isfile(feat_val):
                 features_file = feat_val
             elif feat_val is not None:
-                features_file = str(ws_path / "project_features.md")
+                features_file = str(_ws_dir() / "project_features.md")
                 with open(features_file, "w", encoding="utf-8") as f:
                     f.write(f"# Feature Requirements\n\n{feat_val}")
                 print(f"\n[features] {feat_val}")
@@ -92,8 +102,7 @@ class WorkflowCommand(Command):
             features_file = os.path.join(target_workspace, features_file)
         features_file = to_windows_path(features_file) if features_file else None
 
-        ws = to_windows_path(target_workspace)
-        ws_path = Path(ws)
+        ws_path = _ws_dir()
         ws_path.mkdir(parents=True, exist_ok=True)
         print(f"Workspace: {ws_path}")
 
