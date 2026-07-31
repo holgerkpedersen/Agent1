@@ -1088,6 +1088,29 @@ class ImplementCommand(Command):
                 static_summary = "\n".join(f"- {i}" for i in issues_found)
                 static_summary = f"## Static analysis found {len(issues_found)} issue(s):\n\n{static_summary}\n\n"
 
+            # ---- Actionable: offer to delete dangerous files ----
+            dangerous_files: set[str] = set()
+            dangerous_files.update(cc["file"] for cc in class_conflicts)
+            if dangerous_files:
+                print(f"\n  [review] {len(dangerous_files)} file(s) have class-name conflicts — would break if wired:")
+                for f in sorted(dangerous_files):
+                    print(f"    {f}")
+                try:
+                    choice = input("  Delete these files to prevent import collisions? (y/N): ").strip().lower()
+                    if choice == "y":
+                        for f in dangerous_files:
+                            path = Path(ws) / f
+                            if path.exists():
+                                path.unlink()
+                                print(f"    Deleted: {f}")
+                except (EOFError, KeyboardInterrupt):
+                    pass
+
+            if unwired and not dangerous_files:
+                print(f"\n  [review] {len(unwired)} new module(s) are not imported. Use 'model profile use' to wire them.")
+                for uw in unwired:
+                    print(f"    {uw['file']}")
+
             # ---- Per-file LLM review ----
             for fname in list(all_content.keys())[:8]:
                 content = all_content[fname]
