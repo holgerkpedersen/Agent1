@@ -479,7 +479,7 @@ class ImplementCommand(Command):
                                 taken.setdefault(name, []).append(mod)
                 if taken:
                     taken_list = ", ".join(f"{n} (in {', '.join(fs[:2])})" for n, fs in sorted(taken.items())[:15])
-                    collision_warning = f"\n\n⚠ DO NOT create these names — they already exist in this directory: {taken_list}"
+                    collision_warning = f"\n\nCRITICAL — DO NOT create these names in the new file: {taken_list}. They already exist in the target directory. Modify the existing file instead if you need to extend them."
 
             user_context = f"Implement this file:\n{batch_files_md}\n{export_context}{collision_warning}"
             if task_context:

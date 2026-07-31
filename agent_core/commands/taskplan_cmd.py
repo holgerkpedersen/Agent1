@@ -29,10 +29,14 @@ def _collision_scan(workspace: str) -> str:
                 pass
     if not taken:
         return ""
-    lines = ["\n\n⚠ AVOID class/function name collisions with these existing names:"]
+    lines = ["",
+             "CRITICAL: These class and function names already exist in the project.",
+             "DO NOT create new files that define these same names in the same directory:",
+    ]
     for d, names in sorted(taken.items())[:4]:
         lines.append(f"  {d or 'root'}: {', '.join(names[:12])}")
-    return "\n".join(lines)
+    lines.append("If you need to add functionality to these, modify the existing file.")
+    return "\n\n".join(lines)
 
 
 class TaskplanCommand(Command):

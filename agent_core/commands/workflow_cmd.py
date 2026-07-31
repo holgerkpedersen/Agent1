@@ -44,10 +44,14 @@ def _collision_warning(taken: dict[str, list[str]], max_dirs: int = 4) -> str:
     """Build a brief collision warning string for LLM prompts."""
     if not taken:
         return ""
-    lines = ["\n\n⚠ AVOID class/function name collisions with these existing names:"]
+    lines = ["",
+             "CRITICAL: These class and function names already exist in the project.",
+             "DO NOT create new files that define these same names in the same directory:",
+    ]
     for d, names in sorted(taken.items())[:max_dirs]:
         lines.append(f"  {d or 'root'}: {', '.join(names[:12])}")
-    return "\n".join(lines)
+    lines.append("If you need to add functionality to these, modify the existing file.")
+    return "\n\n".join(lines)
 
 
 class WorkflowCommand(Command):
