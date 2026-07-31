@@ -54,6 +54,14 @@ perf [--detail|--reset|--html]       Command performance dashboard (timing per c
 clear [stats|--force]            Show memory stats, confirm then clear
 ```
 
+Any text not matching a command is sent to the LLM as **natural language**. The LLM can explore the codebase by requesting tools inline:
+
+```
+> What safety guards does the implement command use?
+```
+
+The LLM can read files (`<tool_call>read path</tool_call>`), search the project (`<tool_call>search query</tool_call>`), and list directories — up to 5 rounds of exploration before producing a final answer. Conversation history is maintained so follow-up questions build on previous answers.
+
 ### Workflow Pipeline
 
 The `workflow` command runs a full analysis-to-implementation pipeline. **Greenfield mode** (`--desc`/`--stdin`/`--from`) now includes a spec analysis step (scope, assumptions, risks, dependencies) before plan generation. All spec/feature text is saved to persistent project files (`project_spec.md`, `project_features.md`) — no temporary files.

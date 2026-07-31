@@ -23,7 +23,20 @@ Run: `python agent.py`
 | `perf`                       | Command performance dashboard       |
 | `quit` / `exit` / `q`        | Exit the REPL                       |
 
-Any input not matching a command is treated as natural language and sent directly to the LLM.
+Any text not matching a command is sent to the LLM as **natural language** with full conversation history. The LLM can explore the codebase using tools:
+
+```
+> Make a brainstorm on this repo
+  [tool] list_files C:/Dev/Agent1 -> 609 bytes
+  [tool] read C:/Dev/Agent1/README.md -> 5000 bytes
+  [tool] read C:/Dev/Agent1/agent_core/commands -> 325 bytes
+Agent1 is a Python AI agent framework with 14 commands...
+
+> What safety guards does implement use?
+  [LLM remembers previous context + reads implement_cmd.py → answers]
+```
+
+The LLM can use `<tool_call>search query</tool_call>`, `<tool_call>read path</tool_call>`, and `<tool_call>list_files dir</tool_call>` — up to 5 exploration rounds before producing a final answer.
 
 ---
 
