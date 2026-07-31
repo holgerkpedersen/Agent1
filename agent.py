@@ -665,8 +665,8 @@ async def run_interactive():
 
                     agent._chat_history.append({"role": "user", "content": user_input})
 
-                    # Tool-calling loop: up to 5 iterations
-                    for _ in range(5):
+                    # Tool-calling loop: up to 6 iterations
+                    for _ in range(6):
                         result = await agent.llm.chat(agent._chat_history[-20:])
 
                         # Parse tool calls from response — tagged or bare
@@ -716,16 +716,29 @@ async def run_interactive():
                             "content": f"Tool result:\n{tool_result[:3000]}\n\nContinue your answer based on this.",
                         })
                     else:
-                        # Loop exhausted — ask LLM for final answer based on all tool results
+                        # Loop exhausted — ask LLM for final synthesis
                         agent._chat_history.append({
                             "role": "user",
-                            "content": "You have enough information. Provide your final answer now — no more tool calls.",
+                            "content": "You have enough information. Provide your final answer now — text only, no more tool calls.",
                         })
                         final = await agent.llm.chat(agent._chat_history[-20:])
+
+                        # If the LLM still requested tools, retry once with an ultimatum
+                        if re.search(r'\b(search|read|list_files|list)\s+\S', final, re.IGNORECASE) or re.search(r'<tool_call>', final):
+                            agent._chat_history.append({"role": "assistant", "content": final})
+                            agent._chat_history.append({
+                                "role": "user",
+                                "content": "STOP requesting tools. You MUST synthesize your findings into a plain-text answer RIGHT NOW. No tags, no commands — just your analysis.",
+                            })
+                            final = await agent.llm.chat(agent._chat_history[-20:])
+
                         agent._chat_history.append({"role": "assistant", "content": final})
                         clean = re.sub(r'</?tool_call>', '', final)
                         clean = re.sub(r'</?function_call>', '', clean)
-                        print(clean)
+                        if clean.strip():
+                            print(clean)
+                        else:
+                            print("  (The LLM did not produce a synthesis. Try repeating the question.)")
                 else:
                     result = await agent.execute_tool(tool_action, args)
                     print(result)
