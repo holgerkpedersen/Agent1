@@ -113,10 +113,35 @@ class WorkflowCommand(Command):
             if not force and os.path.exists(plan_md):
                 print(f"\n[Skipping plan] exists")
             else:
+                if not force and os.path.exists(analysis_md):
+                    print(f"\n[Skipping analyze] exists")
+                else:
+                    print(f"\n[analyze] Analyzing spec...")
+                    r = await agent.llm.chat([
+                        {"role": "system", "content": (
+                            "You are an expert software analyst. Analyze the specification across these dimensions:\n"
+                            "1. SCOPE — what is being built, key deliverables, boundaries\n"
+                            "2. ASSUMPTIONS — what the spec assumes but doesn't state\n"
+                            "3. RISKS — ambiguity, missing details, technical challenges\n"
+                            "4. DEPENDENCIES — external systems, libraries, constraints\n"
+                            "Be concise. Max 3 bullet points per dimension."
+                        )},
+                        {"role": "user", "content": f"Analyze this specification:\n\n{spec_content}"},
+                    ])
+                    if not step_ok(r):
+                        print(f"[analyze] FAILED: {r[:200]}")
+                        return True
+                    with open(analysis_md, "w", encoding="utf-8") as f:
+                        f.write(r)
+                    print(f"[analyze] Written")
+
+                with open(analysis_md, "r", encoding="utf-8") as f:
+                    analysis = f.read()
+
                 print(f"\n[plan] Creating plan...")
                 r = await agent.llm.chat([
                     {"role": "system", "content": "You are an expert software architect. Create a detailed coding plan with ALL files needed. Ensure all Python code passes mypy strict type checking. No unbound TypeVars, no type mismatches."},
-                    {"role": "user", "content": f"Create coding plan:\n\n{spec_content}"}
+                    {"role": "user", "content": f"Create coding plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}"}
                 ])
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
@@ -128,11 +153,13 @@ class WorkflowCommand(Command):
             if not force and os.path.exists(entities_md):
                 print(f"\n[Skipping entities] exists")
             else:
+                with open(analysis_md, "r", encoding="utf-8") as f:
+                    analysis = f.read() if os.path.exists(analysis_md) else ""
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
                     {"role": "system", "content": "Extract shared classes/types. Output ONLY Python code — no intro text. Start with ```python. All types must be valid — no unbound TypeVars, no forward-ref errors. Must pass mypy strict. Avoid circular imports."},
-                    {"role": "user", "content": f"Extract entities:\n\n## Spec:\n{spec_content}\n\n## Plan:\n{plan}"}
+                    {"role": "user", "content": f"Extract entities:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
                 ])
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
@@ -144,13 +171,15 @@ class WorkflowCommand(Command):
             if not force and os.path.exists(tasks_md):
                 print(f"\n[Skipping taskplan] exists")
             else:
+                with open(analysis_md, "r", encoding="utf-8") as f:
+                    analysis = f.read() if os.path.exists(analysis_md) else ""
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 with open(entities_md, "r", encoding="utf-8") as f:
                     entities = f.read()
                 r = await agent.llm.chat([
                     {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text. No code blocks.\n\nCRITICAL RULE: Every file path MUST have a directory prefix. Good: `agent1/logger.py`, `src/agent1/memory.py`. BAD: `logger.py`, `memory.py`, `utils.py`. Never emit bare filenames at workspace root — they will be REJECTED."},
-                    {"role": "user", "content": f"Create task plan:\n\n## Spec:\n{spec_content}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}"}
+                    {"role": "user", "content": f"Create task plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}"}
                 ])
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
