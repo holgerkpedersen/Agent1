@@ -980,7 +980,9 @@ class ImplementCommand(Command):
             class_locations: dict[str, list[str]] = {}
             for fname, content in all_content.items():
                 for m in re.finditer(r'^\s*def\s+(\w+)', content, re.MULTILINE):
-                    func_locations.setdefault(m.group(1), []).append(fname)
+                    name = m.group(1)
+                    if not name.startswith("__"):  # skip dunders (__init__, __str__, etc.)
+                        func_locations.setdefault(name, []).append(fname)
                 for m in re.finditer(r'^\s*class\s+(\w+)', content, re.MULTILINE):
                     class_locations.setdefault(m.group(1), []).append(fname)
 
