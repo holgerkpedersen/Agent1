@@ -164,7 +164,11 @@ class Agent:
             path = " ".join(parts[1:]).strip('"').strip("'") or "."
             try:
                 import os as _os
-                abs_path = _os.path.join(self.workspace.replace("/c/", "C:/").replace("\\", "/"), path)
+                # If already an absolute path, use directly — don't join with workspace
+                if _os.path.isabs(path):
+                    abs_path = path
+                else:
+                    abs_path = _os.path.join(self.workspace.replace("/c/", "C:/").replace("\\", "/"), path)
                 if _os.path.isdir(abs_path):
                     entries = _os.listdir(abs_path)[:50]
                     return "\n".join(f"  {e}" for e in sorted(entries))
