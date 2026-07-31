@@ -589,13 +589,17 @@ async def run_interactive():
                                 "- model, clear, cleanup, perf, read, write, search, plan, entities, taskplan — utilities\n"
                                 "- Any text not matching a command is sent to you as natural language.\n"
                                 "Answer questions about the Agent1 tool itself based on this context. "
-                                "The user's current question is about the Agent1 REPL, not a generic terminal.\n"
+                                "Respond in plain text only. NEVER use XML tags, <tool_call>, "
+                                "<function_call>, or any structured format. Just type your answer.\n"
                                 "Be concise."
                             ),
                         })
 
                     agent._chat_history.append({"role": "user", "content": user_input})
                     result = await agent.llm.chat(agent._chat_history[-20:])  # keep last 20
+                    # Strip XML/tool_call tags that some LLMs hallucinate
+                    result = re.sub(r'</?tool_call>', '', result)
+                    result = re.sub(r'</?function_call>', '', result)
                     agent._chat_history.append({"role": "assistant", "content": result})
                     print(result)
                 else:
