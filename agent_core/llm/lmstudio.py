@@ -101,7 +101,7 @@ def get_vram_info() -> dict:
 
 
 def load_model(model_key: str, parallel: int = 4) -> tuple[bool, str]:
-    """Load a model via LM Studio REST API.
+    """Load a model via LM Studio REST API, with ``lms load`` CLI fallback.
 
     Returns (success, message).
     """
@@ -109,7 +109,7 @@ def load_model(model_key: str, parallel: int = 4) -> tuple[bool, str]:
     resp = _http_post_json(f"{base}/models/load", {
         "model": model_key,
         "eval_batch_size": parallel,
-    })
+    }, timeout=60)  # Load can take a while
     if resp and resp.get("status") == "loaded":
         return True, f"loaded ({resp.get('load_time_seconds', '?')}s) — {resp.get('instance_id', model_key)}"
     if resp:
@@ -117,7 +117,25 @@ def load_model(model_key: str, parallel: int = 4) -> tuple[bool, str]:
         if isinstance(err, dict):
             err = err.get("message", str(err))
         return False, str(err)
-    return False, "could not reach LM Studio"
+
+    # REST API failed — try lms CLI as fallback
+    import subprocess
+    import shutil as _shutil
+    lms = _shutil.which("lms") or _shutil.which("lms.exe")
+    if lms:
+        try:
+            r = subprocess.run(
+                [str(lms), "load", model_key, "--yes"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r.returncode == 0:
+                return True, f"loaded via lms — {model_key}"
+            return False, r.stderr.strip() or r.stdout.strip() or "unknown lms error"
+        except subprocess.TimeoutExpired:
+            return False, "lms load timed out"
+        except Exception as e:
+            return False, str(e)
+    return False, "could not reach LM Studio (REST API timed out, lms CLI not found)"
 
 
 def unload_model(instance_id: str | None = None) -> tuple[bool, str]:
