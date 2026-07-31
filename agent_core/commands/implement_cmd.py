@@ -1010,6 +1010,30 @@ class ImplementCommand(Command):
                     print(f"    {fa} ≈ {fb} ({len(all_content[fa])} bytes each)")
                     issues_found.append(f"Nearly identical files: {fa} and {fb} — consider merging")
 
+            # ---- Cross-file attribute & wiring checks ----
+            from agent_core.patterns import detect_module_collisions, detect_attribute_errors, detect_unwired_modules
+
+            collisions = detect_module_collisions(py_new, existing_files=list(all_content.keys()))
+            if collisions:
+                print(f"\n  [review] Module name collisions:")
+                for c in collisions:
+                    print(f"    {c['file']}: {c['suggestion']}")
+                    issues_found.append(f"{c['file']}: {c['suggestion']}")
+
+            attr_errors = detect_attribute_errors(all_content, ws)
+            if attr_errors:
+                print(f"\n  [review] Attribute errors (likely bugs):")
+                for ae in attr_errors:
+                    print(f"    {ae['file']}: {ae['suggestion']}")
+                    issues_found.append(f"{ae['file']}: {ae['suggestion']}")
+
+            unwired = detect_unwired_modules(py_new, ws)
+            if unwired:
+                print(f"\n  [review] Unwired modules (not imported by any code):")
+                for uw in unwired:
+                    print(f"    {uw['file']}: {uw['suggestion']}")
+                    issues_found.append(f"{uw['file']}: {uw['suggestion']}")
+
             static_summary = ""
             if issues_found:
                 static_summary = "\n".join(f"- {i}" for i in issues_found)
