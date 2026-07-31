@@ -133,6 +133,47 @@ class Agent:
         self.dispatcher.register("analyze_file", lambda args: self._tool_analyze_file(**args))
         self.dispatcher.register("llm_analyze", lambda args: self._tool_llm_analyze(**args))
 
+    def _execute_nlp_tool(self, tool_text: str) -> str:
+        """Execute a tool call from the NLP conversation and return the result."""
+        parts = shlex.split(tool_text) if tool_text else []
+        if not parts:
+            return "Error: empty tool call"
+
+        cmd = parts[0].lower()
+        if cmd == "search":
+            query = " ".join(parts[1:])
+            try:
+                results = self.searcher.search(query)
+                if not results:
+                    return "No files found matching that query."
+                return "\n".join(f"  {r}" for r in results[:30])
+            except Exception as e:
+                return f"Search error: {e}"
+
+        if cmd == "read":
+            path = " ".join(parts[1:]).strip('"').strip("'")
+            try:
+                content = self.fs.read(path)
+                if content.startswith("File not found") or content.startswith("Error"):
+                    return content
+                return content[:5000]  # limit to avoid context overflow
+            except Exception as e:
+                return f"Read error: {e}"
+
+        if cmd == "list_files" or cmd == "list":
+            path = " ".join(parts[1:]).strip('"').strip("'") or "."
+            try:
+                import os as _os
+                abs_path = _os.path.join(self.workspace.replace("/c/", "C:/").replace("\\", "/"), path)
+                if _os.path.isdir(abs_path):
+                    entries = _os.listdir(abs_path)[:50]
+                    return "\n".join(f"  {e}" for e in sorted(entries))
+                return f"Not a directory: {path}"
+            except Exception as e:
+                return f"List error: {e}"
+
+        return f"Unknown tool: {cmd}. Available: search, read, list_files"
+
     async def _tool_read_file(self, path: str, **kwargs) -> str:
         result = await self.fs.read(path)
         if not result.startswith("File not found") and not result.startswith("Error"):
@@ -587,21 +628,49 @@ async def run_interactive():
                                 "The user interacts with you through a REPL that has these commands:\n"
                                 "- workflow, implement, fix, analyze, optimize — LLM-assisted code generation/repair\n"
                                 "- model, clear, cleanup, perf, read, write, search, plan, entities, taskplan — utilities\n"
-                                "- Any text not matching a command is sent to you as natural language.\n"
-                                "Answer questions about the Agent1 tool itself based on this context. "
-                                "Respond in plain text only. NEVER use XML tags, <tool_call>, "
-                                "<function_call>, or any structured format. Just type your answer.\n"
+                                "- Any text not matching a command is sent to you as natural language.\n\n"
+                                "You can use tools to read files and search the project. Format:\n"
+                                "<tool_call>search <query></tool_call>\n"
+                                "<tool_call>read <filepath></tool_call>\n"
+                                "<tool_call>list_files [directory]</tool_call>\n\n"
+                                "Use tools when you need to see actual code or find files. "
+                                "After getting tool results, continue your answer.\n"
+                                "Keep tool calls on their own line. Only use one per response.\n"
                                 "Be concise."
                             ),
                         })
 
                     agent._chat_history.append({"role": "user", "content": user_input})
-                    result = await agent.llm.chat(agent._chat_history[-20:])  # keep last 20
-                    # Strip XML/tool_call tags that some LLMs hallucinate
-                    result = re.sub(r'</?tool_call>', '', result)
-                    result = re.sub(r'</?function_call>', '', result)
-                    agent._chat_history.append({"role": "assistant", "content": result})
-                    print(result)
+
+                    # Tool-calling loop: up to 5 iterations
+                    for _ in range(5):
+                        result = await agent.llm.chat(agent._chat_history[-20:])
+
+                        # Parse tool calls from response
+                        tool_match = re.search(r'<tool_call>(.+?)</tool_call>', result, re.DOTALL)
+                        if not tool_match:
+                            # No tool call — display and store
+                            agent._chat_history.append({"role": "assistant", "content": result})
+                            # Strip any remaining XML artifacts
+                            clean = re.sub(r'</?tool_call>', '', result)
+                            clean = re.sub(r'</?function_call>', '', clean)
+                            print(clean)
+                            break
+
+                        tool_text = tool_match.group(1).strip()
+                        tool_result = agent._execute_nlp_tool(tool_text)
+                        print(f"  [tool] {tool_text[:80]} -> {len(tool_result)} bytes")
+
+                        # Append tool call + result to history for context
+                        agent._chat_history.append({
+                            "role": "assistant",
+                            "content": f"<tool_call>{tool_text}</tool_call>",
+                        })
+                        agent._chat_history.append({
+                            "role": "user",
+                            "content": f"Tool result:\n{tool_result[:3000]}\n\nContinue your answer based on this.",
+                        })
+                    # end tool loop
                 else:
                     result = await agent.execute_tool(tool_action, args)
                     print(result)
