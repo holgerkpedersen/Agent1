@@ -136,6 +136,38 @@ class ImplementCommand(Command):
     def help_text(self) -> str:
         return "implement <taskplan.md> [--keep|--force|--fix|--retry|--review] - Implement files from task plan"
 
+    @staticmethod
+    def _auto_review(py_new: list[str], ws: str) -> None:
+        """Run fast static checks on new files (no LLM). Safe to call always."""
+        print(f"\n{'─'*40}")
+        found = 0
+        from agent_core.patterns import detect_module_collisions, detect_class_conflicts, detect_unwired_modules
+
+        collisions = detect_module_collisions(py_new)
+        if collisions:
+            print(f"  ⚠ Module name near existing files:")
+            for c in collisions:
+                print(f"    {c['file']}: {c['suggestion']}")
+                found += 1
+
+        conflicts = detect_class_conflicts(py_new, ws)
+        if conflicts:
+            print(f"  ⚠ Class/function name conflicts:")
+            for cc in conflicts:
+                print(f"    {cc['file']}:{cc['line']}: {cc['suggestion']}")
+                found += 1
+
+        unwired = detect_unwired_modules(py_new, ws)
+        if unwired:
+            print(f"  ⚠ New modules not imported by any code:")
+            for uw in unwired:
+                print(f"    {uw['file']}: {uw['suggestion']}")
+                found += 1
+
+        if not found:
+            print(f"  ✓ Quick review: no conflicts or wiring issues.")
+        print(f"{'─'*40}")
+
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         parts = args
 
@@ -765,8 +797,14 @@ class ImplementCommand(Command):
             print(f"\n  New files created: {len(new_files)}")
             for f in sorted(new_files):
                 print(f"    + {f}")
+
+            # Auto-run static safety checks on new files (fast, no LLM)
+            py_new = sorted(f for f in new_files if f.endswith(".py"))
+            if py_new and len(py_new) <= 10:
+                self._auto_review(py_new, ws)
+
             if not review_mode:
-                print(f"\n  Tip: run 'implement --review' to audit new files for bugs and wiring issues.")
+                print(f"\n  Tip: run 'implement --review' for deep LLM analysis.")
         if removed_files:
             print(f"\n  Files no longer present: {len(removed_files)}")
             for f in sorted(removed_files):
