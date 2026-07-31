@@ -114,9 +114,6 @@ class Agent:
         # Initialize LLM client for AI analysis (LM Studio)
         self.llm = LLMClient(model_name=self.model_name)
 
-        # Chat history for context
-        self.chat_history = []
-
         # Initialize extracted components
         self.fs = FileSystem(self.workspace)
         self.searcher = FileSearcher(self.workspace)
@@ -466,7 +463,7 @@ class Agent:
         """Return summary of current memory state."""
         stale = self.check_stale_files()
         return {
-            "chat_history": len(self.chat_history),
+            "chat_history": len(self._chat_history),
             "files_read": len(self._files_read),
             "stale_files": len(stale),
             "history": len(self._history),
@@ -478,6 +475,7 @@ class Agent:
     def clear_history(self):
         """Clear all agent state."""
         self._history = []
+        self._chat_history.clear()
         self._files_read.clear()
         self._file_mtimes.clear()
         self._knowledge_graph.clear()
