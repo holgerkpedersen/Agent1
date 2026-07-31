@@ -165,6 +165,9 @@ class ModelCommand(Command):
         target = next((m for m in models if m["key"] == matched), None)
 
         if target and not target["loaded"]:
+            loaded = [m for m in models if m["loaded"]]
+            if loaded:
+                self._unload_current_if_needed(models, matched)
             print(f"  Loading {matched} ...")
             ok, msg = _lms.load_model(matched)
             if not ok:
@@ -240,6 +243,24 @@ class ModelCommand(Command):
     #  Load / Unload
     # ------------------------------------------------------------------
 
+    def _unload_current_if_needed(self, models: list[dict], new_key: str) -> None:
+        """Unload currently loaded models only if VRAM likely can't fit both."""
+        new_size = next((m["size_bytes"] for m in models if m["key"] == new_key), 0)
+        loaded = [m for m in models if m["loaded"] and m["key"] != new_key]
+        if not loaded:
+            return
+
+        loaded_total = sum(m["size_bytes"] for m in loaded)
+        # Heuristic: if the new model alone is >40% of total loaded size,
+        # it probably won't fit alongside the current one. Unload first.
+        threshold = loaded_total * 0.4
+        if new_size > threshold:
+            for m in loaded:
+                ok, msg = _lms.unload_model(m["instance_id"])
+                print(f"    Unloaded: {m['key']} ({_format_size(m['size_bytes'])}) — {msg}")
+        else:
+            print(f"    Keeping {len(loaded)} loaded model(s) — (enough VRAM for both)")
+
     async def _load_model(self, rest: list[str], agent: "Agent") -> None:
         """Load a model into LM Studio and optionally switch to it."""
         query = " ".join(rest).strip()
@@ -262,6 +283,10 @@ class ModelCommand(Command):
             self._persist_model(resolved)
             print(f"  Switched to: {resolved}")
             return
+
+        # Unload current models to free VRAM before loading (if needed)
+        if loaded_keys:
+            self._unload_current_if_needed(models, resolved)
 
         print(f"  Loading: {resolved} ...")
         ok, msg = _lms.load_model(resolved)
