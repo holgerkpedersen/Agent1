@@ -646,8 +646,8 @@ async def run_interactive():
 
                     agent._chat_history.append({"role": "user", "content": user_input})
 
-                    # Tool-calling loop: up to 3 iterations, then final summary
-                    for _ in range(3):
+                    # Tool-calling loop: up to 5 iterations
+                    for _ in range(5):
                         result = await agent.llm.chat(agent._chat_history[-20:])
 
                         # Parse tool calls from response — tagged or bare
@@ -700,11 +700,13 @@ async def run_interactive():
                         # Loop exhausted — ask LLM for final answer based on all tool results
                         agent._chat_history.append({
                             "role": "user",
-                            "content": "You have all the information you requested. Provide your final answer now.",
+                            "content": "You have enough information. Provide your final answer now — no more tool calls.",
                         })
                         final = await agent.llm.chat(agent._chat_history[-20:])
                         agent._chat_history.append({"role": "assistant", "content": final})
-                        print(final)
+                        clean = re.sub(r'</?tool_call>', '', final)
+                        clean = re.sub(r'</?function_call>', '', clean)
+                        print(clean)
                 else:
                     result = await agent.execute_tool(tool_action, args)
                     print(result)
