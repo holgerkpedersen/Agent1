@@ -249,31 +249,28 @@ class ImplementCommand(Command):
                 pass
 
         if all_files is None:
-            print("Analyzing task plan to identify all files...")
-
-            list_messages = [
-                {"role": "system", "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations.\n\nCRITICAL: Use EXACTLY the filenames from the task plan. Do not rename or invent new filenames. Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix."},
-                {"role": "user", "content": f"List every file that needs to be created or modified from this task plan:\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}"}
-            ]
-
-            file_list_response = await agent.llm.chat(list_messages)
-
-            if not file_list_response or file_list_response.startswith("[Error") or file_list_response.startswith("[LM Studio"):
-                self.error(f"LM Studio API not responding or returned an error: {file_list_response}")
-                return True
-
-            file_lines = [line.strip() for line in file_list_response.strip().split('\n') if line.strip() and not line.startswith('#')]
-            all_files = [f for f in file_lines if f.endswith(('.py', '.json', '.yaml', '.yml', '.env', '.md', '.txt', '.cfg', '.ini', '.toml'))]
-
+            # Parse filenames directly from taskplan — the source of truth.
+            # LLM is only a fallback when the taskplan format is non-standard.
+            all_files = re.findall(r'`([^`]+\.py)`', taskplan_content)
             if not all_files:
-                all_files = re.findall(r'`([^`]+\.(?:py|json|yaml|yml|env|txt|cfg|ini|toml))`', file_list_response)
-
-            # Fallback: extract filenames directly from taskplan if LLM didn't find any
-            if not all_files:
-                all_files = re.findall(r'`([^`]+\.py)`', taskplan_content)
-            if not all_files:
-                # Last resort: any backtick-wrapped path-like string
                 all_files = re.findall(r'`([^`\s]+\.[a-z]{2,4})`', taskplan_content)
+
+            if not all_files:
+                print("Analyzing task plan to identify all files...")
+                list_messages = [
+                    {"role": "system", "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations.\n\nUse EXACTLY the filenames from the task plan. Do not rename or invent new filenames. Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix."},
+                    {"role": "user", "content": f"List every file that needs to be created or modified from this task plan:\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}"}
+                ]
+                file_list_response = await agent.llm.chat(list_messages)
+                if not file_list_response or file_list_response.startswith("[Error") or file_list_response.startswith("[LM Studio"):
+                    self.error(f"LM Studio API not responding or returned an error: {file_list_response}")
+                    return True
+                file_lines = [line.strip() for line in file_list_response.strip().split('\n') if line.strip() and not line.startswith('#')]
+                all_files = [f for f in file_lines if f.endswith(('.py', '.json', '.yaml', '.yml', '.env', '.md', '.txt', '.cfg', '.ini', '.toml'))]
+                if not all_files:
+                    all_files = re.findall(r'`([^`]+\.(?:py|json|yaml|yml|env|txt|cfg|ini|toml))`', file_list_response)
+                if not all_files:
+                    all_files = re.findall(r'`([^`]+\.py)`', taskplan_content)
 
             cache_data = {"taskplan": taskplan_file, "files": all_files, "taskplan_hash": hashlib.md5(taskplan_content.encode()).hexdigest()[:8] if taskplan_content else ""}
             try:
