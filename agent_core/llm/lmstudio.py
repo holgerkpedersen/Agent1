@@ -279,10 +279,12 @@ class LMStudioProvider:
     def _check_thinking_error(self, content: str, reasoning: str) -> str | None:
         """Check if model used all tokens thinking with no output."""
         if not content and reasoning and len(reasoning) > 500:
-            model = self.model_name
-            alternates = [m for m in KNOWN_MODELS if m != model]
-            alt_hint = f" Try: model {alternates[0]}" if alternates else ""
-            return f"[Error: {model} used all tokens thinking, zero code output. Use 'model reload' or switch model.{alt_hint}]"
+            # Auto-increase max_tokens for the retry
+            old = self.max_tokens
+            if self.max_tokens < 50000:
+                self.max_tokens = min(self.max_tokens * 2, 50000)
+                print(f"  (increased max_tokens: {old} -> {self.max_tokens})", end="", flush=True)
+            return None  # Let retry happen with higher tokens
         return None
     
     async def chat(
