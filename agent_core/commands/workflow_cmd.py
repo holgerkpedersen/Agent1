@@ -205,7 +205,7 @@ class WorkflowCommand(Command):
 
                 print(f"\n[plan] Creating plan...")
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "You are an expert software architect. Create a detailed coding plan with ALL files needed. Ensure all Python code passes mypy strict type checking. No unbound TypeVars, no type mismatches. Never use <tool_call> or XML tags."},
+                    {"role": "system", "content": "You are an expert software architect. Create a detailed coding plan with ALL files needed. Follow SOLID principles — each file has a single responsibility. New files should be small and focused (max 150 lines). If a concept needs more code, split across multiple files. Ensure all Python code passes mypy strict type checking. No unbound TypeVars, no type mismatches. Never use <tool_call> or XML tags."},
                     {"role": "user", "content": f"Create coding plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}"}
                 ])
                 if not step_ok(r):
@@ -243,7 +243,7 @@ class WorkflowCommand(Command):
                 with open(entities_md, "r", encoding="utf-8") as f:
                     entities = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text. No code blocks. Never use <tool_call>, XML tags, or function-calling syntax.\n\nPATH RULES:\n- [NEW] files: MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. Good: `agent1/logger.py`, `agent_core/file_context.py`, `src/agent1/new.py`.\n- [MODIFY] existing files: use the file's actual path (e.g. `agent.py` at root, `agent_core/commands/fix_cmd.py`).\n- BAD: `logger.py` as [NEW], `src/config.py` (bare src/ without subpackage)."},
+                    {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text. No code blocks. Never use <tool_call>, XML tags, or function-calling syntax.\n\nPATH RULES:\n- [NEW] files: MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. Good: `agent1/logger.py`, `agent_core/file_context.py`, `src/agent1/new.py`.\n- [MODIFY] existing files: use the file's actual path (e.g. `agent.py` at root, `agent_core/commands/fix_cmd.py`).\n- BAD: `logger.py` as [NEW], `src/config.py` (bare src/ without subpackage).\n\nSIZE RULES:\n- New files: max 150 lines (SRP — single responsibility). Split large concepts across multiple focused files.\n- Modifying files: only the minimal change — do not suggest rewriting entire large files."},
                     {"role": "user", "content": f"Create task plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}{collision_warning}"}
                 ])
                 if not step_ok(r):
@@ -342,7 +342,7 @@ class WorkflowCommand(Command):
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan for adding these features. Format: mark file as [NEW] or [MODIFY], then '— what to do'. Include type-checking validation. No intro text. Never use <tool_call> or XML tags.\n\nCRITICAL RULE: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare filenames or bare `src/`."},
+                    {"role": "system", "content": "Create task plan for adding these features. Format: mark file as [NEW] or [MODIFY], then '— what to do'. Include type-checking validation. No intro text. Never use <tool_call> or XML tags.\n\nCRITICAL RULES:\n- PATH: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare filenames or bare `src/`.\n- SIZE: New files max 150 lines (SRP — single responsibility). Split large concepts. Modify existing files only with minimal changes — do not suggest rewriting entire large files."},
                     {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\nCreate implementation tasks.{collision_warning}"}
                 ])
                 if not step_ok(r):
@@ -445,7 +445,7 @@ class WorkflowCommand(Command):
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan. Format: 'Task N: `file.py` [TAG] — what to do'. List in dependency order. Be concise — one line per task. No intro text. Never use <tool_call> or XML tags.\n\nCRITICAL RULE: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare filenames or bare `src/`."},
+                    {"role": "system", "content": "Create task plan. Format: 'Task N: `file.py` [TAG] — what to do'. List in dependency order. Be concise — one line per task. No intro text. Never use <tool_call> or XML tags.\n\nCRITICAL RULES:\n- PATH: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare filenames or bare `src/`.\n- SIZE: New files max 150 lines (SRP — single responsibility). Split large concepts. Modify existing files only with minimal changes — do not suggest rewriting entire large files."},
                     {"role": "user", "content": f"Create task plan:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}{collision_warning}"}
                 ])
                 if not step_ok(r):

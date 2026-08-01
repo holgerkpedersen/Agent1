@@ -80,7 +80,7 @@ class TaskplanCommand(Command):
         collision_warning = _collision_scan(ws_dir)
 
         messages = [
-            {"role": "system", "content": "You are an expert project manager. Create a detailed task plan for implementing code changes. Break down work into concrete, actionable tasks with clear descriptions. Include task dependencies and priority.\n\nCRITICAL RULE: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare filenames, bare `src/`, or any other directory."},
+            {"role": "system", "content": "You are an expert project manager. Create a detailed task plan for implementing code changes. Break down work into concrete, actionable tasks with clear descriptions. Include task dependencies and priority.\n\nCRITICAL RULES:\n- PATH: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare filenames, bare `src/`, or any other directory.\n- SIZE: New files max 150 lines (SRP — single responsibility). Split large concepts across multiple focused files. Modify existing files only with minimal changes — do not suggest rewriting entire large files."},
             {"role": "user", "content": f"Create a task implementation plan from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\n## Existing entities.py:\n{entities_content if entities_content else 'No entities.py found'}\n\nGenerate a tasks.md file with specific implementation tasks, organized by file, with clear steps for new and existing files. Ensure tasks respect the entity definitions in entities.py.{collision_warning}"}
         ]
         tasks = await agent.llm.chat(messages)
