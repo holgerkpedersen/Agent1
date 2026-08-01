@@ -1119,8 +1119,14 @@ class ImplementCommand(Command):
             # ---- Actionable: offer to delete dangerous files ----
             dangerous_files: set[str] = set()
             dangerous_files.update(cc["file"] for cc in class_conflicts)
+            dangerous_files.update(uw["file"] for uw in unwired)
             if dangerous_files:
-                print(f"\n  [review] {len(dangerous_files)} file(s) have class-name conflicts — would break if wired:")
+                reasons = []
+                if class_conflicts:
+                    reasons.append(f"{sum(1 for cc in class_conflicts if cc['file'] in dangerous_files)} have class-name conflicts")
+                if unwired:
+                    reasons.append(f"{sum(1 for uw in unwired if uw['file'] in dangerous_files)} are unwired")
+                print(f"\n  [review] {len(dangerous_files)} file(s) have issues ({', '.join(reasons)}):")
                 for f in sorted(dangerous_files):
                     print(f"    {f}")
                 try:
