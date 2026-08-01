@@ -749,6 +749,16 @@ class ImplementCommand(Command):
                 else:
                     os.replace(tmp_path, filepath)
                     print(f"  Compiled OK: {filename}")
+
+            # Post-write: reject files that create class-name conflicts in same directory
+            if filepath.exists() and filename.endswith(".py"):
+                from agent_core.patterns import detect_class_conflicts
+                conflicts = detect_class_conflicts([filename], ws)
+                if conflicts:
+                    filepath.unlink()
+                    print(f"  REJECTED: class-name conflict — {conflicts[0]['suggestion']}")
+                    file_outcomes[filename] = f"rejected — {conflicts[0]['suggestion']}"
+                    continue
             implemented.append(filename)
             print(f"  Written: {filename}")
 
