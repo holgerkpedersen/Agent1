@@ -1,4 +1,5 @@
 """Implement command for agent interactive mode."""
+import hashlib
 import importlib.util
 import json
 import os
@@ -236,9 +237,14 @@ class ImplementCommand(Command):
             try:
                 with open(cache_file, "r", encoding="utf-8") as f:
                     cache_data = json.load(f)
-                if cache_data.get("taskplan") == taskplan_file:
+                # Check taskplan content hasn't changed (stale cache = wrong filenames)
+                cached_hash = cache_data.get("taskplan_hash", "")
+                current_hash = hashlib.md5(taskplan_content.encode()).hexdigest()[:8] if taskplan_content else ""
+                if cache_data.get("taskplan") == taskplan_file and cached_hash == current_hash:
                     all_files = cache_data.get("files", [])
                     print(f"Using cached file list ({len(all_files)} files): {', '.join(all_files)}")
+                else:
+                    print(f"Taskplan changed — refreshing file list")
             except Exception:
                 pass
 
@@ -269,7 +275,7 @@ class ImplementCommand(Command):
                 # Last resort: any backtick-wrapped path-like string
                 all_files = re.findall(r'`([^`\s]+\.[a-z]{2,4})`', taskplan_content)
 
-            cache_data = {"taskplan": taskplan_file, "files": all_files}
+            cache_data = {"taskplan": taskplan_file, "files": all_files, "taskplan_hash": hashlib.md5(taskplan_content.encode()).hexdigest()[:8] if taskplan_content else ""}
             try:
                 with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump(cache_data, f)
