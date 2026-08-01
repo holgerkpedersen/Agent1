@@ -491,7 +491,7 @@ class ImplementCommand(Command):
                     taken_list = ", ".join(f"{n} (in {', '.join(fs[:2])})" for n, fs in sorted(taken.items())[:15])
                     collision_warning = f"\n\nCRITICAL — DO NOT create these names in the new file: {taken_list}. They already exist in the target directory. Modify the existing file instead if you need to extend them."
 
-            user_context = f"Implement this file:\n{batch_files_md}\n{export_context}{collision_warning}"
+            user_context = f"Implement ONLY this file — no other files:\n{batch_files_md}\n{export_context}{collision_warning}"
             if task_context:
                 user_context += f"\n\nTask: {task_context}"
             if analysis_context:
@@ -716,11 +716,24 @@ class ImplementCommand(Command):
                     ):
                         os.unlink(tmp_path)
                         print(f"  WARNING: {filename} appears truncated, re-requesting...")
+                        # Switch to deep-analysis profile (50K tokens) for the retry
+                        old_temp = agent.llm._provider.temperature
+                        old_tok = agent.llm._provider.max_tokens
+                        try:
+                            from agent_core.llm.model_profiles import get_profile
+                            dp = get_profile("deep-analysis")
+                            agent.llm._provider.temperature = dp.temperature
+                            agent.llm._provider.max_tokens = dp.max_tokens
+                        except Exception:
+                            pass
                         retry_msgs = [
                             {"role": "system", "content": "Generate ONLY the complete code for this file. Output as:\n[FILE: filename.py]\n```python\n# complete code here\n```"},
                             {"role": "user", "content": f"Generate complete code for {filename}."}
                         ]
                         retry_content = await agent.llm.chat(retry_msgs)
+                        # Restore original profile
+                        agent.llm._provider.temperature = old_temp
+                        agent.llm._provider.max_tokens = old_tok
                         if not retry_content.startswith("[Error"):
                             match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', retry_content, re.DOTALL)
                             if match:
