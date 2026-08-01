@@ -11,6 +11,26 @@ if TYPE_CHECKING:
     from agent import Agent
 
 
+def _detect_subpackages(workspace: str) -> list[str]:
+    """Find existing subpackage directories (containing __init__.py) in the workspace.
+
+    Returns a sorted list of relative paths like ``['agent_core', 'agent1', 'src/agent1']``.
+    Used to generate workspace-agnostic path rules for LLM prompts.
+    """
+    if not os.path.isdir(workspace):
+        return []
+    pkgs = set()
+    for root, dirs, files in os.walk(workspace):
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('__pycache__', '.pytest_cache')]
+        if '__init__.py' in files:
+            rel = os.path.relpath(root, workspace).replace('\\', '/')
+            if rel == '.':
+                pkgs.add(root.rsplit(os.sep, 1)[-1])  # root package name
+            else:
+                pkgs.add(rel)
+    return sorted(pkgs)
+
+
 def _collect_existing_names(workspace: str) -> tuple[dict[str, list[str]], list[str]]:
     """Scan workspace for class/function names + filenames grouped by directory.
 
@@ -162,6 +182,14 @@ class WorkflowCommand(Command):
         taken_names, existing_filenames = _collect_existing_names(str(ws_path))
         collision_warning = _collision_warning(taken_names, existing_filenames) if taken_names or existing_filenames else ""
 
+        # Dynamic path rules based on workspace structure
+        pkgs = _detect_subpackages(str(ws_path))
+        if not pkgs:
+            pkgs = ["agent_core", "agent1", "src/agent1"]  # fallback
+        pkg_list = "`, `".join(pkgs[:5])
+        path_rule = f"\n\nPATH RULES: New files MUST use a sub-package prefix (`{pkg_list}/`). BAD: bare filenames or `src/` without subdirectory."
+        prompt_context = collision_warning + path_rule + "\n\nSIZE RULES: New files max 150 lines (SRP). Split large concepts. Modifying: minimal changes only."
+
         analysis_md = str(ws_path / "project_analysis.md")
         plan_md = str(ws_path / "project_plan.md")
         entities_md = str(ws_path / "project_entities.md")
@@ -243,8 +271,8 @@ class WorkflowCommand(Command):
                 with open(entities_md, "r", encoding="utf-8") as f:
                     entities = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text. No code blocks. Never use <tool_call>, XML tags, or function-calling syntax.\n\nPATH RULES:\n- [NEW] files: MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. Good: `agent1/logger.py`, `agent_core/file_context.py`, `src/agent1/new.py`.\n- [MODIFY] existing files: use the file's actual path (e.g. `agent.py` at root, `agent_core/commands/fix_cmd.py`).\n- BAD: `logger.py` as [NEW], `src/config.py` (bare src/ without subpackage).\n\nSIZE RULES:\n- New files: max 150 lines (SRP — single responsibility). Split large concepts across multiple focused files.\n- Modifying files: only the minimal change — do not suggest rewriting entire large files."},
-                    {"role": "user", "content": f"Create task plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}{collision_warning}"}
+                    {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text. No code blocks. Never use <tool_call>, XML tags, or function-calling syntax.\n\nFollow the PATH RULES and SIZE RULES in the prompt below."},
+                    {"role": "user", "content": f"Create task plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}{prompt_context}"}
                 ])
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
@@ -342,8 +370,8 @@ class WorkflowCommand(Command):
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan for adding these features. Format: mark file as [NEW] or [MODIFY], then '— what to do'. Include type-checking validation. No intro text. Never use <tool_call> or XML tags.\n\nCRITICAL RULES:\n- PATH: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare filenames or bare `src/`.\n- SIZE: New files max 150 lines (SRP — single responsibility). Split large concepts. Modify existing files only with minimal changes — do not suggest rewriting entire large files."},
-                    {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\nCreate implementation tasks.{collision_warning}"}
+                    {"role": "system", "content": "Create task plan for adding these features. Format: mark file as [NEW] or [MODIFY], then '— what to do'. Include type-checking validation. No intro text. Never use <tool_call> or XML tags.\n\nFollow the rules in the prompt below."},
+                    {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\nCreate implementation tasks.{prompt_context}"}
                 ])
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
@@ -445,8 +473,8 @@ class WorkflowCommand(Command):
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan. Format: 'Task N: `file.py` [TAG] — what to do'. List in dependency order. Be concise — one line per task. No intro text. Never use <tool_call> or XML tags.\n\nCRITICAL RULES:\n- PATH: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare filenames or bare `src/`.\n- SIZE: New files max 150 lines (SRP — single responsibility). Split large concepts. Modify existing files only with minimal changes — do not suggest rewriting entire large files."},
-                    {"role": "user", "content": f"Create task plan:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}{collision_warning}"}
+                    {"role": "system", "content": "Create task plan. Format: 'Task N: `file.py` [TAG] — what to do'. List in dependency order. Be concise — one line per task. No intro text. Never use <tool_call> or XML tags.\n\nFollow the rules in the prompt below."},
+                    {"role": "user", "content": f"Create task plan:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}{prompt_context}"}
                 ])
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")

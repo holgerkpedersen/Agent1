@@ -258,7 +258,7 @@ class ImplementCommand(Command):
             if not all_files:
                 print("Analyzing task plan to identify all files...")
                 list_messages = [
-                    {"role": "system", "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations.\n\nUse EXACTLY the filenames from the task plan. Do not rename or invent new filenames. Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix."},
+                    {"role": "system", "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations.\n\nUse EXACTLY the filenames from the task plan. Do not rename or invent new filenames. Every file MUST use a sub-package prefix — never bare root-level names."},
                     {"role": "user", "content": f"List every file that needs to be created or modified from this task plan:\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}"}
                 ]
                 file_list_response = await agent.llm.chat(list_messages)

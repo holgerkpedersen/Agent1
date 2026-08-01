@@ -9,6 +9,19 @@ if TYPE_CHECKING:
     from agent import Agent
 
 
+def _detect_subpackages(workspace: str) -> list[str]:
+    """Find existing subpackage directories (containing __init__.py)."""
+    if not os.path.isdir(workspace):
+        return []
+    pkgs = set()
+    for root, dirs, files in os.walk(workspace):
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('__pycache__', '.pytest_cache')]
+        if '__init__.py' in files:
+            rel = os.path.relpath(root, workspace).replace('\\', '/')
+            pkgs.add(rel if rel != '.' else root.rsplit(os.sep, 1)[-1])
+    return sorted(pkgs)
+
+
 def _collision_scan(workspace: str) -> str:
     """Brief collision warning for LLM prompts."""
     if not os.path.isdir(workspace):
@@ -79,9 +92,16 @@ class TaskplanCommand(Command):
         ws_dir = os.path.dirname(os.path.abspath(analysis_file))
         collision_warning = _collision_scan(ws_dir)
 
+        # Dynamic path rules
+        pkgs = _detect_subpackages(ws_dir)
+        if not pkgs:
+            pkgs = ["agent_core", "agent1", "src/agent1"]
+        pkg_list = "`, `".join(pkgs[:5])
+        path_rule = f"\n\nPATH RULES: New files MUST use a sub-package prefix (`{pkg_list}/`). BAD: bare filenames or `src/` without subdirectory.\nSIZE RULES: New files max 150 lines (SRP). Split large concepts. Modifying: minimal changes only."
+
         messages = [
-            {"role": "system", "content": "You are an expert project manager. Create a detailed task plan for implementing code changes. Break down work into concrete, actionable tasks with clear descriptions. Include task dependencies and priority.\n\nCRITICAL RULES:\n- PATH: Every file path MUST use `agent_core/`, `agent1/`, or `src/agent1/` prefix. BAD: bare filenames, bare `src/`, or any other directory.\n- SIZE: New files max 150 lines (SRP — single responsibility). Split large concepts across multiple focused files. Modify existing files only with minimal changes — do not suggest rewriting entire large files."},
-            {"role": "user", "content": f"Create a task implementation plan from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\n## Existing entities.py:\n{entities_content if entities_content else 'No entities.py found'}\n\nGenerate a tasks.md file with specific implementation tasks, organized by file, with clear steps for new and existing files. Ensure tasks respect the entity definitions in entities.py.{collision_warning}"}
+            {"role": "system", "content": "You are an expert project manager. Create a detailed task plan for implementing code changes. Break down work into concrete, actionable tasks with clear descriptions. Include task dependencies and priority.\n\nFollow the PATH and SIZE rules in the prompt below."},
+            {"role": "user", "content": f"Create a task implementation plan from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\n## Existing entities.py:\n{entities_content if entities_content else 'No entities.py found'}\n\nGenerate a tasks.md file with specific implementation tasks, organized by file, with clear steps for new and existing files. Ensure tasks respect the entity definitions in entities.py.{collision_warning}{path_rule}"}
         ]
         tasks = await agent.llm.chat(messages)
         
