@@ -571,7 +571,7 @@ async def run_interactive():
     print("  plan <analysis.md> <plan.md> - Generate coding plan from analysis")
     print("  entities <analysis.md> <plan.md> [entities.md] - Generate shared entities")
     print("  taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks")
-    print("  implement <taskplan.md> [--keep] [--force] [--fix] [--retry] [--workspace <path>] - Implement files")
+    print("  implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--force] [--fix] [--retry] [--review] [--workspace <path>] — Implement files")
     print("  fix \"<traceback>\"   - Paste a traceback to auto-fix the error")
     print("  fix <file> --desc \"text\" [--full] - Describe an issue, LLM analyzes full codebase and fixes it")
     print("  cleanup             - Show unreferenced files and reference graph")
