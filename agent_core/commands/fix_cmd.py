@@ -1,6 +1,7 @@
 """Fix command for agent interactive mode."""
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -205,7 +206,7 @@ class FixCommand(Command):
                     all_source += f"  {rel}: {sigs}\n"
                 print(f"  Collected {len(py_files)} Python files ({len(all_source)} bytes)")
                 msgs = [
-                    {"role": "system", "content": "You are an expert Python debugger. Analyze the codebase below. Fix ALL files needed. Keep code concise. NEVER create duplicate functions or classes (_v1, _v2, _clean, _final variants). One implementation per concept.\n\nOutput each fixed file as:\n[FILE: absolute/path/to/file.py]\n```python\n# complete fixed code\n```"},
+                    {"role": "system", "content": "You are an expert Python debugger. Analyze the codebase below. Fix ALL files needed. Keep code concise. NEVER create duplicate functions or classes (_v1, _v2, _clean, _final variants). One implementation per concept.\n\nPrefer [PATCH:] format (minimal diff — only the lines that change):\n[PATCH: path/to/file.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n- old line\n\nOnly use [FILE:] for new files or when the entire file must be rewritten:\n[FILE: absolute/path/to/file.py]\n```python\n# complete fixed code\n```"},
                     {"role": "user", "content": f"The user reports this issue:\n\n{desc_text}\n\nFull project codebase:\n\n{all_source}\n\nAnalyze the issue, find the root cause, and fix ALL affected files. Output each fixed file with its full path."}
                 ]
                 print("Sending to LLM for deep analysis...")
@@ -355,6 +356,13 @@ class FixCommand(Command):
 
             # Display response if it's informational (no file fixes)
             clean = re.sub(r'</?tool_call>', '', response)
+
+            # Parse [PATCH:] blocks
+            patches = re.findall(r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL)
+            if patches:
+                for fpath, patch_text in patches:
+                    self._apply_patch(patch_text.strip(), fpath.strip(), ws_dir)
+
             fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', clean, re.DOTALL)
             valid_fixes = []
             for fpath, new_code in fixes:
@@ -363,9 +371,10 @@ class FixCommand(Command):
                     valid_fixes.append((full, new_code.strip()))
 
             if not valid_fixes:
-                if fixes:
+                if fixes and not patches:
                     print(f"  (ignored {len(fixes)} [FILE:] blocks — no matching files on disk)")
-                print(response)
+                elif not patches:
+                    print(response)
                 return True
 
             # Apply fixes
@@ -400,15 +409,25 @@ class FixCommand(Command):
             return await self._fix_traceback(parts, agent)
 
     def _apply_fix_response(self, response: str, ws_dir: str, desc_text: str) -> None:
-        """Parse [FILE:] blocks from *response* and apply them to disk."""
+        """Parse [FILE:] and [PATCH:] blocks from *response* and apply them to disk."""
         if response.startswith("[Error") or response.startswith("[LM Studio"):
             print(f"LLM error: {response[:200]}")
             return
         clean = re.sub(r'</?tool_call>', '', response)
+
+        # Parse [PATCH:] blocks
+        patches = re.findall(r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL)
+        if patches:
+            for fpath, patch_text in patches:
+                fpath = fpath.strip()
+                self._apply_patch(patch_text.strip(), fpath, ws_dir)
+
+        # Parse [FILE:] blocks (full file rewrite)
         fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', clean, re.DOTALL)
         if not fixes:
-            print("Could not parse fixes.")
-            print(response[:1000])
+            if not patches:
+                print("Could not parse fixes.")
+                print(response[:1000])
             return
         fixed_count = 0
         for fpath, new_code in fixes:
@@ -428,6 +447,113 @@ class FixCommand(Command):
             fixed_count += 1
             print(f"  Fixed: {fpath} ({len(new_code)} bytes)")
         print(f"\nFixed {fixed_count}/{len(fixes)} files.")
+
+    def _apply_patch(self, patch_text: str, fpath: str, ws_dir: str) -> bool:
+        """Apply a unified-diff-style patch to a file. Returns True on success."""
+        full = os.path.normpath(os.path.join(ws_dir, fpath)) if not os.path.isabs(fpath) else fpath
+        if not os.path.exists(full):
+            print(f"  Skipping {fpath} (not found)")
+            return False
+        if _is_stdlib_path(full):
+            print(f"  Skipping {fpath} (stdlib)")
+            return False
+
+        try:
+            with open(full, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except Exception as e:
+            print(f"  Cannot read {fpath}: {e}")
+            return False
+
+        # Parse hunks: @@ -start,count @@ ... @@
+        hunks = []
+        for m in re.finditer(r'@@\s*-(\d+)(?:,\d+)?\s*\+(\d+)(?:,\d+)?\s*@@(.*?)(?=@@|\Z)', patch_text, re.DOTALL):
+            start = int(m.group(1))
+            body = m.group(3).rstrip()
+            chunks: list[tuple[str, str | None]] = []  # ('-', line) or ('+', line) or (' ', line)
+            for line in body.split('\n'):
+                line = line.rstrip('\r')
+                if line.startswith('-'):
+                    chunks.append(('-', line[1:]))
+                elif line.startswith('+'):
+                    chunks.append(('+', line[1:]))
+                elif line.startswith(' '):
+                    chunks.append((' ', line[1:]))
+            if chunks:
+                hunks.append((start, chunks))
+
+        if not hunks:
+            print(f"  Could not parse patch for {fpath}")
+            return False
+
+        # Verify old lines exist before applying (safety check)
+        for start, chunks in hunks:
+            idx = start - 1
+            for op, text in chunks:
+                if op in ('-', ' '):
+                    if idx < 0 or idx >= len(lines) or lines[idx].rstrip('\r\n') != text:
+                        print(f"  Patch mismatch at line {idx+1}: expected '{text[:60]}', got '{lines[idx].rstrip()[:60] if 0 <= idx < len(lines) else 'EOF'}'")
+                        return False
+                    idx += 1
+                elif op == '+':
+                    pass  # new lines don't need verification
+
+        # Apply hunks (reverse order to preserve line numbers)
+        result = lines[:]
+        for start, chunks in reversed(hunks):
+            old_lines = []
+            new_lines = []
+            for op, text in chunks:
+                if op == '-':
+                    old_lines.append(text)
+                elif op == '+':
+                    new_lines.append(text)
+                elif op == ' ':
+                    old_lines.append(text)
+                    new_lines.append(text)
+            idx = start - 1
+            if idx + len(old_lines) <= len(result):
+                del result[idx:idx + len(old_lines)]
+                for i, text in enumerate(new_lines):
+                    result.insert(idx + i, text + '\n')
+
+        # Syntax check
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
+            tf.write(''.join(result))
+            tmp = tf.name
+        r = subprocess.run(["python", "-m", "py_compile", tmp], capture_output=True, text=True)
+        os.unlink(tmp)
+        if r.returncode != 0:
+            print(f"  Patch would break syntax: {r.stderr[:200]}")
+            return False
+
+        # Show diff
+        added = removed = 0
+        print(f"\n  [PATCH: {fpath}]")
+        for start, chunks in hunks:
+            for op, text in chunks:
+                if op == '-':
+                    print(f"  - {text[:100]}")
+                    removed += 1
+                elif op == '+':
+                    print(f"  + {text[:100]}")
+                    added += 1
+        print(f"  ({removed} lines removed, {added} lines added)")
+
+        # Apply
+        try:
+            choice = input("  Apply this patch? (y/N): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        if choice != "y":
+            print("  Skipped.")
+            return False
+
+        with open(full, "w", encoding="utf-8") as f:
+            f.write(''.join(result))
+        print(f"  Patched: {fpath}")
+        return True
 
     async def _fix_traceback(self, parts: list[str], agent: 'Agent') -> bool:
         traceback_text = ""
@@ -592,7 +718,7 @@ class FixCommand(Command):
         print(f"\nSending to LLM for fix...")
         import subprocess
         fix_msgs = [
-            {"role": "system", "content": "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged. No duplicate functions. No _v1/_v2 variants.\n\nOutput as: [FILE: filename.py]\n```python\n# complete fixed code\n```"},
+            {"role": "system", "content": "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged. No duplicate functions. No _v1/_v2 variants.\n\nPrefer [PATCH:] format (minimal diff — only changed lines):\n[PATCH: filename.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n- old line\n\nOnly use [FILE:] for new files or when the entire file must be rewritten:\n[FILE: filename.py]\n```python\n# complete fixed code\n```"},
             {"role": "user", "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n" + "\n".join([f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}" for m, n, s, a in all_broken]) + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}
         ]
         fixed = await agent.llm.chat(fix_msgs)
