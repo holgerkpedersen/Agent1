@@ -33,11 +33,11 @@ implement <taskplan> [opts]      Implement files from task plan
                                  --force            Overwrite existing files
                                  --keep             Skip files that compile OK
                                  --fix              Retry compilation errors
-                                 --retry            Re-generate only missing files
-                                 --review           Review new files for bugs + DRY violations
+                                  --retry            Re-generate only missing files (cache auto-invalidates on taskplan change)
+                                  --review           Review new files + offer to delete dangerous/unwired files
                                  --workspace <path> Target workspace
 fix <traceback>                  Paste traceback to auto-fix root cause
-    <file> --desc "text"        On-demand analysis — only sends top-5 files by relevance
+    <file> --desc "text"        On-demand — top-5 files by keyword match, LLM requests more with [READ:]
     <file> --desc "text" --full  Send entire project context (old behavior)
 cleanup                          Show unreferenced files
 workflow <target> [opts]         Full pipeline: analyze → plan → entities → tasks → implement
@@ -48,7 +48,7 @@ workflow <target> [opts]         Full pipeline: analyze → plan → entities �
                                  --brainstorm      Add 6th dimension: creative features
                                  --force           Skip existing file checks
                                  --workspace <p>   Target workspace
-model [list|load|unload|reload|name]  Manage models via LM Studio API
+model [list|load|unload|reload|profile|name]  Manage models via LM Studio API
 optimize <file|dir> [--apply] [--stdin] Find and apply performance/memory optimizations
 perf [--detail|--reset|--html]       Command performance dashboard (timing per command)
 clear [stats|--force]            Show memory stats, confirm then clear
@@ -60,7 +60,7 @@ Any text not matching a command is sent to the LLM as **natural language**. The 
 > What safety guards does the implement command use?
 ```
 
-The LLM can read files (`<tool_call>read path</tool_call>`), search the project (`<tool_call>search query</tool_call>`), and list directories — up to 5 rounds of exploration before producing a final answer. Conversation history is maintained so follow-up questions build on previous answers.
+The LLM can read files (`<tool_call>read path</tool_call>`), search the project (`<tool_call>search query</tool_call>`), and list directories — up to 6 rounds of exploration before a synthesis-ultimatum retry forces a final answer. Conversation history is maintained so follow-up questions build on previous answers.
 
 ### Workflow Pipeline
 
