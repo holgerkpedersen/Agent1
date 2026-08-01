@@ -90,12 +90,13 @@ The `fix` and `implement` commands include automatic protections against common 
 - **Refuses writes** to files under the Python installation directory to prevent `PermissionError`
 - **On-demand mode** (`fix <file> --desc`): scores candidate files by keyword relevance, sends only the top 5 files as full source. The LLM can request additional files with `[READ: path]` and iterates up to 3 rounds. Use `--full` for the legacy "send everything" behavior.
 
-**implement** — File safety (3 layers):
+**implement** — File safety (4 layers):
 - **Prevention**: LLM prompts instruct the LLM to use sub-package paths (`agent_core/thing.py`) and avoid bare root-level filenames
 - **Collision warnings at workflow time**: taskplan generation scans existing class/function names and filenames per directory, warns the LLM to avoid conflicts (e.g. "DO NOT create retry_policy.py if retry.py already exists")
+- **Post-write rejection**: every generated file is checked for class-name conflicts with existing code in the same directory. Conflicting files are auto-deleted immediately — no manual cleanup needed.
 - **Auto-review after every run**: static checks for class-name conflicts, module collisions, and unwired modules — printed immediately without LLM
 - **`--review` flag**: adds LLM deep analysis + offers to delete dangerous files with a y/N prompt
-- **Self-evolving cache**: implement cache auto-invalidates when taskplan content changes (MD5 hash), preventing stale filenames from reappearing
+- **Self-evolving cache**: implement cache auto-invalidates when taskplan content changes (MD5 hash). File discovery parses the taskplan directly — no LLM invents wrong filenames.
 
 ### Memory Management
 
