@@ -28,7 +28,7 @@ _BUILTIN_PROFILES: Final[Dict[str, ProfileMetadata]] = {
         name="fast-codegen",
         description="Low temperature, low tokens — fast code generation",
         temperature=0.1,
-        max_tokens=4096,
+        max_tokens=8000,
     ),
     "deep-analysis": ProfileMetadata(
         name="deep-analysis",
