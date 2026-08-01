@@ -779,6 +779,33 @@ class ImplementCommand(Command):
                 else:
                     print(f"  Compiled OK: {filename}")
 
+        # Post-loop: remove files that depend on rejected modules
+        rejected_files = {k for k, v in file_outcomes.items() if "rejected" in v}
+        if rejected_files:
+            for fname in list(implemented):
+                fpath = Path(ws) / fname
+                if not fpath.exists():
+                    continue
+                try:
+                    content = fpath.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                # Check imports against rejected files
+                for m in re.finditer(r'^(?:from|import)\s+(\S+)', content, re.MULTILINE):
+                    module = m.group(1)
+                    mod_file = module.replace(".", "/") + ".py"
+                    for rf in rejected_files:
+                        rf_no_ext = rf.replace(".py", "").replace("/", ".")
+                        if mod_file == rf or module == rf_no_ext or module.endswith("." + rf_no_ext.rsplit("/", 1)[-1]):
+                            p = Path(ws) / fname
+                            if p.exists():
+                                p.unlink()
+                            print(f"  REJECTED: {fname} depends on rejected file {rf}")
+                            file_outcomes[fname] = f"rejected — depends on rejected {rf}"
+                            if fname in implemented:
+                                implemented.remove(fname)
+                            break
+
         print(f"\n{'='*50}")
         print(f"Implementation complete: {len(implemented)}/{len(all_files)} files")
 
