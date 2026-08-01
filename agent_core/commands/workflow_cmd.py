@@ -118,6 +118,8 @@ class WorkflowCommand(Command):
                 tw = 'C:' + tw[2:]
             return Path(tw)
 
+        _ws_dir().mkdir(parents=True, exist_ok=True)
+
         if "--desc" in parts:
             di = parts.index("--desc")
             if di + 1 < len(parts):
