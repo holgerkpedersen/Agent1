@@ -92,9 +92,10 @@ The `fix` and `implement` commands include automatic protections against common 
 
 **implement** — File safety (3 layers):
 - **Prevention**: LLM prompts instruct the LLM to use sub-package paths (`agent_core/thing.py`) and avoid bare root-level filenames
-- **Auto-repair**: All bare root-level filenames are auto-prefixed with `agent1/` — `config.py` → `agent1/config.py`. No file is written at workspace root.
-- **Target protection**: Auto-repair skips overwriting files that already exist (>100 bytes), preventing accidental overwrite of project packages.
-- **Categorized outcomes**: Final report groups files by status: auto-repaired, rejected (with reasons), skipped (target exists), and truly missing.
+- **Collision warnings at workflow time**: taskplan generation scans existing class/function names and filenames per directory, warns the LLM to avoid conflicts (e.g. "DO NOT create retry_policy.py if retry.py already exists")
+- **Auto-review after every run**: static checks for class-name conflicts, module collisions, and unwired modules — printed immediately without LLM
+- **`--review` flag**: adds LLM deep analysis + offers to delete dangerous files with a y/N prompt
+- **Self-evolving cache**: implement cache auto-invalidates when taskplan content changes (MD5 hash), preventing stale filenames from reappearing
 
 ### Memory Management
 

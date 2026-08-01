@@ -232,7 +232,12 @@ The `--review` flag performs a post-generation audit:
   Invalid API schema: missing "type":"object" and "required" fields
 ```
 
-Safety: implement automatically refuses to write files that shadow stdlib modules (e.g., `types.py`, `config.py`) or conflict with existing packages. Bare filenames are auto-repaired into sub-packages (e.g., `types.py` → `agent_core/types.py`).
+Safety: implement now has 4 layers of protection:
+
+1. **Workflow collision warnings** — taskplan LLM sees existing names per directory before generating
+2. **Auto-review** — after every run: class conflicts, module collisions, unwired modules flagged immediately
+3. **`--review` flag** — offers to delete dangerous files (y/N) + LLM deep analysis
+4. **Self-evolving cache** — cache auto-invalidates when taskplan changes
 
 ---
 
