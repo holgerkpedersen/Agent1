@@ -39,6 +39,7 @@ implement <taskplan> [opts]      Implement files from task plan
 fix <traceback>                  Paste traceback to auto-fix root cause
     <file> --desc "text"        On-demand — top-5 files by keyword match, LLM requests more with [READ:]
     <file> --desc "text" --full  Send entire project context (old behavior)
+    [PATCH:] output              Prefer minimal diffs — shows changed lines, asks y/N before applying
 cleanup                          Show unreferenced files
 workflow <target> [opts]         Full pipeline: analyze → plan → entities → tasks → implement
                                  --from spec.md    Greenfield from specification
@@ -96,7 +97,9 @@ The `fix` and `implement` commands include automatic protections against common 
 - **Post-write rejection**: every generated file is checked for class-name conflicts with existing code in the same directory. Conflicting files are auto-deleted immediately — no manual cleanup needed.
 - **Auto-review after every run**: static checks for class-name conflicts, module collisions, and unwired modules — printed immediately without LLM
 - **`--review` flag**: adds LLM deep analysis + offers to delete dangerous files with a y/N prompt
-- **SOLID enforcement**: implement system prompt enforces SRP (Single Responsibility Principle). New files capped at 150 lines — LLM splits large concepts across multiple focused files. Modifying existing code uses minimal changes only. Prefers composition over inheritance.
+- **Patch-based fixing**: LLM outputs minimal `[PATCH:]` diffs instead of full-file rewrites. Shows changed lines with +/-, asks y/N before applying. Safety checks: old lines must exist, result must compile. `[FILE:]` still works as fallback.
+- **Workspace-agnostic**: path rules detected dynamically from workspace structure (finds `__init__.py` directories). No hardcoded prefixes — works in any project.
+- **SOLID enforcement**: implement system prompt enforces SRP. New files capped at 150 lines — LLM splits large concepts. Modifying existing code uses minimal changes. Prefers composition over inheritance.
 
 ### Memory Management
 

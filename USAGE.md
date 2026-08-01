@@ -232,7 +232,7 @@ The `--review` flag performs a post-generation audit:
   Invalid API schema: missing "type":"object" and "required" fields
 ```
 
-Safety: implement now has 4 layers of protection:
+Safety: implement now has 5 layers of protection:
 
 1. **Workflow collision warnings** — taskplan LLM sees existing names per directory before generating
 2. **SOLID enforcement** — SRP (Single Responsibility Principle): new files max 150 lines, LLM splits large concepts across multiple focused files. Existing files get minimal changes only.
@@ -240,7 +240,7 @@ Safety: implement now has 4 layers of protection:
 4. **Auto-review** — after every run: class conflicts, module collisions, unwired modules flagged
 5. **`--review` flag** — offers to delete dangerous files (y/N) + LLM deep analysis
 
-File discovery now parses the taskplan directly — no LLM invents wrong filenames.
+File discovery parses the taskplan directly — no LLM invents wrong filenames. Path rules adapt to any workspace by detecting existing `__init__.py` directories — no hardcoded prefixes.
 
 ---
 
@@ -308,7 +308,9 @@ Skipping LLM fix — this is a naming conflict, not a code error.
 > fix agent_core/config.py --desc "The ConfigManager.load() method doesn't validate YAML files"
 ```
 
-On-demand mode (default): sends only the top 5 most relevant files by keyword match, plus signatures for the rest. The LLM can request additional files with `[READ: path.py]` and iterates up to 3 rounds.
+On-demand mode (default): sends only the top 5 most relevant files by keyword match, plus signatures for the rest. The LLM can request additional files with `[READ: path.py]` and iterates up to 6 rounds before a synthesis-ultimatum retry.
+
+**Patch-based fixing**: The LLM prefers `[PATCH:]` format — minimal diffs showing only changed lines. Shows the diff with +/- markers, asks `Apply this patch? (y/N)` before writing. Falls back to `[FILE:]` for new files or full rewrites.
 
 ```
   On-demand: 5 full files + 12 candidate sigs + 86 other sigs (48KB)
