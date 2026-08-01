@@ -235,9 +235,10 @@ The `--review` flag performs a post-generation audit:
 Safety: implement now has 4 layers of protection:
 
 1. **Workflow collision warnings** — taskplan LLM sees existing names per directory before generating
-2. **Post-write rejection** — files with class-name conflicts are auto-deleted immediately
-3. **Auto-review** — after every run: class conflicts, module collisions, unwired modules flagged
-4. **`--review` flag** — offers to delete dangerous files (y/N) + LLM deep analysis
+2. **SOLID enforcement** — SRP (Single Responsibility Principle): new files max 150 lines, LLM splits large concepts across multiple focused files. Existing files get minimal changes only.
+3. **Post-write rejection** — files with class-name conflicts are auto-deleted immediately
+4. **Auto-review** — after every run: class conflicts, module collisions, unwired modules flagged
+5. **`--review` flag** — offers to delete dangerous files (y/N) + LLM deep analysis
 
 File discovery now parses the taskplan directly — no LLM invents wrong filenames.
 

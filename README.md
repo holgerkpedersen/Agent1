@@ -96,7 +96,7 @@ The `fix` and `implement` commands include automatic protections against common 
 - **Post-write rejection**: every generated file is checked for class-name conflicts with existing code in the same directory. Conflicting files are auto-deleted immediately — no manual cleanup needed.
 - **Auto-review after every run**: static checks for class-name conflicts, module collisions, and unwired modules — printed immediately without LLM
 - **`--review` flag**: adds LLM deep analysis + offers to delete dangerous files with a y/N prompt
-- **Self-evolving cache**: implement cache auto-invalidates when taskplan content changes (MD5 hash). File discovery parses the taskplan directly — no LLM invents wrong filenames.
+- **SOLID enforcement**: implement system prompt enforces SRP (Single Responsibility Principle). New files capped at 150 lines — LLM splits large concepts across multiple focused files. Modifying existing code uses minimal changes only. Prefers composition over inheritance.
 
 ### Memory Management
 
