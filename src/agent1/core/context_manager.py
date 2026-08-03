@@ -39,12 +39,21 @@ class SharedContext:
     auditing changes, and optional persistence through a storage backend.
     """
 
-    def __init__(self, storage_backend: Optional[StorageBackend] = None) -> None:
+    def __init__(self, storage_backend: Optional[StorageBackend] = None, max_history: int = 1000) -> None:
         self._entries: Dict[str, ContextEntry] = {}
         self._locks: Dict[str, bool] = {}
         self._lock_owners: Dict[str, str] = {}
         self._history: List[Tuple[float, str, Optional[str], Any, Any]] = []
         self._backend: Optional[StorageBackend] = storage_backend
+        self._max_history = max_history
+
+    def clear(self) -> None:
+        """Clear all context entries and history."""
+        self._entries.clear()
+        self._locks.clear()
+        self._lock_owners.clear()
+        self._history.clear()
+        self._max_history: int = max_history
 
     def set(self, key: str, value: Any, agent_id: Optional[str] = None) -> bool:
         """Set a context value. Returns False if the key is locked."""
@@ -54,9 +63,12 @@ class SharedContext:
         entry = ContextEntry(key, value, agent_id)
         self._entries[key] = entry
         self._history.append((time.time(), key, agent_id, old_value, value))
+        # Limit history size
+        if len(self._history) > self._max_history:
+            self._history.pop(0)
         if self._backend is not None:
             payload: Dict[str, Any] = {
-                "key": key, "value": value, "agent_id": agent_id or "system",
+                "key": key, "value": value, "agent_id": agent_id or SYSTEM_ID,
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             }
             self._backend.store(key, payload)
@@ -80,6 +92,9 @@ class SharedContext:
         if existed:
             del self._entries[key]
         self._history.append((time.time(), key, agent_id, old_value, None))
+        # Limit history size
+        if len(self._history) > self._max_history:
+            self._history.pop(0)
         if self._backend is not None and existed:
             self._backend.delete(key)
         return existed
@@ -159,9 +174,9 @@ class ContextManager:
     semantic search via an EmbeddingService + VectorDatabase pair.
     """
 
-    def __init__(self, db_path: str = ":memory:") -> None:
+    def __init__(self, db_path: str = ":memory:", max_history: int = 1000) -> None:
         self._storage: SQLiteStorage = SQLiteStorage(db_path)
-        self._context: SharedContext = SharedContext(self._storage)
+        self._context: SharedContext = SharedContext(self._storage, max_history=max_history)
         self._semantic_index: Optional[SemanticContextIndex] = None
 
     @property
@@ -197,12 +212,12 @@ class ContextManager:
 
     def cleanup(self) -> None:
         """Release internal caches held by the context manager."""
-        self._context._entries.clear()  # type: ignore[attr-defined]
-        self._context._locks.clear()   # type: ignore[attr-defined]
-        self._context._lock_owners.clear()  # type: ignore[attr-defined]
-        self._context._history.clear()  # type: ignore[attr-defined]
+        self._context.clear()
 
+
+SYSTEM_ID = "system"
 
 __all__: List[str] = [
     "ContextEntry", "SharedContext", "SemanticContextIndex", "ContextManager",
+    "SYSTEM_ID",
 ]

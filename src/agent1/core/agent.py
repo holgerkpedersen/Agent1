@@ -253,8 +253,8 @@ class Agent:
                     logger.info("Agent run cancelled during sleep")
                     raise
 
-    def shutdown(self) -> None:
-        """Cleanly shut down the agent and its components."""
+    async def async_shutdown(self) -> None:
+        """Cleanly shut down the agent and its components asynchronously."""
         logger.info("Shutting down agent '%s'", self.name)
 
         for index, component in enumerate(list(self.sensors) + list(self.actuators)):
@@ -263,8 +263,7 @@ class Agent:
                 try:
                     shutdown_method = component.shutdown()
                     if asyncio.iscoroutine(shutdown_method):
-                        # If called outside an event loop we cannot await; log a warning.
-                        logger.warning("Async shutdown for '%s' requires running event loop", label)
+                        await shutdown_method
                     else:
                         pass  # synchronous shutdown completed implicitly
                 except Exception as exc:  # pragma: no cover - defensive guard
@@ -274,7 +273,9 @@ class Agent:
             try:
                 method = self.memory.shutdown()
                 if asyncio.iscoroutine(method):
-                    logger.warning("Async memory shutdown requires running event loop")
+                    await method
+                else:
+                    pass  # synchronous shutdown completed implicitly
             except Exception as exc:  # pragma: no cover - defensive guard
                 logger.error("Shutdown of memory raised an error: %s", exc)
 

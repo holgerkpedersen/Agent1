@@ -1,5 +1,5 @@
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, cast
 
 from ..tools.definitions import ApplyFixArgs, ReadFileArgs, ToolCallResult
 
@@ -28,27 +28,40 @@ def parse_tool_calls(response_message: Dict[str, Any]) -> List[ToolCallResult]:
         except (json.JSONDecodeError, TypeError):
             parsed_args = {}
 
-        result = _build_tool_call_result(tool_name, parsed_args)
-        results.append(result)
+        # Handle unknown tool names gracefully
+        try:
+            result = _build_tool_call_result(tool_name, parsed_args)
+            results.append(result)
+        except ValueError:
+            continue
 
     return results
 
 
 def execute_tool_call(call: ToolCallResult) -> str:
     """Dispatch and execute a single tool call."""
-    if call["tool"] == "read_file":
-        args = call["arguments"]
-        filename = args["filename"]
-        return _execute_read_file(filename)
+    tool = call["tool"]
+    args = call["arguments"]
 
-    elif call["tool"] == "apply_fix":
-        args = call["arguments"]
-        filename = args["filename"]
-        line_number = args["line_number"]
-        patch = args["patch"]
-        return _execute_apply_fix(filename, line_number, patch)
+    if tool == "read_file":
+        # Type check to ensure args is dict-like for safe access
+        if isinstance(args, dict):
+            return _execute_read_file(args["filename"])
+        raise ValueError("Invalid arguments for read_file")
 
-    raise ValueError(f"Unknown tool: {call['tool']}")
+    elif tool == "apply_fix":
+        # Ensure args is dict-like for safe access of keys that exist in ApplyFixArgs
+        if isinstance(args, dict):
+            try:
+                line_number = int(args.get("line_number", 0))
+            except (ValueError, TypeError):
+                line_number = 0
+            return _execute_apply_fix(
+                args["filename"], line_number, args["patch"]
+            )
+        raise ValueError("Invalid arguments for apply_fix")
+
+    raise ValueError(f"Unknown tool: {tool}")
 
 
 def _build_tool_call_result(tool_name: str, parsed_args: Dict[str, Any]) -> ToolCallResult:
@@ -63,7 +76,13 @@ def _build_tool_call_result(tool_name: str, parsed_args: Dict[str, Any]) -> Tool
 
     elif tool_name == "apply_fix":
         filename = str(parsed_args.get("filename", ""))
-        line_number = int(parsed_args.get("line_number", 0))
+        # Handle potentially malformed line numbers by validating first
+        raw_line_num = parsed_args.get("line_number")
+        if isinstance(raw_line_num, int) or (isinstance(raw_line_num, str) and raw_line_num.isdigit()):
+            line_number = int(raw_line_num)
+        else:
+            line_number = 0
+
         patch = str(parsed_args.get("patch", ""))
         return {
             "tool": "apply_fix",
@@ -79,8 +98,8 @@ def _execute_read_file(filename: str) -> str:
     try:
         with open(filename, "r") as f:
             return f.read()
-    except IOError:
-        return ""
+    except IOError as exc:
+        return f"Error reading file: {exc}"
 
 
 def _execute_apply_fix(filename: str, line_number: int, patch: str) -> str:
@@ -99,5 +118,5 @@ def _execute_apply_fix(filename: str, line_number: int, patch: str) -> str:
             f.writelines(lines)
 
         return ""
-    except IOError:
-        return ""
+    except IOError as exc:
+        return f"Error applying fix: {exc}"

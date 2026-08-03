@@ -1,6 +1,9 @@
 from typing import TypedDict, Union, Dict, Any
 
 
+"""Tool definitions and schemas for FixCommand."""
+
+
 class ReadFileArgs(TypedDict):
     filename: str
 
@@ -29,7 +32,8 @@ APPLY_FIX_SCHEMA: Dict[str, Any] = {
     "required": ["filename", "line_number", "patch"],
 }
 
-TOOLS = [
+# Immutable tuple of tool schemas (OpenAI SDK accepts any sequence)
+TOOLS = (
     {
         "type": "function",
         "function": {
@@ -46,10 +50,10 @@ TOOLS = [
             "parameters": APPLY_FIX_SCHEMA,
         },
     },
-]
+)
 
 
 class ToolCallResult(TypedDict):
     tool: str
     arguments: Union[ReadFileArgs, ApplyFixArgs]
-    result: str
+    # result field is placeholder - actual results returned by execute_tool_call
