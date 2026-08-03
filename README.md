@@ -17,6 +17,7 @@ Python AI agent framework with LLM integration, tool execution, workspace manage
 - Tool loop runner for multi-step LLM interactions
 - Streaming chat with real-time token output
 - Multi-model support: Laguna S 2.1, Qwen, Gemma, etc.
+- **Enhanced executor** with parallel tool execution and error handling (fixcommand/core/executor/llm_executor.py)
 
 ### Commands (`agent_core/commands/`)
 ```
@@ -210,5 +211,7 @@ OPENAI_API_KEY=your-key
 ```bash
 pytest tests/ -v
 ```
-
 86 tests, all passing.
+
+### New Tests (2024-08)
+- Added `tests/test_llm_executor.py` with unit test coverage for improved LLM executor
