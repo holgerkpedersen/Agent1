@@ -2,6 +2,8 @@
 """Agent implementation with workspace management and tool execution."""
 
 import asyncio
+import contextlib
+import io
 import os
 import platform
 import re
@@ -28,6 +30,7 @@ from agent_core.commands.implement_cmd import ImplementCommand
 from agent_core.commands.fix_cmd import FixCommand
 from agent_core.commands.workflow_cmd import WorkflowCommand
 from agent_core.commands.optimize_cmd import OptimizeCommand
+from agent_core.commands.paste_cmd import PasteCommand
 from agent_core.commands.perf_cmd import PerfCommand, PerfTracker
 from datetime import datetime
 from pathlib import Path
@@ -125,6 +128,7 @@ class Agent:
         self._working_memory: list = []
         self._history: list = []
         self._chat_history: list[dict] = []  # NLP conversation context
+        self._nlp_workspace: str | None = None  # workspace override for NLP tools (set by paste --workspace)
 
         # Initialize LLM client for AI analysis (LM Studio)
         self.llm = LLMClient(model_name=self.model_name)
@@ -148,17 +152,29 @@ class Agent:
         self.dispatcher.register("analyze_file", lambda args: self._tool_analyze_file(**args))
         self.dispatcher.register("llm_analyze", lambda args: self._tool_llm_analyze(**args))
 
+    def _resolve_nlp_path(self, path: str) -> str:
+        """Resolve a path for NLP tool use, honouring _nlp_workspace if set."""
+        import os as _os
+        if self._nlp_workspace and not _os.path.isabs(path):
+            return _os.path.normpath(_os.path.join(self._nlp_workspace, path))
+        return path
+
     async def _execute_nlp_tool(self, tool_text: str) -> str:
         """Execute a tool call from the NLP conversation and return the result."""
-        parts = shlex.split(tool_text) if tool_text else []
+        # Strip nested XML tags that some models add (e.g. <arg_key>path</arg_key>)
+        tool_text = re.sub(r'<arg_key>[^<]*</arg_key>', ' ', tool_text)
+        tool_text = re.sub(r'</?arg_value>', '', tool_text)
+        tool_text = re.sub(r' +', ' ', tool_text).strip()
+        parts = shlex.split(tool_text, posix=False) if tool_text else []
         if not parts:
             return "Error: empty tool call"
 
         cmd = parts[0].lower()
         if cmd == "search":
             query = " ".join(parts[1:])
+            search_path = self._nlp_workspace or self.workspace
             try:
-                results = self.searcher.search(query)
+                results = await self.searcher.search(query, search_path)
                 if not results:
                     return "No files found matching that query."
                 return "\n".join(f"  {r}" for r in results[:30])
@@ -166,7 +182,7 @@ class Agent:
                 return f"Search error: {e}"
 
         if cmd == "read":
-            path = " ".join(parts[1:]).strip('"').strip("'")
+            path = self._resolve_nlp_path(" ".join(parts[1:]).strip('"').strip("'"))
             try:
                 content = await self.read_file(path, track_read=False)
                 if content.startswith("File not found") or content.startswith("Error"):
@@ -176,22 +192,208 @@ class Agent:
                 return f"Read error: {e}"
 
         if cmd == "list_files" or cmd == "list":
-            path = " ".join(parts[1:]).strip('"').strip("'") or "."
+            raw_path = " ".join(parts[1:]).strip('"').strip("'") or "."
+            path = self._resolve_nlp_path(raw_path)
             try:
                 import os as _os
-                # If already an absolute path, use directly — don't join with workspace
-                if _os.path.isabs(path):
-                    abs_path = path
-                else:
-                    abs_path = _os.path.join(self.workspace.replace("/c/", "C:/").replace("\\", "/"), path)
+                abs_path = path if _os.path.isabs(path) else _os.path.abspath(path)
                 if _os.path.isdir(abs_path):
                     entries = _os.listdir(abs_path)[:50]
-                    return "\n".join(f"  {e}" for e in sorted(entries))
+                    lines = []
+                    for e in sorted(entries):
+                        full = _os.path.join(abs_path, e)
+                        suffix = "/" if _os.path.isdir(full) else ""
+                        lines.append(f"  {e}{suffix}")
+                    return "\n".join(lines)
                 return f"Not a directory: {path}"
             except Exception as e:
                 return f"List error: {e}"
 
-        return f"Unknown tool: {cmd}. Available: search, read, list_files"
+        if cmd == "fix":
+            resolved_args = list(parts[1:])
+            if resolved_args and not resolved_args[0].startswith("--"):
+                resolved_args[0] = self._resolve_nlp_path(resolved_args[0])
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                await FixCommand().execute(resolved_args, self)
+            output = buf.getvalue()
+            return output or "Fix executed. Check the file for changes."
+
+        if cmd == "write":
+            # Content is everything after the first newline in tool_text
+            nl = tool_text.find('\n')
+            if nl == -1:
+                return "Error: write requires path on first line, content after"
+            path = self._resolve_nlp_path(tool_text[len(cmd):nl].strip())
+            content = tool_text[nl + 1:]
+            try:
+                filepath = Path(path)
+                filepath.parent.mkdir(parents=True, exist_ok=True)
+                filepath.write_text(content, encoding="utf-8")
+                return f"Written {filepath} ({len(content)} bytes)"
+            except Exception as e:
+                return f"Write error: {e}"
+
+        if cmd == "run":
+            # run <command> [timeout]
+            run_args = " ".join(parts[1:])
+            # Check for timeout flag
+            timeout = 120
+            timeout_match = re.search(r'--timeout[=\s]+(\d+)', run_args)
+            if timeout_match:
+                timeout = int(timeout_match.group(1))
+                run_args = run_args[:timeout_match.start()] + run_args[timeout_match.end():]
+            cmd_to_run = run_args.strip()
+            if not cmd_to_run:
+                return "Error: run requires a command. Usage: run python main.py"
+            # Safety check
+            dangerous = ["rm -rf /", "del /s /q", "format c:", "shutdown", "reboot"]
+            for d in dangerous:
+                if d in cmd_to_run.lower():
+                    return f"Error: Dangerous command blocked: {cmd_to_run}"
+            try:
+                r = subprocess.run(
+                    cmd_to_run,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    cwd=self.ws_dir,
+                    timeout=timeout,
+                )
+                output = r.stdout
+                if r.stderr:
+                    output += f"\n[STDERR]\n{r.stderr}"
+                if len(output) > 5000:
+                    output = output[:2500] + "\n... [truncated] ...\n" + output[-2500:]
+                return output if output else "(no output)"
+            except subprocess.TimeoutExpired:
+                return f"Command timed out after {timeout}s"
+            except Exception as e:
+                return f"Error: {e}"
+
+        if cmd == "git":
+            # git <subcommand> [args]
+            subcmd = parts[1] if len(parts) > 1 else "status"
+            git_args = " ".join(parts[2:]) if len(parts) > 2 else ""
+            git_cmds = {
+                "status": "git status",
+                "diff": "git diff",
+                "log": "git log --oneline -15",
+                "add": "git add",
+                "commit": "git commit",
+                "push": "git push",
+                "pull": "git pull",
+                "branch": "git branch",
+                "checkout": "git checkout",
+                "stash": "git stash",
+                "show": "git show",
+                "blame": "git blame",
+                "remote": "git remote -v",
+                "branches": "git branch -a",
+            }
+            base = git_cmds.get(subcmd)
+            if not base:
+                return f"Unknown git command: {subcmd}. Available: {', '.join(git_cmds.keys())}"
+            full_cmd = f"{base} {git_args}".strip()
+            try:
+                r = subprocess.run(
+                    full_cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    cwd=self.ws_dir,
+                    timeout=30,
+                )
+                output = r.stdout
+                if r.stderr:
+                    output += f"\n[STDERR]\n{r.stderr}"
+                if len(output) > 5000:
+                    output = output[:2500] + "\n... [truncated] ...\n" + output[-2500:]
+                return output if output else "(no output)"
+            except Exception as e:
+                return f"Git error: {e}"
+
+        if cmd == "diff":
+            # diff <file1> [file2]
+            if len(parts) < 2:
+                return "Error: diff requires at least one file. Usage: diff file1.py [file2.py]"
+            file1 = self._resolve_nlp_path(parts[1])
+            if len(parts) > 2:
+                file2 = self._resolve_nlp_path(parts[2])
+                full_cmd = f'diff "{file1}" "{file2}"'
+            else:
+                full_cmd = f'git diff "{file1}"'
+            try:
+                r = subprocess.run(
+                    full_cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    cwd=self.ws_dir,
+                    timeout=30,
+                )
+                output = r.stdout
+                if len(output) > 5000:
+                    output = output[:2500] + "\n... [truncated] ...\n" + output[-2500:]
+                return output if output else "(no differences found)"
+            except Exception as e:
+                return f"Diff error: {e}"
+
+        if cmd == "edit":
+            # edit <path> | <old text> | <new text>
+            # Uses pipe delimiter to separate parts
+            edit_args = " ".join(parts[1:])
+            pipe_parts = edit_args.split("|")
+            if len(pipe_parts) < 3:
+                return "Error: edit requires path, old text, and new text separated by |. Usage: edit file.py | old text | new text"
+            path = self._resolve_nlp_path(pipe_parts[0].strip())
+            old_text = pipe_parts[1].strip()
+            new_text = pipe_parts[2].strip()
+            try:
+                content = open(path, "r", encoding="utf-8", errors="replace").read()
+                if old_text not in content:
+                    return f"Text not found in {path}. Make sure old text matches exactly (including whitespace)."
+                new_content = content.replace(old_text, new_text, 1)
+                open(path, "w", encoding="utf-8").write(new_content)
+                self.context.mark_modified(path)
+                return f"Edited {path}"
+            except Exception as e:
+                return f"Edit error: {e}"
+
+        if cmd == "tests":
+            # tests [path] [--framework pytest|unittest]
+            test_path = "."
+            framework = "pytest"
+            for i, p in enumerate(parts[1:], 1):
+                if p == "--framework" and i + 1 < len(parts):
+                    framework = parts[i + 1]
+                elif not p.startswith("--"):
+                    test_path = self._resolve_nlp_path(p)
+            if framework == "pytest":
+                full_cmd = f"python -m pytest {test_path} -v"
+            else:
+                full_cmd = f"python -m unittest {test_path} -v"
+            try:
+                r = subprocess.run(
+                    full_cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    cwd=self.ws_dir,
+                    timeout=120,
+                )
+                output = r.stdout
+                if r.stderr:
+                    output += f"\n[STDERR]\n{r.stderr}"
+                if len(output) > 5000:
+                    output = output[:2500] + "\n... [truncated] ...\n" + output[-2500:]
+                return output if output else "(no output)"
+            except subprocess.TimeoutExpired:
+                return "Tests timed out after 120s"
+            except Exception as e:
+                return f"Error: {e}"
+
+        return f"Unknown tool: {cmd}. Available: search, read, list_files, fix, write, run, git, diff, edit, tests"
 
     async def _tool_read_file(self, path: str, **kwargs) -> str:
         result = await self.fs.read(path)
@@ -459,6 +661,110 @@ class Agent:
 
         return ("unknown", {})
 
+    async def chat_nlp(self, user_input: str) -> None:
+        """Process natural language input through the ReAct tool-calling loop."""
+        # Skip heuristic parsing for long/pasted text — keywords like
+        # "analyze" in command output cause false matches.
+        if len(user_input) > 500 or self._nlp_workspace:
+            tool_action, args = "unknown", {}
+        else:
+            tool_action, args = self._parse_natural_language(user_input)
+
+        if tool_action == "unknown":
+            if not self._chat_history:
+                self._chat_history.append({
+                    "role": "system",
+                    "content": (
+                        "You are an AI coding assistant embedded in Agent1.\n"
+                        "The user interacts with you through a REPL with these commands:\n"
+                        "- workflow, implement, fix, analyze, optimize — LLM-assisted code generation/repair\n"
+                        "- model [list|load|unload|reload|name] — manage LLM models via LM Studio API\n"
+                        "- model profile [list|save|delete|use|name] — manage model profiles\n"
+                        "- clear, cleanup, perf, read, write, search, plan, entities, taskplan, paste — utilities\n"
+                        "- Any text not matching a command is sent to you as natural language.\n\n"
+                        "TOOLS — write these on their OWN SEPARATE LINE wrapped in <tool_call></tool_call> tags:\n\n"
+                        "SEARCH & READ:\n"
+                        "<tool_call>search <text></tool_call>     — searches workspace files for <text>\n"
+                        "<tool_call>read <path></tool_call>       — reads a file (use absolute paths)\n"
+                        "<tool_call>list_files [path]</tool_call> — lists directory (dirs marked with /)\n\n"
+                        "WRITE & EDIT:\n"
+                        "<tool_call>write <path></tool_call>      — creates/overwrites a file (code on next lines)\n"
+                        "<tool_call>edit <path> | <old text> | <new text></tool_call> — edits a file by replacing text\n\n"
+                        "RUN & TEST:\n"
+                        "<tool_call>run <command></tool_call>     — runs a shell command (e.g., run python main.py)\n"
+                        "<tool_call>tests [path] [pytest|unittest]</tool_call> — runs tests on a file/directory\n\n"
+                        "VERSION CONTROL:\n"
+                        "<tool_call>git <subcommand> [args]    — runs git commands (status, diff, log, add, commit, push, pull, branch, stash, blame)\n"
+                        "<tool_call>diff <file1> [file2]      — shows file differences (git diff if one file, diff if two)\n\n"
+                        "FIX & ANALYZE:\n"
+                        "<tool_call>fix <path> --desc \"error\" — fixes a file based on the description\n\n"
+                        "RULES:\n"
+                        "- PLAIN TEXT ONLY between tags — no <arg_key>, <arg_value>, or nested XML\n"
+                        " The <tool_call> line must contain NOTHING else. Not part of a sentence.\n"
+                        " The result will be fed back to you automatically.\n"
+                        "- When you see errors, FIX them immediately using the appropriate tool\n"
+                        "- Do NOT give generic advice. Take concrete action with tools.\n"
+                        "- Be concise. Prefer targeted edits over rewriting entire files.\n"
+                        "- For edit, use pipe | to separate path, old text, and new text"
+                    ),
+                })
+
+            self._chat_history.append({"role": "user", "content": user_input})
+
+            for _ in range(6):
+                result = await self.llm.chat(self._chat_history[-20:])
+
+                tool_text: str | None = None
+                tool_match = re.search(r'<tool_call>(.+?)</tool_call>', result, re.DOTALL)
+                if tool_match:
+                    tool_text = tool_match.group(1).strip()
+
+                if not tool_text:
+                    self._chat_history.append({"role": "assistant", "content": result})
+                    clean = re.sub(r'</?tool_call>', '', result)
+                    clean = re.sub(r'</?function_call>', '', clean)
+                    print(clean)
+                    break
+
+                tool_text = re.sub(r'</?tool_call>', '', tool_text).strip()
+                tool_result = await self._execute_nlp_tool(tool_text)
+                print(f"  [tool] {tool_text[:80]} -> {len(tool_result)} bytes")
+
+                self._chat_history.append({
+                    "role": "assistant",
+                    "content": f"<tool_call>{tool_text}</tool_call>",
+                })
+                self._chat_history.append({
+                    "role": "user",
+                    "content": f"Tool result:\n{tool_result[:3000]}\n\nContinue your answer based on this.",
+                })
+            else:
+                self._chat_history.append({
+                    "role": "user",
+                    "content": "You have enough information. Provide your final answer now — text only, no more tool calls.",
+                })
+                final = await self.llm.chat(self._chat_history[-20:])
+
+                if re.search(r'<tool_call>', final):
+                    self._chat_history.append({"role": "assistant", "content": final})
+                    self._chat_history.append({
+                        "role": "user",
+                        "content": "STOP requesting tools. You MUST synthesize your findings into a plain-text answer RIGHT NOW. No tags, no commands — just your analysis.",
+                    })
+                    final = await self.llm.chat(self._chat_history[-20:])
+
+                self._chat_history.append({"role": "assistant", "content": final})
+                clean = re.sub(r'</?tool_call>', '', final)
+                clean = re.sub(r'</?function_call>', '', clean)
+                if clean.strip():
+                    print(clean)
+                else:
+                    print("  (The LLM did not produce a synthesis. Try repeating the question.)")
+        else:
+            result = await self.execute_tool(tool_action, args)
+            print(result)
+        self._nlp_workspace = None
+
     async def process_query(self, query: str) -> str:
         tool_action, args = self._parse_natural_language(query)
 
@@ -580,6 +886,7 @@ async def run_interactive():
     print("  optimize <file|dir> [--apply] [--yes] [--stdin] — Find and apply optimizations")
     print("  perf [--detail|--reset|--html] — Command performance dashboard")
     print("  clear              - Clear agent memory")
+    print("  paste [--workspace <path>] - Paste multiline text for AI analysis (Ctrl+Z / Ctrl+D to finish)")
     print("  quit               - Exit")
     print("=" * 50)
     
@@ -603,6 +910,7 @@ async def run_interactive():
     registry.register(WorkflowCommand())
     registry.register(OptimizeCommand())
     registry.register(PerfCommand())
+    registry.register(PasteCommand())
 
     while True:
         try:
@@ -625,7 +933,7 @@ async def run_interactive():
             command = parts[0].lower()
 
             # Try commands from registry
-            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf"]:
+            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste"]:
                 import time as _time
                 _start = _time.perf_counter()
                 result = await registry.execute(command, parts[1:], agent)
@@ -633,116 +941,7 @@ async def run_interactive():
                 continue
 
             else:
-                # Try natural language processing with LLM
-                tool_action, args = agent._parse_natural_language(user_input)
-                
-                if tool_action == "unknown":
-                    # Inject project context on first NLP message
-                    if not agent._chat_history:
-                        agent._chat_history.append({
-                            "role": "system",
-                            "content": (
-                                "You are an assistant embedded in the Agent1 AI coding tool "
-                                "(repo: github.com/holgerkpedersen/Agent1).\n"
-                                "The user interacts with you through a REPL that has these commands:\n"
-                                "- workflow, implement, fix, analyze, optimize — LLM-assisted code generation/repair\n"
-                                "- model [list|load|unload|reload|name] — manage LLM models via LM Studio API\n"
-                                "- model profile [list|save|delete|use|name] — manage model profiles (presets for temp/tokens)\n"
-                                "  Built-in profiles: fast-codegen (temp=0.1), deep-analysis (temp=0.7), precise (temp=0.3)\n"
-                                "  Usage: model profile list | use <name> | save <name> --temp 0.3 --max-tokens 8000\n"
-                                "- clear, cleanup, perf, read, write, search, plan, entities, taskplan — utilities\n"
-                                "- Any text not matching a command is sent to you as natural language.\n\n"
-                                "To use a tool, write it on its OWN SEPARATE LINE wrapped in tags:\n"
-                                "\n<tool_call>search <query></tool_call>\n"
-                                "\n<tool_call>read <filepath></tool_call>\n"
-                                "\n<tool_call>list_files [directory]</tool_call>\n"
-                                "\nNOTHING else on that line. Not part of a sentence. "
-                                "The result will be fed back to you automatically.\n"
-                                "Use tools when you need to see actual code.\n"
-                                "Be concise."
-                            ),
-                        })
-
-                    agent._chat_history.append({"role": "user", "content": user_input})
-
-                    # Tool-calling loop: up to 6 iterations
-                    for _ in range(6):
-                        result = await agent.llm.chat(agent._chat_history[-20:])
-
-                        # Parse tool calls from response — tagged or bare
-                        tool_text: str | None = None
-                        tool_match = re.search(r'<tool_call>(.+?)</tool_call>', result, re.DOTALL)
-                        if tool_match:
-                            tool_text = tool_match.group(1).strip()
-                        else:
-                            # Fallback: any line that starts with a known tool command
-                            for line in result.strip().split('\n'):
-                                bare_cmd = re.match(r'^(search|read|list_files|list)\s+(.+)', line.strip(), re.IGNORECASE)
-                                if bare_cmd:
-                                    tool_text = line.strip()
-                                    break
-                            # Also check if the LLM appended a tool command after a period (with or without space)
-                            if not tool_text:
-                                for sentence in re.split(r'[.!?]\s*', result):
-                                    s = sentence.strip()
-                                    if re.match(r'^(search|read|list_files|list)\s+', s, re.IGNORECASE):
-                                        tool_text = s
-                                        break
-                            # Last resort: any occurrence of tool command pattern anywhere
-                            if not tool_text:
-                                m = re.search(r'\b(search|read|list_files|list)\s+(\S.+)', result, re.IGNORECASE)
-                                if m:
-                                    tool_text = m.group(0).strip()
-
-                        if not tool_text:
-                            # No tool call — display and store
-                            agent._chat_history.append({"role": "assistant", "content": result})
-                            clean = re.sub(r'</?tool_call>', '', result)
-                            clean = re.sub(r'</?function_call>', '', clean)
-                            print(clean)
-                            break
-
-                        tool_text = re.sub(r'</?tool_call>', '', tool_text).strip()
-                        tool_result = await agent._execute_nlp_tool(tool_text)
-                        print(f"  [tool] {tool_text[:80]} -> {len(tool_result)} bytes")
-
-                        # Append tool call + result to history for context
-                        agent._chat_history.append({
-                            "role": "assistant",
-                            "content": f"<tool_call>{tool_text}</tool_call>",
-                        })
-                        agent._chat_history.append({
-                            "role": "user",
-                            "content": f"Tool result:\n{tool_result[:3000]}\n\nContinue your answer based on this.",
-                        })
-                    else:
-                        # Loop exhausted — ask LLM for final synthesis
-                        agent._chat_history.append({
-                            "role": "user",
-                            "content": "You have enough information. Provide your final answer now — text only, no more tool calls.",
-                        })
-                        final = await agent.llm.chat(agent._chat_history[-20:])
-
-                        # If the LLM still requested tools, retry once with an ultimatum
-                        if re.search(r'\b(search|read|list_files|list)\s+\S', final, re.IGNORECASE) or re.search(r'<tool_call>', final):
-                            agent._chat_history.append({"role": "assistant", "content": final})
-                            agent._chat_history.append({
-                                "role": "user",
-                                "content": "STOP requesting tools. You MUST synthesize your findings into a plain-text answer RIGHT NOW. No tags, no commands — just your analysis.",
-                            })
-                            final = await agent.llm.chat(agent._chat_history[-20:])
-
-                        agent._chat_history.append({"role": "assistant", "content": final})
-                        clean = re.sub(r'</?tool_call>', '', final)
-                        clean = re.sub(r'</?function_call>', '', clean)
-                        if clean.strip():
-                            print(clean)
-                        else:
-                            print("  (The LLM did not produce a synthesis. Try repeating the question.)")
-                else:
-                    result = await agent.execute_tool(tool_action, args)
-                    print(result)
-                    
+                await agent.chat_nlp(user_input)
         except KeyboardInterrupt:
             print("\nInterrupted. Use 'quit' to exit.")
         except EOFError:

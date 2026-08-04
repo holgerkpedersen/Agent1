@@ -35,8 +35,8 @@ class LLMExecutor:
 
         try:
             response = await asyncio.to_thread(self._create_chat_completion, messages)
-        except openai.OpenAIError as exc:
-            raise LLMExecutorError(f"OpenAI API call failed: {exc}") from exc
+        except Exception as exc:
+            raise LLMExecutorError(f"LLM API call failed: {exc}") from exc
 
         if not response.choices:
             raise LLMExecutorError("No choices returned in LLM response")

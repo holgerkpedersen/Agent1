@@ -100,7 +100,7 @@ def get_vram_info() -> dict:
     }
 
 
-def load_model(model_key: str, parallel: int = 4) -> tuple[bool, str]:
+def load_model(model_key: str, eval_batch_size: int = 4) -> tuple[bool, str]:
     """Load a model via LM Studio REST API, with ``lms load`` CLI fallback.
 
     Returns (success, message).
@@ -108,7 +108,7 @@ def load_model(model_key: str, parallel: int = 4) -> tuple[bool, str]:
     base = _management_url()
     resp = _http_post_json(f"{base}/models/load", {
         "model": model_key,
-        "eval_batch_size": parallel,
+        "eval_batch_size": eval_batch_size,
     }, timeout=300)  # Load can take a while (5 min)
     if resp and resp.get("status") == "loaded":
         return True, f"loaded ({resp.get('load_time_seconds', '?')}s) — {resp.get('instance_id', model_key)}"

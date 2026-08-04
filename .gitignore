@@ -119,3 +119,8 @@ Desktop.ini
 .project_memory.json
 
 .github/workflows/
+nul
+.poolside/
+agent_memory.db
+backups/
+model

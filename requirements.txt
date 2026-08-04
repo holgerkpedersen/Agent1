@@ -1,0 +1,225 @@
+numpy>=1.24.0
+networkx>=3.1
+pydantic>=2.5.0
+```
+
+[FILE: agent_core/agent.py]
+```python
+from typing import Any, Dict, List
+
+AGENT_TOOL_SCHEMAS: List[Dict[str, Any]] = [
+    {
+        "name": "read_file",
+        "description": "Read contents of a file given its path.",
+        "parameters": {
+            "type": "dict",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "write_file",
+        "description": "Write content to a file at the specified path.",
+        "parameters": {
+            "type": "dict",
+            "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+            "required": ["path", "content"],
+        },
+    },
+]
+
+__all__: List[str] = ["AGENT_TOOL_SCHEMAS"]
+```
+
+[FILE: agent_core/llm/tool_loop.py]
+```python
+from typing import Any, Dict, Optional
+
+try:
+    from agent_core.agent import AGENT_TOOL_SCHEMAS
+except ImportError as _exc:  # pragma: no cover
+    raise RuntimeError("Failed to load tool schemas") from _exc
+
+
+def dispatch_tool(tool_name: str, args: Dict[str, Any]) -> Optional[Any]:
+    """Dispatch a named tool call using registered schemas."""
+    schema_names = {s["name"] for s in AGENT_TOOL_SCHEMAS}
+    if tool_name not in schema_names:
+        return None
+    # Placeholder execution logic
+    return args
+
+
+__all__: List[str] = ["dispatch_tool", "AGENT_TOOL_SCHEMAS"]
+```
+
+[FILE: agent_core/exceptions.py]
+```python
+from typing import Any, Optional
+
+
+class FileOperationError(Exception):
+    """Raised when a file operation fails."""
+
+    def __init__(self, path: str, message: str = "", cause: Optional[Any] = None) -> None:
+        self.path = path
+        self.message = message or f"Failed to operate on file '{path}'"
+        super().__init__(self.message)
+
+
+class SecurityViolationError(Exception):
+    """Raised when a security policy violation occurs."""
+
+    def __init__(self, resource: str, reason: str = "", cause: Optional[Any] = None) -> None:
+        self.resource = resource
+        self.reason = reason or f"Access denied to '{resource}'"
+        super().__init__(self.reason)
+
+
+__all__: List[str] = ["FileOperationError", "SecurityViolationError"]
+```
+
+[FILE: agent_core/entities.py]
+```python
+from typing import Any, Dict
+
+
+class AgentState(Dict[str, Any]):
+    """Represents mutable state carried across tool calls."""
+    pass
+
+
+class ToolCallResult(Dict[str, Any]):
+    """Holds structured results from a single tool invocation."""
+    pass
+
+
+__all__: List[str] = ["AgentState", "ToolCallResult"]
+```
+
+[FILE: src/agent1/plugins/base_plugin.py]
+```python
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional
+
+
+class BasePlugin(ABC):
+    """Abstract base class for all plugins."""
+
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @abstractmethod
+    def execute(self, context: Dict[str, Any]) -> Optional[Any]: ...
+
+
+class PluginRegistry:
+    """Stores and retrieves plugin instances by identifier."""
+
+    _plugins: Dict[str, BasePlugin] = {}
+
+    @classmethod
+    def register(cls, plugin: BasePlugin) -> None:
+        cls._plugins[plugin.name] = plugin
+
+    @classmethod
+    def get(cls, name: str) -> Optional[BasePlugin]:
+        return cls._plugins.get(name)
+
+
+class PluginManager(ABC):
+    """Manages lifecycle of registered plugins."""
+
+    registry: PluginRegistry
+
+    @abstractmethod
+    def load_all(self) -> Dict[str, BasePlugin]: ...
+
+    @abstractmethod
+    def unload(self, name: str) -> bool: ...
+
+
+__all__: List[str] = ["BasePlugin", "PluginRegistry", "PluginManager"]
+```
+
+[FILE: src/agent1/plugins/__init__.py]
+```python
+from .base_plugin import BasePlugin, PluginRegistry, PluginManager
+
+__all__: List[str] = ["BasePlugin", "PluginRegistry", "PluginManager"]
+```
+
+[FILE: src/agent1/memory/vector_db.py]
+```python
+from typing import List, Sequence
+
+
+def normalize_vector(vec: Sequence[float]) -> List[float]:
+    """Return unit-normalized copy of input vector."""
+    norm = sum(v * v for v in vec) ** 0.5
+    if norm == 0:
+        return [float(v) for v in vec]
+    scale = 1 / norm
+    return [v * scale for v in vec]
+
+
+def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
+    """Compute dot product-based similarity between vectors."""
+    if len(a) != len(b):
+        raise ValueError("Vector length mismatch")
+    na = normalize_vector(a)
+    nb = normalize_vector(b)
+    return sum(x * y for x, y in zip(na, nb))
+
+
+__all__: List[str] = ["normalize_vector", "cosine_similarity"]
+```
+
+[FILE: agent_core/utils/path_utils.py]
+```python
+from typing import Optional
+from pathlib import Path
+
+
+def safe_join(base_dir: str, target_path: str) -> Optional[Path]:
+    """Join paths safely ensuring containment within base directory."""
+    try:
+        resolved_base = Path(base_dir).resolve()
+        joined = (resolved_base / target_path).resolve()
+        if not joined.is_relative_to(resolved_base):
+            return None
+        return joined
+    except OSError:
+        return None
+
+
+def to_windows_path(path_str: str) -> Optional[Path]:
+    """Convert string path into Windows-style Path object."""
+    try:
+        return Path(path_str).resolve()
+    except OSError:
+        return None
+
+
+__all__: List[str] = ["safe_join", "to_windows_path"]
+```
+
+[FILE: agent_core/commands/base.py]
+```python
+from typing import Any, Dict, Optional, runtime_checkable, Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
+
+
+@runtime_checkable
+class AgentProtocol(Protocol):
+    """Structural protocol defining required attributes/methods of agents."""
+
+    tool_schemas: List[Dict[str, Any]]
+
+    def execute_tool(self, name: str, args: Dict[str, Any]) -> Optional[Any]: ...
+
+
+__all__: List[str] = ["AgentProtocol"]

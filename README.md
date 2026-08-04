@@ -68,6 +68,13 @@ The LLM can read files (`<tool_call>read path</tool_call>`), search the project 
 
 The `workflow` command runs a full analysis-to-implementation pipeline. **Greenfield mode** (`--desc`/`--stdin`/`--from`) now includes a spec analysis step (scope, assumptions, risks, dependencies) before plan generation. All spec/feature text is saved to persistent project files (`project_spec.md`, `project_features.md`) — no temporary files.
 
+**Enhanced greenfield analyze** (for specs referencing agent/self-improvement/security):
+- Auto-detects keywords (`agent`, `self-improvement`, `vulnerability`, `safe`, etc.) and scans the **target workspace** for relevant Python files, including them in the analysis so findings cite real code.
+- Produces a structured 8-section analysis: SCOPE, ASSUMPTIONS, RISKS, DEPENDENCIES, **THREAT MODEL & ATTACK SURFACE**, **MISSING INFORMATION (BLOCKERS)**, **CLARIFYING QUESTIONS**, **SUCCESS METRICS & OVERSIGHT**.
+- Ends with `**BLOCKED:** yes|no` — if blocked and `--force` is not given, the pipeline halts before plan/entities/tasks and prints the questions for the user.
+- Runs a self-critique refinement pass and appends findings to `project_analysis.md`.
+- Writes a traceability header referencing the workspace path and spec file.
+
 Brownfield mode (`workflow .`) uses multi-dimensional analysis across 5 dimensions:
 
 | Dimension | Scope |

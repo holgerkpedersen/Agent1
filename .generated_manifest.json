@@ -1,11 +1,11 @@
 {
   "agent_core/exceptions.py": {
-    "date": "2026-07-26 01:10:51.001310",
-    "size": 972
+    "date": "2026-07-30 02:45:16.273586",
+    "size": 836
   },
   "agent_core/config.py": {
-    "date": "2026-07-26 01:10:51.123382",
-    "size": 1412
+    "date": "2026-07-30 00:45:51.226590",
+    "size": 2024
   },
   "agent_core/subprocess_utils.py": {
     "date": "2026-07-26 01:26:32.873747",
@@ -108,8 +108,8 @@
     "size": 4509
   },
   "src/agent1/monitoring/dashboard_api.py": {
-    "date": "2026-07-28 13:41:11.443132",
-    "size": 6391
+    "date": "2026-07-29 14:50:16.212407",
+    "size": 6114
   },
   "src/agent1/monitoring/alert_system.py": {
     "date": "2026-07-28 13:41:11.618116",
@@ -120,8 +120,8 @@
     "size": 4375
   },
   "tests/unit/test_orchestration.py": {
-    "date": "2026-07-28 13:41:11.969449",
-    "size": 4474
+    "date": "2026-07-30 02:45:17.854400",
+    "size": 3705
   },
   "tests/unit/test_plugins.py": {
     "date": "2026-07-28 13:44:07.417679",
@@ -130,5 +130,465 @@
   "tests/performance/test_scaling.py": {
     "date": "2026-07-28 13:44:07.594842",
     "size": 5761
+  },
+  "pyproject.toml": {
+    "date": "2026-07-28 23:00:17.118168",
+    "size": 2183
+  },
+  "agent_core/agent.py": {
+    "date": "2026-07-31 08:48:16.087658",
+    "size": 3848
+  },
+  "agent_core/llm/client.py": {
+    "date": "2026-08-01 12:42:03.560545",
+    "size": 3624
+  },
+  "agent_core/utils/path_utils.py": {
+    "date": "2026-07-29 01:28:47.771783",
+    "size": 1142
+  },
+  "agent_core/utils/logging_config.py": {
+    "date": "2026-07-28 23:00:17.761776",
+    "size": 1369
+  },
+  "agent_core/utils/errors.py": {
+    "date": "2026-07-28 23:00:17.939673",
+    "size": 703
+  },
+  "agent_core/memory/vector_db.py": {
+    "date": "2026-07-28 23:00:18.104635",
+    "size": 5234
+  },
+  "tests/test_command_to_agent_communication.py": {
+    "date": "2026-07-28 23:00:18.284053",
+    "size": 5196
+  },
+  "tests/test_path_normalization_consistency.py": {
+    "date": "2026-07-28 23:00:18.461175",
+    "size": 3022
+  },
+  "tests/test_circular_import_resolution.py": {
+    "date": "2026-07-28 23:00:18.634610",
+    "size": 3447
+  },
+  "requirements.txt": {
+    "date": "2026-07-29 01:24:26.726199",
+    "size": 5754
+  },
+  "tests/test_agent_parsing.py": {
+    "date": "2026-07-29 14:50:16.549483",
+    "size": 5863
+  },
+  "tests/test_benchmark_scoring.py": {
+    "date": "2026-07-29 16:37:04.062312",
+    "size": 4937
+  },
+  "tests/test_tool_routing_integration.py": {
+    "date": "2026-07-29 16:37:04.246172",
+    "size": 2603
+  },
+  "agent_core/commands/_implement_raw.py": {
+    "date": "2026-07-29 14:51:53.316470",
+    "size": 2714
+  },
+  "src/agent1/core/embedding_service.py": {
+    "date": "2026-07-29 14:51:53.824925",
+    "size": 2182
+  },
+  "src/agent1/diff/semantic_diff_engine.py": {
+    "date": "2026-07-29 14:51:54.162548",
+    "size": 7099
+  },
+  "src/agent1/graph/dependency_visualizer.py": {
+    "date": "2026-07-29 14:51:54.336638",
+    "size": 6327
+  },
+  "src/agent1/daemon/self_heal_monitor.py": {
+    "date": "2026-07-29 14:51:54.683576",
+    "size": 5636
+  },
+  "src/agent1/swarm/message_bus.py": {
+    "date": "2026-07-29 14:51:54.867466",
+    "size": 7559
+  },
+  "src/agent1/core/path_utils.py": {
+    "date": "2026-07-29 14:50:15.689288",
+    "size": 8597
+  },
+  "src/benchmark.py": {
+    "date": "2026-07-29 14:50:15.863089",
+    "size": 8343
+  },
+  "tool_router.py": {
+    "date": "2026-07-29 14:50:16.041009",
+    "size": 9183
+  },
+  "agent_core/commands/implement_cmd.py": {
+    "date": "2026-07-29 14:50:16.380100",
+    "size": 3735
+  },
+  "src/benchmark/config.py": {
+    "date": "2026-07-29 14:50:16.718982",
+    "size": 1972
+  },
+  "src/benchmark/scoring.py": {
+    "date": "2026-07-29 14:50:16.877587",
+    "size": 0
+  },
+  "agent_core/entities.py": {
+    "date": "2026-07-29 14:51:53.486702",
+    "size": 3087
+  },
+  "src/agent_core/exceptions.py": {
+    "date": "2026-07-29 14:51:53.655820",
+    "size": 2258
+  },
+  "agent_core/commands/fix_cmd.py": {
+    "date": "2026-07-29 14:51:53.991794",
+    "size": 2547
+  },
+  "types.py": {
+    "date": "2026-07-29 16:49:13.209490",
+    "size": 442
+  },
+  "config.py": {
+    "date": "2026-07-29 18:13:47.778165",
+    "size": 4754
+  },
+  "ast_analyzer.py": {
+    "date": "2026-07-29 16:49:13.421014",
+    "size": 4103
+  },
+  "semantic_reasoner.py": {
+    "date": "2026-07-29 16:49:13.535448",
+    "size": 4581
+  },
+  "planner.py": {
+    "date": "2026-07-29 16:49:13.640212",
+    "size": 2152
+  },
+  "agent.py": {
+    "date": "2026-07-29 16:49:13.743382",
+    "size": 4803
+  },
+  "logger.py": {
+    "date": "2026-07-29 18:13:47.948941",
+    "size": 2768
+  },
+  "utils.py": {
+    "date": "2026-07-29 18:13:48.127028",
+    "size": 1869
+  },
+  "memory.py": {
+    "date": "2026-07-29 18:13:48.303481",
+    "size": 5908
+  },
+  "evaluator.py": {
+    "date": "2026-07-30 00:45:51.788300",
+    "size": 857
+  },
+  "evolution_engine.py": {
+    "date": "2026-07-30 00:45:51.897912",
+    "size": 1826
+  },
+  "__init__.py": {
+    "date": "2026-07-29 18:13:48.849396",
+    "size": 177
+  },
+  "agent_core/logger.py": {
+    "date": "2026-07-30 00:45:51.388769",
+    "size": 435
+  },
+  "agent_core/utils.py": {
+    "date": "2026-07-30 00:45:51.532885",
+    "size": 791
+  },
+  "agent_core/memory.py": {
+    "date": "2026-07-30 00:45:51.667596",
+    "size": 1176
+  },
+  "agent_core/__init__.py": {
+    "date": "2026-07-30 00:45:52.002927",
+    "size": 538
+  },
+  "agent_core/config/schema.py": {
+    "date": "2026-07-30 02:45:16.102246",
+    "size": 3325
+  },
+  "agent_core/logging/handler.py": {
+    "date": "2026-07-30 02:45:16.456211",
+    "size": 2779
+  },
+  "agent_core/routing/bus.py": {
+    "date": "2026-07-30 02:45:16.637339",
+    "size": 3527
+  },
+  "agent1/providers/async_llm.py": {
+    "date": "2026-07-30 02:45:16.810198",
+    "size": 1521
+  },
+  "agent_core/security/sanitizer.py": {
+    "date": "2026-07-30 02:45:16.987433",
+    "size": 2247
+  },
+  "agent1/evolution/metrics.py": {
+    "date": "2026-07-30 02:45:17.160306",
+    "size": 1913
+  },
+  "agent1/swarm/orchestrator.py": {
+    "date": "2026-07-30 02:45:17.335785",
+    "size": 2313
+  },
+  "agent_core/state_machine/snapshot.py": {
+    "date": "2026-07-30 02:45:17.489893",
+    "size": 2916
+  },
+  "agent_core/diff/semantic_parser.py": {
+    "date": "2026-07-30 02:45:17.616335",
+    "size": 4207
+  },
+  "agent_core/utils/common.py": {
+    "date": "2026-07-30 02:45:17.745056",
+    "size": 1771
+  },
+  "fixcommand/core/tools/__init__.py": {
+    "date": "2026-07-30 14:44:00.146073",
+    "size": 117
+  },
+  "fixcommand/core/tools/definitions.py": {
+    "date": "2026-07-30 14:44:00.332470",
+    "size": 771
+  },
+  "fixcommand/core/parser/__init__.py": {
+    "date": "2026-07-30 14:44:00.516281",
+    "size": 1370
+  },
+  "fixcommand/core/parser/structured.py": {
+    "date": "2026-07-30 14:44:00.695825",
+    "size": 3385
+  },
+  "fixcommand/core/prompt/__init__.py": {
+    "date": "2026-07-30 14:44:00.866026",
+    "size": 123
+  },
+  "fixcommand/core/prompt/generator.py": {
+    "date": "2026-07-30 14:44:01.040804",
+    "size": 1055
+  },
+  "fixcommand/core/executor/__init__.py": {
+    "date": "2026-07-30 14:44:01.206673",
+    "size": 181
+  },
+  "fixcommand/core/executor/llm_executor.py": {
+    "date": "2026-07-30 14:44:01.353449",
+    "size": 1226
+  },
+  "performance_dashboard/__init__.py": {
+    "date": "2026-07-30 17:46:31.153057",
+    "size": 1016
+  },
+  "performance_dashboard/config.py": {
+    "date": "2026-07-30 17:46:31.333731",
+    "size": 1966
+  },
+  "performance_dashboard/models.py": {
+    "date": "2026-07-30 17:46:31.521990",
+    "size": 1801
+  },
+  "performance_dashboard/utils/__init__.py": {
+    "date": "2026-07-30 17:46:31.701941",
+    "size": 612
+  },
+  "performance_dashboard/utils/time_utils.py": {
+    "date": "2026-07-30 17:46:31.866904",
+    "size": 5129
+  },
+  "performance_dashboard/utils/validation.py": {
+    "date": "2026-07-30 17:46:32.008828",
+    "size": 6366
+  },
+  "performance_dashboard/collectors/__init__.py": {
+    "date": "2026-07-30 17:46:32.132493",
+    "size": 407
+  },
+  "performance_dashboard/collectors/command_collector.py": {
+    "date": "2026-07-30 17:46:32.241824",
+    "size": 6029
+  },
+  "performance_dashboard/collectors/task_collector.py": {
+    "date": "2026-07-30 17:46:32.354997",
+    "size": 7986
+  },
+  "performance_dashboard/storage/__init__.py": {
+    "date": "2026-07-30 17:46:32.469222",
+    "size": 1297
+  },
+  "performance_dashboard/storage/database.py": {
+    "date": "2026-07-30 17:46:32.601478",
+    "size": 3007
+  },
+  "performance_dashboard/storage/metrics_store.py": {
+    "date": "2026-07-30 17:51:53.491307",
+    "size": 29027
+  },
+  "performance_dashboard/analytics/__init__.py": {
+    "date": "2026-07-30 17:51:53.680617",
+    "size": 389
+  },
+  "performance_dashboard/analytics/processor.py": {
+    "date": "2026-07-30 17:51:53.862821",
+    "size": 6600
+  },
+  "performance_dashboard/analytics/aggregator.py": {
+    "date": "2026-07-30 17:51:54.047436",
+    "size": 7392
+  },
+  "performance_dashboard/visualization/__init__.py": {
+    "date": "2026-07-30 17:51:54.227579",
+    "size": 186
+  },
+  "performance_dashboard/visualization/dashboard.py": {
+    "date": "2026-07-30 18:17:24.118935",
+    "size": 10435
+  },
+  "performance_dashboard/visualization/charts.py": {
+    "date": "2026-07-30 17:51:54.558962",
+    "size": 13075
+  },
+  "performance_dashboard/visualization/renderers.py": {
+    "date": "2026-07-30 17:51:54.711019",
+    "size": 18969
+  },
+  "performance_dashboard/api/__init__.py": {
+    "date": "2026-07-30 17:51:54.826007",
+    "size": 1556
+  },
+  "performance_dashboard/api/serializers.py": {
+    "date": "2026-07-30 17:52:11.954112",
+    "size": 6437
+  },
+  "performance_dashboard/api/endpoints.py": {
+    "date": "2026-07-30 17:56:48.641031",
+    "size": 24408
+  },
+  "performance_dashboard/main.py": {
+    "date": "2026-07-30 17:56:48.840267",
+    "size": 11846
+  },
+  "src/file_context.py": {
+    "date": "2026-07-31 07:45:03.539523",
+    "size": 690
+  },
+  "src/config.py": {
+    "date": "2026-07-31 07:45:03.711488",
+    "size": 131
+  },
+  "src/agent.py": {
+    "date": "2026-07-31 07:45:03.892934",
+    "size": 2844
+  },
+  "src/agent1/file_context.py": {
+    "date": "2026-07-31 08:11:51.155617",
+    "size": 2153
+  },
+  "src/agent1/tests/test_file_context.py": {
+    "date": "2026-07-31 08:11:51.346142",
+    "size": 748
+  },
+  "agent_core/secure_file_retriever.py": {
+    "date": "2026-07-31 09:33:22.457844",
+    "size": 3370
+  },
+  "agent_core/cli/commands/clear.py": {
+    "date": "2026-07-31 11:47:52.611368",
+    "size": 2060
+  },
+  "agent1/cli/commands/__init__.py": {
+    "date": "2026-07-31 11:47:52.792367",
+    "size": 128
+  },
+  "tests/unit/test_clear_command.py": {
+    "date": "2026-07-31 11:47:52.966878",
+    "size": 5190
+  },
+  "tests/integration/test_cli_clear_integration.py": {
+    "date": "2026-07-31 11:47:53.144877",
+    "size": 3692
+  },
+  "agent_core/llm/model_profiles.py": {
+    "date": "2026-08-01 17:50:25.527311",
+    "size": 8726
+  },
+  "agent_core/llm/workspace_prefs.py": {
+    "date": "2026-07-31 13:07:42.482607",
+    "size": 1891
+  },
+  "agent_core/llm/lm_studio_provider.py": {
+    "date": "2026-07-31 13:07:42.656117",
+    "size": 3855
+  },
+  "agent_core/llm/profile_manager.py": {
+    "date": "2026-08-01 15:15:05.307033",
+    "size": 21086
+  },
+  "agent_core/llm/retry_policy.py": {
+    "date": "2026-08-01 12:42:03.444424",
+    "size": 5771
+  },
+  "agent_core/llm/prompt_cache.py": {
+    "date": "2026-08-01 15:15:05.601011",
+    "size": 6090
+  },
+  "agent_core/llm/orchestrator.py": {
+    "date": "2026-08-01 16:07:07.051467",
+    "size": 3602
+  },
+  "agent_core/llm/profiles.py": {
+    "date": "2026-08-01 12:42:03.221354",
+    "size": 1114
+  },
+  "agent_core/llm/profile_switcher.py": {
+    "date": "2026-08-01 12:42:03.332872",
+    "size": 3910
+  },
+  "agent_core/llm/storage.py": {
+    "date": "2026-08-01 12:42:03.683604",
+    "size": 5579
+  },
+  "agent_core/llm/retry.py": {
+    "date": "2026-08-01 17:50:24.575590",
+    "size": 3235
+  },
+  "agent_core/llm/__init__.py": {
+    "date": "2026-08-01 15:15:06.124498",
+    "size": 643
+  },
+  "agent_core/llm/types.py": {
+    "date": "2026-08-01 18:22:18.244157",
+    "size": 608
+  },
+  "agent_core/llm/config.py": {
+    "date": "2026-08-01 17:50:24.279380",
+    "size": 663
+  },
+  "agent_core/llm/cache_io.py": {
+    "date": "2026-08-01 17:50:24.895299",
+    "size": 1231
+  },
+  "agent_core/llm/db_io.py": {
+    "date": "2026-08-01 17:50:25.206056",
+    "size": 11317
+  },
+  "agent_core/llm/refinement_voter.py": {
+    "date": "2026-08-01 17:50:26.351265",
+    "size": 1718
+  },
+  "agent_core/llm/meta_policy.py": {
+    "date": "2026-08-01 18:22:18.550598",
+    "size": 1403
+  },
+  "agent_core/llm/metrics_tracker.py": {
+    "date": "2026-08-01 18:22:18.920896",
+    "size": 3009
   }
 }

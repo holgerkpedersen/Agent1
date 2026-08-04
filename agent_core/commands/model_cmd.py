@@ -244,6 +244,10 @@ class ModelCommand(Command):
             self._persist_model(active_key)
             print(f"  Done: {active_key}")
 
+    def _persist_model(self, model_name: str) -> None:
+        """Persist the active model choice to disk."""
+        persist_model_choice(model_name)
+
     # ------------------------------------------------------------------
     #  Load / Unload
     # ------------------------------------------------------------------

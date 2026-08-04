@@ -2,6 +2,7 @@
 import os
 import re
 from pathlib import Path
+from typing import Optional
 
 from .base import Command, read_stdin
 from agent_core import to_windows_path
@@ -9,6 +10,20 @@ from agent_core import to_windows_path
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent import Agent
+
+
+_AGENT_SPEC_KEYWORDS = frozenset([
+    "agent", "self-improvement", "self improvement", "vulnerability",
+    "safe", "safety", "security", "hardening", "remediation",
+    "llm", "prompt injection", "reward hacking", "capability escalation",
+])
+
+_PRIORITIZED_LLM_FILES = [
+    "agent.py", "lmstudio.py", "meta_policy.py", "metrics_tracker.py",
+    "prompt_cache.py", "orchestrator.py", "refinement_voter.py",
+    "sanitizer.py", "retry.py", "provider.py", "tool_loop.py",
+    "llm_client.py", "config.py", "constants.py",
+]
 
 
 def _detect_subpackages(workspace: str) -> list[str]:
@@ -82,6 +97,63 @@ def _collision_warning(taken: dict[str, list[str]], filenames: list[str]) -> str
     return "\n\n".join(parts) if parts else ""
 
 
+def _spec_mentions_agent(spec_content: str) -> bool:
+    """Return True if the spec references agent/self-improvement/security concepts."""
+    text = spec_content.lower()
+    return any(kw in text for kw in _AGENT_SPEC_KEYWORDS)
+
+
+def _scan_workspace_context(ws_path: Path, spec_content: str) -> tuple[bool, str]:
+    """Scan target workspace for relevant Python files when spec mentions agent/self-improvement.
+
+    Prioritises LLM-layer files first so they fit within the context budget.
+    Returns (used_any, combined_code_text).
+    """
+    if not _spec_mentions_agent(spec_content):
+        return False, ""
+    ws = str(ws_path)
+    all_py: list[str] = []
+    for dp, dn, filenames in os.walk(ws):
+        if ".git" in dp or "__pycache__" in dp or ".pytest_cache" in dp:
+            continue
+        for fn in filenames:
+            if fn.endswith(".py"):
+                all_py.append(os.path.join(dp, fn))
+
+    # Prioritise LLM-layer files first (they're most relevant to self-improvement)
+    prioritised: list[str] = []
+    rest: list[str] = []
+    for fp in all_py:
+        basename = os.path.basename(fp).lower()
+        if any(p.lower() == basename for p in _PRIORITIZED_LLM_FILES):
+            prioritised.append(fp)
+        else:
+            rest.append(fp)
+    ordered = prioritised + rest
+
+    combined = ""
+    lines_used = 0
+    max_lines = 6000
+    for fp in ordered:
+        try:
+            with open(fp, "r", encoding="utf-8") as fh:
+                content = fh.read()
+        except Exception:
+            continue
+        rel = os.path.relpath(fp, ws).replace("\\", "/")
+        entry = f"\n\n# ---- {rel} ----\n{content}"
+        if lines_used + len(entry.splitlines()) > max_lines:
+            remaining = max_lines - lines_used
+            if remaining <= 0:
+                break
+            lines += entry.splitlines()[:remaining]
+            combined += "\n".join(lines)
+            break
+        combined += entry
+        lines_used += len(content.splitlines())
+    return bool(combined), combined
+
+
 class WorkflowCommand(Command):
     """Full pipeline: analyze, plan, entities, taskplan."""
 
@@ -91,7 +163,13 @@ class WorkflowCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "workflow <target> [--from spec.md] [--stdin] [--brainstorm] [--features spec.md] — Full pipeline"
+        return (
+            "workflow <target> [--from spec.md] [--stdin] [--brainstorm] "
+            "[--features spec.md] [--workspace <path>] — Full pipeline\n"
+            "  Greenfield analyze auto-scans the target workspace when the spec references\n"
+            "  agent/self-improvement/security. Produces a structured 8-section analysis and\n"
+            "  halts at an ambiguity gate (print clarifying questions) unless --force is given."
+        )
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         parts = args
@@ -212,23 +290,126 @@ class WorkflowCommand(Command):
                     print(f"\n[Skipping analyze] exists")
                 else:
                     print(f"\n[analyze] Analyzing spec...")
+
+                    # Scan target workspace for code context when spec references agent/self-improvement
+                    ws_ctx_found, ws_code_context = _scan_workspace_context(ws_path, spec_content)
+                    if ws_ctx_found:
+                        print(f"  [analyze] Included workspace code context (self-improvement detected)")
+                    trace_header = f"# Analysis for workspace {ws_path}\n"
+                    if spec_file:
+                        trace_header += f"| Spec file: {os.path.basename(spec_file)}\n\n"
+                    else:
+                        trace_header += "\n"
+
+                    analyze_system = (
+                        "You are an expert software analyst and security reviewer. Produce a structured analysis.\n"
+                        "Use exactly these section headers, in this order:\n\n"
+                        "## 1. SCOPE\n"
+                        "  What is being built, key deliverables, boundaries of the system.\n"
+                        "## 2. ASSUMPTIONS\n"
+                        "  What the spec assumes but does not state explicitly.\n"
+                        "## 3. RISKS\n"
+                        "  Ambiguity, missing details, technical challenges, and recursive risks\n"
+                        "  (e.g. hardening one path may create another).\n"
+                        "## 4. DEPENDENCIES\n"
+                        "  External systems, libraries, tooling, compliance requirements.\n"
+                        "## 5. THREAT MODEL & ATTACK SURFACE\n"
+                        "  Identify likely attack vectors: prompt injection, reward hacking,\n"
+                        "  capability escalation, sandbox escapes, LLM-output trust boundaries.\n"
+                        "  Reference specific code files from the provided context where relevant.\n"
+                        "## 6. MISSING INFORMATION (BLOCKERS)\n"
+                        "  Enumerate every piece of required information that is absent from\n"
+                        "  the spec and must be supplied before implementation can proceed.\n"
+                        "  If none, write: 'No blockers — spec is sufficient to proceed.'\n"
+                        "## 7. CLARIFYING QUESTIONS\n"
+                        "  List concrete questions for the user. Each question must be answerable\n"
+                        "  via --desc or an answers file.\n"
+                        "## 8. SUCCESS METRICS & OVERSIGHT\n"
+                        "  Define measurable safety criteria (e.g. % prompt-injection blocked,\n"
+                        "  rollback capability, human-approval gates, audit trail).\n"
+                        "  Specify oversight and recovery: who approves changes to safety mechanisms,\n"
+                        "  how to revert self-modification.\n\n"
+                        "Rules:\n"
+                        "- Be concise. Max 3 bullet points per section unless detail is needed.\n"
+                        "- Cite file paths from the workspace context when identifying risks.\n"
+                        "- End your output with exactly one of these lines (no extra text after):\n"
+                        "  **BLOCKED:** yes   (when section 6 has blockers)\n"
+                        "  **BLOCKED:** no\n"
+                        "- Never use <tool_call> or XML tags."
+                    )
+
+                    user_prompt = f"Analyze this specification for the agent in workspace {ws_path}:\n\n{spec_content}"
+                    if ws_ctx_found:
+                        user_prompt += (
+                            "\n\n## Workspace code context (target agent being hardened):\n"
+                            f"{ws_code_context}\n"
+                        )
+                    user_prompt += f"\n\nSpec file reference: {os.path.basename(spec_file) if spec_file else 'inline'}"
+
                     r = await agent.llm.chat([
-                    {"role": "system", "content": (
-                        "You are an expert software analyst. Analyze the specification across these dimensions:\n"
-                        "1. SCOPE — what is being built, key deliverables, boundaries\n"
-                        "2. ASSUMPTIONS — what the spec assumes but doesn't state\n"
-                        "3. RISKS — ambiguity, missing details, technical challenges\n"
-                        "4. DEPENDENCIES — external systems, libraries, constraints\n"
-                        "Be concise. Max 3 bullet points per dimension. Never use <tool_call> or XML tags."
-                    )},
-                        {"role": "user", "content": f"Analyze this specification:\n\n{spec_content}"},
+                        {"role": "system", "content": analyze_system},
+                        {"role": "user", "content": user_prompt},
                     ])
                     if not step_ok(r):
                         print(f"[analyze] FAILED: {r[:200]}")
                         return True
+
+                    # Write analysis with traceability header
                     with open(analysis_md, "w", encoding="utf-8") as f:
+                        f.write(trace_header)
                         f.write(r)
-                    print(f"[analyze] Written")
+                    print(f"[analyze] Written to {analysis_md}")
+
+                    # Ambiguity gate — halt before plan if blockers exist and --force not given
+                    blocked_match = re.search(r"\*\*BLOCKED:\*\*\s*(yes|no)", r, re.IGNORECASE)
+                    if blocked_match and blocked_match.group(1).lower() == "yes" and not force:
+                        print("\n[analyze] BLOCKED — spec requires clarification before proceeding.")
+                        # Extract and print the blocker / questions sections
+                        for section_marker in ["## 6. MISSING INFORMATION", "## 7. CLARIFYING QUESTIONS"]:
+                            idx = r.find(section_marker)
+                            if idx == -1:
+                                continue
+                            next_section = len(r)
+                            for later in ["## 8.", "## Refinement"]:
+                                later_idx = r.find(later, idx + 1)
+                                if later_idx != -1 and later_idx < next_section:
+                                    next_section = later_idx
+                            print(f"\n{r[idx:next_section].strip()}")
+                        print(f"\nNext steps:")
+                        print(f"  1. Answer the questions above, then run again with --desc \"<answers>\"")
+                        print(f"     or create a file and pass it via --from <file>")
+                        print(f"  2. Or use --force to skip this gate and proceed anyway.")
+                        return True
+
+                    # Self-critique refinement pass — only if analysis was not blocked
+                    print("  [analyze] Running self-critique refinement...")
+                    if ws_ctx_found:
+                        critique_user = (
+                            f"## Spec:\n{spec_content}\n\n"
+                            f"## Workspace context:\n{ws_code_context}\n\n"
+                            f"## Analysis to critique:\n{r}"
+                        )
+                    else:
+                        critique_user = (
+                            f"## Spec:\n{spec_content}\n\n"
+                            f"## Analysis to critique:\n{r}"
+                        )
+                    critique_r = await agent.llm.chat([
+                        {"role": "system", "content": (
+                            "You are a senior security engineer. Critique the following analysis.\n"
+                            "List concrete gaps, missed attack vectors, missing metrics, or overlooked\n"
+                            "code references. Be specific — cite file paths and line-level concerns.\n"
+                            "If the analysis is already thorough, say so concisely."
+                        )},
+                        {"role": "user", "content": critique_user},
+                    ])
+                    if step_ok(critique_r):
+                        with open(analysis_md, "a", encoding="utf-8") as f:
+                            f.write("\n\n---\n\n## Refinement (self-critique)\n")
+                            f.write(critique_r)
+                        print(f"  [analyze] Appended refinement pass")
+                    else:
+                        print(f"  [analyze] Critique failed (non-blocking): {critique_r[:100]}")
 
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()

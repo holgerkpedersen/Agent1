@@ -54,7 +54,7 @@ def test_llm_executor_tool_execution_failure_returns_error_string() -> None:
     
     with patch.object(executor.client.chat.completions, "create", return_value=mock_chat_completion):
         # Mock the tool call to return an error string
-        with patch("fixcommand.core.parser.structured.execute_tool_call", return_value="Error: tool failed"):
+        with patch("fixcommand.core.executor.llm_executor.execute_tool_call", return_value="Error: tool failed"):
             result = asyncio.run(executor.run_fix_command("Test issue"))
             assert isinstance(result[0], str)
             assert "Error: tool failed" in result[0]

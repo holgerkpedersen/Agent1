@@ -68,6 +68,19 @@ class FixCommand(Command):
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         parts = args
+        
+        # Handle --stdin flag
+        stdin_mode = "--stdin" in parts
+        if stdin_mode:
+            parts = [p for p in parts if p != "--stdin"]
+            from .base import read_stdin
+            stdin_text = read_stdin("Paste problem description or traceback. Type --- on its own line when done, or Ctrl+Z to finish:")
+            if not stdin_text.strip():
+                self.error("No input provided")
+                return True
+            # If --desc not in parts, use stdin as description
+            if "--desc" not in parts:
+                parts.extend(["--desc", stdin_text.strip()])
 
         if "--desc" in parts:
             di = parts.index("--desc")
@@ -285,14 +298,17 @@ class FixCommand(Command):
                 print()
 
             read_paths: set[str] = {fp for fp, _, _ in top_files}
-            system = ("You are an expert Python debugger.\n\n"
-                      "FORMAT (plain text only — NO XML or <tool_call> tags):\n"
-                      "  To view a file:  [READ: agent_core/commands/fix_cmd.py]\n"
-                      "  To submit a fix: [FILE: agent_core/commands/fix_cmd.py]\n"
-                      "    ```python\n    # complete corrected code here\n    ```\n\n"
-                      "Use REAL paths from the context above. Do NOT write placeholder filenames.\n"
-                      "Do NOT wrap commands in <tool_call> or any XML tags.\n"
-                      "If you cannot determine the exact file, explain without [READ:] or [FILE:] tags.")
+            system = (f"You are an expert Python debugger.\n\n"
+                      f"WORKSPACE: {ws_dir}\n"
+                      f"Files below use paths RELATIVE to the workspace.\n\n"
+                      f"FORMAT (plain text only — NO XML or <tool_call> tags):\n"
+                      f"  To view a file:  [READ: <relative_path>]\n"
+                      f"  To submit a fix: [FILE: <relative_path>]\n"
+                      f"    ```python\n    # complete corrected code here\n    ```\n\n"
+                      f"Use EXACTLY the relative filenames shown in the 'Relevant files' section above.\n"
+                      f"Do NOT add directory prefixes that aren't already shown.\n"
+                      f"Do NOT wrap commands in <tool_call> or any XML tags.\n"
+                      f"If you cannot determine the exact file, explain without [READ:] or [FILE:] tags.")
 
             response = ""
             for round_num in range(1, 4):
@@ -486,13 +502,38 @@ class FixCommand(Command):
             print(f"  Could not parse patch for {fpath}")
             return False
 
-        # Verify old lines exist before applying (safety check)
+        # Filter out broken hunks (incomplete: has - but no +, empty + lines, or incomplete lines)
+        incomplete_ops = ('=', '+', '-', '*', '/', ',', '(', '[', '{')
+        valid_hunks = []
+        for start, chunks in hunks:
+            has_minus = any(op == '-' for op, _ in chunks)
+            has_plus = any(op == '+' for op, _ in chunks)
+            if has_minus and not has_plus:
+                continue  # Removal only — skip
+            if any(op == '+' and not text.strip() for op, text in chunks):
+                continue  # Empty replacement — skip
+            # Filter incomplete lines (trailing operators like =, +, -, etc.)
+            if any(op == '+' and text.rstrip().endswith(incomplete_ops) for op, text in chunks):
+                continue  # Incomplete replacement — skip
+            valid_hunks.append((start, chunks))
+
+        if not valid_hunks:
+            print(f"  No valid hunks in patch for {fpath}")
+            return False
+
+        hunks = valid_hunks
+
+        # Verify old lines exist before applying (whitespace-tolerant)
         for start, chunks in hunks:
             idx = start - 1
             for op, text in chunks:
                 if op in ('-', ' '):
-                    if idx < 0 or idx >= len(lines) or lines[idx].rstrip('\r\n') != text:
-                        print(f"  Patch mismatch at line {idx+1}: expected '{text[:60]}', got '{lines[idx].rstrip()[:60] if 0 <= idx < len(lines) else 'EOF'}'")
+                    if idx < 0 or idx >= len(lines):
+                        print(f"  Patch mismatch at line {idx+1}: line out of range")
+                        return False
+                    actual = lines[idx].rstrip('\r\n')
+                    if actual.strip() != text.strip():
+                        print(f"  Patch mismatch at line {idx+1}: expected '{text[:60]}', got '{actual[:60]}'")
                         return False
                     idx += 1
                 elif op == '+':
@@ -503,14 +544,37 @@ class FixCommand(Command):
         for start, chunks in reversed(hunks):
             old_lines = []
             new_lines = []
-            for op, text in chunks:
+            old_idx = 0
+            i = 0
+            while i < len(chunks):
+                op, text = chunks[i]
                 if op == '-':
-                    old_lines.append(text)
+                    # Use original file's indentation for the replacement
+                    orig_line = result[start - 1 + old_idx] if start - 1 + old_idx < len(result) else text
+                    leading = len(orig_line) - len(orig_line.lstrip())
+                    indent = orig_line[:leading]
+                    # Check if next chunk is a + line (same logical change)
+                    if i + 1 < len(chunks) and chunks[i + 1][0] == '+':
+                        # Apply original indentation to the + line too
+                        _, plus_text = chunks[i + 1]
+                        new_lines.append(indent + plus_text.strip())
+                        old_lines.append(text)
+                        old_idx += 1
+                        i += 2  # Skip both - and + lines
+                    else:
+                        new_lines.append(indent + text.strip())
+                        old_lines.append(text)
+                        old_idx += 1
+                        i += 1
                 elif op == '+':
                     new_lines.append(text)
+                    i += 1
                 elif op == ' ':
                     old_lines.append(text)
                     new_lines.append(text)
+                    old_idx += 1
+                    i += 1
+            
             idx = start - 1
             if idx + len(old_lines) <= len(result):
                 del result[idx:idx + len(old_lines)]
@@ -718,7 +782,7 @@ class FixCommand(Command):
         print(f"\nSending to LLM for fix...")
         import subprocess
         fix_msgs = [
-            {"role": "system", "content": "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged. No duplicate functions. No _v1/_v2 variants.\n\nPrefer [PATCH:] format (minimal diff — only changed lines):\n[PATCH: filename.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n- old line\n\nOnly use [FILE:] for new files or when the entire file must be rewritten:\n[FILE: filename.py]\n```python\n# complete fixed code\n```"},
+            {"role": "system", "content": "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged. No duplicate functions. No _v1/_v2 variants.\n\nWhen fixing type errors (arg-type, incompatible type), search the ENTIRE file for where the variable is defined/initialized, not just where the error occurs. Fix the initialization to use the correct type. Do NOT change function signatures.\n\nOutput the fix using ONE of these formats:\n[PATCH: filename.py] — for small fixes near the error line\n[FILE: filename.py] — when the fix is far from the error or needs full context\n\n[PATCH:] example:\n[PATCH: filename.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n\n[FILE:] example:\n[FILE: filename.py]\n```python\n# complete corrected file\n```"},
             {"role": "user", "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n" + "\n".join([f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}" for m, n, s, a in all_broken]) + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}
         ]
         fixed = await agent.llm.chat(fix_msgs)
@@ -728,7 +792,26 @@ class FixCommand(Command):
             return True
 
         match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', fixed, re.DOTALL)
-        if match:
+        patch_match = re.search(r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[FILE:|\Z)', fixed, re.DOTALL)
+
+        if patch_match:
+            fpath_patch = patch_match.group(1).strip()
+            patch_text = patch_match.group(2).strip()
+            ws_dir = str(Path(fpath).parent)
+            ok = self._apply_patch(patch_text, fpath_patch, ws_dir)
+            if ok:
+                print(f"\nFixed: {fpath_patch} (patch applied)")
+                result = subprocess.run(
+                    ["python", "-m", "py_compile", fpath],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    print("Compiled OK!")
+                else:
+                    print(f"Still has errors:\n{result.stderr[:300]}")
+            else:
+                print(f"Patch failed for {fpath_patch}")
+        elif match:
             new_code = match.group(2).strip()
             if len(new_code) > len(current_code) * 0.1 and 'import' in new_code:
                 if _is_stdlib_path(fpath):

@@ -1,3 +1,4 @@
 {
-  "model": "laguna-s-2.1"
+  "model": "qwen3-coder-30b-a3b-instruct",
+  "profile": "fast-codegen"
 }

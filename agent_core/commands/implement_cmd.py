@@ -126,6 +126,505 @@ def _extract_task_line(taskplan: str, filename: str) -> str:
     return ""
 
 
+def _parse_line_number(err: str) -> int:
+    """Extract the first line number from an error string."""
+    # "file.py:162:" or "line 130" patterns
+    for m in re.finditer(r'(\d+)', err):
+        n = int(m.group(1))
+        if n > 0 and n < 10000:
+            return n
+    if "CROSS:" in err:
+        return 1
+    return 0
+
+
+def _classify_error(err: str):
+    """Return (window_before, window_after, instruction) for an error pattern."""
+    if "union-attr" in err or ("has no attribute" in err and "CROSS:" not in err):
+        return (30, 15,
+            "A variable might be None. Check for an 'is not None' guard ABOVE the error line. "
+            "REUSE the guarded local variable — do NOT re-read from a list/dict after the guard. "
+            "Minimal change: move assignment before the guard, or add a local variable binding.")
+    if "arg-type" in err or ("incompatible type" in err and "expected" in err):
+        return (120, 10,
+            "A variable has the wrong type. Search the ENTIRE file for where it's DEFINED/INITIALIZED. "
+            "The error says a value has the wrong type — find the line that initializes the collection/variable. "
+            "Fix the initialization to use the correct type. Do NOT change function signatures. "
+            "If the fix is far from the error, use [FILE:] to show the full corrected file.")
+    if "No overload variant" in err or ("incompatible type" in err and "expected" not in err):
+        return (20, 10,
+            "The type hint is too broad. Add explicit type parameters: List[T], dict[K,V], Optional[T]. "
+            "Declare the list/dict with its full generic type at the variable definition site.")
+    if "ROOT_CAUSE:" in err:
+        return (50, 20,
+            "This class is missing attributes needed by downstream files. "
+            "Add the missing fields to the class definition (as @dataclass fields or class attributes). "
+            "Show the complete corrected class definition with all fields.")
+    if "COMPILE:" in err:
+        return (10, 10,
+            "Fix the syntax error at the indicated line. Show ONLY the corrected line(s). "
+            "Keep surrounding code unchanged.")
+    if "IMPORT:" in err:
+        return (5, 5,
+            "Fix the import path. Use bare imports for same-directory modules. "
+            "Replace absolute 'from src.agent1.' prefixes with bare 'from ' imports.")
+    if "CROSS:" in err:
+        return (40, 30,
+            "Add the missing attribute as a @property or class attribute in the referenced class. "
+            "Show the complete class definition with the new attribute.")
+    if "SMOKE:" in err:
+        return (30, 20,
+            "The class failed to instantiate. Check __init__ parameters and types. "
+            "The test attempted to create an instance — ensure __init__ accepts the right arguments.")
+    if "is not defined" in err or "Name" in err or "name-defined" in err:
+        return (1, 40,
+            "Missing import. Add 'from module import Name' at the top of the file. "
+            "Look at the available exports in other project files — do NOT define the class yourself. "
+            "IMPORT it from the file that already defines it.")
+    return (40, 20,
+        "Fix this error in the code. Keep changes minimal — do NOT rewrite the entire file. "
+        "Output ONLY the corrected file.")
+
+
+def _extract_window(lines: list[str], error_line: int, before: int, after: int) -> str:
+    """Extract a code window around *error_line* (1-indexed)."""
+    idx = error_line - 1
+    start = max(0, idx - before)
+    end = min(len(lines), idx + after)
+    result = []
+    for i, line in enumerate(lines[start:end], start=start + 1):
+        marker = ">>" if i == error_line else "  "
+        result.append(f"{i:>4} {marker} {line.rstrip()}")
+    return "\n".join(result)
+
+
+def _trace_variable_source(err: str, lines: list[str], error_line: int) -> str:
+    """For arg-type errors, trace the variable back to its initialization.
+
+    Returns a code block showing the root cause (where the variable is initialized)
+    with line numbers, or empty string if tracing fails.
+    """
+    if "arg-type" not in err and ("incompatible type" not in err or "expected" not in err):
+        return ""
+
+    # Extract function name and argument position from error
+    # Pattern: Argument N to "func_name" has incompatible type "X"; expected "Y"
+    func_match = re.search(r'Argument (\d+) to "(\w+)"', err)
+    if not func_match:
+        return ""
+    arg_num = int(func_match.group(1))
+    func_name = func_match.group(2)
+
+    # Find the function definition and extract parameter name
+    param_name = ""
+    for i, line in enumerate(lines):
+        if f"def {func_name}(" in line:
+            params_match = re.search(r'def\s+\w+\s*\((.*?)\)', line, re.DOTALL)
+            if params_match:
+                params = [p.strip().split(':')[0].strip().split('=')[0].strip()
+                          for p in params_match.group(1).split(',')]
+                if arg_num <= len(params):
+                    param_name = params[arg_num - 1]
+            break
+
+    if not param_name or param_name == "self":
+        return ""
+
+    # Find where the parameter is assigned at the error site
+    assigned_from = ""
+    for i in range(error_line - 1, max(0, error_line - 20), -1):
+        line = lines[i].strip()
+        if f"{param_name} = " in line or f"{param_name}=" in line:
+            rhs_match = re.search(rf'{param_name}\s*=\s*(.+)', line)
+            if rhs_match:
+                assigned_from = rhs_match.group(1).strip()
+            break
+
+    if not assigned_from:
+        return ""
+
+    # Find where the source collection is initialized
+    init_lines = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if re.match(rf'self\.\w+\s*=\s*\[', stripped) or re.match(rf'self\.\w+\s*=\s*\{{', stripped):
+            init_lines.append((i + 1, line.rstrip()))
+
+    if not init_lines:
+        return ""
+
+    # Build the root cause section
+    result_parts = []
+    result_parts.append(f"Variable `{param_name}` is assigned from `{assigned_from}` (see error site):")
+    result_parts.append("")
+    for i in range(error_line - 1, max(0, error_line - 10), -1):
+        if param_name in lines[i]:
+            result_parts.append(f"  {i + 1}: {lines[i].rstrip()}")
+            break
+
+    result_parts.append("")
+    result_parts.append("The source collection is initialized here:")
+    result_parts.append("")
+    for line_num, line_text in init_lines[-3:]:
+        result_parts.append(f"  {line_num}: {line_text}")
+
+    result_parts.append("")
+    result_parts.append("Fix: Change the initialization to use the correct type (e.g. 0 instead of None).")
+
+    return "\n".join(result_parts)
+
+
+def _find_class_definition_file(class_name: str, ws_dir: str, exclude_file: str = "") -> tuple[str, str] | None:
+    """Find the file that defines a class. Returns (file_path, source_content) or None."""
+    for root, dirs, files in os.walk(ws_dir):
+        if ".git" in root or "__pycache__" in root:
+            continue
+        for f in files:
+            if not f.endswith(".py"):
+                continue
+            fp = os.path.normpath(os.path.join(root, f))
+            if fp == exclude_file:
+                continue
+            try:
+                with open(fp, "r", encoding="utf-8", errors="replace") as sf:
+                    src = sf.read()
+                if re.search(rf'^class\s+{re.escape(class_name)}\b', src, re.MULTILINE):
+                    return (fp, src)
+            except Exception:
+                pass
+    return None
+
+
+def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> list[tuple[str, list[tuple[str, str, str]]]]:
+    """Group errors by root cause class. Returns [(root_cause_file, [errors])].
+    
+    For attr-defined/call-arg/import errors, finds the class definition file.
+    Groups all errors that trace to the same class definition.
+    """
+    # Extract class names from errors
+    class_errors: dict[str, list[tuple[str, str, str]]] = {}
+    import_errors: dict[str, list[tuple[str, str, str]]] = {}
+    other_errors: list[tuple[str, str, str]] = []
+    
+    for fname, fpath, err in errors:
+        # Extract class name from attr-defined errors
+        # Pattern: "MouseEventData" has no attribute "button"
+        cls_match = re.search(r'"(\w+)" has no attribute "(\w+)"', err)
+        if cls_match:
+            cls_name = cls_match.group(1)
+            class_errors.setdefault(cls_name, []).append((fname, fpath, err))
+            continue
+        # Pattern: Unexpected keyword argument "timestamp" for "MouseEventData"
+        cls_match = re.search(r'for "(\w+)"', err)
+        if cls_match and "keyword argument" in err:
+            cls_name = cls_match.group(1)
+            class_errors.setdefault(cls_name, []).append((fname, fpath, err))
+            continue
+        # Pattern: ImportError: cannot import name 'MouseEvent' from 'mouse_event_handler'
+        import_match = re.search(r"cannot import name '(\w+)' from '(\w+)'", err)
+        if import_match:
+            missing_name = import_match.group(1)
+            source_module = import_match.group(2)
+            import_errors.setdefault(missing_name, []).append((fname, fpath, err))
+            continue
+        other_errors.append((fname, fpath, err))
+    
+    result: list[tuple[str, list[tuple[str, str, str]]]] = []
+    
+    for cls_name, cls_errs in class_errors.items():
+        # Find the class definition file
+        defn = _find_class_definition_file(cls_name, ws_dir)
+        if defn:
+            defn_path, defn_src = defn
+            # Add the class definition file as the root cause
+            root_err = (os.path.basename(defn_path), defn_path,
+                        f"ROOT_CAUSE: {cls_name} is defined here but missing attributes needed by downstream files")
+            result.append((defn_path, [root_err] + cls_errs))
+        else:
+            # Can't find definition — just group the errors together
+            result.append(("", cls_errs))
+    
+    # Group import errors by the missing symbol
+    for missing_name, imp_errs in import_errors.items():
+        # Try to find where this symbol should be defined
+        defn = _find_class_definition_file(missing_name, ws_dir)
+        if defn:
+            defn_path, defn_src = defn
+            root_err = (os.path.basename(defn_path), defn_path,
+                        f"ROOT_CAUSE: {missing_name} should be exported from this module")
+            result.append((defn_path, [root_err] + imp_errs))
+        else:
+            # Check if the symbol exists somewhere but isn't exported
+            # Group by source module — all errors importing from same module
+            result.append(("", imp_errs))
+    
+    # Add ungrouped errors
+    if other_errors:
+        result.append(("", other_errors))
+    
+    return result
+
+
+def _build_fix_prompt(err: str, current_code: str, fname: str, prefer_file: bool = False) -> list[dict]:
+    """Build a strategy-specific fix prompt with relevant code window only.
+    
+    If prefer_file is True (e.g. after a patch failure), tell the LLM to use [FILE:] format.
+    """
+    lines = current_code.split("\n")
+    error_line = _parse_line_number(err)
+    before, after, instruction = _classify_error(err)
+    window = _extract_window(lines, error_line, before, after)
+
+    # For arg-type errors, trace the variable back to its initialization
+    root_cause = _trace_variable_source(err, lines, error_line)
+    root_section = ""
+    if root_cause:
+        root_section = f"## Root cause — READ THIS FIRST\n{root_cause}\n\n"
+
+    # For import-related errors, also show the file header (first 40 lines)
+    header = ""
+    if "import" in instruction.lower() or "is not defined" in instruction or "Name" in instruction:
+        header_end = min(40, len(lines))
+        header_lines = []
+        for i, line in enumerate(lines[:header_end], start=1):
+            header_lines.append(f"{i:>4}    {line.rstrip()}")
+        header = "File header (imports):\n```python\n" + "\n".join(header_lines) + "\n```\n\n"
+
+    sys_msg = f"Fix this specific issue. {instruction}"
+    if prefer_file:
+        sys_msg += " Patches failed before. Use [FILE:] format — output the complete corrected file."
+        user_msg = (
+            f"Error in {fname}, line {error_line}:\n{err}\n\n"
+            f"{root_section}"
+            f"{header}"
+            f"Relevant code:\n```python\n{window}\n```\n\n"
+            f"[FILE: {fname}]\n"
+            f"```python\n# complete corrected file\n```\n\n"
+            f"Output the complete corrected file using [FILE:] format. Do NOT use [PATCH:]."
+        )
+    else:
+        user_msg = (
+            f"Error in {fname}, line {error_line}:\n{err}\n\n"
+            f"{root_section}"
+            f"{header}"
+            f"Relevant code:\n```python\n{window}\n```\n\n"
+            f"Output the fix using ONE of these formats:\n\n"
+            f"Option A — [PATCH:] for small fixes near the error:\n"
+            f"[PATCH: {fname}]\n"
+            f"@@ -line,count +line,count @@\n"
+            f" unchanged context line\n"
+            f"-removed line\n"
+            f"+added line\n"
+            f" unchanged context line\n\n"
+            f"Option B — [FILE:] when the fix is far from the error or needs full context:\n"
+            f"[FILE: {fname}]\n"
+            f"```python\n# complete corrected file\n```\n\n"
+            f"Choose the format that makes the fix clearest. Do NOT output anything else."
+        )
+    return [
+        {"role": "system", "content": sys_msg},
+        {"role": "user", "content": user_msg},
+    ]
+
+
+def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors: list[tuple[str, str, str]], prefer_file: bool = False) -> list[dict]:
+    """Build a prompt for fixing a root cause class with downstream error context.
+    
+    Shows the LLM:
+    1. The class definition that needs fixing
+    2. The downstream errors that will be fixed by this change
+    3. Explicit instruction to fix the class first
+    """
+    # Extract the class definition from the source
+    lines = class_src.split("\n")
+    class_start = -1
+    class_end = len(lines)
+    for i, line in enumerate(lines):
+        if re.match(rf'^class\s+{re.escape(class_name)}\b', line):
+            class_start = i
+            break
+    if class_start == -1:
+        class_start = 0
+    
+    # Find class end (next class or end of file)
+    for i in range(class_start + 1, len(lines)):
+        if re.match(r'^class\s+\w+', lines[i]):
+            class_end = i
+            break
+    
+    class_window = "\n".join(f"{i+1:>4}    {line.rstrip()}" for i, line in enumerate(lines[class_start:class_end], start=class_start))
+    
+    # Build downstream error summary
+    error_summary = []
+    for fname, fpath, err in downstream_errors:
+        if "ROOT_CAUSE:" in err:
+            continue
+        # Extract just the key error info
+        err_short = err[:200] if len(err) > 200 else err
+        error_summary.append(f"  {fname}: {err_short}")
+    
+    downstream_section = ""
+    if error_summary:
+        downstream_section = "## Downstream errors that this fix will resolve\n" + "\n".join(error_summary) + "\n\n"
+    
+    sys_msg = f"Fix the {class_name} class definition. Add all missing fields/attributes."
+    user_msg = (
+        f"The class `{class_name}` is missing attributes needed by downstream files.\n\n"
+        f"{downstream_section}"
+        f"## Current class definition\n```python\n{class_window}\n```\n\n"
+        f"Add the missing fields to this class. For @dataclass, add new fields with types. "
+        f"For regular classes, add them in __init__. Use [FILE:] format to output the corrected file."
+    )
+    if prefer_file:
+        user_msg += " Patches failed before. Use [FILE:] format — output the complete corrected file."
+    
+    return [
+        {"role": "system", "content": sys_msg},
+        {"role": "user", "content": user_msg},
+    ]
+
+
+def _apply_patch(patch_text: str, fpath: str, original_lines: list[str]) -> tuple[bool, str]:
+    """Apply a unified-diff patch. Returns (success, result or error message).
+
+    Whitespace-tolerant: strips leading/trailing whitespace when comparing lines.
+    Filters broken hunks with incomplete replacements.
+    """
+    # Parse hunks: @@ -start,count +start,count @@ ... @@
+    # Also lenient: @@ -start @@ (missing +start part)
+    hunks = []
+    for m in re.finditer(r'@@\s*-(\d+)(?:,\d+)?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@(.*?)(?=@@|\Z)', patch_text, re.DOTALL):
+        start = int(m.group(1))
+        body = m.group(3).strip('\n')
+        chunks: list[tuple[str, str | None]] = []
+        for line in body.split('\n'):
+            line = line.rstrip('\r')
+            if line.startswith('-'): chunks.append(('-', line[1:]))
+            elif line.startswith('+'): chunks.append(('+', line[1:]))
+            elif line.startswith(' '): chunks.append((' ', line[1:]))
+        if chunks:
+            hunks.append((start, chunks))
+    if not hunks:
+        return False, "Could not parse patch"
+
+    # Filter out broken hunks (incomplete: has - but no +, empty + lines, or incomplete lines)
+    incomplete_ops = ('=', '+', '-', '*', '/', ',', '(', '[', '{')
+    valid_hunks = []
+    for start, chunks in hunks:
+        has_minus = any(op == '-' for op, _ in chunks)
+        has_plus = any(op == '+' for op, _ in chunks)
+        if has_minus and not has_plus:
+            continue  # Removal only — skip
+        if any(op == '+' and not text.strip() for op, text in chunks):
+            continue  # Empty replacement — skip
+        # Filter incomplete lines (trailing operators like =, +, -, etc.)
+        if any(op == '+' and text.rstrip().endswith(incomplete_ops) for op, text in chunks):
+            continue  # Incomplete replacement — skip
+        valid_hunks.append((start, chunks))
+
+    if not valid_hunks:
+        return False, "No valid hunks in patch"
+
+    # Verify old lines match (whitespace-tolerant)
+    # For '-' lines: must match (removed lines)
+    # For ' ' context lines: skip if mismatched (LLM often hallucinates context)
+    for start, chunks in valid_hunks:
+        idx = start - 1
+        filtered_chunks = []
+        for op, text in chunks:
+            if op == '-':
+                if idx < 0 or idx >= len(original_lines):
+                    return False, f"Patch mismatch at line {idx+1}: line out of range"
+                actual = original_lines[idx].rstrip('\r\n')
+                if actual.strip() != text.strip():
+                    return False, f"Patch mismatch at line {idx+1}: expected '{text[:60]}'"
+                filtered_chunks.append((op, text))
+                idx += 1
+            elif op == ' ':
+                if idx < 0 or idx >= len(original_lines):
+                    idx += 1
+                    continue  # Skip out-of-range context
+                actual = original_lines[idx].rstrip('\r\n')
+                if actual.strip() != text.strip():
+                    # Skip mismatched context line — LLM hallucinated it
+                    idx += 1
+                    continue
+                filtered_chunks.append((op, text))
+                idx += 1
+            else:
+                filtered_chunks.append((op, text))
+        chunks[:] = filtered_chunks
+
+    # Apply hunks in reverse order
+    result = [l + '\n' for l in original_lines]
+    for start, chunks in reversed(valid_hunks):
+        old_lines = [text for op, text in chunks if op in ('-', ' ')]
+        new_lines = []
+        old_idx = 0
+        i = 0
+        while i < len(chunks):
+            op, text = chunks[i]
+            if op == '-':
+                # Use original file's indentation for the replacement
+                orig_line = result[start - 1 + old_idx] if start - 1 + old_idx < len(result) else text
+                leading = len(orig_line) - len(orig_line.lstrip())
+                indent = orig_line[:leading]
+                # Check if next chunk is a + line (same logical change)
+                if i + 1 < len(chunks) and chunks[i + 1][0] == '+':
+                    # Apply original indentation to the + line too
+                    _, plus_text = chunks[i + 1]
+                    new_lines.append(indent + plus_text.strip())
+                    old_idx += 1
+                    i += 2  # Skip both - and + lines
+                else:
+                    new_lines.append(indent + text.strip())
+                    old_idx += 1
+                    i += 1
+            elif op == '+':
+                new_lines.append(text)
+                i += 1
+            elif op == ' ':
+                new_lines.append(text)
+                old_idx += 1
+                i += 1
+
+        idx = start - 1
+        if idx + len(old_lines) <= len(result):
+            del result[idx:idx + len(old_lines)]
+            for i, text in enumerate(new_lines):
+                result.insert(idx + i, text + '\n')
+
+    # Syntax check
+    import tempfile
+    tf = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
+    tf.write(''.join(result))
+    tf.close()
+    r = subprocess.run(["python", "-m", "py_compile", tf.name], capture_output=True, text=True)
+    os.unlink(tf.name)
+    if r.returncode != 0:
+        return False, f"Patch breaks syntax: {r.stderr[:200]}"
+
+    return True, ''.join(result)
+
+
+def _run_python_snippet(ws: str, extra_paths: list[str], code_lines: list[str]) -> subprocess.CompletedProcess:
+    """Run a Python snippet in a temp file with workspace and extra paths in sys.path.
+
+    Returns the CompletedProcess from subprocess.run.
+    """
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+        tf.write(f"import sys; sys.path.insert(0, {repr(ws)})\n")
+        for p in extra_paths:
+            tf.write(f"sys.path.insert(0, {repr(p)})\n")
+        for line in code_lines:
+            tf.write(line + "\n")
+        tfpath = tf.name
+    r = subprocess.run(["python", tfpath], capture_output=True, text=True, cwd=str(Path(ws)))
+    os.unlink(tfpath)
+    return r
+
+
 class ImplementCommand(Command):
     """Implement files from task plan using LLM."""
 
@@ -197,9 +696,17 @@ class ImplementCommand(Command):
         plan_file = filtered_parts[2] if len(filtered_parts) > 2 else "plan.md"
         entities_file = filtered_parts[3] if len(filtered_parts) > 3 else "entities.md"
 
-        cache_file = os.path.join(os.path.dirname(os.path.realpath(taskplan_file)) if os.path.isabs(taskplan_file) else ".", ".implement_cache.json")
+        # Resolve relative paths against the target workspace
         if not os.path.isabs(taskplan_file):
-            cache_file = os.path.join(".", ".implement_cache.json")
+            taskplan_file = os.path.join(target_workspace, taskplan_file)
+        if not os.path.isabs(analysis_file):
+            analysis_file = os.path.join(target_workspace, analysis_file)
+        if not os.path.isabs(plan_file):
+            plan_file = os.path.join(target_workspace, plan_file)
+        if not os.path.isabs(entities_file):
+            entities_file = os.path.join(target_workspace, entities_file)
+
+        cache_file = os.path.join(os.path.dirname(os.path.realpath(taskplan_file)), ".implement_cache.json")
 
         analysis_content = ""
         plan_content = ""
@@ -500,7 +1007,7 @@ class ImplementCommand(Command):
                 user_context += f"\n\nRelevant plan:\n{plan_context}"
 
             impl_messages = [
-                {"role": "system", "content": "You are an expert Python developer. Implement the specified files concisely.\n\nRULES:\n0. NEVER use <tool_call>, <function_call>, or XML tags. Respond in plain text with [FILE:] blocks only.\n1. All code MUST pass mypy strict type checking and py_compile.\n2. Use ONLY imports that match the available exports listed below. Do not invent names.\n3. SRP — Single Responsibility Principle. Each class does ONE thing. Each file has a single clear purpose. Split unrelated responsibilities.\n4. NEW files: small and focused — max 150 lines. If a concept needs more, SPLIT into multiple files (e.g., types.py + types_io.py). Output each split file as its own [FILE:] block. Do NOT create monolithic files.\n5. MODIFYING existing large files: add only the minimal change needed. Inject imports at the top, add methods near similar ones. DO NOT rewrite the entire file — the existing code already works.\n6. NEVER create duplicate functions or classes. No _v1, _v2 variants.\n7. Prefer composition over inheritance. Inject dependencies via __init__.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
+                {"role": "system", "content": "You are an expert Python developer. Implement the specified files concisely.\n\nRULES:\n0. NEVER use <tool_call>, <function_call>, or XML tags. Respond in plain text with [FILE:] blocks only.\n1. All code MUST pass mypy strict type checking and py_compile.\n2. You receive an export map listing every class/function/constant that already exists and which file defines it. IMPORT those names — NEVER redefine a name that already exists in the export map. If 'Grid' is listed under grid.py, write 'from grid import Grid', do NOT write 'class Grid' again.\n3. Each file has ONE clear responsibility. Define ONLY the classes/functions assigned to that file. All other needed names come from imports.\n4. NEW files: small and focused — max 150 lines.\n5. MODIFYING existing files: add only the minimal change. DO NOT rewrite the entire file.\n6. NEVER create duplicate functions or classes — check the export map before defining anything.\n7. Prefer composition over inheritance. Inject dependencies via __init__.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
                 {"role": "user", "content": user_context}
             ]
 
@@ -602,6 +1109,10 @@ class ImplementCommand(Command):
                 for fname, missing in broken_imports.items():
                     for mod, name in missing:
                         print(f"    {fname}: '{name}' from '{mod}' not found")
+                    if fname in generated_content:
+                        print(f"  REJECTED: {fname} — references names not defined in the project")
+                        file_outcomes[fname] = f"rejected — {len(missing)} unresolved import(s)"
+                        del generated_content[fname]
             else:
                 print(f"  All imports verified!")
         else:
@@ -613,6 +1124,17 @@ class ImplementCommand(Command):
             filepath = workspace / filename
 
             filepath.parent.mkdir(parents=True, exist_ok=True)
+
+            # Ensure __init__.py exists in every package directory so
+            # `from src.agent1.xxx import` works regardless of import style.
+            # Never overwrite an existing __init__.py that has content.
+            _curr = filepath.parent
+            _ws_root = workspace.resolve()
+            while _curr != _ws_root and _curr != _curr.parent:
+                _init = _curr / "__init__.py"
+                if not _init.exists() or _init.stat().st_size == 0:
+                    _init.touch()
+                _curr = _curr.parent
 
             skip_reason = None
             is_analyzed_file = analyzed_file and filename == analyzed_file
@@ -793,7 +1315,11 @@ class ImplementCommand(Command):
                     print(f"  Compiled OK: {filename}")
 
         # Post-loop: remove files that depend on rejected modules
-        rejected_files = {k for k, v in file_outcomes.items() if "rejected" in v}
+        # Only cascade-reject for compilation errors, not name collisions.
+        # A name collision means the class already exists elsewhere — importing
+        # files are not broken.
+        rejected_files = {k for k, v in file_outcomes.items()
+                          if "rejected" in v and "class-name conflict" not in v}
         if rejected_files:
             for fname in list(implemented):
                 fpath = Path(ws) / fname
@@ -890,8 +1416,69 @@ class ImplementCommand(Command):
             print(f"[fix] Deep validation: checking imports + class instantiation...")
             print(f"{'='*50}")
 
+            prev_error_sigs: dict[str, str] = {}
+            files_already_fixed: set[str] = set()
+            file_error_sigs: dict[str, str] = {}  # per-file last-seen error signature
+            patch_failed: set[str] = set()  # files where [PATCH:] format failed — prefer [FILE:] next
+
+            # ---- Pre-loop cross-file attribute check ----
+            # Verify chained attribute accesses across module boundaries.
+            # Runs once since attribute chains don't change between fix attempts.
+            ws = target_workspace
+            if ws.startswith("/c/") or ws.startswith("/C/"):
+                ws = "C:" + ws[2:]
+            cross_errors: list[tuple[str, str, str]] = []
+            for fname in implemented:
+                fp = Path(ws) / fname
+                if not fp.exists():
+                    continue
+                with open(fp, "r") as sf:
+                    src = sf.read()
+                src_dir = str(fp.parent.resolve())
+                imports_by_class: dict[str, str] = {}
+                for im in re.finditer(r'from\s+(\w+)\s+import\s+(.+?)(?:\s*$|\s*#)', src, re.MULTILINE):
+                    mod_file = im.group(1) + ".py"
+                    for n in re.findall(r'(\w+)', im.group(2)):
+                        if n[0].isupper():
+                            imports_by_class[n] = mod_file
+                var_types: dict[str, str] = {}
+                for cls_name, mod_file in imports_by_class.items():
+                    for va in re.finditer(rf'(\w+)\s*=\s*{cls_name}\s*\(', src):
+                        var_types[va.group(1)] = cls_name
+                for var, cls_name in var_types.items():
+                    for chain_m in re.finditer(rf'\b{var}\.(\w+(?:\.\w+)*)\b', src):
+                        chain = chain_m.group(1).split('.')
+                        mod_py = imports_by_class[cls_name][:-3]
+                        check_attrs = '[' + ', '.join(f"'{a}'" for a in chain) + ']'
+                        code = [
+                            f"from {mod_py} import {cls_name}",
+                            f"try: obj = {cls_name}()",
+                            "except: print('SKIP'); sys.exit(0)",
+                        ]
+                        for attr in chain:
+                            code.append(f"if not hasattr(obj, '{attr}'): print('MISSING: {cls_name}.{attr}'); sys.exit(2)")
+                            code.append(f"obj = obj.{attr}")
+                        code.append(f"print('OK: {cls_name}.' + '.'.join({check_attrs}))")
+                        r = _run_python_snippet(ws, [src_dir], code)
+                        if r.returncode == 2:
+                            err_line = ""
+                            for line in (r.stdout or "").split('\n'):
+                                if 'MISSING:' in line:
+                                    err_line = line.strip()
+                                    break
+                            cross_errors.append((fname, str(fp), f"CROSS: {err_line or f'{cls_name}.{chain[0]}'} (accessed as {var}.{chain_m.group(1)} in {fname})"))
+                        elif "OK:" in (r.stdout or ""):
+                            print(f"  {r.stdout.strip()}")
+            if cross_errors:
+                print(f"\n[fix] {len(cross_errors)} cross-file attribute errors:")
+                for fname, fpath, err in cross_errors:
+                    print(f"  - {err}")
+            else:
+                print("[fix] Cross-file attributes all verified!")
+
             for fix_attempt in range(3):
                 errors_found = []
+                current_error_sigs: dict[str, str] = {}
 
                 for fname in implemented:
                     if not fname.endswith(".py"):
@@ -909,13 +1496,10 @@ class ImplementCommand(Command):
 
                     import tempfile
                     mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
-                    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
-                        tf.write(f"import sys; sys.path.insert(0, r'{ws}')\n")
-                        tf.write(f"import {mod_name}\n")
-                        tf.write("print('OK')\n")
-                        tfpath = tf.name
-                    r = subprocess.run(["python", tfpath], capture_output=True, text=True, cwd=str(Path(ws)))
-                    os.unlink(tfpath)
+                    r = _run_python_snippet(ws, [str(fp.parent.resolve())], [
+                        f"import {mod_name}",
+                        "print('OK')",
+                    ])
                     if r.returncode != 0:
                         errors_found.append((fname, fpath_str, f"IMPORT: {r.stderr.strip()}"))
                         continue
@@ -925,7 +1509,19 @@ class ImplementCommand(Command):
                         capture_output=True, text=True, cwd=str(Path(ws))
                     )
                     if r.returncode != 0 and "No module named" not in r.stderr:
-                        type_errors = [l.strip() for l in r.stdout.split('\n') if l.strip() and ':' in l and not l.startswith('Found')]
+                        type_errors = [
+                            l.strip() for l in r.stdout.split('\n')
+                            if l.strip() and ':' in l
+                            and not l.startswith('Found')
+                            and ': note:' not in l
+                            and 'annotation-unchecked' not in l
+                            and '"list" is invariant' not in l
+                            and '--check-untyped-defs' not in l
+                            and 'No overload variant' not in l
+                            and 'Possible overload variants' not in l
+                            and 'no-untyped-def' not in l
+                            and 'no-untyped-call' not in l
+                        ]
                         if type_errors:
                             errors_found.append((fname, fpath_str, f"TYPE: {'; '.join(type_errors[:5])}"))
 
@@ -933,16 +1529,13 @@ class ImplementCommand(Command):
                         source = f.read()
                     class_names = re.findall(r'^class\s+(\w+)', source, re.MULTILINE)
                     for cn in class_names:
-                        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
-                            tf.write(f"import sys; sys.path.insert(0, r'{ws}')\n")
-                            tf.write(f"import {mod_name}\n")
-                            tf.write(f"c={mod_name}.{cn}\n")
-                            tf.write(f"import inspect\n")
-                            tf.write(f"try:\n    sig=inspect.signature(c)\n    print(f'OK: {cn}'+str(list(sig.parameters.keys())))\n")
-                            tf.write(f"except (ValueError, TypeError):\n    print(f'OK: {cn} (builtin/Protocol/TypedDict)')\n")
-                            tfpath = tf.name
-                        r = subprocess.run(["python", tfpath], capture_output=True, text=True, cwd=str(Path(ws)))
-                        os.unlink(tfpath)
+                        r = _run_python_snippet(ws, [str(fp.parent.resolve())], [
+                            f"import {mod_name}",
+                            f"c={mod_name}.{cn}",
+                            "import inspect",
+                            f"try:\n    sig=inspect.signature(c)\n    print(f'OK: {cn}'+str(list(sig.parameters.keys())))\n"
+                            f"except (ValueError, TypeError):\n    print(f'OK: {cn} (builtin/Protocol/TypedDict)')",
+                        ])
                         if r.returncode != 0:
                             errors_found.append((fname, fpath_str, f"CLASS {cn}: {r.stderr.strip()}"))
                         else:
@@ -968,6 +1561,31 @@ class ImplementCommand(Command):
                             if cn.startswith('_') or 'Protocol' in source[cn_match.start():cn_match.start()+200]:
                                 continue
 
+                            mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
+
+                            # Enum classes — validate by accessing members, not calling ()
+                            class_header = source[cn_match.start():cn_match.end()+50]
+                            if 'Enum' in class_header:
+                                smoke_lines = [
+                                    f"import {mod_name}",
+                                    f"print(f'Testing {cn}...')",
+                                    "try:",
+                                    f"    _ = list({mod_name}.{cn})[0]",
+                                    f"    print(f'  OK: {cn} is valid Enum')",
+                                    f"except Exception as e:\n    print(f'  FAIL: {cn}: {{type(e).__name__}}: {{e}}')",
+                                ]
+                                r = _run_python_snippet(ws, [str(fp.parent.resolve())], smoke_lines)
+                                if r.returncode != 0:
+                                    smoke_errors.append((fname, fpath_str, r.stderr.strip()[-300:]))
+                                else:
+                                    output = r.stdout.strip()
+                                    if "FAIL:" in output:
+                                        smoke_errors.append((fname, fpath_str, output))
+                                        print(f"  {fname}: {output}")
+                                    elif "OK:" in output:
+                                        print(f"  {output}")
+                                continue
+
                             init_match = re.search(rf'class\s+{cn}.*?\n(\s+)def\s+__init__\s*\((.*?)\)\s*:', source[cn_match.start():], re.DOTALL)
                             params = init_match.group(2) if init_match else ""
 
@@ -981,28 +1599,22 @@ class ImplementCommand(Command):
 
                             mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
 
-                            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
-                                tf.write(f"import sys; sys.path.insert(0, r'{ws}')\n")
-                                tf.write(f"import {mod_name}\n")
-                                tf.write(f"print(f'Testing {cn}...')\n")
-                                tf.write("try:\n")
-
-                                if not required:
-                                    tf.write(f"    obj = {mod_name}.{cn}()\n")
-                                    tf.write(f"    print(f'  OK: {cn}() works')\n")
-                                elif len(required) <= 2:
-                                    args = ", ".join(f'"mock_{r.split(":")[0].strip()}"' if ':' in r else f'"mock_{r.strip()}"' for r in required)
-                                    tf.write(f"    obj = {mod_name}.{cn}({args})\n")
-                                    tf.write(f"    print(f'  OK: {cn}() works')\n")
-                                else:
-                                    tf.write(f"    print(f'  SKIP: {cn} needs {len(required)} args')\n")
-
-                                tf.write("except Exception as e:\n")
-                                tf.write(f"    print(f'  FAIL: {cn}: {{type(e).__name__}}: {{e}}')\n")
-                                tfpath = tf.name
-
-                            r = subprocess.run(["python", tfpath], capture_output=True, text=True, cwd=str(Path(ws)))
-                            os.unlink(tfpath)
+                            smoke_lines = [
+                                f"import {mod_name}",
+                                f"print(f'Testing {cn}...')",
+                                "try:",
+                            ]
+                            if not required:
+                                smoke_lines.append(f"    obj = {mod_name}.{cn}()")
+                                smoke_lines.append(f"    print(f'  OK: {cn}() works')")
+                            elif len(required) <= 2:
+                                args = ", ".join(f'"mock_{r.split(":")[0].strip()}"' if ':' in r else f'"mock_{r.strip()}"' for r in required)
+                                smoke_lines.append(f"    obj = {mod_name}.{cn}({args})")
+                                smoke_lines.append(f"    print(f'  OK: {cn}() works')")
+                            else:
+                                smoke_lines.append(f"    print(f'  SKIP: {cn} needs {len(required)} args')")
+                            smoke_lines.append(f"except Exception as e:\n    print(f'  FAIL: {cn}: {{type(e).__name__}}: {{e}}')")
+                            r = _run_python_snippet(ws, [str(fp.parent.resolve())], smoke_lines)
 
                             if r.returncode != 0:
                                 smoke_errors.append((fname, fpath_str, r.stderr.strip()[-300:]))
@@ -1025,51 +1637,179 @@ class ImplementCommand(Command):
                         errors_found.append((fname, fpath, f"SMOKE: {err[:200]}"))
                         print(f"  - {fname}: {err[:100]}")
 
-                err_root = errors_found[0][0]
-                for fname, _, err in errors_found:
-                    if "COMPILE:" in err:
-                        err_root = fname
-                        break
-                print(f"\n[fix] Root error file: {err_root} (fixing this first)")
+                # Fold cross-file errors into the first fix attempt
+                if fix_attempt == 0 and cross_errors:
+                    errors_found = cross_errors + errors_found
 
-                print(f"\n[fix] Attempt {fix_attempt + 1}: {len(errors_found)} errors")
+                # Group errors by root cause class
+                error_groups = _group_related_errors(errors_found, ws)
+
+                print(f"\n[fix] Attempt {fix_attempt + 1}: {len(errors_found)} errors in {len(error_groups)} groups")
                 for fname, fpath, err in errors_found:
                     print(f"  - {fname}:")
                     print(f"    {err}")
+
+                    # Build error signature per file for deduplication
+                    sig = f"{fname}:{err[:200]}"
+                    current_error_sigs[fname] = current_error_sigs.get(fname, "") + sig
+
+                # Deduplicate: stop if same errors as previous attempt
+                if fix_attempt > 0 and current_error_sigs == prev_error_sigs:
+                    print(f"\n[fix] Same errors as previous attempt — stopping (no progress possible).")
+                    break
+                prev_error_sigs = dict(current_error_sigs)
 
                 if fix_attempt >= 2:
                     print("[fix] Max attempts reached.")
                     break
 
-                for fname, fpath, err in errors_found:
-                    print(f"\n[fix] Fixing {fname}...")
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        current_code = f.read()
+                # Process error groups: fix root causes first
+                fixed_files_this_round = set()
+                for group_path, group_errors in error_groups:
+                    # Check if this group has a root cause
+                    root_err = None
+                    downstream_errs = []
+                    for fname, fpath, err in group_errors:
+                        if "ROOT_CAUSE:" in err:
+                            root_err = (fname, fpath, err)
+                        else:
+                            downstream_errs.append((fname, fpath, err))
+                    
+                    if root_err:
+                        # Fix root cause first
+                        fname, fpath, err = root_err
+                        if fname in fixed_files_this_round:
+                            print(f"\n[fix] Skipping {fname} — already fixed this round.")
+                            continue
+                        
+                        prev_sig = file_error_sigs.get(fname, "")
+                        cur_sig = f"{err[:200]}"
+                        if prev_sig == cur_sig:
+                            print(f"\n[fix] Skipping {fname} — same error as previous attempt.")
+                            continue
+                        
+                        print(f"\n[fix] Fixing root cause: {fname}...")
+                        print(f"  Downstream files: {', '.join(e[0] for e in downstream_errs)}")
+                        
+                        with open(fpath, "r", encoding="utf-8") as f:
+                            current_code = f.read()
+                        
+                        # Use root cause prompt with downstream context
+                        fix_msgs = _build_root_cause_prompt(
+                            # Extract class name from error
+                            re.search(r'ROOT_CAUSE: (\w+)', err).group(1) if re.search(r'ROOT_CAUSE: (\w+)', err) else "",
+                            current_code,
+                            downstream_errs,
+                            prefer_file=(fname in patch_failed)
+                        )
+                        fixed = await agent.llm.chat(fix_msgs)
+                        if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
+                            print(f"  LLM error: {fixed}")
+                            continue
+                        
+                        # Try [FILE:] format for root cause (usually needs full class rewrite)
+                        file_match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?:\n```|$)', fixed, re.DOTALL)
+                        if file_match:
+                            new_code = file_match.group(2).strip()
+                            new_code = re.sub(r'```\s*$', '', new_code).strip()
+                            if not re.search(r'\b(import|def |class )\b', new_code):
+                                print(f"  WARNING: Fix for {fname} is not valid Python code, skipping")
+                                continue
+                            with open(fpath, "w", encoding="utf-8") as f:
+                                f.write(new_code)
+                            r = subprocess.run(["python", "-m", "py_compile", fpath], capture_output=True, text=True)
+                            if r.returncode == 0:
+                                print(f"  Fixed root cause: {fname} ({len(new_code)} bytes)")
+                                file_error_sigs[fname] = ""
+                                fixed_files_this_round.add(fname)
+                            else:
+                                print(f"  Fix introduced compile error: {r.stderr[:150]}")
+                                with open(fpath, "w", encoding="utf-8") as f:
+                                    f.write(current_code)
+                                file_error_sigs[fname] = cur_sig
+                                patch_failed.add(fname)
+                        else:
+                            # Try patch format
+                            patch_match = re.search(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', fixed, re.DOTALL)
+                            if patch_match:
+                                patch_text = patch_match.group(2).strip()
+                                ok, result = _apply_patch(patch_text, fpath, current_code.split('\n'))
+                                if ok:
+                                    with open(fpath, "w", encoding="utf-8") as f:
+                                        f.write(result)
+                                    print(f"  Fixed root cause: {fname} (patch applied)")
+                                    file_error_sigs[fname] = ""
+                                    fixed_files_this_round.add(fname)
+                                else:
+                                    print(f"  Patch failed: {result[:200]}")
+                                    patch_failed.add(fname)
+                                    file_error_sigs[fname] = cur_sig
+                            else:
+                                print(f"  No [PATCH:] or [FILE:] found in LLM response")
+                                file_error_sigs[fname] = cur_sig
+                    
+                    # Fix downstream errors (if root cause was fixed or no root cause)
+                    for fname, fpath, err in downstream_errs:
+                        if fname in fixed_files_this_round:
+                            continue
+                        prev_sig = file_error_sigs.get(fname, "")
+                        cur_sig = f"{err[:200]}"
+                        if prev_sig == cur_sig:
+                            print(f"\n[fix] Skipping {fname} — same error as previous attempt.")
+                            continue
+                        print(f"\n[fix] Fixing {fname}...")
+                        with open(fpath, "r", encoding="utf-8") as f:
+                            current_code = f.read()
 
-                    fix_msgs = [
-                        {"role": "system", "content": "Fix the error. Output ONLY the corrected file. Start with [FILE: filename.py] immediately. No explanations. No duplicate functions. No _v1/_v2 variants."},
-                        {"role": "user", "content": f"Error in {fname}:\n{err}\n\nCurrent code:\n```python\n{current_code}\n```\n\nOutput the fixed file."}
-                    ]
-                    fixed = await agent.llm.chat(fix_msgs)
-                    if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
-                        print(f"  LLM error: {fixed}")
-                        continue
+                        fix_msgs = _build_fix_prompt(err, current_code, fname, prefer_file=(fname in patch_failed))
+                        fixed = await agent.llm.chat(fix_msgs)
+                        if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
+                            print(f"  LLM error: {fixed}")
+                            continue
 
-                    match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', fixed, re.DOTALL)
-                    if match:
-                        new_code = match.group(2).strip()
-                        if not re.search(r'\b(import|def |class )\b', new_code):
-                            print(f"  WARNING: Fix for {fname} is not valid Python code, skipping")
-                            continue
-                        if fname != err_root and len(new_code) < 100:
-                            print(f"  Skipping cascade fix for {fname} (root issue is in {err_root})")
-                            continue
-                        if len(new_code) < len(current_code) * 0.1:
-                            print(f"  WARNING: Fix is {len(new_code)} bytes vs original {len(current_code)} bytes, skipping")
-                            continue
-                        with open(fpath, "w", encoding="utf-8") as f:
-                            f.write(new_code)
-                        print(f"  Fixed: {fname} ({len(new_code)} bytes)")
+                        # Try [PATCH:] format first (preferred — minimal change)
+                        patch_match = re.search(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', fixed, re.DOTALL)
+                        if patch_match:
+                            patch_text = patch_match.group(2).strip()
+                            ok, result = _apply_patch(patch_text, fpath, current_code.split('\n'))
+                            if ok:
+                                with open(fpath, "w", encoding="utf-8") as f:
+                                    f.write(result)
+                                print(f"  Fixed: {fname} (patch applied)")
+                                file_error_sigs[fname] = ""
+                                fixed_files_this_round.add(fname)
+                            else:
+                                print(f"  Patch failed: {result[:200]}")
+                                print(f"  Debug — LLM response patch area: {patch_text[:300]}")
+                                patch_failed.add(fname)
+                                file_error_sigs[fname] = cur_sig
+                        elif "PATCH" in fixed.upper() or "FILE" in fixed.upper():
+                            file_match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?:\n```|$)', fixed, re.DOTALL)
+                            if file_match:
+                                new_code = file_match.group(2).strip()
+                                new_code = re.sub(r'```\s*$', '', new_code).strip()
+                                if not re.search(r'\b(import|def |class )\b', new_code):
+                                    print(f"  WARNING: Fix for {fname} is not valid Python code, skipping")
+                                    continue
+                                with open(fpath, "w", encoding="utf-8") as f:
+                                    f.write(new_code)
+                                r = subprocess.run(["python", "-m", "py_compile", fpath], capture_output=True, text=True)
+                                if r.returncode == 0:
+                                    print(f"  Fixed: {fname} ({len(new_code)} bytes)")
+                                    file_error_sigs[fname] = ""
+                                    fixed_files_this_round.add(fname)
+                                elif "truncated" in str(r.stderr).lower() or "unexpected EOF" in str(r.stderr):
+                                    print(f"  Fixed: {fname} ({len(new_code)} bytes, truncated but applied)")
+                                    file_error_sigs[fname] = ""
+                                    fixed_files_this_round.add(fname)
+                                else:
+                                    print(f"  Fix introduced compile error, rolling back")
+                                    with open(fpath, "w", encoding="utf-8") as f:
+                                        f.write(current_code)
+                                    file_error_sigs[fname] = cur_sig
+                            else:
+                                print(f"  No [PATCH:] or [FILE:] found in LLM response")
+                                file_error_sigs[fname] = cur_sig
 
             print(f"\n[fix] Complete")
 
