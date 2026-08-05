@@ -2,6 +2,7 @@
 
 Usage:
     optimize <file>              Scan for issues, print suggestions (no changes)
+    optimize <file> --list       Quick list of files with issues (no LLM)
     optimize <file> --apply      Scan, ask y/N per file before applying
     optimize <file> --yes        Scan, apply all suggestions without asking
     optimize <dir>               Scan all .py files in directory
@@ -144,16 +145,17 @@ class OptimizeCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "optimize <file|dir> [--apply] [--yes] — Find and apply optimizations (batched)"
+        return "optimize <file|dir> [--apply] [--yes] [--list] — Find and apply optimizations (batched)"
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         parts = list(args)
         apply_mode = "--apply" in parts
         yes_mode = "--yes" in parts
         stdin_mode = "--stdin" in parts
+        list_mode = "--list" in parts or "-l" in parts
         verbose = "--verbose" in parts or "-v" in parts
 
-        parts = [p for p in parts if p not in ("--apply", "--yes", "--stdin", "--verbose", "-v")]
+        parts = [p for p in parts if p not in ("--apply", "--yes", "--stdin", "--verbose", "-v", "--list", "-l")]
 
         targets: list[str] = []
 
@@ -164,7 +166,7 @@ class OptimizeCommand(Command):
                 return True
             targets = ["<stdin>"]
         elif not parts:
-            self.error("Usage: optimize <file|dir> [--apply] [--yes] [--stdin] [--verbose]")
+            self.error("Usage: optimize <file|dir> [--apply] [--yes] [--stdin] [--list] [--verbose]")
             return True
         else:
             ws = workspace_path(agent.workspace)
@@ -210,6 +212,16 @@ class OptimizeCommand(Command):
         by_file: dict[str, list[dict]] = {}
         for f in all_findings:
             by_file.setdefault(f["file"], []).append(f)
+
+        # List mode: show compact summary and exit
+        if list_mode:
+            print(f"\n  {len(by_file)} file(s) with {len(all_findings)} issue(s):\n")
+            for fpath, findings in sorted(by_file.items()):
+                rel = os.path.relpath(fpath, os.getcwd()) if not stdin_mode else fpath
+                patterns = ", ".join(sorted(set(f["pattern"] for f in findings)))
+                print(f"  {rel} ({len(findings)}): {patterns}")
+            print(f"\n  Run with --apply to fix these issues.")
+            return True
 
         # Print static findings
         print(f"\n  Static analysis found {len(all_findings)} issue(s) in {len(file_contents)} file(s):\n")
