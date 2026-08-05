@@ -267,3 +267,15 @@ class TestShowFileDiff:
         show_file_diff("test.py", "line1\nline2\n", "line1\nline3\n")
         out = capsys.readouterr().out
         assert "\033[42m" in out
+
+    def test_blank_added_line_shows_line_number(self, capsys: pytest.CaptureFixture[str]) -> None:
+        show_file_diff("test.py", "line1\nline2\n", "line1\n\nline2\n")
+        out = capsys.readouterr().out
+        assert "2" in out
+        assert "3" in out
+        assert "\033[42m" in out
+
+    def test_blank_removed_line_shows_line_number(self, capsys: pytest.CaptureFixture[str]) -> None:
+        show_file_diff("test.py", "line1\n\nline2\n", "line1\nline2\n")
+        out = capsys.readouterr().out
+        assert "\033[41m" in out
