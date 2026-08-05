@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .base import Command
+from .base import Command, show_file_diff
 from agent_core import to_windows_path, workspace_path
 
 from typing import TYPE_CHECKING
@@ -1735,6 +1735,7 @@ class ImplementCommand(Command):
                                 patch_text = patch_match.group(2).strip()
                                 ok, result = _apply_patch(patch_text, fpath, current_code.split('\n'))
                                 if ok:
+                                    show_file_diff(fpath, current_code, result)
                                     with open(fpath, "w", encoding="utf-8") as f:
                                         f.write(result)
                                     print(f"  Fixed root cause: {fname} (patch applied)")
@@ -1773,6 +1774,7 @@ class ImplementCommand(Command):
                             patch_text = patch_match.group(2).strip()
                             ok, result = _apply_patch(patch_text, fpath, current_code.split('\n'))
                             if ok:
+                                show_file_diff(fpath, current_code, result)
                                 with open(fpath, "w", encoding="utf-8") as f:
                                     f.write(result)
                                 print(f"  Fixed: {fname} (patch applied)")

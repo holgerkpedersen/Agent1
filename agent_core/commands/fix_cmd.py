@@ -6,7 +6,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .base import Command
+from .base import Command, show_file_diff
 from agent_core import to_windows_path
 
 from typing import TYPE_CHECKING
@@ -593,17 +593,7 @@ class FixCommand(Command):
             return False
 
         # Show diff
-        added = removed = 0
-        print(f"\n  [PATCH: {fpath}]")
-        for start, chunks in hunks:
-            for op, text in chunks:
-                if op == '-':
-                    print(f"  - {text[:100]}")
-                    removed += 1
-                elif op == '+':
-                    print(f"  + {text[:100]}")
-                    added += 1
-        print(f"  ({removed} lines removed, {added} lines added)")
+        show_file_diff(fpath, ''.join(lines), ''.join(result))
 
         # Apply
         try:
