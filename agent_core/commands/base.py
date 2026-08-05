@@ -56,9 +56,14 @@ def show_file_diff(basename: str, original: str, new: str) -> None:
 
     def flush_pair() -> None:
         while pending_removes or pending_adds:
-            old_no, old_text = pending_removes.pop(0) if pending_removes else (0, "")
-            new_no, new_text = pending_adds.pop(0) if pending_adds else (0, "")
-            rows.append((str(old_no) if old_text else "", old_text, str(new_no) if new_text else "", new_text))
+            old_no, old_text = pending_removes.pop(0) if pending_removes else (None, None)
+            new_no, new_text = pending_adds.pop(0) if pending_adds else (None, None)
+            rows.append((
+                str(old_no) if old_no is not None else "",
+                old_text if old_text is not None else "",
+                str(new_no) if new_no is not None else "",
+                new_text if new_text is not None else "",
+            ))
 
     for line in diff:
         stripped = line.rstrip("\n")
@@ -100,20 +105,28 @@ def show_file_diff(basename: str, original: str, new: str) -> None:
         if old_no == "__HEADER__":
             print(f"  {old_text}")
             continue
-        if old_no and new_no and old_text == new_text:
-            # Context line
-            print(f"  {old_no:>{max_old_no}} | {old_text:<{max_old_text}}  {new_no:>{max_new_no}} | {new_text}")
-        elif old_text and new_text:
-            # Paired remove+add
-            print(f"  {old_no:>{max_old_no}} | {RED}{old_text:<{max_old_text}}{RESET}  {new_no:>{max_new_no}} | {GREEN}{new_text}{RESET}")
-            removed += 1
-            added += 1
-        elif old_text:
+        if old_no and new_no:
+            if old_text == new_text:
+                # Context line
+                print(f"  {old_no:>{max_old_no}} | {old_text:<{max_old_text}}  {new_no:>{max_new_no}} | {new_text}")
+            else:
+                # Paired remove+add
+                print(f"  {old_no:>{max_old_no}} | {RED}{old_text:<{max_old_text}}{RESET}  {new_no:>{max_new_no}} | {GREEN}{new_text}{RESET}")
+                removed += 1
+                added += 1
+        elif old_no:
+            # Removed only
             print(f"  {old_no:>{max_old_no}} | {RED}{old_text:<{max_old_text}}{RESET}  {'':>{max_new_no}} |")
             removed += 1
-        elif new_text:
-            print(f"  {'':>{max_old_no}} | {'':<{max_old_text}}  {new_no:>{max_new_no}} | {GREEN}{new_text}{RESET}")
-            added += 1
+        elif new_no:
+            # Added only
+            if new_text:
+                print(f"  {'':>{max_old_no}} | {'':<{max_old_text}}  {new_no:>{max_new_no}} | {GREEN}{new_text}{RESET}")
+                added += 1
+            else:
+                # Added blank line
+                print(f"  {'':>{max_old_no}} | {'':<{max_old_text}}  {new_no:>{max_new_no}} |{GREEN} {RESET}")
+                added += 1
     print(f"  ({removed} lines removed, {added} lines added)")
 
 
