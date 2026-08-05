@@ -116,17 +116,20 @@ def show_file_diff(basename: str, original: str, new: str) -> None:
                 added += 1
         elif old_no:
             # Removed only
-            print(f"  {old_no:>{max_old_no}} | {RED}{old_text:<{max_old_text}}{RESET}  {'':>{max_new_no}} |")
+            if old_text:
+                print(f"  {old_no:>{max_old_no}} | {RED}{old_text:<{max_old_text}}{RESET}  {'':>{max_new_no}} |")
+            else:
+                # Removed blank line
+                print(f"  {old_no:>{max_old_no}} |{RED} {'':<{max_old_text-1}}{RESET}  {'':>{max_new_no}} |")
             removed += 1
         elif new_no:
             # Added only
             if new_text:
                 print(f"  {'':>{max_old_no}} | {'':<{max_old_text}}  {new_no:>{max_new_no}} | {GREEN}{new_text}{RESET}")
-                added += 1
             else:
                 # Added blank line
-                print(f"  {'':>{max_old_no}} | {'':<{max_old_text}}  {new_no:>{max_new_no}} |{GREEN} {RESET}")
-                added += 1
+                print(f"  {'':>{max_old_no}} | {'':<{max_old_text}}  {new_no:>{max_new_no}} |{GREEN} {'':<{max_new_text-1}}{RESET}")
+            added += 1
     print(f"  ({removed} lines removed, {added} lines added)")
 
 
