@@ -103,7 +103,7 @@ def get_vram_info() -> dict:
     }
 
 
-def load_model(model_key: str, eval_batch_size: int = 4) -> tuple[bool, str]:
+def load_model(model_key: str, eval_batch_size: int = 4096) -> tuple[bool, str]:
     """Load a model via LM Studio REST API, with ``lms load`` CLI fallback.
 
     Returns (success, message).

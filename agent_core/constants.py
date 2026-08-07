@@ -24,6 +24,14 @@ KNOWN_MODELS = {
         "params": "8B",
         "thinking": True,
     },
+    "qwen3-coder-30b-a3b-instruct": {
+        "desc": "Qwen3 Coder 30B A3B MoE — coding, thinking",
+        "max_tokens": 100000,
+        "size_gb": 18.1,
+        "params": "30B-A3B",
+        "thinking": True,
+        "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False}},
+    },
     "laguna-s-2.1": {
         "desc": "Laguna S 2.1 MoE A8B — agentic coding, thinking",
         "max_tokens": 100000,

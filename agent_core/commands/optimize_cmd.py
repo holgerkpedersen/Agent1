@@ -13,6 +13,7 @@ Batching:
 """
 
 import ast
+import logging
 import os
 import re
 import sys
@@ -26,6 +27,8 @@ from agent_core.patterns import analyze as static_analyze
 
 if TYPE_CHECKING:
     from agent import Agent
+
+logger = logging.getLogger(__name__)
 
 # Stdlib module names (Python 3.10+).  Used to allow rewrite import additions
 # only when the module is guaranteed to exist; relative/project/third-party
@@ -55,6 +58,17 @@ OPTIMIZE_RULES = (
     "If a change is not unambiguously required by a finding, skip it and keep the original\n"
     "- NEVER leave a dead assignment — every variable you assign must be read by later "
     "code; if an assignment becomes unused, remove it entirely\n"
+    "- For a silent_except finding, replace `pass` with a print/log warning only — never "
+    "convert `except ...: pass` to `raise`. Those handlers are usually intentional "
+    "fallbacks; re-raising changes control flow and crashes otherwise-normal paths\n"
+    "- Only change code inside a loop when a finding targets that exact line; never "
+    "rewrite surrounding control flow the findings do not request\n"
+    "- Hoist `regex_in_loop` matches to MODULE-LEVEL `_RE_*` constants at the top of the "
+    "file (one definition). A `re.compile` inside a function body is NOT a fix — it still "
+    "re-creates the pattern on every call\n"
+    "- Never ADD an import statement that already exists earlier in the file — duplicate "
+    "imports are a new defect (duplicate_import). Region output must not re-import modules "
+    "the file header already imports\n"
     "- Do NOT introduce new helper variables, caches, or functions that the findings "
     "do not require\n"
 )
@@ -598,8 +612,35 @@ def _import_entries(code: str) -> set[str]:
     return entries
 
 
+def _import_entry_counts(code: str) -> dict[str, int]:
+    """Count of each normalized import statement in *code*.
+
+    Unlike ``_import_entries``, this preserves multiplicity so a rewrite that
+    *duplicates* an import already present in the file is detectable.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return {}
+    counts: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                entry = f"import {alias.name}"
+                counts[entry] = counts.get(entry, 0) + 1
+        elif isinstance(node, ast.ImportFrom):
+            prefix = "." * node.level
+            module = prefix + (node.module or "") or prefix
+            names = ", ".join(sorted(a.name for a in node.names))
+            entry = f"from {module} import {names if names else '*'}"
+            counts[entry] = counts.get(entry, 0) + 1
+    return counts
+
+
 def _blocked_added_imports(candidate: str, original: str) -> set[str]:
-    """Added imports in *candidate* that make it unsafe to apply.
+    """Added or duplicated imports in *candidate* that make it unsafe to apply.
 
     A rewrite may add imports only if they are stdlib: a stdlib module is
     guaranteed to exist and export the requested names, so ``import logging``
@@ -607,17 +648,29 @@ def _blocked_added_imports(candidate: str, original: str) -> set[str]:
     imports (``from .base import Command``) and third-party additions are
     rejected because the name's existence cannot be validated cheaply —
     ``compile()`` cannot catch a name a module never exported.
+
+    A rewrite may never add a *second* copy of an import the file already
+    has: duplicate imports are a new ``duplicate_import`` defect (region
+    splices frequently re-inject ``import os``/``import re`` etc.), so those
+    are rejected even though the module is stdlib.
     """
-    added = _import_entries(candidate) - _import_entries(original)
+    cand_counts = _import_entry_counts(candidate)
+    orig_counts = _import_entry_counts(original)
     blocked: set[str] = set()
-    for entry in added:
+    for entry, count in cand_counts.items():
+        excess = count - orig_counts.get(entry, 0)
+        if excess <= 0:
+            continue
+        blocked.add(entry)
+        if entry in orig_counts:
+            # Already imported elsewhere in the file — a duplicate, always bad.
+            continue
         if entry.startswith("from ."):
-            blocked.add(entry)
             continue
         match = re.match(r"^(?:import|from)\s+([A-Za-z_]\w*)", entry)
         top = match.group(1) if match else None
-        if top is None or top not in _STDLIB_MODULES:
-            blocked.add(entry)
+        if top is not None and top in _STDLIB_MODULES:
+            blocked.discard(entry)
     return blocked
 
 
@@ -1038,8 +1091,8 @@ class OptimizeCommand(Command):
                         try:
                             with open(fp, encoding="utf-8") as f:
                                 new_src = f.read()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.debug("Could not re-read %s: %s", fp, exc)
                         res = static_analyze(new_src)
                         if res:
                             for r in res:
