@@ -206,13 +206,135 @@ def _open_write_mode(line: str) -> bool:
     return False
 
 
+_READ_SUGGESTION = (
+    "File read inside loop — move open() outside or cache the content"
+)
+_INVARIANT_SUGGESTION = (
+    "Same file re-read on every iteration — read it once before the loop "
+    "(or cache the content)"
+)
+
+
+def _for_target_names(header: str) -> set[str]:
+    """Identifiers bound by a ``for a, b in ...:`` header (its loop variables)."""
+    m = re.search(r"\bfor\s+(.+?)\s+in\s", header)
+    if not m:
+        return set()
+    target_text = m.group(1)
+    names: set[str] = set()
+    for piece in re.split(r"[(),]", target_text):
+        for w in re.findall(r"[A-Za-z_]\w*", piece):
+            names.add(w)
+    return names
+
+
+def _open_path_arg(stmt: str) -> str | None:
+    """First argument of the ``open(...)``/``read_file(...)`` in *stmt*, or None.
+
+    Prefers the ``with open(X ...) as`` / ``X = open(...)`` line so a separate
+    ``.read()`` line can be resolved back to the identifier that holds the path.
+    """
+    m = re.search(r"\b(?:read_file|open)\s*\(([^()]*)\)", stmt)
+    if not m:
+        return None
+    arg = m.group(1).strip()
+    if arg.startswith("="):
+        return None
+    # first positional argument — split on commas at depth 0
+    parts = []
+    depth = 0
+    cur: list[str] = []
+    for ch in arg:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    parts.append("".join(cur).strip())
+    return parts[0] if parts else None
+
+
+def _path_derived(path_expr: str, derived: set[str]) -> bool:
+    """True when *path_expr* references an iteration-derived identifier.
+
+    A path that contains the loop variable (``open(fp)``) or a name computed
+    from it (``open(full)`` where ``full = os.path.join(root, f)``) changes
+    per iteration — each iteration reads a distinct file, so the read cannot
+    be hoisted.  Literals and loop-invariant names stay flaggable.
+    """
+    return any(w in derived for w in re.findall(r"[A-Za-z_]\w*", path_expr))
+
+
+def _iter_derived_names(body: list[str], loop_vars: set[str]) -> set[str]:
+    """Transitive set of names bound to per-iteration values inside a loop.
+
+    Starts from the loop ``for`` target(s) and any nested ``for`` targets, then
+    grows fixed-point over simple ``name = expr`` assignments whose right side
+    already references a derived name.  e.g. for ``full = os.path.join(root, f)``
+    inside ``os.walk`` iteration, ``full`` becomes derived.  A constant
+    hand-assigned each iteration (``cfg = "x.yaml"``) stays invariant.
+    """
+    derived = set(loop_vars)
+    assignments: dict[str, str] = {}
+    for line in body:
+        fm = re.match(r"\s*for\s+(.+?)\s+in\s", line)
+        if fm:
+            derived |= _for_target_names(line)
+        am = re.match(r"\s*([A-Za-z_]\w*)\s*=", line)
+        if am:
+            name = am.group(1)
+            rhs = line.split("=", 1)[1].strip() if "=" in line else ""
+            assignments[name] = rhs
+    changed = True
+    while changed:
+        changed = False
+        for name, rhs in assignments.items():
+            if name not in derived and any(
+                w in derived for w in re.findall(r"[A-Za-z_]\w*", rhs)
+            ):
+                derived.add(name)
+                changed = True
+    return derived
+
+
+def _read_receiver_alias(body: list[str]) -> dict[str, str]:
+    """Map ``with open(...) as name:`` / ``name = open(...)`` names to path args.
+
+    Lets a later ``.read()`` line resolve back to the identifier that holds the
+    opened path so its derivation can be judged.
+    """
+    result: dict[str, str] = {}
+    for line in body:
+        with_m = re.match(r"\s*with\s+(.+?)\s+as\s+([A-Za-z_]\w*)\s*:", line)
+        if with_m:
+            path = _open_path_arg(with_m.group(1))
+            if path:
+                result[with_m.group(2)] = path
+            continue
+        asg = re.match(r"\s*([A-Za-z_]\w*)\s*=\s*open\s*\(", line)
+        if asg:
+            path = _open_path_arg(line)
+            if path:
+                result[asg.group(1)] = path
+    return result
+
+
 def detect_file_read_in_loop(source: str) -> list[tuple[int, str, str]]:
     """``open()`` or ``read_file()`` inside a for/while loop.
 
-    Loops that memoize reads through a cache dict (``if key in cache: ... else
-    read + cache[key] = result``) are not flagged — the expensive I/O is
-    de-duplicated.  Write-mode ``open()`` calls are not flagged either: writes
-    cannot be hoisted or cached, so the suggested fix does not apply.
+    A read is flagged only when it is a genuinely nested read:
+    * the same file is re-read on every iteration (loop-invariant path), or
+    * the path cannot be proven to change per iteration.
+
+    Reads of *distinct files per iteration* — ``open(fp)`` for a ``for fp in
+    files:`` loop, or ``open(full)`` where ``full = os.path.join(root, f)`` in
+    an ``os.walk`` — carry no hoistable work and are NOT flagged.  Loops that
+    memoize reads through a cache dict are not flagged either, and write-mode
+    ``open()`` calls are excluded: writes cannot be hoisted or cached.
     """
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
@@ -223,17 +345,32 @@ def detect_file_read_in_loop(source: str) -> list[tuple[int, str, str]]:
         if "open(" in line and _open_write_mode(line):
             continue
         idx = i - 1
-        in_loop = False
-        caching_loop = False
         for start, end, _ in spans:
-            if start < idx < end:  # strictly inside this loop's body
-                in_loop = True
-                if _loop_caches(lines[start + 1:end]):
-                    caching_loop = True
+            if not (start < idx < end):  # strictly inside this loop's body
+                continue
+            body = lines[start + 1:end]
+            if _loop_caches(body):
+                break
+            loop_vars = _for_target_names(lines[start])
+            derived = _iter_derived_names(body, loop_vars)
+            receivers = _read_receiver_alias(body)
+            path = _open_path_arg(line)
+            if path is None:
+                # bare ``f.read()`` — resolve through its with/as alias
+                rm = re.search(r"\.read\s*\(", line)
+                if not rm:
                     break
-        if in_loop and not caching_loop:
+                recv_m = re.search(r"([A-Za-z_]\w*)\s*\.read\s*\(", line)
+                rcvr = recv_m.group(1) if recv_m else None
+                if not rcvr:
+                    break
+                path = receivers.get(rcvr, "")
+            if _path_derived(path, derived):
+                break  # distinct file per iteration — no hoistable work
             findings.append((i, "file_read_in_loop",
-                             "File read inside loop — move open() outside or cache the content"))
+                             _INVARIANT_SUGGESTION if path
+                             else _READ_SUGGESTION))
+            break
     return findings
 
 

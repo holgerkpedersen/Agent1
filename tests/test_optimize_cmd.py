@@ -333,7 +333,20 @@ class TestLoopScopeDedent:
         assert len(detect_string_concat_in_loop(code)) == 1
 
     def test_genuine_file_read_in_loop_still_flagged(self) -> None:
-        """A real open() inside a loop body is still detected."""
+        """A real repeated read of the same file inside a loop is detected."""
+        from agent_core.patterns import detect_file_read_in_loop
+        code = textwrap.dedent("""\
+            def collect():
+                cfg = "config.json"
+                for p in paths:
+                    data = open(cfg).read()
+                return data
+        """)
+        assert len(detect_file_read_in_loop(code)) == 1
+
+    def test_distinct_file_reads_in_loop_not_flagged(self) -> None:
+        """Reads of distinct files per iteration are NOT flagged: nothing to
+        hoist, so the suggested fix does not apply."""
         from agent_core.patterns import detect_file_read_in_loop
         code = textwrap.dedent("""\
             def collect():
@@ -341,7 +354,7 @@ class TestLoopScopeDedent:
                     data = open(p).read()
                 return data
         """)
-        assert len(detect_file_read_in_loop(code)) == 1
+        assert detect_file_read_in_loop(code) == []
 
     def test_regex_in_loop_still_flagged(self) -> None:
         from agent_core.patterns import detect_regex_in_loop
@@ -380,14 +393,67 @@ class TestLoopScopeDedent:
                 return data
         """)
         assert detect_file_read_in_loop(cached) == []
-        # uncached reads must still be flagged
+        # repeated reads of a *constant* path must still be flagged
         plain = textwrap.dedent("""\
             def f():
+                cfg = "config.json"
                 for p in paths:
-                    data = open(p).read()
+                    data = open(cfg).read()
                 return data
         """)
         assert len(detect_file_read_in_loop(plain)) == 1
+
+    def test_file_read_in_loop_not_flagged_when_derived(self) -> None:
+        """Reads of paths derived from the iteration variable (e.g. inside
+        ``os.walk``, or ``tmp = os.path.join(root, f)``) must not be flagged:
+        each iteration reads a distinct file."""
+        from agent_core.patterns import detect_file_read_in_loop
+        walked = textwrap.dedent("""\
+            import os
+            def collect():
+                for root, dirs, files in os.walk(ws):
+                    if ".git" in root:
+                        continue
+                    for f in files:
+                        fp = os.path.normpath(os.path.join(root, f))
+                        with open(fp, "r", encoding="utf-8") as sf:
+                            content = sf.read()
+        """)
+        assert detect_file_read_in_loop(walked) == []
+        read_file = textwrap.dedent("""\
+            def f():
+                for p in paths:
+                    data = await read_file(os.path.join(base, p))
+                return data
+        """)
+        assert detect_file_read_in_loop(read_file) == []
+
+    def test_file_read_through_with_alias_not_flagged(self) -> None:
+        """``with open(path) as fh: fh.read()`` — the path used on the
+        ``.read()`` line is the loop variable, so not flagged."""
+        from agent_core.patterns import detect_file_read_in_loop
+        code = textwrap.dedent("""\
+            def f():
+                for p in paths:
+                    with open(p) as fh:
+                        data = fh.read()
+                return data
+        """)
+        assert detect_file_read_in_loop(code) == []
+
+    def test_transitive_derived_path_not_flagged(self) -> None:
+        """``rel = os.path.join(root, f); full = os.path.join(base, rel)``:
+        the second assignment is derived transitively from the loop vars."""
+        from agent_core.patterns import detect_file_read_in_loop
+        code = textwrap.dedent("""\
+            def f():
+                for root, f in files:
+                    rel = os.path.join(root, f)
+                    full = os.path.join(base, rel)
+                    data = open(full).read()
+                return data
+        """)
+        assert detect_file_read_in_loop(code) == []
 
 
 # ---------------------------------------------------------------------------
