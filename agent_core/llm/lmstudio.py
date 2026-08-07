@@ -1,15 +1,16 @@
 """LM Studio provider implementation."""
-import asyncio
 import json
+import logging
 import os
 import urllib.request
 import urllib.error
-import socket
 
 import httpx
 
 from .retry import RetryPolicy
 from agent_core.constants import KNOWN_MODELS, resolve_model
+
+logger = logging.getLogger(__name__)
 
 
 def _management_url() -> str:
@@ -32,10 +33,10 @@ def _http_get_json(url: str, timeout: int = 10) -> dict | None:
     except (httpx.ConnectError, httpx.ConnectTimeout):
         return None
     except httpx.HTTPStatusError as e:
-        print(f"  LM Studio API error: {e.response.status_code} at {url}")
+        logger.warning("LM Studio API error: %s at %s", e.response.status_code, url)
         return None
     except Exception as e:
-        print(f"  LM Studio API error: {e}")
+        logger.warning("LM Studio API error at %s: %s", url, e)
         return None
 
 
@@ -50,10 +51,10 @@ def _http_post_json(url: str, body: dict, timeout: int = 30) -> dict | None:
         resp = httpx.post(url, json=body, timeout=timeout)
         return resp.json()
     except (httpx.ConnectError, httpx.ConnectTimeout):
-        print(f"    LM Studio POST error: could not connect to {url}")
+        logger.warning("LM Studio POST error: could not connect to %s", url)
         return None
     except Exception as e:
-        print(f"    LM Studio POST error at {url}: {e}")
+        logger.warning("LM Studio POST error at %s: %s", url, e)
         return None
 
 
@@ -68,22 +69,24 @@ def get_models_status() -> list[dict]:
     if not data or "models" not in data:
         return []
 
-    result = []
-    for m in data["models"]:
-        if m.get("type") != "llm":
-            continue
-        instances = m.get("loaded_instances", [])
-        result.append({
+    # List comprehension avoids per-iteration append overhead; the nested
+    # ``for inst`` binds loaded_instances once to avoid repeated lookups.
+    return [
+        {
             "key": m["key"],
             "display_name": m.get("display_name", m["key"]),
             "size_bytes": m.get("size_bytes", 0),
             "params_string": m.get("params_string", "?"),
-            "loaded": len(instances) > 0,
-            "instance_id": instances[0]["id"] if instances else None,
-            "context_length": instances[0].get("config", {}).get("context_length", 0) if instances else m.get("max_context_length", 0),
+            "loaded": len(inst) > 0,
+            "instance_id": inst[0]["id"] if inst else None,
+            "context_length": (inst[0].get("config", {}).get("context_length", 0)
+                               if inst else m.get("max_context_length", 0)),
             "architecture": m.get("architecture"),
-        })
-    return result
+        }
+        for m in data["models"]
+        if m.get("type") == "llm"
+        for inst in [m.get("loaded_instances", [])]
+    ]
 
 
 def get_vram_info() -> dict:
@@ -150,14 +153,12 @@ def unload_model(instance_id: str | None = None) -> tuple[bool, str]:
     if not loaded:
         return True, "nothing to unload"
 
-    target = instance_id
-    if not target:
-        target = loaded[0]["instance_id"]
+    target = instance_id or loaded[0]["instance_id"]
 
     resp = _http_post_json(f"{base}/models/unload", {"instance_id": target})
     if resp and resp.get("instance_id"):
         return True, f"unloaded {resp['instance_id']}"
-    return False, resp.get("error", "unknown") if resp else "could not reach LM Studio"
+    return False, (resp.get("error", "unknown") if resp else "could not reach LM Studio")
 
 
 def resolve_model_name(query: str) -> str | None:
@@ -244,21 +245,34 @@ class LMStudioProvider:
         tools: list[dict] | None = None,
         stream: bool = False,
         override_max_tokens: int | None = None,
+        disable_thinking: bool = False,
     ) -> dict:
-        """Build request payload for LM Studio API."""
+        """Build request payload for LM Studio API.
+
+        When thinking is disabled, sends both the OpenAI-style ``thinking``
+        field (honored by some templates) and any per-model extra kwargs from
+        ``KNOWN_MODELS`` (e.g. ``chat_template_kwargs: {"enable_thinking": False}``
+        for Qwen3-family templates that gate reasoning on the jinja
+        ``enable_thinking`` variable).  Sending both keeps the disable working
+        across models regardless of which mechanism the template honors.
+        """
         model_info = KNOWN_MODELS.get(self.model_name, {})
+        max_tok = override_max_tokens or self.max_tokens
         payload = {
             "model": self.model_name,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": override_max_tokens or self.max_tokens,
+            "max_tokens": max_tok,
         }
         if tools:
             payload["tools"] = tools
         if stream:
             payload["stream"] = True
-        if model_info.get("thinking") is False:
+        if disable_thinking or model_info.get("thinking") is False:
             payload["thinking"] = {"type": "disabled"}
+            extra = model_info.get("disable_thinking_kwargs")
+            if extra:
+                payload.update(extra)
         return payload
     
     def _make_request(self, payload: dict, timeout: int = 3600) -> dict:
@@ -277,14 +291,20 @@ class LMStudioProvider:
             return json.loads(response.read().decode())
     
     def _check_thinking_error(self, content: str, reasoning: str) -> str | None:
-        """Check if model used all tokens thinking with no output."""
+        """Check if model used all tokens thinking with no output.
+
+        Returns a hard error instead of silently doubling ``max_tokens``:
+        for reasoning models, a larger budget only buys more reasoning, so the
+        retry would burn the whole doubled budget again (observed live: 31,922
+        reasoning tokens, zero output).  Callers that need to proceed should
+        retry with thinking disabled instead.
+        """
         if not content and reasoning and len(reasoning) > 500:
-            # Auto-increase max_tokens for the retry
-            old = self.max_tokens
-            if self.max_tokens < 50000:
-                self.max_tokens = min(self.max_tokens * 2, 50000)
-                print(f"  (increased max_tokens: {old} -> {self.max_tokens})", end="", flush=True)
-            return None  # Let retry happen with higher tokens
+            return (
+                f"[Error: model consumed {len(reasoning)} tokens reasoning "
+                "with no output. Retry with thinking disabled or a larger "
+                "output budget.]"
+            )
         return None
     
     async def chat(
@@ -292,9 +312,13 @@ class LMStudioProvider:
         messages: list[dict], 
         tools: list[dict] | None = None,
         max_tokens: int | None = None,
+        disable_thinking: bool = False,
     ) -> str:
         """Send chat request to LLM via LM Studio with retry."""
-        payload = self._build_payload(messages, tools, override_max_tokens=max_tokens)
+        payload = self._build_payload(
+            messages, tools, override_max_tokens=max_tokens,
+            disable_thinking=disable_thinking,
+        )
         label = f"[model: {payload['model']}]"
         if self._profile_name:
             label = f"[model: {payload['model']} | profile={self._profile_name} t={self.temperature} tok={self.max_tokens}]"
@@ -369,8 +393,8 @@ class LMStudioProvider:
                         if token:
                             print(token, end='', flush=True)
                             full_content += token
-                    except json.JSONDecodeError:
-                        pass
+                    except json.JSONDecodeError as e:
+                        logger.warning("LM Studio stream JSON decode error: %s", e)
             
             print()
             

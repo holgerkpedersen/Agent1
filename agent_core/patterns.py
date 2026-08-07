@@ -5,8 +5,9 @@ Each detector takes source code as a string and returns a list of
 are possible but kept low by regex anchoring.
 """
 
+import io
 import re
-from collections import Counter
+import tokenize
 
 
 def analyze(source: str) -> list[dict]:
@@ -27,19 +28,90 @@ def analyze(source: str) -> list[dict]:
 # Individual detectors
 # ---------------------------------------------------------------------------
 
+def _loop_body_lines(lines: list[str]) -> list[bool]:
+    """Return a per-line boolean: whether the line is inside a for/while body.
+
+    A loop opens at a line matching the ``for``/``while`` header.  Its body is
+    any *more-indented* non-blank line.  The loop closes as soon as a non-blank
+    line dedents to ``<= loop_indent`` (same indentation as the header).
+
+    Shared by the loop-detectors so their scoping is consistent and correct
+    inside methods, where indented code after a loop must NOT be mistaken for
+    still-being-in-the-loop just because no column-0 line is reached.
+    """
+    flags = [False] * len(lines)
+    in_loop = False
+    loop_indent = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if re.match(r"^\s*(for|while)\s", line):
+            in_loop = True
+            loop_indent = len(line) - len(line.lstrip())
+            continue
+        if in_loop:
+            current_indent = len(line) - len(line.lstrip())
+            if current_indent <= loop_indent and stripped:
+                in_loop = False
+        flags[i] = in_loop
+    return flags
+
+
+def _loop_spans(lines: list[str]) -> list[tuple[int, int, int]]:
+    """Return ``(start, end, indent)`` for each for/while body.
+
+    ``start`` is the index of the ``for``/``while`` header; ``end`` is the
+    index just past the body (exclusive); ``indent`` is the header's indent.
+    Nested loops nest naturally.
+    """
+    spans: list[tuple[int, int, int]] = []
+    stack: list[tuple[int, int]] = []  # (header_idx, indent)
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if re.match(r"^\s*(for|while)\s", line):
+            stack.append((i, len(line) - len(line.lstrip())))
+            continue
+        cur = len(line) - len(line.lstrip())
+        while stack and (not stripped or cur <= stack[-1][1]):
+            if not stripped:  # blank line: keep current loop open, just skip
+                break
+            header_idx, indent = stack.pop()
+            spans.append((header_idx, i, indent))
+    for header_idx, indent in stack:
+        spans.append((header_idx, len(lines), indent))
+    return spans
+
+
+def _loop_caches(spans_body: list[str]) -> bool:
+    """True if a loop body caches file reads in a dict.
+
+    Recognises the pattern where reads are guarded and memoized, e.g.::
+
+        if full in read_cache:
+            ref_content = read_cache[full]
+        else:
+            ref_content = await agent.read_file(full, track_read=False)
+            read_cache[full] = ref_content
+    """
+    body = "\n".join(spans_body)
+    has_guard = re.search(r"\bin\s+(\w+)", body) is not None
+    if not has_guard:
+        return False
+    cache_var = re.search(r"\bin\s+(\w+)", body).group(1)
+    # a dict-style write `cache_var[...] = <name>` where that name is the
+    # read result, e.g. `read_cache[full] = ref_content`
+    has_memoized = re.search(
+        rf"{re.escape(cache_var)}\s*\[[^\]]*\]\s*=\s*([A-Za-z_]\w*)", body
+    ) is not None
+    return has_memoized
+
+
 def detect_regex_in_loop(source: str) -> list[tuple[int, str, str]]:
     """``re.compile()`` or ``re.match()`` inside a for/while loop body."""
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
-    in_loop = False
+    in_loop_flags = _loop_body_lines(lines)
     for i, line in enumerate(lines, 1):
-        stripped = line.strip()
-        if re.match(r"^\s*(for|while)\s", line):
-            in_loop = True
-            continue
-        if in_loop and not line.startswith((" ", "\t")) and stripped:
-            in_loop = False
-        if in_loop and re.search(r"\bre\.(compile|match|search|sub|findall)\(", line):
+        if in_loop_flags[i - 1] and re.search(r"\bre\.(compile|match|search|sub|findall)\(", line):
             findings.append((i, "regex_in_loop",
                              "Move re.compile() to module level — compiling inside loop wastes cycles"))
     return findings
@@ -49,15 +121,9 @@ def detect_string_concat_in_loop(source: str) -> list[tuple[int, str, str]]:
     """String ``+=`` inside a for/while loop."""
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
-    in_loop = False
+    in_loop_flags = _loop_body_lines(lines)
     for i, line in enumerate(lines, 1):
-        stripped = line.strip()
-        if re.match(r"^\s*(for|while)\s", line):
-            in_loop = True
-            continue
-        if in_loop and not line.startswith((" ", "\t")) and stripped:
-            in_loop = False
-        if in_loop and re.search(r"\w+\s*\+=\s*[\"']", line):
+        if in_loop_flags[i - 1] and re.search(r"\w+\s*\+=\s*[\"']", line):
             findings.append((i, "string_concat_in_loop",
                              "Use ''.join() or io.StringIO instead of += in loop — O(n²) becomes O(n)"))
     return findings
@@ -118,45 +184,397 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
     return findings
 
 
+def _open_write_mode(line: str) -> bool:
+    """True when the ``open(`` call on this single line is an explicit write.
+
+    ``open(path, "w")``/``"a"``/``"x"`` (and their binary/plus variants) cannot
+    be hoisted or cached — the detector is about *reads*.  Only a determinable
+    string mode counts: an unknown/positional-variable mode is treated as a read
+    so the detector stays conservative (may over-flag, never under-flag).
+    """
+    m = re.search(r"\bopen\s*\(([^)]*)\)", line)
+    if not m:
+        return False
+    args = m.group(1)
+    pos_args = args.split("=")[0].strip() if "=" in args else args.strip()
+    parts = [p.strip() for p in pos_args.split(",")]
+    if len(parts) < 2:
+        return False  # default mode (r) → read
+    mode = parts[1]
+    if len(mode) >= 2 and mode[0] in "\"'":
+        return mode[1].lower() in "wax"
+    return False
+
+
 def detect_file_read_in_loop(source: str) -> list[tuple[int, str, str]]:
-    """``open()`` or ``read_file()`` inside a for/while loop."""
+    """``open()`` or ``read_file()`` inside a for/while loop.
+
+    Loops that memoize reads through a cache dict (``if key in cache: ... else
+    read + cache[key] = result``) are not flagged — the expensive I/O is
+    de-duplicated.  Write-mode ``open()`` calls are not flagged either: writes
+    cannot be hoisted or cached, so the suggested fix does not apply.
+    """
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
-    in_loop = False
+    spans = _loop_spans(lines)
     for i, line in enumerate(lines, 1):
-        stripped = line.strip()
-        if re.match(r"^\s*(for|while)\s", line):
-            in_loop = True
+        if not ("open(" in line or "read_file(" in line or ".read(" in line):
             continue
-        if in_loop and not line.startswith((" ", "\t")) and stripped:
-            in_loop = False
-        if in_loop and ("open(" in line or "read_file(" in line or ".read(" in line):
+        if "open(" in line and _open_write_mode(line):
+            continue
+        idx = i - 1
+        in_loop = False
+        caching_loop = False
+        for start, end, _ in spans:
+            if start < idx < end:  # strictly inside this loop's body
+                in_loop = True
+                if _loop_caches(lines[start + 1:end]):
+                    caching_loop = True
+                    break
+        if in_loop and not caching_loop:
             findings.append((i, "file_read_in_loop",
                              "File read inside loop — move open() outside or cache the content"))
     return findings
 
 
 def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
-    """``.append()`` in a loop → ``''.join()`` — not a bug, just an optimization hint."""
+    """``.append()`` in a loop whose built list is consumed by ``''.join()``.
+
+    Only fires when the loop-built list is actually used by a ``.join()`` call
+    (matching the pattern's name).  Appends that feed ``sorted()``, ``set()``,
+    ``len()`` or a plain ``return`` are NOT flagged — converting those to a
+    comprehension is a style-only change, and the optimizer must not be pushed
+    into restructuring loops for no measurable gain.
+    """
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
     in_loop = False
+    loop_indent = 0
+    loop_body_lines: list[str] = []
+    append_lines: list[tuple[int, str]] = []  # (1-based line, appended var name)
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
         if re.match(r"^\s*(for|while)\s", line):
             in_loop = True
+            loop_indent = len(line) - len(line.lstrip())
+            loop_body_lines = []
             continue
-        if in_loop and not line.startswith((" ", "\t")) and stripped:
-            in_loop = False
+        if in_loop:
+            current_indent = len(line) - len(line.lstrip())
+            if current_indent <= loop_indent and stripped:
+                in_loop = False
+            else:
+                loop_body_lines.append(stripped)
         if in_loop and ".append(" in line:
-            # Only flag if we also see a join later in the same function
+            # Check if loop body has complex control flow
+            has_complex_flow = any(
+                re.search(r'\b(if|elif|else|await|break|continue|return|try|except)\b', body_line)
+                for body_line in loop_body_lines
+            )
+            if not has_complex_flow:
+                m = re.search(r"\b([A-Za-z_]\w*)\s*\.append\(", line)
+                if m:
+                    append_lines.append((i, m.group(1)))
+    # Only flag appends whose list is consumed by a .join() call.
+    for i, var in append_lines:
+        if re.search(rf"\.join\s*\(\s*{re.escape(var)}\s*\)", source):
             findings.append((i, "list_append_join",
                              "If this builds a string list, use list comprehension or generator — currently O(n) memory"))
     return findings
 
 
+def _assignment_match(stripped: str, compound: bool = False) -> re.Match | None:
+    """Match an assignment statement start, returning the bound name.
+
+    When *compound* is False (default) matches plain ``x = ...`` and annotated
+    ``x: Type = ...`` only — used by the adjacent-overwrite pass because a
+    compound ``+=`` both reads *and* writes (so it is NOT an overwrite).
+
+    When *compound* is True also matches compound writes
+    ``x += ...``, ``x -= ...`` ... — used by the never-used-after pass, where a
+    final ``x += `` whose value is never re-read is a dead store.
+
+    Does NOT match ``for`` loops, ``except ... as e``, tuple/unpacking
+    (``a, b = ...``) or ``:=`` walrus.
+    """
+    _compound = r"\+=|-=|\*=|/=|//=|%=|\*\*=|&=|\|=|\^=|<<=|>>="
+    target = "=" if not compound else rf"(?:{_compound}|=)"
+    return re.match(rf"^([A-Za-z_]\w*)\s*(?::[^=]+)?\s*{target}", stripped)
+
+
+def _inside_bracket_depth(source: str) -> list[int]:
+    """Per-line depth of `(`/`[`/`{` nesting at the START of each line.
+
+    Used to recognize keyword arguments inside multi-line calls and parenthesized
+    contexts: a line like ``capture_output=True,`` inside a multi-line
+    ``subprocess.run([...], ...)`` call is a kwarg, not an assignment statement.
+    ``result[i]`` is the open-bracket depth at the start of source line ``i+1``.
+    """
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        # Fall back to all-zero depth (treat nothing as bracketed) on broken
+        # input; the dead-assignment detector can then only over-report, never
+        # silently miss a real assignment.
+        return [0] * (source.count("\n") + 1)
+
+    # Depth at the start of line L = the bracket depth as it stands just before
+    # the first real token on that line.
+    depth_by_line: dict[int, int] = {}
+    depth = 0
+    for tok in tokens:
+        line_no = tok[2][0]
+        # On a blank/comment-only line that has no opening bracket, the depth
+        # carried across is its start-of-line depth (state before first token).
+        if line_no not in depth_by_line:
+            depth_by_line[line_no] = depth
+        if tok[0] == tokenize.OP:
+            if tok[1] in "([{":
+                depth += 1
+            elif tok[1] in ")]}":
+                depth = max(0, depth - 1)
+
+    # Any line with no tokens at all (all-blank or comment-only) inherits the
+    # depth exported below the last tokenized line that preceded it.
+    line_count = source.count("\n") + 1
+    result = [0] * line_count
+    carry = 0
+    for ln in range(1, line_count + 1):
+        if ln in depth_by_line:
+            carry = depth_by_line[ln]
+        result[ln - 1] = carry
+    return result
+
+
+def detect_dead_assignment(source: str) -> list[tuple[int, str, str]]:
+    """Detect dead assignments: variables that are (a) immediately overwritten
+    on the next statement, or (b) assigned at function-body scope but never
+    referenced again (dead store).
+
+    For (b) a simple indentation-based heuristic tracks ``def``/``async def``
+    nesting without parsing.  Module-level assignments are skipped because the
+    name may be imported and used by other modules in the project.
+    """
+    findings: list[tuple[int, str, str]] = []
+    lines = source.split("\n")
+    bracket_depth = _inside_bracket_depth(source)
+
+    # First pass: adjacent-overwrite detection (kept from the original rule).
+    for i, line in enumerate(lines, 1):
+        if bracket_depth[i - 1] > 0:
+            continue  # inside a call/list/dict — a kwarg, not a statement assignment
+        stripped = line.strip()
+        m = _assignment_match(stripped)
+        if not m:
+            continue
+        var_name = m.group(1)
+        for j in range(i, min(i + 3, len(lines))):
+            next_line = lines[j].strip() if j < len(lines) else ""
+            if not next_line:
+                continue
+            m2 = _assignment_match(next_line)
+            if m2 and m2.group(1) == var_name:
+                # Skip when the overwrite line reads the variable on its RHS
+                # (e.g. ``ws = agent.workspace`` then ``ws = to_windows_path(ws)``):
+                # the first value is consumed, so the store is NOT dead.
+                rhs = next_line[m2.end():]
+                if not re.search(rf"\b{re.escape(var_name)}\b", rhs):
+                    findings.append((i, "dead_assignment",
+                                     f"Variable '{var_name}' assigned at line {i} then immediately overwritten at line {j + 1}. Remove the dead assignment."))
+            break
+
+    seen_dead: set[tuple[int, str]] = {(f[0], f[1]) for f in findings}
+
+    # Second pass: assigned-but-never-read-after detection.
+    #
+    # This pass also considers compound-write opcodes (``x += ...``).  An
+    # assignment/compound-write is a dead store when the name is never
+    # referenced again on any later line (a compound ``x +=`` reads x once, but
+    # leaves a value that is never consumed -> still dead).
+    #
+    # Track def nesting via indentation.  ``func_depth`` is the number of
+    # enclosing ``def`` blocks at the indentation of the assignment.
+    for i, line in enumerate(lines, 1):
+        if bracket_depth[i - 1] > 0:
+            continue  # inside a call/list/dict — a kwarg, not a statement assignment
+        stripped = line.strip()
+        m = _assignment_match(stripped, compound=True)
+        if not m:
+            continue
+        var_name = m.group(1)
+        if var_name.startswith("_"):
+            continue  # convention: intentionally unused
+
+        indent = len(line) - len(line.lstrip())
+        if _func_depth_at(lines, i, indent) == 0:
+            continue  # module-level: may be exported/used elsewhere
+
+        # If already flagged as an adjacent overwrite, don't double-report.
+        if (i, "dead_assignment") in seen_dead:
+            continue
+
+        # Look for any later reference to the name (excluding this line).
+        used_after = False
+        for k in range(i, len(lines)):
+            if k + 1 == i:  # same line as assignment (1-based i == k+1)
+                continue
+            if re.search(rf"\b{re.escape(var_name)}\b", lines[k]):
+                used_after = True
+                break
+
+        if not used_after:
+            findings.append((i, "dead_assignment",
+                             f"Variable '{var_name}' assigned at line {i} but never used after. Remove the dead assignment."))
+
+    findings.sort(key=lambda f: f[0])
+    return findings
+
+
+def detect_walrus_in_comprehension(source: str) -> list[tuple[int, str, str]]:
+    """Flag ``:`` assignment expressions (walrus) used inside a comprehension.
+
+    A walrus inside a list/set/dict/generator comprehension binds the target name
+    into the *enclosing* scope (PEP 572) rather than the comprehension-local
+    scope.  This leaks a name that can mask later re-assignments or shadow an
+    existing binding — a classic source of subtle, non-obvious bugs.
+
+    One finding is emitted per comprehension, at the line of the first walrus
+    encountered inside it.  A walrus used outside a comprehension (e.g. in a
+    plain ``if (m := re.match(...)):``) is NOT flagged here — that is the
+    idiomatic use case.
+    """
+    import ast
+
+    findings: list[tuple[int, str, str]] = []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return findings
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            continue
+        walruses = [sub for sub in ast.walk(node) if isinstance(sub, ast.NamedExpr)]
+        if not walruses:
+            continue
+        first = walruses[0]
+        names = ", ".join({ast.unparse(w.target) for w in walruses})
+        findings.append((first.lineno, "walrus_in_comprehension",
+                         f"Walrus '{names}' inside comprehension leaks into enclosing scope. "
+                         f"Bind these as named locals on their own line before the comprehension."))
+    findings.sort(key=lambda f: f[0])
+    return findings
+
+
+def _func_depth_at(lines: list[str], line_no: int, assign_indent: int) -> int:
+    """Approximate how many ``def``/``async def`` blocks enclose line *line_no*.
+
+    Uses indentation-only tracking: a ``def`` increases depth for lines indented
+    strictly more deeply than it.  A def at indent *D* only encloses code with
+    indent > D, so module-level statements (indent 0) are never considered
+    inside a module-level function body.  The assignment's own *assign_indent*
+    disambiguates the final (unprocessed-at-closer) dedent.
+    """
+    stack: list[int] = []  # indent levels of open def blocks
+    for idx in range(line_no - 1):
+        raw = lines[idx]
+        if not raw.strip():
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        while stack and indent <= stack[-1]:
+            stack.pop()
+        if re.match(r"^\s*(?:async\s+)?def\s+\w+", raw):
+            stack.append(indent)
+    # A def at indent D only encloses code indented strictly more than D.
+    return sum(1 for d in stack if d < assign_indent)
+
+
+def _strip_strings(line: str) -> str:
+    """Remove string literals from *line* so bracket counting ignores parens inside strings."""
+    return re.sub(r'("(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\')', "", line)
+
+
+def _balance_delta(line: str) -> int:
+    """Return net open-minus-close delimiter count for () [] {} on *line* (strings ignored)."""
+    clean = _strip_strings(line)
+    return clean.count("(") - clean.count(")") + \
+           clean.count("[") - clean.count("]") + \
+           clean.count("{") - clean.count("}")
+
+
+def detect_unreachable_code(source: str) -> list[tuple[int, str, str]]:
+    """Code after return/break/continue that can never execute.
+
+    Handles multi-line statements (e.g. ``return sorted(set(`` spanning lines)
+    by tracking delimiter balance across continuation lines.
+    """
+    findings: list[tuple[int, str, str]] = []
+    lines = source.split("\n")
+
+    for i, line in enumerate(lines, 1):
+        if not re.match(r"^\s*(return|break|continue)\b", line):
+            continue
+
+        stmt_indent = len(line) - len(line.lstrip())
+        stripped = line.strip()
+
+        # Track multi-line statement: skip continuation lines while brackets are open.
+        balance = _balance_delta(line)
+        j = i  # pointer to current statement line (0-based: lines[j-1])
+
+        while balance > 0 and j < len(lines):
+            j += 1
+            if j >= len(lines):
+                break
+            balance += _balance_delta(lines[j - 1])
+
+        # Now the statement has ended at line j (0-based index j-1).
+        # Find the next non-empty, non-comment line.
+        for k in range(j, len(lines)):
+            nxt = lines[k]
+            nxt_stripped = nxt.strip()
+            if not nxt_stripped or nxt_stripped.startswith("#"):
+                continue
+            next_indent = len(nxt) - len(nxt.lstrip())
+            if next_indent >= stmt_indent:
+                findings.append((k + 1, "unreachable_code",
+                                 f"Code after '{stripped}' at line {i} can never execute."))
+            break
+
+    return findings
+
+
+def detect_unused_imports(source: str) -> list[tuple[int, str, str]]:
+    """Import statement that is never referenced in the code."""
+    findings: list[tuple[int, str, str]] = []
+    lines = source.split("\n")
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        m = re.match(r"^import\s+(\w+)(?:\s+as\s+(\w+))?", stripped)
+        if m:
+            name = m.group(2) or m.group(1)
+        else:
+            m = re.match(r"^from\s+(\S+)\s+import\s+(\w+)(?:\s+as\s+(\w+))?", stripped)
+            if m:
+                name = m.group(3) or m.group(2)
+            else:
+                continue
+        # Check if name appears elsewhere in code (not on import line)
+        used = False
+        for j, check_line in enumerate(lines, 1):
+            if j == i:
+                continue
+            if re.search(rf"\b{name}\b", check_line):
+                used = True
+                break
+        if not used:
+            findings.append((i, "unused_import",
+                             f"Imported '{name}' is never used. Remove the import."))
+    return findings
+
+
 # ---------------------------------------------------------------------------
-#  Cross-file detectors (called from implement --review)
+# Cross-file detectors (called from implement --review)
 # ---------------------------------------------------------------------------
 
 def detect_module_collisions(generated_files: list[str], existing_files: list[str] | None = None) -> list[dict]:
@@ -167,7 +585,6 @@ def detect_module_collisions(generated_files: list[str], existing_files: list[st
 
     Returns findings with "module_collision" pattern.
     """
-    import importlib.util
     import difflib
 
     findings: list[dict] = []
@@ -434,4 +851,8 @@ DETECTORS = [
     detect_missing_context_manager,
     detect_file_read_in_loop,
     detect_list_append_join,
+    detect_dead_assignment,
+    detect_unreachable_code,
+    detect_walrus_in_comprehension,
+    detect_unused_imports,
 ]

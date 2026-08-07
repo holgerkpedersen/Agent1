@@ -489,6 +489,12 @@ def _apply_patch(patch_text: str, fpath: str, original_lines: list[str]) -> tupl
 
     Whitespace-tolerant: strips leading/trailing whitespace when comparing lines.
     Filters broken hunks with incomplete replacements.
+
+    Line convention: git-style patches put the whole line (indentation included)
+    right after the +/- marker; LLM-style patches add one padding space after the
+    marker.  We detect per-hunk which convention was used by comparing a '-'
+    line's leading whitespace against the matching file line, and strip that
+    single padding space only when present.
     """
     # Parse hunks: @@ -start,count +start,count @@ ... @@
     # Also lenient: @@ -start @@ (missing +start part)
@@ -528,14 +534,21 @@ def _apply_patch(patch_text: str, fpath: str, original_lines: list[str]) -> tupl
     # Verify old lines match (whitespace-tolerant)
     # For '-' lines: must match (removed lines)
     # For ' ' context lines: skip if mismatched (LLM often hallucinates context)
+    # Record, per hunk, whether its +/- lines carry an LLM padding space.
+    hunk_padding: dict[int, bool] = {}
     for start, chunks in valid_hunks:
         idx = start - 1
         filtered_chunks = []
+        padded = False
         for op, text in chunks:
             if op == '-':
                 if idx < 0 or idx >= len(original_lines):
                     return False, f"Patch mismatch at line {idx+1}: line out of range"
                 actual = original_lines[idx].rstrip('\r\n')
+                patch_lead = len(text) - len(text.lstrip())
+                file_lead = len(actual) - len(actual.lstrip())
+                if not padded and patch_lead != file_lead and text.strip() == actual.strip():
+                    padded = True
                 if actual.strip() != text.strip():
                     return False, f"Patch mismatch at line {idx+1}: expected '{text[:60]}'"
                 filtered_chunks.append((op, text))
@@ -554,38 +567,36 @@ def _apply_patch(patch_text: str, fpath: str, original_lines: list[str]) -> tupl
             else:
                 filtered_chunks.append((op, text))
         chunks[:] = filtered_chunks
+        hunk_padding[start] = padded
 
-    # Apply hunks in reverse order
+    def _render_plus(start: int, text: str) -> str:
+        if hunk_padding.get(start, False) and text.startswith(' '):
+            return text[1:]
+        return text
+
+    # Apply hunks in reverse order.  Content is applied verbatim (only the
+    # marker padding is stripped) — indentation is never rewritten here; the
+    # syntax check below rejects patches with broken indentation.
     result = [l + '\n' for l in original_lines]
     for start, chunks in reversed(valid_hunks):
         old_lines = [text for op, text in chunks if op in ('-', ' ')]
         new_lines = []
-        old_idx = 0
         i = 0
         while i < len(chunks):
             op, text = chunks[i]
             if op == '-':
-                # Use original file's indentation for the replacement
-                orig_line = result[start - 1 + old_idx] if start - 1 + old_idx < len(result) else text
-                leading = len(orig_line) - len(orig_line.lstrip())
-                indent = orig_line[:leading]
-                # Check if next chunk is a + line (same logical change)
                 if i + 1 < len(chunks) and chunks[i + 1][0] == '+':
-                    # Apply original indentation to the + line too
-                    _, plus_text = chunks[i + 1]
-                    new_lines.append(indent + plus_text.strip())
-                    old_idx += 1
+                    # Paired removal + addition: the + line is applied verbatim.
+                    new_lines.append(_render_plus(start, chunks[i + 1][1]))
                     i += 2  # Skip both - and + lines
                 else:
-                    new_lines.append(indent + text.strip())
-                    old_idx += 1
+                    new_lines.append(_render_plus(start, text))
                     i += 1
             elif op == '+':
-                new_lines.append(text)
+                new_lines.append(_render_plus(start, text))
                 i += 1
             elif op == ' ':
                 new_lines.append(text)
-                old_idx += 1
                 i += 1
 
         idx = start - 1
@@ -975,7 +986,7 @@ class ImplementCommand(Command):
                 for mod, sigs in sorted(export_map.items()):
                     if sigs:
                         sig_list = ", ".join(f"{name}: {sig}" for name, sig in sorted(sigs.items()))
-                        export_lines.append(f"  {mod} → {sig_list}")
+                        export_lines.append(f"  {mod} -> {sig_list}")
                 if export_lines:
                     export_context = "\n\nAvailable project modules (use only these names with these exact signatures):\n" + "\n".join(export_lines)
 
@@ -1194,7 +1205,7 @@ class ImplementCommand(Command):
                             file_outcomes[filename] = f"skipped — {new_filename} already exists"
                             continue
                         print(f"  Auto-repaired: {filename} -> {new_filename}")
-                        file_outcomes[filename] = f"auto-repaired → {new_filename}"
+                        file_outcomes[filename] = f"auto-repaired -> {new_filename}"
                         filename = new_filename
                         filepath = new_filepath
                     else:

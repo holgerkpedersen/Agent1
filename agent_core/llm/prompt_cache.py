@@ -30,8 +30,9 @@ class PromptCache:
         Falls back to a generic placeholder when no custom template exists.
         """
         key = (task_type, profile_type)
-        if key in self._store:
-            return self._store[key][1]
+        cached = self._store.get(key)
+        if cached is not None:
+            return cached[1]
 
         version = get_latest_version(task_type, profile_type)
         if version is not None:
@@ -59,13 +60,11 @@ class PromptCache:
     def evict(self, task_type: Optional[str] = None, profile_type: Optional[str] = None) -> int:
         """Remove cached entries.  Omit both args to clear everything."""
         before = len(self._store)
-        keys_to_remove = []
-        for key in self._store:
-            if task_type is not None and key[0] != task_type:
-                continue
-            if profile_type is not None and key[1] != profile_type:
-                continue
-            keys_to_remove.append(key)
+        keys_to_remove = [
+            key for key in self._store
+            if (task_type is None or key[0] == task_type)
+            and (profile_type is None or key[1] == profile_type)
+        ]
         for key in keys_to_remove:
             del self._store[key]
         return before - len(self._store)

@@ -1,5 +1,5 @@
 import ast
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 
 from agent_core.commands.implement_cmd import (
     Command, _extract_file_context, _is_stub_body, extract_signatures, file_needs_generation,
@@ -31,17 +31,16 @@ def build_raw_prompt(source: str, filename: str, radius: int = 400) -> str:
     context = _extract_file_context(source, filename, radius=radius)
     signatures = extract_signatures(source)
     stubs = collect_raw_stubs(source)
-    lines: list[str] = []
-    lines.append(f"Filename: {filename}")
-    lines.append("--- Context ---")
-    lines.append(context)
-    lines.append("--- Signatures ---")
-    for name, signature in signatures.items():
-        lines.append(f"{name}: {signature}")
+    lines: list[str] = [
+        f"Filename: {filename}",
+        "--- Context ---",
+        context,
+        "--- Signatures ---",
+    ]
+    lines.extend(f"{name}: {signature}" for name, signature in signatures.items())
     if stubs:
         lines.append("--- Stub bodies to implement ---")
-        for node in stubs:
-            lines.append(ast.unparse(node))
+        lines.extend(ast.unparse(node) for node in stubs)
     return "\n".join(lines)
 
 

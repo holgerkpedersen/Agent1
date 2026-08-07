@@ -43,8 +43,9 @@ class LLMAgent:
         The first retrieved context becomes the topmost (most recent) system
         message so it takes precedence when handed to the LLM.
         """
-        for ctx in reversed(contexts):
-            self._pending_temp_systems.insert(0, {"role": "system", "content": ctx})
+        self._pending_temp_systems = [
+            {"role": "system", "content": ctx} for ctx in contexts
+        ] + self._pending_temp_systems
 
     def _process_message(self, message: str) -> list[dict[str, str]]:
         """Process *message*: record it and attach any file context as temps.
@@ -57,7 +58,7 @@ class LLMAgent:
         contexts = self._detect_file_keywords(message)
         if contexts:
             self._insert_temp_system_messages(contexts)
-        return list(self._pending_temp_systems) + list(self._conversation)
+        return [*self._pending_temp_systems, *self._conversation]
 
     def respond(self, message: str) -> str:
         """Generate a response for *message* and clear temp system messages.

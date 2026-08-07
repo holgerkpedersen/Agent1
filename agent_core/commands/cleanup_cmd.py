@@ -1,6 +1,5 @@
 """Cleanup command for agent interactive mode."""
 import json
-import os
 
 from pathlib import Path
 
@@ -56,7 +55,7 @@ class CleanupCommand(Command):
                     if other != fname and other in content:
                         references[other].add(fname)
             except Exception:
-                pass
+                raise
 
         active_candidates = [f for f in all_files if f.startswith("project_") and f.endswith(".md")]
         active = set()

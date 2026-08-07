@@ -7,7 +7,6 @@ from datetime import datetime
 from pathlib import Path
 
 from .base import Command, show_file_diff
-from agent_core import to_windows_path
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -19,8 +18,8 @@ def _is_stdlib_path(p: str) -> bool:
     prefixes = [sys.prefix, sys.base_prefix]
     try:
         prefixes.append(sys._base_executable or "")
-    except AttributeError:
-        pass
+    except AttributeError as exc:
+        raise RuntimeError(f"Failed to access sys._base_executable: {exc}") from exc
     norm = os.path.normpath(p).lower()
     return any(norm.startswith(os.path.normpath(pr).lower()) for pr in prefixes if pr)
 
@@ -123,12 +122,13 @@ class FixCommand(Command):
                         candidate_files.add(fp)
                         print(f"  Seed: {f}")
 
+            _IMPORT_FROM_RE = re.compile(r'from\s+(\S+)\s+import\s+')
             def get_imported_files(filepath):
                 result = set()
                 try:
                     with open(filepath, "r") as f:
                         content = f.read()
-                    for match in re.finditer(r'from\s+(\S+)\s+import\s+', content):
+                    for match in _IMPORT_FROM_RE.finditer(content):
                         module = match.group(1)
                         path = module.replace('.', os.sep) + '.py'
                         for search_dir in [ws_dir, str(Path(filepath).parent)]:
@@ -136,8 +136,8 @@ class FixCommand(Command):
                             if os.path.isfile(full):
                                 result.add(os.path.normpath(full))
                                 break
-                except Exception:
-                    pass
+                except Exception as exc:
+                    raise RuntimeError(f"Failed to parse imports in {filepath}: {exc}") from exc
                 return result
 
             for f in list(candidate_files):
@@ -147,13 +147,14 @@ class FixCommand(Command):
 
             keywords = {w.lower() for w in re.findall(r'\w+', desc_text) if len(w) > 3} - {'this', 'that', 'with', 'from', 'they', 'have', 'what', 'when', 'then', 'than', 'show', 'just', 'like'}
 
+            _TASK_FILE_RE = re.compile(r'`([^`]+\.py)`')
             resp_matched = set()
             tasks_md_path = os.path.join(ws_dir, "project_tasks.md")
             if os.path.exists(tasks_md_path):
                 current_file = None
                 with open(tasks_md_path, "r", encoding="utf-8") as tf:
                     for line in tf:
-                        m = re.search(r'`([^`]+\.py)`', line)
+                        m = _TASK_FILE_RE.search(line)
                         if m:
                             current_file = m.group(1)
                         elif current_file and line.strip().startswith('-'):
@@ -162,7 +163,7 @@ class FixCommand(Command):
                                 fp = os.path.normpath(os.path.join(ws_dir, current_file))
                                 if os.path.isfile(fp):
                                     resp_matched.add(fp)
-                                    print(f"  Responsibility match: {current_file} → '{task_text[:80]}'")
+                                    print(f"  Responsibility match: {current_file} -> '{task_text[:80]}'")
                 if resp_matched:
                     candidate_files |= resp_matched
                     print(f"  + {len(resp_matched)} files from project_tasks.md responsibility matching")
@@ -203,17 +204,17 @@ class FixCommand(Command):
                         fp = os.path.normpath(os.path.join(root, f))
                         rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
                         py_files.append(fp)
+                        with open(fp, "r", encoding="utf-8") as sf:
+                            content = sf.read()
                         if fp in candidate_files:
-                            with open(fp, "r", encoding="utf-8") as sf:
-                                all_source += f"\n\n# === {fp} ===\n{sf.read()}"
+                            all_source += f"\n\n# === {fp} ===\n{content}"
                         else:
                             try:
-                                with open(fp, "r", encoding="utf-8") as sf:
-                                    sigs = extract_signatures(sf.read())
+                                sigs = extract_signatures(content)
                                 if sigs:
                                     sig_map[rel] = ", ".join(f"{n}" for n in sorted(sigs.keys())[:8])
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                raise RuntimeError(f"Failed to extract signatures from {fp}: {exc}") from exc
                 all_source += f"\n\n## Other project files (signatures only, {len(sig_map)} total)\n\n"
                 for rel, sigs in sorted(sig_map.items()):
                     all_source += f"  {rel}: {sigs}\n"
@@ -260,13 +261,14 @@ class FixCommand(Command):
                     # Skip files already in top_files (we have full source)
                     if fp in {t[0] for t in top_files}:
                         continue
+                    with open(fp, "r", encoding="utf-8") as sf:
+                        content = sf.read()
                     try:
-                        with open(fp, "r", encoding="utf-8") as sf:
-                            sigs = extract_signatures(sf.read())
+                        sigs = extract_signatures(content)
                         if sigs:
                             sig_map[rel] = ", ".join(f"{n}" for n in sorted(sigs.keys())[:8])
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        raise RuntimeError(f"Failed to extract signatures from {fp}: {exc}") from exc
 
             # Build initial context: full source for top-N, signatures for rest
             context = f"## Issue\n{desc_text}\n\n"
@@ -310,6 +312,8 @@ class FixCommand(Command):
                       f"Do NOT wrap commands in <tool_call> or any XML tags.\n"
                       f"If you cannot determine the exact file, explain without [READ:] or [FILE:] tags.")
 
+            _TOOL_CALL_RE = re.compile(r'</?tool_call>')
+            _READ_DIRECTIVE_RE = re.compile(r'\[READ:\s*([^\]]+)\]')
             response = ""
             for round_num in range(1, 4):
                 user = (f"Issue: {desc_text}\n\n## Context\n{context}\n\n"
@@ -328,8 +332,8 @@ class FixCommand(Command):
                 # Check for [READ:] directives — handle both plain and <tool_call> wrapped
                 raw = response
                 # Strip <tool_call> / </tool_call> wrappers if present
-                raw = re.sub(r'</?tool_call>', '', raw)
-                raw_reads = re.findall(r'\[READ:\s*([^\]]+)\]', raw)
+                raw = _TOOL_CALL_RE.sub('', raw)
+                raw_reads = _READ_DIRECTIVE_RE.findall(raw)
                 read_requests = [
                     r.strip() for r in raw_reads
                     if ".py" in r and "\\" not in r and "$" not in r
@@ -351,8 +355,8 @@ class FixCommand(Command):
                                 context += f"\n\n# === {rel} (requested by LLM) ===\n{fcontent}\n"
                                 read_paths.add(full)
                                 new_files.append(rel)
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                raise RuntimeError(f"Failed to read requested file {full}: {exc}") from exc
                         else:
                             bad_reads.append(req_path)
                     if new_files:
@@ -371,7 +375,7 @@ class FixCommand(Command):
                 return True
 
             # Display response if it's informational (no file fixes)
-            clean = re.sub(r'</?tool_call>', '', response)
+            clean = _TOOL_CALL_RE.sub('', response)
 
             # Parse [PATCH:] blocks
             patches = re.findall(r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL)
@@ -423,7 +427,6 @@ class FixCommand(Command):
 
         else:
             return await self._fix_traceback(parts, agent)
-
     def _apply_fix_response(self, response: str, ws_dir: str, desc_text: str) -> None:
         """Parse [FILE:] and [PATCH:] blocks from *response* and apply them to disk."""
         if response.startswith("[Error") or response.startswith("[LM Studio"):
@@ -524,55 +527,65 @@ class FixCommand(Command):
         hunks = valid_hunks
 
         # Verify old lines exist before applying (whitespace-tolerant)
+        # Record, per hunk, whether its +/- lines carry an LLM padding space
+        # (git-style puts the whole line right after the marker; LLM-style adds
+        # one padding space).  Detect by comparing a '-' line's leading
+        # whitespace against the matching file line.
+        hunk_padding = {}
         for start, chunks in hunks:
             idx = start - 1
+            padded = False
             for op, text in chunks:
                 if op in ('-', ' '):
                     if idx < 0 or idx >= len(lines):
                         print(f"  Patch mismatch at line {idx+1}: line out of range")
                         return False
                     actual = lines[idx].rstrip('\r\n')
+                    if op == '-':
+                        patch_lead = len(text) - len(text.lstrip())
+                        file_lead = len(actual) - len(actual.lstrip())
+                        if not padded and patch_lead != file_lead and text.strip() == actual.strip():
+                            padded = True
                     if actual.strip() != text.strip():
                         print(f"  Patch mismatch at line {idx+1}: expected '{text[:60]}', got '{actual[:60]}'")
                         return False
                     idx += 1
                 elif op == '+':
                     pass  # new lines don't need verification
+            hunk_padding[start] = padded
 
-        # Apply hunks (reverse order to preserve line numbers)
+        def _render_plus(start: int, text: str) -> str:
+            if hunk_padding.get(start, False) and text.startswith(' '):
+                return text[1:]
+            return text
+
+        # Apply hunks (reverse order to preserve line numbers).  Content is
+        # applied verbatim (only the marker padding is stripped) — indentation
+        # is never rewritten here; the syntax check rejects broken indentation.
         result = lines[:]
         for start, chunks in reversed(hunks):
             old_lines = []
             new_lines = []
-            old_idx = 0
             i = 0
             while i < len(chunks):
                 op, text = chunks[i]
                 if op == '-':
-                    # Use original file's indentation for the replacement
-                    orig_line = result[start - 1 + old_idx] if start - 1 + old_idx < len(result) else text
-                    leading = len(orig_line) - len(orig_line.lstrip())
-                    indent = orig_line[:leading]
                     # Check if next chunk is a + line (same logical change)
                     if i + 1 < len(chunks) and chunks[i + 1][0] == '+':
-                        # Apply original indentation to the + line too
-                        _, plus_text = chunks[i + 1]
-                        new_lines.append(indent + plus_text.strip())
+                        # The + line is applied verbatim.
+                        new_lines.append(_render_plus(start, chunks[i + 1][1]))
                         old_lines.append(text)
-                        old_idx += 1
                         i += 2  # Skip both - and + lines
                     else:
-                        new_lines.append(indent + text.strip())
+                        new_lines.append(_render_plus(start, text))
                         old_lines.append(text)
-                        old_idx += 1
                         i += 1
                 elif op == '+':
-                    new_lines.append(text)
+                    new_lines.append(_render_plus(start, text))
                     i += 1
                 elif op == ' ':
                     old_lines.append(text)
                     new_lines.append(text)
-                    old_idx += 1
                     i += 1
             
             idx = start - 1
@@ -608,7 +621,6 @@ class FixCommand(Command):
             f.write(''.join(result))
         print(f"  Patched: {fpath}")
         return True
-
     async def _fix_traceback(self, parts: list[str], agent: 'Agent') -> bool:
         traceback_text = ""
         if parts:
@@ -662,8 +674,6 @@ class FixCommand(Command):
         print(f"  {error_msg}")
 
         is_import_error = "ImportError" in error_msg or "ModuleNotFoundError" in error_msg or "cannot import" in error_msg
-        root_path = fpath
-        root_line = line_num
 
         if is_import_error:
             all_files_in_trace = matches
@@ -676,7 +686,7 @@ class FixCommand(Command):
                         root_idx = idx
                         break
                 for i, (fp, ln) in enumerate(all_files_in_trace):
-                    marker = " → ROOT" if i == root_idx else ""
+                    marker = " -> ROOT" if i == root_idx else ""
                     print(f"    {i+1}. {fp}:{ln}{marker}")
 
                 # Walk from the start to find the first *user* file that actually
@@ -710,12 +720,12 @@ class FixCommand(Command):
                                 print(f"  Fix: rename or move it (e.g. {shadowed}_defs.py or put it inside a package).")
                         _dirs[:] = []
                         break
-                    print(f"  Skipping LLM fix — this is a naming conflict, not a code error.")
+                    print("  Skipping LLM fix — this is a naming conflict, not a code error.")
                     return True
 
         if _is_stdlib_path(fpath):
             print(f"\n  Skipping: {fpath} is a stdlib file (under Python installation).")
-            print(f"  The root cause is likely a local file shadowing a stdlib module name.")
+            print("  The root cause is likely a local file shadowing a stdlib module name.")
             return True
 
         with open(fpath, "r", encoding="utf-8") as f:
@@ -747,8 +757,8 @@ class FixCommand(Command):
                         if exports:
                             rel = os.path.relpath(full, project_dir).replace("\\", "/")
                             export_map[rel] = exports
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"  Warning: failed to parse {full}: {e}")
 
         all_broken = []
         for match in re.finditer(r'from\s+(\S+)\s+import\s+(.+?)(?:\s*#|\s*$)', current_code):
@@ -769,8 +779,7 @@ class FixCommand(Command):
             for mod, name, src_file, avail in all_broken:
                 print(f"    '{name}' from '{mod}' not found. Available: {', '.join(avail[:5])}")
 
-        print(f"\nSending to LLM for fix...")
-        import subprocess
+        print("\nSending to LLM for fix...")
         fix_msgs = [
             {"role": "system", "content": "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged. No duplicate functions. No _v1/_v2 variants.\n\nWhen fixing type errors (arg-type, incompatible type), search the ENTIRE file for where the variable is defined/initialized, not just where the error occurs. Fix the initialization to use the correct type. Do NOT change function signatures.\n\nOutput the fix using ONE of these formats:\n[PATCH: filename.py] — for small fixes near the error line\n[FILE: filename.py] — when the fix is far from the error or needs full context\n\n[PATCH:] example:\n[PATCH: filename.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n\n[FILE:] example:\n[FILE: filename.py]\n```python\n# complete corrected file\n```"},
             {"role": "user", "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n" + "\n".join([f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}" for m, n, s, a in all_broken]) + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import os
 from typing import Dict, Final, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
@@ -64,7 +67,7 @@ def _save_user_profiles() -> None:
         with open(_PROFILES_FILE, "w") as f:
             json.dump({k: v.as_dict() for k, v in _user_profiles.items()}, f, indent=2)
     except OSError:
-        pass
+        logger.warning("Failed to save user profiles to %s", _PROFILES_FILE, exc_info=True)
 
 
 def list_profiles() -> List[ProfileMetadata]:

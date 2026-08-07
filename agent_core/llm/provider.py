@@ -1,5 +1,5 @@
 """LLM Provider Protocol - abstract interface for LLM backends."""
-from typing import Protocol, Any
+from typing import Protocol
 
 
 class LLMProvider(Protocol):
@@ -15,13 +15,19 @@ class LLMProvider(Protocol):
     async def chat(
         self, 
         messages: list[dict], 
-        tools: list[dict] | None = None
+        tools: list[dict] | None = None,
+        max_tokens: int | None = None,
+        disable_thinking: bool = False,
     ) -> str:
         """Send chat request to LLM.
         
         Args:
             messages: List of message dicts with 'role' and 'content'
             tools: Optional list of OpenAI-format tool schemas
+            max_tokens: Optional output token cap for this call
+            disable_thinking: If True, send thinking: disabled (reasoning
+                models otherwise burn the output budget on reasoning and
+                return empty content)
             
         Returns:
             LLM response text, or JSON string if tools present and tool_calls returned

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent import Agent
 
+_DIFF_HEADER_RE = re.compile(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
 
 def read_stdin(prompt: str = "Paste text. Type --- on its own line when done, or Ctrl+Z to finish:") -> str:
     """Read multi-line text from stdin until a sentinel line or EOF.
@@ -34,8 +36,6 @@ def show_file_diff(basename: str, original: str, new: str) -> None:
     diff = list(difflib.unified_diff(
         original_lines,
         new_lines,
-        fromfile=f"a/{basename}",
-        tofile=f"b/{basename}",
         n=5,
     ))
     if not diff:
@@ -71,7 +71,7 @@ def show_file_diff(basename: str, original: str, new: str) -> None:
             continue
         if stripped.startswith("@@"):
             flush_pair()
-            m = re.search(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", stripped)
+            m = _DIFF_HEADER_RE.search(stripped)
             if m:
                 old_lineno = int(m.group(1)) - 1
                 new_lineno = int(m.group(2)) - 1
@@ -92,10 +92,8 @@ def show_file_diff(basename: str, original: str, new: str) -> None:
 
     # Calculate column widths (exclude headers)
     data_rows = [r for r in rows if r[0] != "__HEADER__"]
-    max_old_no = max((len(r[0]) for r in data_rows if r[0]), default=4)
-    max_old_no = max(max_old_no, 4)
-    max_new_no = max((len(r[2]) for r in data_rows if r[2]), default=4)
-    max_new_no = max(max_new_no, 4)
+    max_old_no = max(max((len(r[0]) for r in data_rows if r[0]), default=4), 4)
+    max_new_no = max(max((len(r[2]) for r in data_rows if r[2]), default=4), 4)
     max_old_text = max((len(r[1]) for r in data_rows if r[1]), default=10)
     max_new_text = max((len(r[3]) for r in data_rows if r[3]), default=10)
 

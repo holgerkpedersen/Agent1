@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import logging
 import re
 import statistics
 import subprocess
@@ -9,6 +10,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +296,7 @@ def answers_match(response: str, expected: str) -> bool:
         if abs(r_val - e_val) < 0.5:
             return True
     except (ValueError, TypeError):
-        pass
+        logger.debug("Numeric comparison failed for response=%r expected=%r", norm_resp, norm_exp)
 
     # Fraction equivalence
     for frac in [norm_resp, norm_exp]:
@@ -307,7 +311,7 @@ def answers_match(response: str, expected: str) -> bool:
                 if abs(fval - oval) < 0.01:
                     return True
             except (ValueError, ZeroDivisionError):
-                pass
+                logger.debug("Fraction comparison failed for %r", frac)
 
     # Keyword overlap for knowledge questions
     resp_words = set(norm_resp.split())
@@ -597,7 +601,7 @@ async def run_category(
 
 async def run_benchmark(
     models: list[str],
-    categories: dict[str, list[tuple[str, str | None]]],
+    categories: dict[str, list[tuple[str, str | None]],
     repetitions: int = 1,
 ) -> list[ModelResult]:
     results = []
@@ -622,35 +626,31 @@ async def run_benchmark(
                     )
                     all_cat_results.append(cr)
 
-                # Merge: average scores per question
-                merged = CategoryResult(category=cat_name)
+                # Merge: average scores per question. Precompute the
+                # per-question repetition data once (cached outside any
+                # further iteration), then build results via comprehension.
                 n_questions = len(questions)
-                for q_idx in range(n_questions):
-                    reps = [
-                        cr.results[q_idx]
-                        for cr in all_cat_results
-                        if q_idx < len(cr.results)
-                    ]
-                    avg_score = statistics.mean(r.score for r in reps)
-                    avg_latency = statistics.mean(
-                        r.latency_ms for r in reps
+                rep_data = [
+                    [cr.results[q_idx] for cr in all_cat_results if q_idx < len(cr.results)]
+                    for q_idx in range(n_questions)
+                ]
+
+                merged = CategoryResult(category=cat_name)
+                merged.results = [
+                    QuestionResult(
+                        question_idx=q_idx,
+                        prompt=reps[0].prompt if reps else "",
+                        response=(reps[0].response[:500] if reps else ""),
+                        correct=(
+                            all(r.correct is True for r in reps)
+                            if any(r.correct is not None for r in reps)
+                            else None
+                        ),
+                        score=round(statistics.mean(r.score for r in reps), 2) if reps else 0.0,
+                        latency_ms=statistics.mean(r.latency_ms for r in reps) if reps else 0.0,
                     )
-                    any_correct = any(r.correct is True for r in reps)
-                    all_correct = all(r.correct is True for r in reps)
-                    merged.results.append(
-                        QuestionResult(
-                            question_idx=q_idx,
-                            prompt=reps[0].prompt,
-                            response=reps[0].response[:500],
-                            correct=(
-                                all_correct
-                                if any(r.correct is not None for r in reps)
-                                else None
-                            ),
-                            score=round(avg_score, 2),
-                            latency_ms=avg_latency,
-                        )
-                    )
+                    for q_idx, reps in enumerate(rep_data)
+                ]
                 model_result.categories[cat_name] = merged
 
         results.append(model_result)
@@ -670,11 +670,11 @@ async def run_benchmark(
 
 def print_report(results: list[ModelResult]) -> None:
     """Print a formatted comparison table to the console."""
-    cat_names: list[str] = []
-    for r in results:
-        for c in r.categories:
-            if c not in cat_names:
-                cat_names.append(c)
+    # Build ordered, de-duplicated category names via dict.fromkeys (preserves
+    # insertion order without repeated append + membership checks).
+    cat_names = list(dict.fromkeys(
+        c for r in results for c in r.categories
+    ))
 
     header = f"{'Model':<30}"
     for cat in cat_names:
@@ -719,17 +719,15 @@ def build_model_json(model_result: ModelResult) -> dict[str, Any]:
     }
 
     for cat_name, cr in model_result.categories.items():
+        # Build the questions list with a comprehension instead of repeated
+        # append calls (avoids O(n) intermediate growth overhead).
         cat_data: dict[str, Any] = {
             "accuracy": cr.accuracy,
             "correct_count": cr.correct_count,
             "scoreable_count": cr.scoreable_count,
             "avg_latency_ms": cr.avg_latency_ms,
             "p95_latency_ms": cr.p95_latency_ms,
-            "questions": [],
-        }
-
-        for qr in cr.results:
-            cat_data["questions"].append(
+            "questions": [
                 {
                     "index": qr.question_idx,
                     "prompt": qr.prompt,
@@ -739,7 +737,9 @@ def build_model_json(model_result: ModelResult) -> dict[str, Any]:
                     "latency_ms": qr.latency_ms,
                     "tokens_used": qr.tokens_used,
                 }
-            )
+                for qr in cr.results
+            ],
+        }
 
         model_data["categories"][cat_name] = cat_data
 
@@ -753,17 +753,21 @@ def save_models_json(results: list[ModelResult], path: str) -> None:
 
     existing: dict[str, Any] = {}
     if out_path.exists():
+        # Read the cached content once via an explicit context manager so the
+        # handle is never leaked; reuse it across all model writes below.
         try:
-            existing = json.loads(out_path.read_text(encoding="utf-8"))
+            with open(out_path, "r", encoding="utf-8") as f:
+                file_content = f.read()
+            existing = json.loads(file_content)
         except (json.JSONDecodeError, OSError):
+            logger.debug("Could not parse existing models.json at %s; starting fresh.", out_path)
             existing = {}
 
     for r in results:
         existing[r.model] = build_model_json(r)
 
-    out_path.write_text(
-        json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(existing, f, indent=2, ensure_ascii=False)
     print(f"  models.json saved to: {out_path} ({len(existing)} model(s) total)")
 
 
@@ -776,9 +780,8 @@ def save_json_report(results: list[ModelResult], path: str) -> None:
 
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
     print(f"  JSON report saved to: {out_path}")
 
 

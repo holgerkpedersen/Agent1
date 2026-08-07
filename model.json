@@ -1,4 +1,4 @@
 {
-  "model": "qwen3-coder-30b-a3b-instruct",
+  "model": "qwen3.6-27b-mtp",
   "profile": "fast-codegen"
 }

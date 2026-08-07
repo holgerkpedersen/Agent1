@@ -24,9 +24,9 @@ def _parse_imports(source: str) -> list[str]:
         if top in ("agent_core", "agent1", "tests", "src"):
             path = module.replace(".", "/")
             if path == top:
-                path += "/__init__.py"
+                path = f"{top}/__init__.py"
             else:
-                path += ".py"
+                path = f"{path}.py"
             result.append(path)
     return sorted(set(result))
 
@@ -133,21 +133,33 @@ class AnalyzeCommand(Command):
         read_paths: set[str] = set()
         read_paths.add(os.path.normpath(os.path.join(ws, path.replace("/", os.sep))) if not os.path.isabs(path) else os.path.normpath(path))
 
+        read_cache: dict[str, str] = {}
+
         # Follow imports from the target file
-        initial_followed: list[str] = []
+        import_candidates = []
         for imp_path in _parse_imports(content):
-            if len(initial_followed) >= 5:
+            if len(import_candidates) >= 5:
                 break
             full = os.path.normpath(os.path.join(ws, imp_path))
             if os.path.isfile(full) and full not in read_paths:
-                try:
+                import_candidates.append((imp_path, full))
+
+        import_parts = []
+        for imp_path, full in import_candidates:
+            try:
+                if full in read_cache:
+                    imp_content = read_cache[full]
+                else:
                     imp_content = await agent.read_file(full, track_read=False)
-                    if not imp_content.startswith("File not found:") and not imp_content.startswith("Error"):
-                        combined += f"\n\n# === {imp_path} ===\n{imp_content}"
-                        read_paths.add(full)
-                        initial_followed.append(imp_path)
-                except Exception:
-                    pass
+                    read_cache[full] = imp_content
+                if not imp_content.startswith("File not found:") and not imp_content.startswith("Error"):
+                    import_parts.append((imp_path, imp_content))
+                    read_paths.add(full)
+            except Exception as e:
+                print(f"  Warning: failed to read {imp_path}: {e}")
+
+        initial_followed = [imp for imp, _ in import_parts]
+        combined += "".join(f"\n\n# === {p} ===\n{c}" for p, c in import_parts)
 
         if initial_followed:
             print(f"  Round 0: followed imports — {', '.join(initial_followed)}")
@@ -163,21 +175,30 @@ class AnalyzeCommand(Command):
         # Iterate: follow file references mentioned in each answer
         for round_num in range(2, 5):  # rounds 2, 3, 4
             refs = _parse_file_refs(answer)
-            new_files: list[str] = []
-
+            ref_candidates = []
             for ref in refs:
-                if len(new_files) >= 4:
+                if len(ref_candidates) >= 4:
                     break
                 full = os.path.normpath(os.path.join(ws, ref))
                 if os.path.isfile(full) and full not in read_paths:
-                    try:
+                    ref_candidates.append((ref, full))
+
+            ref_parts = []
+            for ref, full in ref_candidates:
+                try:
+                    if full in read_cache:
+                        ref_content = read_cache[full]
+                    else:
                         ref_content = await agent.read_file(full, track_read=False)
-                        if not ref_content.startswith("File not found:") and not ref_content.startswith("Error"):
-                            combined += f"\n\n# === {ref} (referenced in previous answer) ===\n{ref_content}"
-                            read_paths.add(full)
-                            new_files.append(ref)
-                    except Exception:
-                        pass
+                        read_cache[full] = ref_content
+                    if not ref_content.startswith("File not found:") and not ref_content.startswith("Error"):
+                        ref_parts.append((ref, ref_content))
+                        read_paths.add(full)
+                except Exception as e:
+                    print(f"  Warning: failed to read {ref}: {e}")
+
+            new_files = [ref for ref, _ in ref_parts]
+            combined += "".join(f"\n\n# === {p} (referenced in previous answer) ===\n{c}" for p, c in ref_parts)
 
             if not new_files:
                 break  # Nothing new to follow

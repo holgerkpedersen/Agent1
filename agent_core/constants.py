@@ -8,12 +8,20 @@ KNOWN_MODELS = {
         "size_gb": 15.8,
         "params": "27B",
         "thinking": True,
+        "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False}},
     },
     "google/gemma-4-31b": {
         "desc": "Gemma 4 31B — chat, reasoning, fast token gen",
         "max_tokens": 100000,
         "size_gb": 18.1,
         "params": "31B",
+        "thinking": True,
+    },
+    "kwaipilot_kat-coder-v2.5-dev": {
+        "desc": "Kwaipilot Kat-Coder 2.5 dev — coding, thinking",
+        "max_tokens": 100000,
+        "size_gb": 8.1,
+        "params": "8B",
         "thinking": True,
     },
     "laguna-s-2.1": {

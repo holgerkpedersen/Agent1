@@ -75,9 +75,9 @@ class LLMClient:
         self._model_name = value
         self._provider.model_name = value
     
-    async def chat(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int | None = None) -> str:
-        """Send chat request to LLM via LM Studio."""
-        return await self._provider.chat(messages, tools, max_tokens=max_tokens)
+    async def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs) -> str:
+        """Send chat request to LLM via LM Studio (pass-through wrapper)."""
+        return await self._provider.chat(messages, tools, **kwargs)
     
     async def chat_stream(self, messages: list[dict]) -> str:
         """Chat with real-time token streaming to console."""
