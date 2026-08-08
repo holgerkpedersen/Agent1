@@ -1392,16 +1392,15 @@ class OptimizeCommand(Command):
                                 continue
                             resolved = False
                             break
-                        # Preserve the original file's trailing-newline state
-                        # so the diff doesn't show an unrelated newline addition.
-                        # split("\n") preserves trailing empty lines but
-                        # show_file_diff uses splitlines() which strips them —
-                        # normalize so both sides match.
-                        patched = "\n".join(patched.splitlines())
-                        if original.endswith("\n"):
-                            patched = patched + "\n"
                         new_lines = patched.split("\n")
                         line_delta = patched.count("\n") - len(work_lines)
+                        # Preserve the original file's trailing-newline state
+                        # so the diff doesn't show an unrelated trailing blank line.
+                        # split("\n") gives a trailing "" when patched ends with \n;
+                        # show_file_diff uses splitlines() which strips that — pop
+                        # it when the original file lacked a trailing newline.
+                        if not original.endswith("\n") and new_lines and new_lines[-1] == "":
+                            new_lines.pop()
                         work_lines = new_lines
                         if line_delta:
                             for pf in pending:
