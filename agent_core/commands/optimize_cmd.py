@@ -109,14 +109,18 @@ _PATCH_HUNK_RE = re.compile(
 
 
 def _strip_markdown_fence(text: str) -> str:
-    """Remove surrounding ```lang / ``` fences the model may wrap hunks in."""
+    """Remove surrounding ```lang / ``` fences AND prose before the first @@.
+    Returns '' when no hunk header exists."""
     stripped = text.strip()
     fence = re.match(r"^```[a-zA-Z0-9]*\s*\n", stripped)
     if fence:
         stripped = stripped[fence.end():]
     if stripped.endswith("```"):
         stripped = stripped[:-3]
-    return stripped.strip("\n")
+    first = stripped.find("@@")
+    if first == -1:
+        return ""
+    return stripped[first:].strip("\n")
 
 
 def _shift_hunk_starts(patch_text: str, delta: int) -> str:
@@ -1282,6 +1286,10 @@ class OptimizeCommand(Command):
                         )
                         raw = patch_block.group(1) if patch_block else ""
                         raw = _strip_markdown_fence(raw)
+                        if not raw.strip():
+                            # Model may have produced a hunk without the
+                            # [PATCH:] tag — treat the whole response body.
+                            raw = _strip_markdown_fence(llm_response)
                         if not raw.strip():
                             feedback = (
                                 "Your response contained no [PATCH: " + basename +
