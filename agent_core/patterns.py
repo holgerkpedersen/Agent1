@@ -237,11 +237,23 @@ def _open_path_arg(stmt: str) -> str | None:
     Prefers the ``with open(X ...) as`` / ``X = open(...)`` line so a separate
     ``.read()`` line can be resolved back to the identifier that holds the path.
     """
-    m = re.search(r"\b(?:read_file|open)\s*\(([^()]*)\)", stmt)
+    m = re.search(r"\b(?:read_file|open)\s*\(", stmt)
     if not m:
         return None
-    arg = m.group(1).strip()
-    if arg.startswith("="):
+    pos = m.end()  # index just past the opening '('
+    depth = 1
+    end = pos
+    while end < len(stmt) and depth > 0:
+        ch = stmt[end]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        end += 1
+    if depth != 0:
+        return None  # unbalanced — cannot determine argument
+    arg = stmt[pos:end - 1].strip()
+    if not arg or arg.startswith("="):
         return None
     # first positional argument — split on commas at depth 0
     parts = []
