@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from .base import Command, read_stdin, show_file_diff
 from agent_core import workspace_path
-from agent_core.patch_utils import apply_anchored_patch, apply_patch
+from agent_core.patch_utils import apply_anchored_patch, apply_patch, split_patch_hunks
 from agent_core.patterns import analyze as static_analyze
 
 if TYPE_CHECKING:
@@ -565,6 +565,7 @@ def _report_failures(failures: dict[str, list[dict]]) -> None:
 
 CONTEXT_MAX_LINES = 120
 FINDING_MAX_ATTEMPTS = 3
+SCOPE_TOLERANCE = 20  # max lines a hunk start may deviate from the finding line
 
 
 def _finding_context(source: str, line_no: int) -> str | None:
@@ -1367,6 +1368,24 @@ class OptimizeCommand(Command):
                                 f"After your patch the file still contains [{pattern}] "
                                 f"({after_cnt} occurrence(s), {before_cnt} before). The patch must "
                                 "actually remove the finding - change exactly the code it targets."
+                            )
+                            if attempt < FINDING_MAX_ATTEMPTS - 1:
+                                print(f"    Feedback: {feedback[:240]}")
+                                continue
+                            resolved = False
+                            break
+                        # Scope gate: reject patches whose hunks wander outside
+                        # the finding's vicinity (e.g. adding trailing blank lines).
+                        out_of_scope: list[int] = []
+                        for hunk_start, _ in split_patch_hunks(raw):
+                            if abs(hunk_start - line) > SCOPE_TOLERANCE:
+                                out_of_scope.append(hunk_start)
+                        if out_of_scope:
+                            feedback = (
+                                f"Your patch changed line(s) near {out_of_scope} which are far "
+                                f"from the finding at line {line}. Only modify the target area "
+                                f"(±{SCOPE_TOLERANCE} lines). Strip unrelated hunks and re-emit only "
+                                "the fix for this finding."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
                                 print(f"    Feedback: {feedback[:240]}")
