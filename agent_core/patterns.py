@@ -402,20 +402,23 @@ def detect_file_read_in_loop(source: str) -> list[tuple[int, str, str]]:
 
 
 def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
-    """``.append()`` in a loop whose built list is consumed by ``''.join()``.
+    """``.append()`` / ``.extend()`` / ``+= [x]`` in a loop whose built list
+    is consumed by ``''.join()``.
 
     Only fires when the loop-built list is actually used by a ``.join()`` call
-    (matching the pattern's name).  Appends that feed ``sorted()``, ``set()``,
-    ``len()`` or a plain ``return`` are NOT flagged — converting those to a
-    comprehension is a style-only change, and the optimizer must not be pushed
-    into restructuring loops for no measurable gain.
+    (matching the pattern's name).  Appends/extensions that feed ``sorted()``,
+    ``set()``, ``len()`` or a plain ``return`` are NOT flagged — converting
+    those to a comprehension is a style-only change, and the optimizer must not
+    be pushed into restructuring loops for no measurable gain.
     """
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
     in_loop = False
     loop_indent = 0
     loop_body_lines: list[str] = []
-    append_lines: list[tuple[int, str]] = []  # (1-based line, appended var name)
+    append_lines: list[tuple[int, str]] = []  # (1-based line, list-variable name)
+    _APPEND_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\.(?:append|extend)\(")
+    _IEQ_RE = re.compile(r"([A-Za-z_]\w*)\s*\+=\s*\S")
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
         if re.match(r"^\s*(for|while)\s", line):
@@ -429,21 +432,28 @@ def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
                 in_loop = False
             else:
                 loop_body_lines.append(stripped)
-        if in_loop and ".append(" in line:
+        if in_loop and (".append(" in line or ".extend(" in line
+                        or ("+=" in line and "[" in line)):
             # Check if loop body has complex control flow
             has_complex_flow = any(
-                re.search(r'\b(if|elif|else|await|break|continue|return|try|except)\b', body_line)
-                for body_line in loop_body_lines
+                re.search(r'\b(if|elif|else|await|break|continue|return|try|except)\b', bl)
+                for bl in loop_body_lines
             )
             if not has_complex_flow:
-                m = re.search(r"\b([A-Za-z_]\w*)\s*\.append\(", line)
+                m = _APPEND_RE.search(line)
                 if m:
                     append_lines.append((i, m.group(1)))
-    # Only flag appends whose list is consumed by a .join() call.
+                else:
+                    m = _IEQ_RE.search(line)
+                    if m:
+                        append_lines.append((i, m.group(1)))
+    # Only flag lines whose list is consumed by a .join() call.
     for i, var in append_lines:
         if re.search(rf"\.join\s*\(\s*{re.escape(var)}\s*\)", source):
             findings.append((i, "list_append_join",
-                             "If this builds a string list, use list comprehension or generator — currently O(n) memory"))
+                             "Build the joined list in one comprehension/generator "
+                             "instead of building it per-iteration with .append/.extend/+= — "
+                             "currently O(n) per-iteration call overhead"))
     return findings
 
 

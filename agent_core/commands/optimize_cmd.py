@@ -53,6 +53,8 @@ OPTIMIZE_RULES = (
     "- Preserve the original control-flow style: an imperative `for` loop stays a loop. "
     "The ONLY authorized loop-to-comprehension/generator conversion is when a "
     "list_append_join finding is listed for that loop — and never with `:=`. "
+    "The fix must replace the whole loop accumulation with a single comprehension — "
+    "swapping .append(x) for .extend([x]) / += [x] is NOT a fix (same per-iteration cost). "
     "Do NOT fold several statements into a comprehension or compact one-liner in any "
     "other case\n"
     "- Decide and output immediately: do not deliberate at length in reasoning. "
@@ -650,6 +652,53 @@ def _cosmetic_only(old_lines: list[str], new_lines: list[str]) -> bool:
     return True
 
 
+_MECH_PATTERNS: set[str] = {"unused_import", "dead_assignment", "silent_except"}
+
+
+def _tri_mech_fix(work_lines: list[str], line: int, pattern: str,
+                  basename: str, finding: dict) -> str | None:
+    """Return a synthetic ``@@`` hunk for a deterministic fix, or None."""
+    if pattern not in _MECH_PATTERNS:
+        return None
+    idx = line - 1
+    if not (0 <= idx < len(work_lines)):
+        return None
+    if pattern == "unused_import":
+        src_line = work_lines[idx]
+        stripped = src_line.strip()
+        if re.match(r"^import\s+\w+(\s+as\s+\w+)?$", stripped):
+            return f"@@ -{line},1 +{line},0 @@\n-{src_line}"
+        m = re.match(r"^from\s+\S+\s+import\s+(\w[\w\s,]*)$", stripped)
+        if m:
+            names = [n.strip() for n in m.group(1).split(",")]
+            if len(names) <= 1:
+                return f"@@ -{line},1 +{line},0 @@\n-{src_line}"
+        return None
+    if pattern == "dead_assignment":
+        if "immediately overwritten" in finding.get("suggestion", ""):
+            return f"@@ -{line},1 +{line},0 @@\n-{work_lines[idx]}"
+        return None
+    if pattern == "silent_except":
+        ei = idx
+        e_indent = len(work_lines[ei]) - len(work_lines[ei].lstrip())
+        for j in range(ei + 1, min(ei + 20, len(work_lines))):
+            nxt = work_lines[j].rstrip("\r")
+            if nxt.strip() == "" or nxt.lstrip().startswith("#"):
+                continue
+            nxt_indent = len(nxt) - len(nxt.lstrip())
+            if nxt_indent <= e_indent:
+                break
+            if re.match(r"^\s+pass\s*$", nxt):
+                indent = " " * nxt_indent
+                return (
+                    f"@@ -{j + 1},1 +{j + 1},1 @@\n"
+                    f"-{nxt}\n"
+                    f"+{indent}print(f\"Warning: silenced exception in {basename}:{line}\")"
+                )
+        return None
+    return None
+
+
 def _patch_system_prompt(basename: str) -> str:
     """System prompt for the per-finding patch loop: hunk-only output with
     absolute file line numbers, minimal edits, honest [UNRESOLVED:]."""
@@ -680,7 +729,17 @@ def _patch_system_prompt(basename: str) -> str:
         "actual source line exactly.\n"
         "- The '-' line (old code) is REMOVED and the '+' line REPLACES it — "
         "do NOT keep the old buggy line as context and add a new line next to it. "
-        "Keep hunk line counts neutral: as many removed as changed.\n"
+        "For single-line replacements keep hunk line counts neutral (as many removed "
+        "as changed).  When REMOVING a loop entirely (list_append_join → comprehension), "
+        "a net line reduction is expected — the comprehension replaces the whole loop.\n"
+        "- When fixing **list_append_join**: the finding is that a list is built "
+        "incrementally with .append/.extend/+= per-iteration then consumed by .join(). "
+        "The fix must REMOVE the per-iteration build: replace the loop (or loop body) "
+        "with a single list comprehension/generator that builds the WHOLE list at once. "
+        "Swapping .append(x) for .extend([x]), .extend((x,)), += [x], or any other "
+        "single-element incremental call is NOT a fix — it is the same O(n) building "
+        "cost.  The fix must eliminate the per-iteration call entirely by restructuring "
+        "to a comprehension/generator.\n"
         "- Touch ONLY the code required by the finding. Do NOT reformat "
         "whitespace, docstrings, or unrelated lines. Do NOT rename or move "
         "existing variables.\n"
@@ -714,7 +773,14 @@ def _patch_system_prompt(basename: str) -> str:
         "@@ -42,2 +42,2 @@\n"
         "            except Exception:\n"
         "-                pass\n"
-        "+                logger.warning(\"Failed to scan %s\", path)\n"
+        "+                logger.warning(\"Failed to scan %s\", path)\n\n"
+        "Example (list_append_join — the for-loop + .append() are removed, a single "
+        "comprehension line replaces both; line count shrinks because the loop is gone):\n"
+        "[PATCH: taskplan_cmd.py]\n"
+        "@@ -49,2 +49,1 @@\n"
+        "-    for d, names in sorted(taken.items())[:12]:\n"
+        "-        lines.append(f\"  {d or 'root'}: {', '.join(names[:12])}\")\n"
+        "+    lines += [f\"  {d or 'root'}: {', '.join(names[:12])}\" for d, names in sorted(taken.items())[:12]]\n"
     )
 
 
@@ -1251,6 +1317,35 @@ class OptimizeCommand(Command):
                         continue
                     feedback = ""
                     resolved = False
+                    # ── deterministic mechanical fix (no LLM) ────────────
+                    mech_raw = _tri_mech_fix(work_lines, line, pattern, basename, finding)
+                    if mech_raw is not None:
+                        ok, patched = apply_patch(mech_raw, work_lines)
+                        if not ok:
+                            ok, patched = apply_anchored_patch(mech_raw, work_lines)
+                        if ok:
+                            try:
+                                compile(patched, "<mechanical>", "exec")
+                            except SyntaxError:
+                                ok = False
+                            if ok:
+                                before_cnt = sum(1 for f in static_analyze("\n".join(work_lines)) if f["pattern"] == pattern)
+                                after_cnt = sum(1 for f in static_analyze(patched) if f["pattern"] == pattern)
+                                if after_cnt < before_cnt:
+                                    new_lines = patched.split("\n")
+                                    while new_lines and new_lines[-1] == "":
+                                        new_lines.pop()
+                                    line_delta = patched.count("\n") - len(work_lines)
+                                    work_lines = new_lines
+                                    if line_delta:
+                                        for pf in pending:
+                                            if pf["line"] > line:
+                                                pf["line"] += line_delta
+                                    resolved = True
+                                    print(f"    Fixed line {line} [{pattern}] (mechanical, {before_cnt} -> {after_cnt} remaining)")
+                    if resolved:
+                        continue
+                    # ── LLM patch loop ──────────────────────────────────
                     for attempt in range(FINDING_MAX_ATTEMPTS):
                         if attempt > 0:
                             print(f"    Retry {attempt}/{FINDING_MAX_ATTEMPTS - 1} for line {line}...")

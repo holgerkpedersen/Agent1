@@ -102,6 +102,26 @@ def _fix_hunk_for_pattern(basename: str, user_content: str) -> str:
             f"-{text}\n"
             f"+{indent}{modname}  # keep referenced\n"
         )
+    if pat == "string_concat_in_loop":
+        idx = next(i for i, (num, text) in enumerate(numbered)
+                   if "+=" in text and isinstance(num, int))
+        num = numbered[idx][0]
+        old_line = numbered[idx][1]
+        new_line = old_line.replace("+=", "=", 1).rstrip() + "  # FIXME"
+        return (
+            f"[PATCH: {basename}]\n"
+            f"@@ -{num},1 +{num},1 @@\n"
+            f"-{old_line}\n"
+            f"+{new_line}\n"
+        )
+    if pat == "dead_assignment":
+        num, text = next((n, t) for n, t in numbered if "=" in t)
+        return (
+            f"[PATCH: {basename}]\n"
+            f"@@ -{num},1 +{num},1 @@\n"
+            f"-{text}\n"
+            f"+{text[:len(text)-len(text.lstrip())]}pass  # removed\n"
+        )
     raise AssertionError(f"fake LLM does not know pattern {pat!r}")
 
 
@@ -1079,11 +1099,10 @@ class TestOptimizeEmptyOutput:
         target = tmp_path / "sloppy.py"
         target.write_text(textwrap.dedent("""\
             def read(path):
-                try:
-                    return int(path)
-                except Exception:
-                    pass
-                return 0
+                s = ""
+                for i in range(10):
+                    s += "x"
+                return s
         """), encoding="utf-8")
 
         calls = 0
@@ -1103,7 +1122,7 @@ class TestOptimizeEmptyOutput:
         assert calls == 3  # initial + 2 retries (FINDING_MAX_ATTEMPTS=3)
         assert "Unresolved" in out
         assert "No fixes were generated" in out
-        assert "pass" in target.read_text(encoding="utf-8")  # file untouched
+        assert "for i in range(10):" in target.read_text(encoding="utf-8")  # file untouched
 
     def test_prose_only_response_retries_then_recovers(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A response containing no [PATCH:] block triggers the retry; a
@@ -1114,11 +1133,10 @@ class TestOptimizeEmptyOutput:
 
         file_text = textwrap.dedent("""\
             def read(path):
-                try:
-                    return int(path)
-                except Exception:
-                    pass
-                return 0
+                s = ""
+                for i in range(10):
+                    s += "x"
+                return s
         """)
         target = tmp_path / "sloppy.py"
         target.write_text(file_text, encoding="utf-8")
@@ -1145,8 +1163,65 @@ class TestOptimizeEmptyOutput:
         assert "Fixed line" in out
         assert "Applied: sloppy.py" in out
         final = target.read_text(encoding="utf-8")
-        assert "except OSError:" in final
-        assert "pass" not in final
+        assert 's += "' not in final
+        assert 's += "x"' not in final
+
+    def test_list_append_join_rejects_extend_evasion(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """For list_append_join, .append(x) → .extend([x]) is a lateral move.
+        The detector now flags .extend( in loops too, so the acceptance gate
+        rejects it (after_cnt stays 1).  A proper comprehension on retry is
+        accepted."""
+        import asyncio
+        from types import SimpleNamespace
+        from agent_core.commands.optimize_cmd import OptimizeCommand
+
+        file_text = textwrap.dedent("""\
+            def build():
+                lines = []
+                for item in items:
+                    lines.append(f"{item}")
+                return "".join(lines)
+        """)
+        target = tmp_path / "joiner.py"
+        target.write_text(file_text, encoding="utf-8")
+
+        calls = 0
+
+        async def chat(messages, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                # lateral move — rejected (pattern count doesn't shrink)
+                return (
+                    "[PATCH: joiner.py]\n"
+                    "@@ -3,1 +3,1 @@\n"
+                    "-    lines.append(f\"{item}\")\n"
+                    "+    lines.extend([f\"{item}\"])\n"
+                )
+            # proper comprehension fix — accepted
+            return (
+                "[PATCH: joiner.py]\n"
+                "@@ -2,3 +2,1 @@\n"
+                "-    lines = []\n"
+                "-    for item in items:\n"
+                "-        lines.append(f\"{item}\")\n"
+                "+    lines = [f\"{item}\" for item in items]\n"
+            )
+
+        agent = SimpleNamespace(
+            workspace=str(tmp_path),
+            llm=SimpleNamespace(chat=chat),
+        )
+        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        out = capsys.readouterr().out
+        assert ok is True
+        assert calls == 2
+        assert "Fixed line" in out
+        assert "Applied: joiner.py" in out
+        final = target.read_text(encoding="utf-8")
+        assert "for item in items:" not in final
+        assert ".append(" not in final
+        assert "for item in items]" in final
 
 
 class TestChangedImports:
@@ -1232,8 +1307,7 @@ class TestChangedImports:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert calls == 2
-        assert "changed the import set" in out
+        assert calls == 0  # mechanical fix handled unused_import
         assert "Applied: sample.py" in out
         final = target.read_text(encoding="utf-8")
         assert "from .helpers" not in final
@@ -1284,11 +1358,11 @@ class TestChangedImports:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert "changed the import set" not in out
         assert "Applied: sample.py" in out
         final = target.read_text(encoding="utf-8")
-        assert "except OSError:" in final
-        assert "logging" not in final
+        assert "import os" not in final
+        assert "Warning: silenced exception" in final
+        assert "pass" not in final
 
     def test_unchanged_imports_accepted(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1424,11 +1498,10 @@ class TestPerFindingPatches:
         parts.append("        'key',\n")
         parts.append("    )\n\n")
         parts.append("def read_all(path):\n")
-        parts.append("    try:\n")
-        parts.append("        return open(path).read()\n")
-        parts.append("    except Exception:\n")
-        parts.append("        pass\n")
-        parts.append("    return None\n")
+        parts.append("    s = ''\n")
+        parts.append("    for i in range(10):\n")
+        parts.append("        s += \"x\"\n")
+        parts.append("    return s\n")
         return "".join(parts)
 
     def _except_fix_hunk(self, basename: str, numbered: list[tuple[int, str]]) -> str:
@@ -1486,7 +1559,7 @@ class TestPerFindingPatches:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert calls == 120, "one LLM call per finding"
+        assert calls == 60, "one LLM call per non-mechanical finding"
         assert "split into" not in out and "Merged" not in out
         assert "Applied: big.py" in out
         final = target.read_text(encoding="utf-8")
@@ -1656,13 +1729,13 @@ class TestPerFindingPatches:
 
         file_text = textwrap.dedent("""\
             import os
-
+            import re
 
             def read(path):
-                try:
-                    return open(path).read()
-                except Exception:
-                    pass
+                s = ""
+                for i in range(10):
+                    s += "x"
+                return s
         """)
         target = tmp_path / "baseish.py"
         target.write_text(file_text, encoding="utf-8")
@@ -1675,7 +1748,7 @@ class TestPerFindingPatches:
             numbered = _numbered_context(user)
             if calls == 1:
                 idx = next(i for i, (num, text) in enumerate(numbered)
-                           if text.strip() == "try:")
+                           if text.strip() == "for i in range(10):")
                 num = numbered[idx][0]
                 return (
                     "[PATCH: baseish.py]\n"
@@ -1683,7 +1756,7 @@ class TestPerFindingPatches:
                     f"-{numbered[idx][1]}\n"
                     f"+{numbered[idx][1]}  \n"
                 )
-            return self._except_fix_hunk("baseish.py", numbered)
+            return _fix_hunk_for_pattern("baseish.py", user)
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
@@ -1695,7 +1768,7 @@ class TestPerFindingPatches:
         assert "whitespace" in out
         assert "Applied: baseish.py" in out
         final = target.read_text(encoding="utf-8")
-        assert "except OSError:" in final
+        assert 's += "' not in final
 
     def test_giant_statement_file_patched_with_tiny_budget(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1718,7 +1791,7 @@ class TestPerFindingPatches:
             system_prompt = messages[0]["content"]
             max_tokens_seen = max(max_tokens_seen, kwargs.get("max_tokens", 0))
             numbered = _numbered_context(messages[-1]["content"])
-            return self._except_fix_hunk("huge.py", numbered)
+            return _fix_hunk_for_pattern("huge.py", messages[-1]["content"])
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
@@ -1731,7 +1804,7 @@ class TestPerFindingPatches:
         assert "[FILE: huge.py]" not in system_prompt
         assert "Applied: huge.py" in out
         final = target.read_text(encoding="utf-8")
-        assert "except OSError:" in final
+        assert 's += "' not in final
         compile(final, "<huge>", "exec")
 
     def test_missing_hunk_response_retried_with_feedback(
@@ -1761,7 +1834,7 @@ class TestPerFindingPatches:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert calls == 4, "prose retry + per-finding attempts"
+        assert calls == 2
         assert "no [PATCH: huge.py] block" in out
         assert "Applied: huge.py" in out
 
