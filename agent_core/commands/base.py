@@ -43,7 +43,7 @@ def _wrap_line(text: str, width: int) -> list[str]:
         if not cur:
             cur = w
         elif len(cur) + 1 + len(w) <= width:
-            cur += " " + w
+            cur = " ".join([cur, w])
         else:
             lines.append(cur)
             cur = w

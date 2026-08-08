@@ -96,7 +96,11 @@ REGION_CONTEXT_RESERVE = 900    # tokens kept between the prompt and the model w
 # ~18k-token single statement (e.g. a 1350-line method) as a [FILE:] region
 # overflows the window and burns server time for no gain; hunks are small.
 REGION_PATCH_MODE_TOKENS = 6000
-REGION_PATCH_MAX_TOKENS = 4096   # hunks only — tiny output budget vs 32k whole-region re-emit
+REGION_PATCH_MAX_TOKENS = 8192   # hunks only — output budget for one targeted patch.
+                              # Raised from 4096 so a reasoning model that briefly
+                              # thinks before emitting the hunk still has room for
+                              # the patch to fit without truncation (was the cause
+                              # of "No valid hunks in patch" retries on Laguna).
 
 # @@ -start,count +start,count @@ (lenient:  +start part may be missing)
 _PATCH_HUNK_RE = re.compile(
@@ -556,6 +560,134 @@ def _report_failures(failures: dict[str, list[dict]]) -> None:
                 continue
             seen.add(key)
             print(f"    line {i['line']:>4}: [{i['pattern']}] {i['suggestion']}")
+
+
+
+CONTEXT_MAX_LINES = 120
+FINDING_MAX_ATTEMPTS = 3
+
+
+def _finding_context(source: str, line_no: int) -> str | None:
+    """Numbered window (absolute file line numbers) around *line_no*.
+
+    Uses the innermost enclosing AST statement, widened to its enclosing
+    function/method/class when that keeps the window useful, and caps the
+    window at ``CONTEXT_MAX_LINES`` lines.  Falls back to a plain +/- window
+    when the source does not parse.  Returns None for out-of-range lines.
+    """
+    lines = source.split("\n")
+    if line_no < 1 or line_no > len(lines):
+        return None
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        tree = None
+    start = end = None
+    if tree is not None:
+        best = None
+        best_ln = best_end = None
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.stmt):
+                continue
+            ln = getattr(node, "lineno", None)
+            en = getattr(node, "end_lineno", None)
+            if ln is None or en is None or not (ln <= line_no <= en):
+                continue
+            if best is None or (en - ln) < (best_end - best_ln):
+                best, best_ln, best_end = node, ln, en
+        if best is not None:
+            scope = best
+            # Widen to the smallest enclosing function/method/class so the LLM
+            # sees enough surrounding code (init, setup, teardown) to produce a
+            # correct multi-line fix.  The innermost statement (e.g. a single
+            # AugAssign) is often too narrow.
+            fns = [
+                n for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and n.lineno <= line_no <= n.end_lineno
+            ]
+            if fns:
+                smallest = min(fns, key=lambda n: n.end_lineno - n.lineno)
+                if (smallest.end_lineno - smallest.lineno
+                        >= scope.end_lineno - scope.lineno):
+                    scope = smallest
+            start, end = scope.lineno, scope.end_lineno
+            if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and scope.decorator_list:
+                first = scope.decorator_list[0]
+                if getattr(first, "lineno", None) is not None and first.lineno < start:
+                    start = first.lineno
+    if start is None:
+        start, end = max(1, line_no - 10), min(len(lines), line_no + 20)
+    if end - start + 1 > CONTEXT_MAX_LINES:
+        start = max(1, line_no - CONTEXT_MAX_LINES // 2)
+        end = min(len(lines), start + CONTEXT_MAX_LINES - 1)
+        start = max(1, end - CONTEXT_MAX_LINES + 1)
+    out = []
+    for i in range(start, end + 1):
+        out.append(f"{i:>6} | {lines[i - 1]}")
+    return "\n".join(out)
+
+
+def _cosmetic_only(old_lines: list[str], new_lines: list[str]) -> bool:
+    """True when the only difference between the two line lists is
+    whitespace (indentation / trailing blanks / blank-line formatting) —
+    LLMs routinely "fix" regions by stripping whitespace while the actual
+    finding line stands untouched."""
+    if old_lines == new_lines:
+        return True
+    import difflib
+    matcher = difflib.SequenceMatcher(None, old_lines, new_lines)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if [l.strip() for l in old_lines[i1:i2]] != [l.strip() for l in new_lines[j1:j2]]:
+            return False
+    return True
+
+
+def _patch_system_prompt(basename: str) -> str:
+    """System prompt for the per-finding patch loop: hunk-only output with
+    absolute file line numbers, minimal edits, honest [UNRESOLVED:]."""
+    return (
+        "You are an expert Python optimizer. Fix the finding in the request.\n\n"
+        "Output EXACTLY one block in this format:\n"
+        f"[PATCH: {basename}]\n"
+        "@@ -10,3 +10,3 @@\n"
+        "    unchanged line\n"
+        "-    old line\n"
+        "+    new line\n\n"
+        "Rules:\n"
+        "- @@ line numbers are ABSOLUTE, 1-based positions in the whole file — "
+        "the number after '-' is the line number of the FIRST line in your hunk "
+        "body (the first unchanged/changed line you emit), matching the numbers "
+        "printed left of '|' in the numbered context I provide.\n"
+        "- In the hunk BODY, every line is the RAW source line (indentation only) "
+        "— NOT prefixed with '46 |'. The '46 |' numbers exist only in the numbered "
+        "context you are reading for reference.\n"
+        "- After the '-' / '+' marker put the ENTIRE line text directly (the "
+        "line's own indentation included, no extra padding space).\n"
+        "- Context lines MUST be copied VERBATIM from the numbered context.\n"
+        "- The '-' line (old code) is REMOVED and the '+' line REPLACES it — "
+        "do NOT keep the old buggy line as context and add a new line next to it. "
+        "Keep hunk line counts neutral: as many removed as changed.\n"
+        "- Touch ONLY the code required by the finding. Do NOT reformat "
+        "whitespace, docstrings, or unrelated lines. Do NOT rename or move "
+        "existing variables.\n"
+        "- Never add or remove import statements.\n"
+        "- Never re-emit whole functions or files; never use [FILE:] blocks.\n"
+        "- If the finding cannot be fixed without breaking behavior, reply "
+        f"with exactly: [UNRESOLVED: {basename}] <one-sentence reason>\n\n"
+        "Example — for a string-concatenation-in-loop finding, the '-' line is "
+        "the buggy `cur += \" \" + w` and must be REMOVED; the '+' line replaces "
+        "it (the leading @@ number is the first body line, line 45):\n"
+        "[PATCH: base.py]\n"
+        "@@ -45,3 +45,3 @@\n"
+        "        elif len(cur) + 1 + len(w) <= width:\n"
+        "-            cur += \" \" + w\n"
+        "+            cur = \" \".join([cur, w])\n"
+        "        else:\n"
+    )
+
 
 
 def _format_failures_for_prompt(failures: dict[str, list[dict]]) -> str:
@@ -1068,397 +1200,179 @@ class OptimizeCommand(Command):
             print(f"  {batch_str}: {file_list}")
             print(f"    Estimated tokens: {batch['total_tokens']}")
 
-            # Divide & conquer: files above the input budget are split into
-            # contiguous line regions; each region gets its own LLM call so a
-            # single response never has to re-emit a huge file (which burned
-            # 15k reasoning tokens and truncated on an 834-line file).
-            units: list[dict] = []
+            # One targeted LLM call per finding: the model only ever sees the
+            # enclosing block (absolute numbered lines) and must answer with
+            # hunks, so untargeted code cannot drift and no-op "rewrites" are
+            # impossible by construction.
             for fpath in batch["files"]:
-                content = batch["contents"][fpath]
-                findings = batch["findings"][fpath]
-                regions = split_into_regions(content)
-                if len(regions) > 1:
-                    print(f"    {os.path.basename(fpath)}: split into "
-                          f"{len(regions)} region(s) — divide & conquer")
-                    for start, end in regions:
-                        region_code = "\n".join(content.split("\n")[start:end])
-                        units.append({
-                            "file": fpath,
-                            "basename": os.path.basename(fpath),
-                            "code": region_code,
-                            "findings": [
-                                {**f, "line": f["line"] - start}
-                                for f in findings if start + 1 <= f["line"] <= end
-                            ],
-                            "is_region": True,
-                            "start": start,
-                            "end": end,
-                            # One statement bigger than the region budget stays
-                            # in its own oversized region (we never split a
-                            # statement); re-emitting it whole ~1:1 into the
-                            # context window overflows the model, so those go
-                            # patch-mode (hunk output only).
-                            "patch_mode": estimate_tokens(region_code)
-                                            > REGION_PATCH_MODE_TOKENS,
-                        })
-                else:
-                    units.append({
-                        "file": fpath,
-                        "basename": os.path.basename(fpath),
-                        "code": content,
-                        "findings": findings,
-                        "is_region": False,
-                        "start": 0,
-                        "end": len(content.split("\n")),
-                        # Same oversized-statement case, whole file: a single
-                        # giant statement (or few) means re-emission is 1:1 with
-                        # the input — patch with hunks instead of overflowing.
-                        "patch_mode": estimate_tokens(content)
-                                        > REGION_PATCH_MODE_TOKENS,
-                    })
+                basename = os.path.basename(fpath)
+                if not batch["findings"][fpath]:
+                    continue
+                original = batch["contents"][fpath]
+                print(f"  {basename}: {len(batch['findings'][fpath])} finding(s) — targeted patches")
 
-            region_fixes: dict[str, dict[int, tuple[int, int, str]]] = {}
-
-            for unit in units:
-                basename = unit["basename"]
-                if unit["is_region"]:
-                    print(f"    Region of {basename} (lines {unit['start'] + 1}-"
-                          f"{unit['end']}, ~{estimate_tokens(unit['code'])} tokens)")
-                feedback = ""
-                unit_retries = 3 if unit.get("patch_mode") else max_retries
-                for attempt in range(unit_retries + 1):
-                    if attempt > 0:
-                        print(f"    Retry {attempt}/{unit_retries}...")
-                    try:
-                        unit_batch = {
-                            "files": [unit["file"]],
-                            "contents": {unit["file"]: unit["code"]},
-                            "findings": {unit["file"]: unit["findings"]},
-                        }
-                        context = format_batch_context(unit_batch)
-                        static_findings = "\n".join(
-                            f"- {basename}:{f['line']} [{f['pattern']}] {f['suggestion']}"
-                            for f in unit["findings"]
-                        ) if unit["findings"] else "- (none)"
+                work_lines = original.split("\n")
+                pending = list(batch["findings"][fpath])
+                while pending:
+                    finding = pending.pop(0)
+                    line, pattern = finding["line"], finding["pattern"]
+                    context = _finding_context("\n".join(work_lines), line)
+                    if context is None:
+                        print(f"    line {line} [{pattern}] — context unavailable (line out of range), skipped")
+                        continue
+                    feedback = ""
+                    resolved = False
+                    for attempt in range(FINDING_MAX_ATTEMPTS):
+                        if attempt > 0:
+                            print(f"    Retry {attempt}/{FINDING_MAX_ATTEMPTS - 1} for line {line}...")
                         user_content = (
-                            f"## Static findings:\n{static_findings}\n\n"
-                            f"## Code to optimize:\n\n{context}"
+                            f"## Finding to resolve\n"
+                            f"{basename}:{line} [{pattern}] {finding['suggestion']}\n\n"
+                            f"## Numbered context (numbers ARE the absolute file line numbers)\n"
+                            f"```\n{context}\n```\n\n"
+                            "Output exactly one [PATCH: " + basename + "] block per the system rules."
                         )
-                        if unit["is_region"]:
-                            if unit.get("patch_mode"):
-                                user_content += (
-                                    f"\n\nThis is a REGION of a larger file (original lines "
-                                    f"{unit['start'] + 1}-{unit['end']}). Finding line numbers "
-                                    "are relative to this region's first line. The region is "
-                                    "TOO LARGE to re-emit as a whole — that would overflow the "
-                                    "model's context window. Instead, output ONLY small unified "
-                                    "diff hunks:\n"
-                                    f"[PATCH: {basename}]\n"
-                                    "@@ -10,3 +10,3 @@\n"
-                                    " unchanged context line\n"
-                                    "- removed line\n"
-                                    "+ added line\n\n"
-                                    "Line numbers in @@ headers are relative to this region's "
-                                    "first line (line 1 = first line of the given region). "
-                                    "Touch ONLY the finding lines; keep 1-2 unchanged context "
-                                    "lines so hunks apply reliably. For EACH finding, one hunk. "
-                                    "Never output [FILE:] blocks."
-                                )
-                            else:
-                                user_content += (
-                                    f"\n\nThis is a REGION of a larger file (original lines "
-                                    f"{unit['start'] + 1}-{unit['end']}). Finding line numbers "
-                                    "are relative to this region's first line. Output the fixed "
-                                    f"region in [FILE: {basename}] — do not include other parts "
-                                    "of the file. Preserve the original indentation of the "
-                                    "region's first line exactly (it may start inside a class "
-                                    "body); the region will be spliced back into the file "
-                                    "verbatim."
-                                )
                         if feedback:
                             user_content = feedback + "\n\n" + user_content
-                        if unit.get("patch_mode"):
-                            system_content = (
-                                "You are an expert Python optimizer. Apply the listed findings.\n\n"
-                                "Output ONLY unified-diff hunks in this exact format:\n"
-                                f"[PATCH: {basename}]\n"
-                                "@@ -start,count +start,count @@\n"
-                                " unchanged context line\n"
-                                "- removed line\n"
-                                "+ added line\n\n"
-                                "Rules:\n"
-                                f"{OPTIMIZE_RULES}"
+                        try:
+                            llm_response = await agent.llm.chat(
+                                [
+                                    {"role": "system", "content": _patch_system_prompt(basename)},
+                                    {"role": "user", "content": user_content},
+                                ],
+                                max_tokens=min(
+                                    REGION_PATCH_MAX_TOKENS,
+                                    _request_max_tokens(
+                                        estimate_tokens(user_content) + 300, model_ctx
+                                    ),
+                                ),
+                                disable_thinking=True,
                             )
-                        else:
-                            system_content = (
-                                "You are an expert Python optimizer. Apply ALL optimizations to each file.\n\n"
-                                "For EACH file, output:\n"
-                                "[FILE: filename.py]\n```python\n# complete fixed code\n```\n\n"
-                                "Rules:\n"
-                                f"{OPTIMIZE_RULES}"
-                            )
-                        llm_response = await agent.llm.chat(
-                            [
-                                {"role": "system", "content": system_content},
-                                {"role": "user", "content": user_content},
-                            ],
-                            max_tokens=_request_max_tokens(
-                                estimate_tokens(user_content) + 300, model_ctx
-                            ) if not unit.get("patch_mode")
-                            else min(REGION_PATCH_MAX_TOKENS, _request_max_tokens(
-                                estimate_tokens(user_content) + 300, model_ctx
-                            )),
-                            disable_thinking=True,
-                        )
-
+                        except Exception as exc:
+                            print(f"    Error: {exc}")
+                            resolved = False
+                            break
                         if llm_response.startswith("[Error") or llm_response.startswith("[LM Studio"):
                             print(f"    LLM error: {llm_response[:100]}")
-                            if attempt < unit_retries:
-                                continue
+                            resolved = False
                             break
-
-                        if unit["is_region"]:
-                            # Regions cannot be fully validated in isolation
-                            # (imports may be used in other regions) — syntax
-                            # gate only; the merged file is validated after all
-                            # regions return.  The returned region must keep
-                            # the original slice's leading indentation so the
-                            # splice does not corrupt indented class members.
-                            fixes, failures = parse_llm_fixes(
-                                llm_response, [basename], validate=False,
-                                preserve_indent=True,
-                            )
-                        else:
-                            fixes, failures = parse_llm_fixes(
-                                llm_response, [basename]
-                            )
-
-                        # Patch-mode unit (an oversized region — possibly the
-                        # whole file when one giant statement blocks splitting):
-                        # the model was asked for [PATCH:] hunks only.  Apply
-                        # them on top of the unit's code (hunk line numbers are
-                        # 1-based relative to the unit's first line), then let
-                        # the gate below validate the result.
-                        if (unit.get("patch_mode")
-                                and basename not in fixes):
-                            patch_block = re.search(
-                                rf"\[PATCH:\s*{re.escape(basename)}](.*?)(?=\[FILE:|\Z)",
-                                llm_response, re.DOTALL,
-                            )
-                            if patch_block:
-                                raw_patch = patch_block.group(1)
-                                fenced = _strip_markdown_fence(raw_patch)
-                                ok, patched = apply_patch(
-                                    fenced, unit["code"].split("\n")
-                                )
-                                if (not ok and unit.get("patch_mode")
-                                        and unit.get("is_region")
-                                        and unit.get("start", 0) > 0):
-                                    # Models often number hunks against the
-                                    # WHOLE file instead of the region slice —
-                                    # retry with starts shifted back onto the
-                                    # region before giving up.
-                                    ok, patched = apply_patch(
-                                        _shift_hunk_starts(
-                                            fenced, -unit["start"]
-                                        ),
-                                        unit["code"].split("\n"),
-                                    )
-                                if not ok:
-                                    # Anchored fallback: LLM hunks routinely
-                                    # carry wrong line numbers or lose their
-                                    # layout entirely (inline fused headers,
-                                    # fences).  Anchor by content instead —
-                                    # it only succeeds when the old lines
-                                    # exist verbatim in the unit.
-                                    ok, patched = apply_anchored_patch(
-                                        fenced, unit["code"].split("\n")
-                                    )
-                                if not ok:
-                                    preview = " ".join(raw_patch.split())[:200]
-                                    print(f"    Patch for unit did not apply: {patched}")
-                                    print(f"    Patch preview: {preview!r}")
-                                    if attempt < unit_retries:
-                                        feedback = (
-                                            f"Your previous patch could not be applied: {patched}. "
-                                            "Regenerate with [PATCH:] hunks whose '-' lines match "
-                                            "the file's lines verbatim (line numbers starting at 1)."
-                                        )
-                                        continue
-                                    failures = {basename: [{
-                                        "line": 1, "pattern": "patch_apply_failed",
-                                        "suggestion": patched,
-                                    }]}
-                                else:
-                                    fixes = {basename: patched}
-                            else:
-                                if attempt < unit_retries:
-                                    feedback = (
-                                        f"[PATCH: {basename}] hunks were expected (the code is too "
-                                        "large to re-emit in [FILE:] format). Regenerate with hunks only."
-                                    )
-                                    continue
-                                failures = {basename: [{
-                                    "line": 1, "pattern": "patch_format_missing",
-                                    "suggestion": "Model returned no hunks for a patch-mode unit.",
-                                }]}
-
-                        if basename in fixes:
-                            if unit["is_region"] or unit.get("patch_mode"):
-                                # Syntax-only gate for region slices and hunk
-                                # rewrites (full context may live elsewhere);
-                                # indentation of the first line must be kept so
-                                # the splice does not corrupt class members.
-                                slice_indent = ""
-                                for line in unit["code"].split("\n"):
-                                    if line.strip():
-                                        slice_indent = _leading_whitespace(line)
-                                        break
-                                issues = _region_syntax_issues(
-                                    fixes[basename], slice_indent
-                                )
-                                if issues:
-                                    failures.setdefault(basename, []).extend(issues)
-                                    del fixes[basename]
-                                if (not unit["is_region"]
-                                        and unit.get("patch_mode")
-                                        and basename in fixes):
-                                    # A whole-file hunk rewrite (single
-                                    # un-splittable statement) may still smuggle
-                                    # new imports in — same gate as [FILE].
-                                    added = _blocked_added_imports(
-                                        fixes[basename],
-                                        batch["contents"][unit["file"]],
-                                    )
-                                    if added:
-                                        del fixes[basename]
-                                        failures.setdefault(basename, []).append({
-                                            "line": 1,
-                                            "pattern": "changed_imports",
-                                            "suggestion": (
-                                                "Patch added import statement(s) not present "
-                                                "in the original: "
-                                                f"{', '.join(sorted(added))[:140]}. "
-                                                "Restore the original import lines."
-                                            ),
-                                        })
-                            else:
-                                # Reject rewrites whose import set is not a
-                                # subset of the original's: compile() cannot
-                                # catch an LLM relocating or adding imports to
-                                # names a module never exported.  Stdlib
-                                # additions (e.g. logging to fix a
-                                # silent_except) are safe and allowed.
-                                orig = batch["contents"][unit["file"]]
-                                added = _blocked_added_imports(
-                                    fixes[basename], orig
-                                )
-                                if added:
-                                    del fixes[basename]
-                                    failures.setdefault(basename, []).append({
-                                        "line": 1,
-                                        "pattern": "changed_imports",
-                                        "suggestion": (
-                                            "Rewrite added import statement(s) not present "
-                                            "in the original: "
-                                            f"{', '.join(sorted(added))[:140]}. "
-                                            "Restore the original import lines."
-                                        ),
-                                    })
-                                    print(f"    Rejected 1 fix(es) for changed "
-                                          f"imports: {basename}")
-                                    for issue in failures[basename]:
-                                        if issue["pattern"] == "changed_imports":
-                                            print(f"    Skipping {basename} — "
-                                                  f"[changed_imports] {issue['suggestion']}")
-
-                        if unit["is_region"]:
-                            if basename in fixes:
-                                region_fixes.setdefault(basename, {})[unit["start"]] = (
-                                    unit["start"], unit["end"], fixes[basename]
-                                )
-                                print(f"    Got fix for region (lines {unit['start'] + 1}-"
-                                      f"{unit['end']})")
-                                break
-                        else:
-                            if fixes:
-                                all_fixes.update(fixes)
-                                print(f"    Got fixes for {len(fixes)} file(s)")
-                                break
-
-                        if not fixes and not failures:
-                            # Model returned no usable code (e.g. emptied into
-                            # reasoning).  Do not silently drop the unit.
-                            print(f"    No code blocks parsed from LLM response "
-                                  f"({len(llm_response)} chars) — retrying...")
-                            if attempt < max_retries:
-                                if unit.get("patch_mode"):
-                                    feedback = (
-                                        "Your previous response contained no usable hunks. "
-                                        "Regenerate: output ONLY\n"
-                                        f"[PATCH: {basename}]\n"
-                                        "@@ -start,count +start,count @@\n"
-                                        "context line\n- old line\n+ new line\n"
-                                        "Do not return prose or [FILE:] blocks."
-                                    )
-                                else:
-                                    feedback = (
-                                        "Your previous response contained no usable code blocks. "
-                                        "Regenerate: for EACH file output exactly:\n"
-                                        "[FILE: name.py]\n```python\n<complete fixed code>\n```\n"
-                                        "Do not return reasoning or prose alone."
-                                    )
-                                continue
-                            break
-
-                        if failures and attempt < max_retries:
-                            feedback = _format_failures_for_prompt(failures)
-                            continue
-                        break
-
-                    except Exception as e:
-                        print(f"    Error: {e}")
-                        if attempt < max_retries:
-                            continue
-                        break
-
-            # Assemble region-split files and validate the merged result.
-            for basename, regions in region_fixes.items():
-                fpath = next(f for f in batch["files"] if os.path.basename(f) == basename)
-                original = batch["contents"][fpath]
-                merged = _merge_regions(original, regions)
-                # Gate on *no regression* relative to the original: a merge that
-                # reduces pre-existing findings (e.g. 6 silent_except -> 1) is an
-                # improvement and is applied, even with residuals left.  Only a
-                # brand-new pattern type or growth above the original's count
-                # triggers repair / skip.
-                issues = _blocked_regressions(original, merged)
-                if issues:
-                    # Revert the regressing lines deterministically first;
-                    # only unresolvable residuals go to the LLM repair pass.
-                    merged, issues = _surgically_revert_regressions(original, merged)
-                    if not issues:
-                        print(f"  Merged rewrite of {basename} — regressions fixed surgically, applying")
-                    else:
-                        print(f"  Merged rewrite of {basename} regresses "
-                              f"{len(issues)} finding(s) vs the original — running repair passes...")
-                        repaired, issues = await _repair_merged_file(
-                            agent, fpath, original, merged, issues, max_retries,
-                            context_tokens=model_ctx,
+                        unresolved = re.search(
+                            r"\[UNRESOLVED:\s*[^\]]+\]\s*(.*)", llm_response, re.DOTALL
                         )
-                        if repaired is None:
-                            print(f"  Skipping {basename} — merged rewrite regresses the original:")
-                            _report_failures({basename: issues})
+                        if unresolved:
+                            print(f"    Unresolved line {line} [{pattern}]: "
+                                  f"{unresolved.group(1).strip() or 'model reported un-resolvable'}")
+                            resolved = False
+                            break
+                        patch_block = re.search(
+                            rf"\[PATCH:\s*{re.escape(basename)}\s*\](.*?)(?=\[PATCH:|\Z)",
+                            llm_response, re.DOTALL,
+                        )
+                        raw = patch_block.group(1) if patch_block else ""
+                        raw = _strip_markdown_fence(raw)
+                        if not raw.strip():
+                            feedback = (
+                                "Your response contained no [PATCH: " + basename +
+                                "] block. Output ONLY the hunk block; no prose, "
+                                "no [FILE:] blocks."
+                            )
+                            print(f"    Feedback: {feedback[:240]}")
                             continue
-                        merged = repaired
-                added = _blocked_added_imports(merged, original)
-                if added:
-                    print(f"  Skipping {basename} — merged rewrite added import(s): "
-                          f"{', '.join(sorted(added))[:140]}")
-                    continue
-                all_fixes[basename] = merged
-                print(f"  Merged {len(regions)} region(s) -> {basename}")
+                        ok, patched = apply_patch(raw, work_lines)
+                        if not ok:
+                            ok, patched = apply_anchored_patch(raw, work_lines)
+                        if not ok:
+                            # Debug: show the model output that couldn't be parsed.
+                            if attempt == 0:
+                                print(f"    Raw model output: {raw[:300]}")
+                            snippet = "\n".join(
+                                f"  {i + 1:4d} | {l}"
+                                for i, l in enumerate(work_lines[max(0, line - 4):line + 3], start=max(0, line - 4))
+                            )
+                            feedback = (
+                                f"Your patch could not be applied: {patched[:200]}\n"
+                                f"Here is the actual numbered context:\n{snippet}\n"
+                                "Copy these EXACTLY for context/'-' lines. Use correct @@ numbers."
+                            )
+                            if attempt < FINDING_MAX_ATTEMPTS - 1:
+                                print(f"    Feedback: {feedback[:240]}")
+                                continue
+                            resolved = False
+                            break
+                        new_lines = patched.split("\n")
+                        if _cosmetic_only(work_lines, new_lines):
+                            feedback = (
+                                f"Your patch only changed indentation/whitespace (or nothing). "
+                                f"The finding at line {line} [{pattern}] must actually change. "
+                                "Output hunks that modify the code the finding targets."
+                            )
+                            if attempt < FINDING_MAX_ATTEMPTS - 1:
+                                print(f"    Feedback: {feedback[:240]}")
+                                continue
+                            resolved = False
+                            break
+                        try:
+                            compile(patched, "<optimize:patched>", "exec")
+                        except SyntaxError as exc:
+                            feedback = (
+                                f"Your patched file does not compile: {exc.msg} (line {exc.lineno}). "
+                                "Regenerate valid Python."
+                            )
+                            if attempt < FINDING_MAX_ATTEMPTS - 1:
+                                print(f"    Feedback: {feedback[:240]}")
+                                continue
+                            resolved = False
+                            break
+                        added = _blocked_added_imports(patched, "\n".join(work_lines))
+                        if added:
+                            feedback = (
+                                f"Your patch changed the import set: {', '.join(sorted(added))[:160]}. "
+                                "NEVER add or remove import statements — keep the original imports untouched."
+                            )
+                            if attempt < FINDING_MAX_ATTEMPTS - 1:
+                                print(f"    Feedback: {feedback[:240]}")
+                                continue
+                            resolved = False
+                            break
+                        # Acceptance: the pattern's footprint must shrink.  Count
+                        # occurrences before/after; a finding is resolved only when
+                        # the patched file reports fewer instances of the pattern.
+                        before_cnt = sum(
+                            1 for f in static_analyze("\n".join(work_lines)) if f["pattern"] == pattern
+                        )
+                        after_cnt = sum(
+                            1 for f in static_analyze(patched) if f["pattern"] == pattern
+                        )
+                        if after_cnt >= before_cnt:
+                            feedback = (
+                                f"After your patch the file still contains [{pattern}] "
+                                f"({after_cnt} occurrence(s), {before_cnt} before). The patch must "
+                                "actually remove the finding - change exactly the code it targets."
+                            )
+                            if attempt < FINDING_MAX_ATTEMPTS - 1:
+                                print(f"    Feedback: {feedback[:240]}")
+                                continue
+                            resolved = False
+                            break
+                        new_lines = patched.split("\n")
+                        line_delta = patched.count("\n") - len(work_lines)
+                        work_lines = new_lines
+                        if line_delta:
+                            for pf in pending:
+                                if pf["line"] > line:
+                                    pf["line"] += line_delta
+                        resolved = True
+                        print(f"    Fixed line {line} [{pattern}] (hunk applied, "
+                              f"{before_cnt} -> {after_cnt} remaining)")
+                        break
+                    if resolved:
+                        continue
+                    print(f"  Unresolved: {basename}:{line} [{pattern}]")
 
+                new_full = "\n".join(work_lines)
+                if new_full != original:
+                    all_fixes[basename] = new_full
+                    print(f"  {basename}: patched ({len(original)} -> {len(new_full)} bytes)")
         if not all_fixes:
             print("\n  No fixes were generated.")
             return True

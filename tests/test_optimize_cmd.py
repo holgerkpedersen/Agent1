@@ -22,6 +22,89 @@ from agent_core.commands.optimize_cmd import (
 from agent_core.patterns import analyze as static_analyze, detect_list_append_join
 
 
+def _numbered_context(user_content: str) -> list[tuple[int, str]]:
+    """Parse the 'N | line' numbered-context block from a per-finding user
+    prompt into (absolute_line_number, text) pairs — lets a fake LLM build
+    hunks from the exact lines the optimizer showed it."""
+    block = re.search(r"```\n(.*?)\n```", user_content, re.DOTALL)
+    if not block:
+        return []
+    out: list[tuple[int, str]] = []
+    for line in block.group(1).split("\n"):
+        m = re.match(r"^\s*(\d+)\s*\|\s?(.*)$", line)
+        if m:
+            out.append((int(m.group(1)), m.group(2)))
+    return out
+
+
+def _finding_pattern(user_content: str) -> str:
+    """Pattern name from a per-finding prompt's 'Finding to resolve' line."""
+    m = re.search(r"Finding to resolve\s*\n\S+:\d+ \[([^\]]+)\]", user_content)
+    return m.group(1) if m else ""
+
+
+def _fix_hunk_for_pattern(basename: str, user_content: str) -> str:
+    """The canonical one-hunk fix for whichever finding the prompt targets.
+
+    * silent_except: ``except Exception`` -> ``except OSError``
+    * missing_context_manager: ``return open(X).read()`` -> with-block (keeps
+      the finding line's indentation)
+    """
+    numbered = _numbered_context(user_content)
+    pat = _finding_pattern(user_content)
+    if pat == "silent_except":
+        idx = next(i for i, (num, text) in enumerate(numbered)
+                   if text.strip() == "except Exception:")
+        start = numbered[idx - 1][0] if idx > 0 else numbered[idx][0]
+        ctx = numbered[idx - 1][1] if idx > 0 else None
+        body = ""
+        if ctx is not None:
+            body += f" {ctx}\n"
+        body += (f"-{numbered[idx][1]}\n"
+                 f"+{numbered[idx][1].replace('Exception', 'OSError')}\n")
+        pass_next = idx + 1 < len(numbered) and numbered[idx + 1][1].strip() == "pass"
+        if idx + 1 < len(numbered) and not pass_next:
+            body += f" {numbered[idx + 1][1]}\n"
+        out_hunks = f"[PATCH: {basename}]\n@@ -{start},3 +{start},3 @@\n{body}"
+        if pass_next:
+            pass_line = numbered[idx + 1][1]
+            indent = pass_line[: len(pass_line) - len(pass_line.lstrip())]
+            pass_num = numbered[idx + 1][0]
+            out_hunks += (
+                f"@@ -{pass_num},1 +{pass_num},1 @@\n"
+                f"-{pass_line}\n"
+                f"+{indent}return None\n"
+            )
+        return out_hunks
+    if pat == "missing_context_manager":
+        idx = next(i for i, (num, text) in enumerate(numbered)
+                   if text.strip().startswith("return open("))
+        line = numbered[idx][1]
+        indent = line[: len(line) - len(line.lstrip())]
+        expr = line.strip()[len("return "):].removesuffix(".read()")
+        num = numbered[idx][0]
+        return (
+            f"[PATCH: {basename}]\n"
+            f"@@ -{num},1 +{num},2 @@\n"
+            f"-{line}\n"
+            f"+{indent}with {expr} as f:\n"
+            f"+{indent}    return f.read()\n"
+        )
+    if pat == "unused_import":
+        num, text = numbered[0]
+        modname = text.replace("import ", "", 1).strip().split()[0].split(".")[0]
+        if " as " in text:
+            modname = text.strip().split(" as ")[1].strip()
+        indent = text[: len(text) - len(text.lstrip())]
+        return (
+            f"[PATCH: {basename}]\n"
+            f"@@ -{num},1 +{num},1 @@\n"
+            f"-{text}\n"
+            f"+{indent}{modname}  # keep referenced\n"
+        )
+    raise AssertionError(f"fake LLM does not know pattern {pat!r}")
+
+
 # ---------------------------------------------------------------------------
 # estimate_tokens
 # ---------------------------------------------------------------------------
@@ -987,20 +1070,20 @@ class TestShowFileDiff:
 class TestOptimizeEmptyOutput:
     def test_empty_llm_response_retries_then_gives_up(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A model that burns its budget in reasoning and returns an empty
-        message must NOT silently drop the batch: the pipeline retries with
-        feedback, then reports that no fixes were generated."""
+        message must NOT silently drop the finding: the per-finding loop
+        retries with feedback, then reports the finding as unresolved."""
         import asyncio
         from types import SimpleNamespace
         from agent_core.commands.optimize_cmd import OptimizeCommand
 
         target = tmp_path / "sloppy.py"
         target.write_text(textwrap.dedent("""\
-            import os
             def read(path):
                 try:
-                    return open(path).read()
+                    return int(path)
                 except Exception:
                     pass
+                return 0
         """), encoding="utf-8")
 
         calls = 0
@@ -1017,42 +1100,38 @@ class TestOptimizeEmptyOutput:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert calls == 3  # initial + 2 retries (max_retries=2)
-        assert "No code blocks parsed" in out
+        assert calls == 3  # initial + 2 retries (FINDING_MAX_ATTEMPTS=3)
+        assert "Unresolved" in out
         assert "No fixes were generated" in out
         assert "pass" in target.read_text(encoding="utf-8")  # file untouched
 
     def test_prose_only_response_retries_then_recovers(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """A response containing prose but no code blocks triggers the retry;
-        a subsequent valid response is accepted and applied."""
+        """A response containing no [PATCH:] block triggers the retry; a
+        subsequent hunk response is accepted and applied."""
         import asyncio
         from types import SimpleNamespace
         from agent_core.commands.optimize_cmd import OptimizeCommand
 
-        target = tmp_path / "sloppy.py"
-        target.write_text(textwrap.dedent("""\
-            import os
+        file_text = textwrap.dedent("""\
             def read(path):
                 try:
-                    return open(path).read()
+                    return int(path)
                 except Exception:
                     pass
-        """), encoding="utf-8")
+                return 0
+        """)
+        target = tmp_path / "sloppy.py"
+        target.write_text(file_text, encoding="utf-8")
 
-        responses = [
-            "I considered refactoring but here are no code blocks yet.",
-            "[FILE: sloppy.py]\n```python\n"
-            "def read(path):\n"
-            "    try:\n"
-            "        with open(path, encoding=\"utf-8\") as f:\n"
-            "            return f.read()\n"
-            "    except OSError:\n"
-            "        return \"\"\n"
-            "```\n",
-        ]
+        calls = 0
 
         async def chat(messages, **kwargs):
-            return responses.pop(0)
+            nonlocal calls
+            calls += 1
+            user = messages[-1]["content"]
+            if calls == 1:
+                return "I considered refactoring but here are no hunks yet."
+            return _fix_hunk_for_pattern("sloppy.py", user)
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
@@ -1061,9 +1140,13 @@ class TestOptimizeEmptyOutput:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert "No code blocks parsed" in out
-        assert "Got fixes for 1 file(s)" in out
+        assert calls == 2
+        assert "no [PATCH: sloppy.py] block" in out
+        assert "Fixed line" in out
         assert "Applied: sloppy.py" in out
+        final = target.read_text(encoding="utf-8")
+        assert "except OSError:" in final
+        assert "pass" not in final
 
 
 class TestChangedImports:
@@ -1108,41 +1191,39 @@ class TestChangedImports:
     def test_added_import_rejected_and_not_applied(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A rewrite that adds a non-stdlib import the original never had is
+        """A hunk that adds a non-stdlib import the original never had is
         rejected (changed_imports) and routed into the retry feedback, never
-        applied.  Stdlib additions (e.g. import json) are safe and allowed;
-        relative/project imports are the risk this gate blocks."""
+        applied.  Stdlib additions (e.g. import re) are safe and allowed."""
         import asyncio
         from types import SimpleNamespace
         from agent_core.commands.optimize_cmd import OptimizeCommand
 
-        target = tmp_path / "sample.py"
-        target.write_text(textwrap.dedent("""\
+        file_text = textwrap.dedent("""\
             import os
             import re
 
             def f():
                 return re.compile("x")
-        """), encoding="utf-8")
+        """)
+        target = tmp_path / "sample.py"
+        target.write_text(file_text, encoding="utf-8")
 
-        responses = [
-            "[FILE: sample.py]\n```python\n"
-            "import re\n"
-            "from .helpers import now\n"
-            "\n"
-            "def f():\n"
-            "    return now(re.compile(\"x\").pattern)\n"
-            "```\n",
-            "[FILE: sample.py]\n```python\n"
-            "import re\n"
-            "\n"
-            "def f():\n"
-            "    return re.compile(\"x\")\n"
-            "```\n",
-        ]
+        calls = 0
 
         async def chat(messages, **kwargs):
-            return responses.pop(0)
+            nonlocal calls
+            calls += 1
+            user = messages[-1]["content"]
+            if calls == 1:
+                return (
+                    "[PATCH: sample.py]\n"
+                    "@@ -1,3 +1,4 @@\n"
+                    " import os\n"
+                    " import re\n"
+                    "+from .helpers import now\n"
+                    "\n"
+                )
+            return _fix_hunk_for_pattern("sample.py", user)
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
@@ -1151,25 +1232,23 @@ class TestChangedImports:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert "Rejected 1 fix(es) for changed imports" in out
-        assert "changed_imports" in out
-        assert "Got fixes for 1 file(s)" in out  # retry succeeded
+        assert calls == 2
+        assert "changed the import set" in out
         assert "Applied: sample.py" in out
         final = target.read_text(encoding="utf-8")
         assert "from .helpers" not in final
-        assert "import os" not in final  # unused import removed on retry
+        assert "import os" not in final
 
     def test_added_stdlib_import_accepted(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A rewrite that adds a stdlib import (logging, to implement the
+        """A hunk that adds a stdlib import (logging, to implement the
         silent_except fix) passes the changed_imports gate and is applied."""
         import asyncio
         from types import SimpleNamespace
         from agent_core.commands.optimize_cmd import OptimizeCommand
 
-        target = tmp_path / "sample.py"
-        target.write_text(textwrap.dedent("""\
+        file_text = textwrap.dedent("""\
             import os
             import re
 
@@ -1179,21 +1258,24 @@ class TestChangedImports:
                 except Exception:
                     pass
                 return None
-        """), encoding="utf-8")
+        """)
+        target = tmp_path / "sample.py"
+        target.write_text(file_text, encoding="utf-8")
 
         async def chat(messages, **kwargs):
-            return "[FILE: sample.py]\n```python\n" \
-                "import logging\n" \
-                "import re\n" \
-                "\n" \
-                "def f():\n" \
-                "    try:\n" \
-                "        return re.compile(\"x\")\n" \
-                "    except Exception:\n" \
-                "        logging.error(\"compile failed\")\n" \
-                "        raise\n" \
-                "    return None\n" \
-                "```\n"
+            numbered = _numbered_context(messages[-1]["content"])
+            idx = next(i for i, (num, text) in enumerate(numbered)
+                       if text.strip() == "except Exception:")
+            return (
+                "[PATCH: sample.py]\n"
+                "@@ -5,1 +5,1 @@\n"
+                f" {numbered[idx - 1][1]}\n"
+                f"-{numbered[idx][1]}\n"
+                f"+{numbered[idx][1].replace('Exception', 'OSError')}\n"
+                "@@ -7,1 +7,1 @@\n"
+                f"-{numbered[idx + 1][1]}\n"
+                f"+{numbered[idx + 1][1].replace('pass', 'return None')}\n"
+            )
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
@@ -1202,11 +1284,11 @@ class TestChangedImports:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert "changed_imports" not in out
+        assert "changed the import set" not in out
         assert "Applied: sample.py" in out
         final = target.read_text(encoding="utf-8")
-        assert "import logging" in final
-        assert "logging.error" in final
+        assert "except OSError:" in final
+        assert "logging" not in final
 
     def test_unchanged_imports_accepted(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1216,21 +1298,18 @@ class TestChangedImports:
         from types import SimpleNamespace
         from agent_core.commands.optimize_cmd import OptimizeCommand
 
-        target = tmp_path / "sample.py"
-        target.write_text(textwrap.dedent("""\
+        file_text = textwrap.dedent("""\
             import os
             import re
 
             def f():
                 return re.compile("x")
-        """), encoding="utf-8")
+        """)
+        target = tmp_path / "sample.py"
+        target.write_text(file_text, encoding="utf-8")
 
         async def chat(messages, **kwargs):
-            return "[FILE: sample.py]\n```python\n" \
-                   "import re\n\n" \
-                   "def f():\n" \
-                   "    return re.compile(\"x\")\n" \
-                   "```\n"
+            return _fix_hunk_for_pattern("sample.py", messages[-1]["content"])
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
@@ -1300,13 +1379,12 @@ class TestNoopRewriteGate:
         assert _blocked_regressions(original, candidate) == []
 
 
-class TestRegionSplitting:
-    """Divide & conquer: oversized files are split into line regions, each
-    fixed in its own LLM call, then spliced back and validated as a whole."""
+class TestPerFindingPatches:
+    """Targeted patches: one tiny [PATCH:] request per finding, context
+    limited to the enclosing block with ABSOLUTE numbered lines, applied
+    atomically per finding.  No whole-file/region re-emission anywhere."""
 
     def _big_file(self) -> str:
-        """A file big enough (input estimate > REGION_SPLIT_TOKENS) to trigger
-        region splitting: many top-level defs, one silent-except finding."""
         parts = ["import os\nimport re\n\n"]
         for i in range(60):
             parts.append(
@@ -1322,9 +1400,6 @@ class TestRegionSplitting:
         return "".join(parts)
 
     def _big_class_file(self) -> str:
-        """A file whose bulk lives inside a class: many methods, one
-        silent-except finding per method.  Splitting should happen at the
-        indented method boundaries, not only at column-0 statements."""
         parts = ["import os\nimport re\n\n"]
         parts.append("class BigService:\n")
         parts.append("    def __init__(self):\n")
@@ -1343,147 +1418,66 @@ class TestRegionSplitting:
         return "".join(parts)
 
     def _monolith_file(self) -> str:
-        """A file that is ONE un-splittable statement: a giant assignment
-        (dict/tuple literal ~9k tokens) inside a function, whose only finding
-        is the dead assignment itself.  No AST seam exists inside the literal,
-        so the region stays whole and patch-mode (hunks) is the only way."""
         parts = ["def big_engine():\n", "    x = (\n", "        'start',\n"]
         for i in range(1100):
             parts.append(f"        '# padding {i}',\n")
         parts.append("        'key',\n")
-        parts.append("    )\n")
+        parts.append("    )\n\n")
+        parts.append("def read_all(path):\n")
+        parts.append("    try:\n")
+        parts.append("        return open(path).read()\n")
+        parts.append("    except Exception:\n")
+        parts.append("        pass\n")
+        parts.append("    return None\n")
         return "".join(parts)
 
-    def _assert_statement_seam_boundaries(self, code: str, regions: list[tuple[int, int]]) -> None:
-        """Every region boundary must be a statement seam (start of a complete
-        statement that ends the previous one) or a column-0 def/import line."""
-        import ast as ast_mod
-        from agent_core.commands.optimize_cmd import _ast_statement_seams
-        lines = code.split("\n")
-        seams = _ast_statement_seams(code)
-        tree = ast_mod.parse(code)
-        stmt_starts = {0, len(lines)}
-        for node in ast_mod.walk(tree):
-            if getattr(node, "lineno", None) is None:
-                continue
-            first = node.decorator_list[0] if getattr(node, "decorator_list", None) else node
-            stmt_starts.add(first.lineno - 1)
-        for start, end in regions:
-            assert start in (seams | stmt_starts), f"{start} is not a statement start"
-            assert end == 0 or end in (seams | stmt_starts) or end == len(lines), \
-                f"{end} is not a statement boundary"
+    def _except_fix_hunk(self, basename: str, numbered: list[tuple[int, str]]) -> str:
+        """Build a hunk that converts the first `except Exception:` line in
+        the numbered context to `except OSError:` — the canonical finding fix."""
+        idx = next(i for i, (num, text) in enumerate(numbered)
+                   if text.strip() == "except Exception:")
+        num = numbered[idx - 1][0] if idx > 0 else numbered[idx][0]
+        ctx = numbered[idx - 1][1] if idx > 0 else None
+        body = ""
+        if ctx is not None:
+            body += f" {ctx}\n"
+        body += f"-{numbered[idx][1]}\n+{numbered[idx][1].replace('Exception', 'OSError')}\n"
+        pass_next = idx + 1 < len(numbered) and numbered[idx + 1][1].strip() == "pass"
+        if idx + 1 < len(numbered) and not pass_next:
+            body += f" {numbered[idx + 1][1]}\n"
+        out_hunks = f"[PATCH: {basename}]\n@@ -{num},3 +{num},3 @@\n{body}"
+        if pass_next:
+            pass_line = numbered[idx + 1][1]
+            indent = pass_line[: len(pass_line) - len(pass_line.lstrip())]
+            pass_num = numbered[idx + 1][0]
+            out_hunks += (
+                f"@@ -{pass_num},1 +{pass_num},1 @@\n"
+                f"-{pass_line}\n"
+                f"+{indent}return None\n"
+            )
+        return out_hunks
 
-    def test_statement_seams_never_split_a_statement(self) -> None:
-        """Every seam is the start line of SOME complete statement — a cut can
-        never land strictly inside a statement's own lines.  (Seams naturally
-        lie inside enclosing statements: that is exactly what lets a giant
-        method split at its inner statements.)"""
-        import ast as ast_mod
-        from agent_core.commands.optimize_cmd import _ast_statement_seams
-        for code in (self._big_file(), self._big_class_file(), self._monolith_file()):
-            seams = _ast_statement_seams(code)
-            tree = ast_mod.parse(code)
-            stmt_starts = set()
-            for node in ast_mod.walk(tree):
-                if getattr(node, "lineno", None) is None:
-                    continue
-                first = node.decorator_list[0] if getattr(node, "decorator_list", None) else node
-                stmt_starts.add(first.lineno - 1)
-            assert seams <= stmt_starts, f"seams outside statement starts: {seams - stmt_starts}"
-
-    def test_giant_function_body_splits_at_inner_statement_seams(self) -> None:
-        """A 1300-line single method body is no longer one monolithic region:
-        statement seams inside it produce multiple regions, each of which
-        compiles when re-attached to its enclosing function header."""
-        from agent_core.commands.optimize_cmd import split_into_regions
-        parts = ["def big_engine():\n"]
-        for j in range(32):
-            parts.append(f"    x{j} = " + "'" + "y" * 180 + "'\n")
-            parts.append(f"    if x{j}:\n        data = x{j}\n    else:\n        data = 0\n")
-        parts.append("    return data\n")
-        code = "".join(parts)
-        lines = code.split("\n")
-        regions = split_into_regions(code)
-        assert len(regions) >= 2, "giant method must not stay a single region"
-        assert regions[0][0] == 0 and regions[-1][1] == len(lines)
-        for start, end in regions[1:]:
-            assert lines[start][:1].isspace(), "mid-body regions start indented"
-            joined = "def big_engine():\n" + "\n".join(lines[start:end])
-            compile(joined, "<seam>", "exec")
-
-    def test_split_into_regions_splits_class_bodies(self) -> None:
-        """A class-heavy file (like fix_cmd.py) is split at indented method
-        boundaries so the whole class doesn't have to be rewritten one-shot."""
-        from agent_core.commands.optimize_cmd import split_into_regions
-        code = self._big_class_file()
-        lines = code.split("\n")
-        regions = split_into_regions(code)
-        assert len(regions) >= 2
-        # Regions are contiguous and cover the whole file.
-        assert regions[0][0] == 0
-        assert regions[-1][1] == len(lines)
-        for (_, end), (next_start, _) in zip(regions, regions[1:]):
-            assert end == next_start
-        # Some region starts inside the class (indented) — big class bodies
-        # must never have to be rewritten in one shot.
-        indented_starts = [s for s, _ in regions if lines[s][:1].isspace()]
-        assert indented_starts, "expected at least one region to start inside the class"
-        self._assert_statement_seam_boundaries(code, regions)
-
-    def test_split_into_regions_never_cuts_mid_function(self) -> None:
-        from agent_core.commands.optimize_cmd import split_into_regions
-        code = self._big_file()
-        lines = code.split("\n")
-        regions = split_into_regions(code)
-        assert len(regions) >= 2
-        # Regions are contiguous and cover the whole file.
-        assert regions[0][0] == 0
-        assert regions[-1][1] == len(lines)
-        for (_, end), (next_start, _) in zip(regions, regions[1:]):
-            assert end == next_start
-        # Every boundary is a statement seam or a top-level def/import — a
-        # region never starts mid-statement.
-        self._assert_statement_seam_boundaries(code, regions)
-
-    def test_merge_regions_splices_fixed_code(self) -> None:
-        from agent_core.commands.optimize_cmd import _merge_regions
-        original = "a\nb\nc\nd\ne\n"
-        regions = {0: (0, 2, "A\nB"), 1: (2, 5, "C\nD\nE")}
-        assert _merge_regions(original, regions) == "A\nB\nC\nD\nE\n"
-
-    def test_merge_regions_keeps_unfixed_slices(self) -> None:
-        from agent_core.commands.optimize_cmd import _merge_regions
-        original = "a\nb\nc\nd\ne\n"
-        regions = {0: (0, 2, "A\nB")}  # second region never returned a fix
-        assert _merge_regions(original, regions) == "A\nB\nc\nd\ne\n"
-
-    def test_large_file_fixed_in_regions(
+    def test_large_file_fixed_by_targeted_patches(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """An oversized file is split into regions; each region is fixed in its
-        own LLM call; the merged file is applied."""
+        """A file with 60 findings gets one tiny hunk request per finding;
+        every hunk is applied against the live copy and the result compiles."""
         import asyncio
         from types import SimpleNamespace
-        from agent_core.commands.optimize_cmd import OptimizeCommand, split_into_regions
+        from agent_core.commands.optimize_cmd import OptimizeCommand
 
         target = tmp_path / "big.py"
         target.write_text(self._big_file(), encoding="utf-8")
 
-        code = self._big_file()
-        regions = split_into_regions(code)
-        assert len(regions) >= 2  # precondition: this file triggers splitting
+        file_prompts: list[str] = []
+        calls = 0
 
-        # Mock LLM: fix each region by replacing `except Exception: pass` with
-        # `except OSError: return ""` (satisfies silent_except).
         async def chat(messages, **kwargs):
+            nonlocal calls
+            calls += 1
             user = messages[-1]["content"]
-            code_block = re.search(r"```python\n(.*?)\n```", user, re.DOTALL)
-            assert code_block is not None
-            fixed = code_block.group(1).replace(
-                "except Exception:\n        pass",
-                "except OSError:\n        return \"\"",
-            )
-            return f"[FILE: big.py]\n```python\n{fixed}\n```\n"
+            file_prompts.append(user)
+            return _fix_hunk_for_pattern("big.py", user)
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
@@ -1492,54 +1486,33 @@ class TestRegionSplitting:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert "split into" in out
-        assert "divide & conquer" in out
-        assert "Merged" in out
+        assert calls == 120, "one LLM call per finding"
+        assert "split into" not in out and "Merged" not in out
         assert "Applied: big.py" in out
         final = target.read_text(encoding="utf-8")
         assert "except Exception:\n        pass" not in final
         assert final.count("def func_") == 60
+        compile(final, "<big>", "exec")
 
-    def test_class_file_fixed_in_regions_preserves_indentation(
+    def test_class_file_patches_preserve_indentation(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A class-heavy file is split at method boundaries; a region whose
-        fix drops the method's leading indentation is rejected and retried so
-        the merged file stays valid Python."""
+        """Method-level findings inside a class are patched while the class
+        indentation stays intact (the context keeps original indentation and
+        hunks carry the lines verbatim)."""
         import asyncio
         from types import SimpleNamespace
-        from agent_core.commands.optimize_cmd import OptimizeCommand, split_into_regions
+        from agent_core.commands.optimize_cmd import OptimizeCommand
 
         target = tmp_path / "svc.py"
         target.write_text(self._big_class_file(), encoding="utf-8")
-        code = self._big_class_file()
-        regions = split_into_regions(code)
-        assert len(regions) >= 2  # precondition
-
-        bad_indent_done = False
-        seen_feedback: list[str] = []
-        saw_disable_thinking = False
 
         async def chat(messages, **kwargs):
-            nonlocal bad_indent_done, saw_disable_thinking
-            if kwargs.get("disable_thinking") is True:
-                saw_disable_thinking = True
             user = messages[-1]["content"]
-            code_block = re.search(r"```python\n(.*?)\n```", user, re.DOTALL)
-            assert code_block is not None
-            raw = code_block.group(1)
-            if "region_indent_changed" in user:
-                seen_feedback.append(user)
-            if not bad_indent_done and raw[:1].isspace():
-                # Simulate the model dropping the method's first-line indent.
-                bad_indent_done = True
-                dedented = raw[4:]
-                return f"[FILE: svc.py]\n```python\n{dedented}\n```\n"
-            fixed = raw.replace(
-                "except Exception:\n            pass",
-                "except OSError:\n            return \"\"",
-            )
-            return f"[FILE: svc.py]\n```python\n{fixed}\n```\n"
+            numbered = _numbered_context(user)
+            assert all(text.startswith(" ") for _, text in numbered
+                       if text.strip()), "context must preserve indentation"
+            return self._except_fix_hunk("svc.py", numbered)
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
@@ -1548,118 +1521,74 @@ class TestRegionSplitting:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert "split into" in out
-        assert seen_feedback, "expected the bad-indent region to be rejected with feedback"
-        assert saw_disable_thinking, "optimize rewrite calls must pass disable_thinking=True"
+        assert "Applied: svc.py" in out
         final = target.read_text(encoding="utf-8")
-        compile(final, "<svc>", "exec")  # must remain valid Python
+        compile(final, "<svc>", "exec")
         assert final.count("def func_") == 60
         assert "except Exception:\n            pass" not in final
 
-    def test_region_prompt_asks_for_verbatim_indentation(
+    def test_prompt_uses_absolute_numbers_and_hunks_only(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """The region prompt tells the model to keep the original indentation."""
+        """The per-finding prompt must show absolute numbered lines, demand
+        [PATCH:] output, and never ask for a re-emission ([FILE:])."""
         import asyncio
         from types import SimpleNamespace
         from agent_core.commands.optimize_cmd import OptimizeCommand
 
         target = tmp_path / "svc.py"
         target.write_text(self._big_class_file(), encoding="utf-8")
-        seen_prompt = ""
+        seen_system = ""
+        seen_user = ""
 
         async def chat(messages, **kwargs):
-            nonlocal seen_prompt
-            seen_prompt = messages[-1]["content"]
-            user = messages[-1]["content"]
-            code_block = re.search(r"```python\n(.*?)\n```", user, re.DOTALL)
-            raw = code_block.group(1)
-            fixed = raw.replace(
-                "except Exception:\n            pass",
-                "except OSError:\n            return \"\"",
-            )
-            return f"[FILE: svc.py]\n```python\n{fixed}\n```\n"
-
-        agent = SimpleNamespace(
-            workspace=str(tmp_path),
-            llm=SimpleNamespace(chat=chat),
-        )
-        assert asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)) is True
-        assert "Preserve the original indentation" in seen_prompt
-
-    def test_region_syntax_failure_retries_region(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """A region whose fix has a syntax error is rejected and retried with
-        feedback; the corrected region is accepted."""
-        import asyncio
-        from types import SimpleNamespace
-        from agent_core.commands.optimize_cmd import OptimizeCommand
-
-        target = tmp_path / "big.py"
-        target.write_text(self._big_file(), encoding="utf-8")
-
-        responses = [
-            "[FILE: big.py]\n```python\n    def broken(:\n```\n",  # region 0: bad syntax
-        ]
-        used_bad = False
-
-        async def chat(messages, **kwargs):
-            nonlocal used_bad
-            user = messages[-1]["content"]
-            code_block = re.search(r"```python\n(.*?)\n```", user, re.DOTALL)
-            assert code_block is not None
-            code = code_block.group(1)
-            if not used_bad:
-                used_bad = True
-                return responses.pop(0)
-            fixed = code.replace(
-                "except Exception:\n        pass",
-                "except OSError:\n        return \"\"",
-            )
-            return f"[FILE: big.py]\n```python\n{fixed}\n```\n"
+            nonlocal seen_system, seen_user
+            seen_system = messages[0]["content"]
+            seen_user = messages[-1]["content"]
+            numbered = _numbered_context(seen_user)
+            return self._except_fix_hunk("svc.py", numbered)
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
-        out = capsys.readouterr().out
+        capsys.readouterr()
         assert ok is True
-        assert "Retry 1/2" in out
-        assert "Applied: big.py" in out
-        assert "except Exception:\n        pass" not in target.read_text(encoding="utf-8")
+        assert "absolute" in seen_user  # numbers ARE the absolute line numbers
+        assert "[PATCH: svc.py]" in seen_system
+        assert "[FILE: svc.py]" not in seen_user and "[FILE: svc.py]" not in seen_system
+        assert " | " in seen_user  # numbered context
 
-    def test_merged_rewrite_repaired_when_region_leaves_finding(
+
+    def test_syntax_broken_patch_retries_until_valid(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A region that leaves a pre-existing finding unfixed is NOT a
-        regression: the original had many silent-excepts, the merged rewrite
-        has fewer, so it is applied directly — no repair pass, no skip."""
+        """A patch that leaves the file unparseable is rejected with
+        feedback and retried; the valid retry is applied."""
         import asyncio
         from types import SimpleNamespace
         from agent_core.commands.optimize_cmd import OptimizeCommand
 
         target = tmp_path / "big.py"
         target.write_text(self._big_file(), encoding="utf-8")
-        repair_passes = 0
+        calls = 0
 
         async def chat(messages, **kwargs):
-            nonlocal repair_passes
+            nonlocal calls
+            calls += 1
             user = messages[-1]["content"]
-            code_block = re.search(r"```python\n(.*?)\n```", user, re.DOTALL)
-            assert code_block is not None
-            code = code_block.group(1)
-            if "REGION of a larger file" in user:
-                if "func_59" in code:
-                    # Leave this region's silent-except unfixed on purpose.
-                    return f"[FILE: big.py]\n```python\n{code}\n```\n"
-                fixed = code.replace(
-                    "except Exception:\n        pass",
-                    "except OSError:\n        return \"\"",
+            numbered = _numbered_context(user)
+            if calls == 1:
+                num, text = numbered[0]
+                indent = text[: len(text) - len(text.lstrip())]
+                return (
+                    "[PATCH: big.py]\n"
+                    f"@@ -{num},1 +{num},1 @@\n"
+                    f"-{text}\n"
+                    f"+{indent}@@ {text.strip()}\n"
                 )
-                return f"[FILE: big.py]\n```python\n{fixed}\n```\n"
-            # Whole-file repair pass only runs if the merged rewrite regresses.
-            repair_passes += 1
-            return f"[FILE: big.py]\n```python\n{code}\n```\n"
+            return self._except_fix_hunk("big.py", numbered)
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
@@ -1667,62 +1596,41 @@ class TestRegionSplitting:
         )
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
-
         assert ok is True
-        assert repair_passes == 0, (
-            "leaving a pre-existing silent-except must NOT trigger a repair "
-            "pass (no regression vs the original)"
-        )
-        assert "Skipping" not in out
+        assert calls >= 2
+        assert "Patch breaks syntax" in out
         assert "Applied: big.py" in out
-        # The residual silent-except is tolerated (original had 60 of them).
-        final = target.read_text(encoding="utf-8")
-        assert "except Exception:\n        pass" in final
-        compile(final, "<big>", "exec")  # merged file must stay valid
 
-    def test_merged_region_adds_stdlib_import_accepted(
+    def test_patch_that_leaves_finding_is_rejected_and_retried(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A merged rewrite that ADDS a stdlib import (`import logging`, the
-        fix its silent_except finding demands) must not be skipped: stdlib
-        additions are safe and pass the changed_imports gate.  Only
-        relative/project/third-party additions block."""
+        """A hunk that edits a nearby line but leaves the finding itself
+        standing fails the acceptance check (the pattern must shrink) and is
+        retried with feedback pinned to the finding."""
         import asyncio
         from types import SimpleNamespace
         from agent_core.commands.optimize_cmd import OptimizeCommand
 
         target = tmp_path / "big.py"
         target.write_text(self._big_file(), encoding="utf-8")
-        repair_passes = 0
+        calls = 0
 
         async def chat(messages, **kwargs):
-            nonlocal repair_passes
+            nonlocal calls
+            calls += 1
             user = messages[-1]["content"]
-            code_block = re.search(r"```python\n(.*?)\n```", user, re.DOTALL)
-            assert code_block is not None
-            code = code_block.group(1)
-            if "REGION of a larger file" in user:
-                # The first region covers the file top (module imports); add
-                # `import logging` there and fix silent-excepts with it. This
-                # mirrors the live fix_cmd.py run that added import logging.
-                if "import os" in code and code.split("\n")[0].startswith("import "):
-                    fixed = code.replace(
-                        "import os\n",
-                        "import logging\nimport os\n",
-                        1,
-                    )
-                    fixed = fixed.replace(
-                        "except Exception:\n        pass",
-                        "except Exception:\n            logging.error('read failed')\n            return \"\"",
-                    )
-                    return f"[FILE: big.py]\n```python\n{fixed}\n```\n"
-                fixed = code.replace(
-                    "except Exception:\n        pass",
-                    "except OSError:\n        return \"\"",
+            numbered = _numbered_context(user)
+            if calls == 1:
+                idx = next(i for i, (num, text) in enumerate(numbered)
+                           if text.strip().startswith("return open"))
+                num = numbered[idx][0]
+                return (
+                    "[PATCH: big.py]\n"
+                    f"@@ -{num},1 +{num},1 @@\n"
+                    f"-{numbered[idx][1]}\n"
+                    f"+{numbered[idx][1].replace('open(fname)', 'open(fname, mode=\"r\")')}\n"
                 )
-                return f"[FILE: big.py]\n```python\n{fixed}\n```\n"
-            repair_passes += 1
-            return f"[FILE: big.py]\n```python\n{code}\n```\n"
+            return self._except_fix_hunk("big.py", numbered)
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
@@ -1730,48 +1638,52 @@ class TestRegionSplitting:
         )
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
-
         assert ok is True
-        assert repair_passes == 0, "default stdlib import must NOT trigger a repair pass"
-        assert "added import" not in out, "stdlib import addition must not be skipped"
-        assert "Skipping" not in out
+        assert "still contains" in out
         assert "Applied: big.py" in out
         final = target.read_text(encoding="utf-8")
-        assert "import logging" in final
-        assert "logging.error" in final
-        compile(final, "<big>", "exec")  # merged file must stay valid
+        assert "mode=\"r\"" not in final  # the unrelated edit was never applied
 
-    def test_merged_regression_triggers_repair_and_applies(
+    def test_whitespace_only_patch_rejected_as_cosmetic(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A merged rewrite that introduces an extra dead-store line inside a
-        replaced block: the surgical pass removes the inserted line without
-        any LLM repair call, and the cleaned merge is applied."""
+        """A patch that only drops trailing spaces on blank lines (the
+        laguna base.py behavior) is a no-op: rejected, retried, fixed for
+        real."""
         import asyncio
         from types import SimpleNamespace
         from agent_core.commands.optimize_cmd import OptimizeCommand
 
-        target = tmp_path / "big.py"
-        target.write_text(self._big_file(), encoding="utf-8")
-        repair_passes = 0
+        file_text = textwrap.dedent("""\
+            import os
+
+
+            def read(path):
+                try:
+                    return open(path).read()
+                except Exception:
+                    pass
+        """)
+        target = tmp_path / "baseish.py"
+        target.write_text(file_text, encoding="utf-8")
+        calls = 0
 
         async def chat(messages, **kwargs):
-            nonlocal repair_passes
+            nonlocal calls
+            calls += 1
             user = messages[-1]["content"]
-            code_block = re.search(r"```python\n(.*?)\n```", user, re.DOTALL)
-            assert code_block is not None
-            code = code_block.group(1)
-            assert "REGION of a larger file" in user
-            # Region rewrite injects a dead store `leak = 1` never read.
-            leaked = code.replace(
-                "def func_5(value):\n    result = value * 5\n",
-                "def func_5(value):\n    leak = 1\n    result = value * 5\n",
-            )
-            fixed = leaked.replace(
-                "except Exception:\n        pass",
-                "except OSError:\n        return \"\"",
-            )
-            return f"[FILE: big.py]\n```python\n{fixed}\n```\n"
+            numbered = _numbered_context(user)
+            if calls == 1:
+                idx = next(i for i, (num, text) in enumerate(numbered)
+                           if text.strip() == "try:")
+                num = numbered[idx][0]
+                return (
+                    "[PATCH: baseish.py]\n"
+                    f"@@ -{num},1 +{num},1 @@\n"
+                    f"-{numbered[idx][1]}\n"
+                    f"+{numbered[idx][1]}  \n"
+                )
+            return self._except_fix_hunk("baseish.py", numbered)
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
@@ -1780,38 +1692,24 @@ class TestRegionSplitting:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert repair_passes == 0, (
-            "the injected line is removable; no whole-file repair needed"
-        )
-        assert "regressions fixed surgically" in out
-        assert "Applied: big.py" in out
+        assert "whitespace" in out
+        assert "Applied: baseish.py" in out
         final = target.read_text(encoding="utf-8")
-        assert "leak = 1" not in final
-        compile(final, "<big>", "exec")
+        assert "except OSError:" in final
 
-    def test_oversized_region_uses_patch_mode(
+    def test_giant_statement_file_patched_with_tiny_budget(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A file whose first region is ONE un-splittable giant statement (a
-        giant dict literal ~8k tokens, no AST seams exist inside a literal)
-        must not be re-emitted whole: patch-mode asks for [PATCH:] hunks and
-        applies them with a tiny output budget."""
+        """A file dominated by one giant statement (millions of tokens) is
+        still fixed by a small hunk with a capped output budget; the giant
+        literal is never re-emitted whole."""
         import asyncio
         from types import SimpleNamespace
-        from agent_core.commands.optimize_cmd import (
-            OptimizeCommand, estimate_tokens, REGION_PATCH_MODE_TOKENS,
-            split_into_regions,
-        )
+        from agent_core.commands.optimize_cmd import OptimizeCommand
 
         code = self._monolith_file()
         target = tmp_path / "huge.py"
         target.write_text(code, encoding="utf-8")
-
-        lines = code.split("\n")
-        regions = split_into_regions(code)
-        assert regions == [(0, len(lines))]
-        assert estimate_tokens(code) > REGION_PATCH_MODE_TOKENS  # precondition
-
         system_prompt = ""
         max_tokens_seen = 0
 
@@ -1819,16 +1717,8 @@ class TestRegionSplitting:
             nonlocal system_prompt, max_tokens_seen
             system_prompt = messages[0]["content"]
             max_tokens_seen = max(max_tokens_seen, kwargs.get("max_tokens", 0))
-            idx = next(i for i, l in enumerate(lines)
-                       if l.strip() == "'# padding 0',")
-            hunk = (
-                f"[PATCH: huge.py]\n"
-                f"@@ -{idx},3 +{idx},3 @@\n"
-                f" {lines[idx - 1]}\n"
-                f"-{lines[idx]}\n"
-                f"+        'engine_ok_springs'\n"
-            )
-            return hunk
+            numbered = _numbered_context(messages[-1]["content"])
+            return self._except_fix_hunk("huge.py", numbered)
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
@@ -1837,27 +1727,24 @@ class TestRegionSplitting:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert "PATCH: huge.py" in system_prompt, "patch-mode prompt must demand hunks"
-        assert max_tokens_seen <= 4096, "patch-mode output budget must stay small"
+        assert max_tokens_seen <= 8192, "hunk output budget must stay small"
+        assert "[FILE: huge.py]" not in system_prompt
         assert "Applied: huge.py" in out
         final = target.read_text(encoding="utf-8")
-        assert "'engine_ok_springs'" in final
+        assert "except OSError:" in final
         compile(final, "<huge>", "exec")
 
-    def test_patch_mode_retries_after_missing_hunks(
+    def test_missing_hunk_response_retried_with_feedback(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A patch-mode unit that returns no [PATCH:] block is retried with
-        explicit feedback; the corrected hunk response is applied."""
+        """A response with no [PATCH:] block at all is retried with explicit
+        feedback; the corrected hunk response is applied."""
         import asyncio
         from types import SimpleNamespace
         from agent_core.commands.optimize_cmd import OptimizeCommand
 
-        code = self._monolith_file()
-        lines = code.split("\n")
         target = tmp_path / "huge.py"
-        target.write_text(code, encoding="utf-8")
-
+        target.write_text(self._monolith_file(), encoding="utf-8")
         calls = 0
 
         async def chat(messages, **kwargs):
@@ -1865,27 +1752,20 @@ class TestRegionSplitting:
             calls += 1
             if calls == 1:
                 return "no hunks here, just prose"
-            idx = next(i for i, l in enumerate(lines)
-                       if l.strip() == "'# padding 0',")
-            return (
-                f"[PATCH: huge.py]\n"
-                f"@@ -{idx},3 +{idx},3 @@\n"
-                f" {lines[idx - 1]}\n"
-                f"-{lines[idx]}\n"
-                f"+        'engine_ok_springs'\n"
-            )
+            return _fix_hunk_for_pattern("huge.py", messages[-1]["content"])
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute(["huge.py", "--apply", "--yes"], agent))
+        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert calls == 2, "first empty hunk call must be retried"
-        final = target.read_text(encoding="utf-8")
-        assert "engine_ok_springs" in final
-        compile(final, "<huge>", "exec")
+        assert calls == 4, "prose retry + per-finding attempts"
+        assert "no [PATCH: huge.py] block" in out
+        assert "Applied: huge.py" in out
+
+
 class TestSurgicalRevertRegressions:
     """Deterministic excision of regressing lines: run9 showed LLM repair
     loops keep reintroducing walrus-in-comprehension and unused-import

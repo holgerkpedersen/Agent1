@@ -57,18 +57,22 @@ class TestImplementPatchApply:
         assert ok is True
         assert "b = 2" in result
 
-    def test_deletion_only_rejected(self, tmp_path):
-        """Patch with only '-' lines (no '+') is rejected."""
+    def test_deletion_only_accepted(self, tmp_path):
+        """Patch with only '-' lines (no '+') removes the line — needed
+        for optimiser findings like unused-import and dead-assignment."""
         apply = self._load_impl()
         original = ["a = 1\n", "b = 2\n", "c = 3\n"]
         patch_text = (
             "@@ -1,3 +1,2 @@\n"
-            "- a = 1\n"
+            "-a = 1\n"
             " b = 2\n"
             " c = 3\n"
         )
         ok, result = apply(patch_text, "dummy.py", original)
-        assert ok is False
+        assert ok is True
+        assert "a = 1" not in result
+        assert "b = 2" in result
+        assert "c = 3" in result
 
     def test_multiple_hunks(self, tmp_path):
         """Two separate hunks in one patch are both applied."""

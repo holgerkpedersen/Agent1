@@ -1,6 +1,5 @@
 """Model command — list, switch, load, and unload LLM models via LM Studio API."""
 
-import os
 import difflib
 
 from .base import Command
@@ -233,7 +232,6 @@ class ModelCommand(Command):
 
         active = loaded[0]
         active_key = active["key"]
-        active_id = active.get("instance_id", active_key)
 
         if active_key == current:
             print(f"  Agent matches LM Studio: {current}  ({_format_size(active['size_bytes'])})")
@@ -481,3 +479,5 @@ class ModelCommand(Command):
                     return m["key"]
 
         return None
+
+

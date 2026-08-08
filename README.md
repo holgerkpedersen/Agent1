@@ -18,6 +18,7 @@ Python AI agent framework with LLM integration, tool execution, workspace manage
 - Streaming chat with real-time token output
 - Multi-model support: Laguna S 2.1, Qwen, Gemma, etc.
 - **Enhanced executor** with parallel tool execution and error handling (fixcommand/core/executor/llm_executor.py)
+- **Robust thinking-disable** across LM Studio API versions: sends `enable_thinking`, `enableThinking`, `preserve_thinking`, and `reasoning` fields simultaneously so the disable works regardless of the loaded model's template or server runtime
 
 ### Commands (`agent_core/commands/`)
 ```
@@ -51,8 +52,9 @@ workflow <target> [opts]         Full pipeline: analyze → plan → entities �
                                  --force           Skip existing file checks
                                  --workspace <p>   Target workspace
 model [list|load|unload|reload|profile|name]  Manage models via LM Studio API
-optimize <file|dir> [--apply] [--stdin] Find and apply performance/memory optimizations
-                                  Shows side-by-side diff with line numbers before applying
+optimize <file|dir> [--apply] [--stdin] [--yes] Find and apply performance/memory optimizations
+                                   Shows side-by-side diff with line numbers before applying
+                                   --yes: skip the y/N prompt and apply automatically
 perf [--detail|--reset|--html]       Command performance dashboard (timing per command)
 clear [stats|--force]            Show memory stats, confirm then clear
 ```
@@ -107,6 +109,7 @@ The `fix` and `implement` commands include automatic protections against common 
 - **Auto-review after every run**: static checks for class-name conflicts, module collisions, and unwired modules — printed immediately without LLM
 - **`--review` flag**: adds LLM deep analysis + offers to delete dangerous files with a y/N prompt
 - **Patch-based fixing**: LLM outputs minimal `[PATCH:]` diffs instead of full-file rewrites. Shows changed lines with +/-, asks y/N before applying. Safety checks: old lines must exist, result must compile. `[FILE:]` still works as fallback.
+- **Anchored patch fallback**: When LLM ``@@`` line numbers are wrong (a common failure mode), a content-based anchored matcher locates the correct position by matching actual file text in a ±60-line window — absorbing fence-wrapped diffs, fused headers, and ``N |`` numbered-context artifacts.
 - **Workspace-agnostic**: path rules detected dynamically from workspace structure (finds `__init__.py` directories). No hardcoded prefixes — works in any project.
 - **SOLID enforcement**: implement system prompt enforces SRP. New files capped at 150 lines — LLM splits large concepts. Modifying existing code uses minimal changes. Prefers composition over inheritance.
 
@@ -219,7 +222,9 @@ OPENAI_API_KEY=your-key
 ```bash
 pytest tests/ -v
 ```
-86 tests, all passing.
+358 tests, all passing.
 
-### New Tests (2024-08)
-- Added `tests/test_llm_executor.py` with unit test coverage for improved LLM executor
+### Recent Additions
+- Patch application tests for strict, anchored, deletion-only, and `N |`-prefix stripping
+- LM Studio thinking-disable payload tests across models and server versions
+- Optimize command: full batching, feedback-retry, diff-viewer, and apply flow coverage

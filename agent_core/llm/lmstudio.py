@@ -249,12 +249,16 @@ class LMStudioProvider:
     ) -> dict:
         """Build request payload for LM Studio API.
 
-        When thinking is disabled, sends both the OpenAI-style ``thinking``
-        field (honored by some templates) and any per-model extra kwargs from
-        ``KNOWN_MODELS`` (e.g. ``chat_template_kwargs: {"enable_thinking": False}``
-        for Qwen3-family templates that gate reasoning on the jinja
-        ``enable_thinking`` variable).  Sending both keeps the disable working
-        across models regardless of which mechanism the template honors.
+        When thinking is disabled, sends several knobs that each LM Studio API
+        flavor honors: the OpenAI-style ``thinking`` field, the per-model
+        ``disable_thinking_kwargs`` (e.g.
+        ``chat_template_kwargs: {"enable_thinking": False}`` for Qwen/Laguna
+        jinja templates that gate reasoning on that variable), plus
+        ``enableThinking`` and ``preserve_thinking`` (recognized on the
+        OpenAI-compat endpoint — see bug #1990 where chat_template_kwargs
+        alone is ignored on some runtimes), and ``reasoning: "off"`` (the
+        validated field on the native /api/v1/chat endpoint).  Sending all of
+        them keeps the disable working across server versions.
         """
         model_info = KNOWN_MODELS.get(self.model_name, {})
         max_tok = override_max_tokens or self.max_tokens
@@ -273,6 +277,16 @@ class LMStudioProvider:
             extra = model_info.get("disable_thinking_kwargs")
             if extra:
                 payload.update(extra)
+            # LM Studio honors several names for the same toggle; send all of
+            # them so disable works regardless of which switch the running
+            # server version reads.  ``reasoning`` ("off") is the validated
+            # field on the native /api/v1/chat endpoint; ``enableThinking`` and
+            # ``preserve_thinking`` are recognized on the OpenAI-compat
+            # /v1/chat/completions endpoint (see lmstudio-ai bug #1990: the
+            # chat_template_kwargs alone can be ignored on some runtimes).
+            payload.setdefault("reasoning", "off")
+            payload.setdefault("enableThinking", False)
+            payload.setdefault("preserve_thinking", False)
         return payload
     
     def _make_request(self, payload: dict, timeout: int = 3600) -> dict:
@@ -290,7 +304,7 @@ class LMStudioProvider:
         with urllib.request.urlopen(req, timeout=timeout) as response:
             return json.loads(response.read().decode())
     
-    def _check_thinking_error(self, content: str, reasoning: str) -> str | None:
+    def _check_thinking_error(self, content: str, reasoning: str, finish_reason: str | None = None) -> str | None:
         """Check if model used all tokens thinking with no output.
 
         Returns a hard error instead of silently doubling ``max_tokens``:
@@ -304,6 +318,18 @@ class LMStudioProvider:
                 f"[Error: model consumed {len(reasoning)} tokens reasoning "
                 "with no output. Retry with thinking disabled or a larger "
                 "output budget.]"
+            )
+        if (
+            finish_reason == "length"
+            and reasoning
+            and len(reasoning) > 300
+            and (not content or len(content) < len(reasoning))
+        ):
+            return (
+                f"[Error: model hit the output limit ({len(reasoning)} reasoning "
+                "tokens) and the response was truncated before the output could "
+                "complete. Retry with thinking disabled or a larger output budget."
+                "]"
             )
         return None
     
@@ -328,7 +354,8 @@ class LMStudioProvider:
             result = self._make_request(payload)
             
             if 'choices' in result and len(result['choices']) > 0:
-                message = result['choices'][0]['message']
+                choice = result['choices'][0]
+                message = choice.get('message', {})
                 content = message.get('content') or ""
                 reasoning = message.get('reasoning_content') or ""
                 
@@ -337,7 +364,9 @@ class LMStudioProvider:
                     return json.dumps(message)
                 
                 # Check for thinking error
-                thinking_err = self._check_thinking_error(content, reasoning)
+                thinking_err = self._check_thinking_error(
+                    content, reasoning, finish_reason=choice.get('finish_reason')
+                )
                 if thinking_err:
                     return thinking_err
                 
@@ -374,6 +403,7 @@ class LMStudioProvider:
             
             full_content = ""
             reasoning_content = ""
+            finish_reason = None
             
             with urllib.request.urlopen(req, timeout=3600) as response:
                 for line_bytes in response:
@@ -385,9 +415,12 @@ class LMStudioProvider:
                         break
                     try:
                         chunk = json.loads(data_str)
-                        delta = chunk.get('choices', [{}])[0].get('delta', {})
+                        choice = chunk.get('choices', [{}])[0]
+                        delta = choice.get('delta', {})
                         token = delta.get('content', '')
                         reasoning = delta.get('reasoning_content', '')
+                        if choice.get('finish_reason'):
+                            finish_reason = choice['finish_reason']
                         if reasoning:
                             reasoning_content += reasoning
                         if token:
@@ -399,7 +432,9 @@ class LMStudioProvider:
             print()
             
             # Check for thinking error
-            thinking_err = self._check_thinking_error(full_content, reasoning_content)
+            thinking_err = self._check_thinking_error(
+                full_content, reasoning_content, finish_reason=finish_reason
+            )
             if thinking_err:
                 return thinking_err
             

@@ -493,7 +493,7 @@ def _run_python_snippet(ws: str, extra_paths: list[str], code_lines: list[str]) 
     Returns the CompletedProcess from subprocess.run.
     """
     import tempfile
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
         tf.write(f"import sys; sys.path.insert(0, {repr(ws)})\n")
         for p in extra_paths:
             tf.write(f"sys.path.insert(0, {repr(p)})\n")

@@ -512,6 +512,12 @@ Unreferenced .py files (candidates for deletion):
   # Analyzes and applies all suggestions without asking
 ```
 
+The optimizer uses a two-layer patch system:
+1. **Strict** — applies hunks by `@@` line numbers with content verification. Rejects mismatches.
+2. **Anchored fallback** — when `@@` numbers are wrong (LLMs commonly get these off), searches a ±60-line window for matching content. Also strips `N |` numbered-context artifacts that models sometimes copy into hunk bodies.
+
+Pure-removal hunks (unused imports, dead assignments) are now accepted — no replacement line required.
+
 ## Performance dashboard
 
 Every command is automatically timed. View stats anytime:

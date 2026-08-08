@@ -33,6 +33,15 @@ def normalize_patch_block(patch_text: str) -> str:
     return text[first:].strip("\n")
 
 
+def _strip_numbered_prefix(line: str) -> str:
+    """Strip ``46 |`` artifacts that LLMs copy from numbered context."""
+    m = re.match(r'^(\s*)([\-+ ]?)\s*\d+\s*\|\s*', line)
+    if m:
+        marker = m.group(2) or ' '
+        return m.group(1) + marker + line[m.end():]
+    return line
+
+
 def split_patch_hunks(patch_text: str) -> list[tuple[int, list[tuple[str, str]]]]:
     """Parse *patch_text* into ``(start_line, [(op, text), ...])`` hunks.
 
@@ -58,6 +67,7 @@ def split_patch_hunks(patch_text: str) -> list[tuple[int, list[tuple[str, str]]]
         chunks: list[tuple[str, str]] = []
         for line in body.split("\n"):
             line = line.rstrip("\r")
+            line = _strip_numbered_prefix(line)
             if line.startswith("-"):
                 chunks.append(("-", line[1:]))
             elif line.startswith("+"):
@@ -91,6 +101,7 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
         chunks: list[tuple[str, str | None]] = []
         for line in body.split('\n'):
             line = line.rstrip('\r')
+            line = _strip_numbered_prefix(line)
             if line.startswith('-'): chunks.append(('-', line[1:]))
             elif line.startswith('+'): chunks.append(('+', line[1:]))
             elif line.startswith(' '): chunks.append((' ', line[1:]))
@@ -105,8 +116,8 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
     for start, chunks in hunks:
         has_minus = any(op == '-' for op, _ in chunks)
         has_plus = any(op == '+' for op, _ in chunks)
-        if has_minus and not has_plus:
-            continue  # Removal only — skip
+        if not has_minus and not has_plus:
+            continue
         if any(op == '+' and not text.strip() for op, text in chunks):
             continue  # Empty replacement — skip
         # Filter incomplete lines (trailing operators like =, +, -, etc.)
@@ -194,7 +205,7 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
                 result.insert(idx + i, text + '\n')
 
     # Syntax check
-    tf = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
+    tf = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8")
     tf.write(''.join(result))
     tf.close()
     r = subprocess.run(["python", "-m", "py_compile", tf.name], capture_output=True, text=True)
@@ -262,8 +273,6 @@ def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bo
         has_plus = any(op == '+' for op, _ in chunks)
         if not has_minus and not has_plus:
             continue  # context-only hunk — no edit; do not let it delete
-        if has_minus and not has_plus:
-            continue
         if any(op == '+' and not text.strip() for op, text in chunks):
             continue
         if any(op == '+' and text.rstrip().endswith(incomplete_ops) for op, text in chunks):
@@ -300,13 +309,18 @@ def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bo
         # Build the replacement: context (' ') lines are RE-EMITTED FROM THE
         # FILE (they were strip-verified above — the patch text may have lost
         # their indentation, e.g. inlined right after a fused @@ header) and
-        # '+' lines come from the patch verbatim (padding stripped).
+        # '+' lines come from the patch verbatim (padding stripped).  Removed
+        # '-' lines advance the file pointer (they occupied a slot in the source)
+        # but emit nothing, so a trailing context line is re-emitted from the
+        # correct original line rather than shifting onto a removed line.
         new_lines: list[str] = []
         k = anchor
         for op, text in chunks:
             if op == ' ':
                 if k < len(original_lines):
                     new_lines.append(original_lines[k])
+                k += 1
+            elif op == '-':
                 k += 1
             elif op == '+':
                 new_lines.append(
@@ -322,7 +336,7 @@ def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bo
             result.insert(anchor + i, text + '\n')
 
     # Syntax check.
-    tf = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
+    tf = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8")
     tf.write(''.join(result))
     tf.close()
     r = subprocess.run(["python", "-m", "py_compile", tf.name], capture_output=True, text=True)

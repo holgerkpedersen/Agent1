@@ -8,7 +8,7 @@ KNOWN_MODELS = {
         "size_gb": 15.8,
         "params": "27B",
         "thinking": True,
-        "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False}},
+        "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False, "preserve_thinking": False}},
     },
     "google/gemma-4-31b": {
         "desc": "Gemma 4 31B — chat, reasoning, fast token gen",
@@ -30,7 +30,7 @@ KNOWN_MODELS = {
         "size_gb": 18.1,
         "params": "30B-A3B",
         "thinking": True,
-        "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False}},
+        "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False, "preserve_thinking": False}},
     },
     "laguna-s-2.1": {
         "desc": "Laguna S 2.1 MoE A8B — agentic coding, thinking",
@@ -38,6 +38,13 @@ KNOWN_MODELS = {
         "size_gb": 4.2,
         "params": "8B-MoE",
         "thinking": True,
+        "disable_thinking_kwargs": {
+            "chat_template_kwargs": {"enable_thinking": False, "preserve_thinking": False},
+            "thinking": {"type": "disabled"},
+            "enableThinking": False,
+            "preserve_thinking": False,
+            "reasoning": "off",
+        },
     },
 }
 

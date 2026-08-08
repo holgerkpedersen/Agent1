@@ -17,11 +17,26 @@ def test_build_payload_default_has_no_thinking_field() -> None:
 
 
 def test_build_payload_disable_thinking_sets_standard_field() -> None:
-    payload = _provider("laguna-s-2.1")._build_payload(
+    payload = _provider("kwaipilot_kat-coder-v2.5-dev")._build_payload(
         [{"role": "user", "content": "hi"}], disable_thinking=True
     )
     assert payload["thinking"] == {"type": "disabled"}
     assert "chat_template_kwargs" not in payload
+
+
+def test_build_payload_laguna_adds_chat_template_kwargs() -> None:
+    payload = _provider("laguna-s-2.1")._build_payload(
+        [{"role": "user", "content": "hi"}], disable_thinking=True
+    )
+    assert payload["thinking"] == {"type": "disabled"}
+    assert payload["chat_template_kwargs"] == {
+        "enable_thinking": False,
+        "preserve_thinking": False,
+    }
+    # Reasoning is disabled via several LM Studio switches for robustness.
+    assert payload["enableThinking"] is False
+    assert payload["preserve_thinking"] is False
+    assert payload["reasoning"] == "off"
 
 
 def test_build_payload_qwen_adds_chat_template_kwargs() -> None:
@@ -29,7 +44,10 @@ def test_build_payload_qwen_adds_chat_template_kwargs() -> None:
         [{"role": "user", "content": "hi"}], disable_thinking=True
     )
     assert payload["thinking"] == {"type": "disabled"}
-    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False, "preserve_thinking": False}
+    assert payload["enableThinking"] is False
+    assert payload["preserve_thinking"] is False
+    assert payload["reasoning"] == "off"
 
 
 def test_build_payload_merges_tools_and_stream() -> None:
@@ -41,18 +59,30 @@ def test_build_payload_merges_tools_and_stream() -> None:
     )
     assert payload["tools"] == [{"type": "function"}]
     assert payload["stream"] is True
-    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False, "preserve_thinking": False}
 
 
-def test_known_models_extra_only_for_qwen() -> None:
-    allowed = {"qwen3.6-27b-mtp", "qwen3-coder-30b-a3b-instruct"}
+def test_known_models_extra_only_for_qwen_and_laguna() -> None:
+    allowed = {"qwen3.6-27b-mtp", "qwen3-coder-30b-a3b-instruct", "laguna-s-2.1"}
     for name, info in KNOWN_MODELS.items():
         if name in allowed:
-            assert info.get("disable_thinking_kwargs") == {
-                "chat_template_kwargs": {"enable_thinking": False}
-            }, name
+            extra = info.get("disable_thinking_kwargs", {})
+            assert extra.get("chat_template_kwargs", {}).get("enable_thinking") is False, name
+            if name == "laguna-s-2.1":
+                assert extra.get("reasoning") == "off", name
         else:
             assert "disable_thinking_kwargs" not in info, name
+
+
+def test_build_payload_disable_thinking_always_adds_reasoning_off() -> None:
+    """Every model, when disable_thinking is set, must request reasoning off."""
+    for name in KNOWN_MODELS:
+        payload = _provider(name)._build_payload(
+            [{"role": "user", "content": "hi"}], disable_thinking=True
+        )
+        assert payload["reasoning"] == "off", name
+        assert payload["enableThinking"] is False, name
+        assert payload["preserve_thinking"] is False, name
 
 
 def test_load_model_default_eval_batch_size_is_4096() -> None:
