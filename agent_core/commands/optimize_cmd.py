@@ -1394,13 +1394,16 @@ class OptimizeCommand(Command):
                             break
                         new_lines = patched.split("\n")
                         line_delta = patched.count("\n") - len(work_lines)
-                        # Preserve the original file's trailing-newline state
-                        # so the diff doesn't show an unrelated trailing blank line.
-                        # split("\n") gives a trailing "" when patched ends with \n;
-                        # show_file_diff uses splitlines() which strips that — pop
-                        # it when the original file lacked a trailing newline.
-                        if not original.endswith("\n") and new_lines and new_lines[-1] == "":
+                        # apply_patch always appends \n to every line, so if the
+                        # original file has a trailing newline the patched result
+                        # ends with \n\n.  splitlines() (used by show_file_diff)
+                        # sees the inner \n\n as an extra empty "line".  Strip all
+                        # trailing empties, then add exactly one back if the
+                        # original file had a trailing newline.
+                        while new_lines and new_lines[-1] == "":
                             new_lines.pop()
+                        if original.endswith("\n"):
+                            new_lines.append("")
                         work_lines = new_lines
                         if line_delta:
                             for pf in pending:
