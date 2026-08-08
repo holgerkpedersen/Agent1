@@ -315,7 +315,7 @@ class LMStudioProvider:
         """
         if not content and reasoning and len(reasoning) > 500:
             return (
-                f"[Error: model consumed {len(reasoning)} tokens reasoning "
+                f"[Error: model consumed {len(reasoning)} reasoning bytes "
                 "with no output. Retry with thinking disabled or a larger "
                 "output budget.]"
             )
@@ -326,7 +326,7 @@ class LMStudioProvider:
             and (not content or len(content) < len(reasoning))
         ):
             return (
-                f"[Error: model hit the output limit ({len(reasoning)} reasoning "
+                f"[Error: model hit the output limit ({len(reasoning)} reasoning bytes"
                 "tokens) and the response was truncated before the output could "
                 "complete. Retry with thinking disabled or a larger output budget."
                 "]"

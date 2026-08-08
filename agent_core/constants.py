@@ -10,6 +10,14 @@ KNOWN_MODELS = {
         "thinking": True,
         "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False, "preserve_thinking": False}},
     },
+    "qwen3.5-9b-mtp": {
+        "desc": "Qwen 3.5 9B MTP — coding, thinking",
+        "max_tokens": 100000,
+        "size_gb": 5.3,
+        "params": "9B",
+        "thinking": True,
+        "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False, "preserve_thinking": False}},
+    },
     "google/gemma-4-31b": {
         "desc": "Gemma 4 31B — chat, reasoning, fast token gen",
         "max_tokens": 100000,
