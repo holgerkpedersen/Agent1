@@ -656,6 +656,10 @@ def _patch_system_prompt(basename: str) -> str:
         "    unchanged line\n"
         "-    old line\n"
         "+    new line\n\n"
+        "For PURE-REMOVAL findings (unused_import, dead_assignment, dead_code), "
+        "the fix is just a `-` line — NO `+` replacement and NO `pass`: just delete "
+        "the offending line(s). The hunk becomes `@@ -10,1 +10,0 @@` followed by "
+        "the `-` line and zero or more context lines.\n\n"
         "Rules:\n"
         "- @@ line numbers are ABSOLUTE, 1-based positions in the whole file — "
         "the number after '-' is the line number of the FIRST line in your hunk "
@@ -666,7 +670,9 @@ def _patch_system_prompt(basename: str) -> str:
         "context you are reading for reference.\n"
         "- After the '-' / '+' marker put the ENTIRE line text directly (the "
         "line's own indentation included, no extra padding space).\n"
-        "- Context lines MUST be copied VERBATIM from the numbered context.\n"
+        "- Context lines MUST be copied VERBATIM from the numbered context. "
+        "NEVER use \"unchanged line\", \"...\", or any other placeholder — copy the "
+        "actual source line exactly.\n"
         "- The '-' line (old code) is REMOVED and the '+' line REPLACES it — "
         "do NOT keep the old buggy line as context and add a new line next to it. "
         "Keep hunk line counts neutral: as many removed as changed.\n"
@@ -677,15 +683,20 @@ def _patch_system_prompt(basename: str) -> str:
         "- Never re-emit whole functions or files; never use [FILE:] blocks.\n"
         "- If the finding cannot be fixed without breaking behavior, reply "
         f"with exactly: [UNRESOLVED: {basename}] <one-sentence reason>\n\n"
-        "Example — for a string-concatenation-in-loop finding, the '-' line is "
+        "Example (replacement — string_concat_in_loop, the '-' line is "
         "the buggy `cur += \" \" + w` and must be REMOVED; the '+' line replaces "
-        "it (the leading @@ number is the first body line, line 45):\n"
+        "it; the leading @@ number is the first body line, line 45):\n"
         "[PATCH: base.py]\n"
         "@@ -45,3 +45,3 @@\n"
         "        elif len(cur) + 1 + len(w) <= width:\n"
         "-            cur += \" \" + w\n"
         "+            cur = \" \".join([cur, w])\n"
-        "        else:\n"
+        "        else:\n\n"
+        "Example (pure removal — unused_import, dead_assignment: NO + replacement, "
+        "NO pass, just delete.  The `@@` second side count is 0):\n"
+        "[PATCH: model_cmd.py]\n"
+        "@@ -3,1 +3,0 @@\n"
+        "-import os\n"
     )
 
 
@@ -1278,6 +1289,11 @@ class OptimizeCommand(Command):
                             )
                             print(f"    Feedback: {feedback[:240]}")
                             continue
+                        _PH = ("unchanged line", "rest of the", "remaining code")
+                        placeholder_warn = any(p in raw.lower() for p in _PH)
+                        if placeholder_warn:
+                            feedback = ("NEVER use placeholder text. Copy actual source lines from the numbered context. "
+                                        + (feedback if feedback else ""))
                         ok, patched = apply_patch(raw, work_lines)
                         if not ok:
                             ok, patched = apply_anchored_patch(raw, work_lines)
@@ -1294,8 +1310,11 @@ class OptimizeCommand(Command):
                                 f"Here is the actual numbered context:\n{snippet}\n"
                                 "Copy these EXACTLY for context/'-' lines. Use correct @@ numbers."
                             )
+                            _PH = ("unchanged line", "...", "rest of the", "remaining", "code unchanged")
+                            if placeholder_warn or any(p in raw.lower() for p in _PH):
+                                feedback = "NEVER use placeholder text like \"unchanged line\". Copy actual source lines from the numbered context. " + feedback
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
-                                print(f"    Feedback: {feedback[:240]}")
+                                print(f"    Feedback: {feedback[:600]}")
                                 continue
                             resolved = False
                             break
