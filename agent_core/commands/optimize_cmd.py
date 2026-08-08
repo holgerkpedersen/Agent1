@@ -1392,6 +1392,10 @@ class OptimizeCommand(Command):
                                 continue
                             resolved = False
                             break
+                        # Preserve the original file's trailing-newline state
+                        # so the diff doesn't show an unrelated newline addition.
+                        if not original.endswith("\n"):
+                            patched = patched.rstrip("\n")
                         new_lines = patched.split("\n")
                         line_delta = patched.count("\n") - len(work_lines)
                         work_lines = new_lines
