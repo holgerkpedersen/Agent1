@@ -291,7 +291,8 @@ def _find_class_definition_file(class_name: str, ws_dir: str, exclude_file: str 
                 if re.search(rf'^class\s+{re.escape(class_name)}\b', src, re.MULTILINE):
                     return (fp, src)
             except Exception:
-                pass
+                print("WARNING: failed to read file during signature extraction:", fname)  # silent_except fix
+
     return None
 
 
@@ -324,7 +325,7 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
         import_match = re.search(r"cannot import name '(\w+)' from '(\w+)'", err)
         if import_match:
             missing_name = import_match.group(1)
-            source_module = import_match.group(2)
+            # source_module assigned at line 327 but never used after. Remove the dead assignment.
             import_errors.setdefault(missing_name, []).append((fname, fpath, err))
             continue
         other_errors.append((fname, fpath, err))
@@ -385,9 +386,7 @@ def _build_fix_prompt(err: str, current_code: str, fname: str, prefer_file: bool
     header = ""
     if "import" in instruction.lower() or "is not defined" in instruction or "Name" in instruction:
         header_end = min(40, len(lines))
-        header_lines = []
-        for i, line in enumerate(lines[:header_end], start=1):
-            header_lines.append(f"{i:>4}    {line.rstrip()}")
+        header_lines = [f"{i:>4}    {line.rstrip()}" for i, line in enumerate(lines[:header_end], start=1)]
         header = "File header (imports):\n```python\n" + "\n".join(header_lines) + "\n```\n\n"
 
     sys_msg = f"Fix this specific issue. {instruction}"
@@ -456,12 +455,6 @@ def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors:
     
     # Build downstream error summary
     error_summary = []
-    for fname, fpath, err in downstream_errors:
-        if "ROOT_CAUSE:" in err:
-            continue
-        # Extract just the key error info
-        err_short = err[:200] if len(err) > 200 else err
-        error_summary.append(f"  {fname}: {err_short}")
     
     downstream_section = ""
     if error_summary:
@@ -487,135 +480,11 @@ def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors:
 def _apply_patch(patch_text: str, fpath: str, original_lines: list[str]) -> tuple[bool, str]:
     """Apply a unified-diff patch. Returns (success, result or error message).
 
-    Whitespace-tolerant: strips leading/trailing whitespace when comparing lines.
-    Filters broken hunks with incomplete replacements.
-
-    Line convention: git-style patches put the whole line (indentation included)
-    right after the +/- marker; LLM-style patches add one padding space after the
-    marker.  We detect per-hunk which convention was used by comparing a '-'
-    line's leading whitespace against the matching file line, and strip that
-    single padding space only when present.
+    Delegates to the shared ``agent_core.patch_utils.apply_patch`` used by the
+    optimize command's patch mode; *fpath* is kept for call-site compatibility.
     """
-    # Parse hunks: @@ -start,count +start,count @@ ... @@
-    # Also lenient: @@ -start @@ (missing +start part)
-    hunks = []
-    for m in re.finditer(r'@@\s*-(\d+)(?:,\d+)?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@(.*?)(?=@@|\Z)', patch_text, re.DOTALL):
-        start = int(m.group(1))
-        body = m.group(3).strip('\n')
-        chunks: list[tuple[str, str | None]] = []
-        for line in body.split('\n'):
-            line = line.rstrip('\r')
-            if line.startswith('-'): chunks.append(('-', line[1:]))
-            elif line.startswith('+'): chunks.append(('+', line[1:]))
-            elif line.startswith(' '): chunks.append((' ', line[1:]))
-        if chunks:
-            hunks.append((start, chunks))
-    if not hunks:
-        return False, "Could not parse patch"
-
-    # Filter out broken hunks (incomplete: has - but no +, empty + lines, or incomplete lines)
-    incomplete_ops = ('=', '+', '-', '*', '/', ',', '(', '[', '{')
-    valid_hunks = []
-    for start, chunks in hunks:
-        has_minus = any(op == '-' for op, _ in chunks)
-        has_plus = any(op == '+' for op, _ in chunks)
-        if has_minus and not has_plus:
-            continue  # Removal only — skip
-        if any(op == '+' and not text.strip() for op, text in chunks):
-            continue  # Empty replacement — skip
-        # Filter incomplete lines (trailing operators like =, +, -, etc.)
-        if any(op == '+' and text.rstrip().endswith(incomplete_ops) for op, text in chunks):
-            continue  # Incomplete replacement — skip
-        valid_hunks.append((start, chunks))
-
-    if not valid_hunks:
-        return False, "No valid hunks in patch"
-
-    # Verify old lines match (whitespace-tolerant)
-    # For '-' lines: must match (removed lines)
-    # For ' ' context lines: skip if mismatched (LLM often hallucinates context)
-    # Record, per hunk, whether its +/- lines carry an LLM padding space.
-    hunk_padding: dict[int, bool] = {}
-    for start, chunks in valid_hunks:
-        idx = start - 1
-        filtered_chunks = []
-        padded = False
-        for op, text in chunks:
-            if op == '-':
-                if idx < 0 or idx >= len(original_lines):
-                    return False, f"Patch mismatch at line {idx+1}: line out of range"
-                actual = original_lines[idx].rstrip('\r\n')
-                patch_lead = len(text) - len(text.lstrip())
-                file_lead = len(actual) - len(actual.lstrip())
-                if not padded and patch_lead != file_lead and text.strip() == actual.strip():
-                    padded = True
-                if actual.strip() != text.strip():
-                    return False, f"Patch mismatch at line {idx+1}: expected '{text[:60]}'"
-                filtered_chunks.append((op, text))
-                idx += 1
-            elif op == ' ':
-                if idx < 0 or idx >= len(original_lines):
-                    idx += 1
-                    continue  # Skip out-of-range context
-                actual = original_lines[idx].rstrip('\r\n')
-                if actual.strip() != text.strip():
-                    # Skip mismatched context line — LLM hallucinated it
-                    idx += 1
-                    continue
-                filtered_chunks.append((op, text))
-                idx += 1
-            else:
-                filtered_chunks.append((op, text))
-        chunks[:] = filtered_chunks
-        hunk_padding[start] = padded
-
-    def _render_plus(start: int, text: str) -> str:
-        if hunk_padding.get(start, False) and text.startswith(' '):
-            return text[1:]
-        return text
-
-    # Apply hunks in reverse order.  Content is applied verbatim (only the
-    # marker padding is stripped) — indentation is never rewritten here; the
-    # syntax check below rejects patches with broken indentation.
-    result = [l + '\n' for l in original_lines]
-    for start, chunks in reversed(valid_hunks):
-        old_lines = [text for op, text in chunks if op in ('-', ' ')]
-        new_lines = []
-        i = 0
-        while i < len(chunks):
-            op, text = chunks[i]
-            if op == '-':
-                if i + 1 < len(chunks) and chunks[i + 1][0] == '+':
-                    # Paired removal + addition: the + line is applied verbatim.
-                    new_lines.append(_render_plus(start, chunks[i + 1][1]))
-                    i += 2  # Skip both - and + lines
-                else:
-                    new_lines.append(_render_plus(start, text))
-                    i += 1
-            elif op == '+':
-                new_lines.append(_render_plus(start, text))
-                i += 1
-            elif op == ' ':
-                new_lines.append(text)
-                i += 1
-
-        idx = start - 1
-        if idx + len(old_lines) <= len(result):
-            del result[idx:idx + len(old_lines)]
-            for i, text in enumerate(new_lines):
-                result.insert(idx + i, text + '\n')
-
-    # Syntax check
-    import tempfile
-    tf = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
-    tf.write(''.join(result))
-    tf.close()
-    r = subprocess.run(["python", "-m", "py_compile", tf.name], capture_output=True, text=True)
-    os.unlink(tf.name)
-    if r.returncode != 0:
-        return False, f"Patch breaks syntax: {r.stderr[:200]}"
-
-    return True, ''.join(result)
+    from agent_core.patch_utils import apply_patch
+    return apply_patch(patch_text, original_lines)
 
 
 def _run_python_snippet(ws: str, extra_paths: list[str], code_lines: list[str]) -> subprocess.CompletedProcess:
@@ -764,7 +633,7 @@ class ImplementCommand(Command):
                 else:
                     print(f"Taskplan changed — refreshing file list")
             except Exception:
-                pass
+                print("Warning: failed to load cache")
 
         if all_files is None:
             # Parse filenames directly from taskplan — the source of truth.
@@ -796,7 +665,7 @@ class ImplementCommand(Command):
                     json.dump(cache_data, f)
                 print(f"Cached file list to {cache_file}")
             except Exception:
-                pass
+                print("Warning: failed to save cache")
 
         print(f"Found {len(all_files)} files to implement: {', '.join(all_files)}")
 
@@ -880,7 +749,7 @@ class ImplementCommand(Command):
                     return True
                 print("\n[fix] Running validation on existing files...")
                 implemented = [f for f in all_files if f.endswith(".py")]
-                all_files = implemented
+                # all_files = implemented  # dead assignment removed
 
             all_files = files_to_generate
 
@@ -947,7 +816,7 @@ class ImplementCommand(Command):
                     if sigs:
                         export_map[fname] = sigs
                 except Exception:
-                    pass
+                    print("WARNING: failed to read file during signature extraction:", fname)  # silent_except fix
 
         if export_map:
             total_exports = sum(len(v) for v in export_map.values())
@@ -1050,7 +919,7 @@ class ImplementCommand(Command):
                 if matches:
                     break
 
-            if not matches and ("<tool_call" in impl_response or "</tool_call>" in impl_response):
+            if not matches and ("<tool_call" in impl_response or "<tool_call>" in impl_response):
                 print(f"  Detected tool calls, retrying with plain text instruction...")
                 impl_messages.append({"role": "user", "content": "Respond ONLY in [FILE: filename.py] format. No <tool_call> tags."})
                 impl_response = await agent.llm.chat(impl_messages)
@@ -1084,7 +953,7 @@ class ImplementCommand(Command):
                             if sigs:
                                 export_map[fname] = sigs
                         except Exception:
-                            pass
+                            print(f"  Warning: Could not read existing file {fname}")
 
             print(f"\nExport map: {sum(len(v) for v in export_map.values())} exports across {len(export_map)} modules")
 
@@ -1171,8 +1040,7 @@ class ImplementCommand(Command):
             if filename.endswith(".py"):
                 func_names = re.findall(r'def\s+(\w+)', content)
                 if len(func_names) > 20:
-                    from collections import Counter
-                    counts = Counter(func_names)
+                    # from collections import Counter  # unused_import removed
                     similar_prefixes = {}
                     for name in func_names:
                         prefix = re.sub(r'_\d+$|_v\d+$|_clean$|_final$', '', name)
@@ -1258,7 +1126,7 @@ class ImplementCommand(Command):
                             agent.llm._provider.temperature = dp.temperature
                             agent.llm._provider.max_tokens = dp.max_tokens
                         except Exception:
-                            pass
+                            print("Warning: failed to switch to deep-analysis profile")
                         retry_msgs = [
                             {"role": "system", "content": "Generate ONLY the complete code for this file. Output as:\n[FILE: filename.py]\n```python\n# complete code here\n```"},
                             {"role": "user", "content": f"Generate complete code for {filename}."}
@@ -1428,7 +1296,6 @@ class ImplementCommand(Command):
             print(f"{'='*50}")
 
             prev_error_sigs: dict[str, str] = {}
-            files_already_fixed: set[str] = set()
             file_error_sigs: dict[str, str] = {}  # per-file last-seen error signature
             patch_failed: set[str] = set()  # files where [PATCH:] format failed — prefer [FILE:] next
 
@@ -1839,7 +1706,7 @@ class ImplementCommand(Command):
                     try:
                         all_content[fname] = fpath.read_text(encoding="utf-8")
                     except Exception:
-                        pass
+                        print(f"WARNING: Failed to read {fname} — skipping review")
 
             # ---- Static cross-file analysis ----
             func_locations: dict[str, list[str]] = {}
@@ -1938,7 +1805,7 @@ class ImplementCommand(Command):
                                 path.unlink()
                                 print(f"    Deleted: {f}")
                 except (EOFError, KeyboardInterrupt):
-                    pass
+                    print("Interrupted by user or EOF")
 
             if unwired and not dangerous_files:
                 print(f"\n  [review] {len(unwired)} new module(s) are not imported. Use 'model profile use' to wire them.")

@@ -482,7 +482,7 @@ Unreferenced .py files (candidates for deletion):
   Static analysis found 12 issue(s) in 1 file(s):
 
   fix_cmd.py:
-      line   21: [silent_except] Replace 'pass' with logging or re-raise
+      line   21: [silent_except] Replace 'pass' with a print/log warning — do NOT re-raise
       line  134: [regex_in_loop] Move re.compile() to module level
 
   Processing 1 file(s) in 1 batch(es)...

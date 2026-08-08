@@ -1,4 +1,4 @@
 {
-  "model": "qwen3.6-27b-mtp",
+  "model": "laguna-s-2.1",
   "profile": "fast-codegen"
 }

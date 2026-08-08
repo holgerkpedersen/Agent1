@@ -17,6 +17,7 @@ from agent_core.commands.optimize_cmd import (
     parse_llm_fixes,
     OPTIMIZE_RULES,
     SYSTEM_OVERHEAD_TOKENS,
+    _surgically_revert_regressions,
 )
 from agent_core.patterns import analyze as static_analyze, detect_list_append_join
 
@@ -38,6 +39,31 @@ class TestEstimateTokens:
     def test_longer_text(self) -> None:
         text = "x" * 100
         assert estimate_tokens(text) == 25
+
+
+# ---------------------------------------------------------------------------
+# _request_max_tokens (context-aware output budget)
+# ---------------------------------------------------------------------------
+
+class TestRequestMaxTokens:
+    def test_context_aware_budget_fits_window(self) -> None:
+        """With a known context window the budget shrinks so prompt + output
+        (plus the reserve) always fit — the HTTP-400 overflow is impossible."""
+        from agent_core.commands.optimize_cmd import _request_max_tokens
+        assert _request_max_tokens(20000, context_tokens=32768) <= 32768 - 20000
+
+    def test_context_near_full_window_still_positive(self) -> None:
+        from agent_core.commands.optimize_cmd import _request_max_tokens
+        assert _request_max_tokens(32000, context_tokens=32768) >= 1
+
+    def test_heuristic_budget_when_context_unknown(self) -> None:
+        from agent_core.commands.optimize_cmd import _request_max_tokens
+        assert _request_max_tokens(100) >= 8192
+
+    def test_hard_ceiling_respected(self) -> None:
+        from agent_core.commands.optimize_cmd import _request_max_tokens, REGION_HARD_MAX_TOKENS
+        assert _request_max_tokens(100, context_tokens=1000000) <= REGION_HARD_MAX_TOKENS
+        assert _request_max_tokens(100000000, context_tokens=None) == REGION_HARD_MAX_TOKENS
 
 
 # ---------------------------------------------------------------------------
@@ -676,6 +702,37 @@ class TestNewDetectors:
         findings = detect_dead_assignment(code)
         assert findings == []
 
+    def test_dead_assignment_loop_back_edge_not_flagged(self) -> None:
+        """A store at the end of a loop body feeds a read on the next
+        iteration (e.g. ``prev_error_sigs = dict(...)`` compared at the top
+        of the body).  Such loop-state variables are live, never dead."""
+        from agent_core.patterns import detect_dead_assignment
+        code = textwrap.dedent("""\
+            def fix_signatures(tree):
+                prev_error_sigs = {}
+                for node in tree:
+                    if signature(node) in prev_error_sigs:
+                        continue
+                    prev_error_sigs = dict(node.error_sigs)
+                return tree
+        """)
+        findings = detect_dead_assignment(code)
+        assert not any(f[1] == "dead_assignment" for f in findings)
+
+    def test_dead_assignment_inside_loop_dead_store_still_detected(self) -> None:
+        """A store inside a loop that no other line of the loop body reads is
+        still a dead store — the back-edge rule only suppresses real loop state."""
+        from agent_core.patterns import detect_dead_assignment
+        code = textwrap.dedent("""\
+            def walk(items):
+                total = 0
+                for item in items:
+                    scratch = item * 2
+                return total
+        """)
+        findings = detect_dead_assignment(code)
+        assert any(f[1] == "dead_assignment" for f in findings)
+
 
 # ---------------------------------------------------------------------------
 # LLM output validation
@@ -898,6 +955,34 @@ class TestShowFileDiff:
         out = capsys.readouterr().out
         assert "\033[41m" in out
 
+    def test_long_added_line_is_wrapped(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        import agent_core.commands.base as base
+        monkeypatch.setattr(base, "_diff_terminal_width", lambda: 80)
+        huge = "x" * 300
+        show_file_diff("test.py", "line1\n", f"line1\n{huge}\n")
+        out = capsys.readouterr().out
+        # Each visible (stripped of ANSI) printed line stays within the width cap.
+        import re as _re
+        stripped = _re.sub(r"\033\[[0-9]*m", "", out)
+        for line in stripped.splitlines():
+            assert len(line) <= 80, f"line too wide ({len(line)}): {line!r}"
+        # The long token must be split across multiple lines.
+        assert stripped.count("x") == 300
+
+    def test_long_line_word_wraps(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        import agent_core.commands.base as base
+        monkeypatch.setattr(base, "_diff_terminal_width", lambda: 80)
+        words = " ".join(["word"] * 30)  # ~119 chars
+        show_file_diff("test.py", "line1\n", f"line1\n{words}\n")
+        out = capsys.readouterr().out
+        import re as _re
+        stripped = _re.sub(r"\033\[[0-9]*m", "", out)
+        for line in stripped.splitlines():
+            assert len(line) <= 80, f"line too wide ({len(line)}): {line!r}"
+        # No "word" instance should be cut mid-word across a wrap boundary
+        # (word-wrap kicks in before hard-slicing).
+        assert stripped.count("word") == 30
+
 
 class TestOptimizeEmptyOutput:
     def test_empty_llm_response_retries_then_gives_up(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -1002,6 +1087,23 @@ class TestChangedImports:
         fixed = "import re\n\ndef f():\n    return re.compile('x')\n"
         added = _import_entries(fixed) - _import_entries(original)
         assert added == set()
+
+    def test_duplicate_stdlib_import_is_blocked(self) -> None:
+        """A rewrite that adds a *second* copy of an import the file already
+        has (region splices re-inject import os/import re) is a new
+        duplicate_import defect and must be rejected even for stdlib modules."""
+        from agent_core.commands.optimize_cmd import _blocked_added_imports
+        original = "import os\nimport re\n\ndef f():\n    return re.compile('x')\n"
+        candidate = "import os\nimport re\nimport os\n\ndef f():\n    return re.compile('x')\n"
+        assert "import os" in _blocked_added_imports(candidate, original)
+
+    def test_new_stdlib_import_is_allowed(self) -> None:
+        """A genuinely new stdlib import (e.g. import json for a logging fix)
+        is safe and must NOT be blocked."""
+        from agent_core.commands.optimize_cmd import _blocked_added_imports
+        original = "import re\n\ndef f():\n    return re.compile('x')\n"
+        candidate = "import re\nimport json\n\ndef f():\n    return json.dumps(re.compile('x').pattern)\n"
+        assert _blocked_added_imports(candidate, original) == set()
 
     def test_added_import_rejected_and_not_applied(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1141,6 +1243,63 @@ class TestChangedImports:
         assert "Applied: sample.py" in out
 
 
+class TestNoopRewriteGate:
+    """The merged-rewrite gate must reject a diff that touches no finding line:
+    an LLM dodging silent_except findings with a comment/whitespace-only edit
+    is a no-op rewrite, not a fix."""
+
+    def test_whitespace_only_change_to_unrelated_line_is_noop(self) -> None:
+        from agent_core.commands.optimize_cmd import _blocked_regressions
+        original = textwrap.dedent("""\
+            def probe(a):
+                try:
+                    return a + 1
+                except Exception:
+                    pass
+                return 0
+
+
+            def other(b):
+                return b * 2
+        """)
+        # The only change: a comment line elsewhere + one extra blank line;
+        # the silent_except (original line 3) is untouched.
+        candidate = textwrap.dedent("""\
+            def probe(a):
+                try:
+                    return a + 1
+                except Exception:
+                    pass
+                return 0
+
+            # unrelated comment
+            def other(b):
+                return b * 2
+        """)
+        issues = _blocked_regressions(original, candidate)
+        assert [i["pattern"] for i in issues] == ["noop_rewrite"]
+
+    def test_real_fix_touching_finding_line_is_not_noop(self) -> None:
+        from agent_core.commands.optimize_cmd import _blocked_regressions
+        original = textwrap.dedent("""\
+            def probe(a):
+                try:
+                    return a + 1
+                except Exception:
+                    pass
+                return 0
+        """)
+        candidate = textwrap.dedent("""\
+            def probe(a):
+                try:
+                    return a + 1
+                except Exception:
+                    print("probe failed")
+                return 0
+        """)
+        assert _blocked_regressions(original, candidate) == []
+
+
 class TestRegionSplitting:
     """Divide & conquer: oversized files are split into line regions, each
     fixed in its own LLM call, then spliced back and validated as a whole."""
@@ -1183,6 +1342,75 @@ class TestRegionSplitting:
             )
         return "".join(parts)
 
+    def _monolith_file(self) -> str:
+        """A file that is ONE un-splittable statement: a giant assignment
+        (dict/tuple literal ~9k tokens) inside a function, whose only finding
+        is the dead assignment itself.  No AST seam exists inside the literal,
+        so the region stays whole and patch-mode (hunks) is the only way."""
+        parts = ["def big_engine():\n", "    x = (\n", "        'start',\n"]
+        for i in range(1100):
+            parts.append(f"        '# padding {i}',\n")
+        parts.append("        'key',\n")
+        parts.append("    )\n")
+        return "".join(parts)
+
+    def _assert_statement_seam_boundaries(self, code: str, regions: list[tuple[int, int]]) -> None:
+        """Every region boundary must be a statement seam (start of a complete
+        statement that ends the previous one) or a column-0 def/import line."""
+        import ast as ast_mod
+        from agent_core.commands.optimize_cmd import _ast_statement_seams
+        lines = code.split("\n")
+        seams = _ast_statement_seams(code)
+        tree = ast_mod.parse(code)
+        stmt_starts = {0, len(lines)}
+        for node in ast_mod.walk(tree):
+            if getattr(node, "lineno", None) is None:
+                continue
+            first = node.decorator_list[0] if getattr(node, "decorator_list", None) else node
+            stmt_starts.add(first.lineno - 1)
+        for start, end in regions:
+            assert start in (seams | stmt_starts), f"{start} is not a statement start"
+            assert end == 0 or end in (seams | stmt_starts) or end == len(lines), \
+                f"{end} is not a statement boundary"
+
+    def test_statement_seams_never_split_a_statement(self) -> None:
+        """Every seam is the start line of SOME complete statement — a cut can
+        never land strictly inside a statement's own lines.  (Seams naturally
+        lie inside enclosing statements: that is exactly what lets a giant
+        method split at its inner statements.)"""
+        import ast as ast_mod
+        from agent_core.commands.optimize_cmd import _ast_statement_seams
+        for code in (self._big_file(), self._big_class_file(), self._monolith_file()):
+            seams = _ast_statement_seams(code)
+            tree = ast_mod.parse(code)
+            stmt_starts = set()
+            for node in ast_mod.walk(tree):
+                if getattr(node, "lineno", None) is None:
+                    continue
+                first = node.decorator_list[0] if getattr(node, "decorator_list", None) else node
+                stmt_starts.add(first.lineno - 1)
+            assert seams <= stmt_starts, f"seams outside statement starts: {seams - stmt_starts}"
+
+    def test_giant_function_body_splits_at_inner_statement_seams(self) -> None:
+        """A 1300-line single method body is no longer one monolithic region:
+        statement seams inside it produce multiple regions, each of which
+        compiles when re-attached to its enclosing function header."""
+        from agent_core.commands.optimize_cmd import split_into_regions
+        parts = ["def big_engine():\n"]
+        for j in range(32):
+            parts.append(f"    x{j} = " + "'" + "y" * 180 + "'\n")
+            parts.append(f"    if x{j}:\n        data = x{j}\n    else:\n        data = 0\n")
+        parts.append("    return data\n")
+        code = "".join(parts)
+        lines = code.split("\n")
+        regions = split_into_regions(code)
+        assert len(regions) >= 2, "giant method must not stay a single region"
+        assert regions[0][0] == 0 and regions[-1][1] == len(lines)
+        for start, end in regions[1:]:
+            assert lines[start][:1].isspace(), "mid-body regions start indented"
+            joined = "def big_engine():\n" + "\n".join(lines[start:end])
+            compile(joined, "<seam>", "exec")
+
     def test_split_into_regions_splits_class_bodies(self) -> None:
         """A class-heavy file (like fix_cmd.py) is split at indented method
         boundaries so the whole class doesn't have to be rewritten one-shot."""
@@ -1196,11 +1424,11 @@ class TestRegionSplitting:
         assert regions[-1][1] == len(lines)
         for (_, end), (next_start, _) in zip(regions, regions[1:]):
             assert end == next_start
-        # Indented method boundaries inside the class are valid cut points.
+        # Some region starts inside the class (indented) — big class bodies
+        # must never have to be rewritten in one shot.
         indented_starts = [s for s, _ in regions if lines[s][:1].isspace()]
         assert indented_starts, "expected at least one region to start inside the class"
-        for s in indented_starts:
-            assert lines[s].lstrip().startswith(("def ", "async def "))
+        self._assert_statement_seam_boundaries(code, regions)
 
     def test_split_into_regions_never_cuts_mid_function(self) -> None:
         from agent_core.commands.optimize_cmd import split_into_regions
@@ -1213,9 +1441,9 @@ class TestRegionSplitting:
         assert regions[-1][1] == len(lines)
         for (_, end), (next_start, _) in zip(regions, regions[1:]):
             assert end == next_start
-        # No region starts mid-function: every start is a top-level def/import.
-        for start, _ in regions:
-            assert lines[start].startswith(("def ", "import ", "from "))
+        # Every boundary is a statement seam or a top-level def/import — a
+        # region never starts mid-statement.
+        self._assert_statement_seam_boundaries(code, regions)
 
     def test_merge_regions_splices_fixed_code(self) -> None:
         from agent_core.commands.optimize_cmd import _merge_regions
@@ -1516,9 +1744,9 @@ class TestRegionSplitting:
     def test_merged_regression_triggers_repair_and_applies(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A merged rewrite that INTRODUCES a new finding pattern (dead store)
-        not present in the original regresses it; the repair pass removes it
-        and the repaired file is applied."""
+        """A merged rewrite that introduces an extra dead-store line inside a
+        replaced block: the surgical pass removes the inserted line without
+        any LLM repair call, and the cleaned merge is applied."""
         import asyncio
         from types import SimpleNamespace
         from agent_core.commands.optimize_cmd import OptimizeCommand
@@ -1533,21 +1761,15 @@ class TestRegionSplitting:
             code_block = re.search(r"```python\n(.*?)\n```", user, re.DOTALL)
             assert code_block is not None
             code = code_block.group(1)
-            if "REGION of a larger file" in user:
-                # Region rewrite injects a dead store `leak = 1` never read.
-                leaked = code.replace(
-                    "def func_5(value):\n    result = value * 5\n",
-                    "def func_5(value):\n    leak = 1\n    result = value * 5\n",
-                )
-                fixed = leaked.replace(
-                    "except Exception:\n        pass",
-                    "except OSError:\n        return \"\"",
-                )
-                return f"[FILE: big.py]\n```python\n{fixed}\n```\n"
-            repair_passes += 1
-            fixed = code.replace(
-                "    leak = 1\n",
-                "",
+            assert "REGION of a larger file" in user
+            # Region rewrite injects a dead store `leak = 1` never read.
+            leaked = code.replace(
+                "def func_5(value):\n    result = value * 5\n",
+                "def func_5(value):\n    leak = 1\n    result = value * 5\n",
+            )
+            fixed = leaked.replace(
+                "except Exception:\n        pass",
+                "except OSError:\n        return \"\"",
             )
             return f"[FILE: big.py]\n```python\n{fixed}\n```\n"
 
@@ -1558,10 +1780,162 @@ class TestRegionSplitting:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert repair_passes >= 1, (
-            "expected a whole-file repair call for the regression"
+        assert repair_passes == 0, (
+            "the injected line is removable; no whole-file repair needed"
         )
+        assert "regressions fixed surgically" in out
         assert "Applied: big.py" in out
         final = target.read_text(encoding="utf-8")
         assert "leak = 1" not in final
         compile(final, "<big>", "exec")
+
+    def test_oversized_region_uses_patch_mode(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A file whose first region is ONE un-splittable giant statement (a
+        giant dict literal ~8k tokens, no AST seams exist inside a literal)
+        must not be re-emitted whole: patch-mode asks for [PATCH:] hunks and
+        applies them with a tiny output budget."""
+        import asyncio
+        from types import SimpleNamespace
+        from agent_core.commands.optimize_cmd import (
+            OptimizeCommand, estimate_tokens, REGION_PATCH_MODE_TOKENS,
+            split_into_regions,
+        )
+
+        code = self._monolith_file()
+        target = tmp_path / "huge.py"
+        target.write_text(code, encoding="utf-8")
+
+        lines = code.split("\n")
+        regions = split_into_regions(code)
+        assert regions == [(0, len(lines))]
+        assert estimate_tokens(code) > REGION_PATCH_MODE_TOKENS  # precondition
+
+        system_prompt = ""
+        max_tokens_seen = 0
+
+        async def chat(messages, **kwargs):
+            nonlocal system_prompt, max_tokens_seen
+            system_prompt = messages[0]["content"]
+            max_tokens_seen = max(max_tokens_seen, kwargs.get("max_tokens", 0))
+            idx = next(i for i, l in enumerate(lines)
+                       if l.strip() == "'# padding 0',")
+            hunk = (
+                f"[PATCH: huge.py]\n"
+                f"@@ -{idx},3 +{idx},3 @@\n"
+                f" {lines[idx - 1]}\n"
+                f"-{lines[idx]}\n"
+                f"+        'engine_ok_springs'\n"
+            )
+            return hunk
+
+        agent = SimpleNamespace(
+            workspace=str(tmp_path),
+            llm=SimpleNamespace(chat=chat),
+        )
+        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        out = capsys.readouterr().out
+        assert ok is True
+        assert "PATCH: huge.py" in system_prompt, "patch-mode prompt must demand hunks"
+        assert max_tokens_seen <= 4096, "patch-mode output budget must stay small"
+        assert "Applied: huge.py" in out
+        final = target.read_text(encoding="utf-8")
+        assert "'engine_ok_springs'" in final
+        compile(final, "<huge>", "exec")
+
+    def test_patch_mode_retries_after_missing_hunks(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A patch-mode unit that returns no [PATCH:] block is retried with
+        explicit feedback; the corrected hunk response is applied."""
+        import asyncio
+        from types import SimpleNamespace
+        from agent_core.commands.optimize_cmd import OptimizeCommand
+
+        code = self._monolith_file()
+        lines = code.split("\n")
+        target = tmp_path / "huge.py"
+        target.write_text(code, encoding="utf-8")
+
+        calls = 0
+
+        async def chat(messages, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return "no hunks here, just prose"
+            idx = next(i for i, l in enumerate(lines)
+                       if l.strip() == "'# padding 0',")
+            return (
+                f"[PATCH: huge.py]\n"
+                f"@@ -{idx},3 +{idx},3 @@\n"
+                f" {lines[idx - 1]}\n"
+                f"-{lines[idx]}\n"
+                f"+        'engine_ok_springs'\n"
+            )
+
+        agent = SimpleNamespace(
+            workspace=str(tmp_path),
+            llm=SimpleNamespace(chat=chat),
+        )
+        ok = asyncio.run(OptimizeCommand().execute(["huge.py", "--apply", "--yes"], agent))
+        out = capsys.readouterr().out
+        assert ok is True
+        assert calls == 2, "first empty hunk call must be retried"
+        final = target.read_text(encoding="utf-8")
+        assert "engine_ok_springs" in final
+        compile(final, "<huge>", "exec")
+class TestSurgicalRevertRegressions:
+    """Deterministic excision of regressing lines: run9 showed LLM repair
+    loops keep reintroducing walrus-in-comprehension and unused-import
+    regressions, so the merge gate must revert them without the LLM."""
+
+    def test_reverts_introduced_walrus_line(self) -> None:
+        original = "def pick(nums):\n    vals = [n for n in nums if n > 0]\n    return vals\n"
+        candidate = "def pick(nums):\n    vals = [n for n in nums if (p := n) > 0]\n    return vals\n"
+        assert "walrus_in_comprehension" in {
+            f["pattern"] for f in static_analyze(candidate)
+        }
+        cleaned, residual = _surgically_revert_regressions(original, candidate)
+        assert not residual, residual
+        assert "p := n" not in cleaned
+        compile(cleaned, "<clean>", "exec")
+
+    def test_removes_added_unused_import(self) -> None:
+        original = "import os\n\ndef f():\n    return os.name\n"
+        candidate = "import os\nimport collections\n\ndef f():\n    return os.name\n"
+        assert "unused_import" in {f["pattern"] for f in static_analyze(candidate)}
+        cleaned, residual = _surgically_revert_regressions(original, candidate)
+        assert not residual, residual
+        assert "collections" not in cleaned
+        compile(cleaned, "<clean>", "exec")
+
+    def test_keeps_legitimate_fixes(self) -> None:
+        """The fix must not share a replacement block with the regression:
+        difflib preserves equal blocks, so the fixed comprehension survives
+        while only the walrus line is restored."""
+        original = (
+            "def gen(nums):\n"
+            "    out = []\n"
+            "    for n in nums:\n"
+            "        out.append(n)\n"
+            "    return out\n"
+            "\n"
+            "def gen2(xs):\n"
+            "    return [n for n in xs if n > 0]\n"
+        )
+        candidate = (
+            "def gen(nums):\n"
+            "    out = [n for n in nums]\n"
+            "    return out\n"
+            "\n"
+            "def gen2(xs):\n"
+            "    return [n for n in xs if (q := n) > 0]\n"
+        )
+        cleaned, residual = _surgically_revert_regressions(original, candidate)
+        assert not residual, residual
+        assert "out = [n for n in nums]" in cleaned
+        assert "out = []" not in cleaned and "out.append" not in cleaned
+        assert "q := n" not in cleaned
+        compile(cleaned, "<clean>", "exec")

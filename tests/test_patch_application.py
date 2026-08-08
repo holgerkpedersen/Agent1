@@ -571,3 +571,114 @@ class TestPatchIntegrationViaAgent:
         lines = final.strip().split("\n")
         assert lines[0] == "a = 10"
         assert lines[3] == "d = 30"
+
+
+class TestAnchoredPatchApplication:
+    """Content-anchored patch fallback: wrong line numbers, fences, fused
+    headers, padding style, and safe-rejection behaviors."""
+
+    SRC = (
+        "def engine(options):\n"
+        "    cache = {}\n"
+        "    for key in options:\n"
+        "        data = fetch(key)\n"
+        "        cache[key] = data\n"
+        "    return cache\n"
+    )
+
+    def _source_lines(self):
+        return self.SRC.split("\n")
+
+    def test_anchored_fixes_wrong_line_numbers(self) -> None:
+        from agent_core.patch_utils import apply_anchored_patch
+        patch = (
+            "@@ -1,3 +1,3 @@\n"
+            "     for key in options:\n"
+            "-        data = fetch(key)\n"
+            "+        data = load(key)\n"
+            "\n"
+        )
+        ok, result = apply_anchored_patch(patch, self._source_lines())
+        assert ok is True
+        assert "data = load(key)" in result
+
+    def test_anchored_handles_fenced_fused_headers(self) -> None:
+        """run8 shape: markdown fence + multiple fused @@ headers."""
+        from agent_core.patch_utils import apply_anchored_patch
+        patch = (
+            "```python\n"
+            "@@ -4,2 +4,2 @@ for key in options:\n"
+            "-        data = fetch(key)\n"
+            "+        data = load(key)\n"
+            "@@ -88,1 +88,1 @@\n"
+            "```\n"
+        )
+        ok, result = apply_anchored_patch(patch, self._source_lines())
+        assert ok is True
+        assert "data = load(key)" in result
+
+    def test_anchored_applies_multiple_hunks(self) -> None:
+        from agent_core.patch_utils import apply_anchored_patch
+        patch = (
+            "@@ -900,2 +900,2 @@\n"
+            "-        data = fetch(key)\n"
+            "+        data = load(key)\n"
+            "@@ -901,2 +901,2 @@\n"
+            "-        cache[key] = data\n"
+            "+        cache[key] = value\n"
+        )
+        ok, result = apply_anchored_patch(patch, self._source_lines())
+        assert ok is True
+        assert "data = load(key)" in result
+        assert "cache[key] = value" in result
+        compile(result, "<anchored>", "exec")
+
+    def test_anchored_rejects_unknown_content(self) -> None:
+        from agent_core.patch_utils import apply_anchored_patch
+        patch = "@@ -260,2 +260,2 @@\n-     invented_line\n+     x\n"
+        ok, err = apply_anchored_patch(patch, self._source_lines())
+        assert ok is False
+        assert "Cannot anchor" in err
+
+    def test_anchored_rejects_syntax_breakage(self) -> None:
+        from agent_core.patch_utils import apply_anchored_patch
+        patch = (
+            "@@ -900,2 +900,2 @@\n"
+            "-        cache[key] = data\n"
+            "+        cache\n"
+            "+    bad indent(\n"
+        )
+        ok, err = apply_anchored_patch(patch, self._source_lines())
+        assert ok is False
+        assert err  # rejected by hunk validation, anchoring, or the syntax gate
+
+    def test_split_hunks_handles_fused_headers(self) -> None:
+        from agent_core.patch_utils import split_patch_hunks
+        patch = (
+            "@@ -4,2 +4,2 @@ for key in options:\n"
+            "-        data = fetch(key)\n"
+            "+        data = load(key)\n"
+            "@@ -88,1 +88,1 @@\n"
+        )
+        hunks = split_patch_hunks(patch)
+        assert len(hunks) == 1
+        assert hunks[0][0] == 4
+        ops = [op for op, _ in hunks[0][1]]
+        assert "-" in ops and "+" in ops
+
+    def test_normalize_strips_fence_and_preamble(self) -> None:
+        from agent_core.patch_utils import normalize_patch_block
+        raw = (
+            "Here is the fix:\n"
+            "```diff\n"
+            "--- a/huge.py\n"
+            "+++ b/huge.py\n"
+            "@@ -3,3 +3,3 @@\n"
+            "- old\n"
+            "+ new\n"
+            "```\n"
+        )
+        out = normalize_patch_block(raw)
+        assert out.startswith("@@ -3,3 +3,3 @@")
+        assert "--- a/huge.py" not in out
+        assert "```" not in out

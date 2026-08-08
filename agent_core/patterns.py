@@ -148,7 +148,10 @@ def detect_silent_except(source: str) -> list[tuple[int, str, str]]:
             # Look at next line for pass
             if i < len(lines) and re.match(r"^\s+pass\s*$", lines[i]):
                 findings.append((i, "silent_except",
-                                 "Replace 'pass' with logging or re-raise — error is silently swallowed"))
+                                 "Replace 'pass' with a print/log warning — do NOT re-raise (silent "
+                                 "handlers are often intentional fallbacks such as cache reads, "
+                                 "optional features, or Ctrl-C handling); re-raising would crash "
+                                 "normal operation — preserve the original control flow"))
     return findings
 
 
@@ -559,12 +562,60 @@ def detect_dead_assignment(source: str) -> list[tuple[int, str, str]]:
                 used_after = True
                 break
 
+        # Loop back-edge: a store at the end of a for/while body feeds a read
+        # at the top of the *next* iteration, which appears textually BEFORE
+        # the store.  Such loop-state variables (e.g. ``prev_error_sigs =
+        # dict(...)`` compared against at the top of the body) are live, so a
+        # reference anywhere else inside the same loop body keeps the store.
+        if not used_after:
+            used_after = _loop_body_references(lines, i, var_name)
+
         if not used_after:
             findings.append((i, "dead_assignment",
                              f"Variable '{var_name}' assigned at line {i} but never used after. Remove the dead assignment."))
 
     findings.sort(key=lambda f: f[0])
     return findings
+
+
+def _loop_body_references(lines: list[str], line: int, var_name: str) -> bool:
+    """True if *var_name* is referenced on any other line of the enclosing
+    for/while body for 1-based *line*.
+
+    Textual scan matching ``detect_dead_assignment``'s style (no AST): walk up
+    from ``line`` looking for a for/while header at a smaller indentation;
+    then search every line of that body except the assignment line itself.  A
+    reference at the top of the body (the next-iteration read) suppresses the
+    false dead-store finding.
+    """
+    indent = len(lines[line - 1]) - len(lines[line - 1].lstrip())
+    header: int | None = None
+    j = line - 2  # 0-based index one line above the assignment
+    while j >= 0:
+        lj = lines[j]
+        if not lj.strip():
+            j -= 1
+            continue
+        if len(lj) - len(lj.lstrip()) >= indent:
+            j -= 1
+            continue  # still inside the same or a nested block
+        if re.match(r"(?:async\s+)?(?:for|while)\b", lj.strip()):
+            header = j
+            break
+        j -= 1  # a dedented non-loop line (if/def) — keep scanning up
+    if header is None:
+        return False
+
+    header_indent = len(lines[header]) - len(lines[header].lstrip())
+    for k in range(header + 1, len(lines)):
+        lk = lines[k]
+        if lk.strip() and len(lk) - len(lk.lstrip()) <= header_indent:
+            break  # body ended
+        if k + 1 == line:
+            continue  # the assignment itself
+        if re.search(rf"\b{re.escape(var_name)}\b", lk):
+            return True
+    return False
 
 
 def detect_walrus_in_comprehension(source: str) -> list[tuple[int, str, str]]:

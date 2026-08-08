@@ -54,8 +54,8 @@ class CleanupCommand(Command):
                 for other in all_files:
                     if other != fname and other in content:
                         references[other].add(fname)
-            except Exception:
-                raise
+            except Exception as exc:
+                print(f"  Warning: could not read {fname}: {exc}")
 
         active_candidates = [f for f in all_files if f.startswith("project_") and f.endswith(".md")]
         active = set()

@@ -16,10 +16,9 @@ if TYPE_CHECKING:
 def _is_stdlib_path(p: str) -> bool:
     """True when *p* lives under the Python installation (stdlib or site-packages)."""
     prefixes = [sys.prefix, sys.base_prefix]
-    try:
-        prefixes.append(sys._base_executable or "")
-    except AttributeError as exc:
-        raise RuntimeError(f"Failed to access sys._base_executable: {exc}") from exc
+    _base = getattr(sys, "_base_executable", None)
+    if _base:
+        prefixes.append(_base)
     norm = os.path.normpath(p).lower()
     return any(norm.startswith(os.path.normpath(pr).lower()) for pr in prefixes if pr)
 
@@ -137,7 +136,7 @@ class FixCommand(Command):
                                 result.add(os.path.normpath(full))
                                 break
                 except Exception as exc:
-                    raise RuntimeError(f"Failed to parse imports in {filepath}: {exc}") from exc
+                    print(f"  Warning: failed to parse imports in {filepath}: {exc}")
                 return result
 
             for f in list(candidate_files):
@@ -214,7 +213,7 @@ class FixCommand(Command):
                                 if sigs:
                                     sig_map[rel] = ", ".join(f"{n}" for n in sorted(sigs.keys())[:8])
                             except Exception as exc:
-                                raise RuntimeError(f"Failed to extract signatures from {fp}: {exc}") from exc
+                                print(f"  Warning: failed to extract signatures from {fp}: {exc}")
                 all_source += f"\n\n## Other project files (signatures only, {len(sig_map)} total)\n\n"
                 for rel, sigs in sorted(sig_map.items()):
                     all_source += f"  {rel}: {sigs}\n"
@@ -268,7 +267,7 @@ class FixCommand(Command):
                         if sigs:
                             sig_map[rel] = ", ".join(f"{n}" for n in sorted(sigs.keys())[:8])
                     except Exception as exc:
-                        raise RuntimeError(f"Failed to extract signatures from {fp}: {exc}") from exc
+                        print(f"  Warning: failed to extract signatures from {fp}: {exc}")
 
             # Build initial context: full source for top-N, signatures for rest
             context = f"## Issue\n{desc_text}\n\n"
@@ -356,7 +355,7 @@ class FixCommand(Command):
                                 read_paths.add(full)
                                 new_files.append(rel)
                             except Exception as exc:
-                                raise RuntimeError(f"Failed to read requested file {full}: {exc}") from exc
+                                print(f"  Warning: failed to read requested file {full}: {exc}")
                         else:
                             bad_reads.append(req_path)
                     if new_files:
