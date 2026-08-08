@@ -18,6 +18,13 @@ KNOWN_MODELS = {
         "thinking": True,
         "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False, "preserve_thinking": False}},
     },
+    "google/gemma-4-12b": {
+        "desc": "Gemma 4 12B — chat, reasoning, fast token gen",
+        "max_tokens": 100000,
+        "size_gb": 7.0,
+        "params": "12B",
+        "thinking": True,
+    },
     "google/gemma-4-31b": {
         "desc": "Gemma 4 31B — chat, reasoning, fast token gen",
         "max_tokens": 100000,

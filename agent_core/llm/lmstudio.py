@@ -277,16 +277,21 @@ class LMStudioProvider:
             extra = model_info.get("disable_thinking_kwargs")
             if extra:
                 payload.update(extra)
-            # LM Studio honors several names for the same toggle; send all of
-            # them so disable works regardless of which switch the running
-            # server version reads.  ``reasoning`` ("off") is the validated
-            # field on the native /api/v1/chat endpoint; ``enableThinking`` and
-            # ``preserve_thinking`` are recognized on the OpenAI-compat
-            # /v1/chat/completions endpoint (see lmstudio-ai bug #1990: the
-            # chat_template_kwargs alone can be ignored on some runtimes).
+            # Generic top-level knobs that some LM Studio API versions read.
             payload.setdefault("reasoning", "off")
             payload.setdefault("enableThinking", False)
             payload.setdefault("preserve_thinking", False)
+            # Universal fallback — inject chat_template_kwargs so the Jinja
+            # template also blocks thinking.  This is the most reliable
+            # mechanism across models: the template sees `enable_thinking: False`
+            # and skips reasoning regardless of which API-level fields the
+            # specific model/engine respects.
+            ctk = payload.setdefault(
+                "chat_template_kwargs",
+                {"enable_thinking": False, "preserve_thinking": False},
+            )
+            ctk.setdefault("enable_thinking", False)
+            ctk.setdefault("preserve_thinking", False)
         return payload
     
     def _make_request(self, payload: dict, timeout: int = 3600) -> dict:
@@ -327,7 +332,7 @@ class LMStudioProvider:
         ):
             return (
                 f"[Error: model hit the output limit ({len(reasoning)} reasoning bytes"
-                "tokens) and the response was truncated before the output could "
+                ") and the response was truncated before the output could "
                 "complete. Retry with thinking disabled or a larger output budget."
                 "]"
             )

@@ -21,7 +21,8 @@ def test_build_payload_disable_thinking_sets_standard_field() -> None:
         [{"role": "user", "content": "hi"}], disable_thinking=True
     )
     assert payload["thinking"] == {"type": "disabled"}
-    assert "chat_template_kwargs" not in payload
+    # Universal fallback: all thinking models now get chat_template_kwargs
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False, "preserve_thinking": False}
 
 
 def test_build_payload_laguna_adds_chat_template_kwargs() -> None:
@@ -63,7 +64,7 @@ def test_build_payload_merges_tools_and_stream() -> None:
 
 
 def test_known_models_extra_only_for_qwen_and_laguna() -> None:
-    allowed = {"qwen3.6-27b-mtp", "qwen3-coder-30b-a3b-instruct", "laguna-s-2.1"}
+    allowed = {"qwen3.5-9b-mtp", "qwen3.6-27b-mtp", "qwen3-coder-30b-a3b-instruct", "laguna-s-2.1"}
     for name, info in KNOWN_MODELS.items():
         if name in allowed:
             extra = info.get("disable_thinking_kwargs", {})
