@@ -684,7 +684,13 @@ def _patch_system_prompt(basename: str) -> str:
         "- Touch ONLY the code required by the finding. Do NOT reformat "
         "whitespace, docstrings, or unrelated lines. Do NOT rename or move "
         "existing variables.\n"
-        "- Never add or remove import statements.\n"
+        "- Never add or remove import statements.  Exception: adding a stdlib import "
+        "such as ``import logging`` is allowed when the finding needs it "
+        "(e.g. ``silent_except`` fixes using ``logger.warning(...)``).\n"
+        "- When fixing **silent_except**: REPLACE the ``-`` line (the ``pass``) with "
+        "a ``+`` line — never add a new line before ``pass`` and leave the dead "
+        "``pass`` in place.  Use ``logger.warning(...)`` if logging is already "
+        "imported, ``print(f\"...\")`` otherwise.\n"
         "- Never re-emit whole functions or files; never use [FILE:] blocks.\n"
         "- If the finding cannot be fixed without breaking behavior, reply "
         f"with exactly: [UNRESOLVED: {basename}] <one-sentence reason>\n\n"
@@ -701,7 +707,14 @@ def _patch_system_prompt(basename: str) -> str:
         "NO pass, just delete.  The `@@` second side count is 0):\n"
         "[PATCH: model_cmd.py]\n"
         "@@ -3,1 +3,0 @@\n"
-        "-import os\n"
+        "-import os\n\n"
+        "Example (silent_except — REPLACE the pass: the `-` line is `pass`, "
+        "the `+` line is the print/log statement; do NOT keep `pass`):\n"
+        "[PATCH: tool.py]\n"
+        "@@ -42,2 +42,2 @@\n"
+        "            except Exception:\n"
+        "-                pass\n"
+        "+                logger.warning(\"Failed to scan %s\", path)\n"
     )
 
 
@@ -1333,6 +1346,25 @@ class OptimizeCommand(Command):
                                 f"Your patch only changed indentation/whitespace (or nothing). "
                                 f"The finding at line {line} [{pattern}] must actually change. "
                                 "Output hunks that modify the code the finding targets."
+                            )
+                            if attempt < FINDING_MAX_ATTEMPTS - 1:
+                                print(f"    Feedback: {feedback[:240]}")
+                                continue
+                            resolved = False
+                            break
+                        # Nullification guard: replacing functional code with pass
+                        idx = line - 1
+                        if any(
+                            0 <= idx + off < len(work_lines)
+                            and 0 <= idx + off < len(new_lines)
+                            and any(kw in work_lines[idx + off] for kw in (".append(", ".write(", ".setdefault("))
+                            and re.match(r"^\s*pass\s*$", new_lines[idx + off])
+                            for off in range(-3, 4)
+                        ):
+                            feedback = (
+                                "You replaced a functional line (e.g. .append/.write) with `pass` — "
+                                "this destroys the code. Convert it properly (list comprehension, "
+                                "generator, etc.), do NOT nullify it with `pass`."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
                                 print(f"    Feedback: {feedback[:240]}")

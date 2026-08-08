@@ -145,13 +145,25 @@ def detect_silent_except(source: str) -> list[tuple[int, str, str]]:
     lines = source.split("\n")
     for i, line in enumerate(lines, 1):
         if re.match(r"^\s*except\b", line):
-            # Look at next line for pass
-            if i < len(lines) and re.match(r"^\s+pass\s*$", lines[i]):
-                findings.append((i, "silent_except",
-                                 "Replace 'pass' with a print/log warning — do NOT re-raise (silent "
-                                 "handlers are often intentional fallbacks such as cache reads, "
-                                 "optional features, or Ctrl-C handling); re-raising would crash "
-                                 "normal operation — preserve the original control flow"))
+            ei = i - 1
+            e_indent = len(line) - len(line.lstrip())
+            body_indent = e_indent + 4
+            for j in range(ei + 1, min(ei + 20, len(lines))):
+                nxt = lines[j].rstrip("\r")
+                if nxt.strip() == "" or nxt.lstrip().startswith("#"):
+                    continue
+                nxt_indent = len(nxt) - len(nxt.lstrip())
+                if nxt_indent <= e_indent:
+                    break  # dedented — end of except body
+                if re.match(r"^\s+pass\s*$", nxt):
+                    findings.append((i, "silent_except",
+                                     "Replace 'pass' with a print/log warning — do NOT re-raise (silent "
+                                     "handlers are often intentional fallbacks such as cache reads, "
+                                     "optional features, or Ctrl-C handling); re-raising would crash "
+                                     "normal operation — preserve the original control flow"))
+                    break
+                if nxt.strip():
+                    break  # non-pass statement — block is no longer silent
     return findings
 
 
