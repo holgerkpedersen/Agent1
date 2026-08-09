@@ -419,6 +419,24 @@ class TestListAppendJoinDetector:
         findings = detect_list_append_join(code)
         assert any(f[1] == "list_append_join" for f in findings)
 
+    def test_stateful_loop_skipped(self) -> None:
+        """Loops with loop-carried state (name assigned in body, referenced
+        by the append/extend expression) must NOT be flagged."""
+        code = textwrap.dedent("""\
+            def merge(original, regions):
+                lines = original.split("\\n")
+                out = []
+                prev = 0
+                for _, (start, end, code) in sorted(regions.items()):
+                    out.extend(lines[prev:start])
+                    out.extend(code.split("\\n"))
+                    prev = end
+                out.extend(lines[prev:])
+                return "\\n".join(out)
+        """)
+        findings = detect_list_append_join(code)
+        assert findings == []
+
 
 # ---------------------------------------------------------------------------
 # Loop-scope detectors: dedent ends loop (not just column-0)
@@ -1215,7 +1233,7 @@ class TestOptimizeEmptyOutput:
         ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
         out = capsys.readouterr().out
         assert ok is True
-        assert calls == 2
+        assert calls == 0
         assert "Fixed line" in out
         assert "Applied: joiner.py" in out
         final = target.read_text(encoding="utf-8")
@@ -1349,6 +1367,8 @@ class TestChangedImports:
                 "@@ -7,1 +7,1 @@\n"
                 f"-{numbered[idx + 1][1]}\n"
                 f"+{numbered[idx + 1][1].replace('pass', 'return None')}\n"
+                "@@ -8,1 +8,0 @@\n"
+                f"-{numbered[idx + 2][1]}\n"
             )
 
         agent = SimpleNamespace(
@@ -2248,3 +2268,173 @@ class TestUndefinedHoistedNamesGate:
         """)
         result = _undefined_hoisted_names(code)
         assert result == []
+
+
+class TestRegressesDefinedNames:
+    """_regresses_defined_names catches LLM patches that silently drop a
+    previously-defined name (e.g. removing ``prev = 0`` while keeping
+    ``out.extend(lines[prev:])``)."""
+
+    def test_catches_removed_def(self) -> None:
+        from agent_core.commands.optimize_cmd import _regresses_defined_names
+        original = textwrap.dedent("""\
+            def merge(original, regions):
+                lines = original.split("\\n")
+                out = []
+                prev = 0
+                for _, (start, end, code) in sorted(regions.items()):
+                    out.extend(lines[prev:start])
+                    out.extend(code.split("\\n"))
+                    prev = end
+                out.extend(lines[prev:])
+                return "\\n".join(out)
+        """)
+        patched = textwrap.dedent("""\
+            def merge(original, regions):
+                lines = original.split("\\n")
+                out = [segment for region in sorted(regions.items())
+                       for segment in (lines[region[0]:region[1]],
+                       region[2].split("\\n"))]
+                out.extend(lines[prev:])
+                return "\\n".join(out)
+        """)
+        regressed = _regresses_defined_names(original, patched)
+        assert regressed == ["prev"]
+
+    def test_clean_patch_passes(self) -> None:
+        from agent_core.commands.optimize_cmd import _regresses_defined_names
+        original = textwrap.dedent("""\
+            def f(items):
+                out = []
+                for x in items:
+                    out.append(str(x))
+                return ",".join(out)
+        """)
+        patched = textwrap.dedent("""\
+            def f(items):
+                out = [str(x) for x in items]
+                return ",".join(out)
+        """)
+        assert _regresses_defined_names(original, patched) == []
+
+
+class TestCountAnyIncreased:
+    """_count_any_increased flags patches that fix one pattern but regress others."""
+
+    def test_detects_cross_regression(self) -> None:
+        from agent_core.commands.optimize_cmd import _count_any_increased
+        old_code = textwrap.dedent("""\
+            def f(items):
+                out = []
+                for x in items:
+                    out.append(str(x))
+                return ",".join(out)
+        """)
+        # fix introduces dead_assignment (out = [] overwritten)
+        new_code = textwrap.dedent("""\
+            def f(items):
+                out = []
+                out = [str(x) for x in items]
+                return ",".join(out)
+        """)
+        regressed = _count_any_increased(old_code, new_code, exclude="list_append_join")
+        assert "dead_assignment" in regressed
+
+    def test_clean_fix_passes(self) -> None:
+        from agent_core.commands.optimize_cmd import _count_any_increased
+        old_code = textwrap.dedent("""\
+            def f(items):
+                out = []
+                for x in items:
+                    out.append(str(x))
+                return ",".join(out)
+        """)
+        new_code = textwrap.dedent("""\
+            def f(items):
+                out = [str(x) for x in items]
+                return ",".join(out)
+        """)
+        regressed = _count_any_increased(old_code, new_code, exclude="list_append_join")
+        assert regressed == []
+
+
+class TestMechanicalListAppendJoin:
+    """Mechanical _fix_list_append_join converts simple stateless loops."""
+
+    def test_converts_simple_loop(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_list_append_join
+        code = textwrap.dedent("""\
+            def f(items):
+                out = []
+                for x in items:
+                    out.append(str(x))
+                return ",".join(out)
+        """)
+        wl = code.split("\n")
+        hunk = _fix_list_append_join(wl, 3, 4, "test.py", {})
+        assert hunk is not None
+        assert "out = [str(x)" in hunk
+
+    def test_hunk_applies_and_compiles(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_list_append_join
+        from agent_core.patch_utils import apply_patch, apply_anchored_patch
+        code = textwrap.dedent("""\
+            def f(items):
+                out = []
+                for x in items:
+                    out.append(str(x))
+                return ",".join(out)
+        """)
+        wl = code.split("\n")
+        hunk = _fix_list_append_join(wl, 3, 4, "test.py", {})
+        assert hunk is not None
+        ok, patched = apply_patch(hunk, wl)
+        if not ok:
+            ok, patched = apply_anchored_patch(hunk, wl)
+        assert ok
+        compile(patched, "<test>", "exec")
+        assert "out.append(" not in patched
+        assert "out = [str(x) for x in items]" in patched
+
+    def test_stateful_loop_returns_none(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_list_append_join
+        code = textwrap.dedent("""\
+            def merge(original, regions):
+                lines = original.split("\\n")
+                out = []
+                prev = 0
+                for _, (start, end, code) in sorted(regions.items()):
+                    out.extend(lines[prev:start])
+                    prev = end
+                return "\\n".join(out)
+        """)
+        wl = code.split("\n")
+        hunk = _fix_list_append_join(wl, 6, 7, "test.py", {})
+        assert hunk is None
+
+    def test_no_empty_init_returns_none(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_list_append_join
+        code = textwrap.dedent("""\
+            lines = ["prefix"]
+            for i in issues:
+                lines.append(str(i))
+        """)
+        wl = code.split("\n")
+        hunk = _fix_list_append_join(wl, 2, 3, "test.py", {})
+        assert hunk is None
+
+    def test_count_reduction(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_list_append_join, _count_pattern
+        from agent_core.patch_utils import apply_patch
+        code = textwrap.dedent("""\
+            def f(items):
+                out = []
+                for x in items:
+                    out.append(str(x))
+                return ",".join(out)
+        """)
+        wl = code.split("\n")
+        hunk = _fix_list_append_join(wl, 3, 4, "test.py", {})
+        ok, patched = apply_patch(hunk, wl)
+        after = _count_pattern(patched, "list_append_join")
+        assert after == 0

@@ -205,18 +205,23 @@ def detect_silent_except(source: str) -> list[tuple[int, str, str]]:
 
 
 def detect_duplicate_imports(source: str) -> list[tuple[int, str, str]]:
-    """Duplicate ``import X`` or ``from Y import Z`` statements."""
+    """Duplicate ``import X`` or ``from Y import Z`` statements at module
+    level only.  Imports inside function bodies are per-function needs and
+    are never duplicates of each other."""
     findings: list[tuple[int, str, str]] = []
-    seen: dict[str, int] = {}
+    seen: dict[str, tuple[int, int]] = {}  # key -> (line, indent)
     for i, line in enumerate(source.split("\n"), 1):
         m = re.match(r"^\s*(?:import\s+(\S+)|from\s+(\S+)\s+import\s+(.+))", line)
         if m:
             key = m.group(0).strip()
+            indent = len(line) - len(line.lstrip())
             if key in seen:
-                findings.append((i, "duplicate_import",
-                                 f"Duplicate import (first at line {seen[key]}). Remove this copy."))
+                fline, findent = seen[key]
+                if indent == 0 and findent == 0:
+                    findings.append((i, "duplicate_import",
+                                     f"Duplicate import (first at line {fline}). Remove this copy."))
             else:
-                seen[key] = i
+                seen[key] = (i, indent)
     return findings
 
 
@@ -447,31 +452,62 @@ def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
     ``set()``, ``len()`` or a plain ``return`` are NOT flagged — converting
     those to a comprehension is a style-only change, and the optimizer must not
     be pushed into restructuring loops for no measurable gain.
+
+    Loops whose append expressions reference names *assigned inside the loop
+    body* (loop-carried state) are also skipped — they cannot be trivially
+    comprehension-converted and would require a structural rewrite.
     """
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
     in_loop = False
     loop_indent = 0
     loop_body_lines: list[str] = []
-    append_lines: list[tuple[int, str]] = []  # (1-based line, list-variable name)
+    body_assigned: set[str] = set()
+    loop_candidates: list[tuple[int, str]] = []   # pending until loop closes
+    append_lines: list[tuple[int, str]] = []       # filtered survivors
     _APPEND_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\.(?:append|extend)\(")
     _IEQ_RE = re.compile(r"([A-Za-z_]\w*)\s*\+=\s*\S")
+
+    def _flush_loop():
+        """Filter *loop_candidates* against *body_assigned* and commit
+        stateless entries to *append_lines*.  If *any* candidate references
+        a body-assigned name (loop-carried state), the entire loop is skipped."""
+        nonlocal loop_candidates
+        any_stateful = False
+        for li, var in loop_candidates:
+            ol = lines[li - 1]
+            for name in body_assigned:
+                if name != var and re.search(rf"\b{re.escape(name)}\b", ol):
+                    any_stateful = True
+                    break
+            if any_stateful:
+                break
+        if not any_stateful:
+            append_lines.extend(loop_candidates)
+        loop_candidates = []
+
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
         if re.match(r"^\s*(for|while)\s", line):
+            _flush_loop()
             in_loop = True
             loop_indent = len(line) - len(line.lstrip())
             loop_body_lines = []
+            body_assigned = set()
+            loop_candidates = []
             continue
         if in_loop:
             current_indent = len(line) - len(line.lstrip())
             if current_indent <= loop_indent and stripped:
+                _flush_loop()
                 in_loop = False
             else:
                 loop_body_lines.append(stripped)
+                m = _assignment_match(stripped, compound=False)
+                if m:
+                    body_assigned.add(m.group(1))
         if in_loop and (".append(" in line or ".extend(" in line
                         or ("+=" in line and "[" in line)):
-            # Check if loop body has complex control flow
             has_complex_flow = any(
                 re.search(r'\b(if|elif|else|await|break|continue|return|try|except)\b', bl)
                 for bl in loop_body_lines
@@ -479,11 +515,14 @@ def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
             if not has_complex_flow:
                 m = _APPEND_RE.search(line)
                 if m:
-                    append_lines.append((i, m.group(1)))
+                    loop_candidates.append((i, m.group(1)))
                 else:
                     m = _IEQ_RE.search(line)
                     if m:
-                        append_lines.append((i, m.group(1)))
+                        loop_candidates.append((i, m.group(1)))
+
+    _flush_loop()
+
     # Only flag lines whose list is consumed by a .join() call.
     for i, var in append_lines:
         if re.search(rf"\.join\s*\(\s*{re.escape(var)}\s*\)", source):

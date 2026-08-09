@@ -694,7 +694,7 @@ def _fix_silent_except(wl, idx, line, basename, finding):
             indent = " " * nxt_indent
             return (f"@@ -{j + 1},1 +{j + 1},1 @@\n"
                     f"-{nxt}\n"
-                    f"+{indent}print(f\"Warning: silenced exception in "
+                    f"+{indent}print(\"Warning: silenced exception in "
                     f"{basename}:{line}\")")
     return None
 
@@ -840,6 +840,68 @@ def _fix_regex_in_loop(wl, idx, line, basename, finding):
     return hunk
 
 
+def _fix_list_append_join(wl, idx, line, basename, finding):
+    """Mechanical: replace ``out = []`` + ``for x in y: out.append(expr)``
+    with ``out = [expr for x in y]``.  Only handles stateless, single-statement
+    loops whose list is built from scratch (empty initializer)."""
+    from agent_core.patterns import _loop_spans
+
+    spans = _loop_spans(wl)
+    spanning = [sp for sp in spans if sp[0] < idx < sp[1]]
+    if not spanning:
+        return None
+    s, e, indent = min(spanning, key=lambda sp: sp[0])
+
+    header = wl[s]
+    fm = re.match(r"^\s*for\s+(.+?)\s+in\s+(.+?)\s*:\s*$", header)
+    if not fm:
+        return None
+    for_vars = fm.group(1).strip()
+    iterable = fm.group(2).strip()
+
+    al = wl[idx]
+    m = re.search(r"\b([A-Za-z_]\w*)\s*\.(?:append|extend)\((.+)\)\s*$", al)
+    if not m:
+        return None
+    target_var = m.group(1)
+    expr = m.group(2).strip()
+
+    for j in range(s + 1, e):
+        stripped_j = wl[j].strip()
+        if stripped_j and not stripped_j.startswith("#") and j != idx:
+            return None
+
+    init_idx = None
+    for j in range(s - 1, max(0, s - 6), -1):
+        if re.match(rf"^\s*{re.escape(target_var)}\s*(?::[^=]*)?\s*=\s*\[\]", wl[j]):
+            init_idx = j
+            break
+    if init_idx is None:
+        return None
+
+    init_line = wl[init_idx]
+    init_indent = len(init_line) - len(init_line.lstrip())
+    comp_line = f"{' ' * init_indent}{target_var} = [{expr} for {for_vars} in {iterable}]"
+
+    ctx_before = wl[max(0, init_idx - 3) : init_idx]
+    ctx_after = wl[e : e + 3]
+    removed = wl[init_idx : e]
+
+    hunk_lines = []
+    for cl in ctx_before:
+        hunk_lines.append(f" {cl.rstrip()}")
+    for rl in removed:
+        hunk_lines.append(f"-{rl.rstrip()}")
+    hunk_lines.append(f"+{comp_line}")
+    for cl in ctx_after:
+        hunk_lines.append(f" {cl.rstrip()}")
+
+    old_c = len(removed) + len(ctx_before) + len(ctx_after)
+    new_c = 1 + len(ctx_before) + len(ctx_after)
+    first = init_idx + 1
+    return f"@@ -{first},{old_c} +{first},{new_c} @@\n" + "\n".join(hunk_lines)
+
+
 _MECH_FIXERS: dict[str, object] = {
     "unused_import": _fix_unused_import,
     "dead_assignment": _fix_dead_assignment,
@@ -850,6 +912,7 @@ _MECH_FIXERS: dict[str, object] = {
     "type_comparison": _fix_type_comparison,
     "duplicate_import": _fix_unused_import,
     "regex_in_loop": _fix_regex_in_loop,
+    "list_append_join": _fix_list_append_join,
 }
 _MECH_PATTERNS: frozenset[str] = frozenset(_MECH_FIXERS)
 
@@ -905,6 +968,21 @@ def _count_pattern(code: str, pattern: str) -> int:
     from agent_core.patterns import analyze
     return sum(1 for f in analyze(code) if f["pattern"] == pattern)
     return None
+
+
+def _count_any_increased(old_code: str, new_code: str, *, exclude: str) -> list[str]:
+    """Return pattern names whose count *increased* from *old_code* to *new_code*."""
+    from agent_core.patterns import analyze
+    from collections import Counter
+    old_counts = Counter(f["pattern"] for f in analyze(old_code))
+    new_counts = Counter(f["pattern"] for f in analyze(new_code))
+    increased: list[str] = []
+    for p in sorted(set(old_counts) | set(new_counts)):
+        if p == exclude:
+            continue
+        if new_counts.get(p, 0) > old_counts.get(p, 0):
+            increased.append(p)
+    return increased
 
 
 def _patch_system_prompt(basename: str) -> str:
@@ -1392,6 +1470,32 @@ def _undefined_hoisted_names(code: str) -> list[str]:
     return sorted(undefined)
 
 
+def _regresses_defined_names(original: str, patched: str) -> list[str]:
+    """Return non-underscore names loaded in *patched* but no longer stored,
+    yet stored in *original* — these cause NameError at runtime."""
+    try:
+        o_tree = ast.parse(original)
+        p_tree = ast.parse(patched)
+    except SyntaxError:
+        return []
+    o_stored: set[str] = set()
+    for node in ast.walk(o_tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            o_stored.add(node.id)
+    p_stored: set[str] = set()
+    p_loaded: set[str] = set()
+    for node in ast.walk(p_tree):
+        if isinstance(node, ast.Name):
+            if isinstance(node.ctx, ast.Store):
+                p_stored.add(node.id)
+            elif isinstance(node.ctx, ast.Load):
+                p_loaded.add(node.id)
+    regressed = p_loaded - p_stored
+    regressed &= o_stored
+    regressed -= {"__name__", "__file__", "__doc__"}
+    return sorted(regressed)
+
+
 def _post_apply_verify(basename: str, fpath: str, original: str, new_code: str) -> list[str]:
     """Run lightweight post-apply sanity checks; return warning strings.
 
@@ -1571,6 +1675,8 @@ class OptimizeCommand(Command):
                                 ok = False
                             if ok and _undefined_hoisted_names(patched):
                                 ok = False
+                            if ok and _count_any_increased("\n".join(work_lines), patched, exclude=pattern):
+                                ok = False
                             if ok:
                                 before_cnt = _count_pattern("\n".join(work_lines), pattern)
                                 after_cnt = _count_pattern(patched, pattern)
@@ -1728,6 +1834,17 @@ class OptimizeCommand(Command):
                                 continue
                             resolved = False
                             break
+                        dropped_names = _regresses_defined_names(original, patched)
+                        if dropped_names:
+                            feedback = (
+                                f"Your patch removed the definition of: {', '.join(dropped_names)}. "
+                                "Restore the original definitions or keep the old code unchanged."
+                            )
+                            if attempt < FINDING_MAX_ATTEMPTS - 1:
+                                print(f"    Feedback: {feedback[:240]}")
+                                continue
+                            resolved = False
+                            break
                         added = _blocked_added_imports(patched, "\n".join(work_lines))
                         if added:
                             feedback = (
@@ -1749,6 +1866,18 @@ class OptimizeCommand(Command):
                                 f"After your patch the file still contains [{pattern}] "
                                 f"({after_cnt} occurrence(s), {before_cnt} before). The patch must "
                                 "actually remove the finding - change exactly the code it targets."
+                            )
+                            if attempt < FINDING_MAX_ATTEMPTS - 1:
+                                print(f"    Feedback: {feedback[:240]}")
+                                continue
+                            resolved = False
+                            break
+                        regressed = _count_any_increased("\n".join(work_lines), patched, exclude=pattern)
+                        if regressed:
+                            feedback = (
+                                f"Your patch reduced [{pattern}] but introduced or increased: "
+                                f"{', '.join(sorted(regressed))[:160]}. "
+                                "Refactor without introducing new static-analysis issues."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
                                 print(f"    Feedback: {feedback[:240]}")
