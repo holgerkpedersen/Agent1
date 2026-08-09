@@ -226,19 +226,140 @@ def detect_duplicate_imports(source: str) -> list[tuple[int, str, str]]:
 
 
 def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
-    """``open(...).read()`` without ``with`` statement."""
+    """``open(...).read()`` without ``with`` statement — AST-based, no false positives."""
+    import ast
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    if _module_shadows_open(tree):
+        return []
+
+    exempt_ids: set[int] = set()
+    shadowed_func_ids: set[int] = set()
+
+    _BINDING_TARGETS = {
+        ast.Assign: lambda n: n.targets,
+        ast.AnnAssign: lambda n: [n.target],
+        ast.AugAssign: lambda n: [n.target],
+        ast.For: lambda n: [n.target],
+        ast.AsyncFor: lambda n: [n.target],
+        ast.NamedExpr: lambda n: [n.target],
+    }
+
+    def _any_target_is_open(node):
+        getter = _BINDING_TARGETS.get(type(node))
+        if getter is None:
+            return False
+        for target in getter(node):
+            if isinstance(target, ast.Name) and target.id == "open":
+                return True
+            if isinstance(target, (ast.Tuple, ast.List)):
+                for e in target.elts:
+                    if isinstance(e, ast.Name) and e.id == "open":
+                        return True
+        return False
+
+    def _import_binds_open(node):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if (alias.asname or alias.name) == "open":
+                    return True
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if (alias.asname or alias.name) == "open":
+                    return True
+        return False
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for arg in node.args.args:
+                if arg.arg == "open":
+                    shadowed_func_ids.add(id(node))
+                    break
+            else:
+                for sub in ast.walk(node):
+                    if _any_target_is_open(sub) or _import_binds_open(sub):
+                        shadowed_func_ids.add(id(node))
+                        break
+
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                for sub in ast.walk(item.context_expr):
+                    exempt_ids.add(id(sub))
+
+        if isinstance(node, ast.Call):
+            closing = False
+            if isinstance(node.func, ast.Name) and node.func.id == "closing":
+                closing = True
+            elif isinstance(node.func, ast.Attribute) and node.func.attr == "closing":
+                closing = True
+            if closing:
+                for arg in node.args:
+                    for sub in ast.walk(arg):
+                        exempt_ids.add(id(sub))
+
+    parent_map: dict[int, int] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent_map[id(child)] = id(node)
+
     findings: list[tuple[int, str, str]] = []
-    for i, line in enumerate(source.split("\n"), 1):
-        if "open(" in line and "with " not in line and " with " not in line and "with(" not in line:
-            # Avoid false positives: comments, in strings, or in already-correct patterns
-            stripped = line.strip()
-            if stripped.startswith("#"):
-                continue
-            if "contextlib" in stripped or "closing" in stripped:
-                continue
-            findings.append((i, "missing_context_manager",
+    seen: set[int] = set()
+
+    for call_node in ast.walk(tree):
+        if not isinstance(call_node, ast.Call):
+            continue
+        if not isinstance(call_node.func, ast.Name):
+            continue
+        if call_node.func.id != "open":
+            continue
+
+        if id(call_node) in exempt_ids:
+            continue
+
+        ancestor = parent_map.get(id(call_node))
+        inside_shadowed = False
+        while ancestor is not None:
+            if ancestor in shadowed_func_ids:
+                inside_shadowed = True
+                break
+            ancestor = parent_map.get(ancestor)
+        if inside_shadowed:
+            continue
+
+        line = call_node.lineno
+        if line not in seen:
+            seen.add(line)
+            findings.append((line, "missing_context_manager",
                              "Use 'with open() as f:' — current code may leak file handles"))
     return findings
+
+
+def _module_shadows_open(tree) -> bool:
+    """True when top-level code binds the name ``'open'`` (assign, import, def, class)."""
+    import ast
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "open":
+                    return True
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == "open":
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if (alias.asname or alias.name) == "open":
+                    return True
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if (alias.asname or alias.name) == "open":
+                    return True
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == "open":
+                return True
+    return False
 
 
 def _open_write_mode(line: str) -> bool:

@@ -19,7 +19,7 @@ from agent_core.commands.optimize_cmd import (
     SYSTEM_OVERHEAD_TOKENS,
     _surgically_revert_regressions,
 )
-from agent_core.patterns import analyze as static_analyze, detect_list_append_join, detect_none_eq, detect_fstring_without_placeholder, detect_iter_dict_keys, detect_type_comparison, detect_mutable_default_arg, detect_redundant_bool_expr
+from agent_core.patterns import analyze as static_analyze, detect_list_append_join, detect_none_eq, detect_fstring_without_placeholder, detect_iter_dict_keys, detect_type_comparison, detect_mutable_default_arg, detect_redundant_bool_expr, detect_missing_context_manager
 
 
 def _numbered_context(user_content: str) -> list[tuple[int, str]]:
@@ -2176,6 +2176,107 @@ class TestRedundantBoolExprDetector:
     def test_full_analyze(self) -> None:
         results = static_analyze("def f(x):\n    return True if x else False")
         assert "redundant_bool_expr" in {r["pattern"] for r in results}
+
+
+class TestMissingContextManagerDetector:
+    """AST-based ``open(...)`` without ``with`` — no false positives."""
+
+    def test_simple_open_read_flagged(self) -> None:
+        findings = detect_missing_context_manager("def f(p):\n    return open(p).read()")
+        assert len(findings) == 1
+        assert findings[0][1] == "missing_context_manager"
+        assert findings[0][0] == 2
+
+    def test_assignment_open_flagged(self) -> None:
+        findings = detect_missing_context_manager("data = open(path).read()")
+        assert len(findings) == 1
+
+    def test_module_level_open_flagged(self) -> None:
+        findings = detect_missing_context_manager("conf = open('config.json')")
+        assert len(findings) == 1
+
+    def test_with_open_not_flagged(self) -> None:
+        findings = detect_missing_context_manager(
+            "with open(path) as f:\n    print(f.read())"
+        )
+        assert findings == []
+
+    def test_with_multi_open_not_flagged(self) -> None:
+        findings = detect_missing_context_manager(
+            "from pathlib import Path\n"
+            "with (\n"
+            "    open(a) as fa,\n"
+            "    open(b) as fb\n"
+            "):\n"
+            "    pass"
+        )
+        assert findings == []
+
+    def test_closing_open_not_flagged(self) -> None:
+        findings = detect_missing_context_manager(
+            "import contextlib\n"
+            "f = contextlib.closing(open(path))"
+        )
+        assert findings == []
+
+    def test_path_dot_open_not_flagged(self) -> None:
+        findings = detect_missing_context_manager(
+            "from pathlib import Path\n"
+            "f = Path('x').open()"
+        )
+        assert findings == []
+
+    def test_string_literal_not_flagged(self) -> None:
+        findings = detect_missing_context_manager(
+            'x = "use open(path) here"\n'
+            'y = f"open(other)"'
+        )
+        assert findings == []
+
+    def test_comment_docstring_not_flagged(self) -> None:
+        findings = detect_missing_context_manager(
+            '# open(x) leaks\n'
+            '"""open() without with"""\n'
+            "def f(x): return x"
+        )
+        assert findings == []
+
+    def test_shadowed_arg_not_flagged(self) -> None:
+        findings = detect_missing_context_manager(
+            "def read(open):\n    return open('data')"
+        )
+        assert findings == []
+
+    def test_shadowed_assign_not_flagged(self) -> None:
+        findings = detect_missing_context_manager(
+            "def wrapper():\n"
+            "    open = my_factory\n"
+            "    return open('data')"
+        )
+        assert findings == []
+
+    def test_shadowed_module_var_not_flagged(self) -> None:
+        findings = detect_missing_context_manager(
+            "open = my_factory\n"
+            "def f(x):\n    return open(x)"
+        )
+        assert findings == []
+
+    def test_patterns_py_self_check(self) -> None:
+        import os
+        tests_dir = os.path.dirname(__file__)
+        patterns_path = os.path.join(tests_dir, "..", "agent_core", "patterns.py")
+        code = open(patterns_path).read()
+        findings = detect_missing_context_manager(code)
+        assert findings == []
+
+    def test_full_analyze_catches(self) -> None:
+        results = static_analyze("def f(p):\n    return open(p).read()")
+        assert "missing_context_manager" in {r["pattern"] for r in results}
+
+    def test_full_analyze_exempts_with(self) -> None:
+        results = static_analyze("with open(f) as fh:\n    data = fh.read()")
+        assert "missing_context_manager" not in {r["pattern"] for r in results}
 
 
 class TestRegexInLoopDetector:
