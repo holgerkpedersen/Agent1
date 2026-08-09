@@ -1296,7 +1296,8 @@ class TestChangedImports:
         entries = _import_entries(code)
         assert "import os" in entries
         assert "from .base import Command" in entries
-        assert "from agent_core import normalize_path, workspace_path" in entries
+        assert "from agent_core import normalize_path" in entries
+        assert "from agent_core import workspace_path" in entries
         assert "import ast" in entries  # alias target normalized to the module name
 
     def test_removing_unused_import_is_subset(self) -> None:
@@ -1305,6 +1306,42 @@ class TestChangedImports:
         fixed = "import re\n\ndef f():\n    return re.compile('x')\n"
         added = _import_entries(fixed) - _import_entries(original)
         assert added == set()
+
+    def test_removing_name_from_relative_import_not_blocked(self) -> None:
+        """Removing an unused name from a multi-name ``from .`` import reduces
+        the import set and must NOT be blocked by the import gate."""
+        from agent_core.commands.optimize_cmd import _blocked_added_imports
+        original = textwrap.dedent("""\
+            from .types import TaskType, ProfileType
+
+            class P:
+                x: ProfileType
+        """)
+        candidate = textwrap.dedent("""\
+            from .types import ProfileType
+
+            class P:
+                x: ProfileType
+        """)
+        assert _blocked_added_imports(candidate, original) == set()
+
+    def test_adding_name_to_relative_import_is_blocked(self) -> None:
+        """Adding a new name to a ``from .`` import must still be blocked."""
+        from agent_core.commands.optimize_cmd import _blocked_added_imports
+        original = textwrap.dedent("""\
+            from .types import ProfileType
+
+            class P:
+                x: ProfileType
+        """)
+        candidate = textwrap.dedent("""\
+            from .types import TaskType, ProfileType
+
+            class P:
+                x: ProfileType
+        """)
+        blocked = _blocked_added_imports(candidate, original)
+        assert "from .types import TaskType" in blocked
 
     def test_duplicate_stdlib_import_is_blocked(self) -> None:
         """A rewrite that adds a *second* copy of an import the file already
@@ -2404,6 +2441,55 @@ class TestCountAnyIncreased:
         """)
         regressed = _count_any_increased(old_code, new_code, exclude="list_append_join")
         assert regressed == []
+
+
+class TestMechanicalUnusedImport:
+    """_fix_unused_import handles both single-name and multi-name import lines."""
+
+    def test_whole_line_removal_single_name_from(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_unused_import
+        wl = ["from .types import TaskType"]
+        finding = {"suggestion": "Imported 'TaskType' is never used. Remove the import."}
+        hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
+        assert hunk is not None
+        assert "@@ -1,1 +1,0 @@" in hunk
+
+    def test_removes_name_from_multiname_from_import(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_unused_import
+        src = "from .types import TaskType, ProfileType"
+        wl = [src]
+        finding = {"suggestion": "Imported 'TaskType' is never used. Remove the import."}
+        hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
+        assert hunk is not None
+        assert "-" + src in hunk
+        assert "+from .types import ProfileType" in hunk
+
+    def test_removes_name_from_multiname_import_style(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_unused_import
+        src = "import os, sys"
+        wl = [src]
+        finding = {"suggestion": "Imported 'os' is never used. Remove the import."}
+        hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
+        assert hunk is not None
+        assert "-" + src in hunk
+        assert "+import sys" in hunk
+
+    def test_last_name_removes_whole_line(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_unused_import
+        src = "from .types import TaskType"
+        wl = [src]
+        finding = {"suggestion": "Imported 'TaskType' is never used. Remove the import."}
+        hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
+        assert hunk is not None
+        assert "@@ -1,1 +1,0 @@" in hunk
+
+    def test_target_not_present_returns_none(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_unused_import
+        src = "from .types import ProfileType"
+        wl = [src]
+        finding = {"suggestion": "Imported 'TaskType' is never used. Remove the import."}
+        hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
+        assert hunk is None
 
 
 class TestMechanicalListAppendJoin:

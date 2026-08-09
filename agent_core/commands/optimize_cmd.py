@@ -664,12 +664,53 @@ _PLACEHOLDER_PHRASES = ("unchanged line", "rest of the", "remaining code", "..."
 def _fix_unused_import(wl, idx, line, basename, finding):
     src_line = wl[idx]
     stripped = src_line.strip()
-    if re.match(r"^import\s+\w+(\s+as\s+\w+)?$", stripped):
-        return f"@@ -{line},1 +{line},0 @@\n-{src_line}"
-    m = re.match(r"^from\s+\S+\s+import\s+(\w[\w\s,]*)$", stripped)
-    if m and len([n.strip() for n in m.group(1).split(",")]) <= 1:
-        return f"@@ -{line},1 +{line},0 @@\n-{src_line}"
+    target_m = re.search(r"Imported\s+['\"]([\w.]+)['\"]", finding.get("suggestion", ""))
+    if not target_m:
+        return None
+    target = target_m.group(1)
+    imp_single_m = re.match(r"^import\s+([A-Za-z_]\w*)(?:\s+as\s+\w+)?$", stripped)
+    if imp_single_m:
+        if imp_single_m.group(1) == target:
+            return f"@@ -{line},1 +{line},0 @@\n-{src_line}"
+        return None
+    from_single_m = re.match(r"^from\s+\S+\s+import\s+([A-Za-z_]\w*)$", stripped)
+    if from_single_m:
+        if from_single_m.group(1) == target:
+            return f"@@ -{line},1 +{line},0 @@\n-{src_line}"
+        return None
+    import_m = re.match(r"^import\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)$", stripped)
+    if import_m:
+        names = [n.strip() for n in import_m.group(1).split(",")]
+        if len(names) == 1:
+            return None
+        remaining = [n for n in names if n != target]
+        if len(remaining) == len(names):
+            return None
+        return _multi_name_import_hunk(src_line, "import", remaining, line)
+    from_m = re.match(r"^from\s+(\S+)\s+import\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)$", stripped)
+    if from_m:
+        module = from_m.group(1)
+        names = [n.strip() for n in from_m.group(2).split(",")]
+        if len(names) == 1:
+            return None
+        remaining = [n for n in names if n != target]
+        if len(remaining) == len(names):
+            return None
+        return _multi_name_import_hunk(src_line, f"from {module}", remaining, line)
     return None
+
+
+def _multi_name_import_hunk(
+    src_line: str, prefix: str, remaining: list[str], line: int
+) -> str | None:
+    """Build a hunk that removes a name from a multi-name import line."""
+    if prefix.startswith("from "):
+        new_import = f"{prefix} import {', '.join(remaining)}"
+    else:
+        new_import = f"{prefix} {', '.join(remaining)}"
+    if new_import.strip() == src_line.strip():
+        return None
+    return f"@@ -{line},1 +{line},1 @@\n-{src_line}\n+{new_import}"
 
 
 def _fix_dead_assignment(wl, idx, line, basename, finding):
@@ -1393,8 +1434,11 @@ def _import_entries(code: str) -> set[str]:
         elif isinstance(node, ast.ImportFrom):
             prefix = "." * node.level
             module = prefix + (node.module or "") or prefix
-            names = ", ".join(sorted(a.name for a in node.names))
-            entries.add(f"from {module} import {names if names else '*'}")
+            for a in sorted(node.names, key=lambda a: a.name):
+                if a.name == "*":
+                    entries.add(f"from {module} import *")
+                else:
+                    entries.add(f"from {module} import {a.name}")
     return entries
 
 
@@ -1419,9 +1463,12 @@ def _import_entry_counts(code: str) -> dict[str, int]:
         elif isinstance(node, ast.ImportFrom):
             prefix = "." * node.level
             module = prefix + (node.module or "") or prefix
-            names = ", ".join(sorted(a.name for a in node.names))
-            entry = f"from {module} import {names if names else '*'}"
-            counts[entry] = counts.get(entry, 0) + 1
+            for a in sorted(node.names, key=lambda a: a.name):
+                if a.name == "*":
+                    entry = f"from {module} import *"
+                else:
+                    entry = f"from {module} import {a.name}"
+                counts[entry] = counts.get(entry, 0) + 1
     return counts
 
 
