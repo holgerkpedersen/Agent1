@@ -2,7 +2,6 @@
 import os
 import re
 from pathlib import Path
-from typing import Optional
 
 from .base import Command, read_stdin
 from agent_core import to_windows_path
@@ -82,8 +81,7 @@ def _collision_warning(taken: dict[str, list[str]], filenames: list[str]) -> str
     if taken:
         parts.append("CRITICAL: DO NOT create new files defining these class/function names.\n"
                       "They already exist — modify the existing file instead:")
-        for d, names in sorted(taken.items())[:12]:
-            parts.append(f"  {d or 'root'}: {', '.join(names[:30])}")
+        parts += [f"  {d or 'root'}: {', '.join(names[:30])}" for d, names in sorted(taken.items())[:12]]
     if filenames:
         # Flag similar filenames per directory
         by_dir: dict[str, list[str]] = {}
@@ -92,8 +90,7 @@ def _collision_warning(taken: dict[str, list[str]], filenames: list[str]) -> str
             by_dir.setdefault(d or "root", []).append(os.path.basename(f))
         parts.append("CRITICAL: Do NOT create filenames that overlap with existing ones in the same directory.")
         parts.append("Use distinct names. Example: use llm_config.py not config.py, retry_adapter.py not retry_policy.py.")
-        for d, names in sorted(by_dir.items())[:12]:
-            parts.append(f"  {d}: {', '.join(sorted(names)[:12])}")
+        parts += [f"  {d}: {', '.join(sorted(names)[:12])}" for d, names in sorted(by_dir.items())[:12]]
     return "\n\n".join(parts) if parts else ""
 
 
@@ -147,7 +144,7 @@ def _scan_workspace_context(ws_path: Path, spec_content: str) -> tuple[bool, str
             if remaining <= 0:
                 break
             lines += entry.splitlines()[:remaining]
-            combined += "\n".join(lines)
+            combined = "".join([combined, "\n".join(lines)])
             break
         combined += entry
         lines_used += len(content.splitlines())
@@ -491,7 +488,7 @@ class WorkflowCommand(Command):
                         with open(pf, "r", encoding="utf-8") as f:
                             combined += f"\n\n# ---- {pf} ----\n{f.read()}"
                     except Exception:
-                        pass
+                        print(f"Warning: silenced exception in workflow_cmd.py:490")
                 r = await agent.llm.chat([
                     {"role": "system", "content": "You are an expert code reviewer. Analyze the existing code AND these new features. Find bugs, gaps, and what needs to change."},
                     {"role": "user", "content": f"## Existing Code:\n{combined}\n\n## New Features:\n{features}\n\nAnalyze both existing issues and what must change for the new features."}
@@ -586,7 +583,7 @@ class WorkflowCommand(Command):
                         with open(pf, "r", encoding="utf-8") as f:
                             combined += f"\n\n# ---- {pf} ----\n{f.read()}"
                     except Exception:
-                        pass
+                        print(f"Warning: silenced exception in workflow_cmd.py:585")
                 analyze_system = (
                     "You are an expert software architect. Evaluate this codebase across 5 dimensions. "
                     "For each dimension, limit to 3 bullet points max 50 words each. Be concise."

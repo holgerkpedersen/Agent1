@@ -654,6 +654,10 @@ def _cosmetic_only(old_lines: list[str], new_lines: list[str]) -> bool:
 
 _MECH_PATTERNS: set[str] = {"unused_import", "dead_assignment", "silent_except"}
 
+_MECH_PASS_RE = re.compile(r"^\s+pass\s*$")
+_UNRESOLVED_RE = re.compile(r"\[UNRESOLVED:\s*[^\]]+\]\s*(.*)", re.DOTALL)
+
+
 
 def _tri_mech_fix(work_lines: list[str], line: int, pattern: str,
                   basename: str, finding: dict) -> str | None:
@@ -688,7 +692,7 @@ def _tri_mech_fix(work_lines: list[str], line: int, pattern: str,
             nxt_indent = len(nxt) - len(nxt.lstrip())
             if nxt_indent <= e_indent:
                 break
-            if re.match(r"^\s+pass\s*$", nxt):
+            if _MECH_PASS_RE.match(nxt):
                 indent = " " * nxt_indent
                 return (
                     f"@@ -{j + 1},1 +{j + 1},1 @@\n"
@@ -743,6 +747,8 @@ def _patch_system_prompt(basename: str) -> str:
         "- Touch ONLY the code required by the finding. Do NOT reformat "
         "whitespace, docstrings, or unrelated lines. Do NOT rename or move "
         "existing variables.\n"
+        "- NEVER modify docstring lines (lines starting with `\"\"\"` or `'''`), "
+        "their indentation, or their contents — even if they look misplaced.\n"
         "- Never add or remove import statements.  Exception: adding a stdlib import "
         "such as ``import logging`` is allowed when the finding needs it "
         "(e.g. ``silent_except`` fixes using ``logger.warning(...)``).\n"
@@ -1346,6 +1352,9 @@ class OptimizeCommand(Command):
                     if resolved:
                         continue
                     # ── LLM patch loop ──────────────────────────────────
+                    _PATCH_RE = re.compile(
+                        rf"\[PATCH:\s*{re.escape(basename)}\s*\](.*?)(?=\[PATCH:|\Z)", re.DOTALL
+                    )
                     for attempt in range(FINDING_MAX_ATTEMPTS):
                         if attempt > 0:
                             print(f"    Retry {attempt}/{FINDING_MAX_ATTEMPTS - 1} for line {line}...")
@@ -1380,18 +1389,13 @@ class OptimizeCommand(Command):
                             print(f"    LLM error: {llm_response[:100]}")
                             resolved = False
                             break
-                        unresolved = re.search(
-                            r"\[UNRESOLVED:\s*[^\]]+\]\s*(.*)", llm_response, re.DOTALL
-                        )
+                        unresolved = _UNRESOLVED_RE.search(llm_response)
                         if unresolved:
                             print(f"    Unresolved line {line} [{pattern}]: "
                                   f"{unresolved.group(1).strip() or 'model reported un-resolvable'}")
                             resolved = False
                             break
-                        patch_block = re.search(
-                            rf"\[PATCH:\s*{re.escape(basename)}\s*\](.*?)(?=\[PATCH:|\Z)",
-                            llm_response, re.DOTALL,
-                        )
+                        patch_block = _PATCH_RE.search(llm_response)
                         raw = patch_block.group(1) if patch_block else ""
                         raw = _strip_markdown_fence(raw)
                         if not raw.strip():
@@ -1453,7 +1457,7 @@ class OptimizeCommand(Command):
                             0 <= idx + off < len(work_lines)
                             and 0 <= idx + off < len(new_lines)
                             and any(kw in work_lines[idx + off] for kw in (".append(", ".write(", ".setdefault("))
-                            and re.match(r"^\s*pass\s*$", new_lines[idx + off])
+                            and _MECH_PASS_RE.match(new_lines[idx + off])
                             for off in range(-3, 4)
                         ):
                             feedback = (
