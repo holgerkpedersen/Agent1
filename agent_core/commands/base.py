@@ -32,11 +32,20 @@ def _wrap_line(text: str, width: int) -> list[str]:
 
     Prefers word boundaries; hard-slices any fragment that is still too long
     (common for long single-token code lines).  An empty ``width`` is treated
-    as unbounded and returns the line unchanged.
+    as unbounded and returns the line unchanged.  Leading whitespace is
+    preserved so indentation remains visible in diff output.
     """
     if width <= 0 or len(text) <= width:
         return [text]
-    words = text.split(" ")
+    leading = ""
+    i = 0
+    while i < len(text) and text[i] in (" ", "\t"):
+        leading += text[i]
+        i += 1
+    rest = text[i:]
+    if not rest:
+        return [text]
+    words = rest.split(" ")
     lines: list[str] = []
     cur = ""
     for w in words:
@@ -49,6 +58,7 @@ def _wrap_line(text: str, width: int) -> list[str]:
             cur = w
     if cur:
         lines.append(cur)
+    lines[0] = leading + lines[0]
     # Hard-slice any fragment still exceeding the width (long tokens).
     out: list[str] = []
     for ln in lines:
