@@ -404,6 +404,11 @@ def detect_file_read_in_loop(source: str) -> list[tuple[int, str, str]]:
     an ``os.walk`` — carry no hoistable work and are NOT flagged.  Loops that
     memoize reads through a cache dict are not flagged either, and write-mode
     ``open()`` calls are excluded: writes cannot be hoisted or cached.
+
+    For reads nested inside multiple loops (e.g. ``while`` inside ``for``),
+    derived-names and receiver-aliases from *all* enclosing loop bodies are
+    aggregated so that hoistable work can be distinguished from per-iteration
+    distinct-file reads.
     """
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
@@ -414,32 +419,39 @@ def detect_file_read_in_loop(source: str) -> list[tuple[int, str, str]]:
         if "open(" in line and _open_write_mode(line):
             continue
         idx = i - 1
+        derived: set[str] = set()
+        receivers: dict[str, str] = {}
+        cached = False
+        in_any_loop = False
         for start, end, _ in spans:
             if not (start < idx < end):  # strictly inside this loop's body
                 continue
+            in_any_loop = True
             body = lines[start + 1:end]
             if _loop_caches(body):
+                cached = True
                 break
             loop_vars = _for_target_names(lines[start])
-            derived = _iter_derived_names(body, loop_vars)
-            receivers = _read_receiver_alias(body)
-            path = _open_path_arg(line)
-            if path is None:
-                # bare ``f.read()`` — resolve through its with/as alias
-                rm = re.search(r"\.read\s*\(", line)
-                if not rm:
-                    break
-                recv_m = re.search(r"([A-Za-z_]\w*)\s*\.read\s*\(", line)
-                rcvr = recv_m.group(1) if recv_m else None
-                if not rcvr:
-                    break
-                path = receivers.get(rcvr, "")
-            if _path_derived(path, derived):
-                break  # distinct file per iteration — no hoistable work
-            findings.append((i, "file_read_in_loop",
-                             _INVARIANT_SUGGESTION if path
-                             else _READ_SUGGESTION))
-            break
+            derived |= _iter_derived_names(body, loop_vars)
+            receivers.update(_read_receiver_alias(body))
+        if not in_any_loop or cached:
+            continue
+        path = _open_path_arg(line)
+        if path is None:
+            # bare ``f.read()`` — resolve through its with/as alias
+            rm = re.search(r"\.read\s*\(", line)
+            if not rm:
+                continue
+            recv_m = re.search(r"([A-Za-z_]\w*)\s*\.read\s*\(", line)
+            rcvr = recv_m.group(1) if recv_m else None
+            if not rcvr:
+                continue
+            path = receivers.get(rcvr, "")
+        if _path_derived(path, derived):
+            continue  # distinct file per iteration — no hoistable work
+        findings.append((i, "file_read_in_loop",
+                         _INVARIANT_SUGGESTION if path
+                         else _READ_SUGGESTION))
     return findings
 
 

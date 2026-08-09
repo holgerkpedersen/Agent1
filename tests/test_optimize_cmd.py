@@ -602,6 +602,48 @@ class TestLoopScopeDedent:
         """)
         assert detect_file_read_in_loop(code) == []
 
+    def test_distinct_read_through_nested_loops_not_flagged(self) -> None:
+        """``f.read()`` inside ``while`` inside ``with open(fp)`` inside
+        ``os.walk``: the path is derived from outer loop targets, so distinct
+        files are read per iteration — no hoistable work."""
+        from agent_core.patterns import detect_file_read_in_loop
+        code = textwrap.dedent("""\
+            def search(path, query):
+                results = []
+                for root, dirs, files in os.walk(path):
+                    for file in files:
+                        filepath = os.path.join(root, file)
+                        try:
+                            with open(filepath, 'r') as f:
+                                while True:
+                                    chunk = f.read(8192)
+                                    if not chunk:
+                                        break
+                                    if query in chunk:
+                                        results.append(filepath)
+                                        break
+                        except Exception:
+                            pass
+                return results
+        """)
+        assert detect_file_read_in_loop(code) == []
+
+    def test_invariant_read_in_nested_loop_still_flagged(self) -> None:
+        """``open(CONFIG_PATH).read()`` inside nested ``for`` loops: the path is
+        a constant — same file re-read every iteration, must be flagged."""
+        from agent_core.patterns import detect_file_read_in_loop
+        code = textwrap.dedent("""\
+            CONFIG_PATH = "/etc/config.yaml"
+            def f():
+                for root, dirs, files in os.walk('.'):
+                    for file in files:
+                        data = open(CONFIG_PATH).read()
+                        return data
+        """)
+        findings = detect_file_read_in_loop(code)
+        assert len(findings) == 1
+        assert findings[0][1] == "file_read_in_loop"
+
 
 # ---------------------------------------------------------------------------
 # New detectors: dead_assignment, unreachable_code, unused_imports

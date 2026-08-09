@@ -81,6 +81,6 @@ class FileSearcher:
                                 results.append(filepath)
                                 break
                 except Exception:
-                    pass
+                    print("Warning: silenced exception in file_searcher.py:83")
 
         return results
