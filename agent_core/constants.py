@@ -93,7 +93,7 @@ def resolve_model(explicit: str | None = None) -> str:
         if loaded:
             return loaded[0]
     except Exception:
-        pass
+        print("Warning: silenced exception in constants.py:95")
 
     # Persisted choice from model.json
     persisted = load_model_json()
@@ -124,7 +124,7 @@ def save_model_json(data: dict) -> None:
         with open(MODEL_JSON_PATH, "w") as f:
             _json.dump(data, f, indent=2)
     except OSError:
-        pass
+        print("Warning: silenced exception in constants.py:126")
 
 
 def persist_model_choice(model_name: str) -> None:
@@ -148,3 +148,5 @@ def persist_model_choice(model_name: str) -> None:
                 ef.write(line)
         if not found:
             ef.write(f"\nAGENT_MODEL={model_name}\n")
+
+

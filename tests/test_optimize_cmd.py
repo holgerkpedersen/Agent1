@@ -2269,6 +2269,12 @@ class TestUndefinedHoistedNamesGate:
         result = _undefined_hoisted_names(code)
         assert result == []
 
+    def test_passes_module_dunders(self) -> None:
+        from agent_core.commands.optimize_cmd import _undefined_hoisted_names
+        code = 'import os\nos.path.abspath(__file__)\n__doc__\n__package__'
+        result = _undefined_hoisted_names(code)
+        assert result == []
+
 
 class TestRegressesDefinedNames:
     """_regresses_defined_names catches LLM patches that silently drop a

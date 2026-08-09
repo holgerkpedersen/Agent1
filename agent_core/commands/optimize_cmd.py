@@ -1464,7 +1464,7 @@ def _blocked_added_imports(candidate: str, original: str) -> set[str]:
 def _undefined_hoisted_names(code: str) -> list[str]:
     """Return undefined underscore names (hoisted regex/constants) that would
     cause NameError at runtime. Avoids common false positives: imports,
-    function/class defs, and __name__."""
+    function/class defs, and module-level dunders (__name__, __file__, …)."""
     try:
         tree = ast.parse(code)
     except SyntaxError:
@@ -1486,7 +1486,7 @@ def _undefined_hoisted_names(code: str) -> list[str]:
     undefined: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-            if node.id.startswith("_") and node.id not in defined and node.id != "__name__":
+            if node.id.startswith("_") and node.id not in defined and not (node.id.startswith("__") and node.id.endswith("__")):
                 undefined.add(node.id)
     return sorted(undefined)
 
