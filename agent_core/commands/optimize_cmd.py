@@ -659,7 +659,6 @@ _TYPE_EQ_RE = re.compile(r"type\((\w+)\)\s*==\s*(\w+)")
 _TYPE_NE_RE = re.compile(r"type\((\w+)\)\s*!=\s*(\w+)")
 _TYPE_IN_RE = re.compile(r"type\((\w+)\)\s+in\s+\(([^)]+)\)")
 _PLACEHOLDER_PHRASES = ("unchanged line", "rest of the", "remaining code", "...", "code unchanged")
-_FSTRING_STRIP_RE = re.compile(r"f(?=['\"])")
 
 
 # ── Mechanical fixers (one per pattern) ──────────────────────────
@@ -710,14 +709,12 @@ def _fix_none_eq(wl, idx, line, basename, finding):
 
 def _fix_fstring_literal(wl, idx, line, basename, finding):
     old_line = wl[idx]
-    new_line = old_line
-    for q in ('"""', "'''", '"', "'"):
-        needle = "f" + q
-        if needle in new_line:
-            new_line = new_line.replace(needle, q, 1)
-            break
-    if new_line == old_line:
+    from agent_core.patterns import _fstring_lines_without_interpolation
+    hits = _fstring_lines_without_interpolation(old_line)
+    if not hits:
         return None
+    ln, col = hits[0]
+    new_line = old_line[:col] + old_line[col + 1:]
     return f"@@ -{line},1 +{line},1 @@\n-{old_line}\n+{new_line}"
 
 
@@ -761,6 +758,7 @@ _MECH_FIXERS: dict[str, object] = {
     "fstring_without_placeholder": _fix_fstring_literal,
     "iter_dict_keys": _fix_iter_dict_keys,
     "type_comparison": _fix_type_comparison,
+    "duplicate_import": _fix_unused_import,
 }
 _MECH_PATTERNS: frozenset[str] = frozenset(_MECH_FIXERS)
 
@@ -777,6 +775,24 @@ _PATTERN_GUIDANCE: dict[str, str] = {
         "with ``return bool(cond)``. Replace ``return False if cond else True`` "
         "with ``return not cond`` (or ``return not bool(cond)`` when the "
         "condition may return a non-boolean)."
+    ),
+    "regex_in_loop": (
+        "- For **regex_in_loop**: hoist the ``re.compile/s/match/search`` outside the "
+        "loop. STATIC patterns → module‑level ``_X_RE = re.compile('...')``. DYNAMIC "
+        "patterns (``rf'...{param}'`` where param is constant per call) → hoist to "
+        "the top of the enclosing function, one line above the loop at the LOOP's "
+        "indentation level (NOT inside the loop body).\n"
+        "- Put the compile definition AND the usage replacement in the **same hunk**. "
+        "If hoisting to module level, use ONE hunk anchored inside the function that "
+        "removes the inline ``re.`` call, NOT two hunks — otherwise the line numbers "
+        "shift and the second hunk cannot anchor.  Example:\n"
+        "[PATCH: file.py]\n"
+        "@@ -42,2 +42,4 @@\n"
+        " def scan(files):\n"
+        "+    _PAT_RE = re.compile(r'...(config)..')\n"
+        "     for f in files:\n"
+        "-        m = re.search(r'...(config)..', f)\n"
+        "+        m = _PAT_RE.search(f)\n"
     ),
 }
 

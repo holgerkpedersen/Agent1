@@ -1074,9 +1074,7 @@ _IN_KEYS_RE = re.compile(r"in\s+(\w+)\.keys\(\)")
 
 
 def _fstring_has_interpolation(content: str) -> bool:
-    """True when *content* (the raw chars between f-quotes) contains at least
-    one ``{`` that is not an escaped pair ``{{`` (which renders a literal brace
-    and is not interpolation)."""
+    """True when *content* contains an unescaped ``{`` (not ``{{``)."""
     i = 0
     while i < len(content):
         if content[i] == "{":
@@ -1089,30 +1087,39 @@ def _fstring_has_interpolation(content: str) -> bool:
     return False
 
 
-def _fstring_content(line: str) -> str | None:
-    """If *line* contains an f‑string, return its content (between the opening and
-    the matching close quote), otherwise None.  Handles single/double/triple quotes."""
-    for q in ('"""', "'''", '"', "'"):
-        prefix = "f" + q
-        start = line.find(prefix)
-        if start == -1:
+def _fstring_lines_without_interpolation(source: str) -> list[tuple[int, int]]:
+    """Return ``(line, column)`` for every f‑string that has NO interpolation.
+
+    Uses the tokenizer to read the ``FSTRING_START`` … ``FSTRING_END`` stream.
+    An ``OP {`` between start and end signals interpolation — only f‑strings
+    without one are reported.
+    """
+    findings: list[tuple[int, int]] = []
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return findings
+    lines = source.split("\n")
+    fstring_start: tuple[int, int] | None = None
+    has_interp = False
+    for tok in tokens:
+        if tok.type == tokenize.FSTRING_START:
+            fstring_start = tok.start
+            has_interp = False
             continue
-        content_start = start + 1 + len(q)
-        if len(q) == 3:
-            close = line.find(q, content_start)
-            if close == -1:
-                continue
-            return line[content_start:close]
-        pos = content_start
-        while pos < len(line):
-            nxt = line.find(q, pos)
-            if nxt == -1:
-                break
-            if nxt > 0 and line[nxt - 1] == "\\":
-                pos = nxt + 1
-                continue
-            return line[content_start:nxt]
-    return None
+        if fstring_start is None:
+            continue
+        if tok.type == tokenize.FSTRING_END:
+            if not has_interp:
+                line_no, col = fstring_start
+                if line_no <= len(lines) and col < len(lines[line_no - 1]):
+                    if lines[line_no - 1][col] in ('f', 'F'):
+                        findings.append((line_no, col))
+            fstring_start = None
+            continue
+        if tok.type == tokenize.OP and tok.string == "{":
+            has_interp = True
+    return findings
 
 
 def detect_none_eq(source: str) -> list[tuple[int, str, str]]:
@@ -1133,16 +1140,13 @@ def detect_none_eq(source: str) -> list[tuple[int, str, str]]:
 def detect_fstring_without_placeholder(source: str) -> list[tuple[int, str, str]]:
     """f‑string literal whose content contains NO interpolation expression."""
     findings: list[tuple[int, str, str]] = []
-    for i, line in enumerate(source.split("\n"), 1):
-        stripped = line.strip()
-        if stripped.startswith("#"):
+    seen: set[int] = set()
+    for line_no, col in _fstring_lines_without_interpolation(source):
+        if line_no in seen:
             continue
-        content = _fstring_content(line)
-        if content is None:
-            continue
-        if not _fstring_has_interpolation(content):
-            findings.append((i, "fstring_without_placeholder",
-                             "Remove the 'f' prefix — no interpolation expressions inside"))
+        seen.add(line_no)
+        findings.append((line_no, "fstring_without_placeholder",
+                         "Remove the 'f' prefix — no interpolation expressions inside"))
     return findings
 
 
