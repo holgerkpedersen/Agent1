@@ -652,54 +652,151 @@ def _cosmetic_only(old_lines: list[str], new_lines: list[str]) -> bool:
     return True
 
 
-_MECH_PATTERNS: set[str] = {"unused_import", "dead_assignment", "silent_except"}
-
 _MECH_PASS_RE = re.compile(r"^\s+pass\s*$")
 _UNRESOLVED_RE = re.compile(r"\[UNRESOLVED:\s*[^\]]+\]\s*(.*)", re.DOTALL)
+_NONE_EQ_RE = re.compile(r"\b(\w+)\s*(==|!=)\s*None\b")
+_TYPE_EQ_RE = re.compile(r"type\((\w+)\)\s*==\s*(\w+)")
+_TYPE_NE_RE = re.compile(r"type\((\w+)\)\s*!=\s*(\w+)")
+_TYPE_IN_RE = re.compile(r"type\((\w+)\)\s+in\s+\(([^)]+)\)")
+_PLACEHOLDER_PHRASES = ("unchanged line", "rest of the", "remaining code", "...", "code unchanged")
+_FSTRING_STRIP_RE = re.compile(r"f(?=['\"])")
 
+
+# ── Mechanical fixers (one per pattern) ──────────────────────────
+
+def _fix_unused_import(wl, idx, line, basename, finding):
+    src_line = wl[idx]
+    stripped = src_line.strip()
+    if re.match(r"^import\s+\w+(\s+as\s+\w+)?$", stripped):
+        return f"@@ -{line},1 +{line},0 @@\n-{src_line}"
+    m = re.match(r"^from\s+\S+\s+import\s+(\w[\w\s,]*)$", stripped)
+    if m and len([n.strip() for n in m.group(1).split(",")]) <= 1:
+        return f"@@ -{line},1 +{line},0 @@\n-{src_line}"
+    return None
+
+
+def _fix_dead_assignment(wl, idx, line, basename, finding):
+    if "immediately overwritten" in finding.get("suggestion", ""):
+        return f"@@ -{line},1 +{line},0 @@\n-{wl[idx]}"
+    return None
+
+
+def _fix_silent_except(wl, idx, line, basename, finding):
+    ei = idx
+    e_indent = len(wl[ei]) - len(wl[ei].lstrip())
+    for j in range(ei + 1, min(ei + 20, len(wl))):
+        nxt = wl[j].rstrip("\r")
+        if nxt.strip() == "" or nxt.lstrip().startswith("#"):
+            continue
+        nxt_indent = len(nxt) - len(nxt.lstrip())
+        if nxt_indent <= e_indent:
+            break
+        if _MECH_PASS_RE.match(nxt):
+            indent = " " * nxt_indent
+            return (f"@@ -{j + 1},1 +{j + 1},1 @@\n"
+                    f"-{nxt}\n"
+                    f"+{indent}print(f\"Warning: silenced exception in "
+                    f"{basename}:{line}\")")
+    return None
+
+
+def _fix_none_eq(wl, idx, line, basename, finding):
+    old_line = wl[idx]
+    new_line = old_line.replace("== None", "is None").replace("!= None", "is not None")
+    if new_line == old_line:
+        return None
+    return f"@@ -{line},1 +{line},1 @@\n-{old_line}\n+{new_line}"
+
+
+def _fix_fstring_literal(wl, idx, line, basename, finding):
+    old_line = wl[idx]
+    new_line = old_line
+    for q in ('"""', "'''", '"', "'"):
+        needle = "f" + q
+        if needle in new_line:
+            new_line = new_line.replace(needle, q, 1)
+            break
+    if new_line == old_line:
+        return None
+    return f"@@ -{line},1 +{line},1 @@\n-{old_line}\n+{new_line}"
+
+
+def _fix_iter_dict_keys(wl, idx, line, basename, finding):
+    old_line = wl[idx]
+    new_line = old_line.replace(".keys()", "")
+    if new_line == old_line:
+        return None
+    return f"@@ -{line},1 +{line},1 @@\n-{old_line}\n+{new_line}"
+
+
+def _fix_type_comparison(wl, idx, line, basename, finding):
+    old_line = wl[idx]
+    stripped = old_line.lstrip()
+    m = _TYPE_EQ_RE.search(stripped)
+    if m:
+        new_line = old_line.replace(
+            m.group(0), f"isinstance({m.group(1)}, {m.group(2)})"
+        )
+        return f"@@ -{line},1 +{line},1 @@\n-{old_line}\n+{new_line}"
+    m = _TYPE_NE_RE.search(stripped)
+    if m:
+        new_line = old_line.replace(
+            m.group(0), f"not isinstance({m.group(1)}, {m.group(2)})"
+        )
+        return f"@@ -{line},1 +{line},1 @@\n-{old_line}\n+{new_line}"
+    m = _TYPE_IN_RE.search(stripped)
+    if m:
+        new_line = old_line.replace(
+            m.group(0), f"isinstance({m.group(1)}, ({m.group(2)}))"
+        )
+        return f"@@ -{line},1 +{line},1 @@\n-{old_line}\n+{new_line}"
+    return None
+
+
+_MECH_FIXERS: dict[str, object] = {
+    "unused_import": _fix_unused_import,
+    "dead_assignment": _fix_dead_assignment,
+    "silent_except": _fix_silent_except,
+    "none_eq": _fix_none_eq,
+    "fstring_without_placeholder": _fix_fstring_literal,
+    "iter_dict_keys": _fix_iter_dict_keys,
+    "type_comparison": _fix_type_comparison,
+}
+_MECH_PATTERNS: frozenset[str] = frozenset(_MECH_FIXERS)
+
+
+_PATTERN_GUIDANCE: dict[str, str] = {
+    "mutable_default_arg": (
+        "- For **mutable_default_arg**: replace the mutable default ([] / {}) "
+        "with ``None`` and add a guard inside the function body, e.g. "
+        "``if x is None: x = []``. Do NOT keep the mutable literal — it "
+        "persists across function calls."
+    ),
+    "redundant_bool_expr": (
+        "- For **redundant_bool_expr**: replace ``return True if cond else False`` "
+        "with ``return bool(cond)``. Replace ``return False if cond else True`` "
+        "with ``return not cond`` (or ``return not bool(cond)`` when the "
+        "condition may return a non-boolean)."
+    ),
+}
 
 
 def _tri_mech_fix(work_lines: list[str], line: int, pattern: str,
                   basename: str, finding: dict) -> str | None:
     """Return a synthetic ``@@`` hunk for a deterministic fix, or None."""
-    if pattern not in _MECH_PATTERNS:
+    fixer = _MECH_FIXERS.get(pattern)
+    if fixer is None:
         return None
     idx = line - 1
     if not (0 <= idx < len(work_lines)):
         return None
-    if pattern == "unused_import":
-        src_line = work_lines[idx]
-        stripped = src_line.strip()
-        if re.match(r"^import\s+\w+(\s+as\s+\w+)?$", stripped):
-            return f"@@ -{line},1 +{line},0 @@\n-{src_line}"
-        m = re.match(r"^from\s+\S+\s+import\s+(\w[\w\s,]*)$", stripped)
-        if m:
-            names = [n.strip() for n in m.group(1).split(",")]
-            if len(names) <= 1:
-                return f"@@ -{line},1 +{line},0 @@\n-{src_line}"
-        return None
-    if pattern == "dead_assignment":
-        if "immediately overwritten" in finding.get("suggestion", ""):
-            return f"@@ -{line},1 +{line},0 @@\n-{work_lines[idx]}"
-        return None
-    if pattern == "silent_except":
-        ei = idx
-        e_indent = len(work_lines[ei]) - len(work_lines[ei].lstrip())
-        for j in range(ei + 1, min(ei + 20, len(work_lines))):
-            nxt = work_lines[j].rstrip("\r")
-            if nxt.strip() == "" or nxt.lstrip().startswith("#"):
-                continue
-            nxt_indent = len(nxt) - len(nxt.lstrip())
-            if nxt_indent <= e_indent:
-                break
-            if _MECH_PASS_RE.match(nxt):
-                indent = " " * nxt_indent
-                return (
-                    f"@@ -{j + 1},1 +{j + 1},1 @@\n"
-                    f"-{nxt}\n"
-                    f"+{indent}print(f\"Warning: silenced exception in {basename}:{line}\")"
-                )
-        return None
+    return fixer(work_lines, idx, line, basename, finding)
+
+
+def _count_pattern(code: str, pattern: str) -> int:
+    """Number of occurrences of *pattern* in *code* according to the static analyser."""
+    from agent_core.patterns import analyze
+    return sum(1 for f in analyze(code) if f["pattern"] == pattern)
     return None
 
 
@@ -756,7 +853,8 @@ def _patch_system_prompt(basename: str) -> str:
         "a ``+`` line — never add a new line before ``pass`` and leave the dead "
         "``pass`` in place.  Use ``logger.warning(...)`` if logging is already "
         "imported, ``print(f\"...\")`` otherwise.\n"
-        "- Never re-emit whole functions or files; never use [FILE:] blocks.\n"
+        + "".join(_PATTERN_GUIDANCE.values())
+        + "\n- Never re-emit whole functions or files; never use [FILE:] blocks.\n"
         "- If the finding cannot be fixed without breaking behavior, reply "
         f"with exactly: [UNRESOLVED: {basename}] <one-sentence reason>\n\n"
         "Example (replacement — string_concat_in_loop, the '-' line is "
@@ -1335,8 +1433,8 @@ class OptimizeCommand(Command):
                             except SyntaxError:
                                 ok = False
                             if ok:
-                                before_cnt = sum(1 for f in static_analyze("\n".join(work_lines)) if f["pattern"] == pattern)
-                                after_cnt = sum(1 for f in static_analyze(patched) if f["pattern"] == pattern)
+                                before_cnt = _count_pattern("\n".join(work_lines), pattern)
+                                after_cnt = _count_pattern(patched, pattern)
                                 if after_cnt < before_cnt:
                                     new_lines = patched.split("\n")
                                     while new_lines and new_lines[-1] == "":
@@ -1410,8 +1508,7 @@ class OptimizeCommand(Command):
                             )
                             print(f"    Feedback: {feedback[:240]}")
                             continue
-                        _PH = ("unchanged line", "rest of the", "remaining code")
-                        placeholder_warn = any(p in raw.lower() for p in _PH)
+                        placeholder_warn = any(p in raw.lower() for p in _PLACEHOLDER_PHRASES)
                         if placeholder_warn:
                             feedback = ("NEVER use placeholder text. Copy actual source lines from the numbered context. "
                                         + (feedback if feedback else ""))
@@ -1431,8 +1528,7 @@ class OptimizeCommand(Command):
                                 f"Here is the actual numbered context:\n{snippet}\n"
                                 "Copy these EXACTLY for context/'-' lines. Use correct @@ numbers."
                             )
-                            _PH = ("unchanged line", "...", "rest of the", "remaining", "code unchanged")
-                            if placeholder_warn or any(p in raw.lower() for p in _PH):
+                            if placeholder_warn or any(p in raw.lower() for p in _PLACEHOLDER_PHRASES):
                                 feedback = "NEVER use placeholder text like \"unchanged line\". Copy actual source lines from the numbered context. " + feedback
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
                                 print(f"    Feedback: {feedback[:600]}")
@@ -1496,12 +1592,8 @@ class OptimizeCommand(Command):
                         # Acceptance: the pattern's footprint must shrink.  Count
                         # occurrences before/after; a finding is resolved only when
                         # the patched file reports fewer instances of the pattern.
-                        before_cnt = sum(
-                            1 for f in static_analyze("\n".join(work_lines)) if f["pattern"] == pattern
-                        )
-                        after_cnt = sum(
-                            1 for f in static_analyze(patched) if f["pattern"] == pattern
-                        )
+                        before_cnt = _count_pattern("\n".join(work_lines), pattern)
+                        after_cnt = _count_pattern(patched, pattern)
                         if after_cnt >= before_cnt:
                             feedback = (
                                 f"After your patch the file still contains [{pattern}] "

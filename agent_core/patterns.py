@@ -1064,6 +1064,163 @@ def detect_class_conflicts(generated_files: list[str], project_root: str) -> lis
     return findings
 
 
+# ---------------------------------------------------------------------------
+# New detectors (added 2026-08-09)
+# ---------------------------------------------------------------------------
+
+_NONE_EQ_RE = re.compile(r"(\b[A-Za-z_]\w*)\s*(==|!=)\s*None\b")
+_FOR_IN_KEYS_RE = re.compile(r"\bfor\s+\w+\s+in\s+(\w+)\.keys\(\)")
+_IN_KEYS_RE = re.compile(r"in\s+(\w+)\.keys\(\)")
+
+
+def _fstring_has_interpolation(content: str) -> bool:
+    """True when *content* (the raw chars between f-quotes) contains at least
+    one ``{`` that is not an escaped pair ``{{`` (which renders a literal brace
+    and is not interpolation)."""
+    i = 0
+    while i < len(content):
+        if content[i] == "{":
+            if i + 1 < len(content) and content[i + 1] == "{":
+                i += 2
+            else:
+                return True
+        else:
+            i += 1
+    return False
+
+
+def _fstring_content(line: str) -> str | None:
+    """If *line* contains an f‑string, return its content (between the opening and
+    the matching close quote), otherwise None.  Handles single/double/triple quotes."""
+    for q in ('"""', "'''", '"', "'"):
+        prefix = "f" + q
+        start = line.find(prefix)
+        if start == -1:
+            continue
+        content_start = start + 1 + len(q)
+        if len(q) == 3:
+            close = line.find(q, content_start)
+            if close == -1:
+                continue
+            return line[content_start:close]
+        pos = content_start
+        while pos < len(line):
+            nxt = line.find(q, pos)
+            if nxt == -1:
+                break
+            if nxt > 0 and line[nxt - 1] == "\\":
+                pos = nxt + 1
+                continue
+            return line[content_start:nxt]
+    return None
+
+
+def detect_none_eq(source: str) -> list[tuple[int, str, str]]:
+    """``x == None`` or ``x != None`` — should be ``is None``/``is not None``."""
+    findings: list[tuple[int, str, str]] = []
+    for i, line in enumerate(source.split("\n"), 1):
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
+            continue
+        m = _NONE_EQ_RE.search(stripped)
+        if m:
+            findings.append((i, "none_eq",
+                             f"Use '{m.group(1)} is None' / '{m.group(1)} is not None' "
+                             f"instead of '{m.group(1)} {m.group(2)} None'"))
+    return findings
+
+
+def detect_fstring_without_placeholder(source: str) -> list[tuple[int, str, str]]:
+    """f‑string literal whose content contains NO interpolation expression."""
+    findings: list[tuple[int, str, str]] = []
+    for i, line in enumerate(source.split("\n"), 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        content = _fstring_content(line)
+        if content is None:
+            continue
+        if not _fstring_has_interpolation(content):
+            findings.append((i, "fstring_without_placeholder",
+                             "Remove the 'f' prefix — no interpolation expressions inside"))
+    return findings
+
+
+def detect_iter_dict_keys(source: str) -> list[tuple[int, str, str]]:
+    """``for k in d.keys():`` or ``k in d.keys()`` — drop the redundant ``.keys()``."""
+    findings: list[tuple[int, str, str]] = []
+    for i, line in enumerate(source.split("\n"), 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        m = _FOR_IN_KEYS_RE.search(stripped) or _IN_KEYS_RE.search(stripped)
+        if not m:
+            continue
+        findings.append((i, "iter_dict_keys",
+                         f"Drop redundant .keys(): use '{m.group(1)} in d' or "
+                         f"'for {m.group(1)} in d:' instead"))
+    return findings
+
+
+def detect_type_comparison(source: str) -> list[tuple[int, str, str]]:
+    """``type(x) == SomeType`` / ``type(x) in (A, B)`` — use ``isinstance``."""
+    findings: list[tuple[int, str, str]] = []
+    for i, line in enumerate(source.split("\n"), 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        m = re.search(r"type\((\w+)\)\s*==\s*(\w+)", stripped)
+        if m:
+            findings.append((i, "type_comparison",
+                             f"Use isinstance({m.group(1)}, {m.group(2)}) instead of type() == check"))
+            continue
+        m = re.search(r"type\((\w+)\)\s*!=\s*(\w+)", stripped)
+        if m:
+            findings.append((i, "type_comparison",
+                             f"Use 'not isinstance({m.group(1)}, {m.group(2)})' instead of type() != check"))
+            continue
+        m = re.search(r"type\((\w+)\)\s+in\s+\(([^)]+)\)", stripped)
+        if m:
+            findings.append((i, "type_comparison",
+                             f"Use isinstance({m.group(1)}, ({m.group(2)})) instead of type() in (...) check"))
+    return findings
+
+
+def detect_mutable_default_arg(source: str) -> list[tuple[int, str, str]]:
+    """``def f(x=[], y={})`` — mutable default argument persists across calls."""
+    findings: list[tuple[int, str, str]] = []
+    for i, line in enumerate(source.split("\n"), 1):
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped.startswith(("def ", "async def ")):
+            continue
+        m = re.search(r"=\s*(\[\]|\{\})", stripped)
+        if m:
+            findings.append((i, "mutable_default_arg",
+                             f"Mutable default argument {m.group(1)}: use None and "
+                             f"guard with '{m.group(1)} or param is None' in function body"))
+    return findings
+
+
+def detect_redundant_bool_expr(source: str) -> list[tuple[int, str, str]]:
+    """``return True if cond else False`` — replace with ``bool(cond)``."""
+    findings: list[tuple[int, str, str]] = []
+    for i, line in enumerate(source.split("\n"), 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        m = re.search(r"return\s+True\s+if\s+(.+?)\s+else\s+False\s*$", stripped)
+        if m:
+            findings.append((i, "redundant_bool_expr",
+                             f"Use 'return bool({m.group(1).strip()})' instead of True-if-else-False"))
+            continue
+        m = re.search(r"return\s+False\s+if\s+(.+?)\s+else\s+True\s*$", stripped)
+        if m:
+            findings.append((i, "redundant_bool_expr",
+                             f"Use 'return not ({m.group(1).strip()})' or "
+                             f"'return not bool({m.group(1).strip()})' instead"))
+    return findings
+
+
 DETECTORS = [
     detect_regex_in_loop,
     detect_string_concat_in_loop,
@@ -1077,4 +1234,10 @@ DETECTORS = [
     detect_unreachable_code,
     detect_walrus_in_comprehension,
     detect_unused_imports,
+    detect_none_eq,
+    detect_fstring_without_placeholder,
+    detect_iter_dict_keys,
+    detect_type_comparison,
+    detect_mutable_default_arg,
+    detect_redundant_bool_expr,
 ]

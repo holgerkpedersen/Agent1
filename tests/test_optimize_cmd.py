@@ -19,7 +19,7 @@ from agent_core.commands.optimize_cmd import (
     SYSTEM_OVERHEAD_TOKENS,
     _surgically_revert_regressions,
 )
-from agent_core.patterns import analyze as static_analyze, detect_list_append_join
+from agent_core.patterns import analyze as static_analyze, detect_list_append_join, detect_none_eq, detect_fstring_without_placeholder, detect_iter_dict_keys, detect_type_comparison, detect_mutable_default_arg, detect_redundant_bool_expr
 
 
 def _numbered_context(user_content: str) -> list[tuple[int, str]]:
@@ -1892,3 +1892,188 @@ class TestSurgicalRevertRegressions:
         assert "out = []" not in cleaned and "out.append" not in cleaned
         assert "q := n" not in cleaned
         compile(cleaned, "<clean>", "exec")
+
+
+# ---------------------------------------------------------------------------
+# New detectors (added 2026-08-09)
+# ---------------------------------------------------------------------------
+
+class TestNoneEqDetector:
+    """``x == None`` / ``x != None`` → ``is None`` / ``is not None``."""
+
+    def test_none_eq_flagged(self) -> None:
+        code = "if x == None:\n    return"
+        findings = detect_none_eq(code)
+        assert len(findings) == 1
+        assert findings[0][1] == "none_eq"
+
+    def test_none_ne_flagged(self) -> None:
+        code = "if x != None:\n    return"
+        findings = detect_none_eq(code)
+        assert len(findings) == 1
+
+    def test_is_none_not_flagged(self) -> None:
+        code = "if x is None:\n    pass"
+        findings = detect_none_eq(code)
+        assert findings == []
+
+    def test_comment_not_flagged(self) -> None:
+        code = "# check x == None"
+        findings = detect_none_eq(code)
+        assert findings == []
+
+    def test_full_analyze(self) -> None:
+        results = static_analyze("x = None\nif x == None:\n    pass")
+        assert "none_eq" in {r["pattern"] for r in results}
+
+    def test_fixed_clears(self) -> None:
+        results = static_analyze("if x is None:\n    pass")
+        assert "none_eq" not in {r["pattern"] for r in results}
+
+
+class TestFstringWithoutPlaceholderDetector:
+    """``f\"static\"`` → ``\"static\"``."""
+
+    def test_fstring_no_interp_flagged(self) -> None:
+        code = 'msg = f"hello world"'
+        findings = detect_fstring_without_placeholder(code)
+        assert len(findings) == 1
+        assert findings[0][1] == "fstring_without_placeholder"
+
+    def test_fstring_with_interp_not_flagged(self) -> None:
+        code = 'msg = f"hello {name}"'
+        findings = detect_fstring_without_placeholder(code)
+        assert findings == []
+
+    def test_fstring_escaped_braces_flagged(self) -> None:
+        code = 'msg = f"hello {{name}}"'  # {{ → literal {, no interpolation
+        findings = detect_fstring_without_placeholder(code)
+        assert len(findings) == 1
+
+    def test_triple_quoted_flagged(self) -> None:
+        code = 'msg = f"""no interp here\nstill none"""'
+        findings = detect_fstring_without_placeholder(code)
+        assert len(findings) == 1
+
+    def test_full_analyze(self) -> None:
+        results = static_analyze('x = f"static"')
+        assert "fstring_without_placeholder" in {r["pattern"] for r in results}
+
+    def test_fixed_clears(self) -> None:
+        results = static_analyze('x = "static"')
+        assert "fstring_without_placeholder" not in {r["pattern"] for r in results}
+
+
+class TestIterDictKeysDetector:
+    """``for k in d.keys():`` → ``for k in d:``."""
+
+    def test_for_in_keys_flagged(self) -> None:
+        code = "for k in d.keys():\n    print(k)"
+        findings = detect_iter_dict_keys(code)
+        assert len(findings) == 1
+        assert findings[0][1] == "iter_dict_keys"
+
+    def test_containment_flagged(self) -> None:
+        code = "if name in config.keys():\n    return"
+        findings = detect_iter_dict_keys(code)
+        assert len(findings) == 1
+
+    def test_plain_keys_call_not_flagged(self) -> None:
+        code = "x = d.keys()"
+        findings = detect_iter_dict_keys(code)
+        assert findings == []
+
+    def test_fixed_clears(self) -> None:
+        code = "for k in d:\n    print(k)"
+        findings = detect_iter_dict_keys(code)
+        assert findings == []
+
+    def test_full_analyze(self) -> None:
+        results = static_analyze("for k in d.keys():\n    pass")
+        assert "iter_dict_keys" in {r["pattern"] for r in results}
+
+
+class TestTypeComparisonDetector:
+    """``type(x) == Foo`` → ``isinstance(x, Foo)``."""
+
+    def test_type_eq_flagged(self) -> None:
+        code = "if type(x) == str:\n    return True"
+        findings = detect_type_comparison(code)
+        assert len(findings) == 1
+        assert findings[0][1] == "type_comparison"
+
+    def test_type_ne_flagged(self) -> None:
+        code = "if type(x) != int:\n    return"
+        findings = detect_type_comparison(code)
+        assert len(findings) == 1
+
+    def test_type_in_tuple_flagged(self) -> None:
+        code = "if type(x) in (int, float):\n    return"
+        findings = detect_type_comparison(code)
+        assert len(findings) == 1
+
+    def test_isinstance_not_flagged(self) -> None:
+        code = "if isinstance(x, str):\n    return True"
+        findings = detect_type_comparison(code)
+        assert findings == []
+
+    def test_full_analyze(self) -> None:
+        results = static_analyze("if type(x) == str:\n    pass")
+        assert "type_comparison" in {r["pattern"] for r in results}
+
+    def test_fixed_clears(self) -> None:
+        results = static_analyze("if isinstance(x, str):\n    pass")
+        assert "type_comparison" not in {r["pattern"] for r in results}
+
+
+class TestMutableDefaultArgDetector:
+    """``def f(x=[])`` / ``def f(y={})`` → ``None`` + guard."""
+
+    def test_list_default_flagged(self) -> None:
+        code = "def f(x=[]):\n    return x"
+        findings = detect_mutable_default_arg(code)
+        assert len(findings) == 1
+        assert findings[0][1] == "mutable_default_arg"
+
+    def test_dict_default_flagged(self) -> None:
+        code = "def f(x={}):\n    return x"
+        findings = detect_mutable_default_arg(code)
+        assert len(findings) == 1
+
+    def test_none_default_not_flagged(self) -> None:
+        code = "def f(x=None):\n    if x is None:\n        x = []\n    return x"
+        findings = detect_mutable_default_arg(code)
+        assert findings == []
+
+    def test_int_default_not_flagged(self) -> None:
+        code = "def f(x=0):\n    return x"
+        findings = detect_mutable_default_arg(code)
+        assert findings == []
+
+    def test_full_analyze(self) -> None:
+        results = static_analyze("def f(params=[]):\n    return params")
+        assert "mutable_default_arg" in {r["pattern"] for r in results}
+
+
+class TestRedundantBoolExprDetector:
+    """``return True if cond else False`` → ``return bool(cond)``."""
+
+    def test_true_if_else_false_flagged(self) -> None:
+        code = "def f(x):\n    return True if x else False"
+        findings = detect_redundant_bool_expr(code)
+        assert len(findings) == 1
+        assert findings[0][1] == "redundant_bool_expr"
+
+    def test_false_if_else_true_flagged(self) -> None:
+        code = "def f(x):\n    return False if x else True"
+        findings = detect_redundant_bool_expr(code)
+        assert len(findings) == 1
+
+    def test_normal_return_not_flagged(self) -> None:
+        code = "def f(x):\n    return bool(x)"
+        findings = detect_redundant_bool_expr(code)
+        assert findings == []
+
+    def test_full_analyze(self) -> None:
+        results = static_analyze("def f(x):\n    return True if x else False")
+        assert "redundant_bool_expr" in {r["pattern"] for r in results}
