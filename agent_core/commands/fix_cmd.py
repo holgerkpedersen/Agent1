@@ -299,17 +299,17 @@ class FixCommand(Command):
                 print()
 
             read_paths: set[str] = {fp for fp, _, _ in top_files}
-            system = (f"You are an expert Python debugger.\n\n"
+            system = ("You are an expert Python debugger.\n\n"
                       f"WORKSPACE: {ws_dir}\n"
-                      f"Files below use paths RELATIVE to the workspace.\n\n"
-                      f"FORMAT (plain text only — NO XML or <tool_call> tags):\n"
-                      f"  To view a file:  [READ: <relative_path>]\n"
-                      f"  To submit a fix: [FILE: <relative_path>]\n"
-                      f"    ```python\n    # complete corrected code here\n    ```\n\n"
-                      f"Use EXACTLY the relative filenames shown in the 'Relevant files' section above.\n"
-                      f"Do NOT add directory prefixes that aren't already shown.\n"
-                      f"Do NOT wrap commands in <tool_call> or any XML tags.\n"
-                      f"If you cannot determine the exact file, explain without [READ:] or [FILE:] tags.")
+                      "Files below use paths RELATIVE to the workspace.\n\n"
+                      "FORMAT (plain text only — NO XML or <tool_call> tags):\n"
+                      "  To view a file:  [READ: <relative_path>]\n"
+                      "  To submit a fix: [FILE: <relative_path>]\n"
+                      "    ```python\n    # complete corrected code here\n    ```\n\n"
+                      "Use EXACTLY the relative filenames shown in the 'Relevant files' section above.\n"
+                      "Do NOT add directory prefixes that aren't already shown.\n"
+                      "Do NOT wrap commands in <tool_call> or any XML tags.\n"
+                      "If you cannot determine the exact file, explain without [READ:] or [FILE:] tags.")
 
             _TOOL_CALL_RE = re.compile(r'</?tool_call>')
             _READ_DIRECTIVE_RE = re.compile(r'\[READ:\s*([^\]]+)\]')

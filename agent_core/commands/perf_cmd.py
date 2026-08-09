@@ -7,7 +7,6 @@ Usage:
     perf --html           Export as self-contained HTML dashboard
 """
 
-import time as _time
 from datetime import datetime as _datetime
 
 from .base import Command

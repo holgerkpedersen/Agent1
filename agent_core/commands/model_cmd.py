@@ -237,7 +237,7 @@ class ModelCommand(Command):
             print(f"  Agent matches LM Studio: {current}  ({_format_size(active['size_bytes'])})")
         else:
             print(f"  Agent: {current}  |  LM Studio has: {active_key}")
-            print(f"  Syncing agent to match LM Studio...")
+            print("  Syncing agent to match LM Studio...")
             agent.llm.model_name = active_key
             self._persist_model(active_key)
             print(f"  Done: {active_key}")
@@ -479,5 +479,3 @@ class ModelCommand(Command):
                     return m["key"]
 
         return None
-
-

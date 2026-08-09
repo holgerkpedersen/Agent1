@@ -281,17 +281,17 @@ class WorkflowCommand(Command):
             print(f"\n[spec] Loaded from {spec_file}")
 
             if not force and os.path.exists(plan_md):
-                print(f"\n[Skipping plan] exists")
+                print("\n[Skipping plan] exists")
             else:
                 if not force and os.path.exists(analysis_md):
-                    print(f"\n[Skipping analyze] exists")
+                    print("\n[Skipping analyze] exists")
                 else:
-                    print(f"\n[analyze] Analyzing spec...")
+                    print("\n[analyze] Analyzing spec...")
 
                     # Scan target workspace for code context when spec references agent/self-improvement
                     ws_ctx_found, ws_code_context = _scan_workspace_context(ws_path, spec_content)
                     if ws_ctx_found:
-                        print(f"  [analyze] Included workspace code context (self-improvement detected)")
+                        print("  [analyze] Included workspace code context (self-improvement detected)")
                     trace_header = f"# Analysis for workspace {ws_path}\n"
                     if spec_file:
                         trace_header += f"| Spec file: {os.path.basename(spec_file)}\n\n"
@@ -372,10 +372,10 @@ class WorkflowCommand(Command):
                                 if later_idx != -1 and later_idx < next_section:
                                     next_section = later_idx
                             print(f"\n{r[idx:next_section].strip()}")
-                        print(f"\nNext steps:")
-                        print(f"  1. Answer the questions above, then run again with --desc \"<answers>\"")
-                        print(f"     or create a file and pass it via --from <file>")
-                        print(f"  2. Or use --force to skip this gate and proceed anyway.")
+                        print("\nNext steps:")
+                        print("  1. Answer the questions above, then run again with --desc \"<answers>\"")
+                        print("     or create a file and pass it via --from <file>")
+                        print("  2. Or use --force to skip this gate and proceed anyway.")
                         return True
 
                     # Self-critique refinement pass — only if analysis was not blocked
@@ -404,14 +404,14 @@ class WorkflowCommand(Command):
                         with open(analysis_md, "a", encoding="utf-8") as f:
                             f.write("\n\n---\n\n## Refinement (self-critique)\n")
                             f.write(critique_r)
-                        print(f"  [analyze] Appended refinement pass")
+                        print("  [analyze] Appended refinement pass")
                     else:
                         print(f"  [analyze] Critique failed (non-blocking): {critique_r[:100]}")
 
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
 
-                print(f"\n[plan] Creating plan...")
+                print("\n[plan] Creating plan...")
                 r = await agent.llm.chat([
                     {"role": "system", "content": "You are an expert software architect. Create a detailed coding plan with ALL files needed. Follow SOLID principles — each file has a single responsibility. New files should be small and focused (max 150 lines). If a concept needs more code, split across multiple files. Ensure all Python code passes mypy strict type checking. No unbound TypeVars, no type mismatches. Never use <tool_call> or XML tags."},
                     {"role": "user", "content": f"Create coding plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}"}
@@ -421,10 +421,10 @@ class WorkflowCommand(Command):
                     return True
                 with open(plan_md, "w", encoding="utf-8") as f:
                     f.write(r)
-                print(f"[plan] Written")
+                print("[plan] Written")
 
             if not force and os.path.exists(entities_md):
-                print(f"\n[Skipping entities] exists")
+                print("\n[Skipping entities] exists")
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read() if os.path.exists(analysis_md) else ""
@@ -439,10 +439,10 @@ class WorkflowCommand(Command):
                     return True
                 with open(entities_md, "w", encoding="utf-8") as f:
                     f.write(r)
-                print(f"[entities] Written")
+                print("[entities] Written")
 
             if not force and os.path.exists(tasks_md):
-                print(f"\n[Skipping taskplan] exists")
+                print("\n[Skipping taskplan] exists")
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read() if os.path.exists(analysis_md) else ""
@@ -459,7 +459,7 @@ class WorkflowCommand(Command):
                     return True
                 with open(tasks_md, "w", encoding="utf-8") as f:
                     f.write(r)
-                print(f"[taskplan] Written")
+                print("[taskplan] Written")
 
             print(f"\nNext: implement {tasks_md} {plan_md} {entities_md} --workspace {target_workspace} --force")
 
@@ -469,9 +469,9 @@ class WorkflowCommand(Command):
             print(f"\n[features] Loaded from {features_file}")
 
             if not force and os.path.exists(analysis_md):
-                print(f"\n[Skipping analyze] exists")
+                print("\n[Skipping analyze] exists")
             else:
-                print(f"\n[analyze] Scanning existing py files...")
+                print("\n[analyze] Scanning existing py files...")
                 py_files = []
                 for dp, dn, filenames in os.walk(ws_path):
                     if ".git" in dp or "__pycache__" in dp:
@@ -488,7 +488,7 @@ class WorkflowCommand(Command):
                         with open(pf, "r", encoding="utf-8") as f:
                             combined += f"\n\n# ---- {pf} ----\n{f.read()}"
                     except Exception:
-                        print(f"Warning: silenced exception in workflow_cmd.py:490")
+                        print("Warning: silenced exception in workflow_cmd.py:490")
                 r = await agent.llm.chat([
                     {"role": "system", "content": "You are an expert code reviewer. Analyze the existing code AND these new features. Find bugs, gaps, and what needs to change."},
                     {"role": "user", "content": f"## Existing Code:\n{combined}\n\n## New Features:\n{features}\n\nAnalyze both existing issues and what must change for the new features."}
@@ -498,10 +498,10 @@ class WorkflowCommand(Command):
                     return True
                 with open(analysis_md, "w", encoding="utf-8") as f:
                     f.write(r)
-                print(f"[analyze] Written")
+                print("[analyze] Written")
 
             if not force and os.path.exists(plan_md):
-                print(f"\n[Skipping plan] exists")
+                print("\n[Skipping plan] exists")
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
@@ -523,7 +523,7 @@ class WorkflowCommand(Command):
                 print(f"[plan] Appended to {plan_md}")
 
             if not force and os.path.exists(entities_md):
-                print(f"\n[Skipping entities] exists")
+                print("\n[Skipping entities] exists")
             else:
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
@@ -540,10 +540,10 @@ class WorkflowCommand(Command):
                     return True
                 with open(entities_md, "a", encoding="utf-8") as f:
                     f.write(f"\n\n---\n\n{r}")
-                print(f"[entities] Appended")
+                print("[entities] Appended")
 
             if not force and os.path.exists(tasks_md):
-                print(f"\n[Skipping taskplan] exists")
+                print("\n[Skipping taskplan] exists")
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
@@ -558,15 +558,15 @@ class WorkflowCommand(Command):
                     return True
                 with open(tasks_md, "a", encoding="utf-8") as f:
                     f.write(f"\n\n---\n\n{r}")
-                print(f"[taskplan] Appended")
+                print("[taskplan] Appended")
 
             print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
 
         else:
             if not force and os.path.exists(analysis_md):
-                print(f"\n[Skipping analyze] exists")
+                print("\n[Skipping analyze] exists")
             else:
-                print(f"\n[analyze] Scanning py files...")
+                print("\n[analyze] Scanning py files...")
                 py_files = []
                 for dp, dn, filenames in os.walk(ws_path):
                     if ".git" in dp or "__pycache__" in dp:
@@ -583,7 +583,7 @@ class WorkflowCommand(Command):
                         with open(pf, "r", encoding="utf-8") as f:
                             combined += f"\n\n# ---- {pf} ----\n{f.read()}"
                     except Exception:
-                        print(f"Warning: silenced exception in workflow_cmd.py:585")
+                        print("Warning: silenced exception in workflow_cmd.py:585")
                 analyze_system = (
                     "You are an expert software architect. Evaluate this codebase across 5 dimensions. "
                     "For each dimension, limit to 3 bullet points max 50 words each. Be concise."
@@ -604,10 +604,10 @@ class WorkflowCommand(Command):
                     return True
                 with open(analysis_md, "w", encoding="utf-8") as f:
                     f.write(r)
-                print(f"[analyze] Written")
+                print("[analyze] Written")
 
             if not force and os.path.exists(plan_md):
-                print(f"\n[Skipping plan] exists")
+                print("\n[Skipping plan] exists")
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
@@ -625,10 +625,10 @@ class WorkflowCommand(Command):
                     return True
                 with open(plan_md, "w", encoding="utf-8") as f:
                     f.write(r)
-                print(f"[plan] Written")
+                print("[plan] Written")
 
             if not force and os.path.exists(entities_md):
-                print(f"\n[Skipping entities] exists")
+                print("\n[Skipping entities] exists")
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
@@ -643,10 +643,10 @@ class WorkflowCommand(Command):
                     return True
                 with open(entities_md, "w", encoding="utf-8") as f:
                     f.write(r)
-                print(f"[entities] Written")
+                print("[entities] Written")
 
             if not force and os.path.exists(tasks_md):
-                print(f"\n[Skipping taskplan] exists")
+                print("\n[Skipping taskplan] exists")
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
@@ -661,7 +661,7 @@ class WorkflowCommand(Command):
                     return True
                 with open(tasks_md, "w", encoding="utf-8") as f:
                     f.write(r)
-                print(f"[taskplan] Written")
+                print("[taskplan] Written")
 
             print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
 

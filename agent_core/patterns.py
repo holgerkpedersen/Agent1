@@ -111,10 +111,47 @@ def detect_regex_in_loop(source: str) -> list[tuple[int, str, str]]:
     lines = source.split("\n")
     in_loop_flags = _loop_body_lines(lines)
     for i, line in enumerate(lines, 1):
-        if in_loop_flags[i - 1] and re.search(r"\bre\.(compile|match|search|sub|findall)\(", line):
+        if in_loop_flags[i - 1] and re.search(r"\bre\.(compile|match|search|sub|findall)\(", line) and _line_regex_arg_is_hoistable(line):
             findings.append((i, "regex_in_loop",
                              "Move re.compile() to module level — compiling inside loop wastes cycles"))
     return findings
+
+
+def _line_regex_arg_is_hoistable(line: str) -> bool:
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(line).readline))
+    except tokenize.TokenError:
+        return False
+    for i, (typ, s, _, _, _) in enumerate(toks):
+        if typ == tokenize.NAME and s == "re" and i + 1 < len(toks):
+            nxt = toks[i + 1]
+            if nxt[1] == "." and i + 2 < len(toks):
+                after = toks[i + 2]
+                if after[0] == tokenize.NAME and after[1] in ("compile", "match", "search", "sub", "findall") and i + 3 < len(toks):
+                    if toks[i + 3][1] == "(":
+                        j = i + 4
+                        while j < len(toks):
+                            tj = toks[j]
+                            if tj[0] in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE):
+                                j += 1
+                                continue
+                            if tj[0] == tokenize.STRING:
+                                val = tj[1]
+                                prefix = ""
+                                for ch in val:
+                                    if ch == "'" or ch == '"':
+                                        break
+                                    prefix += ch
+                                if "{" in val and "f" in prefix.lower():
+                                    return False
+                                k = j + 1
+                                while k < len(toks) and toks[k][0] in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE):
+                                    k += 1
+                                if k < len(toks) and toks[k][1] == "+":
+                                    return False
+                                return True
+                            return False
+    return False
 
 
 def detect_string_concat_in_loop(source: str) -> list[tuple[int, str, str]]:

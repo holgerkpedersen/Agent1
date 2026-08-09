@@ -39,7 +39,7 @@ class PlanCommand(Command):
         plan = await agent.llm.chat(messages)
         
         with open(plan_file, "w", encoding="utf-8") as f:
-            f.write(f"# Coding Plan\n\n")
+            f.write("# Coding Plan\n\n")
             f.write(plan)
         print(f"Coding plan written to {plan_file}")
         

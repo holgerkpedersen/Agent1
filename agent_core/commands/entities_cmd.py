@@ -42,7 +42,7 @@ class EntitiesCommand(Command):
         entities = await agent.llm.chat(messages)
         
         with open(entities_file, "w", encoding="utf-8") as f:
-            f.write(f"# Shared Entities\n\n")
+            f.write("# Shared Entities\n\n")
             f.write(entities)
         print(f"Entities written to {entities_file}")
         

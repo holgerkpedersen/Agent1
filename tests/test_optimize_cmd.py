@@ -2077,3 +2077,174 @@ class TestRedundantBoolExprDetector:
     def test_full_analyze(self) -> None:
         results = static_analyze("def f(x):\n    return True if x else False")
         assert "redundant_bool_expr" in {r["pattern"] for r in results}
+
+
+class TestRegexInLoopDetector:
+    """Narrowed regex_in_loop: only literal string/r-string patterns are flagged."""
+
+    def test_literal_flagged(self) -> None:
+        from agent_core.patterns import detect_regex_in_loop
+        code = textwrap.dedent("""\
+            for f in files:
+                m = re.search(r"^class", f)
+                re.compile("^x")
+        """)
+        findings = detect_regex_in_loop(code)
+        assert len(findings) == 2
+
+    def test_variable_not_flagged(self) -> None:
+        from agent_core.patterns import detect_regex_in_loop
+        code = textwrap.dedent("""\
+            for pattern in patterns:
+                re.compile(pattern)
+        """)
+        findings = detect_regex_in_loop(code)
+        assert findings == []
+
+    def test_fstring_not_flagged(self) -> None:
+        from agent_core.patterns import detect_regex_in_loop
+        code = textwrap.dedent("""\
+            for cn in class_names:
+                m = re.match(rf"^class\\s+{cn}", line)
+        """)
+        findings = detect_regex_in_loop(code)
+        assert findings == []
+
+    def test_concat_not_flagged(self) -> None:
+        from agent_core.patterns import detect_regex_in_loop
+        code = textwrap.dedent("""\
+            for prefix in prefixes:
+                re.compile("pre_" + prefix)
+        """)
+        findings = detect_regex_in_loop(code)
+        assert findings == []
+
+    def test_full_analyze(self) -> None:
+        code = textwrap.dedent("""\
+            for f in files:
+                re.compile("static_pattern")
+                re.compile(dynamic_var)
+                re.match(rf"pre_{x}", line)
+        """)
+        results = [r for r in static_analyze(code) if r["pattern"] == "regex_in_loop"]
+        assert len(results) == 1
+
+    def test_fixed_clears(self) -> None:
+        from agent_core.patterns import detect_regex_in_loop
+        code = textwrap.dedent("""\
+            def f():
+                _RE_1 = re.compile("static_pattern")
+                for f in files:
+                    _RE_1.match(f)
+        """)
+        findings = detect_regex_in_loop(code)
+        assert findings == []
+
+
+class TestMechanicalRegexHoist:
+    """Mechanical _fix_regex_in_loop produces correct hunks."""
+
+    def test_hoist_produces_hunk(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+        code = "def scan():\n    for f in files:\n        m = re.search(r'^class', f)"
+        wl = code.split("\n")
+        hunk = _fix_regex_in_loop(wl, 2, 3, "test.py", {})
+        assert hunk is not None
+        assert "_RE_" in hunk
+        assert "re.compile" in hunk
+
+    def test_hoist_applies_and_compiles(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+        from agent_core.patch_utils import apply_patch
+        code = textwrap.dedent("""\
+            import re
+
+            def scan(files):
+                for f in files:
+                    m = re.search(r'^class', f)
+                    print(m)
+        """)
+        wl = code.split("\n")
+        hunk = _fix_regex_in_loop(wl, 4, 5, "test.py", {})
+        assert hunk is not None
+        ok, patched = apply_patch(hunk, wl)
+        assert ok
+        compile(patched, "<test>", "exec")
+        assert "re.compile" in patched
+        assert "re.search(" not in patched
+
+    def test_variable_arg_returns_none(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+        code = "for p in pats:\n    re.compile(p)"
+        wl = code.split("\n")
+        hunk = _fix_regex_in_loop(wl, 1, 2, "test.py", {})
+        assert hunk is None
+
+    def test_concat_arg_returns_none(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+        code = "for p in pats:\n    re.compile('pre_' + p)"
+        wl = code.split("\n")
+        hunk = _fix_regex_in_loop(wl, 1, 2, "test.py", {})
+        assert hunk is None
+
+
+    def test_nested_loop_hoists_above_outermost(self) -> None:
+        """When a re call is inside a nested loop, hoist above the OUTERMOST enclosing loop."""
+        from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+        from agent_core.patch_utils import apply_patch
+        code = textwrap.dedent("""\
+            import re
+
+            def run():
+                for attempt in range(3):
+                    for fname in files:
+                        class_names = re.findall(r'^class\\s+(\\w+)', source, re.MULTILINE)
+                        print(class_names)
+        """)
+        wl = code.split("\n")
+        # The findall is at 0-based index 5 (1-based line 6)
+        hunk = _fix_regex_in_loop(wl, 5, 6, "test.py", {})
+        assert hunk is not None
+        ok, patched = apply_patch(hunk, wl)
+        assert ok
+        compile(patched, "<test>", "exec")
+        # The inserted _RE_N = re.compile(...) must NOT be inside any loop body
+        # Verify count drops (no new finding at the insert position)
+        from agent_core.commands.optimize_cmd import _count_pattern
+        before = _count_pattern("\n".join(wl), "regex_in_loop")
+        after = _count_pattern(patched, "regex_in_loop")
+        assert after < before, f"count gate must pass: {before} -> {after}"
+
+
+class TestUndefinedHoistedNamesGate:
+    """_undefined_hoisted_names catches broken hoist patches."""
+
+    def test_detects_undefined(self) -> None:
+        from agent_core.commands.optimize_cmd import _undefined_hoisted_names
+        code = "_INIT_PATTERN.match(x)\n_PREFIX_RE.sub('', y)"
+        result = _undefined_hoisted_names(code)
+        assert "_INIT_PATTERN" in result
+        assert "_PREFIX_RE" in result
+
+    def test_passes_defined(self) -> None:
+        from agent_core.commands.optimize_cmd import _undefined_hoisted_names
+        code = "_RE_1 = re.compile(r'x')\n_RE_1.search(line)"
+        result = _undefined_hoisted_names(code)
+        assert result == []
+
+    def test_passes_import_alias(self) -> None:
+        from agent_core.commands.optimize_cmd import _undefined_hoisted_names
+        code = "import _io\n_io.open('f')"
+        result = _undefined_hoisted_names(code)
+        assert result == []
+
+    def test_passes_function_def(self) -> None:
+        from agent_core.commands.optimize_cmd import _undefined_hoisted_names
+        code = textwrap.dedent("""\
+            def _helper():
+                return 1
+
+            _helper()
+        """)
+        result = _undefined_hoisted_names(code)
+        assert result == []

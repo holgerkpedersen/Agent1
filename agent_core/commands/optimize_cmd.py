@@ -750,6 +750,96 @@ def _fix_type_comparison(wl, idx, line, basename, finding):
     return None
 
 
+def _fix_regex_in_loop(wl, idx, line, basename, finding):
+    from agent_core.patterns import _loop_spans
+    import io, tokenize
+
+    spans = _loop_spans(wl)
+    spanning = [sp for sp in spans if sp[0] < idx < sp[1]]
+    if not spanning:
+        return None
+    s, e, indent = min(spanning, key=lambda sp: sp[0])
+    loop_start = s
+    loop_indent = indent
+
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(wl[idx]).readline))
+    except tokenize.TokenError:
+        return None
+
+    call_i = None
+    func_name = ""
+    for i, (typ, s, _, _, _) in enumerate(toks):
+        if typ == tokenize.NAME and s == "re":
+            if i + 1 < len(toks) and toks[i + 1][1] == "." and i + 2 < len(toks):
+                if toks[i + 2][0] == tokenize.NAME and toks[i + 2][1] in ("compile", "match", "search", "sub", "findall"):
+                    if i + 3 < len(toks) and toks[i + 3][1] == "(":
+                        call_i = i
+                        func_name = toks[i + 2][1]
+                        break
+    if call_i is None:
+        return None
+
+    j = call_i + 4
+    while j < len(toks) and toks[j][0] in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE):
+        j += 1
+    if j >= len(toks) or toks[j][0] != tokenize.STRING:
+        return None
+    arg_tok = toks[j]
+    first_arg_src = arg_tok[1]
+    arg_end = arg_tok[3][1]
+
+    if "{" in first_arg_src and "f" in first_arg_src[:4].lower():
+        return None
+
+    k = j + 1
+    while k < len(toks) and toks[k][0] in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE):
+        k += 1
+    if k < len(toks) and toks[k][1] == "+":
+        return None
+
+    existing = set()
+    for l in wl:
+        m = re.search(r"\b_RE_(\d+)\s*=", l)
+        if m:
+            existing.add(int(m.group(1)))
+    n = 1
+    while n in existing:
+        n += 1
+    name = f"_RE_{n}"
+
+    orig_line = wl[idx]
+    re_pos = toks[call_i][2][1]
+
+    after_arg = orig_line[arg_end:]
+    _rest = after_arg.lstrip()
+    if _rest.startswith(","):
+        after_clean = _rest.split(",", 1)[1].lstrip()
+    else:
+        after_clean = _rest
+
+    new_line = f"{orig_line[:re_pos]}{name}.{func_name}({after_clean}"
+
+    compile_line = f"{' ' * loop_indent}{name} = re.compile({first_arg_src})"
+
+    loop_header = wl[loop_start]
+    context = wl[loop_start + 1 : idx]
+
+    hunk_lines = []
+    hunk_lines.append(f"+{compile_line}")
+    hunk_lines.append(f" {loop_header.rstrip()}")
+    for cl in context:
+        hunk_lines.append(f" {cl.rstrip()}")
+    hunk_lines.append(f"-{orig_line.rstrip()}")
+    hunk_lines.append(f"+{new_line.rstrip()}")
+
+    old_count = 1 + len(context) + 1
+    new_count = 2 + len(context) + 1
+    first_line = loop_start + 1
+    hunk = f"@@ -{first_line},{old_count} +{first_line},{new_count} @@\n" + "\n".join(hunk_lines)
+    return hunk
+
+
 _MECH_FIXERS: dict[str, object] = {
     "unused_import": _fix_unused_import,
     "dead_assignment": _fix_dead_assignment,
@@ -759,6 +849,7 @@ _MECH_FIXERS: dict[str, object] = {
     "iter_dict_keys": _fix_iter_dict_keys,
     "type_comparison": _fix_type_comparison,
     "duplicate_import": _fix_unused_import,
+    "regex_in_loop": _fix_regex_in_loop,
 }
 _MECH_PATTERNS: frozenset[str] = frozenset(_MECH_FIXERS)
 
@@ -1271,6 +1362,36 @@ def _blocked_added_imports(candidate: str, original: str) -> set[str]:
     return blocked
 
 
+def _undefined_hoisted_names(code: str) -> list[str]:
+    """Return undefined underscore names (hoisted regex/constants) that would
+    cause NameError at runtime. Avoids common false positives: imports,
+    function/class defs, and __name__."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+    defined: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(node.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                defined.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                defined.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            defined.add(node.id)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            defined.update(node.names)
+    undefined: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id.startswith("_") and node.id not in defined and node.id != "__name__":
+                undefined.add(node.id)
+    return sorted(undefined)
+
+
 def _post_apply_verify(basename: str, fpath: str, original: str, new_code: str) -> list[str]:
     """Run lightweight post-apply sanity checks; return warning strings.
 
@@ -1448,6 +1569,8 @@ class OptimizeCommand(Command):
                                 compile(patched, "<mechanical>", "exec")
                             except SyntaxError:
                                 ok = False
+                            if ok and _undefined_hoisted_names(patched):
+                                ok = False
                             if ok:
                                 before_cnt = _count_pattern("\n".join(work_lines), pattern)
                                 after_cnt = _count_pattern(patched, pattern)
@@ -1588,6 +1711,17 @@ class OptimizeCommand(Command):
                             feedback = (
                                 f"Your patched file does not compile: {exc.msg} (line {exc.lineno}). "
                                 "Regenerate valid Python."
+                            )
+                            if attempt < FINDING_MAX_ATTEMPTS - 1:
+                                print(f"    Feedback: {feedback[:240]}")
+                                continue
+                            resolved = False
+                            break
+                        undefined = _undefined_hoisted_names(patched)
+                        if undefined:
+                            feedback = (
+                                f"Your patch references undefined names: {', '.join(undefined)}. "
+                                "Define these names or restore the original code."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
                                 print(f"    Feedback: {feedback[:240]}")

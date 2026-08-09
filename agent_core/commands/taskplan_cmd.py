@@ -39,15 +39,14 @@ def _collision_scan(workspace: str) -> str:
                     rel_dir = os.path.relpath(root, workspace).replace("\\", "/").rstrip(".")
                     taken.setdefault(rel_dir, []).extend(sorted(names)[:20])
             except Exception:
-                pass
+                print(f"Warning: Failed to scan {root}/{f}")
     if not taken:
         return ""
     lines = ["",
              "CRITICAL: These class and function names already exist in the project.",
              "DO NOT create new files that define these same names in the same directory:",
     ]
-    for d, names in sorted(taken.items())[:12]:
-        lines.append(f"  {d or 'root'}: {', '.join(names[:12])}")
+    lines += [f"  {d or 'root'}: {', '.join(names[:12])}" for d, names in sorted(taken.items())[:12]]
     lines.append("If you need to add functionality to these, modify the existing file.")
     return "\n\n".join(lines)
 
@@ -106,7 +105,7 @@ class TaskplanCommand(Command):
         tasks = await agent.llm.chat(messages)
         
         with open(tasks_file, "w", encoding="utf-8") as f:
-            f.write(f"# Implementation Tasks\n\n")
+            f.write("# Implementation Tasks\n\n")
             f.write(tasks)
         print(f"Tasks written to {tasks_file}")
         
