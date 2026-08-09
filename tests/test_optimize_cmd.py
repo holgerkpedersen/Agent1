@@ -2491,6 +2491,19 @@ class TestMechanicalUnusedImport:
         hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
         assert hunk is None
 
+    def test_future_import_not_flagged(self) -> None:
+        from agent_core.patterns import analyze
+        results = analyze("from __future__ import annotations\n\ndef f(x): return x")
+        assert "unused_import" not in {r["pattern"] for r in results}
+
+    def test_future_import_fixer_returns_none(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_unused_import
+        src = "from __future__ import annotations"
+        wl = [src]
+        finding = {"suggestion": "Imported 'annotations' is never used. Remove the import."}
+        hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
+        assert hunk is None
+
 
 class TestMechanicalListAppendJoin:
     """Mechanical _fix_list_append_join converts simple stateless loops."""

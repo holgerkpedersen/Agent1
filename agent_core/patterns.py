@@ -866,6 +866,8 @@ def detect_unused_imports(source: str) -> list[tuple[int, str, str]]:
         else:
             m = re.match(r"^from\s+(\S+)\s+import\s+(\w+)(?:\s+as\s+(\w+))?", stripped)
             if m:
+                if m.group(1) == "__future__":
+                    continue
                 name = m.group(3) or m.group(2)
             else:
                 continue

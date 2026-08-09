@@ -664,6 +664,8 @@ _PLACEHOLDER_PHRASES = ("unchanged line", "rest of the", "remaining code", "..."
 def _fix_unused_import(wl, idx, line, basename, finding):
     src_line = wl[idx]
     stripped = src_line.strip()
+    if stripped.startswith("from __future__ import"):
+        return None
     target_m = re.search(r"Imported\s+['\"]([\w.]+)['\"]", finding.get("suggestion", ""))
     if not target_m:
         return None

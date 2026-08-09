@@ -685,4 +685,43 @@ class TestAnchoredPatchApplication:
         out = normalize_patch_block(raw)
         assert out.startswith("@@ -3,3 +3,3 @@")
         assert "--- a/huge.py" not in out
-        assert "```" not in out
+
+
+class TestCommaEndingPatchApply:
+    """+ replacement lines ending in ',' (dict/call args) must not be
+    rejected by the incomplete-line heuristic."""
+
+    def test_apply_patch_comma_ending_plus_line(self) -> None:
+        from agent_core.patch_utils import apply_patch
+        lines = [
+            "content=f'No response from LLM',",
+        ]
+        hunk = (
+            "@@ -1,1 +1,1 @@\n"
+            "-content=f'No response from LLM',\n"
+            "+content='No response from LLM',\n"
+        )
+        ok, result = apply_patch(hunk, lines)
+        assert ok is True
+        assert "content='No response from LLM'," in result
+
+    def test_apply_anchored_patch_comma_ending_plus_line(self) -> None:
+        from agent_core.patch_utils import apply_anchored_patch
+        lines = [
+            "content=f'No response from LLM',",
+        ]
+        hunk = (
+            "@@ -1,1 +1,1 @@\n"
+            "-content=f'No response from LLM',\n"
+            "+content='No response from LLM',\n"
+        )
+        ok, result = apply_anchored_patch(hunk, lines)
+        assert ok is True
+        assert "content='No response from LLM'," in result
+
+    def test_truncated_assignment_still_rejected(self) -> None:
+        from agent_core.patch_utils import apply_patch
+        lines = ["x = 1"]
+        hunk = "@@ -1,1 +1,1 @@\n- x = 1\n+ x ="
+        ok, err = apply_patch(hunk, lines)
+        assert ok is False

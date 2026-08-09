@@ -111,7 +111,7 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
         return False, "Could not parse patch"
 
     # Filter out broken hunks (incomplete: has - but no +, empty + lines, or incomplete lines)
-    incomplete_ops = ('=', '+', '-', '*', '/', ',', '(', '[', '{')
+    incomplete_ops = ('=', '+', '-', '*', '/')
     valid_hunks = []
     for start, chunks in hunks:
         has_minus = any(op == '-' for op, _ in chunks)
@@ -266,7 +266,7 @@ def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bo
     glued headers.  Falls cheap when the content cannot be anchored
     unambiguously rather than risk a wrong edit.
     """
-    incomplete_ops = ('=', '+', '-', '*', '/', ',', '(', '[', '{')
+    incomplete_ops = ('=', '+', '-', '*', '/')
     valid: list[tuple[int, list[tuple[str, str]], bool]] = []
     for claimed, chunks in split_patch_hunks(patch_text):
         has_minus = any(op == '-' for op, _ in chunks)
