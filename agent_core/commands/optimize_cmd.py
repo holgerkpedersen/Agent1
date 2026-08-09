@@ -329,7 +329,7 @@ def _region_syntax_issues(code: str, slice_indent: str = "") -> list[dict]:
             "line": 1,
             "pattern": "region_indent_changed",
             "suggestion": (
-                f"Region output changed the first line's leading whitespace "
+                "Region output changed the first line's leading whitespace "
                 f"from {slice_indent!r} to {_leading_whitespace(code)!r}. "
                 "Preserve the region's original indentation exactly."
             ),
@@ -629,9 +629,7 @@ def _finding_context(source: str, line_no: int) -> str | None:
         start = max(1, line_no - CONTEXT_MAX_LINES // 2)
         end = min(len(lines), start + CONTEXT_MAX_LINES - 1)
         start = max(1, end - CONTEXT_MAX_LINES + 1)
-    out = []
-    for i in range(start, end + 1):
-        out.append(f"{i:>6} | {lines[i - 1]}")
+    out = [f"{i:>6} | {lines[i - 1]}" for i in range(start, end + 1)]
     return "\n".join(out)
 
 
@@ -676,6 +674,34 @@ def _fix_unused_import(wl, idx, line, basename, finding):
 
 def _fix_dead_assignment(wl, idx, line, basename, finding):
     if "immediately overwritten" in finding.get("suggestion", ""):
+        return f"@@ -{line},1 +{line},0 @@\n-{wl[idx]}"
+    if "never used after" in finding.get("suggestion", ""):
+        code = "\n".join(wl)
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return None
+        assign_name = None
+        for node in ast.walk(tree):
+            if getattr(node, 'lineno', -1) == idx + 1 and isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        assign_name = target.id
+                        break
+        if assign_name is None:
+            return None
+        for enclosing in ast.walk(tree):
+            if isinstance(enclosing, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if enclosing.lineno <= idx + 1 <= enclosing.end_lineno:
+                    for sub in ast.walk(enclosing):
+                        if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load) and sub.id == assign_name:
+                            if sub.lineno > idx + 1:
+                                return None
+                    return f"@@ -{line},1 +{line},0 @@\n-{wl[idx]}"
+        for sub in ast.walk(tree):
+            if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load) and sub.id == assign_name:
+                if sub.lineno > idx + 1:
+                    return None
         return f"@@ -{line},1 +{line},0 @@\n-{wl[idx]}"
     return None
 
@@ -799,8 +825,9 @@ def _fix_regex_in_loop(wl, idx, line, basename, finding):
         return None
 
     existing = set()
+    _RE_1 = re.compile(r"\b_RE_(\d+)\s*=")
     for l in wl:
-        m = re.search(r"\b_RE_(\d+)\s*=", l)
+        m = _RE_1.search(l)
         if m:
             existing.add(int(m.group(1)))
     n = 1
@@ -828,8 +855,7 @@ def _fix_regex_in_loop(wl, idx, line, basename, finding):
     hunk_lines = []
     hunk_lines.append(f"+{compile_line}")
     hunk_lines.append(f" {loop_header.rstrip()}")
-    for cl in context:
-        hunk_lines.append(f" {cl.rstrip()}")
+    hunk_lines += [f" {cl.rstrip()}" for cl in context]
     hunk_lines.append(f"-{orig_line.rstrip()}")
     hunk_lines.append(f"+{new_line.rstrip()}")
 
@@ -888,13 +914,10 @@ def _fix_list_append_join(wl, idx, line, basename, finding):
     removed = wl[init_idx : e]
 
     hunk_lines = []
-    for cl in ctx_before:
-        hunk_lines.append(f" {cl.rstrip()}")
-    for rl in removed:
-        hunk_lines.append(f"-{rl.rstrip()}")
+    hunk_lines += [f" {cl.rstrip()}" for cl in ctx_before]
+    hunk_lines += [f"-{rl.rstrip()}" for rl in removed]
     hunk_lines.append(f"+{comp_line}")
-    for cl in ctx_after:
-        hunk_lines.append(f" {cl.rstrip()}")
+    hunk_lines += [f" {cl.rstrip()}" for cl in ctx_after]
 
     old_c = len(removed) + len(ctx_before) + len(ctx_after)
     new_c = 1 + len(ctx_before) + len(ctx_after)
@@ -967,7 +990,6 @@ def _count_pattern(code: str, pattern: str) -> int:
     """Number of occurrences of *pattern* in *code* according to the static analyser."""
     from agent_core.patterns import analyze
     return sum(1 for f in analyze(code) if f["pattern"] == pattern)
-    return None
 
 
 def _count_any_increased(old_code: str, new_code: str, *, exclude: str) -> list[str]:
@@ -1080,9 +1102,7 @@ def _format_failures_for_prompt(failures: dict[str, list[dict]]) -> str:
         return ""
     blocks: list[str] = []
     for basename, issues in failures.items():
-        lines = [f"{basename}:"]
-        for i in issues:
-            lines.append(f"  - line {i['line']}: [{i['pattern']}] {i['suggestion']}")
+        lines = [f"{basename}:", *(f"  - line {i['line']}: [{i['pattern']}] {i['suggestion']}" for i in issues)]
         blocks.append("\n".join(lines))
     return (
         "The previous attempt produced invalid output for some files. "
@@ -1423,6 +1443,7 @@ def _blocked_added_imports(candidate: str, original: str) -> set[str]:
     cand_counts = _import_entry_counts(candidate)
     orig_counts = _import_entry_counts(original)
     blocked: set[str] = set()
+    _RE_2 = re.compile(r"^(?:import|from)\s+([A-Za-z_]\w*)")
     for entry, count in cand_counts.items():
         excess = count - orig_counts.get(entry, 0)
         if excess <= 0:
@@ -1433,7 +1454,7 @@ def _blocked_added_imports(candidate: str, original: str) -> set[str]:
             continue
         if entry.startswith("from ."):
             continue
-        match = re.match(r"^(?:import|from)\s+([A-Za-z_]\w*)", entry)
+        match = _RE_2.match(entry)
         top = match.group(1) if match else None
         if top is not None and top in _STDLIB_MODULES:
             blocked.discard(entry)
@@ -1482,6 +1503,8 @@ def _regresses_defined_names(original: str, patched: str) -> list[str]:
     for node in ast.walk(o_tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             o_stored.add(node.id)
+        elif isinstance(node, ast.arg):
+            o_stored.add(node.arg)
     p_stored: set[str] = set()
     p_loaded: set[str] = set()
     for node in ast.walk(p_tree):
@@ -1490,6 +1513,8 @@ def _regresses_defined_names(original: str, patched: str) -> list[str]:
                 p_stored.add(node.id)
             elif isinstance(node.ctx, ast.Load):
                 p_loaded.add(node.id)
+        elif isinstance(node, ast.arg):
+            p_stored.add(node.arg)
     regressed = p_loaded - p_stored
     regressed &= o_stored
     regressed -= {"__name__", "__file__", "__doc__"}
@@ -1632,7 +1657,6 @@ class OptimizeCommand(Command):
         print(f"  Processing {total_files} file(s) in {len(batches)} batch(es)...\n")
 
         all_fixes: dict[str, str] = {}
-        max_retries = 2
 
         for batch_idx, batch in enumerate(batches, 1):
             batch_str = f"Batch {batch_idx}/{len(batches)}"
@@ -1694,6 +1718,9 @@ class OptimizeCommand(Command):
                                     print(f"    Fixed line {line} [{pattern}] (mechanical, {before_cnt} -> {after_cnt} remaining)")
                     if resolved:
                         continue
+                    _resync = static_analyze("\n".join(work_lines))
+                    if not any(f["line"] == line and f["pattern"] == pattern for f in _resync):
+                        continue
                     # ── LLM patch loop ──────────────────────────────────
                     _PATCH_RE = re.compile(
                         rf"\[PATCH:\s*{re.escape(basename)}\s*\](.*?)(?=\[PATCH:|\Z)", re.DOTALL
@@ -1702,9 +1729,9 @@ class OptimizeCommand(Command):
                         if attempt > 0:
                             print(f"    Retry {attempt}/{FINDING_MAX_ATTEMPTS - 1} for line {line}...")
                         user_content = (
-                            f"## Finding to resolve\n"
+                            "## Finding to resolve\n"
                             f"{basename}:{line} [{pattern}] {finding['suggestion']}\n\n"
-                            f"## Numbered context (numbers ARE the absolute file line numbers)\n"
+                            "## Numbered context (numbers ARE the absolute file line numbers)\n"
                             f"```\n{context}\n```\n\n"
                             "Output exactly one [PATCH: " + basename + "] block per the system rules."
                         )
@@ -1783,7 +1810,7 @@ class OptimizeCommand(Command):
                         new_lines = patched.split("\n")
                         if _cosmetic_only(work_lines, new_lines):
                             feedback = (
-                                f"Your patch only changed indentation/whitespace (or nothing). "
+                                "Your patch only changed indentation/whitespace (or nothing). "
                                 f"The finding at line {line} [{pattern}] must actually change. "
                                 "Output hunks that modify the code the finding targets."
                             )
