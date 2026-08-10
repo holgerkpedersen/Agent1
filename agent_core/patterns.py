@@ -771,9 +771,12 @@ def detect_dead_assignment(source: str) -> list[tuple[int, str, str]]:
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
     bracket_depth = _inside_bracket_depth(source)
+    _ds = _docstring_lines(source)
 
     # First pass: adjacent-overwrite detection (kept from the original rule).
     for i, line in enumerate(lines, 1):
+        if i in _ds:
+            continue  # docstring prose can imitate assignments
         if bracket_depth[i - 1] > 0:
             continue  # inside a call/list/dict — a kwarg, not a statement assignment
         stripped = line.strip()
@@ -808,6 +811,8 @@ def detect_dead_assignment(source: str) -> list[tuple[int, str, str]]:
     # Track def nesting via indentation.  ``func_depth`` is the number of
     # enclosing ``def`` blocks at the indentation of the assignment.
     for i, line in enumerate(lines, 1):
+        if i in _ds:
+            continue  # docstring prose can imitate assignments
         if bracket_depth[i - 1] > 0:
             continue  # inside a call/list/dict — a kwarg, not a statement assignment
         stripped = line.strip()

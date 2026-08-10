@@ -717,6 +717,8 @@ def _multi_name_import_hunk(
 
 def _fix_dead_assignment(wl, idx, line, basename, finding):
     if "immediately overwritten" in finding.get("suggestion", ""):
+        if line in _docstring_lines("\n".join(wl)):
+            return None  # inside docstring — refuse
         return f"@@ -{line},1 +{line},0 @@\n-{wl[idx]}"
     if "never used after" in finding.get("suggestion", ""):
         code = "\n".join(wl)
@@ -823,7 +825,128 @@ def _fix_type_comparison(wl, idx, line, basename, finding):
     return None
 
 
+_OP_TAGS = {
+    "==": "EQ",
+    "!=": "NE",
+    "<=": "LE",
+    ">=": "GE",
+    "<": "LT",
+    ">": "GT",
+    "+=": "PLUS_EQ",
+    "-=": "MINUS_EQ",
+    "*=": "MUL_EQ",
+    "/=": "DIV_EQ",
+    "=": "ASSIGN",
+}
+
+_OP_RE = re.compile("|".join(re.escape(op) for op in _OP_TAGS))
+
+_NAME_META_ESCAPES = "bBdDsSwWtTnNrAfFvV"
+
+
+def _scrub_pattern(pattern: str) -> str:
+    """Reduce a static regex source to naming-relevant text.
+
+    Meta escapes (``\\s \\w \\b …``) become word separators so adjacent words
+    stay separate (``return\\s+True`` → ``return True``); literal punctuation
+    escapes keep their char so ``+=`` operators survive (``\\+`` → ``+``);
+    letter-bearing character classes become ``ID``, other classes and bare
+    quantifiers are dropped.
+    """
+    out: list[str] = []
+    i, n = 0, len(pattern)
+    while i < n:
+        c = pattern[i]
+        if c == "[":
+            end = pattern.find("]", i + 1)
+            seg = pattern[i + 1 : end if end != -1 else n]
+            if re.search(r"[A-Za-z]", seg):
+                out.append("ID")
+            i = n if end == -1 else end + 1
+            continue
+        if c == "\\":
+            if i + 1 >= n:
+                break
+            esc = pattern[i + 1]
+            i += 2
+            if esc in _NAME_META_ESCAPES:
+                out.append(" ")
+            else:
+                out.append(esc)
+            if i < n and pattern[i] in "*+?":
+                i += 1
+            elif i < n and pattern[i] == "{":
+                end = pattern.find("}", i)
+                i = n if end == -1 else end + 1
+            continue
+        if c in "*+?":
+            i += 1
+            continue
+        if c == "{":
+            end = pattern.find("}", i)
+            i = n if end == -1 else end + 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _regex_const_name(pattern: str) -> str:
+    """Derive a descriptive constant name (``_UPPER_SNAKE_RE``) from a static
+    regex pattern source — e.g. ``r'^\\s*(for|while)\\s'`` → ``_FOR_WHILE_RE``.
+    Returns ``""`` when no usable words remain; callers fall back to numeric
+    ``_RE_N`` naming."""
+    clean = _scrub_pattern(pattern)
+    words = [w for w in re.findall(r"[A-Za-z]{2,}", clean) if w.lower() != "re"]
+    words = list(dict.fromkeys(words))
+    if len(words) > 4:
+        words = words[:2] + words[-2:]
+    dm = _OP_RE.search(clean)
+    if dm:
+        tag = _OP_TAGS[dm.group(0)]
+        if tag not in words:
+            words.append(tag)
+    if not words:
+        return ""
+    return "_" + "_".join(w.upper() for w in words) + "_RE"
+
+
+def _same_regex_arg(a: str, b: str) -> bool:
+    """True when two static regex sources are the same literal string."""
+    try:
+        return ast.literal_eval(a) == ast.literal_eval(b)
+    except (ValueError, SyntaxError):
+        return a == b
+
+
+def _enclosing_func_span(wl: list[str], index: int) -> tuple[int, int] | None:
+    """Nearest enclosing ``def``/``class`` body span ``(start, end)`` at
+    ``index``, or ``None`` at module level.  ``end`` is exclusive."""
+    depth: int | None = None
+    start: int | None = None
+    for i in range(index - 1, -1, -1):
+        m = re.match(r"^(\s*)(?:async\s+)?(?:def|class)\s+\w+", wl[i])
+        if m:
+            indent = len(m.group(1))
+            if depth is None or indent < depth:
+                depth = indent
+                start = i
+    if start is None:
+        return None
+    end = len(wl)
+    for i in range(start + 1, len(wl)):
+        if wl[i].strip() and len(wl[i]) - len(wl[i].lstrip()) <= depth:
+            end = i
+            break
+    return (start, end)
+
+
 def _fix_regex_in_loop(wl, idx, line, basename, finding):
+    """Mechanical: hoist an in-loop ``re.<fn>(<static pattern>, ...)`` call out
+    of the loop via a named ``re.compile`` constant (``_DESCRIPTIVE_RE``, or
+    numeric ``_RE_N`` when the pattern has no words).  Reuses an existing
+    visible ``name = re.compile(...)`` with identical args instead of emitting
+    a duplicate compile line."""
     from agent_core.patterns import _loop_spans
     import io, tokenize
 
@@ -871,16 +994,49 @@ def _fix_regex_in_loop(wl, idx, line, basename, finding):
     if k < len(toks) and toks[k][1] == "+":
         return None
 
-    existing = set()
-    _RE_1 = re.compile(r"\b_RE_(\d+)\s*=")
-    for l in wl:
-        m = _RE_1.search(l)
-        if m:
-            existing.add(int(m.group(1)))
-    n = 1
-    while n in existing:
-        n += 1
-    name = f"_RE_{n}"
+    base_name = _regex_const_name(first_arg_src)
+    func_span = _enclosing_func_span(wl, idx)
+
+    known: list[tuple[int, str, str, bool]] = []
+    for i, l in enumerate(wl):
+        m = re.match(r"^(\s*)([A-Za-z_]\w*)\s*=\s*re\.compile\((.+)\)\s*$", l)
+        if not m or i >= loop_start:
+            continue
+        d_indent = len(m.group(1))
+        known.append(
+            (
+                i,
+                m.group(2),
+                m.group(3),
+                d_indent == 0 or _enclosing_func_span(wl, i) == func_span,
+            )
+        )
+
+    reused = None
+    for _, d_name, d_arg, visible in known:
+        if visible and _same_regex_arg(d_arg, first_arg_src):
+            reused = d_name
+            break
+
+    if reused is not None:
+        name = reused
+    elif base_name:
+        name = base_name
+        n = 2
+        while any(d_name == name for _, d_name, _, visible in known if visible):
+            name = f"{base_name}_{n}"
+            n += 1
+    else:
+        existing = set()
+        _RE_1 = re.compile(r"\b_RE_(\d+)\s*=")
+        for l in wl:
+            m = _RE_1.search(l)
+            if m:
+                existing.add(int(m.group(1)))
+        n = 1
+        while n in existing:
+            n += 1
+        name = f"_RE_{n}"
 
     orig_line = wl[idx]
     re_pos = toks[call_i][2][1]
@@ -900,14 +1056,15 @@ def _fix_regex_in_loop(wl, idx, line, basename, finding):
     context = wl[loop_start + 1 : idx]
 
     hunk_lines = []
-    hunk_lines.append(f"+{compile_line}")
+    if reused is None:
+        hunk_lines.append(f"+{compile_line}")
     hunk_lines.append(f" {loop_header.rstrip()}")
     hunk_lines += [f" {cl.rstrip()}" for cl in context]
     hunk_lines.append(f"-{orig_line.rstrip()}")
     hunk_lines.append(f"+{new_line.rstrip()}")
 
     old_count = 1 + len(context) + 1
-    new_count = 2 + len(context) + 1
+    new_count = old_count + (1 if reused is None else 0)
     first_line = loop_start + 1
     hunk = f"@@ -{first_line},{old_count} +{first_line},{new_count} @@\n" + "\n".join(hunk_lines)
     return hunk

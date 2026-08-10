@@ -2358,6 +2358,49 @@ class TestRegexInLoopDetector:
         assert findings == []
 
 
+class TestRegexConstName:
+    """_regex_const_name derives descriptive _UPPER_SNAKE_RE names."""
+
+    def test_simple_words(self) -> None:
+        from agent_core.commands.optimize_cmd import _regex_const_name
+        assert _regex_const_name(r"r'^class'") == "_CLASS_RE"
+        assert _regex_const_name(r"r'-foo  bar-'") == "_FOO_BAR_RE"
+
+    def test_keywords_and_escape_words_kept(self) -> None:
+        from agent_core.commands.optimize_cmd import _regex_const_name
+        assert _regex_const_name(r"r'^\s*(for|while)\s'") == "_FOR_WHILE_RE"
+
+    def test_operator_tagged(self) -> None:
+        from agent_core.commands.optimize_cmd import _regex_const_name
+        assert _regex_const_name(r'r"type\(\w+\)\s*==\s*\w+"') == "_TYPE_EQ_RE"
+        assert _regex_const_name(r'r"alpha\s*!=\s*beta"') == "_ALPHA_BETA_NE_RE"
+
+    def test_truncates_long_patterns(self) -> None:
+        from agent_core.commands.optimize_cmd import _regex_const_name
+        assert _regex_const_name(r"r'one two three four five six'") == "_ONE_TWO_FIVE_SIX_RE"
+
+    def test_drops_re_word(self) -> None:
+        from agent_core.commands.optimize_cmd import _regex_const_name
+        assert _regex_const_name(r"r'@re.match cue'") == "_MATCH_CUE_RE"
+
+    def test_no_words_falls_back(self) -> None:
+        from agent_core.commands.optimize_cmd import _regex_const_name
+        assert _regex_const_name(r"r'\s+'") == ""
+        assert _regex_const_name(r"r'\d{2,4}'") == ""
+
+    def test_char_class_noise_gone(self) -> None:
+        from agent_core.commands.optimize_cmd import _regex_const_name
+        assert _regex_const_name(r"\s*([A-Za-z_]\w*)\s*=") == "_ID_ASSIGN_RE"
+        assert _regex_const_name(r"\s*([A-Za-z_]\w*)\s*=\s*open\s*\(") == "_ID_OPEN_ASSIGN_RE"
+        assert _regex_const_name(r"[A-Za-z_]\w*") == "_ID_RE"
+        assert _regex_const_name(r"\s*with\s+(.+?)\s+as\s+([A-Za-z_]\w*)\s*:") == "_WITH_AS_ID_RE"
+
+    def test_escape_merge_gone(self) -> None:
+        from agent_core.commands.optimize_cmd import _regex_const_name
+        assert _regex_const_name(r"\bre\.(compile|match|search|sub|findall)\(") == "_COMPILE_MATCH_SUB_FINDALL_RE"
+        assert _regex_const_name(r"return\s+True\s+if\s+(.+?)\s+else\s+False\s*$") == "_RETURN_TRUE_ELSE_FALSE_RE"
+
+
 class TestMechanicalRegexHoist:
     """Mechanical _fix_regex_in_loop produces correct hunks."""
 
@@ -2367,7 +2410,7 @@ class TestMechanicalRegexHoist:
         wl = code.split("\n")
         hunk = _fix_regex_in_loop(wl, 2, 3, "test.py", {})
         assert hunk is not None
-        assert "_RE_" in hunk
+        assert "_CLASS_RE" in hunk
         assert "re.compile" in hunk
 
     def test_hoist_applies_and_compiles(self) -> None:
@@ -2403,6 +2446,100 @@ class TestMechanicalRegexHoist:
         wl = code.split("\n")
         hunk = _fix_regex_in_loop(wl, 1, 2, "test.py", {})
         assert hunk is None
+
+    def test_descriptive_name_in_hunk(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+        from agent_core.patch_utils import apply_patch
+        code = textwrap.dedent("""\
+            import re
+
+            def scan(files):
+                for f in files:
+                    m = re.search(r'foo bar', f)
+                    print(m)
+        """)
+        wl = code.split("\n")
+        hunk = _fix_regex_in_loop(wl, 4, 5, "test.py", {})
+        assert hunk is not None
+        assert "+    _FOO_BAR_RE = re.compile(r'foo bar')" in hunk
+        ok, patched = apply_patch(hunk, wl)
+        assert ok
+        compile(patched, "<test>", "exec")
+        assert "_FOO_BAR_RE.search(" in patched
+        assert "re.search(" not in patched
+
+    def test_reuses_existing_same_function_compile(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+        from agent_core.patch_utils import apply_patch
+        code = textwrap.dedent("""\
+            import re
+
+            def scan(files):
+                _FOO_BAR_RE = re.compile(r'foo bar')
+                for f in files:
+                    m = re.search(r'foo bar', f)
+                    print(m)
+        """)
+        wl = code.split("\n")
+        hunk = _fix_regex_in_loop(wl, 5, 6, "test.py", {})
+        assert hunk is not None
+        assert "re.compile" not in hunk
+        assert "_FOO_BAR_RE.search(" in hunk
+        ok, patched = apply_patch(hunk, wl)
+        assert ok
+        assert patched.count("re.compile") == 1
+        compile(patched, "<test>", "exec")
+
+    def test_suffixes_visible_name_conflict(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+        code = textwrap.dedent("""\
+            import re
+
+            _FOO_BAR_RE = re.compile(r'zz')
+
+            def scan(files):
+                for f in files:
+                    m = re.search(r'foo bar', f)
+                    print(m)
+        """)
+        wl = code.split("\n")
+        hunk = _fix_regex_in_loop(wl, 6, 7, "test.py", {})
+        assert hunk is not None
+        assert "+    _FOO_BAR_RE_2 = re.compile(r'foo bar')" in hunk
+
+    def test_no_suffix_across_functions(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+        code = textwrap.dedent("""\
+            import re
+
+            def alpha(lines):
+                _FOO_BAR_RE = re.compile(r'foo bar')
+                a = _FOO_BAR_RE.search(lines[0])
+
+            def beta(files):
+                for f in files:
+                    m = re.search(r'foo bar', f)
+                    print(m)
+        """)
+        wl = code.split("\n")
+        hunk = _fix_regex_in_loop(wl, 8, 9, "test.py", {})
+        assert hunk is not None
+        assert "+    _FOO_BAR_RE = re.compile(r'foo bar')" in hunk
+
+    def test_numeric_fallback_when_no_words(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+        code = textwrap.dedent("""\
+            import re
+
+            def scan(files):
+                for f in files:
+                    m = re.search(r'\\s+', f)
+                    print(m)
+        """)
+        wl = code.split("\n")
+        hunk = _fix_regex_in_loop(wl, 4, 5, "test.py", {})
+        assert hunk is not None
+        assert "+    _RE_1 = re.compile(r'\\s+')" in hunk
 
 
     def test_nested_loop_hoists_above_outermost(self) -> None:
