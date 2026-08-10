@@ -518,6 +518,24 @@ The optimizer uses a two-layer patch system:
 
 Pure-removal hunks (unused imports, dead assignments) are now accepted — no replacement line required.
 
+`regex_in_loop` findings are fixed mechanically (no LLM needed): the static pattern is
+hoisted above the loop into a named compile constant derived from its content, e.g.
+
+```
+> optimize agent_core/patterns.py --apply
+    Fixed line 77 [regex_in_loop] (mechanical, 25 -> 24 remaining)
+  +    _FOR_WHILE_RE = re.compile(r"^\s*(for|while)\s")
+  -    if re.match(r"^\s*(for|while)\s", line):
+  +    if _FOR_WHILE_RE.match(line):
+```
+
+Naming rules:
+- The constant name comes from the pattern's words (`(for|while)` → `_FOR_WHILE_RE`, `type(...) == ...` → `_TYPE_EQ_RE`), so the code stays readable.
+- An existing identical `re.compile()` in the same scope is **reused** — no duplicate compile line is added.
+- A visible name collision gets a numeric suffix (`_FOR_WHILE_RE_2`); patterns with no usable words fall back to `_RE_1`-style names.
+- Detectors and mechanical fixers skip docstring lines, so `--apply` never rewrites docstring prose that merely looks like code.
+- LLM-reviewed findings that would break real logic (e.g. `while changed:` fixed-point guards) are rejected and left untouched.
+
 ## Performance dashboard
 
 Every command is automatically timed. View stats anytime:

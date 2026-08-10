@@ -55,6 +55,9 @@ model [list|load|unload|reload|profile|name]  Manage models via LM Studio API
 optimize <file|dir> [--apply] [--stdin] [--yes] Find and apply performance/memory optimizations
                                    Shows side-by-side diff with line numbers before applying
                                    --yes: skip the y/N prompt and apply automatically
+                                   Mechanical regex_in_loop fixes hoist re.compile() into
+                                   descriptive constants (e.g. _FOR_WHILE_RE) and never
+                                   touch docstring/comment lines
 perf [--detail|--reset|--html]       Command performance dashboard (timing per command)
 clear [stats|--force]            Show memory stats, confirm then clear
 ```
@@ -222,9 +225,10 @@ OPENAI_API_KEY=your-key
 ```bash
 pytest tests/ -v
 ```
-358 tests, all passing.
+465 tests, all passing.
 
 ### Recent Additions
+- Optimize command: mechanical `regex_in_loop` fixes hoist `re.compile()` into descriptive named constants (`_FOR_WHILE_RE`, `_TYPE_EQ_RE`) derived from the pattern, reusing existing identical compiles instead of duplicating them; detectors and mechanical fixers skip docstring lines entirely
 - Patch application tests for strict, anchored, deletion-only, and `N |`-prefix stripping
 - LM Studio thinking-disable payload tests across models and server versions
 - Optimize command: full batching, feedback-retry, diff-viewer, and apply flow coverage
