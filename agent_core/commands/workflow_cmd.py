@@ -3,6 +3,7 @@ import os
 import re
 from pathlib import Path
 
+from .analysis_verifier import verify_analysis_claims
 from .base import Command, read_stdin
 from agent_core import to_windows_path
 
@@ -148,6 +149,23 @@ def _scan_workspace_context(ws_path: Path, spec_content: str) -> tuple[bool, str
         combined += entry
         lines_used += len(content.splitlines())
     return bool(combined), combined
+
+
+async def _write_verified_analysis(text: str, analysis_md: str, ws_path: Path) -> str:
+    """Verify code claims in *text* against *ws_path*, then write to *analysis_md*.
+
+    Unverifiable file paths, symbol names, line numbers, and code snippets are
+    flagged in an appended ``## Verification Report`` instead of being trusted
+    silently. Returns the verified analysis content.
+    """
+    result = await verify_analysis_claims(text, ws_path)
+    if result.text != text:
+        with open(analysis_md, "w", encoding="utf-8") as f:
+            f.write(result.text)
+    if result.checked:
+        status = "clean" if not result.flagged else f"{result.flagged} flagged"
+        print(f"  [analyze] Verified {result.checked} code claims ({status})")
+    return result.text
 
 
 class WorkflowCommand(Command):
@@ -354,7 +372,7 @@ class WorkflowCommand(Command):
                     with open(analysis_md, "w", encoding="utf-8") as f:
                         f.write(trace_header)
                         f.write(r)
-                    print(f"[analyze] Written to {analysis_md}")
+                    print("  [analyze] First pass generated")
 
                     # Ambiguity gate — halt before plan if blockers exist and --force not given
                     blocked_match = re.search(r"\*\*BLOCKED:\*\*\s*(yes|no)", r, re.IGNORECASE)
@@ -406,6 +424,10 @@ class WorkflowCommand(Command):
                         print("  [analyze] Appended refinement pass")
                     else:
                         print(f"  [analyze] Critique failed (non-blocking): {critique_r[:100]}")
+
+                    with open(analysis_md, "r", encoding="utf-8") as f:
+                        final_analysis = f.read()
+                    await _write_verified_analysis(final_analysis, analysis_md, ws_path)
 
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
@@ -487,7 +509,7 @@ class WorkflowCommand(Command):
                         with open(pf, "r", encoding="utf-8") as f:
                             combined += f"\n\n# ---- {pf} ----\n{f.read()}"
                     except Exception:
-                        print("Warning: silenced exception in workflow_cmd.py:490")
+                        print("Warning: silenced exception in workflow_cmd.py")
                 r = await agent.llm.chat([
                     {"role": "system", "content": "You are an expert code reviewer. Analyze the existing code AND these new features. Find bugs, gaps, and what needs to change."},
                     {"role": "user", "content": f"## Existing Code:\n{combined}\n\n## New Features:\n{features}\n\nAnalyze both existing issues and what must change for the new features."}
@@ -495,9 +517,7 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
-                with open(analysis_md, "w", encoding="utf-8") as f:
-                    f.write(r)
-                print("[analyze] Written")
+                await _write_verified_analysis(r, analysis_md, ws_path)
 
             if not force and os.path.exists(plan_md):
                 print("\n[Skipping plan] exists")
@@ -510,6 +530,7 @@ class WorkflowCommand(Command):
                     with open(plan_md, "r", encoding="utf-8") as f:
                         existing_plan = f.read()[:3000]
 
+                print("\n[plan] Creating plan...")
                 r = await agent.llm.chat([
                     {"role": "system", "content": "You are an expert software architect. Create a plan that extends the EXISTING codebase with these new features.\n\nIMPORTANT:\n- Start with '## Feature Addition: <summary>'\n- List NEW files to create\n- List EXISTING files to modify and what minimal changes are needed\n- Explain WHY each change is needed\n- Preserve existing architecture"},
                     {"role": "user", "content": f"## Existing code analysis:\n{analysis}\n\n## Existing plan:\n{existing_plan if existing_plan else 'No existing plan'}\n\n## New features to add:\n{features}\n\nCreate a plan that integrates these features into the existing codebase."}
@@ -582,7 +603,7 @@ class WorkflowCommand(Command):
                         with open(pf, "r", encoding="utf-8") as f:
                             combined += f"\n\n# ---- {pf} ----\n{f.read()}"
                     except Exception:
-                        print("Warning: silenced exception in workflow_cmd.py:585")
+                        print("Warning: silenced exception in workflow_cmd.py")
                 analyze_system = (
                     "You are an expert software architect. Evaluate this codebase across 5 dimensions. "
                     "For each dimension, limit to 3 bullet points max 50 words each. Be concise."
@@ -601,15 +622,14 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
-                with open(analysis_md, "w", encoding="utf-8") as f:
-                    f.write(r)
-                print("[analyze] Written")
+                await _write_verified_analysis(r, analysis_md, ws_path)
 
             if not force and os.path.exists(plan_md):
                 print("\n[Skipping plan] exists")
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
+                print("\n[plan] Creating plan...")
                 r = await agent.llm.chat([
                     {"role": "system", "content": (
                         "Create a prioritized implementation plan. "

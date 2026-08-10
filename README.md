@@ -79,6 +79,7 @@ The `workflow` command runs a full analysis-to-implementation pipeline. **Greenf
 - Produces a structured 8-section analysis: SCOPE, ASSUMPTIONS, RISKS, DEPENDENCIES, **THREAT MODEL & ATTACK SURFACE**, **MISSING INFORMATION (BLOCKERS)**, **CLARIFYING QUESTIONS**, **SUCCESS METRICS & OVERSIGHT**.
 - Ends with `**BLOCKED:** yes|no` — if blocked and `--force` is not given, the pipeline halts before plan/entities/tasks and prints the questions for the user.
 - Runs a self-critique refinement pass and appends findings to `project_analysis.md`.
+- **Code-claim verification** (all analyze modes): after generation, every file path, symbol name, line number, and code snippet in the analysis is checked against the actual workspace. Unverifiable claims are flagged in an appended `## Verification Report` — nothing is silently trusted.
 - Writes a traceability header referencing the workspace path and spec file.
 
 Brownfield mode (`workflow .`) uses multi-dimensional analysis across 5 dimensions:
