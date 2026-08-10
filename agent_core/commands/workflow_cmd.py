@@ -5,12 +5,12 @@ from pathlib import Path
 
 from .analysis_verifier import verify_analysis_claims
 from .base import Command, read_stdin
+from .reasoning_strip import strip_reasoning
 from agent_core import to_windows_path
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent import Agent
-
 
 _AGENT_SPEC_KEYWORDS = frozenset([
     "agent", "self-improvement", "self improvement", "vulnerability",
@@ -24,6 +24,14 @@ _PRIORITIZED_LLM_FILES = [
     "sanitizer.py", "retry.py", "provider.py", "tool_loop.py",
     "llm_client.py", "config.py", "constants.py",
 ]
+
+_HIGH_RISK_STDLIB_NAMES = frozenset({
+    "logging", "json", "types", "os", "sys", "io", "re", "http",
+    "email", "xml", "html", "csv", "sqlite3", "pickle", "socket",
+    "unittest", "argparse", "configparser", "pathlib", "subprocess",
+    "asyncio", "collections", "functools", "itertools", "typing",
+    "importlib", "inspect", "threading", "multiprocessing", "signal",
+})
 
 
 def _detect_subpackages(workspace: str) -> list[str]:
@@ -282,7 +290,14 @@ class WorkflowCommand(Command):
             pkgs = ["agent_core", "agent1", "src/agent1"]  # fallback
         pkg_list = "`, `".join(pkgs[:5])
         path_rule = f"\n\nPATH RULES: New files MUST use a sub-package prefix (`{pkg_list}/`). BAD: bare filenames or `src/` without subdirectory."
-        prompt_context = collision_warning + path_rule + "\n\nSIZE RULES: New files max 150 lines (SRP). Split large concepts. Modifying: minimal changes only."
+        stdlib_shadow = (
+            "\n\nSTDLIB SHADOWING (CRITICAL): Never create a package or directory whose"
+            " name matches one of these Python standard-library modules: "
+            + ", ".join(sorted(_HIGH_RISK_STDLIB_NAMES)[:20])
+            + ", etc. A package named `logging` will BREAK `import logging`."
+            "  Use distinct names (e.g. `log_utils/` not `logging/`)."
+        )
+        prompt_context = collision_warning + path_rule + "\n\nSIZE RULES: New files max 150 lines (SRP). Split large concepts. Modifying: minimal changes only." + stdlib_shadow
 
         analysis_md = str(ws_path / "project_analysis.md")
         plan_md = str(ws_path / "project_plan.md")
@@ -371,7 +386,7 @@ class WorkflowCommand(Command):
                     # Write analysis with traceability header
                     with open(analysis_md, "w", encoding="utf-8") as f:
                         f.write(trace_header)
-                        f.write(r)
+                        f.write(strip_reasoning(r))
                     print("  [analyze] First pass generated")
 
                     # Ambiguity gate — halt before plan if blockers exist and --force not given
@@ -420,7 +435,7 @@ class WorkflowCommand(Command):
                     if step_ok(critique_r):
                         with open(analysis_md, "a", encoding="utf-8") as f:
                             f.write("\n\n---\n\n## Refinement (self-critique)\n")
-                            f.write(critique_r)
+                            f.write(strip_reasoning(critique_r))
                         print("  [analyze] Appended refinement pass")
                     else:
                         print(f"  [analyze] Critique failed (non-blocking): {critique_r[:100]}")
@@ -441,7 +456,7 @@ class WorkflowCommand(Command):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
                 with open(plan_md, "w", encoding="utf-8") as f:
-                    f.write(r)
+                    f.write(strip_reasoning(r))
                 print("[plan] Written")
 
             if not force and os.path.exists(entities_md):
@@ -459,7 +474,7 @@ class WorkflowCommand(Command):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
                 with open(entities_md, "w", encoding="utf-8") as f:
-                    f.write(r)
+                    f.write(strip_reasoning(r))
                 print("[entities] Written")
 
             if not force and os.path.exists(tasks_md):
@@ -479,7 +494,7 @@ class WorkflowCommand(Command):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
                 with open(tasks_md, "w", encoding="utf-8") as f:
-                    f.write(r)
+                    f.write(strip_reasoning(r))
                 print("[taskplan] Written")
 
             print(f"\nNext: implement {tasks_md} {plan_md} {entities_md} --workspace {target_workspace} --force")
@@ -539,7 +554,7 @@ class WorkflowCommand(Command):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
                 with open(plan_md, "a", encoding="utf-8") as f:
-                    f.write(f"\n\n---\n\n{r}")
+                    f.write(f"\n\n---\n\n{strip_reasoning(r)}")
                 print(f"[plan] Appended to {plan_md}")
 
             if not force and os.path.exists(entities_md):
@@ -559,7 +574,7 @@ class WorkflowCommand(Command):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
                 with open(entities_md, "a", encoding="utf-8") as f:
-                    f.write(f"\n\n---\n\n{r}")
+                    f.write(f"\n\n---\n\n{strip_reasoning(r)}")
                 print("[entities] Appended")
 
             if not force and os.path.exists(tasks_md):
@@ -577,7 +592,7 @@ class WorkflowCommand(Command):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
                 with open(tasks_md, "a", encoding="utf-8") as f:
-                    f.write(f"\n\n---\n\n{r}")
+                    f.write(f"\n\n---\n\n{strip_reasoning(r)}")
                 print("[taskplan] Appended")
 
             print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
@@ -643,7 +658,7 @@ class WorkflowCommand(Command):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
                 with open(plan_md, "w", encoding="utf-8") as f:
-                    f.write(r)
+                    f.write(strip_reasoning(r))
                 print("[plan] Written")
 
             if not force and os.path.exists(entities_md):
@@ -661,7 +676,7 @@ class WorkflowCommand(Command):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
                 with open(entities_md, "w", encoding="utf-8") as f:
-                    f.write(r)
+                    f.write(strip_reasoning(r))
                 print("[entities] Written")
 
             if not force and os.path.exists(tasks_md):
@@ -679,7 +694,7 @@ class WorkflowCommand(Command):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
                 with open(tasks_md, "w", encoding="utf-8") as f:
-                    f.write(r)
+                    f.write(strip_reasoning(r))
                 print("[taskplan] Written")
 
             print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")

@@ -155,6 +155,15 @@ def _classify_backtick(content: str) -> str:
 _SNIPPET_MARKERS = ("=", "(", ".", "[", "{", ":", "<")
 
 
+def _shadows_stdlib(file_path: str) -> str | None:
+    """Return the conflicting stdlib name if *file_path* shadows a stdlib module."""
+    parts = file_path.replace("\\", "/").rstrip("/").split("/")
+    for part in parts[:-1]:
+        if part.lower() in _STDLIB_NAMES:
+            return part
+    return None
+
+
 def _extract_claims(segment: str, seg_start: int) -> list[_Claim]:
     """Extract file, symbol, snippet, and line claims from one source line."""
     claims: list[_Claim] = []
@@ -397,6 +406,12 @@ async def verify_analysis_claims(analysis: str, ws_path: Path) -> VerificationRe
         for c in claims:
             if c.kind == "file":
                 status, reason = _verify_existence(c.file, rel_files)
+                if status == _STATUS_OK and c.file:
+                    shadow = _shadows_stdlib(c.file)
+                    if shadow:
+                        status, reason = _STATUS_FLAGGED, (
+                            f"shadows stdlib module '{shadow}' — rename directory"
+                        )
             elif c.kind == "line":
                 _attach_context(c, claims)
                 status, reason = _verify_line(c.line or 0, c.file, line_counts, rel_files)

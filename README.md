@@ -79,6 +79,7 @@ The `workflow` command runs a full analysis-to-implementation pipeline. **Greenf
 - Produces a structured 8-section analysis: SCOPE, ASSUMPTIONS, RISKS, DEPENDENCIES, **THREAT MODEL & ATTACK SURFACE**, **MISSING INFORMATION (BLOCKERS)**, **CLARIFYING QUESTIONS**, **SUCCESS METRICS & OVERSIGHT**.
 - Ends with `**BLOCKED:** yes|no` — if blocked and `--force` is not given, the pipeline halts before plan/entities/tasks and prints the questions for the user.
 - Runs a self-critique refinement pass and appends findings to `project_analysis.md`.
+- **Reasoning leakage stripping**: LLM chain-of-thought, self-correction marks, and XML thinking tags (``, ``) are automatically stripped from all generated output files (analysis, plan, entities, taskplan). Reasoning patterns like "Let's...", "Wait,...", "[Output Generation]", and checkmark markers are removed before writing to disk.
 - **Code-claim verification** (all analyze modes): after generation, every file path, symbol name, line number, and code snippet in the analysis is checked against the actual workspace. Unverifiable claims are flagged in an appended `## Verification Report` — nothing is silently trusted.
 - Writes a traceability header referencing the workspace path and spec file.
 
@@ -106,11 +107,13 @@ The `fix` and `implement` commands include automatic protections against common 
 - **Refuses writes** to files under the Python installation directory to prevent `PermissionError`
 - **On-demand mode** (`fix <file> --desc`): scores candidate files by keyword relevance, sends only the top 5 files as full source. The LLM can request additional files with `[READ: path]` and iterates up to 3 rounds. Use `--full` for the legacy "send everything" behavior.
 
-**implement** — File safety (4 layers):
+**implement** — File safety (6 layers):
 - **Prevention**: LLM prompts instruct the LLM to use sub-package paths (`agent_core/thing.py`) and avoid bare root-level filenames
+- **Stdlib shadowing detection**: workflows warn the LLM to avoid stdlib-module directory names (e.g. `logging/`, `json/`, `types/`). The analysis verifier flags shadowed paths as `[UNVERIFIED]` before implementation. The implement command auto-redirects shadowed paths to safe alternatives (`logging` → `logging_utils`).
 - **Collision warnings at workflow time**: taskplan generation scans existing class/function names and filenames per directory, warns the LLM to avoid conflicts (e.g. "DO NOT create retry_policy.py if retry.py already exists")
 - **Post-write rejection**: every generated file is checked for class-name conflicts with existing code in the same directory. Conflicting files are auto-deleted immediately — no manual cleanup needed.
 - **Auto-review after every run**: static checks for class-name conflicts, module collisions, and unwired modules — printed immediately without LLM
+- **`--review` flag**: adds LLM deep analysis + offers to delete dangerous files with a y/N prompt
 - **`--review` flag**: adds LLM deep analysis + offers to delete dangerous files with a y/N prompt
 - **Patch-based fixing**: LLM outputs minimal `[PATCH:]` diffs instead of full-file rewrites. Shows changed lines with +/-, asks y/N before applying. Safety checks: old lines must exist, result must compile. `[FILE:]` still works as fallback.
 - **Anchored patch fallback**: When LLM ``@@`` line numbers are wrong (a common failure mode), a content-based anchored matcher locates the correct position by matching actual file text in a ±60-line window — absorbing fence-wrapped diffs, fused headers, and ``N |`` numbered-context artifacts.
@@ -185,7 +188,9 @@ Agent1/
 │       ├── cleanup_cmd.py        # File cleanup
 │       ├── implement_cmd.py      # File implementation
 │       ├── fix_cmd.py            # Auto-fix errors
-│       └── workflow_cmd.py       # Full pipeline
+│       ├── workflow_cmd.py       # Full pipeline
+│       ├── reasoning_strip.py    # LLM reasoning token removal
+│       └── analysis_verifier.py  # Code-claim verification
 ├── src/agent1/                   # Generated multi-agent framework
 │   ├── core/                     # Agent, message bus, context manager
 │   ├── memory/                   # Storage, vector DB, semantic search
@@ -229,7 +234,9 @@ pytest tests/ -v
 465 tests, all passing.
 
 ### Recent Additions
+- **Stdlib shadowing protection**: three-layer defense across workflow prompts, analysis verification, and implement file generation. Detects directory names that shadow stdlib modules (`logging/`, `json/`, `types/`, `config/`), warns the LLM to avoid them, flags violations in verification reports, and auto-redirects shadowed paths to safe alternatives.
+- **Reasoning leakage stripping**: automatically removes LLM chain-of-thought text (`` / `` tags), self-correction markers, "[Output Generation]" badges, "Let's..."/"Wait,..." reasoning lines, and checkmark emoji markers from all workflow-generated output files. Keeps analysis, plan, entities, and taskplan files clean.
+- **Config module shadowing resolved**: removed dead `agent_core/config/` directory that shadowed `agent_core/config.py`, fixing `import agent_core.config.schema` failures. Similarly resolved `agent_core/logging/` stdlib shadow.
 - Optimize command: mechanical `regex_in_loop` fixes hoist `re.compile()` into descriptive named constants (`_FOR_WHILE_RE`, `_TYPE_EQ_RE`) derived from the pattern, reusing existing identical compiles instead of duplicating them; detectors and mechanical fixers skip docstring lines entirely
 - Patch application tests for strict, anchored, deletion-only, and `N |`-prefix stripping
 - LM Studio thinking-disable payload tests across models and server versions
-- Optimize command: full batching, feedback-retry, diff-viewer, and apply flow coverage

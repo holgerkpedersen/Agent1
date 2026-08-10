@@ -132,6 +132,8 @@ Workspace: C:\Dev\Agent1
 Next: implement project_tasks.md ... --workspace C:/Dev/Agent1 --keep
 ```
 
+All workflow-generated files (analysis, plan, entities, taskplan) are **automatically stripped of LLM reasoning tokens** — chain-of-thought text, self-correction notes, "[Output Generation]" markers, and checkmark emoji markers are removed before writing to disk. This keeps the output files clean and parseable by the implementation pipeline.
+
 Add `--brainstorm` for a 6th dimension (bold creative features):
 
 ```
@@ -232,13 +234,14 @@ The `--review` flag performs a post-generation audit:
   Invalid API schema: missing "type":"object" and "required" fields
 ```
 
-Safety: implement now has 5 layers of protection:
+Safety: implement now has 6 layers of protection:
 
-1. **Workflow collision warnings** — taskplan LLM sees existing names per directory before generating
-2. **SOLID enforcement** — SRP (Single Responsibility Principle): new files max 150 lines, LLM splits large concepts across multiple focused files. Existing files get minimal changes only.
-3. **Post-write rejection** — files with class-name conflicts are auto-deleted immediately
-4. **Auto-review** — after every run: class conflicts, module collisions, unwired modules flagged
-5. **`--review` flag** — offers to delete dangerous files (y/N) + LLM deep analysis
+1. **Workflow stdlib shadowing warnings** — taskplan LLM is warned against stdlib-module directory names (`logging/`, `json/`, `types/`)
+2. **Analysis verification** — generated plans are checked for stdlib-shadowed paths; violations are flagged as `[UNVERIFIED]` before implementation
+3. **Auto-redirect** — during implementation, shadowed paths are redirected to safe alternatives (`logging` → `logging_utils`)
+4. **Collision warnings** — taskplan LLM sees existing names per directory before generating
+5. **Post-write rejection** — files with class-name conflicts are auto-deleted immediately
+6. **Auto-review + `--review`** — offers to delete dangerous files (y/N) + LLM deep analysis
 
 File discovery parses the taskplan directly — no LLM invents wrong filenames. Path rules adapt to any workspace by detecting existing `__init__.py` directories — no hardcoded prefixes.
 
@@ -301,6 +304,12 @@ The local file C:\Dev\Agent1\types.py shadows 'types' from the Python stdlib.
 Fix: rename or move it (e.g. types_defs.py or put it inside a package).
 Skipping LLM fix — this is a naming conflict, not a code error.
 ```
+
+**Stdlib shadowing detection** runs across the entire pipeline:
+- `workflow` prompts warn the LLM to avoid directory names matching stdlib modules
+- `analysis_verifier` flags shadowed paths in `## Verification Report` before implementation
+- `implement` auto-redirects shadowed paths (e.g. `logging/` → `logging_utils/`)
+- `fix` catches shadowed local files during traceback cascade analysis
 
 ### From a description (on-demand)
 

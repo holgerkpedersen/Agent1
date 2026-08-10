@@ -1,35 +1,179 @@
-Task 1: `agent1/types.py` — Define shared enums (ThreatCategory, SeverityLevel, RemediationStatus, PipelineStage) and TypedDicts for vulnerability reports and summaries. Include `from __future__ import annotations`. Max ~60 lines.
+<tool_call> or XML tags.
+- PATH RULES: New files MUST use a sub-package prefix (`agent1/...`, `agent_core/...`). I will create `agent_core/types.py`.
+- SIZE RULES: Max 150 lines.
+- STDLIB SHADOWING: Avoid names like `logging`, `config`, etc. `types` is fine, but `agent_core/types.py` might shadow `typing`? No, `types` is stdlib but usually safe if prefixed properly or if it's just a module file. To be strictly safe, I'll use `agent_core/shared_types.py`.
+- CRITICAL: Do not create files overlapping with existing ones in the same directory. The prompt lists many existing files in `agent_core/`, including `config.py`, `exceptions.py`, etc. It does NOT list `shared_types.py` or `types.py`. I will use `agent_core/shared_types.py`.
 
-Task 2: `agent1/safety_config.py` — Define frozen SafetyConfig dataclass with validated fields (thresholds, allowed capabilities, timeout limits). Factory load method. Validates config at load time. Max ~80 lines.
+Let's extract the types carefully:
+- `AppConfig` (from spec)
+- `SecurityViolationError` (from analysis/spec)
+- `ToolName`, `ToolRequest` (tool routing)
+- LLM message/response structures (`ChatMessage`, `Choice`, `ChatCompletionResponse`, etc.)
+- Context/State tracking types
 
-Task 3: `agent1/threat_model.py` — Define ThreatProfile frozen dataclass and registry of known threat profiles for self-improvement systems. Lookup function get_threat_profile. Max ~70 lines.
+I will structure it cleanly, strictly typed, using `pydantic.BaseModel` and standard library. I'll ensure mypy strict compliance with explicit types and `from __future__ import annotations`.
 
-Task 4: `agent1/vulnerability.py` — Define frozen Vulnerability dataclass with id, category, severity, description, affected_component, evidence. Define VulnerabilityReport with tuple of vulnerabilities and summary metadata. Factory create_vulnerability with validation. Max ~80 lines.
+Check existing files in `agent_core/`:
+`__init__.py`, `agent.py`, `agent_file_context_interface.py`, `config.py`, `constants.py`, `context_management.py`, `entities.py`, `exceptions.py`, `file_context_retriever.py`, `file_searcher.py`, `file_system.py`, `llm_client.py`
 
-Task 5: `agent1/agent_state.py` — Define AgentState TypedDict with code_snapshot, policy_version, reward_function_ref, capability_level, improvement_history. Serialization helpers to/from JSON. Max ~50 lines.
+I will create `agent_core/shared_types.py`. It doesn't overlap.
+Wait, the prompt says "Extract shared classes/types." I will just output the code block for `agent_core/shared_types.py`.
 
-Task 6: `agent1/scanner_base.py` — Define abstract VulnerabilityScanner base class with scan interface, logging hooks, and result aggregation helper. Enforces Open/Closed and Dependency Inversion SOLID principles. Max ~60 lines.
+Let's draft it carefully within 150 lines.
+```python
+from __future__ import annotations
+import re
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Final
 
-Task 7: `agent1/remediation_base.py` — Define frozen RemediationResult dataclass and abstract RemediationStrategy base class with apply method signature, dry-run support, and rollback capability. Max ~70 lines.
+from pydantic import BaseModel, Field
 
-Task 8: `agent1/prompt_injection_scanner.py` — Implement VulnerabilityScanner for prompt injection via self-modification paths. Detects unsanitized input in code generation prompts, escape-sequence injection, indirect prompt injection through stored data. Returns VulnerabilityReport. Max ~120 lines.
 
-Task 9: `agent1/reward_hacking_scanner.py` — Implement VulnerabilityScanner for reward hacking and reward tampering. Detects self-reward manipulation, reward function overfitting, proxy metric exploitation. Max ~110 lines.
+@dataclass(frozen=True)
+class AppConfig:
+    workspace_root: str
+    lm_studio_url: str = "http://localhost:1234/v1"
+    max_iterations: int = 50
+    allowed_shell_binaries: list[str] = field(default_factory=lambda: ["python", "ls", "cat"])
+    enable_symlink_traversal: bool = False
 
-Task 10: `agent1/capability_escalation_scanner.py` — Implement VulnerabilityScanner for capability escalation risks. Detects unauthorized capability grants, recursive improvement loops, sandbox escape vectors. Max ~120 lines.
 
-Task 11: `agent1/prompt_guard_remediator.py` — Implement RemediationStrategy for prompt injection vulnerabilities. Applies input sanitization, output validation, and prompt separation policies. Returns RemediationResult with before/after state diff. Max ~100 lines.
+class SecurityViolationError(Exception):
+    pass
 
-Task 12: `agent1/reward_clamp_remediator.py` — Implement RemediationStrategy for reward hacking vulnerabilities. Applies reward clamping, monotonicity checks, and proxy metric guards. Max ~90 lines.
+DANGEROUS_PATTERN: Final[re.Pattern[str]] = re.compile(r"[;&|`$(){}<>!\\]", re.IGNORECASE)
 
-Task 13: `agent1/capability_limit_remediator.py` — Implement RemediationStrategy for capability escalation. Enforces capability caps, improvement rate limits, and sandbox boundaries. Max ~100 lines.
 
-Task 14: `agent1/safety_verifier.py` — Define SafetyVerifier class that runs post-remediation verification. Runs regression checks against threat model profiles, validates remediations don't introduce new vulnerabilities (dual-check). Returns VerificationResult with pass/fail and confidence score. Max ~100 lines.
+class ToolName(str, Enum):
+    READ_FILE = "read_file"
+    WRITE_FILE = "write_file"
+    EXECUTE_SHELL = "execute_shell"
 
-Task 15: `agent1/audit_logger.py` — Define AuditLogger class for append-only audit trail of all pipeline operations. Logs scan results, remediation actions, verification outcomes. Supports JSON structured output. Max ~80 lines.
 
-Task 16: `agent1/pipeline_orchestrator.py` — Define SelfImprovementPipeline class orchestrating full pipeline (SOLID: Single Responsibility). Stages: scan → remediate → verify → audit. Supports dry-run mode, parallel scanner execution, and rollback on verification failure. Max ~130 lines.
+class ToolRequest(BaseModel):
+    name: ToolName
+    arguments: dict[str, str] = Field(default_factory=dict)
 
-Task 17: `agent1/main.py` — CLI entry point using argparse. Loads config, runs pipeline, outputs structured JSON report. Max ~60 lines.
 
-Task 18: `pyproject.toml` — Project metadata, dependencies (mypy, pytest, pydantic), mypy configuration with --strict flag enabled for type-checking validation across all modules.
+class FunctionCall(BaseModel):
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolCall(BaseModel):
+    function: FunctionCall
+    id: str
+    type: str = "function"
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
+
+
+class Choice(BaseModel):
+    index: int
+    message: ChatMessage
+
+
+class ChatCompletionResponse(BaseModel):
+    choices: list[Choice]
+```
+
+Check constraints:
+- Output ONLY Python code — no intro text. Start with ```python.
+- All types valid, mypy strict compliant.
+- No forward-ref errors (using `from __future__ import annotations` and defining before use).
+- Avoid circular imports.
+- PATH RULES: `agent_core/shared_types.py` is used as filename context implicitly or I will just output the code block with a comment indicating the path, but the prompt says "Output ONLY Python code". I'll just put the code. To be safe, I'll add a docstring with the intended file path.
+- SIZE RULES: 48 lines. Well under 150.
+- STDLIB SHADOWING: `shared_types` is fine.
+
+One detail: The prompt says "Extract shared classes/types." It might expect just the code block. I will provide exactly that.
+I'll verify mypy strict compatibility: `dict[str, Any]`, `list[Choice]`, etc. are valid Python 3.9+. With `from __future__ import annotations`, it's fully postponed. Pydantic v2 handles these fine.
+All good.
+Output matches response.✅
+Proceeds. 
+Wait, should I include `CorrelationIdContext` or similar? The prompt lists existing files that already have some of these. I'll stick to the extracted ones from the spec/analysis that are missing or need consolidation. The provided list shows `agent_core/config.py`, `agent_core/exceptions.py`, etc. exist. So extracting into a new file is fine as long as names don't clash, but I should avoid duplicating existing ones if possible. The prompt says "Extract shared classes/types." from the *spec and analysis*. I'll just output the clean types.
+I will ensure no overlap with the listed files in `agent_core/`. `shared_types.py` is safe.
+Code block only. No extra text.
+Done. 
+Output Generation. 
+(Self-Correction/Refinement during thought)
+The prompt says "Output ONLY Python code — no intro text. Start with ```python."
+I will strictly follow that.
+One minor thing: `pydantic` might not be installed in the target env, but it's standard for this spec. I'll keep it.
+All constraints met.
+Proceeds. 
+[Output Generation] -> *Proceeds*
+</think>
+
+```python
+"""Intended file path: agent_core/shared_types.py"""
+from __future__ import annotations
+import re
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Final
+
+from pydantic import BaseModel, Field
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    """Validated application settings."""
+    workspace_root: str
+    lm_studio_url: str = "http://localhost:1234/v1"
+    max_iterations: int = 50
+    allowed_shell_binaries: list[str] = field(default_factory=lambda: ["python", "ls", "cat", "grep", "find"])
+    enable_symlink_traversal: bool = False
+
+
+class SecurityViolationError(Exception):
+    """Raised when a path operation violates workspace boundaries or security policies."""
+    pass
+
+DANGEROUS_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"[;&|`$(){}<>!\\]", re.IGNORECASE
+)
+
+
+class ToolName(str, Enum):
+    READ_FILE = "read_file"
+    WRITE_FILE = "write_file"
+    EXECUTE_SHELL = "execute_shell"
+
+
+class ToolRequest(BaseModel):
+    """Strictly typed tool invocation schema."""
+    name: ToolName
+    arguments: dict[str, str] = Field(default_factory=dict)
+
+
+class FunctionCall(BaseModel):
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolCall(BaseModel):
+    function: FunctionCall
+    id: str
+    type: str = "function"
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
+
+
+class Choice(BaseModel):
+    index: int
+    message: ChatMessage
+
+
+class ChatCompletionResponse(BaseModel):
+    choices: list[Choice]
+```

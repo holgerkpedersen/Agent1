@@ -1,429 +1,330 @@
+<tool_call>` or XML tags.
+
+Looking at the spec and analysis, I can extract these key shared types/classes:
+- Configuration models (`AppConfig`, settings)
+- Security/Path utilities (`SecurityViolationError`, path validation functions/types)
+- Sanitizer types/constants
+- LLM client/response types
+- Tool routing/validation schemas (`ToolName`, `ToolRequest`)
+- Agent orchestrator types/context
+
+I will create a single Python file (or multiple if needed, but the prompt says "Output ONLY Python code", I'll put it in one block or logically separate files within the block) containing these extracted shared classes/types. To be safe and comply with "Extract shared classes/types", I'll define them in a clean, modular way that could be split into `types.py`, `config.py`, `security.py`, etc., but I will output them as a single cohesive Python script or clearly separated modules within the code block. Actually, it's better to structure it as a package-like set of classes/functions in one block for simplicity, or use standard module separation syntax if needed. I'll just define them all in one file for the extraction task, properly typed.
+
+Let's list the types to extract:
+1. `AppConfig` (Pydantic settings)
+2. `SecurityViolationError`
+3. `ToolName` (Enum)
+4. `ToolRequest` (Pydantic model)
+5. LLM message/response structures
+6. Context/State tracking types
+
+I will ensure strict typing, no forward refs issues by using `from __future__ import annotations`, and valid Pydantic v2 syntax. I'll avoid circular imports by keeping it flat or carefully structured.
+
+Structure:
 ```python
 from __future__ import annotations
+import re
+from enum import Enum
+from pathlib import Path
+from typing import Any, Final
 
-import json
-import logging
-import uuid
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum, auto
-from typing import Dict, List, Optional, Sequence, Tuple
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# --- Configuration ---
+class AppConfig(BaseSettings): ...
 
-# === Shared Enums (types.py) ===
+# --- Security & Paths ---
+class SecurityViolationError(Exception): ...
+DANGEROUS_PATTERN: Final[re.Pattern[str]] = ...
 
-class ThreatCategory(Enum):
-    PROMPT_INJECTION = auto()
-    REWARD_HACKING = auto()
-    CAPABILITY_ESCALATION = auto()
-    RECURSIVE_MODIFICATION = auto()
-    SANDBOX_ESCAPE = auto()
+# --- Tool Routing ---
+class ToolName(str, Enum): ...
+class ToolRequest(BaseModel): ...
 
+# --- LLM Types ---
+class ChatMessage(BaseModel): ...
+class FunctionCall(BaseModel): ...
+class ToolCall(BaseModel): ...
+class Choice(BaseModel): ...
+class ChatCompletionResponse(BaseModel): ...
+```
 
-class SeverityLevel(Enum):
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    INFO = "info"
+Wait, the prompt says "Extract shared classes/types." I will focus on the core domain models that would be shared across modules.
+I'll make sure everything is strictly typed and valid.
+No intro text. Start directly with ```python.
+Check mypy strict compliance: `from __future__ import annotations` handles forward refs. Use explicit types where possible. Pydantic v2 compatible.
 
+Let's draft it carefully.
+```python
+from __future__ import annotations
+import re
+from enum import Enum
+from pathlib import Path
+from typing import Any, Final
 
-class RemediationStatus(Enum):
-    PENDING = "pending"
-    APPLIED = "applied"
-    FAILED = "failed"
-    ROLLED_BACK = "rolled_back"
-    SKIPPED = "skipped"
-
-
-class PipelineStage(Enum):
-    SCAN = "scan"
-    REMEDIATE = "remediate"
-    VERIFY = "verify"
-    AUDIT = "audit"
-
-
-# === TypedDicts (types.py) ===
-
-class VulnerabilityReportSummary(TypedDict, total=False):
-    total_vulnerabilities: int
-    critical_count: int
-    high_count: int
-    scan_timestamp: str
-    agent_version: str
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# === Config (config.py) ===
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+class AppConfig(BaseSettings):
+    """Validated application settings."""
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
-@dataclass(frozen=True)
-class SafetyConfig:
-    severity_threshold: SeverityLevel = SeverityLevel.MEDIUM
-    max_concurrent_scanners: int = 4
-    improvement_rate_limit: float = 1.0
-    capability_cap: float = 100.0
-    timeout_seconds: float = 300.0
-    dry_run_enabled: bool = True
-    rollback_on_failure: bool = True
-    allowed_capabilities: List[str] = field(default_factory=list)
-    reward_clamp_min: float = -1000.0
-    reward_clamp_max: float = 1000.0
-
-    @classmethod
-    def load(cls, path: str) -> SafetyConfig:
-        with open(path, "r") as f:
-            data = json.load(f)
-        return cls(**data)
+    workspace_root: str
+    lm_studio_url: str = "http://localhost:1234/v1"
+    max_iterations: int = 50
+    allowed_shell_binaries: list[str] = ["python", "ls", "cat", "grep", "find"]
+    enable_symlink_traversal: bool = False
 
 
-# === Threat Model (threat_model.py) ===
+# ---------------------------------------------------------------------------
+# Security & Path Utilities
+# ---------------------------------------------------------------------------
+class SecurityViolationError(Exception):
+    """Raised when a path operation violates workspace boundaries or security policies."""
+    pass
 
-@dataclass(frozen=True)
-class ThreatProfile:
-    category: ThreatCategory
-    description: str
-    attack_vector: str
-    mitigation_strategy: str
-    detection_signatures: List[str] = field(default_factory=list)
-
-
-_THREAT_REGISTRY: Dict[ThreatCategory, ThreatProfile] = {
-    ThreatCategory.PROMPT_INJECTION: ThreatProfile(
-        category=ThreatCategory.PROMPT_INJECTION,
-        description="Malicious input crafted to manipulate agent behavior through self-modification prompts",
-        attack_vector="Unsantized user input injected into code generation pipelines",
-        mitigation_strategy="Input sanitization and output validation with prompt separation policies",
-        detection_signatures=["escape_sequences", "indirect_injection", "prompt_leakage"],
-    ),
-    ThreatCategory.REWARD_HACKING: ThreatProfile(
-        category=ThreatCategory.REWARD_HACKING,
-        description="Agent manipulates its own reward function to achieve artificially high scores",
-        attack_vector="Self-reward manipulation and proxy metric exploitation",
-        mitigation_strategy="Reward clamping, monotonicity checks, and proxy metric guards",
-        detection_signatures=["reward_spike", "proxy_overfitting", "self_reward"],
-    ),
-    ThreatCategory.CAPABILITY_ESCALATION: ThreatProfile(
-        category=ThreatCategory.CAPABILITY_ESCALATION,
-        description="Agent grants itself unauthorized capabilities beyond intended scope",
-        attack_vector="Recursive improvement loops and sandbox escape vectors",
-        mitigation_strategy="Capability caps, improvement rate limits, and sandbox boundaries",
-        detection_signatures=["unauthorized_grant", "recursive_loop", "sandbox_breach"],
-    ),
-}
+DANGEROUS_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"[;&|`$(){}<>!\\]", re.IGNORECASE
+)
 
 
-def get_threat_profile(category: ThreatCategory) -> ThreatProfile:
-    profile = _THREAT_REGISTRY.get(category)
-    if profile is None:
-        raise ValueError(f"Unknown threat category: {category}")
-    return profile
+# ---------------------------------------------------------------------------
+# Tool Routing & Validation
+# ---------------------------------------------------------------------------
+class ToolName(str, Enum):
+    READ_FILE = "read_file"
+    WRITE_FILE = "write_file"
+    EXECUTE_SHELL = "execute_shell"
 
 
-# === Agent State (agent_state.py) ===
-
-class AgentState(TypedDict):
-    code_snapshot: str
-    policy_version: str
-    reward_function_ref: str
-    capability_level: float
-    improvement_history: List[Dict[str, object]]
+class ToolRequest(BaseModel):
+    """Strictly typed tool invocation schema."""
+    name: ToolName
+    arguments: dict[str, str] = Field(default_factory=dict)
 
 
-def serialize_agent_state(state: AgentState) -> str:
-    return json.dumps(state, default=str)
+# ---------------------------------------------------------------------------
+# LLM Interaction Types
+# ---------------------------------------------------------------------------
+class FunctionCall(BaseModel):
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
 
 
-def deserialize_agent_state(raw: str) -> AgentState:
-    data = json.loads(raw)
-    return AgentState(
-        code_snapshot=data["code_snapshot"],
-        policy_version=data["policy_version"],
-        reward_function_ref=data["reward_function_ref"],
-        capability_level=float(data["capability_level"]),
-        improvement_history=list(data.get("improvement_history", [])),
-    )
-
-
-# === Vulnerability (vulnerability.py) ===
-
-@dataclass(frozen=True)
-class Vulnerability:
+class ToolCall(BaseModel):
+    function: FunctionCall
     id: str
-    category: ThreatCategory
-    severity: SeverityLevel
-    description: str
-    affected_component: str
-    evidence: List[str] = field(default_factory=list)
-    detected_at: datetime = field(default_factory=datetime.utcnow)
+    type: str = "function"
 
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
+
+
+class Choice(BaseModel):
+    index: int
+    message: ChatMessage
+
+
+class ChatCompletionResponse(BaseModel):
+    choices: list[Choice]
+```
+
+Check constraints:
+- Output ONLY Python code — no intro text. Start with ```python.
+- All types must be valid — no unbound TypeVars, no forward-ref errors. (Using `from __future__ import annotations` handles this safely for Pydantic and standard typing)
+- Must pass mypy strict. (Types are explicit, `Any` is used appropriately where needed, `Final` for constants, `Field` from pydantic)
+- Avoid circular imports. (Flat structure, no cross-references that would cause cycles)
+- Never use <tool_call> or XML tags.
+
+One minor thing: `pydantic_settings` might not be strictly necessary if I just use standard Pydantic, but it's fine. I'll stick to `BaseModel` for simplicity and avoid external deps beyond pydantic itself, or keep it as is since it was in the spec. Actually, `BaseSettings` is fine.
+I will verify mypy strict compatibility: `dict[str, Any]`, `list[Choice]`, etc. are all valid Python 3.9+ syntax. With `from __future__ import annotations`, everything is postponed evaluation, so no forward ref errors even if I referenced them. But here they are defined before use anyway.
+I'll adjust slightly to ensure maximum compatibility and strictness: replace `Any` with concrete types where possible, or keep it. It's fine.
+The prompt asks to "Extract shared classes/types." from the provided spec/analysis. The extracted types match exactly what's needed for a clean architecture.
+
+I will output exactly the code block. No extra text.
+Ready. 
+One check: `pydantic_settings` is an external package. I'll just use standard `BaseModel` and add a comment or keep it simple. Actually, keeping `AppConfig` as `BaseSettings` is fine per spec. I'll stick with it.
+All good.
+Output matches response.✅
+Proceeds. 
+[Self-Correction/Verification during thought]
+Wait, the prompt says "Extract shared classes/types." It doesn't specify a file name. I'll just output the code block.
+I will make sure there are no syntax errors and it strictly follows Python typing conventions.
+`from __future__ import annotations` is crucial for mypy strict with forward refs or postponed evaluation, though not strictly needed here since all types are defined before use or are built-ins. I'll keep it for safety.
+I'll remove `pydantic_settings` to avoid dependency issues in a pure type extraction context, and just use `BaseModel` with a classmethod or standard init, but the spec explicitly mentioned Pydantic settings. I'll keep it but add a fallback comment if needed? No, just stick to standard libraries + pydantic as requested implicitly by the architecture. Actually, I'll replace `pydantic_settings` with standard `BaseModel` and add a note or just use `dataclass` for config to avoid external deps in type extraction? The prompt says "Extract shared classes/types." I'll keep it clean with just `pydantic.BaseModel`.
+
+Let's refine:
+```python
+from __future__ import annotations
+import re
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Any, Final
+
+from pydantic import BaseModel, Field
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 @dataclass(frozen=True)
-class VulnerabilityReport:
-    vulnerabilities: Tuple[Vulnerability, ...]
-    summary: VulnerabilityReportSummary
-
-    @property
-    def critical_count(self) -> int:
-        return sum(1 for v in self.vulnerabilities if v.severity == SeverityLevel.CRITICAL)
-
-    @property
-    def high_count(self) -> int:
-        return sum(1 for v in self.vulnerabilities if v.severity == SeverityLevel.HIGH)
+class AppConfig:
+    """Validated application settings."""
+    workspace_root: str
+    lm_studio_url: str = "http://localhost:1234/v1"
+    max_iterations: int = 50
+    allowed_shell_binaries: list[str] = field(default_factory=lambda: ["python", "ls", "cat", "grep", "find"])
+    enable_symlink_traversal: bool = False
 
 
-def create_vulnerability(
-    category: ThreatCategory,
-    severity: SeverityLevel,
-    description: str,
-    affected_component: str,
-    evidence: Optional[List[str]] = None,
-) -> Vulnerability:
-    if not description.strip():
-        raise ValueError("Vulnerability description cannot be empty")
-    if not affected_component.strip():
-        raise ValueError("Affected component cannot be empty")
-    return Vulnerability(
-        id=str(uuid.uuid4()),
-        category=category,
-        severity=severity,
-        description=description.strip(),
-        affected_component=affected_component.strip(),
-        evidence=list(evidence) if evidence is not None else [],
-    )
+# ---------------------------------------------------------------------------
+# Security & Path Utilities
+# ---------------------------------------------------------------------------
+class SecurityViolationError(Exception):
+    """Raised when a path operation violates workspace boundaries or security policies."""
+    pass
+
+DANGEROUS_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"[;&|`$(){}<>!\\]", re.IGNORECASE
+)
 
 
-# === Scanner Base (scanner_base.py) ===
-
-class VulnerabilityScanner(ABC):
-    def __init__(self, name: str) -> None:
-        self._name = name
-        self._logger = logging.getLogger(f"scanner.{name}")
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @abstractmethod
-    def scan(self, agent_state: AgentState) -> VulnerabilityReport:
-        ...
-
-    def _log_scan_start(self, agent_state: AgentState) -> None:
-        self._logger.info(
-            "Starting %s scan for policy_version=%s",
-            self._name,
-            agent_state["policy_version"],
-        )
-
-    def _aggregate_reports(self, reports: List[VulnerabilityReport]) -> VulnerabilityReport:
-        all_vulns: List[Vulnerability] = []
-        for report in reports:
-            all_vulns.extend(report.vulnerabilities)
-        summary: VulnerabilityReportSummary = {
-            "total_vulnerabilities": len(all_vulns),
-            "critical_count": sum(1 for v in all_vulns if v.severity == SeverityLevel.CRITICAL),
-            "high_count": sum(1 for v in all_vulns if v.severity == SeverityLevel.HIGH),
-        }
-        return VulnerabilityReport(vulnerabilities=tuple(all_vulns), summary=summary)
+# ---------------------------------------------------------------------------
+# Tool Routing & Validation
+# ---------------------------------------------------------------------------
+class ToolName(str, Enum):
+    READ_FILE = "read_file"
+    WRITE_FILE = "write_file"
+    EXECUTE_SHELL = "execute_shell"
 
 
-# === Remediation Base (remediation_base.py) ===
+class ToolRequest(BaseModel):
+    """Strictly typed tool invocation schema."""
+    name: ToolName
+    arguments: dict[str, str] = Field(default_factory=dict)
 
+
+# ---------------------------------------------------------------------------
+# LLM Interaction Types
+# ---------------------------------------------------------------------------
+class FunctionCall(BaseModel):
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolCall(BaseModel):
+    function: FunctionCall
+    id: str
+    type: str = "function"
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
+
+
+class Choice(BaseModel):
+    index: int
+    message: ChatMessage
+
+
+class ChatCompletionResponse(BaseModel):
+    choices: list[Choice]
+```
+This is cleaner, uses only `pydantic` and stdlib, strictly typed, passes mypy strict. No forward refs issues. Matches spec requirements. Output matches exactly.✅
+Proceeds. 
+Output Generation. 
+(Note: I will ensure the output starts immediately with ```python as requested.) 
+All constraints met.
+Done. 
+[Output Generation] -> *Proceeds*
+</think>
+
+```python
+from __future__ import annotations
+import re
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Final
+
+from pydantic import BaseModel, Field
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 @dataclass(frozen=True)
-class RemediationResult:
-    vulnerability_id: str
-    status: RemediationStatus
-    description: str
-    before_state: Optional[AgentState] = None
-    after_state: Optional[AgentState] = None
-    rollback_available: bool = False
+class AppConfig:
+    """Validated application settings."""
+    workspace_root: str
+    lm_studio_url: str = "http://localhost:1234/v1"
+    max_iterations: int = 50
+    allowed_shell_binaries: list[str] = field(default_factory=lambda: ["python", "ls", "cat", "grep", "find"])
+    enable_symlink_traversal: bool = False
 
 
-class RemediationStrategy(ABC):
-    def __init__(self, name: str) -> None:
-        self._name = name
-        self._logger = logging.getLogger(f"remediation.{name}")
+# ---------------------------------------------------------------------------
+# Security & Path Utilities
+# ---------------------------------------------------------------------------
+class SecurityViolationError(Exception):
+    """Raised when a path operation violates workspace boundaries or security policies."""
+    pass
 
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @abstractmethod
-    def apply(
-        self,
-        vulnerability: Vulnerability,
-        agent_state: AgentState,
-        config: SafetyConfig,
-    ) -> RemediationResult:
-        ...
-
-    def dry_run(
-        self,
-        vulnerability: Vulnerability,
-        agent_state: AgentState,
-        config: SafetyConfig,
-    ) -> RemediationResult:
-        return self.apply(vulnerability, agent_state, config)
+DANGEROUS_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"[;&|`$(){}<>!\\]", re.IGNORECASE
+)
 
 
-# === Safety Verifier (safety_verifier.py) ===
-
-@dataclass(frozen=True)
-class VerificationResult:
-    passed: bool
-    confidence_score: float
-    findings: List[str] = field(default_factory=list)
-    threat_profiles_checked: Tuple[ThreatProfile, ...] = field(default_factory=tuple)
-
-
-class SafetyVerifier:
-    def __init__(self, config: SafetyConfig) -> None:
-        self._config = config
-
-    def verify(
-        self,
-        agent_state: AgentState,
-        report: VulnerabilityReport,
-    ) -> VerificationResult:
-        findings: List[str] = []
-        profiles_checked: List[ThreatProfile] = []
-
-        for vuln in report.vulnerabilities:
-            profile = get_threat_profile(vuln.category)
-            profiles_checked.append(profile)
-            if vuln.severity == SeverityLevel.CRITICAL:
-                findings.append(
-                    f"Critical vulnerability {vuln.id} requires immediate attention"
-                )
-
-        passed = not any("requires immediate" in f for f in findings)
-        confidence = 1.0 - (len(findings) * 0.1)
-        confidence = max(0.0, min(1.0, confidence))
-
-        return VerificationResult(
-            passed=passed,
-            confidence_score=round(confidence, 2),
-            findings=findings,
-            threat_profiles_checked=tuple(profiles_checked),
-        )
+# ---------------------------------------------------------------------------
+# Tool Routing & Validation
+# ---------------------------------------------------------------------------
+class ToolName(str, Enum):
+    READ_FILE = "read_file"
+    WRITE_FILE = "write_file"
+    EXECUTE_SHELL = "execute_shell"
 
 
-# === Audit Logger (audit_logger.py) ===
-
-class AuditLogger:
-    def __init__(self, log_path: str) -> None:
-        self._log_path = log_path
-        self._logger = logging.getLogger("audit")
-        handler = logging.FileHandler(log_path)
-        handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
-        self._logger.addHandler(handler)
-        self._logger.setLevel(logging.INFO)
-
-    def log_scan(self, scanner_name: str, report: VulnerabilityReport) -> None:
-        entry: Dict[str, object] = {
-            "event": "scan",
-            "scanner": scanner_name,
-            "vulnerabilities_found": len(report.vulnerabilities),
-            "summary": dict(report.summary),
-        }
-        self._logger.info(json.dumps(entry))
-
-    def log_remediation(self, strategy_name: str, result: RemediationResult) -> None:
-        entry: Dict[str, object] = {
-            "event": "remediation",
-            "strategy": strategy_name,
-            "status": result.status.value,
-            "vulnerability_id": result.vulnerability_id,
-        }
-        self._logger.info(json.dumps(entry))
-
-    def log_verification(self, result: VerificationResult) -> None:
-        entry: Dict[str, object] = {
-            "event": "verification",
-            "passed": result.passed,
-            "confidence": result.confidence_score,
-            "findings_count": len(result.findings),
-        }
-        self._logger.info(json.dumps(entry))
+class ToolRequest(BaseModel):
+    """Strictly typed tool invocation schema."""
+    name: ToolName
+    arguments: dict[str, str] = Field(default_factory=dict)
 
 
-# === Pipeline Orchestrator (pipeline_orchestrator.py) ===
+# ---------------------------------------------------------------------------
+# LLM Interaction Types
+# ---------------------------------------------------------------------------
+class FunctionCall(BaseModel):
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
 
-class SelfImprovementPipeline:
-    def __init__(
-        self,
-        scanners: Sequence[VulnerabilityScanner],
-        remediations: Dict[ThreatCategory, RemediationStrategy],
-        config: SafetyConfig,
-        audit_logger: AuditLogger,
-    ) -> None:
-        self._scanners = list(scanners)
-        self._remediations = dict(remediations)
-        self._config = config
-        self._audit_logger = audit_logger
-        self._logger = logging.getLogger("pipeline")
 
-    def run(
-        self,
-        agent_state: AgentState,
-        dry_run: bool = True,
-    ) -> Tuple[VulnerabilityReport, Optional[RemediationResult], VerificationResult]:
-        scan_report = self._run_scans(agent_state)
-        self._audit_logger.log_scan("pipeline", scan_report)
+class ToolCall(BaseModel):
+    function: FunctionCall
+    id: str
+    type: str = "function"
 
-        if dry_run or not scan_report.vulnerabilities:
-            verification = self._verify(agent_state, scan_report)
-            return scan_report, None, verification
 
-        remediation_result = self._run_remediation(scan_report, agent_state)
-        self._audit_logger.log_remediation("pipeline", remediation_result)
+class ChatMessage(BaseModel):
+    role: str
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
 
-        verification = self._verify(agent_state, scan_report)
-        self._audit_logger.log_verification(verification)
 
-        if not verification.passed and self._config.rollback_on_failure:
-            self._logger.warning("Verification failed, rollback triggered")
+class Choice(BaseModel):
+    index: int
+    message: ChatMessage
 
-        return scan_report, remediation_result, verification
 
-    def _run_scans(self, agent_state: AgentState) -> VulnerabilityReport:
-        all_reports: List[VulnerabilityReport] = []
-        for scanner in self._scanners:
-            self._logger.info("Running scanner: %s", scanner.name)
-            report = scanner.scan(agent_state)
-            all_reports.append(report)
-        return self._aggregate_scanner_reports(all_reports)
-
-    def _run_remediation(
-        self,
-        report: VulnerabilityReport,
-        agent_state: AgentState,
-    ) -> RemediationResult:
-        for vuln in report.vulnerabilities:
-            strategy = self._remediations.get(vuln.category)
-            if strategy is None:
-                continue
-            result = strategy.apply(vuln, agent_state, self._config)
-            return result
-        return RemediationResult(
-            vulnerability_id="",
-            status=RemediationStatus.SKIPPED,
-            description="No vulnerabilities to remediate",
-        )
-
-    def _verify(
-        self, agent_state: AgentState, report: VulnerabilityReport
-    ) -> VerificationResult:
-        verifier = SafetyVerifier(self._config)
-        return verifier.verify(agent_state, report)
-
-    def _aggregate_scanner_reports(self, reports: List[VulnerabilityReport]) -> VulnerabilityReport:
-        all_vulns: List[Vulnerability] = []
-        for report in reports:
-            all_vulns.extend(report.vulnerabilities)
-        summary: VulnerabilityReportSummary = {
-            "total_vulnerabilities": len(all_vulns),
-            "critical_count": sum(1 for v in all_vulns if v.severity == SeverityLevel.CRITICAL),
-            "high_count": sum(1 for v in all_vulns if v.severity == SeverityLevel.HIGH),
-        }
-        return VulnerabilityReport(vulnerabilities=tuple(all_vulns), summary=summary)
+class ChatCompletionResponse(BaseModel):
+    choices: list[Choice]
 ```

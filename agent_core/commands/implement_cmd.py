@@ -97,6 +97,12 @@ def _is_dangerous_filename(filename: str, workspace: Path) -> tuple[bool, str]:
     if "/" not in filename and "\\" not in filename:
         return True, f"bare workspace-root file {filename!r} — needs sub-package prefix"
 
+    # Check if any directory in the path shadows a stdlib module.
+    parts = filename.replace("\\", "/").split("/")
+    for part in parts[:-1]:
+        if part in _STDLIB_COMMON:
+            return True, f"directory '{part}' shadows stdlib module"
+
     return False, ""
 
 
@@ -695,11 +701,18 @@ class ImplementCommand(Command):
         if retry_mode:
             missing = []
             for fname in all_files:
-                needs_gen, reason = file_needs_generation(fname)
-                if needs_gen:
+                parts = fname.replace("\\", "/").split("/")
+                shadow = any(p in _STDLIB_COMMON for p in parts[:-1])
+                if shadow:
+                    shadow_name = next(
+                        p for p in parts[:-1] if p in _STDLIB_COMMON
+                    )
+                    missing.append(fname)
+                    print(f"  SHADOW: {fname} shadows stdlib '{shadow_name}'")
+                elif file_needs_generation(fname)[0]:
                     missing.append(fname)
                 else:
-                    print(f"  OK: {fname} ({reason})")
+                    print(f"  OK: {fname}")
             if not missing:
                 print("  All files present and compile OK — nothing to retry.")
                 return True
@@ -736,10 +749,23 @@ class ImplementCommand(Command):
                     files_to_skip.append(f"{fname}: {reason}")
                     file_outcomes[fname] = f"needs generation — {reason}"
                 else:
-                    files_to_skip.append(f"{fname}: already exists, compile OK")
-                    file_outcomes[fname] = "already exists and compiles OK"
-                    if fname not in implemented:
-                        implemented.append(fname)
+                    parts = fname.replace("\\", "/").split("/")
+                    shadow = any(
+                        p in _STDLIB_COMMON for p in parts[:-1]
+                    )
+                    if shadow:
+                        shadow_name = next(
+                            p for p in parts[:-1] if p in _STDLIB_COMMON
+                        )
+                        files_to_skip.append(
+                            f"{fname}: COMPILED BUT SHADOWS stdlib '{shadow_name}' — must be renamed"
+                        )
+                        file_outcomes[fname] = f"shadows stdlib '{shadow_name}'"
+                    else:
+                        files_to_skip.append(f"{fname}: already exists, compile OK")
+                        file_outcomes[fname] = "already exists and compiles OK"
+                        if fname not in implemented:
+                            implemented.append(fname)
 
             print(f"\nFiles to skip (already exist and compile): {len(files_to_skip)}")
             for f in files_to_skip:
@@ -868,6 +894,32 @@ class ImplementCommand(Command):
             analysis_context = _extract_file_context(analysis_content, target_file)
             plan_context = _extract_file_context(plan_content, target_file)
 
+            # Redirect stdlib-shadowing paths to safe alternatives
+            stdlib_shadow_warning = ""
+            redirected_batch = []
+            for f in batch:
+                f_parts = f.replace("\\", "/").split("/")
+                shadow_part = None
+                for p in f_parts[:-1]:
+                    if p in _STDLIB_COMMON:
+                        shadow_part = p
+                        break
+                if shadow_part:
+                    safe_name = shadow_part + "_utils"
+                    new_f = f.replace(shadow_part + "/", safe_name + "/", 1)
+                    redirected_batch.append(new_f)
+                    stdlib_shadow_warning = (
+                        f"\n\nCRITICAL — The original path '{f}' shadows stdlib module "
+                        f"'{shadow_part}'. You MUST use '{new_f}' instead. "
+                        f"Do NOT write to the shadowing path."
+                    )
+                else:
+                    redirected_batch.append(f)
+            if redirected_batch != batch:
+                batch = redirected_batch
+                target_file = batch[0]
+                batch_files_md = "\n".join([f"- {f}" for f in batch])
+
             # Build a collision warning: class/function names already in the target directory
             collision_warning = ""
             target_dir = os.path.dirname(target_file) if "/" in target_file or "\\" in target_file else ""
@@ -883,7 +935,7 @@ class ImplementCommand(Command):
                     taken_list = ", ".join(f"{n} (in {', '.join(fs[:2])})" for n, fs in sorted(taken.items())[:15])
                     collision_warning = f"\n\nCRITICAL — DO NOT create these names in the new file: {taken_list}. They already exist in the target directory. Modify the existing file instead if you need to extend them."
 
-            user_context = f"Implement ONLY this file — no other files:\n{batch_files_md}\n{export_context}{collision_warning}"
+            user_context = f"Implement ONLY this file — no other files:\n{batch_files_md}\n{export_context}{collision_warning}{stdlib_shadow_warning}"
             if task_context:
                 user_context += f"\n\nTask: {task_context}"
             if analysis_context:
@@ -1085,6 +1137,20 @@ class ImplementCommand(Command):
                     else:
                         print(f"  REJECTED: {reason}")
                         file_outcomes[filename] = f"rejected — {reason}"
+                elif "shadows stdlib" in reason:
+                    # Redirect stdlib-shadowing path: logging -> logging_utils
+                    f_parts = filename.replace("\\", "/").split("/")
+                    for idx, part in enumerate(f_parts[:-1]):
+                        if part in _STDLIB_COMMON:
+                            safe_name = part + "_utils"
+                            f_parts[idx] = safe_name
+                            new_filename = "/".join(f_parts)
+                            new_filepath = workspace / new_filename
+                            print(f"  Redirected: {filename} -> {new_filename} (shadows stdlib '{part}')")
+                            file_outcomes[filename] = f"redirected -> {new_filename}"
+                            filename = new_filename
+                            filepath = new_filepath
+                            break
                         continue
                 else:
                     print(f"  REJECTED: {reason}")
