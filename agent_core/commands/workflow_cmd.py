@@ -143,8 +143,7 @@ def _scan_workspace_context(ws_path: Path, spec_content: str) -> tuple[bool, str
             remaining = max_lines - lines_used
             if remaining <= 0:
                 break
-            lines += entry.splitlines()[:remaining]
-            combined = "".join([combined, "\n".join(lines)])
+            combined += "\n".join(entry.splitlines()[:remaining])
             break
         combined += entry
         lines_used += len(content.splitlines())
