@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 from .base import Command, read_stdin, show_file_diff
 from agent_core import workspace_path
 from agent_core.patch_utils import apply_anchored_patch, apply_patch, split_patch_hunks
-from agent_core.patterns import analyze as static_analyze
+from agent_core.patterns import _docstring_lines, analyze as static_analyze
 
 if TYPE_CHECKING:
     from agent import Agent
@@ -792,11 +792,15 @@ def _fix_iter_dict_keys(wl, idx, line, basename, finding):
     new_line = old_line.replace(".keys()", "")
     if new_line == old_line:
         return None
+    if line in _docstring_lines("\n".join(wl)):
+        return None  # inside docstring — refuse
     return f"@@ -{line},1 +{line},1 @@\n-{old_line}\n+{new_line}"
 
 
 def _fix_type_comparison(wl, idx, line, basename, finding):
     old_line = wl[idx]
+    if line in _docstring_lines("\n".join(wl)):
+        return None  # inside docstring — refuse
     stripped = old_line.lstrip()
     m = _TYPE_EQ_RE.search(stripped)
     if m:

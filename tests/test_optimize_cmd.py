@@ -19,7 +19,7 @@ from agent_core.commands.optimize_cmd import (
     SYSTEM_OVERHEAD_TOKENS,
     _surgically_revert_regressions,
 )
-from agent_core.patterns import analyze as static_analyze, detect_list_append_join, detect_none_eq, detect_fstring_without_placeholder, detect_iter_dict_keys, detect_type_comparison, detect_mutable_default_arg, detect_redundant_bool_expr, detect_missing_context_manager
+from agent_core.patterns import analyze as static_analyze, detect_list_append_join, detect_none_eq, detect_fstring_without_placeholder, detect_iter_dict_keys, detect_type_comparison, detect_mutable_default_arg, detect_redundant_bool_expr, detect_missing_context_manager, _docstring_lines
 
 
 def _numbered_context(user_content: str) -> list[tuple[int, str]]:
@@ -2091,6 +2091,15 @@ class TestIterDictKeysDetector:
         results = static_analyze("for k in d.keys():\n    pass")
         assert "iter_dict_keys" in {r["pattern"] for r in results}
 
+    def test_docstring_not_flagged(self) -> None:
+        code = (
+            "def f(source):\n"
+            '    """``for k in d.keys():`` — drop .keys()."""\n'
+            "    pass\n"
+        )
+        assert detect_iter_dict_keys(code) == []
+
+
 
 class TestTypeComparisonDetector:
     """``type(x) == Foo`` → ``isinstance(x, Foo)``."""
@@ -2123,6 +2132,14 @@ class TestTypeComparisonDetector:
     def test_fixed_clears(self) -> None:
         results = static_analyze("if isinstance(x, str):\n    pass")
         assert "type_comparison" not in {r["pattern"] for r in results}
+
+    def test_docstring_not_flagged(self) -> None:
+        code = (
+            "def g(x):\n"
+            '    """``type(x) == Foo`` — use isinstance.\"\""\n'
+            "    pass\n"
+        )
+        assert detect_type_comparison(code) == []
 
 
 class TestMutableDefaultArgDetector:
@@ -2686,3 +2703,58 @@ class TestMechanicalListAppendJoin:
         ok, patched = apply_patch(hunk, wl)
         after = _count_pattern(patched, "list_append_join")
         assert after == 0
+
+
+class TestMechFixDocstringGuard:
+    """Mechanical fixers must refuse lines inside docstrings."""
+
+    def test_iter_dict_keys_refuses_docstring(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_iter_dict_keys
+        wl = [
+            'def f():',
+            '    """``for k in d.keys():`` — drop .keys()."""',
+            "    pass",
+        ]
+        hunk = _fix_iter_dict_keys(wl, 1, 2, "f.py", {})
+        assert hunk is None
+
+    def test_type_comparison_refuses_docstring(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_type_comparison
+        wl = [
+            'def g(x):',
+            '    """``type(x) == Foo`` — use isinstance."""',
+            "    pass",
+        ]
+        hunk = _fix_type_comparison(wl, 1, 2, "g.py", {})
+        assert hunk is None
+
+    def test_iter_dict_keys_fixes_real_code(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_iter_dict_keys
+        wl = [
+            "def f():",
+            '    """docstring."""',
+            "    for k in d.keys():\n",
+        ]
+        hunk = _fix_iter_dict_keys(wl, 2, 3, "f.py", {})
+        assert hunk is not None
+
+    def test_type_comparison_fixes_real_code(self) -> None:
+        from agent_core.commands.optimize_cmd import _fix_type_comparison
+        wl = [
+            "def g(x):",
+            '    """docstring."""',
+            "    if type(x) == str:\n",
+        ]
+        hunk = _fix_type_comparison(wl, 2, 3, "g.py", {})
+        assert hunk is not None
+
+    def test_docstring_lines_returns_multi_line(self) -> None:
+        code = (
+            'def f():\n'
+            '    """\n'
+            "    multi-line doc.\n"
+            '    """\n'
+            "    pass\n"
+        )
+        ds = _docstring_lines(code)
+        assert {2, 3, 4} == ds

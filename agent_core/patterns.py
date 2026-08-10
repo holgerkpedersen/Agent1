@@ -5,9 +5,39 @@ Each detector takes source code as a string and returns a list of
 are possible but kept low by regex anchoring.
 """
 
+import ast
 import io
 import re
 import tokenize
+
+
+def _docstring_lines(source: str) -> set[int]:
+    """Return 1-based line numbers that belong to any docstring in *source*."""
+    try:
+        tree = ast.parse(source, type_comments=True)
+    except SyntaxError:
+        return set()
+
+    spans: list[tuple[int, int]] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            continue
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        if isinstance(first, ast.Expr) and isinstance(
+            first.value, (ast.Constant,)
+        ) and isinstance(first.value.value, str):
+            spans.append((first.lineno, first.end_lineno or first.lineno))
+
+    lines: set[int] = set()
+    for start, end in spans:
+        lines.update(range(start, end + 1))
+    return lines
 
 
 def analyze(source: str) -> list[dict]:
@@ -1364,9 +1394,10 @@ def detect_fstring_without_placeholder(source: str) -> list[tuple[int, str, str]
 def detect_iter_dict_keys(source: str) -> list[tuple[int, str, str]]:
     """``for k in d.keys():`` or ``k in d.keys()`` — drop the redundant ``.keys()``."""
     findings: list[tuple[int, str, str]] = []
+    _ds = _docstring_lines(source)
     for i, line in enumerate(source.split("\n"), 1):
         stripped = line.strip()
-        if stripped.startswith("#"):
+        if stripped.startswith("#") or i in _ds:
             continue
         m = _FOR_IN_KEYS_RE.search(stripped) or _IN_KEYS_RE.search(stripped)
         if not m:
@@ -1380,9 +1411,10 @@ def detect_iter_dict_keys(source: str) -> list[tuple[int, str, str]]:
 def detect_type_comparison(source: str) -> list[tuple[int, str, str]]:
     """``type(x) == SomeType`` / ``type(x) in (A, B)`` — use ``isinstance``."""
     findings: list[tuple[int, str, str]] = []
+    _ds = _docstring_lines(source)
     for i, line in enumerate(source.split("\n"), 1):
         stripped = line.strip()
-        if stripped.startswith("#"):
+        if stripped.startswith("#") or i in _ds:
             continue
         m = re.search(r"type\((\w+)\)\s*==\s*(\w+)", stripped)
         if m:
