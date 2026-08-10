@@ -5,7 +5,6 @@ Async-safe correlation tracking & context propagation utilities.
 Provides thread/isolated task scoping for distributed tracing and request correlation.
 """
 
-from __future__ import annotations
 
 import contextvars
 import uuid

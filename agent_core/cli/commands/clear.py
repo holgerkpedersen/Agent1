@@ -12,7 +12,7 @@ class ClearCommand:
     def display_stats(self) -> None:
         """Display statistics/summary of conversation context before clearing."""
         stats = self._session_manager.get_session_stats()
-        print(f"Session stats:")
+        print("Session stats:")
         print(f"  Messages: {stats['message_count']}")
         print(f"  Tokens used: {stats['token_usage']}")
         print(f"  Last activity: {stats['last_activity']}")

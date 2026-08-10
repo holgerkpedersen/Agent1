@@ -1,7 +1,6 @@
 from __future__ import annotations
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
-import logging
 
 class MessageType(Enum):
     EVENT = "event"
@@ -60,7 +59,6 @@ class RoutingBus:
 
     def broadcast(self, payload: Dict[str, Any], msg_type: MessageType = MessageType.EVENT, **kwargs: Any) -> List[Any]:
         results = []
-        msg = Message(str(payload))
         for dest in self._subscriptions.get(msg_type, []):
             res = self.send(dest, payload)
             if res is not None:

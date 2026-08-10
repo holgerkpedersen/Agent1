@@ -40,7 +40,7 @@ class LLMClient:
             if not choices:
                 logger.warning("LLM response contained no choices")
                 return LlmResponse(
-                    content=f"No response from LLM",
+                    content="No response from LLM",
                     is_error=True,
                     error_code="NO_RESPONSE",
                 )
@@ -50,7 +50,7 @@ class LLMClient:
             if not message_content:
                 logger.warning("LLM returned empty content")
                 return LlmResponse(
-                    content=f"Empty response from LLM",
+                    content="Empty response from LLM",
                     is_error=True,
                     error_code="EMPTY_RESPONSE",
                 )

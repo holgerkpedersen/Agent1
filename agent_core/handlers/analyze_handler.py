@@ -1,9 +1,7 @@
 """Analyze a Python source file and report structural signatures via AST."""
-from __future__ import annotations
 
 import ast
 import logging
-import re
 from pathlib import Path
 from typing import Final
 
