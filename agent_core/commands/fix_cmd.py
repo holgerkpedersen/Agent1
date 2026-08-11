@@ -442,14 +442,20 @@ class FixCommand(Command):
 
         Usage: fix --mypy [path...] [--limit N] [--rounds N]
         Default targets: agent_core/, agent1/ and agent.py in the current dir.
+        Each LLM attempt fixes a slice of ~4 errors per file; --rounds is the
+        maximum number of attempts per file.
         """
         limit = 5
         rounds = 2
+        yes_mode = "--yes" in parts
         ws_dir = os.path.abspath(".")
         targets: list[str] = []
         i = 0
         while i < len(parts):
             p = parts[i]
+            if p == "--yes":
+                i += 1
+                continue
             if p == "--limit" and i + 1 < len(parts):
                 limit = int(parts[i + 1])
                 i += 2
@@ -499,7 +505,11 @@ class FixCommand(Command):
                 print(f"  Skipping {rel_file} (not found)")
                 continue
             print(f"\n[fix --mypy] {rel_file}: {len(errs)} error(s)")
-            for attempt in range(rounds):
+            remaining = list(errs)
+            for attempt in range(max(rounds, 1)):
+                if not remaining:
+                    break
+                slice_errs = remaining[:4]
                 try:
                     with open(full, "r", encoding="utf-8") as f:
                         current = f.read()
@@ -508,7 +518,7 @@ class FixCommand(Command):
                     break
                 lines = current.split('\n')
                 user_sections = []
-                for err in errs[:12]:
+                for err in slice_errs:
                     error_line = _parse_line_number(err)
                     before, after, instruction = _classify_error(err)
                     window = _extract_window(lines, error_line, before, after)
@@ -517,15 +527,28 @@ class FixCommand(Command):
                         f"Relevant code:\n```python\n{window}\n```\n"
                     )
                 msgs = [
-                    {"role": "system", "content": f"Fix the mypy errors in {rel_file}. Make the smallest possible targeted changes. Output the fix as ONE of: [PATCH: {rel_file}] with unified hunks, or [FILE: {rel_file}] with the complete corrected file. Do NOT output anything else."},
+                    {"role": "system", "content": f"Fix the mypy errors in {rel_file}. Make the smallest possible targeted changes. Prefer [PATCH:]; if the file is over ~200 lines use [PATCH:] exclusively. Output the fix as ONE of: [PATCH: {rel_file}] with unified hunks, or [FILE: {rel_file}] with the complete corrected file. Do NOT output anything else."},
                     {"role": "user", "content": "\n".join(user_sections) + f"\n\nOutput format:\n[PATCH: {rel_file}]\n@@ -line,count +line,count @@\n unchanged line\n-removed line\n+added line\n\nOR if a larger rewrite is needed:\n[FILE: {rel_file}]\n```python\n# complete corrected file\n```"},
                 ]
-                response = await agent.llm.chat(msgs)
+                print(f"  Attempt {attempt + 1} on {len(slice_errs)} error(s)...")
+                response = await agent.llm.chat(msgs, max_tokens=8000, disable_thinking=True)
                 if not response or response.startswith("[Error") or response.startswith("[LM Studio"):
                     print(f"  LLM error: {response}")
+                    print("  Hint: the model burned its whole output budget on reasoning. Load a non-thinking model (`model load <name>`) or a faster coder model for fix --mypy.")
                     break
                 prev = current
-                changed = self._apply_fix_blocks(response, ws_dir, rel_file)
+                changed = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode)
+                if not changed:
+                    print("  Fix did not apply — retrying once with verbatim-copy instructions")
+                    retry_msgs = [
+                        msgs[0],
+                        {"role": "user", "content": "Your previous [PATCH: ...] hunks did not match the file: the context lines were not exact. Reproduce the hunks using ONLY the exact lines shown in the 'Relevant code' windows above — copy them character-for-character, including indentation. Output a focused patch that touches only the listed lines. Do NOT rewrite whole functions or files.\n\nOutput format (strictly a patch):\n[PATCH: " + rel_file + "]\n@@ -line,count +line,count @@\n unchanged line\n-removed line\n+added line\n"},
+                    ]
+                    response = await agent.llm.chat(retry_msgs, max_tokens=5000, disable_thinking=True)
+                    if not response or response.startswith("[Error") or response.startswith("[LM Studio"):
+                        print(f"  LLM error: {response}")
+                        break
+                    changed = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode)
                 if not changed:
                     print(f"  No usable [PATCH:]/[FILE:] in response for {rel_file}")
                     break
@@ -536,10 +559,9 @@ class FixCommand(Command):
                         f.write(prev)
                     break
                 remaining = parse_errors(run_mypy([rel_file])).get(rel_file, [])
-                print(f"  Round {attempt + 1}: {len(remaining)} error(s) remaining in {rel_file}")
+                print(f"  Attempt {attempt + 1}: {len(remaining)} error(s) remaining in {rel_file}")
                 if not remaining:
                     break
-                errs = remaining
 
         final = parse_errors(run_mypy(targets))
         total = sum(len(v) for v in final.values())
@@ -548,11 +570,12 @@ class FixCommand(Command):
             print(f"  {fp}: {len(cnt)}")
         return True
 
-    def _apply_fix_blocks(self, response: str, ws_dir: str, rel_file: str) -> int:
+    def _apply_fix_blocks(self, response: str, ws_dir: str, rel_file: str, auto_yes: bool = False) -> int:
         """Apply [PATCH:]/[FILE:] blocks targeting rel_file with diff+confirm.
 
         Returns the number of blocks applied. Writes go through save_file_py
-        (y/N confirm); the caller re-compiles and restores on failure.
+        (y/N confirm unless auto_yes); the caller re-compiles and restores on
+        failure.
         """
         full = os.path.normpath(os.path.join(ws_dir, rel_file))
         if not os.path.isfile(full):
@@ -573,11 +596,15 @@ class FixCommand(Command):
         for m in re.finditer(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL):
             if not _targets(m.group(1).strip()):
                 continue
-            ok, result = _impl_apply_patch(m.group(2).strip(), full, current.split('\n'))
+            patch_text = m.group(2).strip()
+            ok, result = _impl_apply_patch(patch_text, full, current.split('\n'))
+            if not ok:
+                from agent_core.patch_utils import apply_anchored_patch
+                ok, result = apply_anchored_patch(patch_text, current.split('\n'))
             if not ok:
                 print(f"  Patch apply failed: {result[:150]}")
                 continue
-            if save_file_py(full, result, auto_yes=False):
+            if save_file_py(full, result, auto_yes=auto_yes):
                 current = result
                 applied += 1
         for m in re.finditer(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?:\n```|$)', clean, re.DOTALL):
@@ -587,7 +614,10 @@ class FixCommand(Command):
             if len(new_code) < 10 or not re.search(r'\b(import|def |class )\b', new_code):
                 print(f"  WARNING: [FILE:] content for {rel_file} looks invalid, skipping")
                 continue
-            if save_file_py(full, new_code, auto_yes=False):
+            if len(current.splitlines()) > 200 and len(new_code) > len(current) * 1.5:
+                print(f"  WARNING: [FILE:] content for {rel_file} is an oversized rewrite, skipping (use [PATCH:] instead)")
+                continue
+            if save_file_py(full, new_code, auto_yes=auto_yes):
                 current = new_code
                 applied += 1
 

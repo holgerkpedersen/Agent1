@@ -42,6 +42,38 @@ def _strip_numbered_prefix(line: str) -> str:
     return line
 
 
+def _mode_delta(deltas: list[int]) -> int:
+    """Pick the dominant patch-vs-file indentation offset, or 0 when weak.
+
+    LLMs sometimes emit hunks where EVERY line (context, removed, added)
+    carries a uniform extra indent bump — strip-compared matching hides it,
+    but '+' lines then land over-indented and break syntax.  The mode of
+    (patch_lead - file_lead) across verified '-'/' ' lines recovers that
+    bump.  Requires the mode to be nonzero, seen at least twice and on the
+    majority of sampled lines, otherwise 0 (keep patch text verbatim).
+    """
+    if not deltas:
+        return 0
+    if len(deltas) == 1:
+        return deltas[0] if deltas[0] != 0 else 0
+    best, count = 0, 0
+    for d in set(deltas):
+        n = deltas.count(d)
+        if n > count:
+            best, count = d, n
+    if best == 0 or count < 2 or count * 2 < len(deltas):
+        return 0
+    return best
+
+
+def _reindent(text: str, lead: int) -> str:
+    """Reapply a target indentation to non-empty *text*."""
+    stripped = text.lstrip()
+    if not stripped:
+        return text
+    return ' ' * max(0, lead) + stripped
+
+
 def split_patch_hunks(patch_text: str) -> list[tuple[int, list[tuple[str, str]]]]:
     """Parse *patch_text* into ``(start_line, [(op, text), ...])`` hunks.
 
@@ -59,7 +91,7 @@ def split_patch_hunks(patch_text: str) -> list[tuple[int, list[tuple[str, str]]]
         part = part.strip("\n")
         if not part:
             continue
-        m = re.match(r"@@\s*-(\d+)(?:,(\d+))?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@(.*)", part, re.DOTALL)
+        m = re.match(r"@@\s*-(\d+)(?:,(\d+))?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@[^\n]*\n(.*)", part, re.DOTALL)
         if not m:
             continue
         start = int(m.group(1))
@@ -95,16 +127,19 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
     # Parse hunks: @@ -start,count +start,count @@ ... @@
     # Also lenient: @@ -start @@ (missing +start part)
     hunks = []
-    for m in re.finditer(r'@@\s*-(\d+)(?:,\d+)?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@(.*?)(?=@@|\Z)', patch_text, re.DOTALL):
+    for m in re.finditer(r'@@\s*-(\d+)(?:,\d+)?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@[^\n]*\n(.*?)(?=@@|\Z)', patch_text, re.DOTALL):
         start = int(m.group(1))
         body = m.group(3).strip('\n')
         chunks: list[tuple[str, str | None]] = []
         for line in body.split('\n'):
             line = line.rstrip('\r')
             line = _strip_numbered_prefix(line)
-            if line.startswith('-'): chunks.append(('-', line[1:]))
-            elif line.startswith('+'): chunks.append(('+', line[1:]))
-            elif line.startswith(' '): chunks.append((' ', line[1:]))
+            if line.startswith('-'):
+                chunks.append(('-', line[1:]))
+            elif line.startswith('+'):
+                chunks.append(('+', line[1:]))
+            elif line.startswith(' '):
+                chunks.append((' ', line[1:]))
         if chunks:
             hunks.append((start, chunks))
     if not hunks:
@@ -132,11 +167,11 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
     # For '-' lines: must match (removed lines)
     # For ' ' context lines: skip if mismatched (LLM often hallucinates context)
     # Record, per hunk, whether its +/- lines carry an LLM padding space.
-    hunk_padding: dict[int, bool] = {}
+    hunk_deltas: dict[int, int] = {}
     for start, chunks in valid_hunks:
         idx = start - 1
         filtered_chunks = []
-        padded = False
+        sampled: list[int] = []
         for op, text in chunks:
             if op == '-':
                 if idx < 0 or idx >= len(original_lines):
@@ -144,10 +179,9 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
                 actual = original_lines[idx].rstrip('\r\n')
                 patch_lead = len(text) - len(text.lstrip())
                 file_lead = len(actual) - len(actual.lstrip())
-                if not padded and patch_lead != file_lead and text.strip() == actual.strip():
-                    padded = True
                 if actual.strip() != text.strip():
                     return False, f"Patch mismatch at line {idx+1}: expected '{text[:60]}'"
+                sampled.append(patch_lead - file_lead)
                 filtered_chunks.append((op, text))
                 idx += 1
             elif op == ' ':
@@ -164,17 +198,20 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
             else:
                 filtered_chunks.append((op, text))
         chunks[:] = filtered_chunks
-        hunk_padding[start] = padded
+        hunk_deltas[start] = _mode_delta(sampled)
 
     def _render_plus(start: int, text: str) -> str:
-        if hunk_padding.get(start, False) and text.startswith(' '):
-            return text[1:]
+        delta = hunk_deltas.get(start, 0)
+        if delta > 0:
+            text = _reindent(text, len(text) - len(text.lstrip()) - delta)
+        elif delta < 0 and text.startswith(' '):
+            text = text[1:]
         return text
 
     # Apply hunks in reverse order.  Content is applied verbatim (only the
     # marker padding is stripped) — indentation is never rewritten here; the
     # syntax check below rejects patches with broken indentation.
-    result = [l + '\n' for l in original_lines]
+    result = [line + '\n' for line in original_lines]
     for start, chunks in reversed(valid_hunks):
         old_lines = [text for op, text in chunks if op in ('-', ' ')]
         new_lines = []
@@ -290,26 +327,27 @@ def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bo
         # Verify the whole old run verbatim (strip-compare) at the anchor and
         # detect the LLM padding-space convention from the first '-'/' ' line.
         idx = anchor
-        padded = False
+        sampled: list[int] = []
         for op, text in chunks:
             if op == '-':
                 actual = original_lines[idx].rstrip('\r\n')
                 patch_lead = len(text) - len(text.lstrip())
                 file_lead = len(actual) - len(actual.lstrip())
-                if not padded and patch_lead != file_lead and actual.strip() == text.strip():
-                    padded = True
                 if actual.strip() != text.strip():
                     return False, (f"Patch mismatch at line {idx + 1}: "
                                    f"expected '{text[:60]}'")
+                sampled.append(patch_lead - file_lead)
                 idx += 1
             elif op == ' ':
                 if idx < len(original_lines) and original_lines[idx].rstrip('\r\n').strip() == text.strip():
                     idx += 1
+        delta = _mode_delta(sampled)
         old_len = idx - anchor
         # Build the replacement: context (' ') lines are RE-EMITTED FROM THE
         # FILE (they were strip-verified above — the patch text may have lost
         # their indentation, e.g. inlined right after a fused @@ header) and
-        # '+' lines come from the patch verbatim (padding stripped).  Removed
+        # '+' lines come from the patch verbatim (indentation corrected by the
+        # hunk's dominant patch-vs-file offset, padding stripped).  Removed
         # '-' lines advance the file pointer (they occupied a slot in the source)
         # but emit nothing, so a trailing context line is re-emitted from the
         # correct original line rather than shifting onto a removed line.
@@ -323,13 +361,15 @@ def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bo
             elif op == '-':
                 k += 1
             elif op == '+':
-                new_lines.append(
-                    text[1:] if (padded and text.startswith(' ')) else text
-                )
+                if delta > 0:
+                    text = _reindent(text, len(text) - len(text.lstrip()) - delta)
+                elif delta < 0 and text.startswith(' '):
+                    text = text[1:]
+                new_lines.append(text)
         edits.append((anchor, old_len, new_lines))
 
     # Apply bottom-up so earlier anchors are never disturbed.
-    result = [l + '\n' for l in original_lines]
+    result = [line + '\n' for line in original_lines]
     for anchor, old_len, new_lines in sorted(edits, key=lambda e: e[0], reverse=True):
         del result[anchor:anchor + old_len]
         for i, text in enumerate(new_lines):

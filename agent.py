@@ -9,7 +9,7 @@ import platform
 import re
 from collections import defaultdict
 from agent_core import to_windows_path
-from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, resolve_model, persist_model_choice
+from agent_core.constants import resolve_model
 from agent_core.llm.lmstudio import LMStudioProvider
 from agent_core.file_system import FileSystem
 from agent_core.file_searcher import FileSearcher
@@ -33,12 +33,10 @@ from agent_core.commands.optimize_cmd import OptimizeCommand
 from agent_core.commands.paste_cmd import PasteCommand
 from agent_core.commands.perf_cmd import PerfCommand, PerfTracker
 from agent_core.commands.decide_cmd import DecideCommand
-from datetime import datetime
 from pathlib import Path
-import json
 import subprocess
 import shlex
-import difflib
+from typing import Any
 
 
 class LLMClient:
@@ -47,8 +45,8 @@ class LLMClient:
     Delegates to LMStudioProvider for all LLM operations.
     """
     
-    def __init__(self, model_name: str = None, api_key: str = None):
-        self._model_name = resolve_model(model_name)
+    def __init__(self, model_name: str | None = None, api_key: str | None = None):
+        self._model_name: str = resolve_model(model_name)
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self._provider = LMStudioProvider(model_name=self._model_name, api_key=self.api_key)
         self._profile_name: str | None = None
@@ -75,12 +73,12 @@ class LLMClient:
     def model_name(self, value: str) -> None:
         self._model_name = value
         self._provider.model_name = value
-    
-    async def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs) -> str:
+
+    async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, **kwargs: Any) -> str:
         """Send chat request to LLM via LM Studio (pass-through wrapper)."""
-        return await self._provider.chat(messages, tools, **kwargs)
-    
-    async def chat_stream(self, messages: list[dict]) -> str:
+        return await self._provider.chat(messages, tools, **kwargs)  # type: ignore[no-any-return]
+
+    async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """Chat with real-time token streaming to console."""
         return await self._provider.chat_stream(messages)
     
@@ -865,9 +863,21 @@ def _is_similar(content1: str, content2: str, threshold: float = 0.8) -> bool:
 async def run_interactive():
     """Interactive mode - allows user to input commands."""
     
+    # Create agent instance (resolves persisted model choice from model.json)
+    agent = Agent(workspace=Agent.DEFAULT_WORKSPACE)
+
     print("=" * 50)
     print("Agent Interactive Mode with LM Studio")
     print(f"Workspace: {Agent.DEFAULT_WORKSPACE}")
+    model_label = agent.llm.model_name
+    print(f"Model: {model_label}" + (f"  |  Profile: {agent.llm._profile_name}" if agent.llm._profile_name else ""))
+    try:
+        from agent_core.llm.lmstudio import get_models_status
+        models = get_models_status()
+        loaded = [m for m in models if m.get("loaded")]
+        print(f"LM Studio: online ({len(loaded)}/{len(models)} models loaded)" if models else "LM Studio: online")
+    except Exception:
+        print("LM Studio: offline")
     print("Commands:")
     print("  read <path>        - Read a file")
     print("  write <path> <content> - Write content to file")
@@ -879,6 +889,7 @@ async def run_interactive():
     print("  implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--force] [--fix] [--retry] [--review] [--workspace <path>] — Implement files")
     print("  fix \"<traceback>\"   - Paste a traceback to auto-fix the error")
     print("  fix <file> --desc \"text\" [--full] - Describe an issue, LLM analyzes full codebase and fixes it")
+    print("  fix --mypy [path...] [--limit N] [--rounds N] [--yes] - Batch-fix mypy errors via LLM")
     print("  cleanup             - Show unreferenced files and reference graph")
     print("  workflow <target> [--from spec.md] [--stdin] [--brainstorm] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] — Full pipeline")
     print("  model [list|load|unload|reload|name|profile] — Manage models via LM Studio API")
@@ -889,9 +900,6 @@ async def run_interactive():
     print("  quit               - Exit")
     print("=" * 50)
     
-    # Create agent instance
-    agent = Agent(workspace=Agent.DEFAULT_WORKSPACE)
-
     # Set up command registry with simple commands
     registry = CommandRegistry()
     registry.register(ReadCommand())
@@ -936,7 +944,7 @@ async def run_interactive():
             if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste", "decide"]:
                 import time as _time
                 _start = _time.perf_counter()
-                result = await registry.execute(command, parts[1:], agent)
+                await registry.execute(command, parts[1:], agent)
                 PerfTracker.record(command, _time.perf_counter() - _start, user_input)
                 continue
 
@@ -955,3 +963,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+

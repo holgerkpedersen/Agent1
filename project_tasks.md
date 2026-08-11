@@ -1,179 +1,20 @@
-<tool_call> or XML tags.
-- PATH RULES: New files MUST use a sub-package prefix (`agent1/...`, `agent_core/...`). I will create `agent_core/types.py`.
-- SIZE RULES: Max 150 lines.
-- STDLIB SHADOWING: Avoid names like `logging`, `config`, etc. `types` is fine, but `agent_core/types.py` might shadow `typing`? No, `types` is stdlib but usually safe if prefixed properly or if it's just a module file. To be strictly safe, I'll use `agent_core/shared_types.py`.
-- CRITICAL: Do not create files overlapping with existing ones in the same directory. The prompt lists many existing files in `agent_core/`, including `config.py`, `exceptions.py`, etc. It does NOT list `shared_types.py` or `types.py`. I will use `agent_core/shared_types.py`.
-
-Let's extract the types carefully:
-- `AppConfig` (from spec)
-- `SecurityViolationError` (from analysis/spec)
-- `ToolName`, `ToolRequest` (tool routing)
-- LLM message/response structures (`ChatMessage`, `Choice`, `ChatCompletionResponse`, etc.)
-- Context/State tracking types
-
-I will structure it cleanly, strictly typed, using `pydantic.BaseModel` and standard library. I'll ensure mypy strict compliance with explicit types and `from __future__ import annotations`.
-
-Check existing files in `agent_core/`:
-`__init__.py`, `agent.py`, `agent_file_context_interface.py`, `config.py`, `constants.py`, `context_management.py`, `entities.py`, `exceptions.py`, `file_context_retriever.py`, `file_searcher.py`, `file_system.py`, `llm_client.py`
-
-I will create `agent_core/shared_types.py`. It doesn't overlap.
-Wait, the prompt says "Extract shared classes/types." I will just output the code block for `agent_core/shared_types.py`.
-
-Let's draft it carefully within 150 lines.
-```python
-from __future__ import annotations
-import re
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Final
-
-from pydantic import BaseModel, Field
-
-
-@dataclass(frozen=True)
-class AppConfig:
-    workspace_root: str
-    lm_studio_url: str = "http://localhost:1234/v1"
-    max_iterations: int = 50
-    allowed_shell_binaries: list[str] = field(default_factory=lambda: ["python", "ls", "cat"])
-    enable_symlink_traversal: bool = False
-
-
-class SecurityViolationError(Exception):
-    pass
-
-DANGEROUS_PATTERN: Final[re.Pattern[str]] = re.compile(r"[;&|`$(){}<>!\\]", re.IGNORECASE)
-
-
-class ToolName(str, Enum):
-    READ_FILE = "read_file"
-    WRITE_FILE = "write_file"
-    EXECUTE_SHELL = "execute_shell"
-
-
-class ToolRequest(BaseModel):
-    name: ToolName
-    arguments: dict[str, str] = Field(default_factory=dict)
-
-
-class FunctionCall(BaseModel):
-    name: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
-
-
-class ToolCall(BaseModel):
-    function: FunctionCall
-    id: str
-    type: str = "function"
-
-
-class ChatMessage(BaseModel):
-    role: str
-    content: str | None = None
-    tool_calls: list[ToolCall] | None = None
-
-
-class Choice(BaseModel):
-    index: int
-    message: ChatMessage
-
-
-class ChatCompletionResponse(BaseModel):
-    choices: list[Choice]
-```
-
-Check constraints:
-- Output ONLY Python code — no intro text. Start with ```python.
-- All types valid, mypy strict compliant.
-- No forward-ref errors (using `from __future__ import annotations` and defining before use).
-- Avoid circular imports.
-- PATH RULES: `agent_core/shared_types.py` is used as filename context implicitly or I will just output the code block with a comment indicating the path, but the prompt says "Output ONLY Python code". I'll just put the code. To be safe, I'll add a docstring with the intended file path.
-- SIZE RULES: 48 lines. Well under 150.
-- STDLIB SHADOWING: `shared_types` is fine.
-
-One detail: The prompt says "Extract shared classes/types." It might expect just the code block. I will provide exactly that.
-I'll verify mypy strict compatibility: `dict[str, Any]`, `list[Choice]`, etc. are valid Python 3.9+. With `from __future__ import annotations`, it's fully postponed. Pydantic v2 handles these fine.
-All good.
-Output matches response.✅
-Proceeds. 
-Wait, should I include `CorrelationIdContext` or similar? The prompt lists existing files that already have some of these. I'll stick to the extracted ones from the spec/analysis that are missing or need consolidation. The provided list shows `agent_core/config.py`, `agent_core/exceptions.py`, etc. exist. So extracting into a new file is fine as long as names don't clash, but I should avoid duplicating existing ones if possible. The prompt says "Extract shared classes/types." from the *spec and analysis*. I'll just output the clean types.
-I will ensure no overlap with the listed files in `agent_core/`. `shared_types.py` is safe.
-Code block only. No extra text.
-Done. 
-Output Generation. 
-(Self-Correction/Refinement during thought)
-The prompt says "Output ONLY Python code — no intro text. Start with ```python."
-I will strictly follow that.
-One minor thing: `pydantic` might not be installed in the target env, but it's standard for this spec. I'll keep it.
-All constraints met.
-Proceeds. 
-[Output Generation] -> *Proceeds*
-</think>
-
-```python
-"""Intended file path: agent_core/shared_types.py"""
-from __future__ import annotations
-import re
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Final
-
-from pydantic import BaseModel, Field
-
-
-@dataclass(frozen=True)
-class AppConfig:
-    """Validated application settings."""
-    workspace_root: str
-    lm_studio_url: str = "http://localhost:1234/v1"
-    max_iterations: int = 50
-    allowed_shell_binaries: list[str] = field(default_factory=lambda: ["python", "ls", "cat", "grep", "find"])
-    enable_symlink_traversal: bool = False
-
-
-class SecurityViolationError(Exception):
-    """Raised when a path operation violates workspace boundaries or security policies."""
-    pass
-
-DANGEROUS_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"[;&|`$(){}<>!\\]", re.IGNORECASE
-)
-
-
-class ToolName(str, Enum):
-    READ_FILE = "read_file"
-    WRITE_FILE = "write_file"
-    EXECUTE_SHELL = "execute_shell"
-
-
-class ToolRequest(BaseModel):
-    """Strictly typed tool invocation schema."""
-    name: ToolName
-    arguments: dict[str, str] = Field(default_factory=dict)
-
-
-class FunctionCall(BaseModel):
-    name: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
-
-
-class ToolCall(BaseModel):
-    function: FunctionCall
-    id: str
-    type: str = "function"
-
-
-class ChatMessage(BaseModel):
-    role: str
-    content: str | None = None
-    tool_calls: list[ToolCall] | None = None
-
-
-class Choice(BaseModel):
-    index: int
-    message: ChatMessage
-
-
-class ChatCompletionResponse(BaseModel):
-    choices: list[Choice]
-```
+1. `agent_core/config.py` — Replace fragile `.env` parsing with validated configuration management and type-safe defaults
+2. `agent_core/llm/config.py` — Integrate robust config validation for LLM provider settings and retry parameters
+3. `agent_core/security/path_utils.py` — Consolidate duplicated path normalization and workspace boundary enforcement logic
+4. `agent_core/security/sanitizer.py` — Add centralized secret masking and consistent input sanitization utilities
+5. `agent_core/logging_config.py` — Create structured logging configuration to replace scattered print statements and silent exceptions
+6. `agent_core/llm/retry_adapter.py` — Implement exponential backoff retries and rate limiting for LLM API calls
+7. `agent_core/tool_executor.py` — Extract tool execution logic from monolithic agent and replace unsafe shell=True subprocess calls
+8. `agent_core/nlp_parser.py` — Extract NLP parsing and intent classification into a dedicated module with standardized type hints
+9. `agent_core/llm/provider.py` — Refactor LLM wrapping to use structured logging, graceful degradation, and the new retry adapter
+10. `agent_core/routing/bus.py` — Update routing bus to handle structured errors and integrate with centralized logging
+11. `agent_core/file_context_retriever.py` — Replace inline path checks with consolidated security utilities and add context-aware retrieval fallbacks
+12. `agent_core/commands/base.py` — Standardize command base class with type hints, structured error handling, and shared validation logic
+13. `agent_core/commands/implement_cmd.py` — Patch _execute_nlp_tool to use safe subprocess execution without shell=True
+14. `agent_core/handlers/base_handler.py` — Refactor handler base to enforce SRP, integrate structured logging, and remove silent exception swallowing
+15. `agent_core/agent.py` — Decompose monolithic Agent class by delegating CLI, NLP, tool execution, and LLM tasks to extracted modules
+16. `agent_core/cli/commands/clear.py` — Update clear command to use standardized logging and validated configuration paths
+17. `agent1/providers/async_llm.py` — Integrate rate limiting and backoff retries into async provider implementation
+18. `agent1/swarm/orchestrator.py` — Refactor orchestrator to leverage extracted agent modules and structured error handling
+19. `agent_core/diff/semantic_parser.py` — Add type annotations and graceful fallbacks for semantic diff parsing failures
+20. `agent_core/security/allowlist.py` — Enhance command allowlist with dynamic validation and structured audit logging
