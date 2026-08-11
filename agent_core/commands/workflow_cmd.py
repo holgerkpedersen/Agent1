@@ -7,6 +7,7 @@ from .analysis_verifier import verify_analysis_claims
 from .base import Command, read_stdin
 from .reasoning_strip import strip_reasoning
 from agent_core import to_windows_path
+from agent_core.decisions import add_decision, extract_from_analysis
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -386,7 +387,7 @@ class WorkflowCommand(Command):
                     # Write analysis with traceability header
                     with open(analysis_md, "w", encoding="utf-8") as f:
                         f.write(trace_header)
-                        f.write(strip_reasoning(r))
+                        f.write(strip_reasoning(r, mode="analysis"))
                     print("  [analyze] First pass generated")
 
                     # Ambiguity gate — halt before plan if blockers exist and --force not given
@@ -435,7 +436,7 @@ class WorkflowCommand(Command):
                     if step_ok(critique_r):
                         with open(analysis_md, "a", encoding="utf-8") as f:
                             f.write("\n\n---\n\n## Refinement (self-critique)\n")
-                            f.write(strip_reasoning(critique_r))
+                            f.write(strip_reasoning(critique_r, mode="analysis"))
                         print("  [analyze] Appended refinement pass")
                     else:
                         print(f"  [analyze] Critique failed (non-blocking): {critique_r[:100]}")
@@ -447,6 +448,48 @@ class WorkflowCommand(Command):
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
 
+                # Auto-extract decision candidates from analysis
+                try:
+                    candidates = await extract_from_analysis(agent, analysis)
+                    if candidates:
+                        print(f"\n[decide] Extracted {len(candidates)} decision candidates:")
+                        for i, c in enumerate(candidates, 1):
+                            print(f"  {i}. {c.get('title', 'Untitled')}")
+                            ctx = c.get('context', '')
+                            if ctx:
+                                print(f"     {ctx}")
+                        print("\n  Record? (1,2/all/N, press Enter to skip): ", end="")
+                        try:
+                            choice = input().strip().lower()
+                        except (EOFError, KeyboardInterrupt):
+                            choice = ""
+                        if choice and choice != "n":
+                            ws_str = str(ws_path)
+                            if choice == "all":
+                                selected = range(len(candidates))
+                            else:
+                                selected = []
+                                for part in choice.replace(" ", "").split(","):
+                                    try:
+                                        selected.append(int(part) - 1)
+                                    except ValueError:
+                                        pass
+                            for idx in selected:
+                                if 0 <= idx < len(candidates):
+                                    c = candidates[idx]
+                                    record = add_decision(
+                                        ws_str,
+                                        c.get("title", "Untitled"),
+                                        context=c.get("context", ""),
+                                        decision=c.get("decision", ""),
+                                        rationale=c.get("rationale", ""),
+                                        affected_files=c.get("affected_files", []),
+                                        tags=c.get("tags", []),
+                                    )
+                                    print(f"  Recorded #{record['id']}: {record['title']}")
+                except Exception:
+                    pass
+
                 print("\n[plan] Creating plan...")
                 r = await agent.llm.chat([
                     {"role": "system", "content": "You are an expert software architect. Create a detailed coding plan with ALL files needed. Follow SOLID principles — each file has a single responsibility. New files should be small and focused (max 150 lines). If a concept needs more code, split across multiple files. Ensure all Python code passes mypy strict type checking. No unbound TypeVars, no type mismatches. Never use <tool_call> or XML tags."},
@@ -456,7 +499,7 @@ class WorkflowCommand(Command):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
                 with open(plan_md, "w", encoding="utf-8") as f:
-                    f.write(strip_reasoning(r))
+                    f.write(strip_reasoning(r, mode="light"))
                 print("[plan] Written")
 
             if not force and os.path.exists(entities_md):
@@ -474,7 +517,7 @@ class WorkflowCommand(Command):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
                 with open(entities_md, "w", encoding="utf-8") as f:
-                    f.write(strip_reasoning(r))
+                    f.write(strip_reasoning(r, mode="light"))
                 print("[entities] Written")
 
             if not force and os.path.exists(tasks_md):
@@ -494,7 +537,7 @@ class WorkflowCommand(Command):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
                 with open(tasks_md, "w", encoding="utf-8") as f:
-                    f.write(strip_reasoning(r))
+                    f.write(strip_reasoning(r, mode="light"))
                 print("[taskplan] Written")
 
             print(f"\nNext: implement {tasks_md} {plan_md} {entities_md} --workspace {target_workspace} --force")
@@ -554,7 +597,7 @@ class WorkflowCommand(Command):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
                 with open(plan_md, "a", encoding="utf-8") as f:
-                    f.write(f"\n\n---\n\n{strip_reasoning(r)}")
+                    f.write(f"\n\n---\n\n{strip_reasoning(r, mode="light")}")
                 print(f"[plan] Appended to {plan_md}")
 
             if not force and os.path.exists(entities_md):
@@ -574,7 +617,7 @@ class WorkflowCommand(Command):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
                 with open(entities_md, "a", encoding="utf-8") as f:
-                    f.write(f"\n\n---\n\n{strip_reasoning(r)}")
+                    f.write(f"\n\n---\n\n{strip_reasoning(r, mode="light")}")
                 print("[entities] Appended")
 
             if not force and os.path.exists(tasks_md):
@@ -592,7 +635,7 @@ class WorkflowCommand(Command):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
                 with open(tasks_md, "a", encoding="utf-8") as f:
-                    f.write(f"\n\n---\n\n{strip_reasoning(r)}")
+                    f.write(f"\n\n---\n\n{strip_reasoning(r, mode="light")}")
                 print("[taskplan] Appended")
 
             print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
@@ -613,12 +656,22 @@ class WorkflowCommand(Command):
                     self.error("[analyze] No py files. Use --from spec.md for greenfield.")
                     return True
                 combined = ""
+                lines_used = 0
+                max_lines = 5000
                 for pf in py_files:
                     try:
                         with open(pf, "r", encoding="utf-8") as f:
-                            combined += f"\n\n# ---- {pf} ----\n{f.read()}"
+                            entry = f"\n\n# ---- {pf} ----\n{f.read()}"
                     except Exception:
-                        print("Warning: silenced exception in workflow_cmd.py")
+                        continue
+                    entry_lines = len(entry.splitlines())
+                    if lines_used + entry_lines > max_lines:
+                        remaining = max_lines - lines_used
+                        if remaining > 0:
+                            combined += "\n".join(entry.splitlines()[:remaining])
+                        break
+                    combined += entry
+                    lines_used += entry_lines
                 analyze_system = (
                     "You are an expert software architect. Evaluate this codebase across 5 dimensions. "
                     "For each dimension, limit to 3 bullet points max 50 words each. Be concise."
@@ -658,7 +711,7 @@ class WorkflowCommand(Command):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
                 with open(plan_md, "w", encoding="utf-8") as f:
-                    f.write(strip_reasoning(r))
+                    f.write(strip_reasoning(r, mode="light"))
                 print("[plan] Written")
 
             if not force and os.path.exists(entities_md):
@@ -676,7 +729,7 @@ class WorkflowCommand(Command):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
                 with open(entities_md, "w", encoding="utf-8") as f:
-                    f.write(strip_reasoning(r))
+                    f.write(strip_reasoning(r, mode="light"))
                 print("[entities] Written")
 
             if not force and os.path.exists(tasks_md):
@@ -694,7 +747,7 @@ class WorkflowCommand(Command):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
                 with open(tasks_md, "w", encoding="utf-8") as f:
-                    f.write(strip_reasoning(r))
+                    f.write(strip_reasoning(r, mode="light"))
                 print("[taskplan] Written")
 
             print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")

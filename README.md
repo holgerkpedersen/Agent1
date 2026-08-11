@@ -60,6 +60,14 @@ optimize <file|dir> [--apply] [--stdin] [--yes] Find and apply performance/memor
                                    touch docstring/comment lines
 perf [--detail|--reset|--html]       Command performance dashboard (timing per command)
 clear [stats|--force]            Show memory stats, confirm then clear
+decide "title" --why "..."       Record a design decision with rationale
+     --what "..."                 (tags, files, context tracked)
+     --tags t1,t2 --files f1.py
+decide list [--tag t] [--search q] Search past decisions
+decide show <id>                 Show full decision record
+decide check --text "idea"       LLM checks if idea contradicts past decisions
+decide resolve <id1> <id2>       LLM resolves contradiction between two decisions
+decide extract [--from a.md]     Auto-extract decisions from project analysis
 ```
 
 Any text not matching a command is sent to the LLM as **natural language**. The LLM can explore the codebase by requesting tools inline:
@@ -190,6 +198,7 @@ Agent1/
 │       ├── fix_cmd.py            # Auto-fix errors
 │       ├── workflow_cmd.py       # Full pipeline
 │       ├── reasoning_strip.py    # LLM reasoning token removal
+│       ├── decide_cmd.py         # Decision tracking command
 │       └── analysis_verifier.py  # Code-claim verification
 ├── src/agent1/                   # Generated multi-agent framework
 │   ├── core/                     # Agent, message bus, context manager
@@ -238,5 +247,6 @@ pytest tests/ -v
 - **Reasoning leakage stripping**: automatically removes LLM chain-of-thought text (`` / `` tags), self-correction markers, "[Output Generation]" badges, "Let's..."/"Wait,..." reasoning lines, and checkmark emoji markers from all workflow-generated output files. Keeps analysis, plan, entities, and taskplan files clean.
 - **Config module shadowing resolved**: removed dead `agent_core/config/` directory that shadowed `agent_core/config.py`, fixing `import agent_core.config.schema` failures. Similarly resolved `agent_core/logging/` stdlib shadow.
 - Optimize command: mechanical `regex_in_loop` fixes hoist `re.compile()` into descriptive named constants (`_FOR_WHILE_RE`, `_TYPE_EQ_RE`) derived from the pattern, reusing existing identical compiles instead of duplicating them; detectors and mechanical fixers skip docstring lines entirely
+- **Decision tracking system**: record, search, and enforce design decisions. `decide` command for manual recording. Auto-extracts decision candidates from `workflow`, `implement`, and `fix` runs. Past decisions are injected as hard constraints into LLM prompts — preventing accidental contradictions. LLM-powered contradiction detection and resolution.
 - Patch application tests for strict, anchored, deletion-only, and `N |`-prefix stripping
 - LM Studio thinking-disable payload tests across models and server versions

@@ -170,7 +170,7 @@ class Command(ABC):
     async def execute(self, args: list[str], agent: Agent) -> bool: ...
 ```
 
-### Commands (13 total)
+### Commands (14 total)
 
 | Command | Class | Purpose |
 |---|---|---|
@@ -187,6 +187,10 @@ class Command(ABC):
 | `fix` | `FixCommand` | Fix from traceback or description |
 | `cleanup` | `CleanupCommand` | Show unreferenced files |
 | `workflow` | `WorkflowCommand` | Full pipeline: analyze→plan→entities→tasks→implement |
+| `optimize` | `OptimizeCommand` | Find and apply performance/quality improvements |
+| `perf` | `PerfCommand` | Command performance dashboard |
+| `paste` | `PasteCommand` | Paste multi-line text for analysis |
+| `decide` | `DecideCommand` | Record, search, and enforce design decisions
 
 ### REPL Loop (`run_interactive()`)
 
@@ -281,6 +285,27 @@ src/agent1/
 - **Protocol-based interfaces**: `StorageBackend`, `PluginInterface`, `VectorEmbeddingModel` are Protocols for mypy-strict compliance.
 - **Composition over inheritance**: Components like `MemoryStore` compose `SQLiteStorage`, `EmbeddingService`, `VectorDatabase` rather than inheriting.
 - **Lifecycle management**: Plugins follow `initialize → execute → cleanup`, managed by `PluginManager`.
+
+### Safety Architecture
+
+The framework has multiple layers of protection against common AI agent failure modes:
+
+**Stdlib Shadowing Prevention (3 layers):**
+1. Workflow prompts warn the LLM against directory names matching stdlib modules (logging/, json/, types/)
+2. Analysis verifier flags shadowed paths as `[UNVERIFIED]` before implementation
+3. Implement command auto-redirects shadowed paths (`logging/` → `logging_utils/`)
+
+**LLM Reasoning Stripping** (`agent_core/commands/reasoning_strip.py`):
+- Automatic removal of LLM chain-of-thought, thinking tags, self-correction markers, and output generation badges from all workflow-generated files
+- Two modes: `"analysis"` (aggressive section extraction + reasoning removal) and `"light"` (regex-only tag stripping for plan/entities/taskplan)
+- Prevents corrupted output when models leak reasoning into responses
+
+**Decision Tracking** (`agent_core/decisions.py`, `decide` command):
+- `.decisions.json` stores design decisions with context, rationale, affected files, and tags
+- Auto-extracts decision candidates from `workflow`, `implement`, and `fix` runs
+- Past decisions injected as hard constraints into LLM prompts — prevents accidental contradictions
+- LLM-powered contradiction detection (`decide check`) and resolution (`decide resolve`)
+- Full lifecycle: make decisions → record them → enforce on future runs → detect drift
 
 ## 7. Test Architecture
 

@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .base import Command, show_file_diff
+from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -779,8 +780,20 @@ class FixCommand(Command):
                 print(f"    '{name}' from '{mod}' not found. Available: {', '.join(avail[:5])}")
 
         print("\nSending to LLM for fix...")
+        fix_system = "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged. No duplicate functions. No _v1/_v2 variants.\n\nWhen fixing type errors (arg-type, incompatible type), search the ENTIRE file for where the variable is defined/initialized, not just where the error occurs. Fix the initialization to use the correct type. Do NOT change function signatures.\n\nOutput the fix using ONE of these formats:\n[PATCH: filename.py] — for small fixes near the error line\n[FILE: filename.py] — when the fix is far from the error or needs full context\n\n[PATCH:] example:\n[PATCH: filename.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n\n[FILE:] example:\n[FILE: filename.py]\n```python\n# complete corrected file\n```"
+        # Inject past decisions as constraints
+        try:
+            basename = os.path.basename(fpath) if fpath else ""
+            constraints = decisions_as_system_prompt(
+                str(Path(fpath).parent.resolve()) if fpath else "",
+                [basename] if basename else []
+            )
+            if constraints:
+                fix_system += constraints
+        except Exception:
+            pass
         fix_msgs = [
-            {"role": "system", "content": "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged. No duplicate functions. No _v1/_v2 variants.\n\nWhen fixing type errors (arg-type, incompatible type), search the ENTIRE file for where the variable is defined/initialized, not just where the error occurs. Fix the initialization to use the correct type. Do NOT change function signatures.\n\nOutput the fix using ONE of these formats:\n[PATCH: filename.py] — for small fixes near the error line\n[FILE: filename.py] — when the fix is far from the error or needs full context\n\n[PATCH:] example:\n[PATCH: filename.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n\n[FILE:] example:\n[FILE: filename.py]\n```python\n# complete corrected file\n```"},
+            {"role": "system", "content": fix_system},
             {"role": "user", "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n" + "\n".join([f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}" for m, n, s, a in all_broken]) + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}
         ]
         fixed = await agent.llm.chat(fix_msgs)
@@ -838,5 +851,49 @@ class FixCommand(Command):
         else:
             print("Could not parse fix from LLM response")
             print(f"Raw: {fixed[:300]}")
+
+        # Auto-extract design decisions from this fix
+        if fpath and os.path.exists(fpath):
+            try:
+                basename = os.path.basename(fpath)
+                candidates = await extract_from_changes(
+                    agent, [basename],
+                    context=f"Fixed {fpath}: {error_msg[:300] if error_msg else 'unknown error'}"
+                )
+                if candidates:
+                    print(f"\n[decide] Extracted {len(candidates)} decision candidates from this fix:")
+                    for i, c in enumerate(candidates, 1):
+                        print(f"  {i}. {c.get('title', 'Untitled')}")
+                    print("  Record? (1/all/N, press Enter to skip): ", end="")
+                    try:
+                        choice = input().strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        choice = ""
+                    if choice and choice != "n":
+                        ws_str = str(Path(fpath).parent.resolve())
+                        if choice == "all":
+                            selected = range(len(candidates))
+                        else:
+                            selected = []
+                            for part in choice.replace(" ", "").split(","):
+                                try:
+                                    selected.append(int(part) - 1)
+                                except ValueError:
+                                    pass
+                        for idx in selected:
+                            if 0 <= idx < len(candidates):
+                                c = candidates[idx]
+                                record = add_decision(
+                                    ws_str,
+                                    c.get("title", "Untitled"),
+                                    context=c.get("context", ""),
+                                    decision=c.get("decision", ""),
+                                    rationale=c.get("rationale", ""),
+                                    affected_files=c.get("affected_files", []),
+                                    tags=c.get("tags", []),
+                                )
+                                print(f"  Recorded #{record['id']}: {record['title']}")
+            except Exception:
+                pass
 
         return True

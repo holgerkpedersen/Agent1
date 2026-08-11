@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 from .base import Command, read_stdin, show_file_diff
 from agent_core import workspace_path
+from agent_core.decisions import find_decisions, find_overlaps, format_for_prompt
 from agent_core.patch_utils import apply_anchored_patch, apply_patch, split_patch_hunks
 from agent_core.patterns import _docstring_lines, analyze as static_analyze
 
@@ -1769,8 +1770,9 @@ class OptimizeCommand(Command):
         yes_mode = "--yes" in parts
         stdin_mode = "--stdin" in parts
         list_mode = "--list" in parts or "-l" in parts
+        force_mode = "--force" in parts
 
-        parts = [p for p in parts if p not in ("--apply", "--yes", "--stdin", "--verbose", "-v", "--list", "-l")]
+        parts = [p for p in parts if p not in ("--apply", "--yes", "--stdin", "--verbose", "-v", "--list", "-l", "--force")]
 
         targets: list[str] = []
 
@@ -1945,6 +1947,15 @@ class OptimizeCommand(Command):
                             f"```\n{context}\n```\n\n"
                             "Output exactly one [PATCH: " + basename + "] block per the system rules."
                         )
+                        # Inject past decisions as context (first attempt only)
+                        if attempt == 0:
+                            try:
+                                past = find_decisions(ws, files=[basename])
+                                if past:
+                                    decisions_ctx = format_for_prompt(past)
+                                    user_content += "\n\n" + decisions_ctx
+                            except Exception:
+                                pass
                         if feedback:
                             user_content = feedback + "\n\n" + user_content
                         try:
@@ -1990,6 +2001,21 @@ class OptimizeCommand(Command):
                             )
                             print(f"    Feedback: {feedback[:240]}")
                             continue
+                        # Check if this fix contradicts a past decision
+                        if not force_mode:
+                            past = find_decisions(ws, files=[basename])
+                            if past:
+                                fix_tags = _infer_tags_from_finding(pattern)
+                                overlaps = find_overlaps(
+                                    {"tags": fix_tags, "affected_files": [basename]}, past
+                                )
+                                if overlaps:
+                                    ids = ", ".join(f"#{d['id']}" for d in overlaps)
+                                    titles = "; ".join(d['title'] for d in overlaps)
+                                    print(f"    WARNING: Fix contradicts past decisions: {ids} ({titles})")
+                                    print(f"    Use --force to override and apply anyway.")
+                                    resolved = False
+                                    break
                         placeholder_warn = any(p in raw.lower() for p in _PLACEHOLDER_PHRASES)
                         if placeholder_warn:
                             feedback = ("NEVER use placeholder text. Copy actual source lines from the numbered context. "
@@ -2236,3 +2262,17 @@ class OptimizeCommand(Command):
 
         print(f"\n  Done. Applied {applied}/{len(all_fixes)} fix(es).")
         return True
+
+
+def _infer_tags_from_finding(pattern: str) -> list[str]:
+    mapping = {
+        "regex_in_loop": ["optimization", "performance"],
+        "list_append_join": ["optimization", "performance"],
+        "silent_except": ["error-handling"],
+        "dead_code": ["dead-code", "cleanup"],
+        "unused_import": ["dead-code", "cleanup"],
+        "dead_assignment": ["dead-code", "cleanup"],
+        "type_arg": ["typing"],
+        "broad_except": ["error-handling"],
+    }
+    return mapping.get(pattern, ["optimization"])

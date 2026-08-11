@@ -570,6 +570,112 @@ Every command is automatically timed. View stats anytime:
 
 ---
 
+## Decision Tracking
+
+Every `implement` and `fix` run auto-extracts design decisions and suggests recording them. Decisions are stored in `.decisions.json` and are enforced as constraints on future changes.
+
+### Recording decisions
+
+```
+> decide "Use composition over inheritance for security" --why "Injected via __init__" --what "Chose composition to avoid fragile base class issues" --tags architecture,security --files agent_core/security/allowlist.py
+  
+  Recorded decision #001: Use composition over inheritance for security
+```
+
+### Searching decisions
+
+```
+> decide list --tag security
+
+  1 decision(s):
+  ------------------------------------------------------------
+    #001  2026-08-11  Use composition over inheritance for security
+           files: agent_core/security/allowlist.py
+           tags:  architecture, security
+
+> decide list --search "logging"
+
+> decide list --file agent_core/config.py
+
+> decide show 001
+    id: 001
+    date: 2026-08-11
+    title: Use composition over inheritance for security
+    ...
+```
+
+### Auto-extraction from workflow/implement/fix
+
+After `workflow` runs, the analysis is scanned for decision candidates:
+
+```
+[decide] Extracted 3 decision candidates:
+  1. "Resolve module-vs-package conflict in agent_core/config"
+  2. "Add deterministic termination to refinement loop"
+  3. "Sandbox shell execution via allowlist"
+
+  Record? (1,2/all/N, press Enter to skip): 1,3
+  Recorded #002
+  Recorded #003
+```
+
+After `implement` or `fix` runs, file changes are analyzed for design choices:
+
+```
+[decide] Extracted 2 decision candidates from this run:
+  1. "Use path_utils.normalize_path for all file operations"
+  2. "Inject dependencies via __init__ instead of module globals"
+
+  Record? (1,2/all/N, press Enter to skip): 
+```
+
+Press Enter to skip — decisions are optional. They accumulate in `.decisions.json` as you go.
+
+### Contradiction detection
+
+Before recording a new decision, check if it conflicts:
+
+```
+> decide check --text "Move schema.py back under agent_core/config/"
+
+  Tag/file overlap detected with: #002
+
+  Checking for contradictions (LLM)...
+  CONTRADICTION with Decision #002:
+  #002 deleted agent_core/config/ because schema.py was dead code and
+  config.py shadows the directory package. Moving schema.py back would
+  recreate the module-vs-package conflict. Consider agent_core/schemas/
+  as an alternative non-shadowing location.
+```
+
+### Enforcement: decisions as constraints
+
+Past decisions are injected as **hard constraints** into every `implement` and `fix` LLM prompt:
+
+```
+CRITICAL DESIGN CONSTRAINTS — past decisions that MUST be respected:
+  Decision #001 (Use composition over inheritance):
+    Chose: Inject via __init__ instead of extending base classes
+    Why: Avoids fragile base class issues and circular imports
+```
+
+The LLM cannot accidentally undo deliberate choices. To override a decision, use:
+
+```
+> decide resolve 001 --text "We now need inheritance because..."
+```
+
+### The full lifecycle
+
+```
+implement/fix runs ──► decisions auto-extracted ──► .decisions.json
+        ▲                                              │
+        │                                              ▼
+        └──── future runs read as hard constraints ────┘
+```
+
+---
+
 ## Tips
 
 - **`quit`** or `Ctrl+C` to exit anytime.

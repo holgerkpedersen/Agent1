@@ -32,6 +32,7 @@ from agent_core.commands.workflow_cmd import WorkflowCommand
 from agent_core.commands.optimize_cmd import OptimizeCommand
 from agent_core.commands.paste_cmd import PasteCommand
 from agent_core.commands.perf_cmd import PerfCommand, PerfTracker
+from agent_core.commands.decide_cmd import DecideCommand
 from datetime import datetime
 from pathlib import Path
 import json
@@ -911,6 +912,7 @@ async def run_interactive():
     registry.register(OptimizeCommand())
     registry.register(PerfCommand())
     registry.register(PasteCommand())
+    registry.register(DecideCommand())
 
     while True:
         try:
@@ -933,7 +935,7 @@ async def run_interactive():
             command = parts[0].lower()
 
             # Try commands from registry
-            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste"]:
+            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste", "decide"]:
                 import time as _time
                 _start = _time.perf_counter()
                 result = await registry.execute(command, parts[1:], agent)

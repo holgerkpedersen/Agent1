@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .base import Command, show_file_diff
 from agent_core import to_windows_path, workspace_path
+from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -942,6 +943,14 @@ class ImplementCommand(Command):
                 user_context += f"\n\nRelevant analysis:\n{analysis_context}"
             if plan_context:
                 user_context += f"\n\nRelevant plan:\n{plan_context}"
+
+            # Inject past decisions as design constraints
+            try:
+                constraints = decisions_as_system_prompt(target_workspace, batch)
+                if constraints:
+                    user_context += constraints
+            except Exception:
+                pass
 
             impl_messages = [
                 {"role": "system", "content": "You are an expert Python developer. Implement the specified files concisely.\n\nRULES:\n0. NEVER use <tool_call>, <function_call>, or XML tags. Respond in plain text with [FILE:] blocks only.\n1. All code MUST pass mypy strict type checking and py_compile.\n2. You receive an export map listing every class/function/constant that already exists and which file defines it. IMPORT those names — NEVER redefine a name that already exists in the export map. If 'Grid' is listed under grid.py, write 'from grid import Grid', do NOT write 'class Grid' again.\n3. Each file has ONE clear responsibility. Define ONLY the classes/functions assigned to that file. All other needed names come from imports.\n4. NEW files: small and focused — max 150 lines.\n5. MODIFYING existing files: add only the minimal change. DO NOT rewrite the entire file.\n6. NEVER create duplicate functions or classes — check the export map before defining anything.\n7. Prefer composition over inheritance. Inject dependencies via __init__.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
@@ -1914,5 +1923,51 @@ class ImplementCommand(Command):
                     print(f"  {review}")
                 else:
                     print("  No bugs found.")
+
+        # Auto-extract design decisions from this implementation
+        if implemented and target_workspace:
+            try:
+                candidates = await extract_from_changes(
+                    agent, implemented,
+                    context=f"Task plan: {taskplan_content[:500] if taskplan_content else 'N/A'}"
+                )
+                if candidates:
+                    print(f"\n[decide] Extracted {len(candidates)} decision candidates from this run:")
+                    for i, c in enumerate(candidates, 1):
+                        print(f"  {i}. {c.get('title', 'Untitled')}")
+                        ctx = c.get('context', '')
+                        if ctx:
+                            print(f"     {ctx}")
+                    print("\n  Record? (1,2/all/N, press Enter to skip): ", end="")
+                    try:
+                        choice = input().strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        choice = ""
+                    if choice and choice != "n":
+                        ws_str = str(Path(workspace_path(target_workspace)).resolve())
+                        if choice == "all":
+                            selected = range(len(candidates))
+                        else:
+                            selected = []
+                            for part in choice.replace(" ", "").split(","):
+                                try:
+                                    selected.append(int(part) - 1)
+                                except ValueError:
+                                    pass
+                        for idx in selected:
+                            if 0 <= idx < len(candidates):
+                                c = candidates[idx]
+                                record = add_decision(
+                                    ws_str,
+                                    c.get("title", "Untitled"),
+                                    context=c.get("context", ""),
+                                    decision=c.get("decision", ""),
+                                    rationale=c.get("rationale", ""),
+                                    affected_files=c.get("affected_files", []),
+                                    tags=c.get("tags", []),
+                                )
+                                print(f"  Recorded #{record['id']}: {record['title']}")
+            except Exception:
+                pass
 
         return True

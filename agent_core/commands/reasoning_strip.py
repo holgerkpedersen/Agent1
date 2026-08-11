@@ -42,6 +42,12 @@ _re_think = re.compile(
     + r'|' + re.escape(TOOL_OPEN) + r'.*$'
     , re.DOTALL | re.MULTILINE
 )
+# When the entire response is wrapped in think tags, keep the content
+_re_think_tags_only = re.compile(
+    re.escape(THINK_OPEN) + r'|' + re.escape(THINK_CLOSE)
+    + r'|' + re.escape(TOOL_OPEN) + r'|' + re.escape(TOOL_CLOSE)
+    , re.DOTALL | re.MULTILINE
+)
 _re_arrow = re.compile(r'^\s*->\s*\*?Proceeds\*?\.?\s*$', re.MULTILINE | re.IGNORECASE)
 _re_markers = re.compile(r'^\s*\[(?:Output|Self)[^\]]*\]\s*$', re.MULTILINE | re.IGNORECASE)
 _re_multi_blank = re.compile(r'\n{3,}', re.DOTALL)
@@ -262,20 +268,31 @@ def _clean_analysis_sections(text: str) -> str:
     return '\n'.join(section_lines)
 
 
-def strip_reasoning(text: str) -> str:
-    """Remove LLM reasoning tokens and leaked chain-of-thought from text."""
+def strip_reasoning(text: str, mode: str = "analysis") -> str:
+    """Remove LLM reasoning tokens and leaked chain-of-thought from text.
+
+    Args:
+        text: Raw LLM output to clean.
+        mode: ``"analysis"`` (default) for project_analysis.md — aggressive
+              section extraction + reasoning removal. ``"light"`` for plan,
+              entities, and taskplan — only regex-based tag/marker stripping.
+    """
     if not text:
         return text
 
     out = _re_think.sub('', text)
+    # Fallback: if think/tool_call stripping left nothing, content was
+    # fully wrapped — just remove the tag markers, keep the content.
+    if not out.strip():
+        out = _re_think_tags_only.sub('', text)
     out = _re_arrow.sub('', out)
     out = _re_markers.sub('', out)
 
     # Try section-based extraction for analysis files
-    if '## 1.' in out and ('## Refinement' in out or '## Verification' in out):
+    if mode == "analysis" and '## 1.' in out and ('## Refinement' in out or '## Verification' in out):
         out = _clean_analysis_sections(out)
-    else:
-        # Line-by-line reasoning removal
+    elif mode == "analysis":
+        # Line-by-line reasoning removal (only for analysis mode)
         lines_out = []
         for line in out.split('\n'):
             stripped = line.strip()
