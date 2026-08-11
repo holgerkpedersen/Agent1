@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .types import VoteResult
+from .llm_types import VoteResult
 
 
 class ConsensusVoter:

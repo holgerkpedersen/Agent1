@@ -27,6 +27,16 @@ class Sanitizer:
         r"`.*`",
     ]
 
+    # Patterns for common secrets and credentials
+    _SECRET_PATTERNS = [
+        r"(?i)(api[_-]?key|apikey)\s*[:=]\s*\S+",
+        r"(?i)(password|passwd|pwd)\s*[:=]\s*\S+",
+        r"(?i)(token|auth_token|access_token)\s*[:=]\s*\S+",
+        r"(?i)Bearer\s+\S+",
+    ]
+
+    _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
     def __init__(self, allow_html: bool = False) -> None:
         """
         Initialize the sanitizer.
@@ -49,8 +59,11 @@ class Sanitizer:
         if not text:
             return text
 
+        # Strip non-printable control characters for consistent sanitization
+        cleaned = self._CONTROL_CHARS.sub("", text)
+
         # Remove shell/code injection patterns
-        sanitized = self._combined_pattern.sub("", text)
+        sanitized = self._combined_pattern.sub("", cleaned)
 
         # Handle HTML
         if not self.allow_html:
@@ -79,5 +92,44 @@ class Sanitizer:
         
         if isinstance(data, tuple):
             return tuple(self.sanitize(item) for item in data)
+
+        return data
+
+    def mask_secrets(self, text: str) -> str:
+        """
+        Masks sensitive information like API keys, passwords, and tokens.
+
+        :param text: The raw input string potentially containing secrets.
+        :return: The string with secret values masked.
+        """
+        if not text:
+            return text
+        
+        masked = text
+        for pattern in self._SECRET_PATTERNS:
+            masked = re.sub(pattern, lambda m: f"{m.group(0)[:12]}****", masked)
+        return masked
+
+    def sanitize_and_mask(self, data: Any) -> Any:
+        """
+        Recursively sanitizes and masks secrets in complex data structures.
+
+        :param data: The data to process.
+        :return: The sanitized and masked version of the input data.
+        """
+        if isinstance(data, str):
+            return self.mask_secrets(self.sanitize_string(data))
+        
+        if isinstance(data, dict):
+            return {
+                str(k): self.sanitize_and_mask(v) 
+                for k, v in data.items()
+            }
+        
+        if isinstance(data, list):
+            return [self.sanitize_and_mask(item) for item in data]
+        
+        if isinstance(data, tuple):
+            return tuple(self.sanitize_and_mask(item) for item in data)
 
         return data

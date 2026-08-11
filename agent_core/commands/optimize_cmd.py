@@ -2183,6 +2183,10 @@ class OptimizeCommand(Command):
                                 if pf["line"] > line:
                                     pf["line"] += line_delta
                         resolved = True
+                        # Show the per-iteration diff for visibility
+                        pre_patch = "\n".join(work_lines) + ("\n" if original.endswith("\n") else "")
+                        post_patch = "\n".join(new_lines) + ("\n" if original.endswith("\n") and new_lines and new_lines[-1] == "" else "")
+                        show_file_diff(f"{basename}:{line} [{pattern}]", pre_patch, post_patch)
                         print(f"    Fixed line {line} [{pattern}] (hunk applied, "
                               f"{before_cnt} -> {after_cnt} remaining)")
                         break

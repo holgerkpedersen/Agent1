@@ -1,6 +1,6 @@
 # agent_core/llm/meta_policy.py
 from .metrics_tracker import MetricsTracker
-from .types import ProfileType
+from .llm_types import ProfileType
 
 DECAY_FACTOR = 0.95
 

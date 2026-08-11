@@ -1,4 +1,4 @@
 {
   "model": "qwen3.6-27b-mtp",
-  "profile": "deep-analysis"
+  "profile": "fast-codegen"
 }

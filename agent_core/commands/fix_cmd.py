@@ -6,7 +6,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .base import Command, show_file_diff
+from .base import Command, show_file_diff, save_file_py
 from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
 
 from typing import TYPE_CHECKING
@@ -828,9 +828,10 @@ class FixCommand(Command):
                 if _is_stdlib_path(fpath):
                     print(f"\nSkipping: {fpath} is a stdlib file.")
                     return True
-                with open(fpath, "w", encoding="utf-8") as f:
-                    f.write(new_code)
-                print(f"\nFixed: {fpath} ({len(new_code)} bytes)")
+                if save_file_py(fpath, new_code, auto_yes=False):
+                    print(f"\nFixed: {fpath} ({len(new_code)} bytes)")
+                else:
+                    print(f"\nSkipped: {fpath} (no changes)")
 
                 changelog_path = os.path.join(str(Path(fpath).parent), "CHANGES.md")
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")

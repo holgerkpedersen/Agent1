@@ -1,6 +1,6 @@
 from enum import Enum
 
-from agent_core.llm.types import TaskType
+from agent_core.llm.llm_types import TaskType
 
 
 class ProfileType(Enum):

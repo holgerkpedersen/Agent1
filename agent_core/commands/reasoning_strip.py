@@ -268,6 +268,58 @@ def _clean_analysis_sections(text: str) -> str:
     return '\n'.join(section_lines)
 
 
+_TASKPLAN_REASONING_RE = re.compile(
+    r'^\s*\d+\.\s*\*\*.*\*\*\s*$|'           # " N.  **Header**"
+    r'^\s*-\s+(?:CRITICAL|DO NOT|PATH RULES|SIZE RULES|STDLIB SHADOWING):|'  # prompt context leaks
+    r'^\s*(?:Let\'s|Need to|First,?|I\'ll|I will|The prompt|Wait,|Now,?|'
+    r'One minor|Check format|Also,?)\s|'  # self-talk starts
+    r'^\s*(?:Input Analysis|Map to Existing|Dependency Order|Output Generation|'
+    r'Self-Correction|Check constraints|Check,|CRITICAL:)',  # planning headers
+    re.MULTILINE | re.IGNORECASE
+)
+
+_TASKPLAN_FRAGMENT_RE = re.compile(
+    r'^\s*(?:or XML tags|or function|All constraints met|One check:|'
+    r'This strictly adheres|Final check|Ready\.\s*\u2705?$|'
+    r'All good\.|Proceeds\.\s*$|Output matches)',  # sentence fragments / self-verification
+    re.MULTILINE | re.IGNORECASE
+)
+
+
+def _strip_taskplan_reasoning(text: str) -> str:
+    """Remove reasoning sections from taskplan/plan output without destroying content.
+
+    Removes paragraphs that start with planning headers or self-talk patterns,
+    but preserves numbered task items like ``1. `file.py` — description``.
+    """
+    lines = text.split('\n')
+    result = []
+    in_reasoning_block = False
+    for line in lines:
+        stripped = line.strip()
+
+        # Detect start of a reasoning paragraph
+        if _TASKPLAN_REASONING_RE.match(stripped):
+            in_reasoning_block = True
+            continue
+        # Also catch standalone fragment lines
+        if _TASKPLAN_FRAGMENT_RE.match(stripped):
+            continue
+
+        # End of reasoning block: empty line or a task item starts
+        if in_reasoning_block:
+            if not stripped or re.match(r'^\d+\.\s+`', stripped):
+                in_reasoning_block = False
+
+        if not in_reasoning_block:
+            result.append(line)
+        # Empty lines end reasoning blocks always
+        elif not stripped:
+            result.append(line)
+
+    return '\n'.join(result)
+
+
 def strip_reasoning(text: str, mode: str = "analysis") -> str:
     """Remove LLM reasoning tokens and leaked chain-of-thought from text.
 
@@ -299,6 +351,10 @@ def strip_reasoning(text: str, mode: str = "analysis") -> str:
             if not _is_reasoning_line(stripped):
                 lines_out.append(line)
         out = '\n'.join(lines_out)
+    elif mode == "light":
+        # Light filtering for plan/entities/taskplan — strip obvious reasoning
+        # sections without destroying legitimate content
+        out = _strip_taskplan_reasoning(out)
 
     out = _re_multi_blank.sub('\n\n', out)
     return out.strip() + '\n'

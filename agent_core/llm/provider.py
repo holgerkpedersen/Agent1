@@ -1,5 +1,5 @@
 """LLM Provider Protocol - abstract interface for LLM backends."""
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class LLMProvider(Protocol):
@@ -14,8 +14,8 @@ class LLMProvider(Protocol):
     
     async def chat(
         self, 
-        messages: list[dict], 
-        tools: list[dict] | None = None,
+        messages: list[dict[str, str]], 
+        tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         disable_thinking: bool = False,
     ) -> str:
@@ -34,7 +34,7 @@ class LLMProvider(Protocol):
         """
         ...
     
-    async def chat_stream(self, messages: list[dict]) -> str:
+    async def chat_stream(self, messages: list[dict[str, str]]) -> str:
         """Chat with real-time token streaming to console.
         
         Args:

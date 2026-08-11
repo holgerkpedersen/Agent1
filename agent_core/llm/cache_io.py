@@ -2,7 +2,7 @@ import json
 import logging
 from pathlib import Path
 
-from .types import RetryParams
+from .llm_types import RetryParams
 
 CACHE_FILENAME = ".implement_cache.json"
 

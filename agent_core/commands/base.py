@@ -1,5 +1,6 @@
 """Command base class and registry for agent interactive mode."""
 import difflib
+import os
 import re
 import shutil
 from abc import ABC, abstractmethod
@@ -217,6 +218,43 @@ def show_file_diff(basename: str, original: str, new: str) -> None:
                 print(f"  {old_blank_no} | {'':<{old_col}}  {nnum} | {GREEN}{n}{RESET}")
             added += 1
     print(f"  ({removed} lines removed, {added} lines added)")
+
+
+def save_file_py(fpath: str, content: str, auto_yes: bool = True) -> bool:
+    """Write ``content`` to ``fpath`` with a unified diff preview.
+
+    With ``auto_yes=True`` the write happens immediately; otherwise a y/N
+    confirmation is prompted after the diff.  Returns True only if the file
+    was actually written (False on identical content or user declining).
+    """
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            current = f.read()
+    except FileNotFoundError:
+        current = ""
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"  Warning: could not read {fpath}: {e}")
+        current = ""
+
+    if current == content:
+        return False
+
+    show_file_diff(os.path.basename(fpath), current, content)
+    if not auto_yes:
+        try:
+            resp = input(f"  Apply to {fpath}? [y/N] ").strip().lower()
+        except EOFError:
+            resp = "n"
+        if resp not in ("y", "yes"):
+            print(f"  Skipped: {fpath}")
+            return False
+
+    parent = os.path.dirname(fpath)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(fpath, "w", encoding="utf-8") as f:
+        f.write(content)
+    return True
 
 
 class Command(ABC):

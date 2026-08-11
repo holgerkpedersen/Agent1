@@ -2,7 +2,7 @@
 
 import json
 import logging
-import sys
+import logging.config
 import uuid
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
@@ -20,14 +20,14 @@ except ImportError:
 class SafeJsonEncoder(json.JSONEncoder):
     """Custom JSON encoder that safely serializes common agent framework types."""
 
-    def default(self, obj: Any) -> str | dict[str, Any]:  # type: ignore[override]
+    def default(self, obj: Any) -> str | dict[str, Any]:
         if isinstance(obj, (datetime, Path)):
             return str(obj)
         if isinstance(obj, uuid.UUID):
             return str(obj)
         if is_dataclass(obj):
             try:
-                return asdict(obj)
+                return asdict(obj)  # type: ignore[arg-type]
             except Exception:
                 # Fallback for frozen or complex dataclasses that fail asdict()
                 return getattr(obj, "__dict__", repr(obj))
@@ -37,7 +37,7 @@ class SafeJsonEncoder(json.JSONEncoder):
                 "message": str(obj),
             }
         if hasattr(obj, "__dict__"):
-            return obj.__dict__
+            return {k: v for k, v in obj.__dict__.items()}
         # Ultimate fallback to prevent logging crashes on unknown payloads
         return str(obj)
 

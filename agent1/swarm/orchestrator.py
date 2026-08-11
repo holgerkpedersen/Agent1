@@ -1,3 +1,4 @@
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future, wait
 from typing import List, Any, Callable, Dict, Optional
@@ -11,14 +12,17 @@ class Orchestrator:
     def __init__(self, agents: List[Any], max_workers: int = 20) -> None:
         self.agents = agents
         self._executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=max_workers)
-        self._tasks: Dict[int, Future] = {}
+        self._tasks: Dict[int, Future[Any]] = {}
         self._task_counter: int = 0
         self._lock: threading.Lock = threading.Lock()
+        self._logger: logging.Logger = logging.getLogger(__name__)
 
     def __enter__(self) -> "Orchestrator":
         return self
 
     def __exit__(self, exc_type: Optional[type], exc_val: Optional[BaseException], exc_tb: Optional[Any]) -> None:
+        if exc_val is not None:
+            self._logger.error("Orchestrator exited with exception: %s", exc_val)
         self.shutdown(wait=True)
 
     def dispatch(self, task_func: Callable[..., Any], *args: Any, **kwargs: Any) -> int:
@@ -31,6 +35,7 @@ class Orchestrator:
 
         future = self._executor.submit(task_func, *args, **kwargs)
         self._tasks[task_id] = future
+        self._logger.debug("Dispatched task %d", task_id)
         return task_id
 
     def get_result(self, task_id: int) -> Optional[Dict[str, Any]]:
@@ -42,8 +47,9 @@ class Orchestrator:
             try:
                 result = future.result()
                 return result if isinstance(result, dict) else {"data": result}
-            except Exception:
-                return None
+            except Exception as exc:
+                self._logger.error("Task %d failed with exception: %s", task_id, exc)
+                return {"error": str(exc), "task_id": task_id}
         return None
 
     def shutdown(self, wait: bool = True) -> None:
@@ -53,6 +59,7 @@ class Orchestrator:
         self._executor.shutdown(wait=wait)
         with self._lock:
             self._tasks.clear()
+        self._logger.info("Orchestrator shutdown complete")
 
     def wait_for_completion(self, timeout: Optional[float] = None) -> bool:
         """
@@ -60,9 +67,13 @@ class Orchestrator:
         """
         with self._lock:
             futures = list(self._tasks.values())
-        
+
         if not futures:
             return True
 
         done, _ = wait(futures, timeout=timeout)
-        return len(done) == len(futures)
+        completed = len(done) == len(futures)
+        if not completed and timeout is not None:
+            pending = len(futures) - len(done)
+            self._logger.warning("Timeout waiting for %d tasks", pending)
+        return completed

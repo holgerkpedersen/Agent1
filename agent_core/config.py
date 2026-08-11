@@ -1,5 +1,5 @@
-
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
@@ -35,6 +35,97 @@ def _validate_settings(settings: AgentSettings) -> None:
 
     if settings.max_concurrent_tools <= 0:
         raise ConfigurationError("max_concurrent_tools must be positive")
+
+
+def _load_env_file(env_path: Path | None = None) -> dict[str, str]:
+    """Load environment variables from a .env file into a dictionary."""
+    env_vars: dict[str, str] = {}
+
+    if env_path is None:
+        search_dir = Path.cwd()
+        while True:
+            candidate = search_dir / ".env"
+            if candidate.is_file():
+                env_path = candidate
+                break
+            parent = search_dir.parent
+            if parent == search_dir:
+                break
+            search_dir = parent
+
+    if env_path and env_path.is_file():
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        key, _, value = line.partition("=")
+                        key = key.strip()
+                        value = value.strip().strip("\"'")
+                        if key:
+                            env_vars[key] = value
+        except OSError as exc:
+            logger.warning("Failed to read .env file %s: %s", env_path, exc)
+
+    return env_vars
+
+
+def _parse_int(value: str | None, default: int) -> int:
+    """Safely parse an integer from a string."""
+    if value is None:
+        return default
+    try:
+        return int(value.strip())
+    except ValueError:
+        logger.warning("Invalid integer value '%s', using default %d", value, default)
+        return default
+
+
+def _parse_float(value: str | None, default: float) -> float:
+    """Safely parse a float from a string."""
+    if value is None:
+        return default
+    try:
+        return float(value.strip())
+    except ValueError:
+        logger.warning("Invalid float value '%s', using default %f", value, default)
+        return default
+
+
+def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
+    """Load agent settings from environment variables with type-safe defaults.
+
+    Environment variable mapping:
+        AGENT_WORKSPACE_ROOT -> workspace_root (Path)
+        AGENT_LLM_API_URL -> llm_api_url (str)
+        AGENT_MAX_CONCURRENT_TOOLS -> max_concurrent_tools (int)
+        AGENT_SEARCH_COMMAND_TIMEOUT_SEC -> search_command_timeout_sec (float)
+        AGENT_COMPILATION_CHECK_TIMEOUT_SEC -> compilation_check_timeout_sec (float)
+    """
+    env_vars = _load_env_file(env_path)
+
+    merged: dict[str, str] = {**env_vars}
+    for key in ("AGENT_WORKSPACE_ROOT", "AGENT_LLM_API_URL",
+                "AGENT_MAX_CONCURRENT_TOOLS", "AGENT_SEARCH_COMMAND_TIMEOUT_SEC",
+                "AGENT_COMPILATION_CHECK_TIMEOUT_SEC"):
+        if key in os.environ:
+            merged[key] = os.environ[key]
+
+    workspace_root_str = merged.get("AGENT_WORKSPACE_ROOT")
+    workspace_root = Path(workspace_root_str) if workspace_root_str else Path.cwd()
+
+    settings = AgentSettings(
+        workspace_root=workspace_root,
+        llm_api_url=merged.get("AGENT_LLM_API_URL", "http://localhost:1234/v1"),
+        max_concurrent_tools=_parse_int(merged.get("AGENT_MAX_CONCURRENT_TOOLS"), 5),
+        search_command_timeout_sec=_parse_float(merged.get("AGENT_SEARCH_COMMAND_TIMEOUT_SEC"), 30.0),
+        compilation_check_timeout_sec=_parse_float(merged.get("AGENT_COMPILATION_CHECK_TIMEOUT_SEC"), 30.0),
+    )
+
+    _validate_settings(settings)
+    return settings
 
 
 DEFAULT_SETTINGS: Final[AgentSettings] = AgentSettings()

@@ -1,6 +1,10 @@
+import logging
 from typing import Optional
 
+from agent_core.config import load_agent_settings, _validate_settings
 from ..session.session_manager import SessionManager
+
+logger = logging.getLogger(__name__)
 
 
 class ClearCommand:
@@ -8,14 +12,17 @@ class ClearCommand:
 
     def __init__(self, session_manager: SessionManager) -> None:
         self._session_manager = session_manager
+        # Validate configuration paths on initialization
+        settings = load_agent_settings()
+        _validate_settings(settings)
 
     def display_stats(self) -> None:
         """Display statistics/summary of conversation context before clearing."""
         stats = self._session_manager.get_session_stats()
-        print("Session stats:")
-        print(f"  Messages: {stats['message_count']}")
-        print(f"  Tokens used: {stats['token_usage']}")
-        print(f"  Last activity: {stats['last_activity']}")
+        logger.info("Session stats:")
+        logger.info(f"  Messages: {stats['message_count']}")
+        logger.info(f"  Tokens used: {stats['token_usage']}")
+        logger.info(f"  Last activity: {stats['last_activity']}")
 
     def prompt_user_confirmation(self) -> bool:
         """Prompt user for explicit confirmation before proceeding.
@@ -26,12 +33,13 @@ class ClearCommand:
         while True:
             response = input("Are you sure? [y/n]: ").strip().lower()
             if response == "y":
+                logger.info("User confirmed session clear.")
                 return True  # Proceed with clear
             elif response == "n":
-                print("Clear aborted. Conversation context left intact.")
+                logger.warning("Clear aborted. Conversation context left intact.")
                 return False  # Abort, leave conversation intact
             else:
-                print("Invalid input. Please respond with 'y' or 'n'.")
+                logger.warning("Invalid input. Please respond with 'y' or 'n'.")
 
     def run(self) -> Optional[str]:
         """Execute the clear command flow.
@@ -43,7 +51,7 @@ class ClearCommand:
         if not self.prompt_user_confirmation():
             return "Clear aborted by user."
         self._session_manager.clear_session()
-        print("Session cleared successfully.")
+        logger.info("Session cleared successfully.")
         return "Session cleared successfully."
 
 

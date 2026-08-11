@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from .types import TaskType, ProfileType
+from .llm_types import TaskType, ProfileType
 
 
 class MetricsTracker:

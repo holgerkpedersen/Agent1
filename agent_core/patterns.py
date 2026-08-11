@@ -72,9 +72,10 @@ def _loop_body_lines(lines: list[str]) -> list[bool]:
     flags = [False] * len(lines)
     in_loop = False
     loop_indent = 0
+    _FOR_WHILE_RE = re.compile(r"^\s*(for|while)\s")
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if re.match(r"^\s*(for|while)\s", line):
+        if _FOR_WHILE_RE.match(line):
             in_loop = True
             loop_indent = len(line) - len(line.lstrip())
             continue
@@ -95,9 +96,10 @@ def _loop_spans(lines: list[str]) -> list[tuple[int, int, int]]:
     """
     spans: list[tuple[int, int, int]] = []
     stack: list[tuple[int, int]] = []  # (header_idx, indent)
+    _FOR_WHILE_RE = re.compile(r"^\s*(for|while)\s")
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if re.match(r"^\s*(for|while)\s", line):
+        if _FOR_WHILE_RE.match(line):
             stack.append((i, len(line) - len(line.lstrip())))
             continue
         cur = len(line) - len(line.lstrip())
@@ -140,8 +142,9 @@ def detect_regex_in_loop(source: str) -> list[tuple[int, str, str]]:
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
     in_loop_flags = _loop_body_lines(lines)
+    _COMPILE_MATCH_SUB_FINDALL_RE = re.compile(r"\bre\.(compile|match|search|sub|findall)\(")
     for i, line in enumerate(lines, 1):
-        if in_loop_flags[i - 1] and re.search(r"\bre\.(compile|match|search|sub|findall)\(", line) and _line_regex_arg_is_hoistable(line):
+        if in_loop_flags[i - 1] and _COMPILE_MATCH_SUB_FINDALL_RE.search(line) and _line_regex_arg_is_hoistable(line):
             findings.append((i, "regex_in_loop",
                              "Move re.compile() to module level — compiling inside loop wastes cycles"))
     return findings
@@ -189,8 +192,9 @@ def detect_string_concat_in_loop(source: str) -> list[tuple[int, str, str]]:
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
     in_loop_flags = _loop_body_lines(lines)
+    _PLUS_EQ_RE = re.compile(r"\w+\s*\+=\s*[\"']")
     for i, line in enumerate(lines, 1):
-        if in_loop_flags[i - 1] and re.search(r"\w+\s*\+=\s*[\"']", line):
+        if in_loop_flags[i - 1] and _PLUS_EQ_RE.search(line):
             findings.append((i, "string_concat_in_loop",
                              "Use ''.join() or io.StringIO instead of += in loop — O(n²) becomes O(n)"))
     return findings
@@ -199,8 +203,9 @@ def detect_string_concat_in_loop(source: str) -> list[tuple[int, str, str]]:
 def detect_bare_except(source: str) -> list[tuple[int, str, str]]:
     """Bare ``except:`` without exception type."""
     findings: list[tuple[int, str, str]] = []
+    _EXCEPT_RE = re.compile(r"^\s*except\s*:")
     for i, line in enumerate(source.split("\n"), 1):
-        if re.match(r"^\s*except\s*:", line) and "except:" in line:
+        if _EXCEPT_RE.match(line) and "except:" in line:
             findings.append((i, "bare_except",
                              "Specify exception type — bare except catches KeyboardInterrupt and hides bugs"))
     return findings
@@ -210,11 +215,12 @@ def detect_silent_except(source: str) -> list[tuple[int, str, str]]:
     """``except ...: pass`` — silently swallowing errors."""
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
+    _EXCEPT_RE = re.compile(r"^\s*except\b")
+    _PASS_RE = re.compile(r"^\s+pass\s*$")
     for i, line in enumerate(lines, 1):
-        if re.match(r"^\s*except\b", line):
+        if _EXCEPT_RE.match(line):
             ei = i - 1
             e_indent = len(line) - len(line.lstrip())
-            body_indent = e_indent + 4
             for j in range(ei + 1, min(ei + 20, len(lines))):
                 nxt = lines[j].rstrip("\r")
                 if nxt.strip() == "" or nxt.lstrip().startswith("#"):
@@ -222,7 +228,7 @@ def detect_silent_except(source: str) -> list[tuple[int, str, str]]:
                 nxt_indent = len(nxt) - len(nxt.lstrip())
                 if nxt_indent <= e_indent:
                     break  # dedented — end of except body
-                if re.match(r"^\s+pass\s*$", nxt):
+                if _PASS_RE.match(nxt):
                     findings.append((i, "silent_except",
                                      "Replace 'pass' with a print/log warning — do NOT re-raise (silent "
                                      "handlers are often intentional fallbacks such as cache reads, "
@@ -240,8 +246,9 @@ def detect_duplicate_imports(source: str) -> list[tuple[int, str, str]]:
     are never duplicates of each other."""
     findings: list[tuple[int, str, str]] = []
     seen: dict[str, tuple[int, int]] = {}  # key -> (line, indent)
+    _IMPORT_FROM_RE = re.compile(r"^\s*(?:import\s+(\S+)|from\s+(\S+)\s+import\s+(.+))")
     for i, line in enumerate(source.split("\n"), 1):
-        m = re.match(r"^\s*(?:import\s+(\S+)|from\s+(\S+)\s+import\s+(.+))", line)
+        m = _IMPORT_FROM_RE.match(line)
         if m:
             key = m.group(0).strip()
             indent = len(line) - len(line.lstrip())
@@ -500,21 +507,24 @@ def _iter_derived_names(body: list[str], loop_vars: set[str]) -> set[str]:
     """
     derived = set(loop_vars)
     assignments: dict[str, str] = {}
+    _FOR_IN_RE = re.compile(r"\s*for\s+(.+?)\s+in\s")
+    _ID_ASSIGN_RE = re.compile(r"\s*([A-Za-z_]\w*)\s*=")
     for line in body:
-        fm = re.match(r"\s*for\s+(.+?)\s+in\s", line)
+        fm = _FOR_IN_RE.match(line)
         if fm:
             derived |= _for_target_names(line)
-        am = re.match(r"\s*([A-Za-z_]\w*)\s*=", line)
+        am = _ID_ASSIGN_RE.match(line)
         if am:
             name = am.group(1)
             rhs = line.split("=", 1)[1].strip() if "=" in line else ""
             assignments[name] = rhs
     changed = True
+    _ID_RE = re.compile(r"[A-Za-z_]\w*")
     while changed:
         changed = False
         for name, rhs in assignments.items():
             if name not in derived and any(
-                w in derived for w in re.findall(r"[A-Za-z_]\w*", rhs)
+                w in derived for w in _ID_RE.findall(rhs)
             ):
                 derived.add(name)
                 changed = True
@@ -528,14 +538,16 @@ def _read_receiver_alias(body: list[str]) -> dict[str, str]:
     opened path so its derivation can be judged.
     """
     result: dict[str, str] = {}
+    _WITH_AS_ID_RE = re.compile(r"\s*with\s+(.+?)\s+as\s+([A-Za-z_]\w*)\s*:")
+    _ID_OPEN_ASSIGN_RE = re.compile(r"\s*([A-Za-z_]\w*)\s*=\s*open\s*\(")
     for line in body:
-        with_m = re.match(r"\s*with\s+(.+?)\s+as\s+([A-Za-z_]\w*)\s*:", line)
+        with_m = _WITH_AS_ID_RE.match(line)
         if with_m:
             path = _open_path_arg(with_m.group(1))
             if path:
                 result[with_m.group(2)] = path
             continue
-        asg = re.match(r"\s*([A-Za-z_]\w*)\s*=\s*open\s*\(", line)
+        asg = _ID_OPEN_ASSIGN_RE.match(line)
         if asg:
             path = _open_path_arg(line)
             if path:
@@ -649,9 +661,11 @@ def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
             append_lines.extend(loop_candidates)
         loop_candidates = []
 
+    _FOR_WHILE_RE = re.compile(r"^\s*(for|while)\s")
+    _IF_ELIF_TRY_EXCEPT_RE = re.compile(r'\b(if|elif|else|await|break|continue|return|try|except)\b')
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
-        if re.match(r"^\s*(for|while)\s", line):
+        if _FOR_WHILE_RE.match(line):
             _flush_loop()
             in_loop = True
             loop_indent = len(line) - len(line.lstrip())
@@ -672,7 +686,7 @@ def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
         if in_loop and (".append(" in line or ".extend(" in line
                         or ("+=" in line and "[" in line)):
             has_complex_flow = any(
-                re.search(r'\b(if|elif|else|await|break|continue|return|try|except)\b', bl)
+                _IF_ELIF_TRY_EXCEPT_RE.search(bl)
                 for bl in loop_body_lines
             )
             if not has_complex_flow:
@@ -869,6 +883,7 @@ def _loop_body_references(lines: list[str], line: int, var_name: str) -> bool:
     indent = len(lines[line - 1]) - len(lines[line - 1].lstrip())
     header: int | None = None
     j = line - 2  # 0-based index one line above the assignment
+    _ASYNC_FOR_WHILE_RE = re.compile(r"(?:async\s+)?(?:for|while)\b")
     while j >= 0:
         lj = lines[j]
         if not lj.strip():
@@ -877,7 +892,7 @@ def _loop_body_references(lines: list[str], line: int, var_name: str) -> bool:
         if len(lj) - len(lj.lstrip()) >= indent:
             j -= 1
             continue  # still inside the same or a nested block
-        if re.match(r"(?:async\s+)?(?:for|while)\b", lj.strip()):
+        if _ASYNC_FOR_WHILE_RE.match(lj.strip()):
             header = j
             break
         j -= 1  # a dedented non-loop line (if/def) — keep scanning up
@@ -927,7 +942,7 @@ def detect_walrus_in_comprehension(source: str) -> list[tuple[int, str, str]]:
         names = ", ".join({ast.unparse(w.target) for w in walruses})
         findings.append((first.lineno, "walrus_in_comprehension",
                          f"Walrus '{names}' inside comprehension leaks into enclosing scope. "
-                         f"Bind these as named locals on their own line before the comprehension."))
+                         "Bind these as named locals on their own line before the comprehension."))
     findings.sort(key=lambda f: f[0])
     return findings
 
@@ -977,8 +992,9 @@ def detect_unreachable_code(source: str) -> list[tuple[int, str, str]]:
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
 
+    _RETURN_BREAK_CONTINUE_RE = re.compile(r"^\s*(return|break|continue)\b")
     for i, line in enumerate(lines, 1):
-        if not re.match(r"^\s*(return|break|continue)\b", line):
+        if not _RETURN_BREAK_CONTINUE_RE.match(line):
             continue
 
         stmt_indent = len(line) - len(line.lstrip())
@@ -1014,13 +1030,15 @@ def detect_unused_imports(source: str) -> list[tuple[int, str, str]]:
     """Import statement that is never referenced in the code."""
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
+    _IMPORT_AS_RE = re.compile(r"^import\s+(\w+)(?:\s+as\s+(\w+))?")
+    _FROM_IMPORT_AS_RE = re.compile(r"^from\s+(\S+)\s+import\s+(\w+)(?:\s+as\s+(\w+))?")
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
-        m = re.match(r"^import\s+(\w+)(?:\s+as\s+(\w+))?", stripped)
+        m = _IMPORT_AS_RE.match(stripped)
         if m:
             name = m.group(2) or m.group(1)
         else:
-            m = re.match(r"^from\s+(\S+)\s+import\s+(\w+)(?:\s+as\s+(\w+))?", stripped)
+            m = _FROM_IMPORT_AS_RE.match(stripped)
             if m:
                 if m.group(1) == "__future__":
                     continue
@@ -1283,7 +1301,7 @@ def detect_class_conflicts(generated_files: list[str], project_root: str) -> lis
                     if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name not in skip:
                         existing[node.name] = (rel, pkg_dir)
             except Exception:
-                pass
+                print("Warning: silenced exception in patterns.py:1303")
 
     for fname in generated_files:
         if not fname.endswith(".py"):
@@ -1417,21 +1435,24 @@ def detect_type_comparison(source: str) -> list[tuple[int, str, str]]:
     """``type(x) == SomeType`` / ``type(x) in (A, B)`` — use ``isinstance``."""
     findings: list[tuple[int, str, str]] = []
     _ds = _docstring_lines(source)
+    _TYPE_EQ_RE = re.compile(r"type\((\w+)\)\s*==\s*(\w+)")
+    _TYPE_NE_RE = re.compile(r"type\((\w+)\)\s*!=\s*(\w+)")
+    _TYPE_IN_RE = re.compile(r"type\((\w+)\)\s+in\s+\(([^)]+)\)")
     for i, line in enumerate(source.split("\n"), 1):
         stripped = line.strip()
         if stripped.startswith("#") or i in _ds:
             continue
-        m = re.search(r"type\((\w+)\)\s*==\s*(\w+)", stripped)
+        m = _TYPE_EQ_RE.search(stripped)
         if m:
             findings.append((i, "type_comparison",
                              f"Use isinstance({m.group(1)}, {m.group(2)}) instead of type() == check"))
             continue
-        m = re.search(r"type\((\w+)\)\s*!=\s*(\w+)", stripped)
+        m = _TYPE_NE_RE.search(stripped)
         if m:
             findings.append((i, "type_comparison",
                              f"Use 'not isinstance({m.group(1)}, {m.group(2)})' instead of type() != check"))
             continue
-        m = re.search(r"type\((\w+)\)\s+in\s+\(([^)]+)\)", stripped)
+        m = _TYPE_IN_RE.search(stripped)
         if m:
             findings.append((i, "type_comparison",
                              f"Use isinstance({m.group(1)}, ({m.group(2)})) instead of type() in (...) check"))
@@ -1441,11 +1462,12 @@ def detect_type_comparison(source: str) -> list[tuple[int, str, str]]:
 def detect_mutable_default_arg(source: str) -> list[tuple[int, str, str]]:
     """``def f(x=[], y={})`` — mutable default argument persists across calls."""
     findings: list[tuple[int, str, str]] = []
+    _ASSIGN_RE = re.compile(r"=\s*(\[\]|\{\})")
     for i, line in enumerate(source.split("\n"), 1):
         stripped = line.strip()
         if stripped.startswith("#") or not stripped.startswith(("def ", "async def ")):
             continue
-        m = re.search(r"=\s*(\[\]|\{\})", stripped)
+        m = _ASSIGN_RE.search(stripped)
         if m:
             findings.append((i, "mutable_default_arg",
                              f"Mutable default argument {m.group(1)}: use None and "
@@ -1456,16 +1478,18 @@ def detect_mutable_default_arg(source: str) -> list[tuple[int, str, str]]:
 def detect_redundant_bool_expr(source: str) -> list[tuple[int, str, str]]:
     """``return True if cond else False`` — replace with ``bool(cond)``."""
     findings: list[tuple[int, str, str]] = []
+    _RETURN_TRUE_ELSE_FALSE_RE = re.compile(r"return\s+True\s+if\s+(.+?)\s+else\s+False\s*$")
+    _RETURN_FALSE_ELSE_TRUE_RE = re.compile(r"return\s+False\s+if\s+(.+?)\s+else\s+True\s*$")
     for i, line in enumerate(source.split("\n"), 1):
         stripped = line.strip()
         if stripped.startswith("#"):
             continue
-        m = re.search(r"return\s+True\s+if\s+(.+?)\s+else\s+False\s*$", stripped)
+        m = _RETURN_TRUE_ELSE_FALSE_RE.search(stripped)
         if m:
             findings.append((i, "redundant_bool_expr",
                              f"Use 'return bool({m.group(1).strip()})' instead of True-if-else-False"))
             continue
-        m = re.search(r"return\s+False\s+if\s+(.+?)\s+else\s+True\s*$", stripped)
+        m = _RETURN_FALSE_ELSE_TRUE_RE.search(stripped)
         if m:
             findings.append((i, "redundant_bool_expr",
                              f"Use 'return not ({m.group(1).strip()})' or "

@@ -14,7 +14,7 @@ from agent_core.llm.lmstudio import LMStudioProvider
 from agent_core.file_system import FileSystem
 from agent_core.file_searcher import FileSearcher
 from agent_core.tool_dispatcher import ToolDispatcher
-from agent_core.commands.base import Command
+from agent_core.commands.base import save_file_py
 from agent_core.commands.registry import CommandRegistry
 from agent_core.commands.read_cmd import ReadCommand
 from agent_core.commands.write_cmd import WriteCommand
@@ -228,10 +228,9 @@ class Agent:
             path = self._resolve_nlp_path(tool_text[len(cmd):nl].strip())
             content = tool_text[nl + 1:]
             try:
-                filepath = Path(path)
-                filepath.parent.mkdir(parents=True, exist_ok=True)
-                filepath.write_text(content, encoding="utf-8")
-                return f"Written {filepath} ({len(content)} bytes)"
+                if save_file_py(path, content, auto_yes=True):
+                    return f"Written {path} ({len(content)} bytes)"
+                return f"Skipped {path} (no changes)"
             except Exception as e:
                 return f"Write error: {e}"
 
@@ -355,9 +354,10 @@ class Agent:
                 if old_text not in content:
                     return f"Text not found in {path}. Make sure old text matches exactly (including whitespace)."
                 new_content = content.replace(old_text, new_text, 1)
-                open(path, "w", encoding="utf-8").write(new_content)
-                self.context.mark_modified(path)
-                return f"Edited {path}"
+                if save_file_py(path, new_content, auto_yes=True):
+                    self.context.mark_modified(path)
+                    return f"Edited {path}"
+                return f"Skipped {path} (no changes)"
             except Exception as e:
                 return f"Edit error: {e}"
 
@@ -521,12 +521,10 @@ class Agent:
 
     async def edit_file(self, path: str, content: str) -> str:
         local_path = self._safe_path(path)
-
         try:
-            with open(local_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-
-            return f"Successfully edited {path}"
+            if save_file_py(local_path, content, auto_yes=True):
+                return f"Successfully edited {path}"
+            return f"Skipped {path} (no changes)"
         except PermissionError:
             return f"Permission denied: {path}"
         except Exception as e:

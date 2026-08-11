@@ -4,8 +4,8 @@
     "size": 836
   },
   "agent_core/config.py": {
-    "date": "2026-07-30 00:45:51.226590",
-    "size": 2024
+    "date": "2026-08-11 17:32:29.116088",
+    "size": 4787
   },
   "agent_core/subprocess_utils.py": {
     "date": "2026-07-26 01:26:32.873747",
@@ -320,32 +320,32 @@
     "size": 2779
   },
   "agent_core/routing/bus.py": {
-    "date": "2026-07-30 02:45:16.637339",
-    "size": 3527
+    "date": "2026-08-11 17:32:32.998541",
+    "size": 6109
   },
   "agent1/providers/async_llm.py": {
-    "date": "2026-07-30 02:45:16.810198",
-    "size": 1521
+    "date": "2026-08-11 17:32:35.759393",
+    "size": 2861
   },
   "agent_core/security/sanitizer.py": {
-    "date": "2026-07-30 02:45:16.987433",
-    "size": 2247
+    "date": "2026-08-11 17:32:30.448119",
+    "size": 3989
   },
   "agent1/evolution/metrics.py": {
     "date": "2026-07-30 02:45:17.160306",
     "size": 1913
   },
   "agent1/swarm/orchestrator.py": {
-    "date": "2026-07-30 02:45:17.335785",
-    "size": 2313
+    "date": "2026-08-11 17:32:36.317599",
+    "size": 2948
   },
   "agent_core/state_machine/snapshot.py": {
     "date": "2026-07-30 02:45:17.489893",
     "size": 2916
   },
   "agent_core/diff/semantic_parser.py": {
-    "date": "2026-07-30 02:45:17.616335",
-    "size": 4207
+    "date": "2026-08-11 17:32:36.816754",
+    "size": 5927
   },
   "agent_core/utils/common.py": {
     "date": "2026-07-30 02:45:17.745056",
@@ -500,8 +500,8 @@
     "size": 3370
   },
   "agent_core/cli/commands/clear.py": {
-    "date": "2026-07-31 11:47:52.611368",
-    "size": 2060
+    "date": "2026-08-11 17:32:35.267090",
+    "size": 2426
   },
   "agent1/cli/commands/__init__.py": {
     "date": "2026-07-31 11:47:52.792367",
@@ -590,5 +590,57 @@
   "agent_core/llm/metrics_tracker.py": {
     "date": "2026-08-01 18:22:18.920896",
     "size": 3009
+  },
+  "agent_core/security/__init__.py": {
+    "date": "2026-08-10 18:09:02.548679",
+    "size": 358
+  },
+  "agent_core/security/path_utils.py": {
+    "date": "2026-08-11 17:32:29.936217",
+    "size": 3391
+  },
+  "agent_core/security/allowlist.py": {
+    "date": "2026-08-11 17:32:37.307592",
+    "size": 4387
+  },
+  "agent_core/tools/file_ops.py": {
+    "date": "2026-08-10 18:09:03.810641",
+    "size": 2079
+  },
+  "agent_core/tools/shell_ops.py": {
+    "date": "2026-08-10 18:09:04.235083",
+    "size": 2272
+  },
+  "benchmarks/security_benchmarks.py": {
+    "date": "2026-08-10 18:09:04.665005",
+    "size": 4730
+  },
+  "agent_core/logging/__init__.py": {
+    "date": "2026-08-10 18:42:11.398951",
+    "size": 33
+  },
+  "agent_core/logging_config.py": {
+    "date": "2026-08-11 17:32:31.013683",
+    "size": 4471
+  },
+  "agent_core/llm/retry_adapter.py": {
+    "date": "2026-08-11 19:09:27.195614",
+    "size": 2459
+  },
+  "agent_core/tool_executor.py": {
+    "date": "2026-08-11 17:32:31.600471",
+    "size": 2158
+  },
+  "agent_core/nlp_parser.py": {
+    "date": "2026-08-11 17:32:32.094303",
+    "size": 4461
+  },
+  "agent_core/llm/provider.py": {
+    "date": "2026-08-11 17:32:32.567003",
+    "size": 4782
+  },
+  "agent_core/file_context_retriever.py": {
+    "date": "2026-08-11 17:32:33.493013",
+    "size": 2321
   }
 }

@@ -1,6 +1,7 @@
 """Workflow command for agent interactive mode."""
 import os
 import re
+import sys
 from pathlib import Path
 
 from .analysis_verifier import verify_analysis_claims
@@ -177,6 +178,55 @@ async def _write_verified_analysis(text: str, analysis_md: str, ws_path: Path) -
     return result.text
 
 
+async def _extract_decisions_if_any(agent, analysis_md: str, ws_path) -> None:
+    """Read analysis, extract decision candidates, prompt to record. Non-blocking."""
+    try:
+        with open(analysis_md, "r", encoding="utf-8") as f:
+            analysis = f.read()
+        candidates = await extract_from_analysis(agent, analysis)
+        if not candidates:
+            return
+        print(f"\n[decide] Extracted {len(candidates)} decision candidates:")
+        for i, c in enumerate(candidates, 1):
+            print(f"  {i}. {c.get('title', 'Untitled')}")
+            ctx = c.get('context', '')
+            if ctx:
+                print(f"     {ctx}")
+        if not sys.stdin.isatty():
+            return
+        print("\n  Record? (1,2/all/N, press Enter to skip): ", end="")
+        try:
+            choice = input().strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            choice = ""
+        if choice and choice != "n":
+            ws_str = str(ws_path)
+            if choice == "all":
+                selected = range(len(candidates))
+            else:
+                selected = []
+                for part in choice.replace(" ", "").split(","):
+                    try:
+                        selected.append(int(part) - 1)
+                    except ValueError:
+                        pass
+            for idx in selected:
+                if 0 <= idx < len(candidates):
+                    c = candidates[idx]
+                    record = add_decision(
+                        ws_str,
+                        c.get("title", "Untitled"),
+                        context=c.get("context", ""),
+                        decision=c.get("decision", ""),
+                        rationale=c.get("rationale", ""),
+                        affected_files=c.get("affected_files", []),
+                        tags=c.get("tags", []),
+                    )
+                    print(f"  Recorded #{record['id']}: {record['title']}")
+    except Exception:
+        pass
+
+
 class WorkflowCommand(Command):
     """Full pipeline: analyze, plan, entities, taskplan."""
 
@@ -280,6 +330,16 @@ class WorkflowCommand(Command):
         ws_path = _ws_dir()
         ws_path.mkdir(parents=True, exist_ok=True)
         print(f"Workspace: {ws_path}")
+
+        # Probe LM Studio before spending time on the pipeline
+        probe = await agent.llm.chat([
+            {"role": "system", "content": "Respond with exactly one word: ready"},
+            {"role": "user", "content": "ready"}
+        ], max_tokens=8)
+        if probe.startswith("[Error") or probe.startswith("[LM Studio"):
+            self.error(f"LM Studio is not reachable: {probe[:200]}")
+            self.error("Start LM Studio and ensure a model is loaded, then retry.")
+            return True
 
         # Pre-scan existing names to warn about collisions
         taken_names, existing_filenames = _collect_existing_names(str(ws_path))
@@ -448,47 +508,14 @@ class WorkflowCommand(Command):
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
 
-                # Auto-extract decision candidates from analysis
-                try:
-                    candidates = await extract_from_analysis(agent, analysis)
-                    if candidates:
-                        print(f"\n[decide] Extracted {len(candidates)} decision candidates:")
-                        for i, c in enumerate(candidates, 1):
-                            print(f"  {i}. {c.get('title', 'Untitled')}")
-                            ctx = c.get('context', '')
-                            if ctx:
-                                print(f"     {ctx}")
-                        print("\n  Record? (1,2/all/N, press Enter to skip): ", end="")
-                        try:
-                            choice = input().strip().lower()
-                        except (EOFError, KeyboardInterrupt):
-                            choice = ""
-                        if choice and choice != "n":
-                            ws_str = str(ws_path)
-                            if choice == "all":
-                                selected = range(len(candidates))
-                            else:
-                                selected = []
-                                for part in choice.replace(" ", "").split(","):
-                                    try:
-                                        selected.append(int(part) - 1)
-                                    except ValueError:
-                                        pass
-                            for idx in selected:
-                                if 0 <= idx < len(candidates):
-                                    c = candidates[idx]
-                                    record = add_decision(
-                                        ws_str,
-                                        c.get("title", "Untitled"),
-                                        context=c.get("context", ""),
-                                        decision=c.get("decision", ""),
-                                        rationale=c.get("rationale", ""),
-                                        affected_files=c.get("affected_files", []),
-                                        tags=c.get("tags", []),
-                                    )
-                                    print(f"  Recorded #{record['id']}: {record['title']}")
-                except Exception:
-                    pass
+                # Validate analysis has expected sections
+                expected = ["## 1. SCOPE", "## 2. ASSUMPTIONS", "## 3. RISKS"]
+                missing = [h for h in expected if h not in analysis]
+                if missing:
+                    print(f"  [analyze] WARNING: missing expected sections: {', '.join(missing)}")
+                    print("  The analysis format may be non-standard. Plan/task quality may be reduced.")
+
+                await _extract_decisions_if_any(agent, analysis_md, ws_path)
 
                 print("\n[plan] Creating plan...")
                 r = await agent.llm.chat([
@@ -530,8 +557,19 @@ class WorkflowCommand(Command):
                 with open(entities_md, "r", encoding="utf-8") as f:
                     entities = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan. List files in dependency order. Format: 'Task N: `file.py` — what to do'. Include type-checking validation. No intro text. No code blocks. Never use <tool_call>, XML tags, or function-calling syntax.\n\nFollow the PATH RULES and SIZE RULES in the prompt below."},
-                    {"role": "user", "content": f"Create task plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}{prompt_context}"}
+                    {"role": "system", "content": (
+                        "Create a numbered task plan. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
+                        "FORMAT — exactly one task per line:\n"
+                        "  N. `path/to/file.py` — short description\n\n"
+                        "RULES:\n"
+                        "- Every file path MUST be backtick-wrapped\n"
+                        "- One file per line, numbered sequentially (1. 2. 3.)\n"
+                        "- No bullet markers (-, *), no [TAGS], no brackets around filenames\n"
+                        "- If modifying an existing file, use its EXACT current path\n"
+                        "- List in dependency order (configs first, then utilities, then consumers)\n"
+                        + prompt_context
+                    )},
+                    {"role": "user", "content": f"## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}"}
                 ])
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
@@ -576,6 +614,7 @@ class WorkflowCommand(Command):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
                 await _write_verified_analysis(r, analysis_md, ws_path)
+                await _extract_decisions_if_any(agent, analysis_md, ws_path)
 
             if not force and os.path.exists(plan_md):
                 print("\n[Skipping plan] exists")
@@ -628,8 +667,20 @@ class WorkflowCommand(Command):
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan for adding these features. Format: mark file as [NEW] or [MODIFY], then '— what to do'. Include type-checking validation. No intro text. Never use <tool_call> or XML tags.\n\nFollow the rules in the prompt below."},
-                    {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\nCreate implementation tasks.{prompt_context}"}
+                    {"role": "system", "content": (
+                        "Create a numbered task plan for adding these features. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
+                        "FORMAT — exactly one task per line:\n"
+                        "  N. [NEW] `path/to/new.py` — short description\n"
+                        "  N. [MODIFY] `existing/file.py` — short description\n\n"
+                        "RULES:\n"
+                        "- Every file path MUST be backtick-wrapped\n"
+                        "- Prefix each task with [NEW] or [MODIFY]\n"
+                        "- One file per line, numbered sequentially\n"
+                        "- No bullet markers, no extra [TAGS], no brackets around filenames\n"
+                        "- If modifying an existing file, use its EXACT current path\n"
+                        + prompt_context
+                    )},
+                    {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
                 ])
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
@@ -691,6 +742,7 @@ class WorkflowCommand(Command):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
                 await _write_verified_analysis(r, analysis_md, ws_path)
+                await _extract_decisions_if_any(agent, analysis_md, ws_path)
 
             if not force and os.path.exists(plan_md):
                 print("\n[Skipping plan] exists")
@@ -740,8 +792,19 @@ class WorkflowCommand(Command):
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "Create task plan. Format: 'Task N: `file.py` [TAG] — what to do'. List in dependency order. Be concise — one line per task. No intro text. Never use <tool_call> or XML tags.\n\nFollow the rules in the prompt below."},
-                    {"role": "user", "content": f"Create task plan:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}{prompt_context}"}
+                    {"role": "system", "content": (
+                        "Create a numbered task plan. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
+                        "FORMAT — exactly one task per line:\n"
+                        "  N. `path/to/file.py` — short description\n\n"
+                        "RULES:\n"
+                        "- Every file path MUST be backtick-wrapped\n"
+                        "- One file per line, numbered sequentially (1. 2. 3.)\n"
+                        "- No bullet markers (-, *), no [TAGS], no brackets around filenames\n"
+                        "- If modifying an existing file, use its EXACT current path\n"
+                        "- List in dependency order (configs first, then utilities, then consumers)\n"
+                        + prompt_context
+                    )},
+                    {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
                 ])
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")

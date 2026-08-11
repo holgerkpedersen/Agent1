@@ -1,11 +1,9 @@
 """Implement command for agent interactive mode."""
 import hashlib
-import importlib.util
 import json
 import os
 import re
 import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -125,11 +123,22 @@ def _extract_file_context(source: str, filename: str, radius: int = 400) -> str:
 
 
 def _extract_task_line(taskplan: str, filename: str) -> str:
-    """Extract the task line for a specific file from the task plan."""
+    """Extract the task line for a specific file from the task plan.
+
+    Uses backtick-bounded matching — `` `filename` `` — to avoid false
+    positives from substring matches (e.g. ``agent.py`` in ``agent_core/agent.py``).
+    """
     name = os.path.basename(filename)
     for line in taskplan.split('\n'):
-        if name in line and ('Task' in line or line.strip().startswith('-')):
+        if f"`{filename}`" in line:
             return line.strip()
+    for line in taskplan.split('\n'):
+        if f"`{name}`" in line:
+            return line.strip()
+    for line in taskplan.split('\n'):
+        stripped = line.strip()
+        if name in stripped and re.match(r'^\d+\.?\s+`', stripped):
+            return stripped
     return ""
 
 
@@ -299,7 +308,7 @@ def _find_class_definition_file(class_name: str, ws_dir: str, exclude_file: str 
                 if re.search(rf'^class\s+{re.escape(class_name)}\b', src, re.MULTILINE):
                     return (fp, src)
             except Exception:
-                print("WARNING: failed to read file during signature extraction:", fname)  # silent_except fix
+                print("WARNING: failed to read file during signature extraction:", f)  # silent_except fix
 
     return None
 _ATTR_NO_ATTR_RE = re.compile(r'"(\w+)" has no attribute "(\w+)"')
@@ -377,7 +386,7 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
     return result
 
 
-def _build_fix_prompt(err: str, current_code: str, fname: str, prefer_file: bool = False) -> list[dict]:
+def _build_fix_prompt(err: str, current_code: str, fname: str, prefer_file: bool = False) -> list[dict[str, str]]:
     """Build a strategy-specific fix prompt with relevant code window only.
     
     If prefer_file is True (e.g. after a patch failure), tell the LLM to use [FILE:] format.
@@ -437,7 +446,7 @@ def _build_fix_prompt(err: str, current_code: str, fname: str, prefer_file: bool
     ]
 
 
-def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors: list[tuple[str, str, str]], prefer_file: bool = False) -> list[dict]:
+def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors: list[tuple[str, str, str]], prefer_file: bool = False) -> list[dict[str, str]]:
     """Build a prompt for fixing a root cause class with downstream error context.
     
     Shows the LLM:
@@ -466,7 +475,7 @@ def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors:
     class_window = "\n".join(f"{i+1:>4}    {line.rstrip()}" for i, line in enumerate(lines[class_start:class_end], start=class_start))
     
     # Build downstream error summary
-    error_summary = []
+    error_summary: list[str] = []
     
     downstream_section = ""
     if error_summary:
@@ -499,7 +508,7 @@ def _apply_patch(patch_text: str, fpath: str, original_lines: list[str]) -> tupl
     return apply_patch(patch_text, original_lines)
 
 
-def _run_python_snippet(ws: str, extra_paths: list[str], code_lines: list[str]) -> subprocess.CompletedProcess:
+def _run_python_snippet(ws: str, extra_paths: list[str], code_lines: list[str]) -> subprocess.CompletedProcess[str]:
     """Run a Python snippet in a temp file with workspace and extra paths in sys.path.
 
     Returns the CompletedProcess from subprocess.run.
@@ -671,6 +680,9 @@ class ImplementCommand(Command):
                 if not all_files:
                     all_files = re.findall(r'`([^`]+\.py)`', taskplan_content)
 
+            # Deduplicate while preserving order
+            all_files = list(dict.fromkeys(all_files))
+
             cache_data = {"taskplan": taskplan_file, "files": all_files, "taskplan_hash": hashlib.md5(taskplan_content.encode()).hexdigest()[:8] if taskplan_content else ""}
             try:
                 with open(cache_file, "w", encoding="utf-8") as f:
@@ -769,8 +781,8 @@ class ImplementCommand(Command):
                             implemented.append(fname)
 
             print(f"\nFiles to skip (already exist and compile): {len(files_to_skip)}")
-            for f in files_to_skip:
-                print(f"  - {f}")
+            for fs in files_to_skip:
+                print(f"  - {fs}")
 
             files_to_generate = [fname for fname in all_files if fname not in implemented]
             print(f"\nFiles to generate: {len(files_to_generate)}: {', '.join(files_to_generate)}")
@@ -795,7 +807,7 @@ class ImplementCommand(Command):
             if fp.is_file() and ".git" not in str(fp) and "__pycache__" not in str(fp):
                 pre_snapshot.add(str(fp.relative_to(Path(ws))).replace("\\", "/"))
 
-        def extract_signatures(source: str) -> dict:
+        def extract_signatures(source: str) -> dict[str, str]:
             sigs = {}
             for m in re.finditer(r'^class\s+(\w+)\s*(?:\((.*?)\))?\s*:', source, re.MULTILINE):
                 cls_name = m.group(1)
@@ -1108,7 +1120,7 @@ class ImplementCommand(Command):
                 func_names = re.findall(r'def\s+(\w+)', content)
                 if len(func_names) > 20:
                     # from collections import Counter  # unused_import removed
-                    similar_prefixes = {}
+                    similar_prefixes: dict[str, int] = {}
                     for name in func_names:
                         prefix = _RE_3.sub('', name)
                         similar_prefixes[prefix] = similar_prefixes.get(prefix, 0) + 1
@@ -1167,6 +1179,7 @@ class ImplementCommand(Command):
                     continue
 
             # Write to temp → compile → rename on success, delete on failure
+            prev_content = filepath.read_text(encoding="utf-8") if filepath.exists() else None
             tmp_path = str(filepath) + ".tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
                 f.write(content)
@@ -1247,7 +1260,10 @@ class ImplementCommand(Command):
                 from agent_core.patterns import detect_class_conflicts
                 conflicts = detect_class_conflicts([filename], ws)
                 if conflicts:
-                    filepath.unlink()
+                    if prev_content is not None:
+                        filepath.write_text(prev_content, encoding="utf-8")  # restore original
+                    else:
+                        filepath.unlink()  # new file, safe to delete
                     print(f"  REJECTED: class-name conflict — {conflicts[0]['suggestion']}")
                     file_outcomes[filename] = f"rejected — {conflicts[0]['suggestion']}"
                     continue
@@ -1328,23 +1344,23 @@ class ImplementCommand(Command):
 
         if repaired:
             print(f"\nAuto-repaired ({len(repaired)}):")
-            for f, how in sorted(repaired.items()):
-                print(f"  {f}  — {how}")
+            for fs_item, how in sorted(repaired.items()):
+                print(f"  {fs_item}  — {how}")
 
         if truly_missing:
             print(f"\nMissing — could not generate ({len(truly_missing)}):")
-            for f in sorted(truly_missing):
-                reason = file_outcomes.get(f, "unknown")
-                print(f"  - {f}  ({reason})")
+            for fs in sorted(truly_missing):
+                reason = file_outcomes.get(fs, "unknown")
+                print(f"  - {fs}  ({reason})")
 
         if rejected:
             print(f"\nRejected ({len(rejected)}):")
-            for f, why in sorted(rejected.items()):
-                print(f"  - {f}: {why}")
+            for fs, why in sorted(rejected.items()):
+                print(f"  - {fs}: {why}")
 
         if skipped:
             print(f"\nSkipped — target exists ({len(skipped)}):")
-            for f, why in sorted(skipped.items()):
+            for fs, why in sorted(skipped.items()):
                 print(f"  - {why}")
 
         post_snapshot = set()
@@ -1356,8 +1372,8 @@ class ImplementCommand(Command):
         removed_files = pre_snapshot - post_snapshot
         if new_files:
             print(f"\n  New files created: {len(new_files)}")
-            for f in sorted(new_files):
-                print(f"    + {f}")
+            for fs in sorted(new_files):
+                print(f"    + {fs}")
 
             # Auto-run static safety checks on new files (fast, no LLM)
             py_new = sorted(f for f in new_files if f.endswith(".py"))
@@ -1368,8 +1384,8 @@ class ImplementCommand(Command):
                 print("\n  Tip: run 'implement --review' for deep LLM analysis.")
         if removed_files:
             print(f"\n  Files no longer present: {len(removed_files)}")
-            for f in sorted(removed_files):
-                print(f"    - {f}")
+            for fs in sorted(removed_files):
+                print(f"    - {fs}")
 
         if fix_mode and implemented:
             print(f"\n{'='*50}")
@@ -1395,11 +1411,14 @@ class ImplementCommand(Command):
                     src = sf.read()
                 src_dir = str(fp.parent.resolve())
                 imports_by_class: dict[str, str] = {}
-                for im in re.finditer(r'from\s+(\w+)\s+import\s+(.+?)(?:\s*$|\s*#)', src, re.MULTILINE):
-                    mod_file = im.group(1) + ".py"
+                for im in re.finditer(r'from\s+([\w.]+)\s+import\s+(.+?)(?:\s*$|\s*#)', src, re.MULTILINE):
+                    mod_dotted = im.group(1)
+                    mod_file = mod_dotted.replace('.', '/') + ".py"
+                    if not (Path(ws) / mod_file).exists():
+                        continue
                     for n in re.findall(r'(\w+)', im.group(2)):
                         if n[0].isupper():
-                            imports_by_class[n] = mod_file
+                            imports_by_class[n] = mod_dotted
                 var_types: dict[str, str] = {}
                 for cls_name, mod_file in imports_by_class.items():
                     for va in re.finditer(rf'(\w+)\s*=\s*{cls_name}\s*\(', src):
@@ -1407,7 +1426,7 @@ class ImplementCommand(Command):
                 for var, cls_name in var_types.items():
                     for chain_m in re.finditer(rf'\b{var}\.(\w+(?:\.\w+)*)\b', src):
                         chain = chain_m.group(1).split('.')
-                        mod_py = imports_by_class[cls_name][:-3]
+                        mod_py = imports_by_class[cls_name]
                         check_attrs = '[' + ', '.join(f"'{a}'" for a in chain) + ']'
                         code = [
                             f"from {mod_py} import {cls_name}",
@@ -1443,6 +1462,7 @@ class ImplementCommand(Command):
             for fix_attempt in range(3):
                 errors_found = []
                 current_error_sigs: dict[str, str] = {}
+                preexisting_sigs: set[str] = set()
 
                 for fname in implemented:
                     if not fname.endswith(".py"):
@@ -1464,7 +1484,19 @@ class ImplementCommand(Command):
                         "print('OK')",
                     ])
                     if r.returncode != 0:
-                        errors_found.append((fname, fpath_str, f"IMPORT: {r.stderr.strip()}"))
+                        err_text = r.stderr.strip()
+                        mm = re.search(r"No module named '([^']+)'", err_text)
+                        if mm:
+                            batch_mods = {
+                                bm[:-3].replace('\\', '.').replace('/', '.')
+                                for bm in list(implemented) + list(all_files)
+                                if bm.endswith('.py')
+                            }
+                            if mm.group(1) not in batch_mods:
+                                preexisting_sigs.add(f"{fname}: missing module '{mm.group(1)}'")
+                                print(f"  (pre-existing, skipped) {fname}: missing module '{mm.group(1)}' is not produced by this batch")
+                                continue
+                        errors_found.append((fname, fpath_str, f"IMPORT: {err_text}"))
                         continue
 
                     r = subprocess.run(
@@ -1472,19 +1504,28 @@ class ImplementCommand(Command):
                         capture_output=True, text=True, cwd=str(Path(ws))
                     )
                     if r.returncode != 0 and "No module named" not in r.stderr:
-                        type_errors = [
-                            l.strip() for l in r.stdout.split('\n')
-                            if l.strip() and ':' in l
-                            and not l.startswith('Found')
-                            and ': note:' not in l
-                            and 'annotation-unchecked' not in l
-                            and '"list" is invariant' not in l
-                            and '--check-untyped-defs' not in l
-                            and 'No overload variant' not in l
-                            and 'Possible overload variants' not in l
-                            and 'no-untyped-def' not in l
-                            and 'no-untyped-call' not in l
-                        ]
+                        norm_fname = fname.replace("\\", "/")
+                        real_fname = fpath_str.replace("\\", "/")
+                        type_errors = []
+                        foreign_errors = []
+                        for line in r.stdout.split('\n'):
+                            line = line.strip()
+                            if not line or ':' not in line or line.startswith('Found'):
+                                continue
+                            if (': note:' in line or 'annotation-unchecked' in line
+                                    or '"list" is invariant' in line or '--check-untyped-defs' in line
+                                    or 'No overload variant' in line or 'Possible overload variants' in line
+                                    or 'no-untyped-def' in line or 'no-untyped-call' in line):
+                                continue
+                            err_path = line.split(':', 1)[0].replace("\\", "/")
+                            if err_path == norm_fname or err_path == real_fname:
+                                type_errors.append(line)
+                            else:
+                                foreign_errors.append(line)
+                        if foreign_errors:
+                            for fe in foreign_errors:
+                                preexisting_sigs.add(fe)
+                            print(f"  (pre-existing, skipped) {fname}: {len(foreign_errors)} error(s) in other files: {foreign_errors[0]}")
                         if type_errors:
                             errors_found.append((fname, fpath_str, f"TYPE: {'; '.join(type_errors[:5])}"))
 
@@ -1503,6 +1544,9 @@ class ImplementCommand(Command):
                             errors_found.append((fname, fpath_str, f"CLASS {cn}: {r.stderr.strip()}"))
                         else:
                             print(f"  {fname}: {r.stdout.strip()}")
+
+                if preexisting_sigs:
+                    print(f"  (pre-existing, skipped) {len(preexisting_sigs)} unique error(s) outside this batch — reported, not LLM-fixed")
 
                 if not errors_found:
                     print("\n[fix] All files pass deep validation!")
@@ -1553,26 +1597,41 @@ class ImplementCommand(Command):
                             params = init_match.group(2) if init_match else ""
 
                             required = []
-                            for p in params.split(','):
-                                p = p.strip()
-                                if not p or p == 'self':
-                                    continue
-                                if '=' not in p:
-                                    required.append(p.split(':')[0].strip())
+                            dc_m = re.search(r'@dataclass\b[^\n]*\n\s*class\s+' + re.escape(cn) + r'\b', source[:cn_match.end()])
+                            if dc_m:
+                                for dline in source[cn_match.end():].split('\n'):
+                                    stripped = dline.strip()
+                                    if not stripped or stripped.startswith(('#', '"""', '@', 'def ', 'class ')):
+                                        continue
+                                    if re.match(r'^\w+\s*:', stripped) and '=' not in stripped:
+                                        required.append(stripped.split(':')[0].strip())
+                                    elif not dline.startswith('    ') and stripped:
+                                        break
+                            else:
+                                for p in params.split(','):
+                                    p = p.strip()
+                                    if not p or p == 'self':
+                                        continue
+                                    if '=' not in p:
+                                        required.append(p.split(':')[0].strip())
 
                             mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
 
                             smoke_lines = [
                                 f"import {mod_name}",
+                                "import inspect",
                                 f"print(f'Testing {cn}...')",
                                 "try:",
+                                f"    if inspect.isabstract({mod_name}.{cn}):",
+                                f"        print(f'  OK: {cn} is abstract by design')",
+                                "        raise SystemExit(0)",
                             ]
                             if not required:
                                 smoke_lines.append(f"    obj = {mod_name}.{cn}()")
                                 smoke_lines.append(f"    print(f'  OK: {cn}() works')")
                             elif len(required) <= 2:
-                                args = ", ".join(f'"mock_{r.split(":")[0].strip()}"' if ':' in r else f'"mock_{r.strip()}"' for r in required)
-                                smoke_lines.append(f"    obj = {mod_name}.{cn}({args})")
+                                call_args = ", ".join(f'"mock_{r.split(":")[0].strip()}"' if ':' in r else f'"mock_{r.strip()}"' for r in required)
+                                smoke_lines.append(f"    obj = {mod_name}.{cn}({call_args})")
                                 smoke_lines.append(f"    print(f'  OK: {cn}() works')")
                             else:
                                 smoke_lines.append(f"    print(f'  SKIP: {cn} needs {len(required)} args')")
@@ -1654,13 +1713,18 @@ class ImplementCommand(Command):
                         print(f"\n[fix] Fixing root cause: {fname}...")
                         print(f"  Downstream files: {', '.join(e[0] for e in downstream_errs)}")
 
+                        if not os.path.exists(fpath):
+                            print(f"  Skipping {fname} — file not found")
+                            file_error_sigs[fname] = cur_sig
+                            continue
                         with open(fpath, "r", encoding="utf-8") as f:
                             current_code = f.read()
 
                         # Use root cause prompt with downstream context
+                        _rc_m = re.search(r'ROOT_CAUSE: (\w+)', err)
+                        _rc_class = _rc_m.group(1) if _rc_m else ""
                         fix_msgs = _build_root_cause_prompt(
-                            # Extract class name from error
-                            re.search(r'ROOT_CAUSE: (\w+)', err).group(1) if re.search(r'ROOT_CAUSE: (\w+)', err) else "",
+                            _rc_class,
                             current_code,
                             downstream_errs,
                             prefer_file=(fname in patch_failed)
@@ -1696,16 +1760,16 @@ class ImplementCommand(Command):
                             patch_match = re.search(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', fixed, re.DOTALL)
                             if patch_match:
                                 patch_text = patch_match.group(2).strip()
-                                ok, result = _apply_patch(patch_text, fpath, current_code.split('\n'))
+                                ok, new_text = _apply_patch(patch_text, fpath, current_code.split('\n'))
                                 if ok:
-                                    show_file_diff(fpath, current_code, result)
+                                    show_file_diff(fpath, current_code, new_text)
                                     with open(fpath, "w", encoding="utf-8") as f:
-                                        f.write(result)
+                                        f.write(new_text)
                                     print(f"  Fixed root cause: {fname} (patch applied)")
                                     file_error_sigs[fname] = ""
                                     fixed_files_this_round.add(fname)
                                 else:
-                                    print(f"  Patch failed: {result[:200]}")
+                                    print(f"  Patch failed: {new_text[:200]}")
                                     patch_failed.add(fname)
                                     file_error_sigs[fname] = cur_sig
                             else:
@@ -1722,6 +1786,10 @@ class ImplementCommand(Command):
                             print(f"\n[fix] Skipping {fname} — same error as previous attempt.")
                             continue
                         print(f"\n[fix] Fixing {fname}...")
+                        if not os.path.exists(fpath):
+                            print(f"  Skipping {fname} — file not found (may have been rejected)")
+                            file_error_sigs[fname] = cur_sig
+                            continue
                         with open(fpath, "r", encoding="utf-8") as f:
                             current_code = f.read()
 
@@ -1735,16 +1803,16 @@ class ImplementCommand(Command):
                         patch_match = _RE_5.search(fixed, re.DOTALL)
                         if patch_match:
                             patch_text = patch_match.group(2).strip()
-                            ok, result = _apply_patch(patch_text, fpath, current_code.split('\n'))
+                            ok, new_text = _apply_patch(patch_text, fpath, current_code.split('\n'))
                             if ok:
-                                show_file_diff(fpath, current_code, result)
+                                show_file_diff(fpath, current_code, new_text)
                                 with open(fpath, "w", encoding="utf-8") as f:
-                                    f.write(result)
+                                    f.write(new_text)
                                 print(f"  Fixed: {fname} (patch applied)")
                                 file_error_sigs[fname] = ""
                                 fixed_files_this_round.add(fname)
                             else:
-                                print(f"  Patch failed: {result[:200]}")
+                                print(f"  Patch failed: {new_text[:200]}")
                                 print(f"  Debug — LLM response patch area: {patch_text[:300]}")
                                 patch_failed.add(fname)
                                 file_error_sigs[fname] = cur_sig
@@ -1879,16 +1947,16 @@ class ImplementCommand(Command):
                 if unwired:
                     reasons.append(f"{sum(1 for uw in unwired if uw['file'] in dangerous_files)} are unwired")
                 print(f"\n  [review] {len(dangerous_files)} file(s) have issues ({', '.join(reasons)}):")
-                for f in sorted(dangerous_files):
-                    print(f"    {f}")
+                for df in sorted(dangerous_files):
+                    print(f"    {df}")
                 try:
                     choice = input("  Delete these files to prevent import collisions? (y/N): ").strip().lower()
                     if choice == "y":
-                        for f in dangerous_files:
-                            path = Path(ws) / f
+                        for df in dangerous_files:
+                            path = Path(ws) / df
                             if path.exists():
                                 path.unlink()
-                                print(f"    Deleted: {f}")
+                                print(f"    Deleted: {df}")
                 except (EOFError, KeyboardInterrupt):
                     print("Interrupted by user or EOF")
 
@@ -1946,7 +2014,7 @@ class ImplementCommand(Command):
                     if choice and choice != "n":
                         ws_str = str(Path(workspace_path(target_workspace)).resolve())
                         if choice == "all":
-                            selected = range(len(candidates))
+                            selected = list(range(len(candidates)))
                         else:
                             selected = []
                             for part in choice.replace(" ", "").split(","):
