@@ -8,6 +8,12 @@ from pathlib import Path
 
 from .base import Command, show_file_diff, save_file_py
 from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
+from .implement_cmd import (
+    _apply_patch as _impl_apply_patch,
+    _classify_error,
+    _extract_window,
+    _parse_line_number,
+)
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -63,7 +69,7 @@ class FixCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return 'fix "<traceback>" | <file> --desc "issue" [--full] - Fix code errors'
+        return 'fix "<traceback>" | <file> --desc "issue" [--full] | --mypy [path...] - Fix code errors'
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         parts = args
@@ -425,8 +431,177 @@ class FixCommand(Command):
             print(f"\nFixed {fixed_count}/{len(fixes)} files.")
             return True
 
+        if "--mypy" in parts:
+            return await self._fix_mypy(parts, agent)
+
         else:
             return await self._fix_traceback(parts, agent)
+
+    async def _fix_mypy(self, parts: list[str], agent: 'Agent') -> bool:
+        """Run mypy over the workspace and LLM-fix errors grouped by owning file.
+
+        Usage: fix --mypy [path...] [--limit N] [--rounds N]
+        Default targets: agent_core/, agent1/ and agent.py in the current dir.
+        """
+        limit = 5
+        rounds = 2
+        ws_dir = os.path.abspath(".")
+        targets: list[str] = []
+        i = 0
+        while i < len(parts):
+            p = parts[i]
+            if p == "--limit" and i + 1 < len(parts):
+                limit = int(parts[i + 1])
+                i += 2
+                continue
+            if p == "--rounds" and i + 1 < len(parts):
+                rounds = int(parts[i + 1])
+                i += 2
+                continue
+            if p == "--mypy":
+                i += 1
+                continue
+            targets.append(p)
+            i += 1
+        if not targets:
+            for t in ("agent_core", "agent1"):
+                if os.path.isdir(os.path.join(ws_dir, t)):
+                    targets.append(os.path.join(ws_dir, t))
+            if os.path.isfile(os.path.join(ws_dir, "agent.py")):
+                targets.append(os.path.join(ws_dir, "agent.py"))
+
+        def run_mypy(args: list[str]) -> str:
+            r = subprocess.run(
+                [sys.executable, "-m", "mypy", *args, "--ignore-missing-imports", "--follow-imports=skip"],
+                capture_output=True, text=True, cwd=ws_dir,
+            )
+            return r.stdout
+
+        def parse_errors(stdout: str) -> dict[str, list[str]]:
+            by_file: dict[str, list[str]] = {}
+            for line in stdout.split('\n'):
+                m = re.match(r'^(.*?):(\d+): error: (.*)$', line.strip())
+                if m:
+                    fpath = m.group(1).replace('\\', '/')
+                    by_file.setdefault(fpath, []).append(line.strip())
+            return by_file
+
+        errors_by_file = parse_errors(run_mypy(targets))
+        files = sorted(errors_by_file.items(), key=lambda kv: -len(kv[1]))
+        print(f"[fix --mypy] {sum(len(v) for v in errors_by_file.values())} error(s) in {len(files)} file(s)")
+        if not files:
+            print("Workspace is mypy-clean. Nothing to fix.")
+            return True
+
+        for rel_file, errs in files[:limit]:
+            full = os.path.normpath(os.path.join(ws_dir, rel_file))
+            if not os.path.isfile(full):
+                print(f"  Skipping {rel_file} (not found)")
+                continue
+            print(f"\n[fix --mypy] {rel_file}: {len(errs)} error(s)")
+            for attempt in range(rounds):
+                try:
+                    with open(full, "r", encoding="utf-8") as f:
+                        current = f.read()
+                except OSError as e:
+                    print(f"  Cannot read {rel_file}: {e}")
+                    break
+                lines = current.split('\n')
+                user_sections = []
+                for err in errs[:12]:
+                    error_line = _parse_line_number(err)
+                    before, after, instruction = _classify_error(err)
+                    window = _extract_window(lines, error_line, before, after)
+                    user_sections.append(
+                        f"### Error\n{err}\n\nInstruction: {instruction}\n\n"
+                        f"Relevant code:\n```python\n{window}\n```\n"
+                    )
+                msgs = [
+                    {"role": "system", "content": f"Fix the mypy errors in {rel_file}. Make the smallest possible targeted changes. Output the fix as ONE of: [PATCH: {rel_file}] with unified hunks, or [FILE: {rel_file}] with the complete corrected file. Do NOT output anything else."},
+                    {"role": "user", "content": "\n".join(user_sections) + f"\n\nOutput format:\n[PATCH: {rel_file}]\n@@ -line,count +line,count @@\n unchanged line\n-removed line\n+added line\n\nOR if a larger rewrite is needed:\n[FILE: {rel_file}]\n```python\n# complete corrected file\n```"},
+                ]
+                response = await agent.llm.chat(msgs)
+                if not response or response.startswith("[Error") or response.startswith("[LM Studio"):
+                    print(f"  LLM error: {response}")
+                    break
+                prev = current
+                changed = self._apply_fix_blocks(response, ws_dir, rel_file)
+                if not changed:
+                    print(f"  No usable [PATCH:]/[FILE:] in response for {rel_file}")
+                    break
+                r = subprocess.run([sys.executable, "-m", "py_compile", full], capture_output=True, text=True)
+                if r.returncode != 0:
+                    print(f"  Fix introduced a compile error — restoring previous version\n  {r.stderr.strip()[:200]}")
+                    with open(full, "w", encoding="utf-8") as f:
+                        f.write(prev)
+                    break
+                remaining = parse_errors(run_mypy([rel_file])).get(rel_file, [])
+                print(f"  Round {attempt + 1}: {len(remaining)} error(s) remaining in {rel_file}")
+                if not remaining:
+                    break
+                errs = remaining
+
+        final = parse_errors(run_mypy(targets))
+        total = sum(len(v) for v in final.values())
+        print(f"\n[fix --mypy] Done. {total} error(s) remain in {len(final)} file(s).")
+        for fp, cnt in sorted(final.items(), key=lambda kv: -len(kv[1]))[:10]:
+            print(f"  {fp}: {len(cnt)}")
+        return True
+
+    def _apply_fix_blocks(self, response: str, ws_dir: str, rel_file: str) -> int:
+        """Apply [PATCH:]/[FILE:] blocks targeting rel_file with diff+confirm.
+
+        Returns the number of blocks applied. Writes go through save_file_py
+        (y/N confirm); the caller re-compiles and restores on failure.
+        """
+        full = os.path.normpath(os.path.join(ws_dir, rel_file))
+        if not os.path.isfile(full):
+            return 0
+        clean = re.sub(r'</?tool_call>', '', response)
+        try:
+            with open(full, "r", encoding="utf-8") as f:
+                current = f.read()
+        except OSError as e:
+            print(f"  Cannot read {rel_file}: {e}")
+            return 0
+
+        def _targets(block_path: str) -> bool:
+            bp = block_path.replace('\\', '/')
+            return bp == rel_file or bp == os.path.basename(rel_file)
+
+        applied = 0
+        for m in re.finditer(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL):
+            if not _targets(m.group(1).strip()):
+                continue
+            ok, result = _impl_apply_patch(m.group(2).strip(), full, current.split('\n'))
+            if not ok:
+                print(f"  Patch apply failed: {result[:150]}")
+                continue
+            if save_file_py(full, result, auto_yes=False):
+                current = result
+                applied += 1
+        for m in re.finditer(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?:\n```|$)', clean, re.DOTALL):
+            if not _targets(m.group(1).strip()):
+                continue
+            new_code = m.group(2).strip()
+            if len(new_code) < 10 or not re.search(r'\b(import|def |class )\b', new_code):
+                print(f"  WARNING: [FILE:] content for {rel_file} looks invalid, skipping")
+                continue
+            if save_file_py(full, new_code, auto_yes=False):
+                current = new_code
+                applied += 1
+
+        if applied:
+            changelog_path = os.path.join(ws_dir, "CHANGES.md")
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+            entry = f"\n## {timestamp} — fix --mypy\n\n**Change**: Modified `{os.path.basename(full)}`\n**Reason**: mypy error fixes\n"
+            try:
+                with open(changelog_path, "a", encoding="utf-8") as cl:
+                    cl.write(entry)
+            except OSError:
+                pass
+        return applied
+
     def _apply_fix_response(self, response: str, ws_dir: str, desc_text: str) -> None:
         """Parse [FILE:] and [PATCH:] blocks from *response* and apply them to disk."""
         if response.startswith("[Error") or response.startswith("[LM Studio"):

@@ -78,3 +78,4 @@
 
 **Change**: Modified `benchmark.py`
 **Reason**: Fix all issues from project_tasks.md: 3) Update __init__.py exports. 4) Fix read_file dedup in agent.py. 5) Fix analyze_handler AST traversal. 6) Register ShellCommandHandler in tool_router.py. 7) Con
+
