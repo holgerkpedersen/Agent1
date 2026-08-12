@@ -1,4 +1,5 @@
 """Fix command for agent interactive mode."""
+import ast
 import os
 import re
 import subprocess
@@ -6,7 +7,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .base import Command, show_file_diff, save_file_py
+from .base import Command, show_file_diff, save_file_py, read_choice, stop_requested
 from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
 from .implement_cmd import (
     _apply_patch as _impl_apply_patch,
@@ -39,6 +40,313 @@ def _is_trackable_file(p: str) -> bool:
     if _is_stdlib_path(p):
         return False
     return True
+
+
+def _max_identical_run(text: str) -> int:
+    """Longest run of IDENTICAL consecutive non-blank lines in *text*.
+
+    Blank lines are excluded so a patch that legitimately adds spacing does
+    not look like corruption.  Pure comment lines ARE counted — a run of 45
+    identical ``# TODO`` comments is exactly the corruption signature we
+    want to catch.
+    """
+    longest = 0
+    prev: str | None = None
+    run = 0
+    for raw in text.split('\n'):
+        line = raw.rstrip('\r').strip()
+        if not line:
+            run = 0
+            prev = None
+            continue
+        if line == prev:
+            run += 1
+            if run > longest:
+                longest = run
+        else:
+            run = 1
+            prev = line
+            if run > longest:
+                longest = run
+    return longest
+
+
+def _looks_corrupted(original: str, result: str) -> str | None:
+    """Return a human reason when *result* looks like a mis-applied patch.
+
+    Two signatures of anchor/positional mis-application that the
+    syntax-only gate (``compile``) cannot catch:
+
+    * **duplicate-run explosion** — a comment or line was repeated many
+      times (e.g. the 45x-TODO corruption).  Reject when the longest
+      identical run in *result* is both >8 and >2x the longest run in
+      *original*.
+    * **runaway growth** — a [PATCH:] that doubles the file is almost
+      never a legitimate mypy fix.  Reject when *result* has >2x the
+      non-blank line count of *original*.
+    """
+    res_run = _max_identical_run(result)
+    orig_run = _max_identical_run(original)
+    if res_run > 8 and res_run > 2 * max(orig_run, 1):
+        return (f"result introduces a {res_run}-long identical-line run "
+                f"(original max {orig_run}) — likely a mis-anchored patch")
+    orig_n = sum(1 for ln in original.split('\n') if ln.strip())
+    res_n = sum(1 for ln in result.split('\n') if ln.strip())
+    if orig_n > 20 and res_n > 2 * orig_n:
+        return (f"result grew {orig_n}->{res_n} non-blank lines (>2x) — "
+                f"rejecting runaway patch")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Deterministic (non-LLM) mypy fixers
+# ---------------------------------------------------------------------------
+# Each of these transforms is provably safe for the error subclass it targets.
+# They are run BEFORE the LLM ladder so the flaky patch path only has to deal
+# with the errors that genuinely need judgment (missing return statement,
+# untyped-call into third-party code, element types for bare tuple/dict, ...).
+# Every transform re-validates with ``compile``; the caller re-runs mypy
+# afterwards, so a wrong guess is rolled back by the normal verification.
+
+_TYPE_IGNORE_RE = re.compile(r'\s*#\s*type:\s*ignore(?:\[[^\]]*\])?\s*$')
+
+
+def _collapse_duplicate_runs(text: str, threshold: int = 5) -> tuple[str, int]:
+    """Collapse runs of > *threshold* identical consecutive lines to one.
+
+    Returns ``(new_text, collapsed_runs)``.  Blank-line runs are left alone so
+    we never normalise spacing.  This is the mechanical repair for the
+    corruption seen in the wild (a ``# TODO`` comment copy-pasted 45x by a
+    mis-anchored patch).
+    """
+    lines = text.split('\n')
+    out: list[str] = []
+    i = 0
+    runs = 0
+    n = len(lines)
+    while i < n:
+        j = i + 1
+        while j < n and lines[j] == lines[i]:
+            j += 1
+        run_len = j - i
+        if run_len > threshold and lines[i].strip():
+            out.append(lines[i])
+            runs += 1
+        else:
+            out.extend(lines[i:j])
+        i = j
+    return '\n'.join(out), runs
+
+
+def _syntax_ok(source: str) -> bool:
+    try:
+        compile(source, "<mechanical>", "exec")
+        return True
+    except SyntaxError:
+        return False
+
+
+def _fix_unused_ignore(lines: list[str], lineno: int) -> list[str] | None:
+    """Drop a trailing ``# type: ignore`` directive on *lineno* (1-indexed)."""
+    idx = lineno - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+    m = _TYPE_IGNORE_RE.search(lines[idx])
+    if not m:
+        return None
+    new_line = lines[idx][:m.start()].rstrip()
+    if not new_line.strip():
+        return lines[:idx] + lines[idx + 1:]  # whole line was the comment
+    return lines[:idx] + [new_line] + lines[idx + 1:]
+
+
+def _fix_redundant_cast(lines: list[str], lineno: int, typ: str) -> list[str] | None:
+    """Replace ``cast(typ, expr)`` with ``expr`` on *lineno* (1-indexed)."""
+    idx = lineno - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+    line = lines[idx]
+    m = re.search(r'\bcast\s*\(\s*', line)
+    if not m:
+        return None
+    rest = line[m.end():]
+    depth = 1
+    i = 0
+    type_end: int | None = None
+    while i < len(rest):
+        c = rest[i]
+        if c == '(':
+            depth += 1
+        elif c == ')':
+            depth -= 1
+            if depth == 0:
+                break
+        elif c == ',' and depth == 1:
+            type_end = i
+            break
+        i += 1
+    if type_end is None:
+        return None
+    if rest[:type_end].strip() != typ:
+        return None
+    arg_start = type_end + 1
+    depth = 1
+    j = arg_start
+    arg_end: int | None = None
+    while j < len(rest):
+        c = rest[j]
+        if c == '(':
+            depth += 1
+        elif c == ')':
+            depth -= 1
+            if depth == 0:
+                arg_end = j
+                break
+        j += 1
+    if arg_end is None:
+        return None
+    arg = rest[arg_start:arg_end].strip()
+    new_line = line[:m.start()] + arg + rest[arg_end + 1:]
+    return lines[:idx] + [new_line] + lines[idx + 1:]
+
+
+def _fix_implicit_optional(lines: list[str], lineno: int) -> list[str] | None:
+    """``name: T = None`` -> ``name: T | None = None`` on *lineno* (1-indexed).
+
+    Only when *T* is a plain annotation without an existing ``| None`` or
+    ``Optional[...]`` wrapper (mypy would not have flagged those).
+    """
+    idx = lineno - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+    line = lines[idx]
+    m = re.search(
+        r'(\b\w+\s*:\s*)([A-Za-z_][\w.]*(?:\[[^\]]*\])?)\s*=\s*None\b',
+        line,
+    )
+    if not m:
+        return None
+    type_str = m.group(2)
+    if type_str.endswith('None') or 'Optional' in type_str:
+        return None
+    new_line = line[:m.end(2)] + ' | None' + line[m.end(2):]
+    return lines[:idx] + [new_line] + lines[idx + 1:]
+
+
+def _enclosing_function_name(source: str, lineno: int) -> str | None:
+    """Name of the function whose body contains *lineno*, or None."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    enclosing: str | None = None
+    best_start: int = -1
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            start = node.lineno
+            end = node.end_lineno or start
+            if start <= lineno <= end and start > best_start:
+                best_start = start
+                enclosing = node.name
+    return enclosing
+
+
+def _fix_attr_defined_rename(
+    lines: list[str], lineno: int, full_source: str, bad: str, suggested: str
+) -> list[str] | None:
+    """Rename ``<obj>.bad`` to ``<obj>.suggested`` on *lineno* when safe.
+
+    Only applied when *suggested* is actually a ``def`` in *full_source* AND
+    the rename would not turn a call inside the ``def suggested`` body into a
+    recursive call (the mypy "maybe '_tool_x'?" hint fires for delegation
+    methods whose target was mis-spelled — renaming there just creates
+    infinite recursion, so leave those for the LLM).
+    """
+    idx = lineno - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+    if not re.search(r'\bdef\s+' + re.escape(suggested) + r'\s*\(', full_source):
+        return None
+    if _enclosing_function_name(full_source, lineno) == suggested:
+        return None  # would be self-recursion — skip
+    if not re.search(r'\.' + re.escape(bad) + r'\b', lines[idx]):
+        return None
+    new_line = re.sub(
+        r'(\.)' + re.escape(bad) + r'\b', r'\1' + suggested, lines[idx]
+    )
+    return lines[:idx] + [new_line] + lines[idx + 1:]
+
+
+def _function_returns_value(source: str, def_lineno: int) -> bool:
+    """True if the function starting on *def_lineno* has a ``return <expr>``."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return True  # do not risk adding a wrong ``-> None``
+
+    def returns_value(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        def _scan(body: list[ast.stmt]) -> bool:
+            for stmt in body:
+                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    continue
+                if isinstance(stmt, ast.Return) and stmt.value is not None:
+                    if not (isinstance(stmt.value, ast.Constant) and stmt.value.value is None):
+                        return True
+                body_attr = getattr(stmt, 'body', None)
+                if isinstance(body_attr, list) and _scan(body_attr):
+                    return True
+            return False
+        return _scan(node.body)
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.lineno == def_lineno:
+            return returns_value(node)
+    return True
+
+
+def _fix_missing_return_none(lines: list[str], def_lineno: int) -> list[str] | None:
+    """Append ``-> None`` to the function signature on *def_lineno* when the
+    body has no value-returning ``return``.
+    """
+    idx = def_lineno - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+    def_line = lines[idx]
+    stripped = def_line.lstrip()
+    if not (stripped.startswith('def ') or stripped.startswith('async def ')):
+        return None
+    indent = len(def_line) - len(def_line.lstrip())
+    if def_line.rstrip().endswith(':'):
+        close_idx = idx
+    else:
+        close_idx = -1
+        for j in range(idx + 1, len(lines)):
+            cand = lines[j]
+            cstrip = cand.strip()
+            cindent = len(cand) - len(cand.lstrip())
+            if cstrip.endswith(':') and (cindent <= indent or cstrip[:1] in ')]}'):
+                close_idx = j
+                break
+        if close_idx < 0:
+            return None
+    sig_text = '\n'.join(lines[idx:close_idx + 1])
+    if '->' in sig_text:
+        return None
+    source_for_check = '\n'.join(lines)
+    if _function_returns_value(source_for_check, def_lineno):
+        return None
+    close_line = lines[close_idx]
+    colon = close_line.rfind(':')
+    new_close = close_line[:colon] + ' -> None' + close_line[colon:]
+    return lines[:close_idx] + [new_close] + lines[close_idx + 1:]
+
+
+def _parse_mypy_error(err: str) -> tuple[int, str] | None:
+    """Extract ``(line_number, error_code)`` from a mypy error line."""
+    m = re.match(r'^(.*?):(\d+): error: (.*?)\s*\[([a-z-]+)\]\s*$', err.strip())
+    if not m:
+        return None
+    return int(m.group(2)), m.group(4)
 
 
 def extract_signatures(source: str) -> dict:
@@ -500,13 +808,19 @@ class FixCommand(Command):
             return True
 
         for rel_file, errs in files[:limit]:
+            if stop_requested():
+                print("  Stopped by user — remaining files skipped.")
+                break
             full = os.path.normpath(os.path.join(ws_dir, rel_file))
             if not os.path.isfile(full):
                 print(f"  Skipping {rel_file} (not found)")
                 continue
             print(f"\n[fix --mypy] {rel_file}: {len(errs)} error(s)")
             remaining = list(errs)
+            remaining = self._repair_and_mechanical(full, rel_file, remaining, yes_mode)
             for attempt in range(max(rounds, 1)):
+                if stop_requested():
+                    break
                 if not remaining:
                     break
                 slice_errs = remaining[:4]
@@ -537,7 +851,9 @@ class FixCommand(Command):
                     print("  Hint: the model burned its whole output budget on reasoning. Load a non-thinking model (`model load <name>`) or a faster coder model for fix --mypy.")
                     break
                 prev = current
-                changed = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode)
+                before_errs = list(remaining)
+                count_before = len(before_errs)
+                changed = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode, context_errors=slice_errs)
                 if not changed:
                     print("  Fix did not apply — retrying once with verbatim-copy instructions")
                     retry_msgs = [
@@ -550,15 +866,45 @@ class FixCommand(Command):
                         break
                     changed = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode)
                 if not changed:
-                    print(f"  No usable [PATCH:]/[FILE:] in response for {rel_file}")
-                    break
+                    print("  Slice failed — retrying the first error alone")
+                    single_msgs = [
+                        msgs[0],
+                        {"role": "user", "content": user_sections[0] +
+                            "\n\nOutput ONLY a minimal [PATCH:] fixing this one error. "
+                            "Copy the context lines character-for-character from the window above."},
+                    ]
+                    response = await agent.llm.chat(single_msgs, max_tokens=4000, disable_thinking=True)
+                    if response and not response.startswith("[Error") and not response.startswith("[LM Studio"):
+                        changed = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode, context_errors=slice_errs[:1])
+                    if changed:
+                        remaining = parse_errors(run_mypy([rel_file])).get(rel_file, [])
+                        if len(remaining) > count_before:
+                            print(f"  Single-error fix regressed: {count_before} -> {len(remaining)} errors — restoring previous version")
+                            with open(full, "w", encoding="utf-8") as f:
+                                f.write(prev)
+                            remaining = before_errs[4:]
+                            continue
+                        print(f"  Single-error fallback applied: {len(remaining)} error(s) remaining")
+                        if not remaining:
+                            break
+                        continue
+                    remaining = remaining[4:]
+                    print(f"  No usable fix for these {len(slice_errs)} error(s) — skipping them")
+                    continue
                 r = subprocess.run([sys.executable, "-m", "py_compile", full], capture_output=True, text=True)
                 if r.returncode != 0:
                     print(f"  Fix introduced a compile error — restoring previous version\n  {r.stderr.strip()[:200]}")
                     with open(full, "w", encoding="utf-8") as f:
                         f.write(prev)
-                    break
+                    remaining = before_errs[4:]
+                    continue
                 remaining = parse_errors(run_mypy([rel_file])).get(rel_file, [])
+                if len(remaining) > count_before:
+                    print(f"  Fix regressed: {count_before} -> {len(remaining)} errors — restoring previous version")
+                    with open(full, "w", encoding="utf-8") as f:
+                        f.write(prev)
+                    remaining = before_errs[4:]
+                    continue
                 print(f"  Attempt {attempt + 1}: {len(remaining)} error(s) remaining in {rel_file}")
                 if not remaining:
                     break
@@ -570,12 +916,114 @@ class FixCommand(Command):
             print(f"  {fp}: {len(cnt)}")
         return True
 
-    def _apply_fix_blocks(self, response: str, ws_dir: str, rel_file: str, auto_yes: bool = False) -> int:
+    def _repair_and_mechanical(
+        self, full: str, rel_file: str, errs: list[str], auto_yes: bool
+    ) -> list[str]:
+        """Pre-flight corruption repair + deterministic mypy fixes.
+
+        Returns the still-unfixed error list (re-queried from mypy so the
+        caller's attempt loop only sees what genuinely needs the LLM).
+        """
+        try:
+            with open(full, "r", encoding="utf-8") as f:
+                source = f.read()
+        except OSError as e:
+            print(f"  Cannot read {rel_file}: {e}")
+            return errs
+
+        # 1) Collapse duplicated-line corruption left by a prior bad apply.
+        collapsed_source, runs = _collapse_duplicate_runs(source)
+        if runs:
+            print(f"  [repair] collapsed {runs} duplicated-line run(s) in {rel_file}")
+            if save_file_py(full, collapsed_source, auto_yes=auto_yes):
+                source = collapsed_source
+            errs = self._rerun_mypy_errors(rel_file, full, errs)
+
+        # 2) Deterministic fixes — process bottom-up so a dropped line never
+        #    invalidates the line numbers of errors yet to be handled.
+        parsed: list[tuple[int, str, str]] = []
+        for err in errs:
+            info = _parse_mypy_error(err)
+            if info is None:
+                continue
+            parsed.append((info[0], info[1], err))
+        parsed.sort(key=lambda t: -t[0])
+
+        new_lines = source.split('\n')
+        changed = False
+        for lineno, code, err in parsed:
+            before = list(new_lines)
+            after: list[str] | None = None
+            if code == "unused-ignore":
+                after = _fix_unused_ignore(before, lineno)
+                label = "unused-ignore"
+            elif code == "redundant-cast":
+                m = re.search(r'Redundant cast to "([^"]+)"', err)
+                if m:
+                    after = _fix_redundant_cast(before, lineno, m.group(1))
+                label = "redundant-cast"
+            elif code == "assignment" and "default has type \"None\"" in err:
+                after = _fix_implicit_optional(before, lineno)
+                label = "implicit-optional"
+            elif code == "attr-defined":
+                m = re.search(r'has no attribute "([^"]+)"; maybe "([^"]+)"', err)
+                if m:
+                    after = _fix_attr_defined_rename(
+                        before, lineno, '\n'.join(new_lines), m.group(1), m.group(2)
+                    )
+                label = "attr-defined-rename"
+            elif code == "no-untyped-def":
+                after = _fix_missing_return_none(before, lineno)
+                label = "return-None"
+            else:
+                continue
+            if after is None or after == before:
+                continue
+            joined = '\n'.join(after)
+            if not _syntax_ok(joined):
+                print(f"  mechanical {label} rejected (syntax) — {err[:80]}")
+                continue
+            print(f"  mechanical {label} @ {rel_file}:{lineno}")
+            if save_file_py(full, joined, auto_yes=auto_yes):
+                new_lines = after
+                changed = True
+
+        if changed:
+            return self._rerun_mypy_errors(rel_file, full, errs)
+        return errs
+
+    def _rerun_mypy_errors(
+        self, rel_file: str, full: str, prev_errs: list[str]
+    ) -> list[str]:
+        """Re-run mypy on *full* and return its current error list for it."""
+        ws_dir = os.path.dirname(full)
+        r = subprocess.run(
+            [sys.executable, "-m", "mypy", full, "--ignore-missing-imports",
+             "--follow-imports=skip"],
+            capture_output=True, text=True, cwd=ws_dir,
+        )
+        by_file: dict[str, list[str]] = {}
+        for line in r.stdout.split('\n'):
+            m = re.match(r'^(.*?):(\d+): error: (.*)$', line.strip())
+            if m:
+                fpath = m.group(1).replace('\\', '/')
+                by_file.setdefault(fpath, []).append(line.strip())
+        match_key = rel_file.replace('\\', '/')
+        # mypy prints the path as it was given; try both rel and basename.
+        for key in (match_key, os.path.basename(rel_file), full.replace('\\', '/')):
+            if key in by_file:
+                return by_file[key]
+        return []
+
+    def _apply_fix_blocks(self, response: str, ws_dir: str, rel_file: str,
+                          auto_yes: bool = False,
+                          context_errors: list[str] | None = None) -> int:
         """Apply [PATCH:]/[FILE:] blocks targeting rel_file with diff+confirm.
 
         Returns the number of blocks applied. Writes go through save_file_py
         (y/N confirm unless auto_yes); the caller re-compiles and restores on
-        failure.
+        failure.  When *context_errors* is given, the issues the model was
+        asked to fix are printed above each presented patch.
         """
         full = os.path.normpath(os.path.join(ws_dir, rel_file))
         if not os.path.isfile(full):
@@ -593,17 +1041,31 @@ class FixCommand(Command):
             return bp == rel_file or bp == os.path.basename(rel_file)
 
         applied = 0
+        from agent_core.patch_utils import split_source_lines
+
+        def _show_targeted_issues() -> None:
+            if context_errors:
+                print(f"  Issues this patch targets ({len(context_errors)}):")
+                for e in context_errors:
+                    print(f"    {e}")
+
+        lines = split_source_lines(current)
         for m in re.finditer(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL):
             if not _targets(m.group(1).strip()):
                 continue
             patch_text = m.group(2).strip()
-            ok, result = _impl_apply_patch(patch_text, full, current.split('\n'))
+            ok, result = _impl_apply_patch(patch_text, full, lines)
             if not ok:
                 from agent_core.patch_utils import apply_anchored_patch
-                ok, result = apply_anchored_patch(patch_text, current.split('\n'))
+                ok, result = apply_anchored_patch(patch_text, lines)
             if not ok:
                 print(f"  Patch apply failed: {result[:150]}")
                 continue
+            reason = _looks_corrupted(current, result)
+            if reason:
+                print(f"  Rejected patch — corruption guard: {reason}")
+                continue
+            _show_targeted_issues()
             if save_file_py(full, result, auto_yes=auto_yes):
                 current = result
                 applied += 1
@@ -617,6 +1079,7 @@ class FixCommand(Command):
             if len(current.splitlines()) > 200 and len(new_code) > len(current) * 1.5:
                 print(f"  WARNING: [FILE:] content for {rel_file} is an oversized rewrite, skipping (use [PATCH:] instead)")
                 continue
+            _show_targeted_issues()
             if save_file_py(full, new_code, auto_yes=auto_yes):
                 current = new_code
                 applied += 1
@@ -644,7 +1107,7 @@ class FixCommand(Command):
         if patches:
             for fpath, patch_text in patches:
                 fpath = fpath.strip()
-                self._apply_patch(patch_text.strip(), fpath, ws_dir)
+                self._apply_patch(patch_text.strip(), fpath, ws_dir, reason=desc_text)
 
         # Parse [FILE:] blocks (full file rewrite)
         fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', clean, re.DOTALL)
@@ -672,8 +1135,13 @@ class FixCommand(Command):
             print(f"  Fixed: {fpath} ({len(new_code)} bytes)")
         print(f"\nFixed {fixed_count}/{len(fixes)} files.")
 
-    def _apply_patch(self, patch_text: str, fpath: str, ws_dir: str) -> bool:
-        """Apply a unified-diff-style patch to a file. Returns True on success."""
+    def _apply_patch(self, patch_text: str, fpath: str, ws_dir: str,
+                     reason: str | None = None) -> bool:
+        """Apply a unified-diff-style patch to a file. Returns True on success.
+
+        *reason* (the issue the patch is meant to fix) is shown above the
+        diff so the user can judge the patch against it.
+        """
         full = os.path.normpath(os.path.join(ws_dir, fpath)) if not os.path.isabs(fpath) else fpath
         if not os.path.exists(full):
             print(f"  Skipping {fpath} (not found)")
@@ -811,14 +1279,12 @@ class FixCommand(Command):
             return False
 
         # Show diff
+        if reason:
+            print(f"  Reason: {reason[:400]}")
         show_file_diff(fpath, ''.join(lines), ''.join(result))
 
         # Apply
-        try:
-            choice = input("  Apply this patch? (y/N): ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            return False
-        if choice != "y":
+        if not read_choice("  Apply this patch? (y/N): "):
             print("  Skipped.")
             return False
 
@@ -1014,7 +1480,7 @@ class FixCommand(Command):
             fpath_patch = patch_match.group(1).strip()
             patch_text = patch_match.group(2).strip()
             ws_dir = str(Path(fpath).parent)
-            ok = self._apply_patch(patch_text, fpath_patch, ws_dir)
+            ok = self._apply_patch(patch_text, fpath_patch, ws_dir, reason=error_msg)
             if ok:
                 print(f"\nFixed: {fpath_patch} (patch applied)")
                 result = subprocess.run(
@@ -1033,6 +1499,7 @@ class FixCommand(Command):
                 if _is_stdlib_path(fpath):
                     print(f"\nSkipping: {fpath} is a stdlib file.")
                     return True
+                print(f"  Reason: {error_msg[:400]}")
                 if save_file_py(fpath, new_code, auto_yes=False):
                     print(f"\nFixed: {fpath} ({len(new_code)} bytes)")
                 else:

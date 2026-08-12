@@ -21,7 +21,7 @@ import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .base import Command, read_stdin, show_file_diff
+from .base import Command, read_stdin, show_file_diff, read_choice, stop_requested
 from agent_core import workspace_path
 from agent_core.decisions import find_decisions, find_overlaps, format_for_prompt
 from agent_core.patch_utils import apply_anchored_patch, apply_patch, split_patch_hunks
@@ -1882,14 +1882,20 @@ class OptimizeCommand(Command):
             # impossible by construction.
             for fpath in batch["files"]:
                 basename = os.path.basename(fpath)
+                if stop_requested():
+                    break
                 if not batch["findings"][fpath]:
                     continue
                 original = batch["contents"][fpath]
                 print(f"  {basename}: {len(batch['findings'][fpath])} finding(s) — targeted patches")
 
                 work_lines = original.split("\n")
+                if work_lines and work_lines[-1] == "":
+                    work_lines.pop()
                 pending = list(batch["findings"][fpath])
                 while pending:
+                    if stop_requested():
+                        break
                     finding = pending.pop(0)
                     line, pattern = finding["line"], finding["pattern"]
                     context = _finding_context("\n".join(work_lines), line)
@@ -1932,6 +1938,7 @@ class OptimizeCommand(Command):
                         continue
                     _resync = static_analyze("\n".join(work_lines))
                     if not any(f["line"] == line and f["pattern"] == pattern for f in _resync):
+                        print(f"    line {line} [{pattern}] — no longer present at that line, skipped")
                         continue
                     # ── LLM patch loop ──────────────────────────────────
                     _PATCH_RE = re.compile(
@@ -2166,17 +2173,12 @@ class OptimizeCommand(Command):
                             resolved = False
                             break
                         new_lines = patched.split("\n")
+                        # patched = content lines each ending in '\n', so the
+                        # newline count equals the content-line count, matching
+                        # content-only work_lines.
                         line_delta = patched.count("\n") - len(work_lines)
-                        # apply_patch always appends \n to every line, so if the
-                        # original file has a trailing newline the patched result
-                        # ends with \n\n.  splitlines() (used by show_file_diff)
-                        # sees the inner \n\n as an extra empty "line".  Strip all
-                        # trailing empties, then add exactly one back if the
-                        # original file had a trailing newline.
                         while new_lines and new_lines[-1] == "":
                             new_lines.pop()
-                        if original.endswith("\n"):
-                            new_lines.append("")
                         work_lines = new_lines
                         if line_delta:
                             for pf in pending:
@@ -2185,7 +2187,7 @@ class OptimizeCommand(Command):
                         resolved = True
                         # Show the per-iteration diff for visibility
                         pre_patch = "\n".join(work_lines) + ("\n" if original.endswith("\n") else "")
-                        post_patch = "\n".join(new_lines) + ("\n" if original.endswith("\n") and new_lines and new_lines[-1] == "" else "")
+                        post_patch = "\n".join(new_lines) + ("\n" if original.endswith("\n") and new_lines else "")
                         show_file_diff(f"{basename}:{line} [{pattern}]", pre_patch, post_patch)
                         print(f"    Fixed line {line} [{pattern}] (hunk applied, "
                               f"{before_cnt} -> {after_cnt} remaining)")
@@ -2195,11 +2197,17 @@ class OptimizeCommand(Command):
                     print(f"  Unresolved: {basename}:{line} [{pattern}]")
 
                 new_full = "\n".join(work_lines)
+                if original.endswith("\n") and new_full:
+                    new_full += "\n"
                 if new_full != original:
                     all_fixes[basename] = new_full
                     print(f"  {basename}: patched ({len(original)} -> {len(new_full)} bytes)")
         if not all_fixes:
             print("\n  No fixes were generated.")
+            return True
+
+        if stop_requested():
+            print(f"\n  Stopped by user — {len(all_fixes)} fix(es) generated but NOT applied.")
             return True
 
         # Phase 3: Apply fixes
@@ -2208,6 +2216,8 @@ class OptimizeCommand(Command):
 
         for fpath in targets:
             basename = os.path.basename(fpath)
+            if stop_requested():
+                break
             if basename not in all_fixes:
                 continue
 
@@ -2223,17 +2233,18 @@ class OptimizeCommand(Command):
                     print(f"  Skipping {basename} — suspicious size change ({original_size} -> {new_size} bytes)")
                     continue
 
+            file_findings = by_file.get(fpath, [])
+            if file_findings:
+                print(f"  Fixes {len(file_findings)} finding(s) in {basename}:")
+                for fnd in file_findings[:20]:
+                    print(f"    line {fnd['line']}: [{fnd['pattern']}] {fnd['suggestion']}")
+
             show_file_diff(basename, original, new_code)
 
             if not yes_mode:
-                print(f"  Apply {basename}? ({original_size} -> {new_size} bytes) (y/N): ", end="")
-                try:
-                    if input().strip().lower() != "y":
-                        print("    Skipped.")
-                        continue
-                except (EOFError, KeyboardInterrupt):
-                    print("  Cancelled.")
-                    return True
+                if not read_choice(f"  Apply {basename}? ({original_size} -> {new_size} bytes) (y/N): "):
+                    print("    Skipped.")
+                    continue
 
             try:
                 with open(fpath, "w", encoding="utf-8") as f:

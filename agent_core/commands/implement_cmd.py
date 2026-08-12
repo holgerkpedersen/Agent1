@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from .base import Command, show_file_diff
+from .base import Command, show_file_diff, read_input, stop_requested
 from agent_core import to_windows_path, workspace_path
 from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
 
@@ -504,7 +504,7 @@ def _apply_patch(patch_text: str, fpath: str, original_lines: list[str]) -> tupl
     Delegates to the shared ``agent_core.patch_utils.apply_patch`` used by the
     optimize command's patch mode; *fpath* is kept for call-site compatibility.
     """
-    from agent_core.patch_utils import apply_patch
+    from agent_core.patch_utils import apply_patch, split_source_lines
     return apply_patch(patch_text, original_lines)
 
 
@@ -1760,7 +1760,7 @@ class ImplementCommand(Command):
                             patch_match = re.search(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', fixed, re.DOTALL)
                             if patch_match:
                                 patch_text = patch_match.group(2).strip()
-                                ok, new_text = _apply_patch(patch_text, fpath, current_code.split('\n'))
+                                ok, new_text = _apply_patch(patch_text, fpath, split_source_lines(current_code))
                                 if ok:
                                     show_file_diff(fpath, current_code, new_text)
                                     with open(fpath, "w", encoding="utf-8") as f:
@@ -1803,7 +1803,7 @@ class ImplementCommand(Command):
                         patch_match = _RE_5.search(fixed, re.DOTALL)
                         if patch_match:
                             patch_text = patch_match.group(2).strip()
-                            ok, new_text = _apply_patch(patch_text, fpath, current_code.split('\n'))
+                            ok, new_text = _apply_patch(patch_text, fpath, split_source_lines(current_code))
                             if ok:
                                 show_file_diff(fpath, current_code, new_text)
                                 with open(fpath, "w", encoding="utf-8") as f:
@@ -1949,16 +1949,17 @@ class ImplementCommand(Command):
                 print(f"\n  [review] {len(dangerous_files)} file(s) have issues ({', '.join(reasons)}):")
                 for df in sorted(dangerous_files):
                     print(f"    {df}")
-                try:
-                    choice = input("  Delete these files to prevent import collisions? (y/N): ").strip().lower()
-                    if choice == "y":
-                        for df in dangerous_files:
-                            path = Path(ws) / df
-                            if path.exists():
-                                path.unlink()
-                                print(f"    Deleted: {df}")
-                except (EOFError, KeyboardInterrupt):
-                    print("Interrupted by user or EOF")
+                choice = read_input("  Delete these files to prevent import collisions? (y/N): ").strip().lower()
+                if stop_requested():
+                    return True
+                if choice == "y":
+                    for df in dangerous_files:
+                        if stop_requested():
+                            break
+                        path = Path(ws) / df
+                        if path.exists():
+                            path.unlink()
+                            print(f"    Deleted: {df}")
 
             if unwired and not dangerous_files:
                 print(f"\n  [review] {len(unwired)} new module(s) are not imported. Use 'model profile use' to wire them.")
@@ -1967,6 +1968,8 @@ class ImplementCommand(Command):
 
             # ---- Per-file LLM review ----
             for fname in list(all_content.keys())[:8]:
+                if stop_requested():
+                    break
                 content = all_content[fname]
                 print(f"\n  Reviewing {fname} ({len(content)} bytes)...")
                 review_msg = [
@@ -2007,10 +2010,9 @@ class ImplementCommand(Command):
                         if ctx:
                             print(f"     {ctx}")
                     print("\n  Record? (1,2/all/N, press Enter to skip): ", end="")
-                    try:
-                        choice = input().strip().lower()
-                    except (EOFError, KeyboardInterrupt):
-                        choice = ""
+                    choice = read_input().strip().lower()
+                    if stop_requested():
+                        return True
                     if choice and choice != "n":
                         ws_str = str(Path(workspace_path(target_workspace)).resolve())
                         if choice == "all":

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from .analysis_verifier import verify_analysis_claims
-from .base import Command, read_stdin
+from .base import Command, read_stdin, read_input, stop_requested
 from .reasoning_strip import strip_reasoning
 from agent_core import to_windows_path
 from agent_core.decisions import add_decision, extract_from_analysis
@@ -195,10 +195,9 @@ async def _extract_decisions_if_any(agent, analysis_md: str, ws_path) -> None:
         if not sys.stdin.isatty():
             return
         print("\n  Record? (1,2/all/N, press Enter to skip): ", end="")
-        try:
-            choice = input().strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            choice = ""
+        choice = read_input().strip().lower()
+        if stop_requested():
+            return
         if choice and choice != "n":
             ws_str = str(ws_path)
             if choice == "all":

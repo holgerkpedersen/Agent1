@@ -1,10 +1,12 @@
 """Command base class and registry for agent interactive mode."""
+import asyncio
 import difflib
 import os
 import re
 import shutil
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agent import Agent
@@ -87,6 +89,98 @@ def read_stdin(prompt: str = "Paste text. Type --- on its own line when done, or
             break
         lines.append(line)
     return "\n".join(lines)
+
+
+# ── Flow-stop control ────────────────────────────────────────────────────
+#
+# A run (fix / optimize / implement / decide / workflow) may process many
+# files in a loop.  Every interactive confirm answers through read_choice(),
+# and the loops check stop_requested() so a single
+# "stop/quit/abort" answer or Ctrl+C winds the whole run down instead of
+# merely declining the current item.
+
+_FLOW_STOP = False
+
+
+class FlowStopped(BaseException):
+    """Raised when the user interrupts an in-flight LLM request.
+
+    Deliberately a BaseException: LLM calls sit inside ``except Exception``
+    blocks that must NOT swallow it — the interrupt has to unwind the current
+    command so the REPL can prompt again.
+    """
+
+
+def request_stop() -> None:
+    """Ask every run loop in the current command to stop."""
+    global _FLOW_STOP
+    _FLOW_STOP = True
+
+
+def stop_requested() -> bool:
+    """True once the user asked (or Ctrl+C'd) the current run to stop."""
+    return _FLOW_STOP
+
+
+def clear_stop() -> None:
+    """Reset the stop flag — called before each new command starts."""
+    global _FLOW_STOP
+    _FLOW_STOP = False
+
+
+def read_input(prompt: str = "") -> str:
+    """Read one line from stdin.
+
+    EOFError returns "" without requesting a stop; KeyboardInterrupt requests
+    a flow stop and returns "" so callers wind down gracefully.
+    """
+    try:
+        return input(prompt)
+    except EOFError:
+        return ""
+    except KeyboardInterrupt:
+        request_stop()
+        print("\n  Stopping the flow — no further changes will be applied.")
+        return ""
+
+
+_STOP_TOKENS = frozenset({"s", "stop", "q", "quit", "abort", "x"})
+
+
+def read_choice(prompt: str) -> bool:
+    """y/N confirm.  Returns True only for y/yes.
+
+    The stop tokens (s/stop/q/quit/abort/x) and Ctrl+C request a flow stop
+    (stop_requested()) and decline the current item; any other answer merely
+    declines it.
+    """
+    resp = read_input(prompt).strip().lower()
+    if resp in _STOP_TOKENS:
+        request_stop()
+        print("  Stopping the flow — no further changes will be applied.")
+        return False
+    return resp in ("y", "yes")
+
+
+def chat_stoppable(chat: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    """Wrap an async chat callable so Ctrl+C mid-request turns into a
+    graceful FlowStopped + request_stop() instead of tearing down the run.
+
+    Because the REPL runs under asyncio.run(), a KeyboardInterrupt during an
+    ``await`` surfaces as a CancelledError thrown at that await point; the
+    wrapper converts it back into an orderly stop.
+    """
+    async def wrapped(msgs: Any, **kw: Any) -> Any:
+        task = asyncio.current_task()
+        try:
+            return await chat(msgs, **kw)
+        except asyncio.CancelledError:
+            if task is not None and hasattr(task, "uncancel"):
+                task.uncancel()
+            request_stop()
+            print("\n  Stopped by user (Ctrl+C) — the current run was aborted.")
+            raise FlowStopped() from None
+    return wrapped
 
 
 def show_file_diff(basename: str, original: str, new: str) -> None:
@@ -241,11 +335,7 @@ def save_file_py(fpath: str, content: str, auto_yes: bool = True) -> bool:
 
     show_file_diff(os.path.basename(fpath), current, content)
     if not auto_yes:
-        try:
-            resp = input(f"  Apply to {fpath}? [y/N] ").strip().lower()
-        except EOFError:
-            resp = "n"
-        if resp not in ("y", "yes"):
+        if not read_choice(f"  Apply to {fpath}? [y/N] "):
             print(f"  Skipped: {fpath}")
             return False
 

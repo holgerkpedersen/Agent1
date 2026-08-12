@@ -13,7 +13,7 @@ Usage:
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .base import Command
+from .base import Command, read_input, stop_requested
 from agent_core.decisions import (
     add_decision,
     check_contradictions,
@@ -166,14 +166,13 @@ class DecideCommand(Command):
             print("Paste your decision idea, then press Enter on an empty line:")
             lines = []
             while True:
-                try:
-                    line = input()
-                except (EOFError, KeyboardInterrupt):
-                    break
+                line = read_input()
                 if line == "":
                     break
                 lines.append(line)
             text = "\n".join(lines)
+            if stop_requested():
+                return True
         if not text.strip():
             self.error("No decision text provided.")
             return True
@@ -268,9 +267,8 @@ class DecideCommand(Command):
             print(f"     Files: {', '.join(c.get('affected_files', []))}")
 
         print("\nRecord these decisions? (1,2/all/N): ", end="")
-        try:
-            choice = input().strip().lower()
-        except (EOFError, KeyboardInterrupt):
+        choice = read_input().strip().lower()
+        if stop_requested():
             return True
 
         ws = str(Path(agent.workspace).resolve())
