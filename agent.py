@@ -1,3 +1,4 @@
+from typing import Any, cast
 #!/usr/bin/env python3
 """Agent implementation with workspace management and tool execution."""
 
@@ -14,7 +15,7 @@ from agent_core.llm.lmstudio import LMStudioProvider
 from agent_core.file_system import FileSystem
 from agent_core.file_searcher import FileSearcher
 from agent_core.tool_dispatcher import ToolDispatcher
-from agent_core.commands.base import save_file_py
+from agent_core.commands.base import save_file_py, chat_stoppable, clear_stop, FlowStopped
 from agent_core.commands.registry import CommandRegistry
 from agent_core.commands.read_cmd import ReadCommand
 from agent_core.commands.write_cmd import WriteCommand
@@ -77,12 +78,12 @@ class LLMClient:
     async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, **kwargs: Any) -> str:
         """Send chat request to LLM via LM Studio (pass-through wrapper)."""
         return await self._provider.chat(messages, tools, **kwargs)  # type: ignore[no-any-return]
-
+    
     async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """Chat with real-time token streaming to console."""
-        return await self._provider.chat_stream(messages)
+        return await self._provider.chat_stream(messages)  # type: ignore[no-any-return]
     
-    async def chat_with_continuation(self, messages: list[dict], max_continues: int = 3, max_tokens: int | None = None) -> str:
+    async def chat_with_continuation(self, messages: list[dict[str, Any]], max_continues: int = 3, max_tokens: int | None = None) -> str:
         """Chat with auto-resume if response gets truncated at token limit."""
         full_response = ""
         current_messages = [dict(m) for m in messages]
@@ -108,25 +109,25 @@ class LLMClient:
     
     async def analyze_code(self, code: str) -> str:
         """Analyze code using LLM."""
-        return await self._provider.analyze_code(code)
+        return await self._provider.analyze_code(code)  # type: ignore[no-any-return]
 
 
 class Agent:
     """Main agent class with workspace management and tool execution."""
-
+    
     DEFAULT_WORKSPACE = "/c/Dev/Agent1"
-
-    def __init__(self, workspace: str = None, model_name: str = None):
+    
+    def __init__(self, workspace: str | None = None, model_name: str | None = None):
         self.workspace = workspace or self.DEFAULT_WORKSPACE
         self.model_name = resolve_model(model_name)
 
         self._semantic_index: dict[str, set[int]] = defaultdict(set)
         self._files_read: set[str] = set()
         self._file_mtimes: dict[str, float] = {}
-        self._knowledge_graph: dict = {}
-        self._working_memory: list = []
-        self._history: list = []
-        self._chat_history: list[dict] = []  # NLP conversation context
+        self._knowledge_graph: dict[str, Any] = {}
+        self._working_memory: list[Any] = []
+        self._history: list[Any] = []
+        self._chat_history: list[dict[str, Any]] = []  # NLP conversation context
         self._nlp_workspace: str | None = None  # workspace override for NLP tools (set by paste --workspace)
 
         # Initialize LLM client for AI analysis (LM Studio)
@@ -138,7 +139,7 @@ class Agent:
         self.dispatcher = ToolDispatcher()
         self._register_tool_handlers()
 
-    def _register_tool_handlers(self):
+    def _register_tool_handlers(self) -> None:
         """Register tool handlers with the dispatcher."""
         self.dispatcher.register("read_file", lambda args: self._tool_read_file(**args))
         self.dispatcher.register("write_file", lambda args: self._tool_write_file(**args))
@@ -160,13 +161,13 @@ class Agent:
 
     async def _execute_nlp_tool(self, tool_text: str) -> str:
         """Execute a tool call from the NLP conversation and return the result."""
-        # Strip nested XML tags that some models add (e.g. <arg_key>path</arg_key>)
         tool_text = re.sub(r'<arg_key>[^<]*</arg_key>', ' ', tool_text)
         tool_text = re.sub(r'</?arg_value>', '', tool_text)
         tool_text = re.sub(r' +', ' ', tool_text).strip()
         parts = shlex.split(tool_text, posix=False) if tool_text else []
         if not parts:
             return "Error: empty tool call"
+        ws_dir = self._nlp_workspace or self.workspace
 
         cmd = parts[0].lower()
         if cmd == "search":
@@ -199,10 +200,10 @@ class Agent:
                 if _os.path.isdir(abs_path):
                     entries = _os.listdir(abs_path)[:50]
                     lines = []
-                    for e in sorted(entries):
-                        full = _os.path.join(abs_path, e)
+                    for entry in sorted(entries):
+                        full = _os.path.join(abs_path, entry)
                         suffix = "/" if _os.path.isdir(full) else ""
-                        lines.append(f"  {e}{suffix}")
+                        lines.append(f"  {entry}{suffix}")
                     return "\n".join(lines)
                 return f"Not a directory: {path}"
             except Exception as e:
@@ -255,7 +256,7 @@ class Agent:
                     shell=True,
                     capture_output=True,
                     text=True,
-                    cwd=self.ws_dir,
+                    cwd=ws_dir,
                     timeout=timeout,
                 )
                 output = r.stdout
@@ -299,7 +300,7 @@ class Agent:
                     shell=True,
                     capture_output=True,
                     text=True,
-                    cwd=self.ws_dir,
+                    cwd=ws_dir,
                     timeout=30,
                 )
                 output = r.stdout
@@ -327,7 +328,7 @@ class Agent:
                     shell=True,
                     capture_output=True,
                     text=True,
-                    cwd=self.ws_dir,
+                    cwd=ws_dir,
                     timeout=30,
                 )
                 output = r.stdout
@@ -352,8 +353,9 @@ class Agent:
                 if old_text not in content:
                     return f"Text not found in {path}. Make sure old text matches exactly (including whitespace)."
                 new_content = content.replace(old_text, new_text, 1)
-                if save_file_py(path, new_content, auto_yes=True):
-                    self.context.mark_modified(path)
+                ctx = getattr(self, "context", None)
+                if ctx is not None and save_file_py(path, new_content, auto_yes=True):
+                    ctx.mark_modified(path)
                     return f"Edited {path}"
                 return f"Skipped {path} (no changes)"
             except Exception as e:
@@ -378,7 +380,7 @@ class Agent:
                     shell=True,
                     capture_output=True,
                     text=True,
-                    cwd=self.ws_dir,
+                    cwd=ws_dir,
                     timeout=120,
                 )
                 output = r.stdout
@@ -392,9 +394,8 @@ class Agent:
             except Exception as e:
                 return f"Error: {e}"
 
-        return f"Unknown tool: {cmd}. Available: search, read, list_files, fix, write, run, git, diff, edit, tests"
 
-    async def _tool_read_file(self, path: str, **kwargs) -> str:
+    async def _tool_read_file(self, path: str, **kwargs: Any) -> str:
         result = await self.fs.read(path)
         if not result.startswith("File not found") and not result.startswith("Error"):
             safe = self.fs.safe_path(path)
@@ -405,34 +406,34 @@ class Agent:
                 pass
         return result
 
-    async def _tool_write_file(self, path: str, content: str, **kwargs) -> str:
-        return await self.fs.write(path, content)
+    async def _tool_write_file(self, path: str, content: str, **kwargs: Any) -> str:
+        return cast(str, await self.fs.write(path, content))
 
-    async def _tool_apply_patch(self, path: str, find: str, replace: str, **kwargs) -> str:
-        return await self.fs.apply_patch(path, find, replace)
+    async def _tool_apply_patch(self, path: str, find: str, replace: str, **kwargs: Any) -> str:
+        return cast(str, await self.fs.apply_patch(path, find, replace))
 
-    async def _tool_edit_file(self, path: str, content: str, **kwargs) -> str:
-        return await self.fs.edit(path, content)
+    async def _tool_edit_file(self, path: str, content: str, **kwargs: Any) -> str:
+        return cast(str, await self.fs.edit(path, content))
 
-    async def _tool_search(self, query: str, path: str = ".", **kwargs) -> str:
-        return await self.searcher.search(query, path)
+    async def _tool_search(self, query: str, path: str = ".", **kwargs: Any) -> str:
+        return cast(str, await self.searcher.search(query, path))
 
-    async def _tool_list_files(self, path: str = ".", pattern: str = "*", **kwargs) -> str:
-        return await self._list_files(path, pattern)
+    async def _tool_list_files(self, path: str = ".", pattern: str = "*", **kwargs: Any) -> str:
+        return cast(str, await self.fs.list_files(path, pattern))
 
-    async def _tool_delete_file(self, path: str, **kwargs) -> str:
-        return await self._delete_file(path)
+    async def _tool_delete_file(self, path: str, **kwargs: Any) -> str:
+        return cast(str, await self.fs.delete(path))
 
     async def _tool_analyze_file(self, path: str, **kwargs) -> str:
-        return await self._analyze_file(path)
+        return cast(str, await self.llm.analyze_code(await self.read_file(path)))
 
-    async def _tool_llm_analyze(self, path: str, **kwargs) -> str:
+    async def _tool_llm_analyze(self, path: str, **kwargs: Any) -> str:
         file_content = await self.read_file(path, track_read=False)
         if file_content.startswith("File not found:") or file_content.startswith("Error reading file:"):
             return f"Could not analyze: {file_content}"
         return await self.llm.analyze_code(file_content)
 
-    async def execute_tool(self, tool_name: str, arguments: dict) -> str:
+    async def execute_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
         """Execute a tool by name using the dispatcher."""
         return await self.dispatcher.execute(tool_name, arguments)
 
@@ -528,7 +529,7 @@ class Agent:
         except Exception as e:
             return f"Error editing file: {e}"
 
-    def _build_semantic_index(self, words: list[str], idx: int):
+    def _build_semantic_index(self, words: list[str], idx: int) -> None:
         """Build semantic index with memory management."""
         MAX_INDEX_SIZE = 10000
         
@@ -539,7 +540,7 @@ class Agent:
             normalized_word = word.lower()
             self._semantic_index[normalized_word].add(idx)
 
-    def _cleanup_semantic_index(self):
+    def _cleanup_semantic_index(self) -> None:
         """Remove oldest entries from semantic index."""
         if not self._semantic_index:
             return
@@ -606,7 +607,7 @@ class Agent:
 
         return results
 
-    async def search_file(self, query: str, path: str = None) -> str:
+    async def search_file(self, query: str, path: str | None = None) -> str:
         local_path = self._safe_path(path or self.workspace)
         
         results = await self._search_files(query, local_path)
@@ -835,7 +836,7 @@ class Agent:
             "knowledge_graph": len(self._knowledge_graph),
         }
 
-    def clear_history(self):
+    def clear_history(self) -> None:
         """Clear all agent state."""
         self._history = []
         self._chat_history.clear()
@@ -860,7 +861,7 @@ def _is_similar(content1: str, content2: str, threshold: float = 0.8) -> bool:
     return similarity >= threshold
 
 
-async def run_interactive():
+async def run_interactive() -> None:
     """Interactive mode - allows user to input commands."""
     
     # Create agent instance (resolves persisted model choice from model.json)
@@ -944,24 +945,37 @@ async def run_interactive():
             if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste", "decide"]:
                 import time as _time
                 _start = _time.perf_counter()
-                await registry.execute(command, parts[1:], agent)
+                clear_stop()
+                _llm = getattr(agent, "llm", None)
+                _chat = getattr(_llm, "chat", None)
+                if _llm is not None and _chat is not None:
+                    _llm.chat = chat_stoppable(_chat)
+                try:
+                    try:
+                        await registry.execute(command, parts[1:], agent)
+                    except FlowStopped:
+                        print("  Flow stopped by user.")
+                finally:
+                    if _llm is not None and _chat is not None:
+                        _llm.chat = _chat
                 PerfTracker.record(command, _time.perf_counter() - _start, user_input)
                 continue
 
             else:
                 await agent.chat_nlp(user_input)
         except KeyboardInterrupt:
-            print("\nInterrupted. Use 'quit' to exit.")
+            print("\nInterrupted — the current run was stopped. Use 'quit' to exit.")
         except EOFError:
             break
 
 
-async def main():
+async def main() -> None:
     """Main entry point - runs interactive mode."""
     await run_interactive()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
-
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
