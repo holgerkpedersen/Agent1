@@ -407,16 +407,16 @@ class Agent:
         return result
 
     async def _tool_write_file(self, path: str, content: str, **kwargs: Any) -> str:
-        return cast(str, await self.fs.write(path, content))
+        return await self.fs.write(path, content)
 
     async def _tool_apply_patch(self, path: str, find: str, replace: str, **kwargs: Any) -> str:
-        return cast(str, await self.fs.apply_patch(path, find, replace))
+        return await self.fs.apply_patch(path, find, replace)
 
     async def _tool_edit_file(self, path: str, content: str, **kwargs: Any) -> str:
-        return cast(str, await self.fs.edit(path, content))
+        return await self.fs.edit(path, content)
 
     async def _tool_search(self, query: str, path: str = ".", **kwargs: Any) -> str:
-        return cast(str, await self.searcher.search(query, path))
+        return await self.searcher.search(query, path)
 
     async def _tool_list_files(self, path: str = ".", pattern: str = "*", **kwargs: Any) -> str:
         return cast(str, await self.fs.list_files(path, pattern))
@@ -424,14 +424,14 @@ class Agent:
     async def _tool_delete_file(self, path: str, **kwargs: Any) -> str:
         return cast(str, await self.fs.delete(path))
 
-    async def _tool_analyze_file(self, path: str, **kwargs) -> str:
-        return cast(str, await self.llm.analyze_code(await self.read_file(path)))
+    async def _tool_analyze_file(self, path: str, **kwargs: Any) -> str:
+        return cast(str, await self.llm.analyze_code(await self.read_file(path)))  # type: ignore[redundant-cast]
 
     async def _tool_llm_analyze(self, path: str, **kwargs: Any) -> str:
         file_content = await self.read_file(path, track_read=False)
         if file_content.startswith("File not found:") or file_content.startswith("Error reading file:"):
             return f"Could not analyze: {file_content}"
-        return await self.llm.analyze_code(file_content)
+        return cast(str, await self.llm.analyze_code(file_content))  # type: ignore[redundant-cast]
 
     async def execute_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
         """Execute a tool by name using the dispatcher."""
@@ -446,7 +446,7 @@ class Agent:
             return str(abs_path)
         except (OSError, RuntimeError):
             if normalized.startswith(("C:\\", "D:\\", "/")):
-                return normalized
+                return str(normalized)
             raise ValueError(f"Invalid path: {path}")
 
     def _safe_path(self, path: str) -> str:
@@ -617,7 +617,7 @@ class Agent:
         
         return "\n".join(results)
 
-    def _parse_natural_language(self, query: str) -> tuple:
+    def _parse_natural_language(self, query: str) -> tuple[str, dict[str, Any]]:
         """Parse natural language into tool actions."""
         workspace = self.workspace
         query_lower = query.lower()

@@ -6,30 +6,30 @@ Agent1 is a Python AI agent framework with LLM integration via LM Studio (local)
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                        Agent1 System                              │
-│                                                                   │
-│  ┌─────────────┐   ┌──────────────┐   ┌──────────────────────┐  │
-│  │   LLM Layer  │   │  Agent Core  │   │   Command Layer      │  │
-│  │  (lmstudio)  │──>│  (agent.py)  │<──│  (commands/)         │  │
-│  └─────────────┘   └──────┬───────┘   └──────────────────────┘  │
-│                            │                                       │
-│          ┌─────────────────┼─────────────────┐                    │
-│          │                 │                 │                    │
-│   ┌──────┴──────┐  ┌──────┴──────┐  ┌──────┴──────────┐        │
-│   │ FileSystem  │  │FileSearcher │  │ ToolDispatcher  │        │
-│   │ read/write/ │  │ findstr/    │  │ registry-based  │        │
-│   │ patch/edit  │  │ grep/fallback│ │ tool dispatch   │        │
-│   └─────────────┘  └─────────────┘  └─────────────────┘        │
-│                                                                   │
+│                        Agent1 System                             │
+│                                                                  │
+│  ┌─────────────┐   ┌──────────────┐   ┌──────────────────────┐   │
+│  │   LLM Layer │   │  Agent Core  │   │   Command Layer      │   │
+│  │  (lmstudio) │──>│  (agent.py)  │<──│  (commands/)         │   │
+│  └─────────────┘   └──────┬───────┘   └──────────────────────┘   │
+│                           │                                      │
+│         ┌─────────────────┼─────────────────┐                    │
+│         │                 │                 │                    │
+│   ┌─────┴───────┐  ┌──────┴───────┐  ┌──────┴──────────┐         │
+│   │ FileSystem  │  │FileSearcher  │  │ ToolDispatcher  │         │
+│   │ read/write/ │  │ findstr/     │  │ registry-based  │         │
+│   │ patch/edit  │  │ grep/fallback│  │ tool dispatch   │         │
+│   └─────────────┘  └──────────────┘  └─────────────────┘         │
+│                                                                  │
 │  ┌───────────────────────────────────────────────────────────┐   │
-│  │              src/agent1  (Multi-Agent Framework)           │   │
-│  │                                                             │   │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │   │
-│  │  │   Core    │  │  Memory   │  │Orchestrat │  │Monitor   │  │   │
-│  │  │ Agent     │  │ Store     │  │Scheduler  │  │Metrics   │  │   │
-│  │  │ Messages  │  │ Vector DB │  │Workflow   │  │Dashboard │  │   │
-│  │  │ Context   │  │ Semantic  │  │DepGraph   │  │Alerts    │  │   │
-│  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │   │
+│  │              src/agent1  (Multi-Agent Framework)          │   │
+│  │                                                           │   │
+│  │  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌──────────┐│   │
+│  │  │   Core    │  │  Memory   │  │Orchestrat │  │Monitor   ││   │
+│  │  │ Agent     │  │ Store     │  │Scheduler  │  │Metrics   ││   │
+│  │  │ Messages  │  │ Vector DB │  │Workflow   │  │Dashboard ││   │
+│  │  │ Context   │  │ Semantic  │  │DepGraph   │  │Alerts    ││   │
+│  │  └───────────┘  └───────────┘  └───────────┘  └──────────┘│   │
 │  └───────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -40,12 +40,12 @@ Communicates with LM Studio's OpenAI-compatible API endpoint.
 
 ### Components
 
-| Component | File | Role |
-|---|---|---|
-| `LLMProvider` | `provider.py` | Protocol defining the LLM interface |
-| `LMStudioProvider` | `lmstudio.py` | Concrete implementation with chat, stream, analyze |
-| `RetryPolicy` | `retry.py` | Exponential backoff retry on transient errors |
-| `ToolLoopRunner` | `tool_loop.py` | Multi-step LLM interaction with tool result injection |
+| Component          | File           | Role                                                  |
+| ------------------ | -------------- | ----------------------------------------------------- |
+| `LLMProvider`      | `provider.py`  | Protocol defining the LLM interface                   |
+| `LMStudioProvider` | `lmstudio.py`  | Concrete implementation with chat, stream, analyze    |
+| `RetryPolicy`      | `retry.py`     | Exponential backoff retry on transient errors         |
+| `ToolLoopRunner`   | `tool_loop.py` | Multi-step LLM interaction with tool result injection |
 
 ### Data Flow
 
@@ -106,6 +106,7 @@ dispatcher.register("search", lambda args: self._tool_search(**args))
 ```
 
 Execution is a one-liner:
+
 ```python
 async def execute_tool(self, tool_name, arguments):
     return await self.dispatcher.execute(tool_name, arguments)
@@ -113,15 +114,15 @@ async def execute_tool(self, tool_name, arguments):
 
 ### Memory System
 
-| Store | Type | Purpose | Detection |
-|---|---|---|---|
-| `_files_read` | `set[str]` | Tracks which files were read | — |
-| `_file_mtimes` | `dict[str, float]` | mtime per tracked file | `check_stale_files()` |
-| `_semantic_index` | `dict[str, set[int]]` | Word → position index | Invalidated on stale |
-| `_knowledge_graph` | `dict` | Entity relationship graph | — |
-| `_working_memory` | `list` | Active task items | — |
-| `_history` | `list` | Interaction log | — |
-| `chat_history` | `list` | LLM conversation context | — |
+| Store              | Type                  | Purpose                      | Detection             |
+| ------------------ | --------------------- | ---------------------------- | --------------------- |
+| `_files_read`      | `set[str]`            | Tracks which files were read | —                     |
+| `_file_mtimes`     | `dict[str, float]`    | mtime per tracked file       | `check_stale_files()` |
+| `_semantic_index`  | `dict[str, set[int]]` | Word → position index        | Invalidated on stale  |
+| `_knowledge_graph` | `dict`                | Entity relationship graph    | —                     |
+| `_working_memory`  | `list`                | Active task items            | —                     |
+| `_history`         | `list`                | Interaction log              | —                     |
+| `chat_history`     | `list`                | LLM conversation context     | —                     |
 
 **Stale file detection**: Every file read stores its `os.path.getmtime()`. `check_stale_files()` compares current mtime vs stored — returns paths changed externally. `invalidate_stale()` purges stale entries and clears the semantic index.
 
@@ -151,8 +152,8 @@ User input ──>   │ CommandRegistry  │
                  │  execute()       │
                  └───────┬──────────┘
                          │
-         ┌───────────────┼───────────────┐
-         │               │               │
+         ┌───────────────┼──────────────┐
+         │               │              │
     ┌────┴────┐    ┌─────┴──────┐   ┌───┴──────────┐
     │ReadCmd  │    │ImplementCmd│   │WorkflowCmd   │
     │execute()│    │execute()   │   │execute()     │
@@ -172,25 +173,25 @@ class Command(ABC):
 
 ### Commands (14 total)
 
-| Command | Class | Purpose |
-|---|---|---|
-| `read` | `ReadCommand` | Read file contents |
-| `write` | `WriteCommand` | Write content to file |
-| `search` | `SearchCommand` | Search files for text |
-| `clear` | `ClearCommand` | Show memory stats + clear |
-| `model` | `ModelCommand` | List/reload/switch LLM models |
-| `analyze` | `AnalyzeCommand` | AI code analysis |
-| `plan` | `PlanCommand` | Generate coding plan |
-| `entities` | `EntitiesCommand` | Extract shared entities |
-| `taskplan` | `TaskplanCommand` | Generate task list |
-| `implement` | `ImplementCommand` | Generate files from taskplan |
-| `fix` | `FixCommand` | Fix from traceback or description |
-| `cleanup` | `CleanupCommand` | Show unreferenced files |
-| `workflow` | `WorkflowCommand` | Full pipeline: analyze→plan→entities→tasks→implement |
-| `optimize` | `OptimizeCommand` | Find and apply performance/quality improvements |
-| `perf` | `PerfCommand` | Command performance dashboard |
-| `paste` | `PasteCommand` | Paste multi-line text for analysis |
-| `decide` | `DecideCommand` | Record, search, and enforce design decisions
+| Command     | Class              | Purpose                                              |
+| ----------- | ------------------ | ---------------------------------------------------- |
+| `read`      | `ReadCommand`      | Read file contents                                   |
+| `write`     | `WriteCommand`     | Write content to file                                |
+| `search`    | `SearchCommand`    | Search files for text                                |
+| `clear`     | `ClearCommand`     | Show memory stats + clear                            |
+| `model`     | `ModelCommand`     | List/reload/switch LLM models                        |
+| `analyze`   | `AnalyzeCommand`   | AI code analysis                                     |
+| `plan`      | `PlanCommand`      | Generate coding plan                                 |
+| `entities`  | `EntitiesCommand`  | Extract shared entities                              |
+| `taskplan`  | `TaskplanCommand`  | Generate task list                                   |
+| `implement` | `ImplementCommand` | Generate files from taskplan                         |
+| `fix`       | `FixCommand`       | Fix from traceback or description                    |
+| `cleanup`   | `CleanupCommand`   | Show unreferenced files                              |
+| `workflow`  | `WorkflowCommand`  | Full pipeline: analyze→plan→entities→tasks→implement |
+| `optimize`  | `OptimizeCommand`  | Find and apply performance/quality improvements      |
+| `perf`      | `PerfCommand`      | Command performance dashboard                        |
+| `paste`     | `PasteCommand`     | Paste multi-line text for analysis                   |
+| `decide`    | `DecideCommand`    | Record, search, and enforce design decisions         |
 
 ### REPL Loop (`run_interactive()`)
 
@@ -291,16 +292,19 @@ src/agent1/
 The framework has multiple layers of protection against common AI agent failure modes:
 
 **Stdlib Shadowing Prevention (3 layers):**
+
 1. Workflow prompts warn the LLM against directory names matching stdlib modules (logging/, json/, types/)
 2. Analysis verifier flags shadowed paths as `[UNVERIFIED]` before implementation
 3. Implement command auto-redirects shadowed paths (`logging/` → `logging_utils/`)
 
 **LLM Reasoning Stripping** (`agent_core/commands/reasoning_strip.py`):
+
 - Automatic removal of LLM chain-of-thought, thinking tags, self-correction markers, and output generation badges from all workflow-generated files
 - Two modes: `"analysis"` (aggressive section extraction + reasoning removal) and `"light"` (regex-only tag stripping for plan/entities/taskplan)
 - Prevents corrupted output when models leak reasoning into responses
 
 **Decision Tracking** (`agent_core/decisions.py`, `decide` command):
+
 - `.decisions.json` stores design decisions with context, rationale, affected files, and tags
 - Auto-extracts decision candidates from `workflow`, `implement`, and `fix` runs
 - Past decisions injected as hard constraints into LLM prompts — prevents accidental contradictions
@@ -331,11 +335,11 @@ tests/
 
 ## Summary
 
-| Layer | Responsibility | Pattern |
-|---|---|---|
-| **LLM** (`llm/`) | Model communication, retry, streaming | Provider protocol + DIP |
-| **Agent Core** (`agent.py`) | State, tool dispatch, memory | Composition + SRP |
-| **Commands** (`commands/`) | User-facing REPL commands | Command pattern + Registry |
-| **File Ops** (`file_system.py`, `file_searcher.py`) | Read/write/search with path safety | Extracted utility classes |
-| **Src Agent1** (`src/agent1/`) | Multi-agent framework | Centralized types, protocols, composition |
-| **Tests** (`tests/`) | Unit, integration, performance | pytest with anyio |
+| Layer                                               | Responsibility                        | Pattern                                   |
+| --------------------------------------------------- | ------------------------------------- | ----------------------------------------- |
+| **LLM** (`llm/`)                                    | Model communication, retry, streaming | Provider protocol + DIP                   |
+| **Agent Core** (`agent.py`)                         | State, tool dispatch, memory          | Composition + SRP                         |
+| **Commands** (`commands/`)                          | User-facing REPL commands             | Command pattern + Registry                |
+| **File Ops** (`file_system.py`, `file_searcher.py`) | Read/write/search with path safety    | Extracted utility classes                 |
+| **Src Agent1** (`src/agent1/`)                      | Multi-agent framework                 | Centralized types, protocols, composition |
+| **Tests** (`tests/`)                                | Unit, integration, performance        | pytest with anyio                         |
