@@ -11,8 +11,23 @@ import re
 import tokenize
 
 
+_DS_CACHE: dict[str, set[int]] = {}
+_DS_CACHE_MAX = 64
+
+
 def _docstring_lines(source: str) -> set[int]:
     """Return 1-based line numbers that belong to any docstring in *source*."""
+    cached = _DS_CACHE.get(source)
+    if cached is not None:
+        return cached
+    lines = _docstring_lines_uncached(source)
+    if len(_DS_CACHE) >= _DS_CACHE_MAX:
+        _DS_CACHE.clear()
+    _DS_CACHE[source] = lines
+    return lines
+
+
+def _docstring_lines_uncached(source: str) -> set[int]:
     try:
         tree = ast.parse(source, type_comments=True)
     except SyntaxError:
@@ -40,8 +55,15 @@ def _docstring_lines(source: str) -> set[int]:
     return lines
 
 
+_ANALYZE_CACHE: dict[str, list[dict]] = {}
+_ANALYZE_CACHE_MAX = 64
+
+
 def analyze(source: str) -> list[dict]:
     """Run all detectors and return unified findings."""
+    cached = _ANALYZE_CACHE.get(source)
+    if cached is not None:
+        return list(cached)
     all_findings: list[dict] = []
     for detector in DETECTORS:
         for line_no, name, suggestion in detector(source):
@@ -51,6 +73,9 @@ def analyze(source: str) -> list[dict]:
                 "suggestion": suggestion,
             })
     all_findings.sort(key=lambda f: f["line"])
+    if len(_ANALYZE_CACHE) >= _ANALYZE_CACHE_MAX:
+        _ANALYZE_CACHE.clear()
+    _ANALYZE_CACHE[source] = all_findings
     return all_findings
 
 
@@ -275,6 +300,7 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
 
     exempt_ids: set[int] = set()
     shadowed_func_ids: set[int] = set()
+    binder_nodes: list[ast.AST] = []
 
     _BINDING_TARGETS = {
         ast.Assign: lambda n: n.targets,
@@ -315,11 +341,6 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
                 if arg.arg == "open":
                     shadowed_func_ids.add(id(node))
                     break
-            else:
-                for sub in ast.walk(node):
-                    if _any_target_is_open(sub) or _import_binds_open(sub):
-                        shadowed_func_ids.add(id(node))
-                        break
 
         if isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
@@ -337,10 +358,24 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
                     for sub in ast.walk(arg):
                         exempt_ids.add(id(sub))
 
-    parent_map: dict[int, int] = {}
+        if _any_target_is_open(node) or _import_binds_open(node):
+            binder_nodes.append(node)
+
+    parent_map: dict[int, ast.AST] = {}
     for node in ast.walk(tree):
         for child in ast.iter_child_nodes(node):
-            parent_map[id(child)] = id(node)
+            parent_map[id(child)] = node
+
+    # A function is "shadowed" when any binding of ``open`` (assign/import)
+    # appears inside its body — a subtree check done here in O(bindings x depth)
+    # instead of re-walking every function's subtree.  Every enclosing function
+    # is marked, matching the original per-function subtree scans.
+    for node in binder_nodes:
+        anc = parent_map.get(id(node))
+        while anc is not None:
+            if isinstance(anc, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                shadowed_func_ids.add(id(anc))
+            anc = parent_map.get(id(anc))
 
     findings: list[tuple[int, str, str]] = []
     seen: set[int] = set()
@@ -359,10 +394,10 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
         ancestor = parent_map.get(id(call_node))
         inside_shadowed = False
         while ancestor is not None:
-            if ancestor in shadowed_func_ids:
+            if id(ancestor) in shadowed_func_ids:
                 inside_shadowed = True
                 break
-            ancestor = parent_map.get(ancestor)
+            ancestor = parent_map.get(id(ancestor))
         if inside_shadowed:
             continue
 
@@ -824,6 +859,7 @@ def detect_dead_assignment(source: str) -> list[tuple[int, str, str]]:
     #
     # Track def nesting via indentation.  ``func_depth`` is the number of
     # enclosing ``def`` blocks at the indentation of the assignment.
+    func_depth = _func_depth_by_line(lines)
     for i, line in enumerate(lines, 1):
         if i in _ds:
             continue  # docstring prose can imitate assignments
@@ -837,8 +873,7 @@ def detect_dead_assignment(source: str) -> list[tuple[int, str, str]]:
         if var_name.startswith("_"):
             continue  # convention: intentionally unused
 
-        indent = len(line) - len(line.lstrip())
-        if _func_depth_at(lines, i, indent) == 0:
+        if func_depth[i - 1] == 0:
             continue  # module-level: may be exported/used elsewhere
 
         # If already flagged as an adjacent overwrite, don't double-report.
@@ -947,27 +982,28 @@ def detect_walrus_in_comprehension(source: str) -> list[tuple[int, str, str]]:
     return findings
 
 
-def _func_depth_at(lines: list[str], line_no: int, assign_indent: int) -> int:
-    """Approximate how many ``def``/``async def`` blocks enclose line *line_no*.
+def _func_depth_by_line(lines: list[str]) -> list[int]:
+    """Precompute, per line, how many ``def``/``async def`` blocks enclose it.
 
-    Uses indentation-only tracking: a ``def`` increases depth for lines indented
-    strictly more deeply than it.  A def at indent *D* only encloses code with
-    indent > D, so module-level statements (indent 0) are never considered
-    inside a module-level function body.  The assignment's own *assign_indent*
-    disambiguates the final (unprocessed-at-closer) dedent.
+    Single forward pass; ``result[i]`` is the enclosing-def count for 0-based
+    line *i*.  A def at indent *D* only encloses code with indent > D, matching
+    the semantics of ``_func_depth_at`` (a def at indent D is popped by any
+    later line at indent <= D, and never counts for an assignment at that same
+    indent level).
     """
+    _DEF_RE = re.compile(r"^\s*(?:async\s+)?def\s+\w+")
     stack: list[int] = []  # indent levels of open def blocks
-    for idx in range(line_no - 1):
-        raw = lines[idx]
+    depths = [0] * len(lines)
+    for idx, raw in enumerate(lines):
         if not raw.strip():
             continue
         indent = len(raw) - len(raw.lstrip())
         while stack and indent <= stack[-1]:
             stack.pop()
-        if re.match(r"^\s*(?:async\s+)?def\s+\w+", raw):
+        depths[idx] = len(stack)
+        if _DEF_RE.match(raw):
             stack.append(indent)
-    # A def at indent D only encloses code indented strictly more than D.
-    return sum(1 for d in stack if d < assign_indent)
+    return depths
 
 
 def _strip_strings(line: str) -> str:

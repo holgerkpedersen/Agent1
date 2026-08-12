@@ -13,8 +13,6 @@ the claimed position only as a search window hint.
 import difflib
 import os
 import re
-import subprocess
-import tempfile
 
 
 def normalize_patch_block(patch_text: str) -> str:
@@ -241,16 +239,22 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
             for i, text in enumerate(new_lines):
                 result.insert(idx + i, text + '\n')
 
-    # Syntax check
-    tf = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8")
-    tf.write(''.join(result))
-    tf.close()
-    r = subprocess.run(["python", "-m", "py_compile", tf.name], capture_output=True, text=True)
-    os.unlink(tf.name)
-    if r.returncode != 0:
-        return False, f"Patch breaks syntax: {r.stderr[:200]}"
+    # Syntax check (in-process; equivalent to py_compile for syntax errors)
+    try:
+        compile(''.join(result), "<patch>", "exec")
+    except SyntaxError as e:
+        return False, f"Patch breaks syntax: {e.msg} (line {e.lineno})"
 
     return True, ''.join(result)
+
+
+def split_source_lines(text: str) -> list[str]:
+    """Split file text into lines, dropping the trailing '' artifact that
+    ``text.split('\\n')`` leaves when the file ends with a newline."""
+    lines = text.split('\n')
+    if lines and lines[-1] == '':
+        lines.pop()
+    return lines
 
 
 def _match_score(a: str, b: str) -> float:
@@ -260,13 +264,48 @@ def _match_score(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, a.strip(), b.strip()).ratio()
 
 
+def _walk_run(lines: list[str], old_lines: list[str], start: int) -> bool:
+    """True when the whole old-line run matches contiguously from *start*.
+
+    Tolerates up to two stray/hallucinated context lines inside the run, which
+    is only safe because the caller re-verifies every '-' line verbatim after
+    anchoring.
+    """
+    skips = 0
+    run = 1
+    j = start
+    while run < len(old_lines) and j + 1 < len(lines):
+        j += 1
+        if _match_score(lines[j], old_lines[run]) >= 0.8:
+            run += 1
+            continue
+        if skips < 2:
+            skips += 1
+            run += 1
+            continue
+        break
+    return run >= len(old_lines)
+
+
 def _find_hunk_anchor(lines: list[str], chunks: list[tuple[str, str]],
                       claimed_start: int) -> int | None:
     """Locate the ('-'/' ') line that the first old line of *chunks* anchors
     to in *lines*, searching a ±60-line window around *claimed_start*.
 
-    Requires an unambiguous best match >= 0.8 that also holds for the whole
-    old-line run that follows.  Returns the 0-based index or None.
+    Ambiguity is judged by the WHOLE old-line run, not just the first line:
+    a hunk whose first old line is common (``try:``, ``return f\"...\"``) still
+    anchors whenever the run that follows is distinctive.
+
+    * Multi-line runs (>=2 old lines) that match at two far-apart places are
+      refused — that is the signature of a genuinely duplicated BLOCK, and
+      anchoring onto the wrong copy is what produced the run-45 TODO
+      corruption.
+    * Single-line runs are inherently weak; there we anchor at the position
+      nearest the claimed line and let the syntax gate catch bad edits.
+      Refusing them caused repeated "Cannot anchor ... around line N"
+      failures for common one-line hunks.
+
+    Returns the 0-based index or None.
     """
     old_lines = [text for op, text in chunks if op in ('-', ' ')]
     if not old_lines:
@@ -276,21 +315,17 @@ def _find_hunk_anchor(lines: list[str], chunks: list[tuple[str, str]],
     hi = min(len(lines), center + 60)
     if lo >= hi:
         lo, hi = max(0, len(lines) - 120), len(lines)
-    best, best_score = -1, 0.0
+    anchors: list[int] = []
     for i in range(lo, hi):
-        score = _match_score(lines[i], old_lines[0])
-        if score > best_score:
-            best, best_score = i, score
-    if best_score < 0.8:
+        if _match_score(lines[i], old_lines[0]) < 0.8:
+            continue
+        if _walk_run(lines, old_lines, i):
+            anchors.append(i)
+    if not anchors:
         return None
-    run = 1
-    while run < len(old_lines) and best + run < len(lines):
-        if _match_score(lines[best + run], old_lines[run]) < 0.8:
-            break
-        run += 1
-    if run < len(old_lines):
+    if len(old_lines) >= 2 and len(anchors) >= 2 and max(anchors) - min(anchors) > 10:
         return None
-    return best
+    return min(anchors, key=lambda a: abs(a - center))
 
 
 def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
@@ -375,13 +410,10 @@ def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bo
         for i, text in enumerate(new_lines):
             result.insert(anchor + i, text + '\n')
 
-    # Syntax check.
-    tf = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8")
-    tf.write(''.join(result))
-    tf.close()
-    r = subprocess.run(["python", "-m", "py_compile", tf.name], capture_output=True, text=True)
-    os.unlink(tf.name)
-    if r.returncode != 0:
-        return False, f"Patch breaks syntax: {r.stderr[:200]}"
+    # Syntax check (in-process; equivalent to py_compile for syntax errors).
+    try:
+        compile(''.join(result), "<patch>", "exec")
+    except SyntaxError as e:
+        return False, f"Patch breaks syntax: {e.msg} (line {e.lineno})"
 
     return True, ''.join(result)
