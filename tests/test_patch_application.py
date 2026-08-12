@@ -5,7 +5,6 @@ import os
 import re
 from unittest.mock import patch
 
-import pytest
 
 
 class TestImplementPatchApply:
@@ -275,6 +274,18 @@ class TestImplementPatchApply:
         assert isinstance(ok, bool)
         assert isinstance(result, str)
 
+    def test_no_extra_trailing_blank_from_split_input(self, tmp_path):
+        """Input from ``read().split('\\n')`` (trailing '' element) must not
+        grow an extra blank line at EOF — callers drop the artifact via
+        ``split_source_lines`` before applying."""
+        from agent_core.patch_utils import split_source_lines
+        apply = self._load_impl()
+        original = split_source_lines("a = 1\nb = 2\n")  # ['a = 1', 'b = 2']
+        patch_text = "@@ -1 +1 @@\n- a = 1\n+ A = 10\n"
+        ok, result = apply(patch_text, "dummy.py", original)
+        assert ok is True
+        assert result == "A = 10\nb = 2\n"
+
     def test_replacement_with_comment(self, tmp_path):
         """A patch replacing a line with a comment is valid."""
         apply = self._load_impl()
@@ -384,15 +395,20 @@ class TestFixCmdPatchApply:
             ok = fc._apply_patch("@@ -1 +1 @@\n- old = 1\n+ new = 1\n", str(target), str(tmp_path))
         assert ok is False
 
-    def test_keyboard_interrupt_skips_patch(self, tmp_path):
-        """KeyboardInterrupt in input() skips the patch."""
+    def test_keyboard_interrupt_skips_patch_and_stops_flow(self, tmp_path):
+        """KeyboardInterrupt in input() skips the patch AND requests a flow
+        stop, so the surrounding run winds down instead of continuing."""
+        from agent_core.commands.base import stop_requested, clear_stop
         from agent_core.commands.fix_cmd import FixCommand
+        clear_stop()
         fc = FixCommand()
         target = tmp_path / "test.py"
         target.write_text("old = 1\n", encoding="utf-8")
         with patch("builtins.input", side_effect=KeyboardInterrupt):
             ok = fc._apply_patch("@@ -1 +1 @@\n- old = 1\n+ new = 1\n", str(target), str(tmp_path))
         assert ok is False
+        assert stop_requested() is True
+        clear_stop()
 
     def test_syntax_rejection_prevents_write(self, tmp_path):
         """A patch that breaks syntax is not written to disk."""
@@ -655,6 +671,93 @@ class TestAnchoredPatchApplication:
         ok, err = apply_anchored_patch(patch, self._source_lines())
         assert ok is False
         assert err  # rejected by hunk validation, anchoring, or the syntax gate
+
+    def test_anchored_rejects_ambiguous_repeated_block(self) -> None:
+        """A multi-line old run duplicated at two far-apart places is
+        ambiguous — the patcher must refuse rather than guess (guessing
+        caused the 45x-TODO corruption)."""
+        from agent_core.patch_utils import apply_anchored_patch
+        src_lines = (
+            "def engine(options):\n"
+            "    cache = {}\n"
+            "    for key in options:\n"
+            "        data = fetch(key)\n"
+            + ("        # TODO: implement search branch\n" * 40)
+            + "        cache[key] = data\n"
+            "    return cache\n"
+        ).split("\n")
+        patch = (
+            "@@ -500,2 +500,2 @@\n"
+            "-        # TODO: implement search branch\n"
+            "-        # TODO: implement search branch\n"
+            "+        # done\n"
+        )
+        ok, err = apply_anchored_patch(patch, src_lines)
+        assert ok is False
+        assert "Cannot anchor" in err
+
+    def test_anchored_single_line_hunk_picks_nearest_copy(self) -> None:
+        """A one-line hunk whose '-' line appears many times must still
+        anchor at the copy nearest the claimed line — refusing it caused
+        repeated 'Cannot anchor ... around line N' failures (and broke the
+        optimize command's retry feedback). The syntax gate is the safety
+        net for single-line edits."""
+        from agent_core.patch_utils import apply_anchored_patch
+        src_lines = (
+            "def func_0(value):\n"
+            "    return open(fname).read()\n"
+            "    pass\n"
+            "def func_1(value):\n"
+            "    return open(fname).read()\n"
+            "    pass\n"
+            "def func_2(value):\n"
+            "    return open(fname).read()\n"
+            "    pass\n"
+        ).split("\n")
+        patch = (
+            "@@ -5,1 +5,1 @@\n"
+            "-    return open(fname).read()\n"
+            "+    return open(fname).read().strip()\n"
+        )
+        ok, result = apply_anchored_patch(patch, src_lines)
+        assert ok is True
+        assert "return open(fname).read().strip()" in result
+
+    def test_anchored_common_first_line_still_anchors(self) -> None:
+        """A hunk whose first old line is a common statement (try:) must
+        still anchor when the rest of the old-line run is distinctive.
+        The first-line-only ambiguity check rejected these and caused
+        'Cannot anchor ... around line 176' for every try:-headed hunk."""
+        from agent_core.patch_utils import apply_anchored_patch
+        src_lines = (
+            "def a():\n"
+            "    try:\n"
+            "        x = 1\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "\n"
+            "def engine(options):\n"
+            "    cache = {}\n"
+            "    try:\n"
+            "        results = searcher.search(q, p)\n"
+            "        if not results:\n"
+            "            return 'none'\n"
+            "    except Exception as e:\n"
+            "        return f'err {e}'\n"
+            "    return cache\n"
+        ).split("\n")
+        patch = (
+            "@@ -100,4 +100,4 @@\n"
+            "            try:\n"
+            "-                results = searcher.search(q, p)\n"
+            "+                results = searcher.search(q, path)\n"
+            "                if not results:\n"
+            "                    return 'none'\n"
+        )
+        ok, result = apply_anchored_patch(patch, src_lines)
+        assert ok is True
+        assert "searcher.search(q, path)" in result
+        assert result.count("searcher.search") == 1
 
     def test_split_hunks_handles_fused_headers(self) -> None:
         from agent_core.patch_utils import split_patch_hunks
