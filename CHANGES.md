@@ -445,3 +445,9 @@
 **Reason**: A multi-step task (e.g. 'analyze the whole project and write a report') burned all iterations on exploration, the loop exited mid-task, and the model's intermediate narration was printed as if it were the final answer.
 **Files**: agent_core/llm/tool_loop.py (deadline note, forced synthesis, deadline_window), agent.py (max_iterations 8 -> 20), tests/test_tool_loop_nlp.py (+3 tests), Architecture.md (component table).
 
+
+## 2026-08-13 14:10 — fix: Git-Bash workspace broke subprocess tools
+
+**Change**: Agent.DEFAULT_WORKSPACE was the Git-Bash path "/c/Dev/Agent1", which is not a valid Windows directory. Every subprocess-based NLP tool (git, run, diff, py_compile verification) ran with cwd=ws_dir and failed with WinError 267 "The directory name is invalid", while read/search/list_files kept working. The default is now derived from the script location, the constructor translates Git-Bash-style paths via to_windows_path, and _execute_tool_call/_verify_file fall back to a valid cwd if _nlp_workspace is invalid.
+**Files**: agent.py (DEFAULT_WORKSPACE, __init__, _execute_tool_call ws_dir, _verify_file cwd), tests/test_tool_loop_nlp.py (+2 regression tests)
+
