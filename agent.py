@@ -7,7 +7,6 @@ import contextlib
 import io
 import json
 import os
-import platform
 import re
 import sys
 from collections import defaultdict
@@ -592,68 +591,17 @@ class Agent:
         for word, idx_set in sorted_items[:keep_count]:
             self._semantic_index[word] = idx_set
 
-    async def _search_files(self, query: str, local_path: str) -> list[str]:
-        """Search files with platform-appropriate command and fallback."""
-        results = []
-
-        if platform.system() == "Windows":
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "findstr", "/S", "/N", "/C:" + query, local_path,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-
-                stdout, stderr = await proc.communicate()
-
-                if proc.returncode == 0:
-                    results = stdout.decode().splitlines()
-                else:
-                    results = await self._fallback_search(query, local_path)
-
-            except FileNotFoundError:
-                results = await self._fallback_search(query, local_path)
-        else:
-            proc = await asyncio.create_subprocess_exec(
-                "grep", "-rn", query, local_path,
-                stdout=asyncio.subprocess.PIPE
-            )
-            stdout, _ = await proc.communicate()
-            results = stdout.decode().splitlines()
-
-        return results
-
-    async def _fallback_search(self, query: str, path: str) -> list[str]:
-        """Fallback search using Python's os.walk with chunked reading."""
-        results = []
-        chunk_size = 8192
-
-        for root, dirs, files in os.walk(path):
-            for file in files:
-                filepath = os.path.join(root, file)
-                try:
-                    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                        while True:
-                            chunk = f.read(chunk_size)
-                            if not chunk:
-                                break
-                            if query in chunk:
-                                results.append(filepath)
-                                break
-                except Exception:
-                    pass
-
-        return results
-
     async def search_file(self, query: str, path: str | None = None) -> str:
-        local_path = self._safe_path(path or self.workspace)
-        
-        results = await self._search_files(query, local_path)
-        
-        if not results:
+        """Search workspace files for text.
+
+        Delegates to the shared :class:`FileSearcher` (excludes git-ignored
+        state/cache/binary files, returns ``path:lineno: content`` lines), so
+        the REPL ``search`` command and the NLP ``search`` tool behave alike.
+        """
+        results = await self.searcher.search(query, path or self.workspace)
+        if not results or results == "No matches found":
             return "No matches found"
-        
-        return "\n".join(results)
+        return results
 
     async def chat_nlp(self, user_input: str) -> None:
         """Process natural language input through a structured tool-calling loop.

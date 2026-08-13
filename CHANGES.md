@@ -480,3 +480,8 @@
 **Change**: read tool gained optional offset/limit parameters and appends '[truncated — use read with offset=N to continue]' so the model can page through large files instead of re-reading the same first 5000 chars — the root cause of the repeated-read loop in the '_execute_nlp_tool' session.
 **Files**: agent_core/llm/tool_loop.py (_STUCK_SYNTHESIS_NOTE, stuck detection), agent_core/tool_schemas.py (read offset/limit), agent.py (read handler pagination), tests/test_tool_loop_nlp.py (+4 tests)
 
+
+## 2026-08-13 17:18 — REPL search command shares the fixed FileSearcher
+
+**Change**: The REPL \search\ command (Agent.search_file) still used the old duplicated findstr + blind os.walk fallback — matching .git logs, chat_history.json, mypy_cache .db and __pycache__ binaries without line numbers, while the NLP search tool had already been fixed. Agent.search_file now delegates to the shared FileSearcher (exclusions + path:lineno: content), and the dead _search_files/_fallback_search duplicates plus the now-unused platform import were removed.
+**Files**: agent.py (search_file delegation, dead code removal), no new tests needed (existing 595 cover the searcher)
