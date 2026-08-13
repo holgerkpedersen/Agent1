@@ -119,6 +119,9 @@ Desktop.ini
 .project_memory.json
 chat_history.json
 
+# Temporary workflow command artifacts (spec -> analysis -> plan -> tasks -> entities)
+project_*.md
+
 .github/workflows/
 nul
 .poolside/

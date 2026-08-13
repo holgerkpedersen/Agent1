@@ -485,3 +485,9 @@
 
 **Change**: The REPL \search\ command (Agent.search_file) still used the old duplicated findstr + blind os.walk fallback — matching .git logs, chat_history.json, mypy_cache .db and __pycache__ binaries without line numbers, while the NLP search tool had already been fixed. Agent.search_file now delegates to the shared FileSearcher (exclusions + path:lineno: content), and the dead _search_files/_fallback_search duplicates plus the now-unused platform import were removed.
 **Files**: agent.py (search_file delegation, dead code removal), no new tests needed (existing 595 cover the searcher)
+
+## 2026-08-13 18:29 — project_*.md no longer pollutes search results
+
+**Change**: project_*.md (spec/analysis/plan/tasks/entities) are temporary outputs of the workflow command, not source of truth — they are now excluded from search, git-ignored, and untracked. A symbol that only lives in them (e.g. '_execute_nlp_tool') no longer appears as a code match, so the agent concludes 'not in code' instead of chasing a phantom implementation.
+**Files**: agent_core/file_searcher.py (_is_ignored_file project_*.md rule), .gitignore (project_*.md), git rm --cached of the five tracked docs, tests/test_file_searcher.py (+1 regression test: the exact _execute_nlp_tool scenario)
+

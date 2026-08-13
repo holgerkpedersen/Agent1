@@ -22,6 +22,16 @@ _IGNORED_FILES = {
     ".env", ".env.example", ".coverage", "model",
 }
 
+
+def _is_ignored_file(name: str) -> bool:
+    """True for runtime state files and temporary workflow artifacts."""
+    if name in _IGNORED_FILES:
+        return True
+    # project_*.md are transient outputs of the workflow command (spec ->
+    # analysis -> plan -> tasks -> entities), not source of truth — they must
+    # not surface as code matches.
+    return name.startswith("project_") and name.endswith(".md")
+
 #: Extensions never searched (binary/cache/asset files).
 _IGNORED_EXTENSIONS = {
     ".db", ".pyc", ".pyo", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
@@ -76,7 +86,7 @@ class FileSearcher:
                 d for d in dirs if d not in _IGNORED_DIRS and not d.endswith(".egg-info")
             )
             for file in sorted(files):
-                if file in _IGNORED_FILES or file.endswith((".pyc", ".pyo")):
+                if _is_ignored_file(file) or file.endswith((".pyc", ".pyo")):
                     continue
                 ext = os.path.splitext(file)[1].lower()
                 if ext in _IGNORED_EXTENSIONS:

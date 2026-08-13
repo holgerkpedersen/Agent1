@@ -56,6 +56,27 @@ class TestFileSearcher:
         result = asyncio.run(FileSearcher().search("zzz-not-there", str(tmp_path)))
         assert result == "No matches found"
 
+    def test_project_workflow_docs_are_not_code_matches(self, tmp_path):
+        """project_*.md are temporary workflow artifacts — a symbol that only
+        lives in them (like '_execute_nlp_tool') must not appear as a match."""
+        (tmp_path / "project_plan.md").write_text(
+            "[MUST] Patch `_execute_nlp_tool` command injection vulnerability",
+            encoding="utf-8",
+        )
+        (tmp_path / "project_tasks.md").write_text(
+            "1. `_execute_nlp_tool` shell=True replacement",
+            encoding="utf-8",
+        )
+        (tmp_path / "src.py").write_text("def _execute_tool_call():\n    pass\n", encoding="utf-8")
+
+        result = asyncio.run(FileSearcher().search("_execute_nlp_tool", str(tmp_path)))
+        assert result == "No matches found"
+
+        result2 = asyncio.run(FileSearcher().search("_execute_tool_call", str(tmp_path)))
+        assert "src.py" in result2
+        assert "project_plan.md" not in result2
+        assert "project_tasks.md" not in result2
+
     def test_caps_results(self, tmp_path):
         for i in range(60):
             (tmp_path / f"f{i}.py").write_text(f"needle = {i}", encoding="utf-8")
