@@ -302,3 +302,103 @@ class TestAgentExecuteToolCall:
 
         result = asyncio.run(run())
         assert "Git error" not in result
+
+
+class TestPersistentChatHistory:
+    """The NLP conversation must survive REPL restarts via chat_history.json."""
+
+    def test_loads_history_from_previous_session(self, tmp_path):
+        from unittest.mock import patch
+        from agent import Agent
+        history_file = tmp_path / "chat_history.json"
+        history_file.write_text(
+            json.dumps([
+                {"role": "user", "content": "Analyser projektet"},
+                {"role": "assistant", "content": "Jeg fandt 5 ting."},
+            ]),
+            encoding="utf-8",
+        )
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            agent = Agent(workspace=".")
+            assert len(agent._chat_history) == 2
+            assert agent._chat_history[0]["content"] == "Analyser projektet"
+
+    def test_corrupt_history_file_falls_back_to_empty(self, tmp_path):
+        from unittest.mock import patch
+        from agent import Agent
+        history_file = tmp_path / "chat_history.json"
+        history_file.write_text("{not valid json", encoding="utf-8")
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            agent = Agent(workspace=".")
+            assert agent._chat_history == []
+
+    def test_saves_history_after_nlp_turn(self, tmp_path):
+        import asyncio
+        from unittest.mock import patch
+        from agent import Agent
+        history_file = tmp_path / "chat_history.json"
+
+        class FakeLLM:
+            async def chat(self, messages, tools=None, **kwargs):
+                return "Summary of the analysis."
+
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            agent = Agent(workspace=".")
+            agent.llm = FakeLLM()
+
+            async def run():
+                await agent.chat_nlp("Analyser projektet")
+
+            asyncio.run(run())
+
+            assert history_file.exists()
+            saved = json.loads(history_file.read_text(encoding="utf-8"))
+            roles = [m["role"] for m in saved]
+            assert roles == ["system", "user", "assistant"]
+            assert saved[1]["content"] == "Analyser projektet"
+            assert saved[2]["content"] == "Summary of the analysis."
+
+    def test_trim_keeps_system_prompt_and_tail(self, tmp_path):
+        import asyncio
+        from unittest.mock import patch
+        from agent import Agent, _trim_chat_history
+        history_file = tmp_path / "chat_history.json"
+        messages = [{"role": "system", "content": "SYS"}]
+        messages += [{"role": "user", "content": f"msg-{i}"} for i in range(80)]
+
+        trimmed = _trim_chat_history(messages)
+        assert len(trimmed) == 60
+        assert trimmed[0]["content"] == "SYS"
+        assert trimmed[-1]["content"] == "msg-79"
+
+        class FakeLLM:
+            async def chat(self, messages, tools=None, **kwargs):
+                return "done"
+
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            agent = Agent(workspace=".")
+            agent._chat_history = list(messages)
+            agent.llm = FakeLLM()
+
+            async def run():
+                await agent.chat_nlp("hello")
+
+            asyncio.run(run())
+            saved = json.loads(history_file.read_text(encoding="utf-8"))
+            assert len(saved) == 60
+            assert saved[0]["content"] == "SYS"
+
+    def test_clear_history_deletes_file(self, tmp_path):
+        from unittest.mock import patch
+        from agent import Agent
+        history_file = tmp_path / "chat_history.json"
+        history_file.write_text(
+            json.dumps([{"role": "user", "content": "hi"}]),
+            encoding="utf-8",
+        )
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            agent = Agent(workspace=".")
+            assert agent._chat_history
+            agent.clear_history()
+            assert agent._chat_history == []
+            assert not history_file.exists()

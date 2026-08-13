@@ -117,6 +117,7 @@ Desktop.ini
 .implement_cache.json
 .generated_manifest.json
 .project_memory.json
+chat_history.json
 
 .github/workflows/
 nul

@@ -12,7 +12,7 @@ import re
 import sys
 from collections import defaultdict
 from agent_core import to_windows_path
-from agent_core.constants import resolve_model
+from agent_core.constants import resolve_model, CHAT_HISTORY_JSON_PATH
 from agent_core.llm.lmstudio import LMStudioProvider
 from agent_core.file_system import FileSystem
 from agent_core.file_searcher import FileSearcher
@@ -135,7 +135,9 @@ class Agent:
         self._knowledge_graph: dict[str, Any] = {}
         self._working_memory: list[Any] = []
         self._history: list[Any] = []
-        self._chat_history: list[dict[str, Any]] = []  # NLP conversation context
+        #: NLP conversation context — persisted to chat_history.json so a new
+        #: session continues where the previous one left off.
+        self._chat_history: list[dict[str, Any]] = self._load_chat_history()
         self._nlp_workspace: str | None = None  # workspace override for NLP tools (set by paste --workspace)
 
         # Initialize LLM client for AI analysis (LM Studio)
@@ -706,6 +708,10 @@ class Agent:
             tools=list(NLP_TOOL_SCHEMAS),
         )
         self._chat_history = final_messages
+        # Keep the conversation bounded and persist it so the next session
+        # (or a follow-up prompt) can continue the dialogue.
+        self._chat_history = _trim_chat_history(self._chat_history)
+        self._save_chat_history()
 
         clean = re.sub(r'</?tool_call>', '', final_text)
         clean = re.sub(r'</?function_call>', '', clean)
@@ -760,6 +766,49 @@ class Agent:
         self._knowledge_graph.clear()
         self._working_memory.clear()
         self._semantic_index.clear()
+        try:
+            os.remove(CHAT_HISTORY_JSON_PATH)
+        except OSError:
+            pass
+
+    # ------------------------------------------------------------------
+    #  Persistent NLP chat history (chat_history.json)
+    # ------------------------------------------------------------------
+
+    def _load_chat_history(self) -> list[dict[str, Any]]:
+        """Load the persisted NLP conversation from the previous session."""
+        try:
+            with open(CHAT_HISTORY_JSON_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, list):
+                return []
+            messages = [
+                m for m in data
+                if isinstance(m, dict) and m.get("role") in ("system", "user", "assistant", "tool")
+            ]
+            return _trim_chat_history(messages)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return []
+
+    def _save_chat_history(self) -> None:
+        """Persist the NLP conversation so the next session can continue it."""
+        try:
+            with open(CHAT_HISTORY_JSON_PATH, "w", encoding="utf-8") as f:
+                json.dump(self._chat_history, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+
+_MAX_CHAT_MESSAGES = 60
+
+
+def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the system prompt plus the last N-1 messages so the conversation
+    stays within a bounded context; returns a new list."""
+    if len(messages) <= _MAX_CHAT_MESSAGES:
+        return list(messages)
+    head = messages[:1]
+    return head + list(messages[-(_MAX_CHAT_MESSAGES - 1):])
 
 
 def _is_similar(content1: str, content2: str, threshold: float = 0.8) -> bool:

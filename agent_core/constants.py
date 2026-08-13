@@ -68,6 +68,7 @@ DEFAULT_MODEL = os.environ.get("AGENT_MODEL", "laguna-s-2.1")
 
 _MODEL_JSON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "model.json")
+CHAT_HISTORY_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "chat_history.json")
 
 
 # ---------------------------------------------------------------------------

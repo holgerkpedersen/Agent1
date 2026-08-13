@@ -23,7 +23,7 @@ Run: `python agent.py`
 | `perf`                       | Command performance dashboard       |
 | `quit` / `exit` / `q`        | Exit the REPL                       |
 
-Any text not matching a command is sent to the LLM as **natural language** with full conversation history. The agent uses **native tool calling** — it receives schemas for `search`, `read`, `list_files`, `write`, `edit`, `run`, `git`, `diff`, `tests`, `fix`, and `analyze`, and must call a tool to act:
+Any text not matching a command is sent to the LLM as **natural language** with full conversation history. The conversation **persists across sessions** in `chat_history.json` (project root, git-ignored), so a new REPL run continues where the last one left off — use `clear` to reset it. The agent uses **native tool calling** — it receives schemas for `search`, `read`, `list_files`, `write`, `edit`, `run`, `git`, `diff`, `tests`, `fix`, and `analyze`, and must call a tool to act:
 
 ```
 > Make a brainstorm on this repo

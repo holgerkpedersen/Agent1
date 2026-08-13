@@ -451,3 +451,10 @@
 **Change**: Agent.DEFAULT_WORKSPACE was the Git-Bash path "/c/Dev/Agent1", which is not a valid Windows directory. Every subprocess-based NLP tool (git, run, diff, py_compile verification) ran with cwd=ws_dir and failed with WinError 267 "The directory name is invalid", while read/search/list_files kept working. The default is now derived from the script location, the constructor translates Git-Bash-style paths via to_windows_path, and _execute_tool_call/_verify_file fall back to a valid cwd if _nlp_workspace is invalid.
 **Files**: agent.py (DEFAULT_WORKSPACE, __init__, _execute_tool_call ws_dir, _verify_file cwd), tests/test_tool_loop_nlp.py (+2 regression tests)
 
+
+## 2026-08-13 14:20 — persistent NLP chat history across sessions
+
+**Change**: The natural-language conversation now survives REPL restarts. After every chat_nlp turn the history is saved to chat_history.json (project root, git-ignored) and loaded back on startup, so the next session continues where the previous one left off. History is capped at 60 messages (system prompt + tail) to keep context bounded, corrupt files fall back to empty, and the clear command deletes the file too.
+**Reason**: Asking 'Hvor nåede vi til sidst?' after a restart had no context — the in-memory chat history was reset on every launch.
+**Files**: agent_core/constants.py (CHAT_HISTORY_JSON_PATH), agent.py (_load_chat_history, _save_chat_history, _trim_chat_history, clear_history), .gitignore, USAGE.md, tests/test_tool_loop_nlp.py (+5 tests)
+
