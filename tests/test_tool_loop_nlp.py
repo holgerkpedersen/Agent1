@@ -195,6 +195,57 @@ class TestToolLoopExecution:
         assert executed == ["read", "edit", "read"]
         assert final_text == "Verified."
 
+    def test_third_consecutive_duplicate_forces_synthesis_immediately(self):
+        """A model stuck on the same call must be stopped after the third
+        repeat and forced to answer — not left to burn the iteration budget.
+        The scripted LLM raises IndexError if the loop asks for one more
+        response after the forced call, proving early termination."""
+        fake = _ScriptedLLM([
+            ("read", {"path": "agent.py"}),
+            ("read", {"path": "agent.py"}),
+            ("read", {"path": "agent.py"}),
+            "I found the implementation in agent.py.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return "content..."
+
+        runner = ToolLoopRunner(max_iterations=20)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert executed == ["read"]
+        assert final_text == "I found the implementation in agent.py."
+        # The forced call runs without tools and only 4 LLM calls happened
+        # (3 loop iterations + 1 forced synthesis) despite max_iterations=20.
+        assert len(fake.calls) == 4
+        assert fake.calls[-1][1] == []
+        tool_msgs = [m["content"] for m in messages if m["role"] == "tool"]
+        assert any("three times" in m for m in tool_msgs)
+
+    def test_stuck_synthesis_note_does_not_leak_into_history(self):
+        fake = _ScriptedLLM([
+            ("read", {"path": "a.py"}),
+            ("read", {"path": "a.py"}),
+            ("read", {"path": "a.py"}),
+            "Answer.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return "x"
+
+        runner = ToolLoopRunner(max_iterations=20)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert final_text == "Answer."
+        assert not any(
+            m.get("role") == "system" and "repeated the same tool call" in str(m.get("content"))
+            for m in messages
+        )
+
     def test_deadline_note_is_injected_before_cap(self):
         """A budget warning must reach the LLM before the cap hits — but must
         NOT leak into the persisted history (a fresh turn has a fresh budget)."""
@@ -282,6 +333,44 @@ class TestAgentExecuteToolCall:
         assert "Written" in result
         assert "[verify] py_compile" in result
         assert target.read_text(encoding="utf-8").startswith("def hello")
+
+    def test_read_supports_offset_pagination(self, tmp_path):
+        """read must page through large files with offset/limit instead of
+        re-returning the same first chunk (the cause of repeated read loops)."""
+        import asyncio
+        from agent import Agent
+        agent = Agent(workspace=str(tmp_path))
+        target = tmp_path / "big.py"
+        target.write_text("line0\n" + "x" * 6000, encoding="utf-8")
+
+        async def first_page():
+            return await agent._execute_tool_call("read", {"path": str(target)})
+
+        async def second_page():
+            return await agent._execute_tool_call(
+                "read", {"path": str(target), "offset": 5000},
+            )
+
+        page1 = asyncio.run(first_page())
+        assert "line0" in page1
+        assert "use read with offset=5000" in page1
+        page2 = asyncio.run(second_page())
+        assert "x" in page2
+        assert "offset=5000" not in page2
+
+    def test_read_offset_beyond_end(self, tmp_path):
+        import asyncio
+        from agent import Agent
+        agent = Agent(workspace=str(tmp_path))
+        target = tmp_path / "small.py"
+        target.write_text("abc", encoding="utf-8")
+
+        async def run():
+            return await agent._execute_tool_call(
+                "read", {"path": str(target), "offset": 99},
+            )
+
+        assert "beyond the end" in asyncio.run(run())
 
     def test_edit_verifies_and_replaces_first_occurrence(self, tmp_path):
         import asyncio

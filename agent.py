@@ -220,10 +220,17 @@ class Agent:
         if name == "read":
             path = self._resolve_nlp_path(str(args.get("path", "")).strip('"').strip("'"))
             try:
+                offset = max(0, int(args.get("offset") or 0))
+                limit = max(1, int(args.get("limit") or 5000))
                 content = await self.read_file(path, track_read=False)
                 if content.startswith("File not found") or content.startswith("Error"):
                     return content
-                return content[:5000]
+                if offset >= len(content):
+                    return f"Offset {offset} is beyond the end of {path} ({len(content)} chars)."
+                chunk = content[offset:offset + limit]
+                if offset + limit < len(content):
+                    return f"{chunk}\n[truncated — use read with offset={offset + limit} to continue]"
+                return chunk
             except Exception as e:
                 return f"Read error: {e}"
 

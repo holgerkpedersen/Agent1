@@ -39,11 +39,17 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read",
-            "description": "Read a file from the workspace and return its contents.",
+            "description": (
+                "Read a file from the workspace and return its contents. Large "
+                "files are truncated with a hint telling you the offset to "
+                "continue from — page through with offset/limit."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Absolute or workspace-relative file path"},
+                    "offset": {"type": "integer", "description": "Character offset to start reading from (default 0)"},
+                    "limit": {"type": "integer", "description": "Max characters to return (default 5000)"},
                 },
                 "required": ["path"],
             },

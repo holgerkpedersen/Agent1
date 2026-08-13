@@ -473,3 +473,10 @@
 **Change**: chat_nlp system prompt now requires verified repo facts (project_*.md marked as historical), verified numbers, and explicitly 'if a search finds nothing in source, state the symbol does not exist — never repeat the search'.
 **Files**: agent_core/file_searcher.py (rewrite), agent.py (_resolve_nlp_path workspace scoping, search handler, system prompt), agent_core/llm/tool_loop.py (duplicate detection), tests/test_file_searcher.py (new, 8 tests), tests/test_tool_loop_nlp.py (+2 loop tests)
 
+
+## 2026-08-13 16:58 — stuck-model guard: forced synthesis after 3rd identical call
+
+**Change**: When the model repeats the exact same tool call three times in a row, ToolLoopRunner now stops the loop immediately and runs the forced tool-less synthesis (dedicated 'you are stuck' note) — it no longer waits for the iteration cap while the model keeps repeating (observed: 8+ identical read calls in a real session despite steering notes).
+**Change**: read tool gained optional offset/limit parameters and appends '[truncated — use read with offset=N to continue]' so the model can page through large files instead of re-reading the same first 5000 chars — the root cause of the repeated-read loop in the '_execute_nlp_tool' session.
+**Files**: agent_core/llm/tool_loop.py (_STUCK_SYNTHESIS_NOTE, stuck detection), agent_core/tool_schemas.py (read offset/limit), agent.py (read handler pagination), tests/test_tool_loop_nlp.py (+4 tests)
+

@@ -20,6 +20,16 @@ _FORCED_SYNTHESIS_NOTE = (
     "incomplete, report exactly what is missing and what you would need."
 )
 
+#: Used when the model repeats the same tool call three times in a row: the
+#: loop stops immediately and forces a text answer instead of burning budget.
+_STUCK_SYNTHESIS_NOTE = (
+    "You have now repeated the same tool call without making progress, so the "
+    "tool loop is stopping. Do NOT call any more tools. Using only what you "
+    "have already read in this conversation, give your final answer to the "
+    "user's request now — report what you found, and if you lack information, "
+    "state exactly what is missing and what you would need."
+)
+
 
 class ToolLoopRunner:
     """Orchestrates tool calling loop with LLM.
@@ -65,6 +75,7 @@ class ToolLoopRunner:
         current_messages = [dict(m) for m in messages]
         deadline_injected = False
         hit_cap = False
+        stuck = False
         #: Contents of the steering notes injected during this run.  They are
         #: stripped from the returned history so a follow-up turn is not
         #: confused by a stale "budget exhausted / no more tools" instruction.
@@ -72,6 +83,7 @@ class ToolLoopRunner:
         #: Consecutive-duplicate detection: the exact same call twice in a row
         #: means the model is stuck (e.g. re-searching a symbol it already
         #: searched).  Duplicates are not re-executed; they get a note instead.
+        #: A third consecutive duplicate stops the loop and forces synthesis.
         prev_call_key: tuple[str, str] | None = None
         prev_was_duplicate = False
         prev_result: str = ""
@@ -119,14 +131,15 @@ class ToolLoopRunner:
                     json.dumps(args, sort_keys=True, default=str),
                 )
                 if call_key == prev_call_key:
-                    # Consecutive identical call: do NOT re-execute.
-                    print(f"  [tool] {tool_name}({_fmt_args(args)}) (duplicate, not re-executed)")
                     if prev_was_duplicate:
+                        # Third consecutive identical call: the model is stuck.
+                        # Stop the loop right here and force a text answer.
                         result_str = (
                             "NOTE: This identical call has now been made three times in a "
                             "row with the same result. Stop repeating it — take a different "
                             "action or give your final answer now."
                         )
+                        stuck = True
                     else:
                         result_str = (
                             f"NOTE: This exact call was just executed (result: "
@@ -135,12 +148,15 @@ class ToolLoopRunner:
                             "answer in text."
                         )
                     prev_was_duplicate = True
+                    print(f"  [tool] {tool_name}({_fmt_args(args)}) (duplicate, not re-executed)")
                     print(f"  [result] {result_str[:200]}")
                     current_messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
                         "content": result_str,
                     })
+                    if stuck:
+                        break
                     continue
 
                 print(f"  [tool] {tool_name}({_fmt_args(args)})")
@@ -157,18 +173,19 @@ class ToolLoopRunner:
                     "tool_call_id": tc_id,
                     "content": result_str
                 })
+
+            if stuck:
+                break
         else:
             # The cap was hit while tool calls were still pending: the model
             # never produced a text answer, so force a final synthesis from
             # the tool results already gathered.
             hit_cap = True
 
-        if hit_cap:
-            current_messages.append({
-                "role": "system",
-                "content": _FORCED_SYNTHESIS_NOTE,
-            })
-            injected_notes.append(_FORCED_SYNTHESIS_NOTE)
+        if hit_cap or stuck:
+            note = _STUCK_SYNTHESIS_NOTE if stuck else _FORCED_SYNTHESIS_NOTE
+            current_messages.append({"role": "system", "content": note})
+            injected_notes.append(note)
             response_text, updated_messages = await llm_chat_fn(current_messages, [])
             current_messages = updated_messages
             if response_text:
