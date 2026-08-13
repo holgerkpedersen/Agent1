@@ -686,7 +686,7 @@ class Agent:
             updated.append({"role": "assistant", "content": raw})
             return raw, updated
 
-        loop = ToolLoopRunner(max_iterations=8)
+        loop = ToolLoopRunner(max_iterations=20)
         final_text, final_messages = await loop.run(
             messages=self._chat_history,
             llm_chat_fn=llm_chat_fn,

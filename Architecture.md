@@ -45,7 +45,7 @@ Communicates with LM Studio's OpenAI-compatible API endpoint.
 | `LLMProvider`      | `provider.py`  | Protocol defining the LLM interface                   |
 | `LMStudioProvider` | `lmstudio.py`  | Concrete implementation with chat, stream, analyze    |
 | `RetryPolicy`      | `retry.py`     | Exponential backoff retry on transient errors         |
-| `ToolLoopRunner`   | `tool_loop.py` | Multi-step LLM interaction with tool result injection |
+| `ToolLoopRunner`   | `tool_loop.py` | Multi-step LLM interaction with tool result injection, deadline steering, forced final synthesis |
 
 ### Data Flow
 

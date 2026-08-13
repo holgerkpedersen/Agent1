@@ -120,6 +120,69 @@ class TestToolLoopExecution:
         tool_msg = next(m for m in messages if m["role"] == "tool")
         assert "Tool error: boom" in tool_msg["content"]
 
+    def test_cap_hit_while_tool_calls_pending_forces_final_synthesis(self):
+        """If the model burns all iterations on tool calls, the loop must still
+        produce a final text answer via a forced tool-less synthesis call."""
+        fake = _ScriptedLLM([
+            ("list_files", {"path": "."}),
+            ("list_files", {"path": "."}),
+            ("list_files", {"path": "."}),
+            "Final synthesis: the project has these files.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return "entries"
+
+        runner = ToolLoopRunner(max_iterations=3)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert final_text == "Final synthesis: the project has these files."
+        assert executed == ["list_files", "list_files", "list_files"]
+        # The forced call must run WITHOUT tools so a text answer is forced.
+        assert fake.calls[-1][1] == []
+
+    def test_deadline_note_is_injected_before_cap(self):
+        """A budget warning must appear in the history before the cap hits."""
+        fake = _ScriptedLLM([
+            ("list_files", {"path": "."}),
+            "Answer before the cap.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return "entries"
+
+        runner = ToolLoopRunner(max_iterations=3, deadline_window=2)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        notes = [
+            m["content"] for m in messages
+            if m["role"] == "system" and "BUDGET WARNING" in m["content"]
+        ]
+        assert len(notes) == 1
+        assert "1 tool call" in notes[0] or "tool call" in notes[0]
+
+    def test_no_deadline_note_when_model_answers_early(self):
+        fake = _ScriptedLLM(["Just an answer, no tools."])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return "x"
+
+        runner = ToolLoopRunner(max_iterations=5, deadline_window=2)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert final_text == "Just an answer, no tools."
+        notes = [
+            m["content"] for m in messages
+            if m["role"] == "system" and "BUDGET WARNING" in m["content"]
+        ]
+        assert notes == []
+
 
 def _loop_runner_sync(runner, fake_llm, execute_tool):
     import asyncio
