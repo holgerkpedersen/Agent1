@@ -142,9 +142,16 @@ class TestToolLoopExecution:
         assert executed == ["list_files", "list_files", "list_files"]
         # The forced call must run WITHOUT tools so a text answer is forced.
         assert fake.calls[-1][1] == []
+        # The "no more tools" steering note must not leak into the history
+        # that a follow-up turn would continue from.
+        assert not any(
+            m.get("role") == "system" and "no more tools" in str(m.get("content"))
+            for m in messages
+        )
 
     def test_deadline_note_is_injected_before_cap(self):
-        """A budget warning must appear in the history before the cap hits."""
+        """A budget warning must reach the LLM before the cap hits — but must
+        NOT leak into the persisted history (a fresh turn has a fresh budget)."""
         fake = _ScriptedLLM([
             ("list_files", {"path": "."}),
             "Answer before the cap.",
@@ -158,12 +165,17 @@ class TestToolLoopExecution:
         runner = ToolLoopRunner(max_iterations=3, deadline_window=2)
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
 
-        notes = [
-            m["content"] for m in messages
-            if m["role"] == "system" and "BUDGET WARNING" in m["content"]
+        sent_notes = [
+            m["content"] for call in fake.calls for m in call[0]
+            if m.get("role") == "system" and "BUDGET WARNING" in str(m.get("content"))
         ]
-        assert len(notes) == 1
-        assert "1 tool call" in notes[0] or "tool call" in notes[0]
+        assert len(sent_notes) == 1
+        assert "1 tool call" in sent_notes[0] or "tool call" in sent_notes[0]
+        # The steering note must not persist into the returned history.
+        assert not any(
+            m.get("role") == "system" and "BUDGET WARNING" in str(m.get("content"))
+            for m in messages
+        )
 
     def test_no_deadline_note_when_model_answers_early(self):
         fake = _ScriptedLLM(["Just an answer, no tools."])

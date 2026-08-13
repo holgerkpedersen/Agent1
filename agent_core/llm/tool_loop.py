@@ -65,6 +65,10 @@ class ToolLoopRunner:
         current_messages = [dict(m) for m in messages]
         deadline_injected = False
         hit_cap = False
+        #: Contents of the steering notes injected during this run.  They are
+        #: stripped from the returned history so a follow-up turn is not
+        #: confused by a stale "budget exhausted / no more tools" instruction.
+        injected_notes: list[str] = []
 
         for iteration in range(self.max_iterations):
             # Steer toward wrapping up before the cap is actually reached.
@@ -72,10 +76,9 @@ class ToolLoopRunner:
                 self.max_iterations - iteration <= self.deadline_window
             ):
                 remaining = self.max_iterations - iteration
-                current_messages.append({
-                    "role": "system",
-                    "content": _DEADLINE_NOTE.format(remaining=remaining),
-                })
+                note = _DEADLINE_NOTE.format(remaining=remaining)
+                current_messages.append({"role": "system", "content": note})
+                injected_notes.append(note)
                 deadline_injected = True
 
             # Call LLM
@@ -127,6 +130,7 @@ class ToolLoopRunner:
                 "role": "system",
                 "content": _FORCED_SYNTHESIS_NOTE,
             })
+            injected_notes.append(_FORCED_SYNTHESIS_NOTE)
             response_text, updated_messages = await llm_chat_fn(current_messages, [])
             current_messages = updated_messages
             if response_text:
@@ -140,6 +144,13 @@ class ToolLoopRunner:
             if part and part.strip():
                 final_text = part
                 break
+        # Steering notes were only meant for the current loop; a fresh turn has
+        # a fresh budget, so they must not leak into the persisted history.
+        if injected_notes:
+            current_messages = [
+                m for m in current_messages
+                if not (m.get("role") == "system" and m.get("content") in injected_notes)
+            ]
         return final_text, current_messages
 
 
