@@ -69,6 +69,12 @@ class ToolLoopRunner:
         #: stripped from the returned history so a follow-up turn is not
         #: confused by a stale "budget exhausted / no more tools" instruction.
         injected_notes: list[str] = []
+        #: Consecutive-duplicate detection: the exact same call twice in a row
+        #: means the model is stuck (e.g. re-searching a symbol it already
+        #: searched).  Duplicates are not re-executed; they get a note instead.
+        prev_call_key: tuple[str, str] | None = None
+        prev_was_duplicate = False
+        prev_result: str = ""
 
         for iteration in range(self.max_iterations):
             # Steer toward wrapping up before the cap is actually reached.
@@ -108,12 +114,44 @@ class ToolLoopRunner:
                 except json.JSONDecodeError:
                     args = {}
 
+                call_key = (
+                    tool_name,
+                    json.dumps(args, sort_keys=True, default=str),
+                )
+                if call_key == prev_call_key:
+                    # Consecutive identical call: do NOT re-execute.
+                    print(f"  [tool] {tool_name}({_fmt_args(args)}) (duplicate, not re-executed)")
+                    if prev_was_duplicate:
+                        result_str = (
+                            "NOTE: This identical call has now been made three times in a "
+                            "row with the same result. Stop repeating it — take a different "
+                            "action or give your final answer now."
+                        )
+                    else:
+                        result_str = (
+                            f"NOTE: This exact call was just executed (result: "
+                            f"{prev_result[:160]}). It is not re-executed — unless the file "
+                            "changed, the result is identical. Take a different action or "
+                            "answer in text."
+                        )
+                    prev_was_duplicate = True
+                    print(f"  [result] {result_str[:200]}")
+                    current_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": result_str,
+                    })
+                    continue
+
                 print(f"  [tool] {tool_name}({_fmt_args(args)})")
                 try:
                     result_str = await execute_tool_fn(tool_name, args)
                 except Exception as exc:
                     result_str = f"Tool error: {exc}"
                 print(f"  [result] {result_str[:200]}")
+                prev_call_key = call_key
+                prev_was_duplicate = False
+                prev_result = result_str
                 current_messages.append({
                     "role": "tool",
                     "tool_call_id": tc_id,

@@ -140,7 +140,9 @@ class TestToolLoopExecution:
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
 
         assert final_text == "Final synthesis: the project has these files."
-        assert executed == ["list_files", "list_files", "list_files"]
+        # Consecutive identical calls are NOT re-executed — the first runs,
+        # the two repeats get a steering note instead.
+        assert executed == ["list_files"]
         # The forced call must run WITHOUT tools so a text answer is forced.
         assert fake.calls[-1][1] == []
         # The "no more tools" steering note must not leak into the history
@@ -149,6 +151,49 @@ class TestToolLoopExecution:
             m.get("role") == "system" and "no more tools" in str(m.get("content"))
             for m in messages
         )
+
+    def test_consecutive_identical_calls_get_note_not_repeat_execution(self):
+        """A repeated identical call must not silently re-execute; the model
+        must be told it already got that result."""
+        fake = _ScriptedLLM([
+            ("search", {"query": "_execute_nlp_tool", "path": "."}),
+            ("search", {"query": "_execute_nlp_tool", "path": "."}),
+            "The symbol does not exist in current code.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return "only state files match"
+
+        runner = ToolLoopRunner(max_iterations=5)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert executed == ["search"]
+        assert final_text == "The symbol does not exist in current code."
+        notes = [m["content"] for m in messages if m["role"] == "tool"]
+        assert len(notes) == 2
+        assert "NOTE: This exact call was just executed" in notes[1]
+
+    def test_non_consecutive_identical_call_still_executes(self):
+        """A legit re-read (read -> edit -> read) must still work."""
+        fake = _ScriptedLLM([
+            ("read", {"path": "f.py"}),
+            ("edit", {"path": "f.py", "old_text": "a", "new_text": "b"}),
+            ("read", {"path": "f.py"}),
+            "Verified.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return f"result-{name}"
+
+        runner = ToolLoopRunner(max_iterations=5)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert executed == ["read", "edit", "read"]
+        assert final_text == "Verified."
 
     def test_deadline_note_is_injected_before_cap(self):
         """A budget warning must reach the LLM before the cap hits — but must

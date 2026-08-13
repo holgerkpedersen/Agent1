@@ -465,3 +465,11 @@
 **Correction**: the stale project_plan.md claims ('_execute_nlp_tool' in implement_cmd.py, 'test_implement_safety.py missing') were false — the function is _execute_tool_call, implement_cmd.py never used shell=True, and test_implement_safety.py exists.
 **Files**: agent.py (_blocked_shell_command + run/git/diff/tests handlers), tool_router.py (ShellCommandHandler), tests/test_tool_loop_nlp.py (+5 injection/blocklist tests), tests/test_tool_router.py (green)
 
+
+## 2026-08-13 16:46 — search tool overhaul: no more char-per-line or state-file noise
+
+**Change**: The NLP search tool now returns usable results. Root causes fixed: (1) the handler iterated the result STRING char-by-char (results[:30] on a string) producing one line per character; (2) FileSearcher fell back to a blind os.walk that matched .git logs, mypy_cache .db binaries and chat_history.json. The searcher is now a pure-Python walker that excludes git-ignored state/caches/binary files, returns path:lineno: content lines capped at 50, and resolves relative paths against the agent workspace (never the process CWD).
+**Change**: ToolLoopRunner detects consecutive identical tool calls — a repeat is not re-executed; the model gets a note with the previous result, and a third identical call in a row gets a hard 'stop repeating' note. This kills the 14x-identical-search loop seen in real sessions.
+**Change**: chat_nlp system prompt now requires verified repo facts (project_*.md marked as historical), verified numbers, and explicitly 'if a search finds nothing in source, state the symbol does not exist — never repeat the search'.
+**Files**: agent_core/file_searcher.py (rewrite), agent.py (_resolve_nlp_path workspace scoping, search handler, system prompt), agent_core/llm/tool_loop.py (duplicate detection), tests/test_file_searcher.py (new, 8 tests), tests/test_tool_loop_nlp.py (+2 loop tests)
+

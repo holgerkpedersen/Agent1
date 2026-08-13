@@ -163,10 +163,15 @@ class Agent:
         self.dispatcher.register("llm_analyze", lambda args: self._tool_llm_analyze(**args))
 
     def _resolve_nlp_path(self, path: str) -> str:
-        """Resolve a path for NLP tool use, honouring _nlp_workspace if set."""
+        """Resolve a path for NLP tool use, honouring _nlp_workspace if set.
+
+        Relative paths are resolved against the effective workspace (never the
+        process CWD), so tools stay scoped to the agent's workspace.
+        """
         import os as _os
-        if self._nlp_workspace and not _os.path.isabs(path):
-            return _os.path.normpath(_os.path.join(self._nlp_workspace, path))
+        base = self._nlp_workspace or self.workspace
+        if not _os.path.isabs(path):
+            return _os.path.normpath(_os.path.join(base, path))
         return path
 
     async def _verify_file(self, path: str) -> str:
@@ -205,9 +210,10 @@ class Agent:
             search_path = self._resolve_nlp_path(str(args.get("path") or "."))
             try:
                 results = await self.searcher.search(query, search_path)
-                if not results:
+                if not results or results == "No matches found":
                     return "No files found matching that query."
-                return "\n".join(f"  {r}" for r in results[:30])
+                lines = results.splitlines()
+                return "\n".join(f"  {line}" for line in lines[:30])
             except Exception as e:
                 return f"Search error: {e}"
 
@@ -672,6 +678,13 @@ class Agent:
                     "- If a tool fails, read the error and try a different approach.\n"
                     "- When the request is ambiguous, make a reasonable assumption and state it, "
                     "or ask one clarifying question before acting.\n"
+                    "- Never assert facts about this repo that you have not verified with a "
+                    "tool. project_plan.md / project_tasks.md are HISTORICAL phase docs and "
+                    "may be outdated — verify claims against the actual code.\n"
+                    "- Verify numbers (e.g. how many tests exist) with the tests tool or git "
+                    "log before claiming them.\n"
+                    "- If a search finds nothing in source files, state that the symbol does "
+                    "not exist in the current code — never repeat the same search.\n"
                     "- Be concise. Answer in the user's language."
                 ),
             })
