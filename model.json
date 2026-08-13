@@ -1,4 +1,4 @@
 {
   "model": "laguna-s-2.1",
-  "profile": "fast-codegen"
+  "profile": "deep-analysis"
 }

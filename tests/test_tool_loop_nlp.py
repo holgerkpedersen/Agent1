@@ -611,9 +611,43 @@ class TestPersistentChatHistory:
                 await agent.chat_nlp("hello")
 
             asyncio.run(run())
+            # The SAVED history is projected: only the last exchange survives.
             saved = json.loads(history_file.read_text(encoding="utf-8"))
-            assert len(saved) == 60
             assert saved[0]["content"] == "SYS"
+            assert saved[1]["content"] == "hello"
+            assert saved[2]["content"] == "done"
+
+    def test_projection_keeps_only_last_exchange(self):
+        from agent import _project_chat_history
+        messages = [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "gammel opgave"},
+            {"role": "assistant", "content": "gammelt svar"},
+            {"role": "user", "content": "ny opgave"},
+            {"role": "assistant", "content": "nyt svar"},
+        ]
+        projected = _project_chat_history(messages)
+        roles = [m["content"] for m in projected]
+        assert roles == ["SYS", "ny opgave", "nyt svar"]
+
+    def test_projection_drops_steering_notes_and_empty_placeholders(self):
+        from agent import _project_chat_history
+        messages = [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "opgave"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
+            {"role": "tool", "tool_call_id": "t1", "content": "resultat"},
+            {"role": "tool", "tool_call_id": "t2", "content": "NOTE: This exact call was just executed ..."},
+            {"role": "assistant", "content": ""},
+            {"role": "assistant", "content": "endeligt svar"},
+        ]
+        projected = _project_chat_history(messages)
+        assert [m["content"] for m in projected if m["content"]] == [
+            "SYS", "opgave", "resultat", "endeligt svar",
+        ]
+        # The empty assistant WITH tool_calls stays (it pairs with the result)…
+        tool_calls = [m for m in projected if m.get("tool_calls")]
+        assert len(tool_calls) == 1
 
     def test_clear_history_deletes_file(self, tmp_path):
         from unittest.mock import patch

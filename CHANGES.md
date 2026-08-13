@@ -491,3 +491,10 @@
 **Change**: project_*.md (spec/analysis/plan/tasks/entities) are temporary outputs of the workflow command, not source of truth — they are now excluded from search, git-ignored, and untracked. A symbol that only lives in them (e.g. '_execute_nlp_tool') no longer appears as a code match, so the agent concludes 'not in code' instead of chasing a phantom implementation.
 **Files**: agent_core/file_searcher.py (_is_ignored_file project_*.md rule), .gitignore (project_*.md), git rm --cached of the five tracked docs, tests/test_file_searcher.py (+1 regression test: the exact _execute_nlp_tool scenario)
 
+
+## 2026-08-13 18:46 — fix: persisted history no longer anchors new prompts to old topics
+
+**Change**: The agent kept producing the IDENTICAL stale answer regardless of the new prompt. Root cause: the persisted chat_history.json had grown to 60 messages dominated by an old '_execute_nlp_tool' exchange (including loop steering notes and an old user request), and every new prompt was appended to it — at temperature 0.1 the same context yields the same output, so the model re-answered the OLD request every time.
+**Change**: History is now PROJECTED before saving/loading: only the system prompt + the exchange starting at the last user message survive; loop steering NOTE tool messages and empty assistant placeholders are dropped. Old topics can never anchor a fresh session again.
+**Files**: agent.py (_project_chat_history used by _save/_load_chat_history), tests/test_tool_loop_nlp.py (+2 projection tests, 1 updated)
+

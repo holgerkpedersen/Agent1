@@ -745,7 +745,12 @@ class Agent:
     # ------------------------------------------------------------------
 
     def _load_chat_history(self) -> list[dict[str, Any]]:
-        """Load the persisted NLP conversation from the previous session."""
+        """Load the persisted NLP conversation from the previous session.
+
+        The persisted history only contains the last exchange (see
+        ``_project_chat_history``), so a fresh prompt can never be anchored to
+        an ancient request from an earlier session.
+        """
         try:
             with open(CHAT_HISTORY_JSON_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -755,7 +760,7 @@ class Agent:
                 m for m in data
                 if isinstance(m, dict) and m.get("role") in ("system", "user", "assistant", "tool")
             ]
-            return _trim_chat_history(messages)
+            return _project_chat_history(messages)
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return []
 
@@ -763,7 +768,7 @@ class Agent:
         """Persist the NLP conversation so the next session can continue it."""
         try:
             with open(CHAT_HISTORY_JSON_PATH, "w", encoding="utf-8") as f:
-                json.dump(self._chat_history, f, ensure_ascii=False, indent=2)
+                json.dump(_project_chat_history(self._chat_history), f, ensure_ascii=False, indent=2)
         except OSError:
             pass
 
@@ -812,6 +817,38 @@ def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return list(messages)
     head = messages[:1]
     return head + list(messages[-(_MAX_CHAT_MESSAGES - 1):])
+
+
+def _project_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Project a conversation down to what the NEXT session should see.
+
+    Keeps the system prompt plus the exchange starting at the LAST user
+    message, and drops loop steering notes (``NOTE: This ...`` tool messages)
+    and empty assistant placeholders.  Older topics are deliberately discarded
+    so they can never anchor a fresh session to a stale request — the root
+    cause of the agent repeatedly re-answering an old question.
+    """
+    if not messages:
+        return []
+    projected: list[dict[str, Any]] = []
+    for i, m in enumerate(messages):
+        if m.get("role") == "user":
+            # Restart the projection at the most recent user request.
+            projected = [m]
+        elif projected:
+            projected.append(m)
+    head = messages[:1] if messages and messages[0].get("role") == "system" else []
+    if head:
+        projected = head + projected
+    cleaned = []
+    for m in projected:
+        content = str(m.get("content") or "")
+        if m.get("role") == "tool" and content.startswith("NOTE: This"):
+            continue  # loop steering noise — meaningless in a fresh session
+        if m.get("role") == "assistant" and not content and not m.get("tool_calls"):
+            continue  # empty placeholder with no action
+        cleaned.append(m)
+    return _trim_chat_history(cleaned)
 
 
 def _is_similar(content1: str, content2: str, threshold: float = 0.8) -> bool:
