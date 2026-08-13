@@ -265,10 +265,9 @@ class Agent:
             timeout = int(args.get("timeout") or 120)
             if not cmd_to_run:
                 return "Error: run requires a command."
-            dangerous = ["rm -rf /", "del /s /q", "format c:", "shutdown", "reboot"]
-            for d in dangerous:
-                if d in cmd_to_run.lower():
-                    return f"Error: Dangerous command blocked: {cmd_to_run}"
+            blocked = _blocked_shell_command(cmd_to_run)
+            if blocked:
+                return f"Error: Dangerous command blocked ({blocked}): {cmd_to_run}"
             try:
                 r = subprocess.run(
                     cmd_to_run,
@@ -290,32 +289,36 @@ class Agent:
                 return f"Error: {e}"
 
         if name == "git":
-            subcmd = str(args.get("subcommand") or "status")
+            subcmd = str(args.get("subcommand") or "status").lower()
             git_args = str(args.get("args") or "")
             git_cmds = {
-                "status": "git status",
-                "diff": "git diff",
-                "log": "git log --oneline -15",
-                "add": "git add",
-                "commit": "git commit",
-                "push": "git push",
-                "pull": "git pull",
-                "branch": "git branch",
-                "checkout": "git checkout",
-                "stash": "git stash",
-                "show": "git show",
-                "blame": "git blame",
-                "remote": "git remote -v",
-                "branches": "git branch -a",
+                "status": ["status"],
+                "diff": ["diff", "--no-color"],
+                "log": ["log", "--oneline", "-15"],
+                "add": ["add"],
+                "commit": ["commit"],
+                "push": ["push"],
+                "pull": ["pull"],
+                "branch": ["branch"],
+                "checkout": ["checkout"],
+                "stash": ["stash"],
+                "show": ["show"],
+                "blame": ["blame"],
+                "remote": ["remote", "-v"],
+                "branches": ["branch", "-a"],
             }
             base = git_cmds.get(subcmd)
             if not base:
                 return f"Unknown git command: {subcmd}. Available: {', '.join(git_cmds.keys())}"
-            full_cmd = f"{base} {git_args}".strip()
             try:
+                extra = shlex.split(git_args)
+            except ValueError as e:
+                return f"Git error: invalid arguments: {e}"
+            try:
+                # Arg-list execution (no shell): shell metacharacters in
+                # model-supplied args become literal git arguments.
                 r = subprocess.run(
-                    full_cmd,
-                    shell=True,
+                    ["git"] + base + extra,
                     capture_output=True,
                     text=True,
                     cwd=ws_dir,
@@ -335,15 +338,14 @@ class Agent:
             file2 = args.get("file2")
             if not file1:
                 return "Error: diff requires at least one file."
+            cmd = ["git", "diff", "--no-color", "--"]
             if file2:
-                file2 = self._resolve_nlp_path(str(file2))
-                full_cmd = f'diff "{file1}" "{file2}"'
+                cmd += [file1, self._resolve_nlp_path(str(file2))]
             else:
-                full_cmd = f'git diff "{file1}"'
+                cmd += [file1]
             try:
                 r = subprocess.run(
-                    full_cmd,
-                    shell=True,
+                    cmd,
                     capture_output=True,
                     text=True,
                     cwd=ws_dir,
@@ -378,14 +380,13 @@ class Agent:
         if name == "tests":
             test_path = self._resolve_nlp_path(str(args.get("path") or "."))
             framework = str(args.get("framework") or "pytest")
-            if framework == "pytest":
-                full_cmd = f"python -m pytest {test_path} -v"
-            else:
-                full_cmd = f"python -m unittest {test_path} -v"
             try:
+                if framework == "pytest":
+                    cmd = [sys.executable, "-m", "pytest", test_path, "-v"]
+                else:
+                    cmd = [sys.executable, "-m", "unittest", test_path, "-v"]
                 r = subprocess.run(
-                    full_cmd,
-                    shell=True,
+                    cmd,
                     capture_output=True,
                     text=True,
                     cwd=ws_dir,
@@ -800,6 +801,40 @@ class Agent:
 
 
 _MAX_CHAT_MESSAGES = 60
+
+#: Destructive shell patterns the ``run`` tool refuses (word-boundary,
+#: case-insensitive) — the command injection surface of the NLP loop.
+_DANGEROUS_SHELL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"rm\s+-r[f]?", re.I), "recursive file removal (rm -r/-rf)"),
+    (re.compile(r"\bdeltree\b", re.I), "deltree"),
+    (re.compile(r"\brd\s+/s", re.I), "rd /s"),
+    (re.compile(r"\brmdir\s+/s", re.I), "rmdir /s"),
+    (re.compile(r"\bdel\s+/[sqf]", re.I), "del /s /q /f"),
+    (re.compile(r"\bformat\s+[a-z]:", re.I), "format <drive>:"),
+    (re.compile(r"\bshutdown\b", re.I), "shutdown"),
+    (re.compile(r"\breboot\b", re.I), "reboot"),
+    (re.compile(r"restart-computer", re.I), "restart-computer"),
+    (re.compile(r"stop-computer", re.I), "stop-computer"),
+    (re.compile(r"\bdiskpart\b", re.I), "diskpart"),
+    (re.compile(r"\bmkfs\b", re.I), "mkfs"),
+    (re.compile(r"wipefs", re.I), "wipefs"),
+    (re.compile(r"\bdd\s+of=", re.I), "dd of="),
+    (re.compile(r"taskkill\s+/f", re.I), "taskkill /f"),
+    (re.compile(r"\breg\s+delete", re.I), "reg delete"),
+    (re.compile(r"remove-item\s+-recurse", re.I), "Remove-Item -Recurse"),
+    (re.compile(r"clear-recyclebin", re.I), "Clear-RecycleBin"),
+    (re.compile(r"format-volume", re.I), "Format-Volume"),
+    (re.compile(r"invoke-expression", re.I), "Invoke-Expression"),
+]
+
+
+def _blocked_shell_command(command: str) -> str | None:
+    """Return a description of the first blocked destructive pattern in
+    *command*, or None if the command passes the safety scan."""
+    for pattern, desc in _DANGEROUS_SHELL_PATTERNS:
+        if pattern.search(command):
+            return desc
+    return None
 
 
 def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

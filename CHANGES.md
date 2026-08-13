@@ -458,3 +458,10 @@
 **Reason**: Asking 'Hvor nåede vi til sidst?' after a restart had no context — the in-memory chat history was reset on every launch.
 **Files**: agent_core/constants.py (CHAT_HISTORY_JSON_PATH), agent.py (_load_chat_history, _save_chat_history, _trim_chat_history, clear_history), .gitignore, USAGE.md, tests/test_tool_loop_nlp.py (+5 tests)
 
+
+## 2026-08-13 15:47 — security: NLP tools no longer shell-injectable
+
+**Change**: The command-injection surface in the NLP tool loop is closed. git/diff/tests tools switched from shell-string construction (shell=True, raw model args appended) to arg-list subprocess execution — shell metacharacters in model-supplied args are now literal arguments. The run tool (intentionally a shell tool) got a hardened word-boundary, case-insensitive destructive-pattern blocklist replacing the old substring blacklist. Legacy tool_router.py ShellCommandHandler now enforces a binary allow-list plus metacharacter rejection (Windows builtins like echo require the shell, so metachar blocking is the safe middle ground).
+**Correction**: the stale project_plan.md claims ('_execute_nlp_tool' in implement_cmd.py, 'test_implement_safety.py missing') were false — the function is _execute_tool_call, implement_cmd.py never used shell=True, and test_implement_safety.py exists.
+**Files**: agent.py (_blocked_shell_command + run/git/diff/tests handlers), tool_router.py (ShellCommandHandler), tests/test_tool_loop_nlp.py (+5 injection/blocklist tests), tests/test_tool_router.py (green)
+

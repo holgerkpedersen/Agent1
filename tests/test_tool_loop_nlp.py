@@ -304,6 +304,99 @@ class TestAgentExecuteToolCall:
         assert "Git error" not in result
 
 
+class TestNoShellInjection:
+    """The NLP subprocess tools must not let model-supplied text reach a shell.
+
+    Regression: git/diff/tests built shell strings with shell=True, so an
+    argument like ``--oneline && echo PWNED`` would have executed both parts.
+    """
+
+    @staticmethod
+    def _echo_ran(result: str) -> bool:
+        """True only if `echo PWNED` actually executed (standalone line)."""
+        return any(line.strip() == "PWNED" for line in result.splitlines())
+
+    def test_git_args_cannot_chain_shell_commands(self, tmp_path):
+        import asyncio
+        import subprocess
+        from agent import Agent
+        repo = tmp_path
+        subprocess.run(["git", "init", "-q", str(repo)], check=False)
+        (repo / "f.txt").write_text("x\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "f.txt"], check=False)
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-qm", "init"], check=False,
+        )
+        agent = Agent(workspace=str(repo))
+
+        async def run():
+            return await agent._execute_tool_call(
+                "git", {"subcommand": "log", "args": "--oneline && echo PWNED"},
+            )
+
+        result = asyncio.run(run())
+        assert not self._echo_ran(result)
+
+    def test_tests_path_cannot_chain_shell_commands(self, tmp_path):
+        import asyncio
+        from agent import Agent
+        agent = Agent(workspace=str(tmp_path))
+
+        async def run():
+            return await agent._execute_tool_call(
+                "tests", {"path": "x; echo PWNED", "framework": "pytest"},
+            )
+
+        result = asyncio.run(run())
+        assert not self._echo_ran(result)
+
+    def test_diff_path_cannot_chain_shell_commands(self, tmp_path):
+        import asyncio
+        from agent import Agent
+        repo = tmp_path
+        (repo / "a.txt").write_text("a\n", encoding="utf-8")
+        (repo / "b.txt").write_text("b\n", encoding="utf-8")
+        agent = Agent(workspace=str(repo))
+
+        async def run():
+            return await agent._execute_tool_call(
+                "diff", {"file1": 'a.txt" && echo PWNED && "'},
+            )
+
+        result = asyncio.run(run())
+        assert not self._echo_ran(result)
+
+    def test_run_tool_blocks_destructive_patterns(self):
+        import asyncio
+        from agent import Agent
+        agent = Agent(workspace=".")
+
+        async def run(cmd):
+            return await agent._execute_tool_call("run", {"command": cmd})
+
+        for cmd in [
+            "del /s /q C:\\x",
+            "rm -rf /",
+            "rmdir /s C:\\x",
+            "FORMAT D:",
+            "shutdown /s",
+            "diskpart",
+            "powershell -Command Remove-Item -Recurse C:\\x",
+        ]:
+            result = asyncio.run(run(cmd))
+            assert "blocked" in result.lower(), cmd
+
+    def test_run_tool_still_executes_harmless_commands(self):
+        import asyncio
+        from agent import Agent
+        agent = Agent(workspace=".")
+
+        async def run():
+            return await agent._execute_tool_call("run", {"command": "echo hello-ok"})
+
+        assert "hello-ok" in asyncio.run(run())
+
+
 class TestPersistentChatHistory:
     """The NLP conversation must survive REPL restarts via chat_history.json."""
 

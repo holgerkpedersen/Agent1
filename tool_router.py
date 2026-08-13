@@ -124,25 +124,42 @@ class ShellCommandHandler:
     """Handles execution of validated shell commands."""
 
     def __init__(self) -> None:
-        self._allowed_prefixes = (
+        self._allowed_binaries = (
             "echo", "ls", "dir", "cat", "type", "python", "py",
             "grep", "findstr", "head", "tail", "wc", "pwd", "whoami",
-            "git status", "git diff", "git log",
+            "git",
         )
 
     def execute(self, args: ShellCommandArgs) -> str | dict[str, Any]:
-        """Execute a shell command after basic prefix sanitisation."""
-        cmd = args.command.strip()
+        """Execute a command after binary allow-list + metacharacter checks.
 
-        # Basic allow-list guard (expand as needed)
-        allowed = any(cmd.startswith(pfx) for pfx in self._allowed_prefixes)
-        if not allowed:
+        Windows shell builtins (echo, dir, type, ...) cannot run without the
+        shell, so this stays shell-based — but injection is impossible: the
+        binary must be allow-listed AND no shell metacharacter may appear
+        outside double quotes (no ``&``, ``|``, ``;`` chaining or redirection).
+        """
+        import re
+        import shlex
+        import subprocess
+        cmd = args.command.strip()
+        try:
+            tokens = shlex.split(cmd)
+        except ValueError as exc:
             raise ToolExecutionError(
-                f"Command '{cmd}' is not in the allowed prefix list",
+                f"Invalid command: {cmd}",
+                details={"command": cmd, "error": str(exc)},
+            )
+        if not tokens or tokens[0] not in self._allowed_binaries:
+            raise ToolExecutionError(
+                f"Command '{cmd}' is not in the allowed command list",
                 details={"command": cmd},
             )
-
-        import subprocess
+        unquoted = re.sub(r'"[^"]*"', "", cmd)
+        if re.search(r"[&|;<>()^`$]", unquoted):
+            raise ToolExecutionError(
+                f"Command '{cmd}' contains shell metacharacters",
+                details={"command": cmd},
+            )
         try:
             result = subprocess.run(
                 cmd,
