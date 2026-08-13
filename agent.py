@@ -119,10 +119,14 @@ class LLMClient:
 class Agent:
     """Main agent class with workspace management and tool execution."""
     
-    DEFAULT_WORKSPACE = "/c/Dev/Agent1"
-    
+    #: Real filesystem path (not a Git-Bash /c/... path) — subprocess cwd must
+    #: be a valid Windows directory, so derive it from this file's location.
+    DEFAULT_WORKSPACE = os.path.dirname(os.path.abspath(__file__))
+
     def __init__(self, workspace: str | None = None, model_name: str | None = None):
-        self.workspace = workspace or self.DEFAULT_WORKSPACE
+        # Translate Git-Bash-style paths (/c/Dev/...) to Windows paths so that
+        # subprocess cwd and filesystem tools always see a valid directory.
+        self.workspace = os.path.abspath(to_windows_path(workspace or self.DEFAULT_WORKSPACE))
         self.model_name = resolve_model(model_name)
 
         self._semantic_index: dict[str, set[int]] = defaultdict(set)
@@ -166,9 +170,12 @@ class Agent:
     async def _verify_file(self, path: str) -> str:
         """Run py_compile on *path* and return a short verification summary."""
         try:
+            cwd = os.path.abspath(to_windows_path(self._nlp_workspace or self.workspace))
+            if not os.path.isdir(cwd):
+                cwd = self.workspace
             r = subprocess.run(
                 [sys.executable, "-m", "py_compile", path],
-                capture_output=True, text=True, cwd=self._nlp_workspace or self.workspace,
+                capture_output=True, text=True, cwd=cwd,
             )
         except OSError as e:
             return f"[verify] py_compile could not run: {e}"
@@ -184,6 +191,11 @@ class Agent:
         verification summary so the model can report verified results.
         """
         ws_dir = self._nlp_workspace or self.workspace
+        # subprocess cwd must be an existing directory; a bad override (e.g.
+        # a Git-Bash /c/... path from paste --workspace) must not break tools.
+        ws_dir = os.path.abspath(to_windows_path(ws_dir))
+        if not os.path.isdir(ws_dir):
+            ws_dir = self.workspace
         name = name.lower()
 
         if name == "search":

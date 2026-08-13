@@ -6,6 +6,7 @@ LLM that emits native ``tool_calls`` and verify that the dispatcher runs
 the tools, feeds results back, and terminates on a plain-text answer.
 """
 import json
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -265,3 +266,39 @@ class TestAgentExecuteToolCall:
             return await agent._execute_tool_call("no_such_tool", {})
 
         assert "Unknown tool" in asyncio.run(run())
+
+    def test_git_bash_workspace_is_normalized(self, tmp_path):
+        """A Git-Bash /c/... workspace must not break subprocess-based tools
+        (regression: WinError 267 'directory name is invalid' on git/run/diff).
+        """
+        import asyncio
+        from pathlib import Path
+        from agent import Agent
+        repo = Path(tmp_path)
+        (repo / ".git").mkdir()
+        (repo / "file.txt").write_text("hello\n", encoding="utf-8")
+        bash_path = "/c" + str(repo)[2:].replace("\\", "/")
+
+        agent = Agent(workspace=bash_path)
+        assert os.path.isdir(agent.workspace)
+        assert agent.workspace == os.path.normpath(str(repo))
+
+        async def run():
+            return await agent._execute_tool_call("git", {"subcommand": "status"})
+
+        result = asyncio.run(run())
+        assert "Git error" not in result
+
+    def test_git_bash_override_in_nlp_workspace_is_normalized(self, tmp_path):
+        """A bad _nlp_workspace override (paste --workspace) must fall back to a
+        valid cwd instead of failing subprocess tools."""
+        import asyncio
+        from agent import Agent
+        agent = Agent(workspace=".")
+        agent._nlp_workspace = "/c/definitely/not/a/dir"
+
+        async def run():
+            return await agent._execute_tool_call("git", {"subcommand": "status"})
+
+        result = asyncio.run(run())
+        assert "Git error" not in result

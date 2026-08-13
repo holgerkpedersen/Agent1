@@ -438,3 +438,10 @@
 **Reason**: A multi-step task (e.g. 'analyze the whole project and write a report') burned all iterations on exploration, the loop exited mid-task, and the model's intermediate narration was printed as if it were the final answer.
 **Files**: agent_core/llm/tool_loop.py (deadline note, forced synthesis, deadline_window), agent.py (max_iterations 8 -> 20), tests/test_tool_loop_nlp.py (+3 tests), Architecture.md (component table).
 
+
+## 2026-08-13 14:10 — tool loop deadline: forced final synthesis
+
+**Change**: The NLP tool loop no longer dies silently at the iteration cap. ToolLoopRunner now injects a BUDGET WARNING system note when only a few iterations remain, and if the cap is hit while tool calls are still pending, one final tool-less LLM call forces the model to synthesize the answer from the gathered tool results. chat_nlp iteration cap raised from 8 to 20.
+**Reason**: A multi-step task (e.g. 'analyze the whole project and write a report') burned all iterations on exploration, the loop exited mid-task, and the model's intermediate narration was printed as if it were the final answer.
+**Files**: agent_core/llm/tool_loop.py (deadline note, forced synthesis, deadline_window), agent.py (max_iterations 8 -> 20), tests/test_tool_loop_nlp.py (+3 tests), Architecture.md (component table).
+
