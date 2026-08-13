@@ -14,10 +14,10 @@ class CommandRegistry:
     without modifying existing code.
     """
     
-    def __init__(self):
+    def __init__(self) -> None:
         self._commands: dict[str, Command] = {}
     
-    def register(self, command: Command):
+    def register(self, command: Command) -> None:
         """Register a command."""
         self._commands[command.name] = command
     
@@ -37,7 +37,7 @@ class CommandRegistry:
         print(f"Unknown command: {name}. Type 'help' for commands.")
         return True
     
-    def print_help(self):
+    def print_help(self) -> None:
         """Print all registered commands."""
         print("Commands:")
         for cmd in sorted(self._commands.values(), key=lambda c: c.name):

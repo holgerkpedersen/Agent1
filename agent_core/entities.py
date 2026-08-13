@@ -45,7 +45,9 @@ def enrich_exception_with_traceback(exc: Exception) -> None:
     """Attach traceback context to an exception for richer diagnostics."""
     import traceback
 
-    exc.__traceback__ = traceback.format_exc()  # type: ignore[attr-defined]
+    setattr(exc, "__traceback__", traceback.format_exc())
+    if not hasattr(exc, "_agent_trace"):
+        setattr(exc, "_agent_trace", traceback.format_exc())
     if not hasattr(exc, "_agent_trace"):
         setattr(exc, "_agent_trace", traceback.format_exc())
 

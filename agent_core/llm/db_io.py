@@ -1,4 +1,11 @@
 import sqlite3
+from typing import Any
+from typing import Any
+from typing import Any
+from typing import Any
+from typing import Any
+from typing import Any
+from typing import Any
 from pathlib import Path
 
 DB_FILE = "agent_memory.db"
@@ -88,7 +95,7 @@ def update_template(template_id: int, template_text: str) -> bool:
     return success
 
 
-def save_metrics(task_type: str, profile_type: str, version: int, metrics: dict) -> None:
+def save_metrics(task_type: str, profile_type: str, version: int, metrics: dict[str, Any]) -> None:
     init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -110,7 +117,7 @@ def save_metrics(task_type: str, profile_type: str, version: int, metrics: dict)
     conn.close()
 
 
-def load_metrics(task_type: str, profile_type: str, version: int) -> None | dict:
+def load_metrics(task_type: str, profile_type: str, version: int) -> None | dict[str, Any]:
     init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -133,7 +140,7 @@ def load_metrics(task_type: str, profile_type: str, version: int) -> None | dict
     return None
 
 
-def update_metrics(metrics_id: int, metrics: dict) -> bool:
+def update_metrics(metrics_id: int, metrics: dict[str, Any]) -> bool:
     init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -220,7 +227,7 @@ def delete_metrics(metrics_id: int) -> bool:
     return success
 
 
-def get_template_by_id(template_id: int) -> None | dict:
+def get_template_by_id(template_id: int) -> None | dict[str, Any]:
     init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -243,7 +250,7 @@ def get_template_by_id(template_id: int) -> None | dict:
     return None
 
 
-def get_metrics_by_id(metrics_id: int) -> None | dict:
+def get_metrics_by_id(metrics_id: int) -> None | dict[str, Any]:
     init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -268,7 +275,7 @@ def get_metrics_by_id(metrics_id: int) -> None | dict:
     return None
 
 
-def list_templates(task_type: str | None = None, profile_type: str | None = None) -> list[dict]:
+def list_templates(task_type: str | None = None, profile_type: str | None = None) -> list[dict[str, Any]]:
     init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -308,7 +315,7 @@ def list_templates(task_type: str | None = None, profile_type: str | None = None
     ]
 
 
-def list_metrics(task_type: str | None = None, profile_type: str | None = None) -> list[dict]:
+def list_metrics(task_type: str | None = None, profile_type: str | None = None) -> list[dict[str, Any]]:
     init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()

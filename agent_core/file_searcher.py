@@ -12,7 +12,7 @@ class FileSearcher:
     Extracted from Agent class to separate search concerns.
     """
     
-    def __init__(self, workspace: str = None):
+    def __init__(self, workspace: str | None = None):
         self.workspace = workspace
     
     async def search(self, query: str, path: str) -> str:

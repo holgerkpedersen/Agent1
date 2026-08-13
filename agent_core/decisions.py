@@ -12,7 +12,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agent import Agent
@@ -27,23 +27,26 @@ def _decision_path(workspace: str | Path) -> Path:
     return Path(workspace) / _DECISIONS_FILE
 
 
-def load_decisions(workspace: str | Path) -> list[dict]:
+def load_decisions(workspace: str | Path) -> list[dict[str, Any]]:
     fp = _decision_path(workspace)
     if not fp.exists():
         return []
     try:
-        return json.loads(fp.read_text(encoding="utf-8"))
+        parsed = json.loads(fp.read_text(encoding="utf-8"))
+        if isinstance(parsed, list):
+            return [d for d in parsed if isinstance(d, dict)]
+        return []
     except (json.JSONDecodeError, OSError):
         return []
 
 
-def save_decisions(workspace: str | Path, decisions: list[dict]) -> None:
+def save_decisions(workspace: str | Path, decisions: list[dict[str, Any]]) -> None:
     _decision_path(workspace).write_text(
         json.dumps(decisions, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
 
-def _next_id(decisions: list[dict]) -> str:
+def _next_id(decisions: list[dict[str, Any]]) -> str:
     max_id = 0
     for d in decisions:
         try:
@@ -61,7 +64,7 @@ def add_decision(
     rationale: str = "",
     affected_files: list[str] | None = None,
     tags: list[str] | None = None,
-) -> dict:
+) -> dict[str, Any]:
     decisions = load_decisions(workspace)
     record = {
         "id": _next_id(decisions),
@@ -89,7 +92,7 @@ def find_decisions(
     tags: list[str] | None = None,
     files: list[str] | None = None,
     keyword: str = "",
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     decisions = load_decisions(workspace)
     result = []
     for d in decisions:
@@ -108,7 +111,7 @@ def find_decisions(
 # ── Simple overlap check (instant, no LLM) ──────────────────────────────────
 
 
-def find_overlaps(new_decision: dict, existing: list[dict]) -> list[dict]:
+def find_overlaps(new_decision: dict[str, Any], existing: list[dict[str, Any]]) -> list[dict[str, Any]]:
     new_tags = set(new_decision.get("tags", []))
     new_files = set(new_decision.get("affected_files", []))
     overlaps = []
@@ -122,7 +125,7 @@ def find_overlaps(new_decision: dict, existing: list[dict]) -> list[dict]:
     return overlaps
 
 
-def format_for_prompt(decisions: list[dict]) -> str:
+def format_for_prompt(decisions: list[dict[str, Any]]) -> str:
     if not decisions:
         return ""
     lines = ["## Past Decisions (do NOT contradict these)"]
@@ -143,7 +146,7 @@ def format_for_prompt(decisions: list[dict]) -> str:
 
 async def check_contradictions(
     agent: "Agent",
-    decisions: list[dict],
+    decisions: list[dict[str, Any]],
     new_decision_text: str,
 ) -> str:
     if not decisions:
@@ -180,8 +183,8 @@ async def check_contradictions(
 
 async def resolve_contradictions(
     agent: "Agent",
-    d1: dict,
-    d2: dict,
+    d1: dict[str, Any],
+    d2: dict[str, Any],
 ) -> str:
     sys_msg = (
         "You are a senior architect resolving a design contradiction. "
@@ -214,10 +217,28 @@ async def resolve_contradictions(
 # ── Extract decisions from analysis ─────────────────────────────────────────
 
 
+def _parse_json_array(response: str) -> list[dict[str, Any]]:
+    """Best-effort parse of a JSON array from an LLM response."""
+    try:
+        parsed = json.loads(response)
+        if isinstance(parsed, list):
+            return [d for d in parsed if isinstance(d, dict)]
+    except json.JSONDecodeError:
+        match = re.search(r"\[.*\]", response, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group())
+                if isinstance(parsed, list):
+                    return [d for d in parsed if isinstance(d, dict)]
+            except json.JSONDecodeError:
+                pass
+    return []
+
+
 async def extract_from_analysis(
     agent: "Agent",
     analysis_text: str,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     sys_msg = (
         "Extract design decisions from the project analysis.\n"
         "Return a JSON array of decision candidates. Each object must have:\n"
@@ -233,30 +254,14 @@ async def extract_from_analysis(
         {"role": "system", "content": sys_msg},
         {"role": "user", "content": f"Extract decisions from:\n\n{analysis_text}"},
     ])
-    result: list[dict] = []
-    if response:
-        try:
-            result = json.loads(response)
-            if not isinstance(result, list):
-                result = []
-        except json.JSONDecodeError:
-            match = re.search(r"\[.*\]", response, re.DOTALL)
-            if match:
-                try:
-                    parsed = json.loads(match.group())
-                    if isinstance(parsed, list):
-                        result = parsed
-                except json.JSONDecodeError:
-                    pass
-    ws = str(Path(agent.workspace).resolve())
-    return _filter_candidates(result, ws)
+    return _parse_json_array(response)
 
 
 async def extract_from_changes(
     agent: "Agent",
     files: list[str],
     context: str = "",
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Extract design decisions from a set of file changes.
 
     Args:
@@ -290,21 +295,7 @@ async def extract_from_changes(
         {"role": "system", "content": sys_msg},
         {"role": "user", "content": user_msg},
     ])
-    result: list[dict] = []
-    if response:
-        try:
-            result = json.loads(response)
-            if not isinstance(result, list):
-                result = []
-        except json.JSONDecodeError:
-            match = re.search(r"\[.*\]", response, re.DOTALL)
-            if match:
-                try:
-                    parsed = json.loads(match.group())
-                    if isinstance(parsed, list):
-                        result = parsed
-                except json.JSONDecodeError:
-                    pass
+    result = _parse_json_array(response)
     ws = str(Path(agent.workspace).resolve())
     return _filter_candidates(result, ws)
 
@@ -314,7 +305,7 @@ def decisions_as_system_prompt(workspace: str | Path, files: list[str]) -> str:
 
     Returns empty string if no relevant decisions exist.
     """
-    decisions = find_decisions(ws=str(workspace), files=files) if files else load_decisions(workspace)
+    decisions = find_decisions(workspace=str(workspace), files=files) if files else load_decisions(workspace)
     if not decisions:
         return ""
     lines = [
@@ -333,9 +324,9 @@ def decisions_as_system_prompt(workspace: str | Path, files: list[str]) -> str:
 
 
 def _filter_candidates(
-    candidates: list[dict],
+    candidates: list[dict[str, Any]],
     workspace: str | Path,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Remove candidates that duplicate existing decisions or are already done."""
     existing = load_decisions(workspace)
     existing_titles_lower = {d.get("title", "").lower() for d in existing}

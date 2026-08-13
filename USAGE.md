@@ -23,20 +23,30 @@ Run: `python agent.py`
 | `perf`                       | Command performance dashboard       |
 | `quit` / `exit` / `q`        | Exit the REPL                       |
 
-Any text not matching a command is sent to the LLM as **natural language** with full conversation history. The LLM can explore the codebase using tools:
+Any text not matching a command is sent to the LLM as **natural language** with full conversation history. The agent uses **native tool calling** — it receives schemas for `search`, `read`, `list_files`, `write`, `edit`, `run`, `git`, `diff`, `tests`, `fix`, and `analyze`, and must call a tool to act:
 
 ```
 > Make a brainstorm on this repo
-  [tool] list_files C:/Dev/Agent1 -> 609 bytes
-  [tool] read C:/Dev/Agent1/README.md -> 5000 bytes
-  [tool] read C:/Dev/Agent1/agent_core/commands -> 325 bytes
+  [tool] list_files(path=.)
+  [result] ...
+  [tool] read(path=README.md)
+  [result] ...
+  [tool] read(path=agent_core/commands)
+  [result] ...
 Agent1 is a Python AI agent framework with 14 commands...
 
 > What safety guards does implement use?
-  [LLM remembers previous context + reads implement_cmd.py → answers]
+  [tool] read(path=agent_core/commands/implement_cmd.py)
+  [result] ...
+The implement command guards against stdlib shadowing, class-name
+collisions, and unwired modules (see implement_cmd.py).
 ```
 
-The LLM can use `<tool_call>search query</tool_call>`, `<tool_call>read path</tool_call>`, and `<tool_call>list_files dir</tool_call>` — up to 5 exploration rounds before producing a final answer.
+- **Actions, not descriptions**: the model cannot answer "I'll read the file..." without actually calling the tool — the API forces a structured tool call or a text answer.
+- **Visible execution**: every call is printed as `[tool] name(args)` with its result `[result] ...`.
+- **Verified writes**: `write`/`edit` append a `py_compile` verification summary so the model reports verified changes.
+- **Error recovery**: a failed tool returns its error to the model, which can retry differently.
+- **Tool schemas live in `agent_core/tool_schemas.py`** — the exact set the dispatcher can execute (`NLP_TOOL_NAMES`).
 
 ---
 

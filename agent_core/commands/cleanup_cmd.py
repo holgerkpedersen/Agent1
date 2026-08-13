@@ -36,8 +36,8 @@ class CleanupCommand(Command):
         generated_files = {}
         manifest_file = ws_path / ".generated_manifest.json"
         if manifest_file.exists():
-            with open(manifest_file, "r", encoding="utf-8") as f:
-                generated_files = json.load(f)
+            with open(manifest_file, "r", encoding="utf-8") as mf:
+                generated_files = json.load(mf)
             print(f"  Manifest: {len(generated_files)} previously generated files")
 
         all_files = {}
@@ -46,7 +46,7 @@ class CleanupCommand(Command):
                 rel = str(fp.relative_to(ws_path)).replace("\\", "/")
                 all_files[rel] = {"size": fp.stat().st_size, "generated": rel in generated_files}
 
-        references = {f: set() for f in all_files}
+        references: dict[str, set[str]] = {f: set() for f in all_files}
         for fname in all_files:
             fp = ws_path / fname
             try:

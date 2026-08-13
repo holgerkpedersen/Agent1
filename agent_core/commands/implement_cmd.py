@@ -154,7 +154,7 @@ def _parse_line_number(err: str) -> int:
     return 0
 
 
-def _classify_error(err: str):
+def _classify_error(err: str) -> tuple[int, int, str]:
     """Return (window_before, window_after, instruction) for an error pattern."""
     if "union-attr" in err or ("has no attribute" in err and "CROSS:" not in err):
         return (30, 15,
@@ -197,6 +197,12 @@ def _classify_error(err: str):
             "Missing import. Add 'from module import Name' at the top of the file. "
             "Look at the available exports in other project files — do NOT define the class yourself. "
             "IMPORT it from the file that already defines it.")
+    if "Missing return statement" in err or "[return]" in err:
+        return (-1, -1,
+            "The function does not return on all code paths. The window below shows "
+            "the ENTIRE enclosing function. Find where control can fall off the end "
+            "without returning (e.g. an unmatched if/elif chain, or a try/except "
+            "missing an else). Add a return for that unhandled path.")
     return (40, 20,
         "Fix this error in the code. Keep changes minimal — do NOT rewrite the entire file. "
         "Output ONLY the corrected file.")
@@ -570,6 +576,7 @@ class ImplementCommand(Command):
         print(f"{'─'*40}")
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
+        from agent_core.patch_utils import split_source_lines
         parts = args
 
         if len(parts) < 1:
@@ -693,7 +700,7 @@ class ImplementCommand(Command):
 
         print(f"Found {len(all_files)} files to implement: {', '.join(all_files)}")
 
-        def file_needs_generation(fname):
+        def file_needs_generation(fname: str) -> tuple[bool, str]:
             raw_ws = workspace_path(target_workspace)
             fpath = Path(raw_ws) / fname
             if not fpath.exists():

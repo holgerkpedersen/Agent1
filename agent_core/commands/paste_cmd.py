@@ -1,9 +1,10 @@
 """Paste command — read multiline text from stdin and feed into the NLP ReAct loop."""
 import os as _os
 import sys as _sys
+from typing import TYPE_CHECKING
 from .base import Command
 
-if False:
+if TYPE_CHECKING:
     from agent import Agent
 
 

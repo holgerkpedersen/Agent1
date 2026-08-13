@@ -4,7 +4,7 @@ import dataclasses
 import json
 import logging
 import os
-from typing import Dict, Final, List, Optional
+from typing import Dict, Final, List, Optional, Any, Any, Any
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +18,11 @@ class ProfileMetadata:
     max_tokens: int = 50000
     thinking: Optional[bool] = None  # None = use model default
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> ProfileMetadata:
+    def from_dict(cls, d: dict[str, Any]) -> ProfileMetadata:
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
@@ -107,7 +107,7 @@ def delete_profile(name: str) -> bool:
     return False
 
 
-def apply_profile(payload: dict, profile: ProfileMetadata) -> dict:
+def apply_profile(payload: dict[str, Any], profile: ProfileMetadata) -> dict[str, Any]:
     """Apply profile overrides to an LLM request payload."""
     if profile.temperature is not None:
         payload["temperature"] = profile.temperature

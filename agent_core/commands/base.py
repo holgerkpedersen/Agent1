@@ -377,10 +377,10 @@ class Command(ABC):
         """
         ...
     
-    def error(self, msg: str):
+    def error(self, msg: str) -> None:
         """Print error message."""
         print(f"Error: {msg}")
     
-    def success(self, msg: str):
+    def success(self, msg: str) -> None:
         """Print success message."""
         print(msg)

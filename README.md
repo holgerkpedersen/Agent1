@@ -70,13 +70,22 @@ decide resolve <id1> <id2>       LLM resolves contradiction between two decision
 decide extract [--from a.md]     Auto-extract decisions from project analysis
 ```
 
-Any text not matching a command is sent to the LLM as **natural language**. The LLM can explore the codebase by requesting tools inline:
+Any text not matching a command is sent to the LLM as **natural language**. The agent uses **native OpenAI-format tool calling** — the model is given schemas for `search`, `read`, `list_files`, `write`, `edit`, `run`, `git`, `diff`, `tests`, `fix`, and `analyze`, and must either emit a structured tool call or answer in text:
 
 ```
 > What safety guards does the implement command use?
+  [tool] read(path=agent_core/commands/implement_cmd.py)
+  [result] ... (file contents fed back to the model)
+The implement command guards against stdlib shadowing, class-name
+collisions, and unwired modules (see agent_core/commands/implement_cmd.py).
 ```
 
-The LLM can read files (`<tool_call>read path</tool_call>`), search the project (`<tool_call>search query</tool_call>`), and list directories — up to 6 rounds of exploration before a synthesis-ultimatum retry forces a final answer. Conversation history is maintained so follow-up questions build on previous answers.
+- **Actions, not descriptions**: the API forces the model to actually call a tool — it cannot just say "I will read the file."
+- **Visible execution**: every tool call is printed (`[tool] name(args)`) with its result (`[result] ...`).
+- **Verified writes**: after `write`/`edit`, a `py_compile` summary is appended so the model reports verified changes.
+- **Tool errors feed back**: a failed tool returns its error to the model, which can retry with a different approach.
+- **Tool schemas are declared once** in `agent_core/tool_schemas.py` — the schema set sent to the LLM is exactly the set the dispatcher can execute (`NLP_TOOL_NAMES`).
+- Conversation history is maintained so follow-up questions build on previous answers.
 
 ### Workflow Pipeline
 
@@ -180,7 +189,8 @@ Agent1/
 │   │   ├── lmstudio.py           # LM Studio provider
 │   │   ├── provider.py           # LLMProvider protocol
 │   │   ├── retry.py              # RetryPolicy
-│   │   └── tool_loop.py          # ToolLoopRunner
+│   │   └── tool_loop.py          # ToolLoopRunner (native tool_calls loop)
+│   ├── tool_schemas.py           # NLP tool schemas + names (single source of truth)
 │   └── commands/
 │       ├── base.py               # Command ABC
 │       ├── registry.py           # CommandRegistry
@@ -240,7 +250,7 @@ OPENAI_API_KEY=your-key
 ```bash
 pytest tests/ -v
 ```
-465 tests, all passing.
+567 tests, all passing.
 
 ### Recent Additions
 - **Stdlib shadowing protection**: three-layer defense across workflow prompts, analysis verification, and implement file generation. Detects directory names that shadow stdlib modules (`logging/`, `json/`, `types/`, `config/`), warns the LLM to avoid them, flags violations in verification reports, and auto-redirects shadowed paths to safe alternatives.

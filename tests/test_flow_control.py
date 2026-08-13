@@ -152,7 +152,7 @@ class TestApplyFixBlocksContext:
         )
         fc = FixCommand()
         with patch("builtins.input", return_value="q"):
-            n = fc._apply_fix_blocks(
+            n, failures = fc._apply_fix_blocks(
                 response, str(tmp_path), "t.py", auto_yes=False,
                 context_errors=["t.py:2: error: Missing return statement  [return]"],
             )
@@ -162,3 +162,76 @@ class TestApplyFixBlocksContext:
         assert n == 0
         assert stop_requested() is True
         assert target.read_text(encoding="utf-8") == "def f():\n    pass\n"
+
+
+class TestShowPatchVerdict:
+    """The pre-prompt verdict verifies a candidate patch against mypy so the
+    y/N decision is informed (fixes N/M targeted, introduces K new)."""
+
+    def test_verdict_printed_before_prompt(self, tmp_path, capsys):
+        from agent_core.commands.fix_cmd import FixCommand
+        target = tmp_path / "t.py"
+        target.write_text("x: int = 'not an int'\n", encoding="utf-8")
+        fc = FixCommand()
+        fc._show_patch_verdict(
+            str(target),
+            "x: int = 5\n",
+            "t.py",
+            ["t.py:1: error: Incompatible types in assignment (expression has type \"str\", variable has type \"int\")  [assignment]"],
+            str(tmp_path),
+        )
+        out = capsys.readouterr().out
+        assert "[verify]" in out
+        assert "targeted error" in out
+        assert "→" in out
+
+    def test_verdict_detects_new_errors(self, tmp_path, capsys):
+        """A patch that merely silences one error but breaks another must be
+        flagged as introducing new errors."""
+        from agent_core.commands.fix_cmd import FixCommand
+        target = tmp_path / "t.py"
+        target.write_text("x: int = 'bad'\n", encoding="utf-8")
+        fc = FixCommand()
+        fc._show_patch_verdict(
+            str(target),
+            "x: int = 'bad'  # type: ignore[assignment]\n",
+            "t.py",
+            ["t.py:1: error: Incompatible types in assignment (expression has type \"str\", variable has type \"int\")  [assignment]"],
+            str(tmp_path),
+        )
+        out = capsys.readouterr().out
+        assert "introduces" in out or "→ y" in out
+
+    def test_verdict_ignores_pre_existing_errors(self, tmp_path, capsys):
+        """A patch that fixes the targeted error but leaves OTHER pre-existing
+        errors in the file must NOT be flagged as introducing them."""
+        from agent_core.commands.fix_cmd import FixCommand
+        target = tmp_path / "t.py"
+        target.write_text(
+            "def f(a: int | None) -> int:\n"
+            "    return a - 1\n"
+            "def g() -> None:\n"
+            "    x = nonexistent_attr\n"
+            "    print(x)\n",
+            encoding="utf-8",
+        )
+        fc = FixCommand()
+        patched = (
+            "def f(a: int | None) -> int:\n"
+            "    assert a is not None\n"
+            "    return a - 1\n"
+            "def g() -> None:\n"
+            "    x = nonexistent_attr\n"
+            "    print(x)\n"
+        )
+        fc._show_patch_verdict(
+            str(target),
+            patched,
+            "t.py",
+            ['t.py:2: error: Unsupported operand types for - ("None" and "int")  [operator]'],
+            str(tmp_path),
+        )
+        out = capsys.readouterr().out
+        assert "fixes 1/1 targeted" in out
+        assert "introduces" not in out
+        assert "→ y" in out

@@ -10,7 +10,7 @@ from .reasoning_strip import strip_reasoning
 from agent_core import to_windows_path
 from agent_core.decisions import add_decision, extract_from_analysis
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -178,7 +178,7 @@ async def _write_verified_analysis(text: str, analysis_md: str, ws_path: Path) -
     return result.text
 
 
-async def _extract_decisions_if_any(agent, analysis_md: str, ws_path) -> None:
+async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: str | Path) -> None:
     """Read analysis, extract decision candidates, prompt to record. Non-blocking."""
     try:
         with open(analysis_md, "r", encoding="utf-8") as f:
@@ -200,10 +200,10 @@ async def _extract_decisions_if_any(agent, analysis_md: str, ws_path) -> None:
             return
         if choice and choice != "n":
             ws_str = str(ws_path)
+            selected: list[int] = []
             if choice == "all":
-                selected = range(len(candidates))
+                selected = list(range(len(candidates)))
             else:
-                selected = []
                 for part in choice.replace(" ", "").split(","):
                     try:
                         selected.append(int(part) - 1)
@@ -364,7 +364,7 @@ class WorkflowCommand(Command):
         entities_md = str(ws_path / "project_entities.md")
         tasks_md = str(ws_path / "project_tasks.md")
 
-        def step_ok(result):
+        def step_ok(result: str) -> bool:
             return not (result.startswith("[Error") or result.startswith("[LM Studio"))
 
         if spec_file:

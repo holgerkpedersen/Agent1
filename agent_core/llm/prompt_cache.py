@@ -3,7 +3,7 @@ from __future__ import annotations
 """Versioned prompt template storage backed by db_io."""
 
 
-from typing import Optional
+from typing import Optional, Any
 
 from .db_io import (
     get_latest_version,
@@ -70,7 +70,7 @@ class PromptCache:
             del self._store[key]
         return before - len(self._store)
 
-    def list_all(self) -> list[dict]:
+    def list_all(self) -> list[dict[str, Any]]:
         """Return all stored templates (bypasses the local cache)."""
         return list_templates()
 

@@ -103,7 +103,11 @@ class AnalyzeCommand(Command):
         if deep_mode:
             result = await self._deep_analyze(path, desc_text, agent)
         else:
-            result = await agent.process_query(f"analyze {path}")
+            content = await agent.read_file(path, track_read=False)
+            if content.startswith("File not found:") or content.startswith("Error"):
+                result = content
+            else:
+                result = await agent.llm.analyze_code(content)
 
         if output_file:
             invalid = set('<>:"/\\|?*')
@@ -136,7 +140,7 @@ class AnalyzeCommand(Command):
         read_cache: dict[str, str] = {}
 
         # Follow imports from the target file
-        import_candidates = []
+        import_candidates: list[tuple[str, str]] = []
         for imp_path in _parse_imports(content):
             if len(import_candidates) >= 5:
                 break
@@ -175,7 +179,7 @@ class AnalyzeCommand(Command):
         # Iterate: follow file references mentioned in each answer
         for round_num in range(2, 5):  # rounds 2, 3, 4
             refs = _parse_file_refs(answer)
-            ref_candidates = []
+            ref_candidates: list[tuple[str, str]] = []
             for ref in refs:
                 if len(ref_candidates) >= 4:
                     break

@@ -128,7 +128,7 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
     for m in re.finditer(r'@@\s*-(\d+)(?:,\d+)?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@[^\n]*\n(.*?)(?=@@|\Z)', patch_text, re.DOTALL):
         start = int(m.group(1))
         body = m.group(3).strip('\n')
-        chunks: list[tuple[str, str | None]] = []
+        chunks: list[tuple[str, str]] = []
         for line in body.split('\n'):
             line = line.rstrip('\r')
             line = _strip_numbered_prefix(line)
@@ -264,27 +264,26 @@ def _match_score(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, a.strip(), b.strip()).ratio()
 
 
-def _walk_run(lines: list[str], old_lines: list[str], start: int) -> bool:
-    """True when the whole old-line run matches contiguously from *start*.
-
-    Tolerates up to two stray/hallucinated context lines inside the run, which
-    is only safe because the caller re-verifies every '-' line verbatim after
-    anchoring.
-    """
+def _run_score(lines: list[str], old_lines: list[str], start: int) -> float | None:
+    """Mean similarity of the whole old-line run from *start*, or None when
+    the run cannot be walked contiguously (mirrors ``_walk_run``'s tolerance
+    of up to two stray/hallucinated context lines)."""
     skips = 0
-    run = 1
+    matched = [_match_score(lines[start], old_lines[0])]
     j = start
-    while run < len(old_lines) and j + 1 < len(lines):
+    for run in range(1, len(old_lines)):
         j += 1
-        if _match_score(lines[j], old_lines[run]) >= 0.8:
-            run += 1
+        if j >= len(lines):
+            return None
+        s = _match_score(lines[j], old_lines[run])
+        if s >= 0.8:
+            matched.append(s)
             continue
         if skips < 2:
             skips += 1
-            run += 1
             continue
-        break
-    return run >= len(old_lines)
+        return None
+    return sum(matched) / len(matched)
 
 
 def _find_hunk_anchor(lines: list[str], chunks: list[tuple[str, str]],
@@ -296,10 +295,12 @@ def _find_hunk_anchor(lines: list[str], chunks: list[tuple[str, str]],
     a hunk whose first old line is common (``try:``, ``return f\"...\"``) still
     anchors whenever the run that follows is distinctive.
 
-    * Multi-line runs (>=2 old lines) that match at two far-apart places are
-      refused — that is the signature of a genuinely duplicated BLOCK, and
-      anchoring onto the wrong copy is what produced the run-45 TODO
-      corruption.
+    * Multi-line runs (>=2 old lines) that match at two far-apart places with
+      equally good similarity are refused — that is the signature of a
+      genuinely duplicated BLOCK, and anchoring onto the wrong copy is what
+      produced the run-45 TODO corruption.
+    * A clearly better-scoring anchor (e.g. the verbatim 1.0 copy vs a
+      fuzzy near-miss on a similar-but-different line) wins outright.
     * Single-line runs are inherently weak; there we anchor at the position
       nearest the claimed line and let the syntax gate catch bad edits.
       Refusing them caused repeated "Cannot anchor ... around line N"
@@ -315,17 +316,32 @@ def _find_hunk_anchor(lines: list[str], chunks: list[tuple[str, str]],
     hi = min(len(lines), center + 60)
     if lo >= hi:
         lo, hi = max(0, len(lines) - 120), len(lines)
-    anchors: list[int] = []
+    anchors: list[tuple[int, float]] = []
     for i in range(lo, hi):
         if _match_score(lines[i], old_lines[0]) < 0.8:
             continue
-        if _walk_run(lines, old_lines, i):
-            anchors.append(i)
+        score = _run_score(lines, old_lines, i)
+        if score is not None:
+            anchors.append((i, score))
     if not anchors:
         return None
-    if len(old_lines) >= 2 and len(anchors) >= 2 and max(anchors) - min(anchors) > 10:
-        return None
-    return min(anchors, key=lambda a: abs(a - center))
+    anchors.sort(key=lambda t: -t[1])
+    best_idx, best_score = anchors[0]
+    if len(old_lines) >= 2 and len(anchors) >= 2:
+        # An exact (1.0) first-line match is the verbatim copy the patch was
+        # written against — it beats a fuzzy near-miss on a similar-but-
+        # different line (e.g. ``str`` vs ``str | None``), so a far-apart
+        # fuzzy candidate must NOT veto it.
+        exact = [a for a in anchors if _match_score(lines[a[0]], old_lines[0]) == 1.0]
+        if exact:
+            exact.sort(key=lambda t: -t[1])
+            if len(exact) == 1 or max(a[0] for a in exact) - min(a[0] for a in exact) <= 10:
+                return exact[0][0]
+            return None  # two verbatim copies far apart — genuinely ambiguous
+        for idx, score in anchors[1:]:
+            if abs(idx - best_idx) > 10 and score >= best_score - 0.15:
+                return None
+    return best_idx
 
 
 def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
@@ -339,7 +355,7 @@ def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bo
     unambiguously rather than risk a wrong edit.
     """
     incomplete_ops = ('=', '+', '-', '*', '/')
-    valid: list[tuple[int, list[tuple[str, str]], bool]] = []
+    valid: list[tuple[int, list[tuple[str, str]]]] = []
     for claimed, chunks in split_patch_hunks(patch_text):
         has_minus = any(op == '-' for op, _ in chunks)
         has_plus = any(op == '+' for op, _ in chunks)

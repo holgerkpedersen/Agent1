@@ -19,13 +19,13 @@ import re
 import sys
 import textwrap
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from .base import Command, read_stdin, show_file_diff, read_choice, stop_requested
 from agent_core import workspace_path
 from agent_core.decisions import find_decisions, find_overlaps, format_for_prompt
 from agent_core.patch_utils import apply_anchored_patch, apply_patch, split_patch_hunks
-from agent_core.patterns import _docstring_lines, analyze as static_analyze
+from agent_core.patterns import Finding, _docstring_lines, analyze as static_analyze
 
 if TYPE_CHECKING:
     from agent import Agent
@@ -133,7 +133,7 @@ def _shift_hunk_starts(patch_text: str, delta: int) -> str:
     the region slice; shifting by ``-region_start`` maps those hunks back onto
     the region.  Starts are clamped to >= 1.
     """
-    def _repl(m: re.Match) -> str:
+    def _repl(m: re.Match[str]) -> str:
         old = max(1, int(m.group(1)) + delta)
         count_old = f",{int(m.group(2)) + delta}" if m.group(2) else ""
         new = max(1, int(m.group(3)) + delta) if m.group(3) else m.group(3)
@@ -314,7 +314,7 @@ def split_into_regions(
     return regions
 
 
-def _region_syntax_issues(code: str, slice_indent: str = "") -> list[dict]:
+def _region_syntax_issues(code: str, slice_indent: str = "") -> list[dict[str, Any]]:
     """Syntax-only gate for a region slice.
 
     Full detectors need whole-file context (e.g. an import in region 0 used in
@@ -379,15 +379,15 @@ def estimate_tokens(text: str) -> int:
 
 def create_batches(
     file_contents: dict[str, str],
-    findings_by_file: dict[str, list[dict]],
+    findings_by_file: dict[str, list[dict[str, Any]]],
     max_tokens: int = MAX_BATCH_TOKENS,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Group files into batches that fit within token budget.
 
     Returns list of dicts with keys: files, contents, findings, total_tokens
     """
-    batches: list[dict] = []
-    current_batch: dict = {
+    batches: list[dict[str, Any]] = []
+    current_batch: dict[str, Any] = {
         "files": [],
         "contents": {},
         "findings": {},
@@ -433,7 +433,7 @@ def create_batches(
     return batches
 
 
-def format_batch_context(batch: dict) -> str:
+def format_batch_context(batch: dict[str, Any]) -> str:
     """Format batch contents and findings for LLM prompt."""
     parts = []
     for fpath in batch["files"]:
@@ -451,7 +451,7 @@ def format_batch_context(batch: dict) -> str:
     return "\n\n".join(parts)
 
 
-def validate_llm_code(code: str) -> list[dict]:
+def validate_llm_code(code: str) -> list[Finding]:
     """Validate LLM-generated code for quality issues.
 
     Returns a list of blocking issues that should prevent the code from being
@@ -494,7 +494,7 @@ def parse_llm_fixes(
     batch_files: list[str],
     validate: bool = True,
     preserve_indent: bool = False,
-) -> tuple[dict[str, str], dict[str, list[dict]]]:
+) -> tuple[dict[str, str], dict[str, list[Finding]]]:
     """Parse an LLM response into accepted fixes and rejected failures.
 
     Returns ``(fixes, failures)`` where *fixes* maps a file's basename to
@@ -516,7 +516,7 @@ def parse_llm_fixes(
     file; stripping it would corrupt the indentation of indented methods).
     """
     fixes: dict[str, str] = {}
-    failures: dict[str, list[dict]] = {}
+    failures: dict[str, list[Finding]] = {}
 
     def _consider(basename: str, code: str) -> None:
         if preserve_indent:
@@ -556,11 +556,11 @@ def parse_llm_fixes(
     return fixes, failures
 
 
-def _report_failures(failures: dict[str, list[dict]]) -> None:
+def _report_failures(failures: dict[str, list[Finding]]) -> None:
     """Pretty-print per-file validation failures (deduped lines)."""
     for basename, issues in failures.items():
         print(f"  Skipping {basename} — LLM code quality issues:")
-        seen: set[tuple] = set()
+        seen: set[tuple[Any, ...]] = set()
         for i in issues:
             key = (i["line"], i["pattern"], i["suggestion"])
             if key in seen:
@@ -601,7 +601,7 @@ def _finding_context(source: str, line_no: int) -> str | None:
             en = getattr(node, "end_lineno", None)
             if ln is None or en is None or not (ln <= line_no <= en):
                 continue
-            if best is None or (en - ln) < (best_end - best_ln):
+            if best is None or (best_end is not None and best_ln is not None and (en - ln) < (best_end - best_ln)):
                 best, best_ln, best_end = node, ln, en
         if best is not None:
             scope = best
@@ -612,10 +612,12 @@ def _finding_context(source: str, line_no: int) -> str | None:
             fns = [
                 n for n in ast.walk(tree)
                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and n.end_lineno is not None
                 and n.lineno <= line_no <= n.end_lineno
             ]
             if fns:
-                smallest = min(fns, key=lambda n: n.end_lineno - n.lineno)
+                smallest = min(fns, key=lambda n: (n.end_lineno or 0) - (n.lineno or 0))
+                assert smallest.end_lineno is not None and scope.end_lineno is not None and scope.lineno is not None
                 if (smallest.end_lineno - smallest.lineno
                         >= scope.end_lineno - scope.lineno):
                     scope = smallest
@@ -626,6 +628,7 @@ def _finding_context(source: str, line_no: int) -> str | None:
                     start = first.lineno
     if start is None:
         start, end = max(1, line_no - 10), min(len(lines), line_no + 20)
+    assert start is not None and end is not None
     if end - start + 1 > CONTEXT_MAX_LINES:
         start = max(1, line_no - CONTEXT_MAX_LINES // 2)
         end = min(len(lines), start + CONTEXT_MAX_LINES - 1)
@@ -662,7 +665,7 @@ _PLACEHOLDER_PHRASES = ("unchanged line", "rest of the", "remaining code", "..."
 
 # ── Mechanical fixers (one per pattern) ──────────────────────────
 
-def _fix_unused_import(wl, idx, line, basename, finding):
+def _fix_unused_import(wl: list[str], idx: int, line: int, basename: str, finding: dict[str, Any]) -> str | None:
     src_line = wl[idx]
     stripped = src_line.strip()
     if stripped.startswith("from __future__ import"):
@@ -716,7 +719,7 @@ def _multi_name_import_hunk(
     return f"@@ -{line},1 +{line},1 @@\n-{src_line}\n+{new_import}"
 
 
-def _fix_dead_assignment(wl, idx, line, basename, finding):
+def _fix_dead_assignment(wl: list[str], idx: int, line: int, basename: str, finding: dict[str, Any]) -> str | None:
     if "immediately overwritten" in finding.get("suggestion", ""):
         if line in _docstring_lines("\n".join(wl)):
             return None  # inside docstring — refuse
@@ -738,7 +741,8 @@ def _fix_dead_assignment(wl, idx, line, basename, finding):
             return None
         for enclosing in ast.walk(tree):
             if isinstance(enclosing, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                if enclosing.lineno <= idx + 1 <= enclosing.end_lineno:
+                end_lineno = getattr(enclosing, 'end_lineno', None) or enclosing.lineno
+                if enclosing.lineno <= idx + 1 <= end_lineno:
                     for sub in ast.walk(enclosing):
                         if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load) and sub.id == assign_name:
                             if sub.lineno > idx + 1:
@@ -752,7 +756,7 @@ def _fix_dead_assignment(wl, idx, line, basename, finding):
     return None
 
 
-def _fix_silent_except(wl, idx, line, basename, finding):
+def _fix_silent_except(wl: list[str], idx: int, line: int, basename: str, finding: dict[str, Any]) -> str | None:
     ei = idx
     e_indent = len(wl[ei]) - len(wl[ei].lstrip())
     for j in range(ei + 1, min(ei + 20, len(wl))):
@@ -771,7 +775,7 @@ def _fix_silent_except(wl, idx, line, basename, finding):
     return None
 
 
-def _fix_none_eq(wl, idx, line, basename, finding):
+def _fix_none_eq(wl: list[str], idx: int, line: int, basename: str, finding: dict[str, Any]) -> str | None:
     old_line = wl[idx]
     new_line = old_line.replace("== None", "is None").replace("!= None", "is not None")
     if new_line == old_line:
@@ -779,7 +783,7 @@ def _fix_none_eq(wl, idx, line, basename, finding):
     return f"@@ -{line},1 +{line},1 @@\n-{old_line}\n+{new_line}"
 
 
-def _fix_fstring_literal(wl, idx, line, basename, finding):
+def _fix_fstring_literal(wl: list[str], idx: int, line: int, basename: str, finding: dict[str, Any]) -> str | None:
     old_line = wl[idx]
     from agent_core.patterns import _fstring_lines_without_interpolation
     hits = _fstring_lines_without_interpolation(old_line)
@@ -790,7 +794,7 @@ def _fix_fstring_literal(wl, idx, line, basename, finding):
     return f"@@ -{line},1 +{line},1 @@\n-{old_line}\n+{new_line}"
 
 
-def _fix_iter_dict_keys(wl, idx, line, basename, finding):
+def _fix_iter_dict_keys(wl: list[str], idx: int, line: int, basename: str, finding: dict[str, Any]) -> str | None:
     old_line = wl[idx]
     new_line = old_line.replace(".keys()", "")
     if new_line == old_line:
@@ -800,7 +804,7 @@ def _fix_iter_dict_keys(wl, idx, line, basename, finding):
     return f"@@ -{line},1 +{line},1 @@\n-{old_line}\n+{new_line}"
 
 
-def _fix_type_comparison(wl, idx, line, basename, finding):
+def _fix_type_comparison(wl: list[str], idx: int, line: int, basename: str, finding: dict[str, Any]) -> str | None:
     old_line = wl[idx]
     if line in _docstring_lines("\n".join(wl)):
         return None  # inside docstring — refuse
@@ -915,7 +919,8 @@ def _regex_const_name(pattern: str) -> str:
 def _same_regex_arg(a: str, b: str) -> bool:
     """True when two static regex sources are the same literal string."""
     try:
-        return ast.literal_eval(a) == ast.literal_eval(b)
+        result = ast.literal_eval(a) == ast.literal_eval(b)
+        return bool(result)
     except (ValueError, SyntaxError):
         return a == b
 
@@ -936,13 +941,13 @@ def _enclosing_func_span(wl: list[str], index: int) -> tuple[int, int] | None:
         return None
     end = len(wl)
     for i in range(start + 1, len(wl)):
-        if wl[i].strip() and len(wl[i]) - len(wl[i].lstrip()) <= depth:
+        if wl[i].strip() and depth is not None and len(wl[i]) - len(wl[i].lstrip()) <= depth:
             end = i
             break
     return (start, end)
 
 
-def _fix_regex_in_loop(wl, idx, line, basename, finding):
+def _fix_regex_in_loop(wl: list[str], idx: int, line: int, basename: str, finding: dict[str, Any]) -> str | None:
     """Mechanical: hoist an in-loop ``re.<fn>(<static pattern>, ...)`` call out
     of the loop via a named ``re.compile`` constant (``_DESCRIPTIVE_RE``, or
     numeric ``_RE_N`` when the pattern has no words).  Reuses an existing
@@ -966,8 +971,8 @@ def _fix_regex_in_loop(wl, idx, line, basename, finding):
 
     call_i = None
     func_name = ""
-    for i, (typ, s, _, _, _) in enumerate(toks):
-        if typ == tokenize.NAME and s == "re":
+    for i, (typ, tok_text, _, _, _) in enumerate(toks):
+        if typ == tokenize.NAME and tok_text == "re":
             if i + 1 < len(toks) and toks[i + 1][1] == "." and i + 2 < len(toks):
                 if toks[i + 2][0] == tokenize.NAME and toks[i + 2][1] in ("compile", "match", "search", "sub", "findall"):
                     if i + 3 < len(toks) and toks[i + 3][1] == "(":
@@ -1071,7 +1076,7 @@ def _fix_regex_in_loop(wl, idx, line, basename, finding):
     return hunk
 
 
-def _fix_list_append_join(wl, idx, line, basename, finding):
+def _fix_list_append_join(wl: list[str], idx: int, line: int, basename: str, finding: dict[str, Any]) -> str | None:
     """Mechanical: replace ``out = []`` + ``for x in y: out.append(expr)``
     with ``out = [expr for x in y]``.  Only handles stateless, single-statement
     loops whose list is built from scratch (empty initializer)."""
@@ -1130,7 +1135,7 @@ def _fix_list_append_join(wl, idx, line, basename, finding):
     return f"@@ -{first},{old_c} +{first},{new_c} @@\n" + "\n".join(hunk_lines)
 
 
-_MECH_FIXERS: dict[str, object] = {
+_MECH_FIXERS: dict[str, Callable[[list[str], int, int, str, dict[str, Any]], str | None]] = {
     "unused_import": _fix_unused_import,
     "dead_assignment": _fix_dead_assignment,
     "silent_except": _fix_silent_except,
@@ -1180,7 +1185,7 @@ _PATTERN_GUIDANCE: dict[str, str] = {
 
 
 def _tri_mech_fix(work_lines: list[str], line: int, pattern: str,
-                  basename: str, finding: dict) -> str | None:
+                  basename: str, finding: dict[str, Any]) -> str | None:
     """Return a synthetic ``@@`` hunk for a deterministic fix, or None."""
     fixer = _MECH_FIXERS.get(pattern)
     if fixer is None:
@@ -1301,7 +1306,7 @@ def _patch_system_prompt(basename: str) -> str:
 
 
 
-def _format_failures_for_prompt(failures: dict[str, list[dict]]) -> str:
+def _format_failures_for_prompt(failures: dict[str, list[Finding]]) -> str:
     """Render validation failures as a retry hint for the LLM."""
     if not failures:
         return ""
@@ -1333,7 +1338,7 @@ def _affected_original_lines(original: str, candidate: str) -> set[int]:
     return affected
 
 
-def _blocked_regressions(original: str, candidate: str) -> list[dict]:
+def _blocked_regressions(original: str, candidate: str) -> list[Finding]:
     """Blocking issues in *candidate* that make it worse than *original*.
 
     The apply gate for rewrites is "no regression", not "zero issues": a merge
@@ -1359,7 +1364,7 @@ def _blocked_regressions(original: str, candidate: str) -> list[dict]:
     orig_counts = Counter(i["pattern"] for i in orig_findings)
     cand_counts = Counter(i["pattern"] for i in cand_findings)
 
-    regressions: list[dict] = []
+    regressions: list[Finding] = []
     for pat, cnt in cand_counts.items():
         excess = cnt - orig_counts.get(pat, 0)
         if excess > 0:
@@ -1383,7 +1388,7 @@ def _blocked_regressions(original: str, candidate: str) -> list[dict]:
 
 def _surgically_revert_regressions(
     original: str, candidate: str, max_rounds: int = 5
-) -> tuple[str, list[dict]]:
+) -> tuple[str, list[Finding]]:
     """Deterministically excise regressing lines from a merged rewrite.
 
     Repair passes re-send the whole file to the LLM, which at low temperature
@@ -1468,10 +1473,10 @@ async def _repair_merged_file(
     fpath: str,
     original: str,
     merged: str,
-    issues: list[dict],
+    issues: list[Finding],
     max_retries: int,
     context_tokens: int | None = None,
-) -> tuple[str | None, list[dict]]:
+) -> tuple[str | None, list[Finding]]:
     """Retry-fix a merged region rewrite that *regressed* the original.
 
     The merged file is re-sent as a whole with the remaining regression issues
@@ -1805,7 +1810,7 @@ class OptimizeCommand(Command):
             return True
 
         # Phase 1: Static analysis
-        all_findings: list[dict] = []
+        all_findings: list[dict[str, Any]] = []
         file_contents: dict[str, str] = {}
 
         for fpath in targets:
@@ -1826,27 +1831,27 @@ class OptimizeCommand(Command):
             return True
 
         # Group findings by file
-        by_file: dict[str, list[dict]] = {}
-        for f in all_findings:
-            by_file.setdefault(f["file"], []).append(f)
+        by_file: dict[str, list[dict[str, Any]]] = {}
+        for item in all_findings:
+            by_file.setdefault(item["file"], []).append(item)
 
         # List mode: show compact summary and exit
         if list_mode:
             print(f"\n  {len(by_file)} file(s) with {len(all_findings)} issue(s):\n")
-            for fpath, findings in sorted(by_file.items()):
+            for fpath, group in sorted(by_file.items()):
                 rel = os.path.relpath(fpath, os.getcwd()) if not stdin_mode else fpath
-                patterns = ", ".join(sorted(set(f["pattern"] for f in findings)))
-                print(f"  {rel} ({len(findings)}): {patterns}")
+                patterns = ", ".join(sorted(set(f["pattern"] for f in group)))
+                print(f"  {rel} ({len(group)}): {patterns}")
             print("\n  Run with --apply to fix these issues.")
             return True
 
         # Print static findings
         print(f"\n  Static analysis found {len(all_findings)} issue(s) in {len(file_contents)} file(s):\n")
-        for fpath, findings in sorted(by_file.items()):
+        for fpath, group in sorted(by_file.items()):
             rel = os.path.relpath(fpath, os.getcwd()) if not stdin_mode else fpath
             print(f"  {rel}:")
-            for f in findings:
-                print(f"    line {f['line']:>4}: [{f['pattern']}] {f['suggestion']}")
+            for item in group:
+                print(f"    line {item['line']:>4}: [{item['pattern']}] {item['suggestion']}")
             print()
 
         if not apply_mode or stdin_mode:
@@ -2247,8 +2252,8 @@ class OptimizeCommand(Command):
                     continue
 
             try:
-                with open(fpath, "w", encoding="utf-8") as f:
-                    f.write(new_code)
+                with open(fpath, "w", encoding="utf-8") as out_f:
+                    out_f.write(new_code)
                 print(f"  Applied: {basename} ({new_size} bytes)")
                 applied += 1
                 for w in _post_apply_verify(basename, fpath, original, new_code):
@@ -2265,8 +2270,8 @@ class OptimizeCommand(Command):
                     if os.path.basename(fp) == basename:
                         new_src = file_contents.get(fp, "")
                         try:
-                            with open(fp, encoding="utf-8") as f:
-                                new_src = f.read()
+                            with open(fp, encoding="utf-8") as src_f:
+                                new_src = src_f.read()
                         except Exception as exc:
                             logger.debug("Could not re-read %s: %s", fp, exc)
                         res = static_analyze(new_src)

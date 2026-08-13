@@ -17,7 +17,7 @@ def _cache_path(workspace: str | None = None) -> Path:
 
 def load_retry_params(workspace: str | None = None) -> RetryParams:
     path = _cache_path(workspace)
-    default_params = {
+    default_params: RetryParams = {
         "base_delay": 1.0,
         "max_retries": 3,
         "timeout_multiplier": 2.0,

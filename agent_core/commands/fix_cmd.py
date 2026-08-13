@@ -16,7 +16,7 @@ from .implement_cmd import (
     _parse_line_number,
 )
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -304,6 +304,107 @@ def _function_returns_value(source: str, def_lineno: int) -> bool:
     return True
 
 
+def _enclosing_function_extent(lines: list[str], error_line: int) -> tuple[int, int] | None:
+    """Return (start, end) line numbers of the function containing *error_line*, or None."""
+    source = '\n'.join(lines)
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    best: tuple[int, int] | None = None
+    best_start = -1
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            start = node.lineno
+            end = node.end_lineno or start
+            if start <= error_line <= end and start > best_start:
+                best_start = start
+                best = (start, end)
+    return best
+
+
+def _function_can_fall_off_end(source: str, def_lineno: int) -> bool:
+    """True if the function at *def_lineno* can reach its end without returning."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+
+    def _check(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        return _stmts_can_fall_through(node.body)
+
+    def _stmts_can_fall_through(stmts: list[ast.stmt]) -> bool:
+        for stmt in stmts:
+            if _stmt_reaches_end(stmt):
+                continue
+            return False
+        return True
+
+    def _stmt_reaches_end(stmt: ast.stmt) -> bool:
+        if isinstance(stmt, (ast.Return, ast.Raise)):
+            return False
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return True
+        if isinstance(stmt, (ast.If, ast.With, ast.Try, ast.For, ast.AsyncFor)):
+            if isinstance(stmt, ast.If):
+                branches = [stmt.body, stmt.orelse]
+            elif isinstance(stmt, ast.Try):
+                branches = [stmt.body, stmt.orelse]
+                if stmt.handlers:
+                    branches.append(stmt.handlers[0].body)
+            elif isinstance(stmt, (ast.For, ast.AsyncFor)):
+                branches = [stmt.body]
+                if stmt.orelse:
+                    branches.append(stmt.orelse)
+            else:
+                branches = [stmt.body]
+            for branch in branches:
+                if branch and _stmts_can_fall_through(branch):
+                    return True
+            # No branch falls through — but if there's no else clause,
+            # the if/with/for statement can still fall through when the
+            # condition is false (body doesn't execute).
+            if isinstance(stmt, ast.If) and not stmt.orelse:
+                return True
+            if isinstance(stmt, (ast.For, ast.AsyncFor)) and not stmt.orelse:
+                return True
+            return False
+        if isinstance(stmt, ast.While):
+            if not stmt.orelse:
+                return True
+            return _stmts_can_fall_through(stmt.orelse)
+        if isinstance(stmt, ast.Match):
+            for case in stmt.cases:
+                if _stmts_can_fall_through(case.body):
+                    return True
+            return False
+        return True
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.lineno == def_lineno:
+            return _check(node)
+    return False
+
+
+def _signature_close_line(lines: list[str], def_idx: int) -> int | None:
+    """0-based index of the line ending the def signature at *def_idx*.
+
+    Single-line signatures close on the def line itself; multi-line ones on
+    the first ``:`` line at or above the def's indentation.
+    """
+    def_line = lines[def_idx]
+    if def_line.rstrip().endswith(':'):
+        return def_idx
+    indent = len(def_line) - len(def_line.lstrip())
+    for j in range(def_idx + 1, len(lines)):
+        cand = lines[j]
+        cstrip = cand.strip()
+        cindent = len(cand) - len(cand.lstrip())
+        if cstrip.endswith(':') and (cindent <= indent or cstrip[:1] in ')]}'):
+            return j
+    return None
+
+
 def _fix_missing_return_none(lines: list[str], def_lineno: int) -> list[str] | None:
     """Append ``-> None`` to the function signature on *def_lineno* when the
     body has no value-returning ``return``.
@@ -315,20 +416,9 @@ def _fix_missing_return_none(lines: list[str], def_lineno: int) -> list[str] | N
     stripped = def_line.lstrip()
     if not (stripped.startswith('def ') or stripped.startswith('async def ')):
         return None
-    indent = len(def_line) - len(def_line.lstrip())
-    if def_line.rstrip().endswith(':'):
-        close_idx = idx
-    else:
-        close_idx = -1
-        for j in range(idx + 1, len(lines)):
-            cand = lines[j]
-            cstrip = cand.strip()
-            cindent = len(cand) - len(cand.lstrip())
-            if cstrip.endswith(':') and (cindent <= indent or cstrip[:1] in ')]}'):
-                close_idx = j
-                break
-        if close_idx < 0:
-            return None
+    close_idx = _signature_close_line(lines, idx)
+    if close_idx is None:
+        return None
     sig_text = '\n'.join(lines[idx:close_idx + 1])
     if '->' in sig_text:
         return None
@@ -349,7 +439,517 @@ def _parse_mypy_error(err: str) -> tuple[int, str] | None:
     return int(m.group(2)), m.group(4)
 
 
-def extract_signatures(source: str) -> dict:
+_GENERIC_ANY_FILL = {
+    "dict": "dict[str, Any]",
+    "list": "list[Any]",
+    "set": "set[Any]",
+    "frozenset": "frozenset[Any]",
+    "tuple": "tuple[Any, ...]",
+    "Match": "Match[Any]",
+    "Pattern": "Pattern[Any]",
+    "type": "type[Any]",
+}
+
+
+def _fix_bare_generic(lines: list[str], lineno: int, err: str) -> list[str] | None:
+    """Fill a bare generic type with ``Any`` args (``list[dict]`` -> ``list[dict[str, Any]]``).
+
+    Only fires on the exact line mypy reported; ``dict(``/``type(`` calls and
+    already-parameterized ``dict[...]`` uses are left alone.  The caller
+    re-runs mypy afterwards, so a wrong fill is reverted.
+    """
+    m = re.search(r'Missing type arguments for generic type "(\w+)"', err)
+    if not m:
+        return None
+    typ = m.group(1)
+    fill = _GENERIC_ANY_FILL.get(typ)
+    if fill is None:
+        return None
+    idx = lineno - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+    line = lines[idx]
+    new_line = re.sub(
+        rf'\b{re.escape(typ)}\b(?!\s*[\[(])',
+        fill,
+        line,
+    )
+    if new_line == line:
+        return None
+    return _ensure_typing_any(lines[:idx] + [new_line] + lines[idx + 1:])
+
+
+def _strip_strings(line: str) -> str:
+    """Remove string literals from *line* so pattern scans ignore their text."""
+    return re.sub(r'("(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\')', "", line)
+
+
+def _fix_container_optional(lines: list[str], err: str) -> list[str] | None:
+    """Narrow ``X | None`` to ``X`` inside a container element annotation.
+
+    Fires on ``union-attr``/``arg-type`` errors like
+    ``Item "None" of "str | None" has no attribute "strip"`` where the
+    ``str | None`` lives in a ``list[...]``/``tuple[...]``/``dict[...]``
+    element slot (e.g. ``chunks: list[tuple[str, str | None]]``).  The
+    offending annotation is located by scanning for the container + base
+    type; the caller's mypy re-run decides whether the narrowing holds.
+    """
+    m = re.search(r'Item "None" of "([^"]+)"', err)
+    if m is None:
+        m = re.search(r'has incompatible type "([^"]+)"', err)
+    if m is None:
+        return None
+    union = m.group(1).strip()
+    mm = re.match(r'^(.*?)\s*\|\s*None$', union)
+    if mm is None:
+        return None
+    base = mm.group(1).strip()
+    if not re.match(r'^[A-Za-z_][\w.]*$', base):
+        return None
+    container = re.compile(r'\b(list|tuple|dict|set|frozenset)\[')
+    pair = re.compile(rf'\b{re.escape(base)}\s*\|\s*None\b')
+    in_docstring: str | None = None  # '"' or "'" — the open triple-quote
+    for i, line in enumerate(lines):
+        # Track triple-quoted string blocks so docstring prose that merely
+        # *mentions* ``str | None`` next to ``list[...]`` is never edited.
+        stripped = line.strip()
+        if in_docstring is None:
+            tm = re.match(r'^(?:r|u|f|rf|fr|b)?("""|\'\'\')', stripped)
+            if tm:
+                delim = tm.group(1)
+                if stripped.count(delim) >= 2:
+                    continue  # single-line docstring — prose
+                in_docstring = delim
+                continue
+        else:
+            if in_docstring in line:
+                in_docstring = None
+            continue
+        if not container.search(line):
+            continue
+        if not pair.search(line):
+            continue
+        # Never edit inside a comment or a one-line string literal either.
+        code_part = _strip_strings(line)
+        if '#' in code_part:
+            code_part = code_part.split('#', 1)[0]
+        if not pair.search(code_part):
+            continue
+        new_line = re.sub(rf'\b{re.escape(base)}\s*\|\s*None\b', base, line)
+        if new_line != line:
+            return lines[:i] + [new_line] + lines[i + 1:]
+    return None
+
+
+def _split_top_level(s: str) -> list[str]:
+    """Split *s* on commas at bracket depth 0."""
+    parts: list[str] = []
+    depth = 0
+    cur: list[str] = []
+    for ch in s:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    parts.append("".join(cur).strip())
+    return parts
+
+
+def _fix_tuple_arity(lines: list[str], lineno: int, err: str) -> list[str] | None:
+    """Truncate an over-wide ``list[tuple[...]]`` annotation to the unpack arity.
+
+    Fires on ``misc: Too many values to unpack (N expected, M provided)``
+    where the container annotation declares more tuple elements than the
+    code unpacks (e.g. ``valid: list[tuple[int, list[tuple[str, str]], bool]]``
+    unpacked as ``for claimed, chunks in valid:``).
+    """
+    m = re.search(r'Too many values to unpack \((\d+) expected, (\d+) provided\)', err)
+    if m is None:
+        return None
+    expected, provided = int(m.group(1)), int(m.group(2))
+    if provided <= expected:
+        return None
+    idx = lineno - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+    vm = re.search(r'\bfor\b.*?\bin\s+([A-Za-z_]\w*)\s*:', lines[idx])
+    if vm is None:
+        return None
+    var = vm.group(1)
+    ann = re.compile(rf'\b{re.escape(var)}\s*:\s*list\[tuple\[')
+    for i, line in enumerate(lines):
+        am = ann.search(line)
+        if am is None:
+            continue
+        # find the matching ']]' closing the list[tuple[ with bracket balance
+        depth = 0
+        end = am.end() - 1
+        while end < len(line):
+            if line[end] == '[':
+                depth += 1
+            elif line[end] == ']':
+                depth -= 1
+                if depth == 0:
+                    break
+            end += 1
+        inner = line[am.end():end]
+        elems = _split_top_level(inner)
+        if len(elems) != provided:
+            continue
+        trimmed = ", ".join(elems[:expected])
+        new_line = line[:am.end()] + trimmed + line[end:]
+        if new_line == line:
+            return None
+        return lines[:i] + [new_line] + lines[i + 1:]
+    return None
+
+
+def _ensure_typing_any(lines: list[str]) -> list[str]:
+    """Return *lines* with ``Any`` importable (merge or add typing import)."""
+    for i, line in enumerate(lines):
+        m = re.match(r'^from typing import (.+)$', line.strip())
+        if m:
+            names = {n.strip() for n in m.group(1).split(",")}
+            if "Any" not in names:
+                new_line = line.rstrip() + ", Any"
+                return lines[:i] + [new_line] + lines[i + 1:]
+            return lines
+    for i, line in enumerate(lines):
+        if re.match(r'^(from|import) ', line.strip()):
+            return lines[:i] + [line] + ["from typing import Any"] + lines[i + 1:]
+    return ["from typing import Any"] + lines
+
+
+def _fix_untyped_params(lines: list[str], def_lineno: int) -> list[str] | None:
+    """Add ``: Any`` to every unannotated parameter of the def at *def_lineno*,
+    and `` -> Any`` when the signature has no return annotation either.
+
+    ``self``/``cls`` are skipped (mypy does not require them).  Uses AST
+    positions so multi-line signatures and defaults (``x=5`` -> ``x: Any = 5``)
+    are handled; ``Any`` import is ensured via ``_ensure_typing_any``.
+    """
+    idx = def_lineno - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+    if not (lines[idx].lstrip().startswith('def ') or lines[idx].lstrip().startswith('async def ')):
+        return None
+    source = '\n'.join(lines)
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    node: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.lineno == def_lineno:
+            node = n
+            break
+    if node is None:
+        return None
+    args = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+    if node.args.vararg is not None:
+        args.append(node.args.vararg)
+    if node.args.kwarg is not None:
+        args.append(node.args.kwarg)
+    edits: list[tuple[int, int]] = []
+    for a in args:
+        if a.annotation is None and a.arg not in ("self", "cls"):
+            if a.end_lineno is not None and a.end_col_offset is not None:
+                edits.append((a.end_lineno - 1, a.end_col_offset))
+    new_lines = list(lines)
+    for ln, col in sorted(edits, key=lambda e: (e[0], e[1]), reverse=True):
+        if 0 <= ln < len(new_lines) and col <= len(new_lines[ln]):
+            insert = ": Any"
+            new_lines[ln] = new_lines[ln][:col] + insert + new_lines[ln][col:]
+            # normalize a default: `c: Any=3` / `c: Any =3` -> `c: Any = 3`
+            eq = col + len(insert)
+            if new_lines[ln][eq:eq + 1] == "=":
+                new_lines[ln] = new_lines[ln][:eq] + " = " + new_lines[ln][eq + 1:].lstrip()
+            elif new_lines[ln][eq:eq + 1] == " " and new_lines[ln][eq + 1:eq + 2] == "=":
+                new_lines[ln] = new_lines[ln][:eq] + " = " + new_lines[ln][eq + 2:].lstrip()
+    # If the signature has no return annotation, add `` -> Any`` as well so
+    # the whole "missing a type annotation" error is resolved, not just the
+    # parameters (a function with untyped params AND no return type would
+    # otherwise swap one no-untyped-def for another).  This also covers the
+    # "annotated params but no return type" case, where ``edits`` is empty.
+    # Only for value-returning functions — void functions are handled by the
+    # caller's ``_fix_missing_return_none`` (``-> None``) and must not get
+    # `` -> Any`` here.
+    close_idx = _signature_close_line(lines, idx)
+    if close_idx is not None:
+        sig_lines = lines[idx:close_idx + 1]
+        if not any("->" in ln for ln in sig_lines):
+            if _function_returns_value(source, def_lineno):
+                close_line = new_lines[close_idx]
+                colon = close_line.rfind(":")
+                if colon > 0 and not close_line[:colon].rstrip().endswith(":"):
+                    new_lines[close_idx] = close_line[:colon] + " -> Any" + close_line[colon:]
+    if new_lines == lines:
+        return None
+    return _ensure_typing_any(new_lines)
+
+
+def _import_graph_deps(err_files: list[str], ws_dir: str) -> dict[str, set[str]]:
+    """Map each error file to the other error files it imports directly.
+
+    Module names are resolved to ``path/to/module.py`` / ``__init__.py`` keys;
+    stdlib and third-party imports are ignored because they are not in the set.
+    """
+    keys = set(err_files)
+    deps: dict[str, set[str]] = {}
+    pat = re.compile(
+        r'^\s*(?:from\s+([\w.]+)\s+import\s+\w+|import\s+([\w.]+))',
+        re.MULTILINE,
+    )
+    for k in err_files:
+        try:
+            with open(os.path.join(ws_dir, k.replace('/', os.sep)), 'r', encoding='utf-8') as f:
+                src = f.read()
+        except OSError:
+            deps[k] = set()
+            continue
+        local: set[str] = set()
+        for m in pat.finditer(src):
+            mod = m.group(1) or m.group(2)
+            for cand in (
+                mod.replace('.', '/') + '.py',
+                mod.replace('.', '/') + '/__init__.py',
+            ):
+                if cand in keys:
+                    local.add(cand)
+        deps[k] = local
+    return deps
+
+
+def _order_leaves_first(
+    err_files: list[str], errs_by_file: dict[str, list[str]], ws_dir: str
+) -> list[str]:
+    """Order error files so deepest dependencies are fixed before their users.
+
+    Leaves (files importing nothing else from the set) come first; files that
+    import them follow once their dependencies are cleared.  Cycles are broken
+    by taking the remaining file with the most errors.  Ties within a level
+    keep the previous error-count-descending order.
+    """
+    deps = _import_graph_deps(err_files, ws_dir)
+    remaining = set(err_files)
+    ordered: list[str] = []
+    while remaining:
+        ready = [
+            k for k in remaining
+            if not (deps[k] & remaining)
+        ]
+        if not ready:
+            ready = [max(remaining, key=lambda k: len(errs_by_file[k]))]
+        ready.sort(key=lambda k: -len(errs_by_file[k]))
+        ordered.extend(ready)
+        remaining.difference_update(ready)
+    return ordered
+
+
+def _cluster_mypy_errors(lines: list[str], errs: list[str]) -> list[list[str]]:
+    """Group errors into dependency clusters that must be fixed together.
+
+    Errors inside the same enclosing function form one cluster; module-level
+    errors (e.g. a cache/annotation feeding that function) merge into the
+    following function's cluster when within ``_CLUSTER_MERGE_GAP`` lines.
+    Clusters are returned in source order.  A single cluster may exceed the
+    slice cap — callers slice the *first* cluster, keeping related errors
+    together so type decisions are made once, not site-by-site.
+    """
+    _CLUSTER_MERGE_GAP = 10
+    groups: dict[tuple[int, int], list[str]] = {}
+    module_errors: list[tuple[int, str]] = []
+    for err in errs:
+        info = _parse_mypy_error(err)
+        if info is None:
+            continue
+        lineno = info[0]
+        extent = _enclosing_function_extent(lines, lineno)
+        if extent is not None:
+            groups.setdefault((extent[0], extent[1]), []).append(err)
+        else:
+            module_errors.append((lineno, err))
+    for mline, err in module_errors:
+        target: tuple[int, int] | None = None
+        for start, end in sorted(groups):
+            if mline < start and start - mline <= _CLUSTER_MERGE_GAP:
+                target = (start, end)
+                break
+        if target is None:
+            groups.setdefault((mline, mline), []).append(err)
+        else:
+            groups[target].append(err)
+    ordered: list[list[str]] = []
+    for key in sorted(groups):
+        group = groups[key]
+        group.sort(key=lambda e: (_parse_mypy_error(e) or (0, ''))[0])
+        ordered.append(group)
+    return ordered
+
+
+_IDENT_RE = re.compile(r"[A-Za-z_]\w*")
+
+
+def _type_context(lines: list[str], err: str, error_line: int) -> str:
+    """Collect the type annotations mypy knows for the variables the error
+    mentions, so the LLM can patch against real types instead of guessing.
+
+    Looks up every identifier appearing in the error message inside the
+    enclosing function: annotated parameters, ``x: T`` local annotations,
+    and ``from module import x`` imports.  Returns a compact prompt block
+    (empty when nothing useful is found).
+    """
+    msg = err.split("error: ", 1)[-1] if "error: " in err else err
+    # Drop the trailing [error-code] bracket and quoted literals before
+    # scanning for variable names; lowercase so skip-words match exactly.
+    msg = re.sub(r'\s*\[[a-z-]+\]\s*$', '', msg).lower()
+    msg = re.sub(r'"[^"]*"', '', msg)
+    # Only identifiers that are likely *variables*, not type names / messages.
+    skip = {
+        "None", "Any", "int", "str", "float", "bool", "list", "dict", "set",
+        "tuple", "Match", "type", "object", "bytes", "error", "expected",
+        "has", "no", "attribute", "incompatible", "types", "argument",
+        "returning", "from", "function", "declared", "to", "variable",
+        "expression", "item", "value", "callable", "untyped", "missing",
+        "annotation", "parameter", "supertype", "signature", "await", "and",
+        "with", "not", "for", "in", "is", "or", "the", "of", "at", "line",
+        "always", "never", "already", "defined", "name", "statement",
+        "unreachable", "cannot", "be", "could", "may", "possibly", "maybe",
+        "unsupported", "operand", "left", "right", "both", "are", "unions",
+        "too", "many", "values", "unpack", "provided", "misc",
+        "got", "supports", "dunder", "attr", "module", "class", "self",
+        "cls", "note", "code", "covered", "comment", "ignore", "redundant",
+        "cast", "assignment", "import", "empty", "replacement", "break",
+        "continue", "return", "raise", "pass", "print", "len", "sorted",
+        "range", "max", "min", "any", "all", "sum", "join", "list_comp",
+        "dict_comp", "set_comp", "generator", "append", "extend", "arg",
+        "operator", "overload", "variant", "matches", "never", "instance",
+        "member", "method", "call", "argument", "each", "uses", "used",
+        "between", "items", "item", "wrapped", "buffer", "default",
+        "non", "zero", "types", "generic", "arguments", "container",
+    }
+    names = {m for m in _IDENT_RE.findall(msg) if m not in skip}
+    # Operator/arg-type errors mention the *type*, not the variable — so when
+    # the message names no variables, also look at the identifiers on the
+    # offending source line (e.g. ``a`` in ``a.end_lineno - 1``).
+    if not names and 0 <= error_line - 1 < len(lines):
+        names |= {m for m in _IDENT_RE.findall(lines[error_line - 1]) if m not in skip}
+    if not names:
+        return ""
+    extent = _enclosing_function_extent(lines, error_line)
+    if extent is None:
+        return ""
+    fstart, fend = extent
+    body = lines[fstart - 1:fend]
+
+    # One pass over the function body: annotated locals/params win, plain
+    # assignments and imports fill in the rest.  dict.fromkeys keeps the
+    # first mention per name (dedup without a second loop).
+    def _extract(ln: str) -> str | None:
+        m = re.match(r'^\s*([A-Za-z_]\w*)\s*:\s*([^=#]+?)\s*(?:=|$)', ln)
+        if m and m.group(1) in names:
+            return f"{m.group(1)}: {m.group(2).strip()}"
+        m = re.match(r'^\s*([A-Za-z_]\w*)\s*=\s*(.+?)\s*(?:#.*)?$', ln)
+        if m and m.group(1) in names:
+            return f"{m.group(1)} = {m.group(2).strip()}"
+        m = re.match(r'^\s*for\s+([A-Za-z_]\w*)\s+in\s+(.+?)\s*:', ln)
+        if m and m.group(1) in names:
+            return f"{m.group(1)} in {m.group(2).strip()}"
+        m = re.match(r'^\s*(?:from\s+[\w.]+\s+import\s+|import\s+)(.+)$', ln)
+        if m and any(n.strip() in names for n in m.group(1).split(",")):
+            return ln.strip()
+        return None
+
+    found = list(dict.fromkeys(x for x in (_extract(ln) for ln in body) if x))
+    if not found:
+        return ""
+    return "Types in scope (from annotations/assignments/imports):\n" + \
+        "\n".join(f"  {l}" for l in found) + "\n"
+
+
+def _shared_type_hint(errs: list[str]) -> str:
+    """Prompt hint when several errors in the slice reference the same generic
+    type — tell the model to decide the type once and apply it everywhere."""
+    counts: dict[str, int] = {}
+    for err in errs:
+        for t in re.findall(
+            r'\b(dict|list|Match|set|tuple|Optional|Union|Callable|Any)\b', err
+        ):
+            counts[t] = counts.get(t, 0) + 1
+    shared = [t for t, n in counts.items() if n >= 2]
+    if not shared:
+        return ""
+    return (
+        f"Note: {len(errs)} errors below involve the same type"
+        f"{'s' if len(shared) > 1 else ''} ({', '.join(shared)}). "
+        "Decide the type ONCE and apply it consistently at every site in the window — "
+        "e.g. define a TypedDict for structured dicts, or use a shared alias. "
+        "Do NOT patch sites one by one with conflicting type choices."
+    )
+
+
+def _mypy_error_signatures(stdout: str) -> list[tuple[str, str, str]]:
+    """Multiset of ``(file, code, message)`` for regression detection.
+
+    The line number is deliberately NOT part of the identity: a legitimate
+    patch shifts lines (an inserted import bumps every following line), so a
+    comparison keyed on line numbers would flag every surviving error as
+    "new" and wrongly revert good fixes.  A list (not a set) keeps the
+    *count* of identical errors — e.g. 7 identical ``type-arg`` messages —
+    so fixing one of several still counts as progress.
+    """
+    sigs: list[tuple[str, str, str]] = []
+    for line in stdout.split('\n'):
+        m = re.match(r'^(.*?):(\d+): error: (.*?)\s*\[([a-z-]+)\]\s*$', line.strip())
+        if m:
+            sigs.append((
+                m.group(1).replace('\\', '/'),
+                m.group(4),
+                m.group(3).strip(),
+            ))
+    return sigs
+
+
+def _multiset_excess(after: list[tuple[str, str, str]], before: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    """Signatures present MORE often in *after* than in *before*.
+
+    Both lists are multisets of ``(file, code, message)``; an error kind that
+    appears 7 times before and 6 times after is *not* new (one was fixed),
+    while a kind appearing 1 time before and 2 times after contributes one
+    new entry.  Line numbers are irrelevant (a patch legitimately shifts
+    lines), only counts matter.
+    """
+    from collections import Counter
+    after_c = Counter(after)
+    before_c = Counter(before)
+    excess: list[tuple[str, str, str]] = []
+    for sig, n in after_c.items():
+        extra = n - before_c.get(sig, 0)
+        if extra > 0:
+            excess.extend([sig] * extra)
+    return excess
+
+
+def _mypy_error_kinds(stdout: str) -> set[tuple[str, str]]:
+    """Set of ``(code, message)`` pairs for a single file's errors.
+
+    Line numbers are deliberately dropped: a patch legitimately shifts lines,
+    so a fix is recognized by its error code + message text surviving or not.
+    """
+    kinds: set[tuple[str, str]] = set()
+    for line in stdout.split('\n'):
+        m = re.match(r'^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$', line.strip())
+        if m:
+            kinds.add((m.group(3), m.group(2).strip()))
+    return kinds
+
+
+def extract_signatures(source: str) -> dict[str, Any]:
     """Extract function/class signatures from Python source."""
     sigs = {}
     for m in re.finditer(r'^class\s+(\w+)\s*(?:\((.*?)\))?\s*:', source, re.MULTILINE):
@@ -437,7 +1037,7 @@ class FixCommand(Command):
                         print(f"  Seed: {f}")
 
             _IMPORT_FROM_RE = re.compile(r'from\s+(\S+)\s+import\s+')
-            def get_imported_files(filepath):
+            def get_imported_files(filepath: str) -> set[str]:
                 result = set()
                 try:
                     with open(filepath, "r") as f:
@@ -530,8 +1130,8 @@ class FixCommand(Command):
                             except Exception as exc:
                                 print(f"  Warning: failed to extract signatures from {fp}: {exc}")
                 all_source += f"\n\n## Other project files (signatures only, {len(sig_map)} total)\n\n"
-                for rel, sigs in sorted(sig_map.items()):
-                    all_source += f"  {rel}: {sigs}\n"
+                for rel, names in sorted(sig_map.items()):
+                    all_source += f"  {rel}: {names}\n"
                 print(f"  Collected {len(py_files)} Python files ({len(all_source)} bytes)")
                 msgs = [
                     {"role": "system", "content": "You are an expert Python debugger. Analyze the codebase below. Fix ALL files needed. Keep code concise. NEVER create duplicate functions or classes (_v1, _v2, _clean, _final variants). One implementation per concept.\n\nPrefer [PATCH:] format (minimal diff — only the lines that change):\n[PATCH: path/to/file.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n- old line\n\nOnly use [FILE:] for new files or when the entire file must be rewritten:\n[FILE: absolute/path/to/file.py]\n```python\n# complete fixed code\n```"},
@@ -550,8 +1150,8 @@ class FixCommand(Command):
                 if not os.path.isfile(fp) or not fp.endswith(".py"):
                     continue
                 try:
-                    with open(fp, "r", encoding="utf-8") as f:
-                        content = f.read()
+                    with open(fp, "r", encoding="utf-8") as fh:
+                        content = fh.read()
                 except Exception:
                     continue
                 score = sum(1 for kw in keywords if kw in content.lower())
@@ -663,8 +1263,8 @@ class FixCommand(Command):
                             continue
                         if os.path.isfile(full) and full.endswith(".py"):
                             try:
-                                with open(full, "r", encoding="utf-8") as f:
-                                    fcontent = f.read()
+                                with open(full, "r", encoding="utf-8") as fh:
+                                    fcontent = fh.read()
                                 rel = os.path.relpath(full, ws_dir).replace("\\", "/")
                                 context += f"\n\n# === {rel} (requested by LLM) ===\n{fcontent}\n"
                                 read_paths.add(full)
@@ -725,8 +1325,8 @@ class FixCommand(Command):
                     print(f"  Skipping {fpath} (stdlib — cannot modify)")
                     continue
 
-                with open(full, "w", encoding="utf-8") as f:
-                    f.write(new_code)
+                with open(full, "w", encoding="utf-8") as out_f:
+                    out_f.write(new_code)
                 fixed_count += 1
                 print(f"  Fixed: {fpath} ({len(new_code)} bytes)")
 
@@ -750,8 +1350,15 @@ class FixCommand(Command):
 
         Usage: fix --mypy [path...] [--limit N] [--rounds N]
         Default targets: agent_core/, agent1/ and agent.py in the current dir.
-        Each LLM attempt fixes a slice of ~4 errors per file; --rounds is the
-        maximum number of attempts per file.
+        Imports are followed, so errors in imported modules are included;
+        files are processed leaves-first (deepest dependencies before their
+        users) so branch files are only touched after their dependencies.
+        Errors are grouped into clusters (same enclosing function, plus nearby
+        module-level annotations) so interconnected type decisions are made
+        once; each attempt shows the whole function.  After every applied
+        patch the ENTIRE target set is re-scanned — any new error signature
+        anywhere (ripple into importing files) rolls the patch back.
+        --rounds is the maximum number of attempts per file.
         """
         limit = 5
         rounds = 2
@@ -786,7 +1393,7 @@ class FixCommand(Command):
 
         def run_mypy(args: list[str]) -> str:
             r = subprocess.run(
-                [sys.executable, "-m", "mypy", *args, "--ignore-missing-imports", "--follow-imports=skip"],
+                [sys.executable, "-m", "mypy", *args, "--ignore-missing-imports"],
                 capture_output=True, text=True, cwd=ws_dir,
             )
             return r.stdout
@@ -801,7 +1408,8 @@ class FixCommand(Command):
             return by_file
 
         errors_by_file = parse_errors(run_mypy(targets))
-        files = sorted(errors_by_file.items(), key=lambda kv: -len(kv[1]))
+        ordered = _order_leaves_first(list(errors_by_file), errors_by_file, ws_dir)
+        files = [(k, errors_by_file[k]) for k in ordered]
         print(f"[fix --mypy] {sum(len(v) for v in errors_by_file.values())} error(s) in {len(files)} file(s)")
         if not files:
             print("Workspace is mypy-clean. Nothing to fix.")
@@ -817,13 +1425,12 @@ class FixCommand(Command):
                 continue
             print(f"\n[fix --mypy] {rel_file}: {len(errs)} error(s)")
             remaining = list(errs)
-            remaining = self._repair_and_mechanical(full, rel_file, remaining, yes_mode)
+            remaining = self._repair_and_mechanical(full, rel_file, remaining, yes_mode, targets, ws_dir)
             for attempt in range(max(rounds, 1)):
                 if stop_requested():
                     break
                 if not remaining:
                     break
-                slice_errs = remaining[:4]
                 try:
                     with open(full, "r", encoding="utf-8") as f:
                         current = f.read()
@@ -831,17 +1438,69 @@ class FixCommand(Command):
                     print(f"  Cannot read {rel_file}: {e}")
                     break
                 lines = current.split('\n')
+                clusters = _cluster_mypy_errors(lines, remaining)
+                slice_errs = (clusters[0] if clusters else remaining)[:8]
+                baseline_sigs = _mypy_error_signatures(run_mypy(targets))
                 user_sections = []
-                for err in slice_errs:
-                    error_line = _parse_line_number(err)
-                    before, after, instruction = _classify_error(err)
-                    window = _extract_window(lines, error_line, before, after)
+                cluster_extent: tuple[int, int] | None = None
+                if len(slice_errs) >= 2:
+                    info = _parse_mypy_error(slice_errs[0])
+                    if info is not None:
+                        cluster_extent = _enclosing_function_extent(lines, info[0])
+                if cluster_extent is not None:
+                    start, end = cluster_extent
+                    window = _extract_window(lines, start, 0, end - start + 2)
+                    err_block = "\n".join(f"- {e}" for e in slice_errs)
+                    type_blocks = [
+                        t for e in slice_errs
+                        if (t := _type_context(lines, e, _parse_line_number(e)))
+                    ]
+                    type_section = "\n".join(type_blocks)
                     user_sections.append(
-                        f"### Error\n{err}\n\nInstruction: {instruction}\n\n"
-                        f"Relevant code:\n```python\n{window}\n```\n"
+                        f"### Errors ({len(slice_errs)} — same function, fix together)\n"
+                        f"{err_block}\n\n"
+                        f"The errors below are inside one function (lines {start}-{end}). "
+                        "Resolve each type ONCE and apply it consistently at every site in this window.\n\n"
+                        f"Relevant code (entire function):\n```python\n{window}\n```\n"
+                        + (f"\n{type_section}\n" if type_section else "")
                     )
+                else:
+                    for err in slice_errs:
+                        error_line = _parse_line_number(err)
+                        before, after, instruction = _classify_error(err)
+                        if before == -1 and after == -1:
+                            extent = _enclosing_function_extent(lines, error_line)
+                            if extent and error_line >= extent[0]:
+                                before = error_line - extent[0]
+                                after = extent[1] - error_line + 5
+                            else:
+                                before, after = 40, 20
+                        window = _extract_window(lines, error_line, before, after)
+                        type_ctx = _type_context(lines, err, error_line)
+                        user_sections.append(
+                            f"### Error\n{err}\n\nInstruction: {instruction}\n\n"
+                            f"Relevant code:\n```python\n{window}\n```\n"
+                            + (f"\n{type_ctx}\n" if type_ctx else "")
+                        )
+                type_hint = _shared_type_hint(slice_errs)
+                system_prompt = (
+                    f"Fix the mypy errors in {rel_file}. Make the smallest possible targeted changes. "
+                    "Prefer [PATCH:]; if the file is over ~200 lines use [PATCH:] exclusively. "
+                    "Output EXACTLY ONE block: [PATCH: {rel_file}] with unified hunks (one patch may "
+                    "contain multiple @@ hunks), or [FILE: {rel_file}] with the complete corrected file. "
+                    "Do NOT output multiple [PATCH:]/[FILE:] blocks, no retries, nothing else.\n\n"
+                    "Minimal hunk example (one-line change inside a function, indentation kept, "
+                    "the + line must DIFFER from the - line):\n"
+                    "@@ -131,7 +131,7 @@\n"
+                    "        chunks: list[tuple[str, str | None]] = []\n"
+                    "+        chunks: list[tuple[str, str]] = []\n"
+                    "        for line in body.split('\\n'):\n"
+                    "            line = line.rstrip('\\r')\n"
+                )
+                if type_hint:
+                    system_prompt += "\n\n" + type_hint
                 msgs = [
-                    {"role": "system", "content": f"Fix the mypy errors in {rel_file}. Make the smallest possible targeted changes. Prefer [PATCH:]; if the file is over ~200 lines use [PATCH:] exclusively. Output the fix as ONE of: [PATCH: {rel_file}] with unified hunks, or [FILE: {rel_file}] with the complete corrected file. Do NOT output anything else."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": "\n".join(user_sections) + f"\n\nOutput format:\n[PATCH: {rel_file}]\n@@ -line,count +line,count @@\n unchanged line\n-removed line\n+added line\n\nOR if a larger rewrite is needed:\n[FILE: {rel_file}]\n```python\n# complete corrected file\n```"},
                 ]
                 print(f"  Attempt {attempt + 1} on {len(slice_errs)} error(s)...")
@@ -853,42 +1512,81 @@ class FixCommand(Command):
                 prev = current
                 before_errs = list(remaining)
                 count_before = len(before_errs)
-                changed = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode, context_errors=slice_errs)
+                failures: list[str] = []
+                changed, failures = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode, context_errors=slice_errs)
+                if stop_requested():
+                    print("  Stopped by user — skipping remaining attempts.")
+                    break
                 if not changed:
-                    print("  Fix did not apply — retrying once with verbatim-copy instructions")
+                    fail_summary = "\n".join(f"  - {f}" for f in failures) if failures else "  (unknown — no diagnostics captured)"
+                    print(f"  Fix did not apply — retrying once with verbatim-copy instructions")
+                    if stop_requested():
+                        break
                     retry_msgs = [
                         msgs[0],
-                        {"role": "user", "content": "Your previous [PATCH: ...] hunks did not match the file: the context lines were not exact. Reproduce the hunks using ONLY the exact lines shown in the 'Relevant code' windows above — copy them character-for-character, including indentation. Output a focused patch that touches only the listed lines. Do NOT rewrite whole functions or files.\n\nOutput format (strictly a patch):\n[PATCH: " + rel_file + "]\n@@ -line,count +line,count @@\n unchanged line\n-removed line\n+added line\n"},
+                        {"role": "user", "content": (
+                            "Your previous [PATCH: ...] hunks did not apply. "
+                            "Failure reasons:\n" + fail_summary + "\n\n"
+                            "Reproduce the hunks using ONLY the exact lines shown in the "
+                            "'Relevant code' windows above — copy them character-for-character, "
+                            "including indentation. Output a focused patch that touches only the "
+                            "listed lines. Do NOT rewrite whole functions or files.\n\n"
+                            "Output format (strictly a patch):\n"
+                            f"[PATCH: {rel_file}]\n@@ -line,count +line,count @@\n"
+                            " unchanged line\n-removed line\n+added line\n"
+                        )},
                     ]
                     response = await agent.llm.chat(retry_msgs, max_tokens=5000, disable_thinking=True)
                     if not response or response.startswith("[Error") or response.startswith("[LM Studio"):
                         print(f"  LLM error: {response}")
                         break
-                    changed = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode)
+                    changed, retry_failures = self._apply_fix_blocks(
+                        response, ws_dir, rel_file, auto_yes=yes_mode,
+                        context_errors=slice_errs,
+                    )
+                    failures.extend(retry_failures)
+                if stop_requested():
+                    print("  Stopped by user — skipping remaining attempts.")
+                    break
                 if not changed:
+                    fail_summary = "\n".join(f"  - {f}" for f in failures) if failures else "  (unknown — no diagnostics captured)"
                     print("  Slice failed — retrying the first error alone")
+                    if stop_requested():
+                        break
                     single_msgs = [
                         msgs[0],
-                        {"role": "user", "content": user_sections[0] +
-                            "\n\nOutput ONLY a minimal [PATCH:] fixing this one error. "
-                            "Copy the context lines character-for-character from the window above."},
+                        {"role": "user", "content": (
+                            user_sections[0] +
+                            "\n\nPrevious patch attempts failed:\n" + fail_summary + "\n\n"
+                            "Output ONLY a minimal [PATCH:] fixing this one error. "
+                            "Copy the context lines character-for-character from the window above."
+                        )},
                     ]
                     response = await agent.llm.chat(single_msgs, max_tokens=4000, disable_thinking=True)
                     if response and not response.startswith("[Error") and not response.startswith("[LM Studio"):
-                        changed = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode, context_errors=slice_errs[:1])
+                        changed, _ = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode, context_errors=slice_errs[:1])
                     if changed:
                         remaining = parse_errors(run_mypy([rel_file])).get(rel_file, [])
+                        new_sigs = _multiset_excess(
+                            _mypy_error_signatures(run_mypy(targets)), baseline_sigs
+                        )
+                        if new_sigs:
+                            print(f"  Single-error fix introduced {len(new_sigs)} new error(s) elsewhere ({next(iter(sorted(new_sigs)))}) — restoring previous version")
+                            with open(full, "w", encoding="utf-8") as f:
+                                f.write(prev)
+                            remaining = before_errs[len(slice_errs):]
+                            continue
                         if len(remaining) > count_before:
                             print(f"  Single-error fix regressed: {count_before} -> {len(remaining)} errors — restoring previous version")
                             with open(full, "w", encoding="utf-8") as f:
                                 f.write(prev)
-                            remaining = before_errs[4:]
+                            remaining = before_errs[len(slice_errs):]
                             continue
                         print(f"  Single-error fallback applied: {len(remaining)} error(s) remaining")
                         if not remaining:
                             break
                         continue
-                    remaining = remaining[4:]
+                    remaining = remaining[len(slice_errs):]
                     print(f"  No usable fix for these {len(slice_errs)} error(s) — skipping them")
                     continue
                 r = subprocess.run([sys.executable, "-m", "py_compile", full], capture_output=True, text=True)
@@ -896,14 +1594,23 @@ class FixCommand(Command):
                     print(f"  Fix introduced a compile error — restoring previous version\n  {r.stderr.strip()[:200]}")
                     with open(full, "w", encoding="utf-8") as f:
                         f.write(prev)
-                    remaining = before_errs[4:]
+                    remaining = before_errs[len(slice_errs):]
                     continue
                 remaining = parse_errors(run_mypy([rel_file])).get(rel_file, [])
+                new_sigs = _multiset_excess(
+                    _mypy_error_signatures(run_mypy(targets)), baseline_sigs
+                )
+                if new_sigs:
+                    print(f"  Fix introduced {len(new_sigs)} new error(s) elsewhere ({next(iter(sorted(new_sigs)))}) — restoring previous version")
+                    with open(full, "w", encoding="utf-8") as f:
+                        f.write(prev)
+                    remaining = before_errs[len(slice_errs):]
+                    continue
                 if len(remaining) > count_before:
                     print(f"  Fix regressed: {count_before} -> {len(remaining)} errors — restoring previous version")
                     with open(full, "w", encoding="utf-8") as f:
                         f.write(prev)
-                    remaining = before_errs[4:]
+                    remaining = before_errs[len(slice_errs):]
                     continue
                 print(f"  Attempt {attempt + 1}: {len(remaining)} error(s) remaining in {rel_file}")
                 if not remaining:
@@ -917,13 +1624,32 @@ class FixCommand(Command):
         return True
 
     def _repair_and_mechanical(
-        self, full: str, rel_file: str, errs: list[str], auto_yes: bool
+        self, full: str, rel_file: str, errs: list[str], auto_yes: bool,
+        targets: list[str], ws_dir: str,
     ) -> list[str]:
         """Pre-flight corruption repair + deterministic mypy fixes.
 
-        Returns the still-unfixed error list (re-queried from mypy so the
-        caller's attempt loop only sees what genuinely needs the LLM).
+        Without ``--yes`` every candidate is shown as a diff and confirmed
+        interactively (declining skips it).  Every applied fix is verified
+        before it sticks: mypy is re-run over the whole *targets* set, and
+        the fix is kept only if the file's own error count dropped AND no
+        new error signature appeared anywhere (ripple into importers reverts
+        the change).  Returns the still-unfixed error list (re-queried from
+        mypy so the caller's attempt loop only sees what genuinely needs
+        the LLM).
         """
+        def mypy_sigs() -> list[tuple[str, str, str]]:
+            r = subprocess.run(
+                [sys.executable, "-m", "mypy", *targets, "--ignore-missing-imports",
+                 "--explicit-package-bases", "--namespace-packages"],
+                capture_output=True, text=True, cwd=ws_dir,
+            )
+            return _mypy_error_signatures(r.stdout)
+
+        def file_error_count(sigs: list[tuple[str, str, str]]) -> int:
+            key = rel_file.replace('\\', '/')
+            return sum(1 for f, _, _ in sigs if f == key or f.endswith('/' + key))
+
         try:
             with open(full, "r", encoding="utf-8") as f:
                 source = f.read()
@@ -941,52 +1667,115 @@ class FixCommand(Command):
 
         # 2) Deterministic fixes — process bottom-up so a dropped line never
         #    invalidates the line numbers of errors yet to be handled.
-        parsed: list[tuple[int, str, str]] = []
-        for err in errs:
-            info = _parse_mypy_error(err)
-            if info is None:
-                continue
-            parsed.append((info[0], info[1], err))
-        parsed.sort(key=lambda t: -t[0])
-
+        baseline: list[tuple[str, str, str]] | None = None
         new_lines = source.split('\n')
         changed = False
-        for lineno, code, err in parsed:
-            before = list(new_lines)
-            after: list[str] | None = None
-            if code == "unused-ignore":
-                after = _fix_unused_ignore(before, lineno)
-                label = "unused-ignore"
-            elif code == "redundant-cast":
-                m = re.search(r'Redundant cast to "([^"]+)"', err)
-                if m:
-                    after = _fix_redundant_cast(before, lineno, m.group(1))
-                label = "redundant-cast"
-            elif code == "assignment" and "default has type \"None\"" in err:
-                after = _fix_implicit_optional(before, lineno)
-                label = "implicit-optional"
-            elif code == "attr-defined":
-                m = re.search(r'has no attribute "([^"]+)"; maybe "([^"]+)"', err)
-                if m:
-                    after = _fix_attr_defined_rename(
-                        before, lineno, '\n'.join(new_lines), m.group(1), m.group(2)
-                    )
-                label = "attr-defined-rename"
-            elif code == "no-untyped-def":
-                after = _fix_missing_return_none(before, lineno)
-                label = "return-None"
-            else:
-                continue
-            if after is None or after == before:
-                continue
-            joined = '\n'.join(after)
-            if not _syntax_ok(joined):
-                print(f"  mechanical {label} rejected (syntax) — {err[:80]}")
-                continue
-            print(f"  mechanical {label} @ {rel_file}:{lineno}")
-            if save_file_py(full, joined, auto_yes=auto_yes):
+        work = list(errs)
+        rejected: set[tuple[str, str]] = set()
+        while True:
+            if stop_requested():
+                print("  Stopped by user — remaining mechanical fixes skipped.")
+                break
+            # Re-parse the still-unfixed errors on EVERY pass: an applied fix
+            # shifts line numbers (an inserted import bumps everything below),
+            # so stale line numbers must not be reused for the next fix.
+            parsed: list[tuple[int, str, str]] = []
+            for err in work:
+                info = _parse_mypy_error(err)
+                if info is None:
+                    continue
+                kind = (info[1], err.split('error: ', 1)[-1].split('  [')[0].strip())
+                if kind in rejected:
+                    continue
+                parsed.append((info[0], info[1], err))
+            parsed.sort(key=lambda t: -t[0])
+            if not parsed:
+                break
+            applied_any = False
+            for lineno, code, err in parsed:
+                before = list(new_lines)
+                after: list[str] | None = None
+                if code == "unused-ignore":
+                    after = _fix_unused_ignore(before, lineno)
+                    label = "unused-ignore"
+                elif code == "redundant-cast":
+                    m = re.search(r'Redundant cast to "([^"]+)"', err)
+                    if m:
+                        after = _fix_redundant_cast(before, lineno, m.group(1))
+                    label = "redundant-cast"
+                elif code == "assignment" and "default has type \"None\"" in err:
+                    after = _fix_implicit_optional(before, lineno)
+                    label = "implicit-optional"
+                elif code == "attr-defined":
+                    m = re.search(r'has no attribute "([^"]+)"; maybe "([^"]+)"', err)
+                    if m:
+                        after = _fix_attr_defined_rename(
+                            before, lineno, '\n'.join(new_lines), m.group(1), m.group(2)
+                        )
+                    label = "attr-defined-rename"
+                elif code == "no-untyped-def":
+                    after = _fix_missing_return_none(before, lineno)
+                    label = "return-None"
+                    if after is None:
+                        # Value-returning function with missing annotations:
+                        # the return-None rule refuses, so add ``: Any`` params
+                        # (and `` -> Any``) instead.  ``_fix_untyped_params``
+                        # only adds `` -> Any`` when the function returns a
+                        # value, so void functions keep ``-> None`` above.
+                        after = _fix_untyped_params(before, lineno)
+                        label = "untyped-params"
+                elif code == "type-arg":
+                    after = _fix_bare_generic(before, lineno, err)
+                    label = "type-arg-Any"
+                elif code in ("union-attr", "arg-type"):
+                    after = _fix_container_optional(before, err)
+                    label = "container-optional"
+                elif code == "misc" and "Too many values to unpack" in err:
+                    after = _fix_tuple_arity(before, lineno, err)
+                    label = "tuple-arity"
+                else:
+                    continue
+                if after is None or after == before:
+                    continue
+                joined = '\n'.join(after)
+                if not _syntax_ok(joined):
+                    print(f"  mechanical {label} rejected (syntax) — {err[:80]}")
+                    continue
+                if baseline is None:
+                    # snapshot the pre-fix state BEFORE the first write so the
+                    # improvement check compares against the untouched file
+                    baseline = mypy_sigs()
+                print(f"  mechanical {label} @ {rel_file}:{lineno} — {err.split('error: ')[-1][:70]}")
+                if not save_file_py(full, joined, auto_yes=auto_yes):
+                    # declined (n) or stopped (s/q): remember the candidate so
+                    # later passes do not re-prompt the same change
+                    rejected.add((code, err.split('error: ', 1)[-1].split('  [')[0].strip()))
+                    if stop_requested():
+                        print("  Stopped by user — remaining mechanical fixes skipped.")
+                        break
+                    continue
+                count_before = file_error_count(baseline)
+                new_sigs = mypy_sigs()
+                new_only = _multiset_excess(new_sigs, baseline)
+                count_after = file_error_count(new_sigs)
+                if new_only or count_after >= count_before:
+                    print(f"    reverted — {len(new_only)} new signature(s) elsewhere, file {count_before}->{count_after}")
+                    with open(full, "w", encoding="utf-8") as f:
+                        f.write('\n'.join(before))
+                    # remember the (code, message) so later passes do not
+                    # retry the same mechanical transformation in vain
+                    rejected.add((code, err.split('error: ', 1)[-1].split('  [')[0].strip()))
+                    continue
+                print(f"    applied ({count_before}->{count_after} errors)")
+                baseline = new_sigs
                 new_lines = after
                 changed = True
+                applied_any = True
+            if not applied_any:
+                break
+            # A fix shifted line numbers — refresh the error list for the
+            # next pass so the remaining candidates are located correctly.
+            work = self._rerun_mypy_errors(rel_file, full, work)
 
         if changed:
             return self._rerun_mypy_errors(rel_file, full, errs)
@@ -998,8 +1787,7 @@ class FixCommand(Command):
         """Re-run mypy on *full* and return its current error list for it."""
         ws_dir = os.path.dirname(full)
         r = subprocess.run(
-            [sys.executable, "-m", "mypy", full, "--ignore-missing-imports",
-             "--follow-imports=skip"],
+            [sys.executable, "-m", "mypy", full, "--ignore-missing-imports"],
             capture_output=True, text=True, cwd=ws_dir,
         )
         by_file: dict[str, list[str]] = {}
@@ -1017,30 +1805,31 @@ class FixCommand(Command):
 
     def _apply_fix_blocks(self, response: str, ws_dir: str, rel_file: str,
                           auto_yes: bool = False,
-                          context_errors: list[str] | None = None) -> int:
+                          context_errors: list[str] | None = None) -> tuple[int, list[str]]:
         """Apply [PATCH:]/[FILE:] blocks targeting rel_file with diff+confirm.
 
-        Returns the number of blocks applied. Writes go through save_file_py
+        Returns (applied_count, failures).  Writes go through save_file_py
         (y/N confirm unless auto_yes); the caller re-compiles and restores on
         failure.  When *context_errors* is given, the issues the model was
         asked to fix are printed above each presented patch.
         """
         full = os.path.normpath(os.path.join(ws_dir, rel_file))
         if not os.path.isfile(full):
-            return 0
+            return 0, []
         clean = re.sub(r'</?tool_call>', '', response)
         try:
             with open(full, "r", encoding="utf-8") as f:
                 current = f.read()
         except OSError as e:
             print(f"  Cannot read {rel_file}: {e}")
-            return 0
+            return 0, []
 
         def _targets(block_path: str) -> bool:
             bp = block_path.replace('\\', '/')
             return bp == rel_file or bp == os.path.basename(rel_file)
 
         applied = 0
+        failures: list[str] = []
         from agent_core.patch_utils import split_source_lines
 
         def _show_targeted_issues() -> None:
@@ -1049,8 +1838,24 @@ class FixCommand(Command):
                 for e in context_errors:
                     print(f"    {e}")
 
+        _has_return_error = context_errors and any(
+            "Missing return statement" in ce or "[return]" in ce
+            for ce in context_errors
+        )
+        _return_error_line = None
+        if context_errors:
+            for ce in context_errors:
+                parsed = _parse_mypy_error(ce)
+                if parsed and parsed[1] == "return":
+                    _return_error_line = parsed[0]
+                    break
+
         lines = split_source_lines(current)
+        failed_attempts = 0
+        seen_failures: set[str] = set()
         for m in re.finditer(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL):
+            if applied:
+                break
             if not _targets(m.group(1).strip()):
                 continue
             patch_text = m.group(2).strip()
@@ -1059,30 +1864,68 @@ class FixCommand(Command):
                 from agent_core.patch_utils import apply_anchored_patch
                 ok, result = apply_anchored_patch(patch_text, lines)
             if not ok:
-                print(f"  Patch apply failed: {result[:150]}")
+                # The model often repeats the same broken hunk many times in
+                # one response — give up after a few distinct failures instead
+                # of printing the identical error 70 times.
+                msg = result[:150]
+                if msg in seen_failures:
+                    failed_attempts += 1
+                else:
+                    seen_failures.add(msg)
+                    failures.append(f"Patch apply failed: {msg}")
+                    print(f"  Patch apply failed: {msg}")
+                    failed_attempts += 1
+                if failed_attempts >= 4:
+                    print("  Too many failed patch attempts in this response — skipping the rest.")
+                    break
                 continue
             reason = _looks_corrupted(current, result)
             if reason:
+                failures.append(f"Corruption guard: {reason[:150]}")
                 print(f"  Rejected patch — corruption guard: {reason}")
                 continue
+            if _has_return_error and _return_error_line is not None:
+                from agent_core.commands.fix_cmd import _enclosing_function_extent, _function_can_fall_off_end
+                extent = _enclosing_function_extent(result.split('\n'), _return_error_line)
+                if extent:
+                    _, end_line = extent
+                    patched_func_lines = result.split('\n')[0:end_line]
+                    patched_func_src = '\n'.join(patched_func_lines)
+                    if _function_can_fall_off_end(patched_func_src, _return_error_line):
+                        print(f"  WARNING: patch does not resolve 'Missing return statement' "
+                              f"at line {_return_error_line} — function still falls off the end")
             _show_targeted_issues()
+            if not auto_yes and context_errors:
+                self._show_patch_verdict(full, result, rel_file, context_errors, ws_dir)
             if save_file_py(full, result, auto_yes=auto_yes):
                 current = result
                 applied += 1
+            if stop_requested():
+                break
         for m in re.finditer(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?:\n```|$)', clean, re.DOTALL):
+            if applied or stop_requested():
+                break
             if not _targets(m.group(1).strip()):
                 continue
             new_code = m.group(2).strip()
             if len(new_code) < 10 or not re.search(r'\b(import|def |class )\b', new_code):
+                failures.append(f"Invalid [FILE:] content for {rel_file}")
                 print(f"  WARNING: [FILE:] content for {rel_file} looks invalid, skipping")
                 continue
             if len(current.splitlines()) > 200 and len(new_code) > len(current) * 1.5:
+                failures.append(f"Oversized [FILE:] rewrite for {rel_file}")
                 print(f"  WARNING: [FILE:] content for {rel_file} is an oversized rewrite, skipping (use [PATCH:] instead)")
+                continue
+            if len(current.splitlines()) > 200 and len(new_code) < len(current) * 0.3:
+                failures.append(f"Shrinking [FILE:] rewrite for {rel_file}")
+                print(f"  WARNING: [FILE:] content for {rel_file} drops more than 70% of the file, skipping (use [PATCH:] instead)")
                 continue
             _show_targeted_issues()
             if save_file_py(full, new_code, auto_yes=auto_yes):
                 current = new_code
                 applied += 1
+            if stop_requested():
+                break
 
         if applied:
             changelog_path = os.path.join(ws_dir, "CHANGES.md")
@@ -1093,7 +1936,104 @@ class FixCommand(Command):
                     cl.write(entry)
             except OSError:
                 pass
-        return applied
+        return applied, failures
+
+    def _show_patch_verdict(
+        self, full: str, result: str, rel_file: str, context_errors: list[str], ws_dir: str
+    ) -> None:
+        """Verify a candidate [PATCH:] result against mypy BEFORE prompting.
+
+        The patched text is written to a temporary sibling file and checked
+        with mypy; the outcome is reported as a verdict so the y/N decision
+        is informed: how many of the targeted errors are actually gone, and
+        which NEW errors the patch would introduce.  Best-effort: any mypy
+        failure just suppresses the verdict.
+        """
+        try:
+            import tempfile
+            fd, tmp = tempfile.mkstemp(
+                suffix=".py", prefix=".mypycheck_", dir=os.path.dirname(full)
+            )
+        except OSError:
+            return
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(result)
+            r = subprocess.run(
+                [sys.executable, "-m", "mypy", tmp, "--ignore-missing-imports",
+                 "--explicit-package-bases", "--namespace-packages"],
+                capture_output=True, text=True, cwd=ws_dir,
+            )
+        except OSError:
+            return
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+        tmp_base = os.path.basename(tmp)
+        patched_kinds: set[tuple[str, str]] = set()
+        for line in r.stdout.split('\n'):
+            m = re.match(r'^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$', line.strip())
+            if m and m.group(1).replace('\\', '/').split('/')[-1] == tmp_base:
+                patched_kinds.add((m.group(3), m.group(2).strip()))
+
+        if not patched_kinds:
+            print("  [verify] patched file is mypy-clean — fixes all targeted errors, no new errors. → y")
+            return
+
+        targeted_kinds = _mypy_error_kinds("\n".join(context_errors))
+        # Baseline = the file's CURRENT full error set, not just the slice:
+        # a patch must not be flagged for pre-existing errors it never touched.
+        try:
+            with open(full, "r", encoding="utf-8") as f:
+                current_text = f.read()
+        except OSError:
+            current_text = ""
+        try:
+            import tempfile
+            fd2, tmp2 = tempfile.mkstemp(
+                suffix=".py", prefix=".mypycheck_", dir=os.path.dirname(full)
+            )
+            with os.fdopen(fd2, "w", encoding="utf-8") as f:
+                f.write(current_text)
+            r2 = subprocess.run(
+                [sys.executable, "-m", "mypy", tmp2, "--ignore-missing-imports",
+                 "--explicit-package-bases", "--namespace-packages"],
+                capture_output=True, text=True, cwd=ws_dir,
+            )
+        except OSError:
+            r2 = None
+        finally:
+            try:
+                os.remove(tmp2)
+            except OSError:
+                pass
+        baseline_kinds: set[tuple[str, str]] = set()
+        if r2 is not None:
+            tmp2_base = os.path.basename(tmp2)
+            for line in r2.stdout.split('\n'):
+                m = re.match(r'^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$', line.strip())
+                if m and m.group(1).replace('\\', '/').split('/')[-1] == tmp2_base:
+                    baseline_kinds.add((m.group(3), m.group(2).strip()))
+
+        fixed = targeted_kinds - patched_kinds
+        # NEW errors = errors present after the patch that were NOT already
+        # present before it (pre-existing errors are not "introduced").
+        new_kinds = patched_kinds - (baseline_kinds or targeted_kinds)
+        print(f"  [verify] fixes {len(fixed)}/{len(targeted_kinds)} targeted error(s)")
+        if new_kinds:
+            print(f"  [verify] introduces {len(new_kinds)} new error(s):")
+            for code, msg in sorted(new_kinds)[:5]:
+                print(f"    [{code}] {msg[:90]}")
+            if len(new_kinds) > 5:
+                print(f"    ... and {len(new_kinds) - 5} more")
+            print("  → n (patch introduces new errors)  [s/q = stop whole run]")
+        elif fixed == targeted_kinds:
+            print("  → y (all targeted errors fixed, nothing new)")
+        else:
+            print("  → n (some targeted errors remain)  [s/q = stop whole run]")
 
     def _apply_fix_response(self, response: str, ws_dir: str, desc_text: str) -> None:
         """Parse [FILE:] and [PATCH:] blocks from *response* and apply them to disk."""
@@ -1162,7 +2102,7 @@ class FixCommand(Command):
         for m in re.finditer(r'@@\s*-(\d+)(?:,\d+)?\s*\+(\d+)(?:,\d+)?\s*@@(.*?)(?=@@|\Z)', patch_text, re.DOTALL):
             start = int(m.group(1))
             body = m.group(3).rstrip()
-            chunks: list[tuple[str, str | None]] = []  # ('-', line) or ('+', line) or (' ', line)
+            chunks: list[tuple[str, str]] = []  # ('-', line) or ('+', line) or (' ', line)
             for line in body.split('\n'):
                 line = line.rstrip('\r')
                 if line.startswith('-'):
@@ -1432,9 +2372,9 @@ class FixCommand(Command):
                         print(f"  Warning: failed to parse {full}: {e}")
 
         all_broken = []
-        for match in re.finditer(r'from\s+(\S+)\s+import\s+(.+?)(?:\s*#|\s*$)', current_code):
-            src_module = match.group(1)
-            imported_names = [n.strip().split(' as ')[0].strip() for n in match.group(2).strip('()').split(',')]
+        for import_match in re.finditer(r'from\s+(\S+)\s+import\s+(.+?)(?:\s*#|\s*$)', current_code):
+            src_module = import_match.group(1)
+            imported_names = [n.strip().split(' as ')[0].strip() for n in import_match.group(2).strip('()').split(',')]
             src_file = src_module.replace('.', '/') + '.py'
             if src_file not in export_map:
                 continue
@@ -1544,10 +2484,10 @@ class FixCommand(Command):
                         choice = ""
                     if choice and choice != "n":
                         ws_str = str(Path(fpath).parent.resolve())
+                        selected: list[int] = []
                         if choice == "all":
-                            selected = range(len(candidates))
+                            selected = list(range(len(candidates)))
                         else:
-                            selected = []
                             for part in choice.replace(" ", "").split(","):
                                 try:
                                     selected.append(int(part) - 1)

@@ -11,7 +11,7 @@ from datetime import datetime as _datetime
 
 from .base import Command
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 class PerfTracker:
     """In-memory command timing collector — no threads, no SQLite, no deps."""
 
-    _records: list[dict] = []
+    _records: list[dict[str, Any]] = []
 
     @classmethod
     def record(cls, command: str, elapsed_s: float, input_text: str = "") -> None:
@@ -31,7 +31,7 @@ class PerfTracker:
         })
 
     @classmethod
-    def summary(cls) -> list[dict]:
+    def summary(cls) -> list[dict[str, Any]]:
         """Aggregate by command name, return sorted by total time descending."""
         by_cmd: dict[str, list[float]] = {}
         for r in cls._records:
@@ -49,7 +49,7 @@ class PerfTracker:
         return result
 
     @classmethod
-    def detail(cls) -> list[dict]:
+    def detail(cls) -> list[dict[str, Any]]:
         return cls._records
 
     @classmethod
@@ -114,7 +114,7 @@ class PerfCommand(Command):
 
         return True
 
-    def _build_html(self, summary: list[dict], detail: list[dict]) -> str:
+    def _build_html(self, summary: list[dict[str, Any]], detail: list[dict[str, Any]]) -> str:
         rows = "\n".join(
             f"<tr><td>{s['command']}</td><td>{s['calls']}</td><td>{s['total']}</td><td>{s['avg']}</td><td>{s['max']}</td><td>{s['last']}</td></tr>"
             for s in summary

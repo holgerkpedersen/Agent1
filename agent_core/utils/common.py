@@ -3,9 +3,7 @@ import json
 
 def convert_value(value: str) -> Any:
     """Converts a string value to its appropriate Python type."""
-    if not isinstance(value, str):
-        return value
-    
+
     val = value.strip()
     lowered = val.lower()
     

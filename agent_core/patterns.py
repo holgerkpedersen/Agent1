@@ -9,6 +9,7 @@ import ast
 import io
 import re
 import tokenize
+from typing import TypedDict, Any, Any, Any, Any, Any, Any, Any, Any, Any
 
 
 _DS_CACHE: dict[str, set[int]] = {}
@@ -55,20 +56,26 @@ def _docstring_lines_uncached(source: str) -> set[int]:
     return lines
 
 
-_ANALYZE_CACHE: dict[str, list[dict]] = {}
+class Finding(TypedDict):
+    line: int
+    pattern: str
+    suggestion: str
+
+
+_ANALYZE_CACHE: dict[str, list[Finding]] = {}
 _ANALYZE_CACHE_MAX = 64
 
 
-def analyze(source: str) -> list[dict]:
+def analyze(source: str) -> list[Finding]:
     """Run all detectors and return unified findings."""
     cached = _ANALYZE_CACHE.get(source)
     if cached is not None:
         return list(cached)
-    all_findings: list[dict] = []
+    all_findings: list[Finding] = []
     for detector in DETECTORS:
         for line_no, name, suggestion in detector(source):
             all_findings.append({
-                "line": line_no,
+                "line": int(line_no),
                 "pattern": name,
                 "suggestion": suggestion,
             })
@@ -150,10 +157,10 @@ def _loop_caches(spans_body: list[str]) -> bool:
             read_cache[full] = ref_content
     """
     body = "\n".join(spans_body)
-    has_guard = re.search(r"\bin\s+(\w+)", body) is not None
-    if not has_guard:
+    guard_match = re.search(r"\bin\s+(\w+)", body)
+    if guard_match is None:
         return False
-    cache_var = re.search(r"\bin\s+(\w+)", body).group(1)
+    cache_var = guard_match.group(1)
     # a dict-style write `cache_var[...] = <name>` where that name is the
     # read result, e.g. `read_cache[full] = ref_content`
     has_memoized = re.search(
@@ -303,7 +310,7 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
     binder_nodes: list[ast.AST] = []
 
     _BINDING_TARGETS = {
-        ast.Assign: lambda n: n.targets,
+        ast.Assign: lambda n: list(n.targets),
         ast.AnnAssign: lambda n: [n.target],
         ast.AugAssign: lambda n: [n.target],
         ast.For: lambda n: [n.target],
@@ -311,11 +318,11 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
         ast.NamedExpr: lambda n: [n.target],
     }
 
-    def _any_target_is_open(node):
+    def _any_target_is_open(node: ast.AST) -> bool:
         getter = _BINDING_TARGETS.get(type(node))
         if getter is None:
             return False
-        for target in getter(node):
+        for target in list(getter(node)):
             if isinstance(target, ast.Name) and target.id == "open":
                 return True
             if isinstance(target, (ast.Tuple, ast.List)):
@@ -324,7 +331,7 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
                         return True
         return False
 
-    def _import_binds_open(node):
+    def _import_binds_open(node: ast.AST) -> bool:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if (alias.asname or alias.name) == "open":
@@ -353,9 +360,9 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
                 closing = True
             elif isinstance(node.func, ast.Attribute) and node.func.attr == "closing":
                 closing = True
-            if closing:
-                for arg in node.args:
-                    for sub in ast.walk(arg):
+                for call_arg in node.args:
+                    for sub in ast.walk(call_arg):
+                        exempt_ids.add(id(sub))
                         exempt_ids.add(id(sub))
 
         if _any_target_is_open(node) or _import_binds_open(node):
@@ -409,7 +416,7 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
     return findings
 
 
-def _module_shadows_open(tree) -> bool:
+def _module_shadows_open(tree: ast.Module) -> bool:
     """True when top-level code binds the name ``'open'`` (assign, import, def, class)."""
     import ast
     for node in ast.iter_child_nodes(tree):
@@ -678,7 +685,7 @@ def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
     _APPEND_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\.(?:append|extend)\(")
     _IEQ_RE = re.compile(r"([A-Za-z_]\w*)\s*\+=\s*\S")
 
-    def _flush_loop():
+    def _flush_loop() -> None:
         """Filter *loop_candidates* against *body_assigned* and commit
         stateless entries to *append_lines*.  If *any* candidate references
         a body-assigned name (loop-carried state), the entire loop is skipped."""
@@ -745,7 +752,7 @@ def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
     return findings
 
 
-def _assignment_match(stripped: str, compound: bool = False) -> re.Match | None:
+def _assignment_match(stripped: str, compound: bool = False) -> re.Match[Any] | None:
     """Match an assignment statement start, returning the bound name.
 
     When *compound* is False (default) matches plain ``x = ...`` and annotated
@@ -1099,7 +1106,7 @@ def detect_unused_imports(source: str) -> list[tuple[int, str, str]]:
 # Cross-file detectors (called from implement --review)
 # ---------------------------------------------------------------------------
 
-def detect_module_collisions(generated_files: list[str], existing_files: list[str] | None = None) -> list[dict]:
+def detect_module_collisions(generated_files: list[str], existing_files: list[str] | None = None) -> list[dict[str, Any]]:
     """Flag generated modules whose names overlap with existing project modules.
 
     Checks for near-duplicate filenames (e.g., ``lm_studio_provider.py``
@@ -1109,7 +1116,7 @@ def detect_module_collisions(generated_files: list[str], existing_files: list[st
     """
     import difflib
 
-    findings: list[dict] = []
+    findings: list[dict[str, Any]] = []
 
     # Collect known project files if not provided
     if existing_files is None:
@@ -1146,7 +1153,7 @@ def detect_module_collisions(generated_files: list[str], existing_files: list[st
     return findings
 
 
-def detect_attribute_errors(source_files: dict[str, str], project_root: str) -> list[dict]:
+def detect_attribute_errors(source_files: dict[str, str], project_root: str) -> list[dict[str, Any]]:
     """Check attribute access patterns against what imported classes actually export.
 
     Tracks both direct imports AND annotated variables/functions that reference
@@ -1158,7 +1165,7 @@ def detect_attribute_errors(source_files: dict[str, str], project_root: str) -> 
     import ast
     import os as _os
 
-    findings: list[dict] = []
+    findings: list[dict[str, Any]] = []
 
     for fname, source in source_files.items():
         try:
@@ -1244,12 +1251,12 @@ def detect_attribute_errors(source_files: dict[str, str], project_root: str) -> 
                                 if isinstance(sn, ast.AnnAssign):
                                     names = {n.id for n in ast.walk(sn.target) if isinstance(n, ast.Name)}
                                     class_fields.update(names)
-                            # body assignments like self.name = ...
-                            for sn in ast.walk(node):
-                                if isinstance(sn, ast.Assign):
-                                    for t in sn.targets:
-                                        if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "self":
-                                            class_fields.add(t.attr)
+                               # body assignments like self.name = ...
+                            for sn in node.body:
+                                   if isinstance(sn, ast.Assign):
+                                       for t in sn.targets:
+                                           if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "self":
+                                               class_fields.add(t.attr)
                             break
                     missing = attrs - class_fields
                     for attr in sorted(missing):
@@ -1263,13 +1270,13 @@ def detect_attribute_errors(source_files: dict[str, str], project_root: str) -> 
     return findings
 
 
-def detect_unwired_modules(generated_files: list[str], project_root: str) -> list[dict]:
+def detect_unwired_modules(generated_files: list[str], project_root: str) -> list[dict[str, Any]]:
     """Flag generated modules that are not imported by any existing code.
 
     Returns findings with "unwired_module" pattern.
     """
     import os as _os
-    findings: list[dict] = []
+    findings: list[dict[str, Any]] = []
 
     for fname in generated_files:
         if not fname.endswith(".py") or fname.endswith("__init__.py"):
@@ -1307,14 +1314,14 @@ def detect_unwired_modules(generated_files: list[str], project_root: str) -> lis
     return findings
 
 
-def detect_class_conflicts(generated_files: list[str], project_root: str) -> list[dict]:
+def detect_class_conflicts(generated_files: list[str], project_root: str) -> list[dict[str, Any]]:
     """Flag generated class/function names that collide with existing production code
     in the *same directory*.  Cross-package name reuse is intentional.
     """
     import os as _os
     import ast
 
-    findings: list[dict] = []
+    findings: list[dict[str, Any]] = []
     skip = {"__init__", "__str__", "__repr__", "__eq__", "__hash__", "__call__",
             "__enter__", "__exit__", "__getitem__", "__setitem__", "__iter__", "__len__",
             "get", "set", "run", "main", "execute", "record", "start", "stop"}

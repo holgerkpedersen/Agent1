@@ -47,11 +47,11 @@ class CorrelationIdContext:
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: Any,
-    ) -> bool:
+    ) -> None:
         if self._token is not None:
             CORRELATION_ID_CTX.reset(self._token)
         # Do not suppress exceptions
-        return False
+        return
 
 
 def copy_correlation_context() -> contextvars.Context:

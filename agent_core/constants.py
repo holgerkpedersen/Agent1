@@ -1,5 +1,6 @@
 """Shared constants for agent configuration."""
 import os
+from typing import Any, cast
 
 KNOWN_MODELS = {
     "qwen3.6-27b-mtp": {
@@ -91,14 +92,14 @@ def resolve_model(explicit: str | None = None) -> str:
         models = get_models_status()
         loaded = [m["key"] for m in models if m["loaded"]]
         if loaded:
-            return loaded[0]
+            return str(loaded[0])
     except Exception:
         print("Warning: silenced exception in constants.py:95")
 
     # Persisted choice from model.json
     persisted = load_model_json()
     if persisted.get("model") in KNOWN_MODELS:
-        return persisted["model"]
+        return str(persisted["model"])
 
     return DEFAULT_MODEL
 
@@ -107,17 +108,17 @@ def resolve_model(explicit: str | None = None) -> str:
 #  Persistence
 # ---------------------------------------------------------------------------
 
-def load_model_json() -> dict:
+def load_model_json() -> dict[str, Any]:
     """Load persisted model state from model.json."""
     import json as _json
     try:
         with open(MODEL_JSON_PATH, "r") as f:
-            return _json.load(f)
+            return cast(dict[str, Any], _json.load(f))
     except (FileNotFoundError, _json.JSONDecodeError):
         return {}
 
 
-def save_model_json(data: dict) -> None:
+def save_model_json(data: dict[str, Any]) -> None:
     """Persist model state to model.json."""
     import json as _json
     try:

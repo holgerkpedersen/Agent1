@@ -14,6 +14,11 @@ from agent_core.commands.fix_cmd import (
     _fix_implicit_optional,
     _fix_attr_defined_rename,
     _fix_missing_return_none,
+    _fix_bare_generic,
+    _fix_container_optional,
+    _fix_tuple_arity,
+    _fix_untyped_params,
+    _type_context,
     _function_returns_value,
     _enclosing_function_name,
 )
@@ -221,3 +226,192 @@ class TestEnclosingFunction:
 
     def test_none_outside_function(self):
         assert _enclosing_function_name("x = 1\n", 1) is None
+
+
+class TestFixBareGeneric:
+    def test_fills_bare_dict_in_annotation(self):
+        lines = ["def f() -> list[dict]:", "    return []"]
+        out = _fix_bare_generic(lines, 1, 'error: Missing type arguments for generic type "dict" [type-arg]')
+        assert out is not None
+        assert "def f() -> list[dict[str, Any]]:" in out
+
+    def test_leaves_parameterized_alone(self):
+        lines = ["x: dict[str, int] = {}"]
+        assert _fix_bare_generic(lines, 1, 'error: Missing type arguments for generic type "dict" [type-arg]') is None
+
+    def test_leaves_call_alone(self):
+        lines = ["d = dict()"]
+        assert _fix_bare_generic(lines, 1, 'error: Missing type arguments for generic type "dict" [type-arg]') is None
+
+    def test_match_generic(self):
+        lines = ["m: re.Match | None = None"]
+        out = _fix_bare_generic(lines, 1, 'error: Missing type arguments for generic type "Match" [type-arg]')
+        assert out is not None
+        assert "m: re.Match[Any] | None = None" in out
+
+
+class TestFixContainerOptional:
+    ERR = 'error: Item "None" of "str | None" has no attribute "strip" [union-attr]'
+
+    def test_narrows_container_element(self):
+        lines = [
+            "def apply():",
+            "    chunks: list[tuple[str, str | None]] = []",
+            "    chunks.append(('-', line[1:]))",
+            "    if any(op == '+' and not text.strip() for op, text in chunks):",
+            "        pass",
+        ]
+        out = _fix_container_optional(lines, TestFixContainerOptional.ERR)
+        assert out is not None
+        assert out[1] == "    chunks: list[tuple[str, str]] = []"
+
+    def test_ignores_plain_local_optional(self):
+        lines = [
+            "def f():",
+            "    guard_match: Match[str] | None = re.search('x', body)",
+            "    return guard_match.group(1)",
+        ]
+        assert _fix_container_optional(lines, TestFixContainerOptional.ERR) is None
+
+    def test_ignores_without_container(self):
+        lines = ["x: str | None = None"]
+        assert _fix_container_optional(lines, TestFixContainerOptional.ERR) is None
+
+    def test_ignores_docstring_prose(self):
+        """A docstring that merely *mentions* ``str | None`` next to
+        ``list[...]`` is prose, not an annotation â€” it must never be edited."""
+        lines = [
+            "def f():",
+            '    """Narrow ``X | None`` to ``X`` inside a container element.',
+            "    ``str | None`` lives in a ``list[...]``/``tuple[...]``/``dict[...]``",
+            '    element slot."""',
+            "    chunks: list[tuple[str, str | None]] = []",
+        ]
+        out = _fix_container_optional(lines, TestFixContainerOptional.ERR)
+        assert out is not None
+        assert out[4] == "    chunks: list[tuple[str, str]] = []"
+        assert out[2] == "    ``str | None`` lives in a ``list[...]``/``tuple[...]``/``dict[...]``"
+
+    def test_ignores_pure_docstring(self):
+        lines = [
+            "def f():",
+            '    """``str | None`` lives in a ``list[...]`` slot."""',
+            "    pass",
+        ]
+        assert _fix_container_optional(lines, TestFixContainerOptional.ERR) is None
+
+    def test_ignores_comment_mention(self):
+        lines = [
+            "def f():",
+            "    # note: ``str | None`` in a ``list[...]``",
+            "    chunks: list[tuple[str, str | None]] = []",
+        ]
+        out = _fix_container_optional(lines, TestFixContainerOptional.ERR)
+        assert out is not None
+        assert out[2] == "    chunks: list[tuple[str, str]] = []"
+        assert out[1] == "    # note: ``str | None`` in a ``list[...]``"
+
+
+class TestFixTupleArity:
+    ERR = "error: Too many values to unpack (2 expected, 3 provided) [misc]"
+
+    def test_truncates_annotation(self):
+        lines = [
+            "def apply():",
+            "    valid: list[tuple[int, list[tuple[str, str]], bool]] = []",
+            "    for claimed, chunks in valid:",
+            "        pass",
+        ]
+        out = _fix_tuple_arity(lines, 3, TestFixTupleArity.ERR)
+        assert out is not None
+        assert out[1] == "    valid: list[tuple[int, list[tuple[str, str]]]] = []"
+
+    def test_skips_when_arity_matches(self):
+        lines = [
+            "def apply():",
+            "    valid: list[tuple[int, str]] = []",
+            "    for a, b in valid:",
+            "        pass",
+        ]
+        assert _fix_tuple_arity(lines, 3, TestFixTupleArity.ERR) is None
+
+
+class TestFixUntypedParams:
+    def test_annotates_all_params(self):
+        src = (
+            "from typing import Optional\n"
+            "def f(a, b: int, c=3):\n"
+            "    pass\n"
+        )
+        out = _fix_untyped_params(src.split("\n"), 2)
+        assert out is not None
+        assert out[0] == "from typing import Optional, Any"
+        assert out[1] == "def f(a: Any, b: int, c: Any = 3):"
+
+    def test_adds_typing_import_when_missing(self):
+        src = "def f(x):\n    pass\n"
+        out = _fix_untyped_params(src.split("\n"), 1)
+        assert out is not None
+        assert "from typing import Any" in out
+
+    def test_skips_self(self):
+        src = "class C:\n    def m(self):\n        pass\n"
+        out = _fix_untyped_params(src.split("\n"), 2)
+        assert out is None
+
+class TestTypeContext:
+    SRC = [
+        "def _fix_untyped_params(lines: list[str], def_lineno: int) -> list[str] | None:",
+        "    idx = def_lineno - 1",
+        "    edits: list[tuple[int, int]] = []",
+        "    for a in args:",
+        "        if a.annotation is None:",
+        "            edits.append((a.end_lineno - 1, a.end_col_offset))",
+        "    return None",
+    ]
+
+    def test_operator_error_uses_error_line_identifiers(self):
+        err = 't.py:6: error: Unsupported operand types for - ("None" and "int")  [operator]'
+        ctx = _type_context(self.SRC, err, 6)
+        assert "edits: list[tuple[int, int]]" in ctx
+        assert "a in args" in ctx
+
+    def test_message_identifiers_win_over_line(self):
+        err = 't.py:5: error: Item "None" of "str | None" has no attribute "strip"  [union-attr]'
+        ctx = _type_context(self.SRC, err, 5)
+        # "a" står på fejllinjen, men beskeden nævner ingen variabel ->
+        # fejllinjen bruges, "a in args" skal med
+        assert "a in args" in ctx
+
+    def test_empty_outside_function(self):
+        src = ["x = 1", "y = 2"]
+        assert _type_context(src, "t.py:1: error: Name 'x' is not defined  [name-defined]", 1) == ""
+
+    def test_value_returning_no_annotations(self):
+        """Funktion med hverken param- eller retur-annotationer (den klasse
+        LLM'en fejler på) skal få : Any-params + -> Any."""
+        src = [
+            "def _fix_dead_assignment(wl, idx, line, basename, finding):",
+            "    if 'never used after' in finding.get('suggestion', ''):",
+            "        return f'@@ -{line},1 +{line},0 @@\\n-{wl[idx]}'",
+            "    return None",
+        ]
+        out = _fix_untyped_params(src, 1)
+        assert out is not None
+        assert "def _fix_dead_assignment(wl: Any, idx: Any, line: Any, basename: Any, finding: Any) -> Any:" in out
+        assert "from typing import Any" in out
+
+    def test_annotated_params_missing_return(self):
+        """Annoterede parametre men manglende retur-annotation -> kun -> Any."""
+        src = [
+            "def f(a: int, b: str):",
+            "    return a + len(b)",
+        ]
+        out = _fix_untyped_params(src, 1)
+        assert out is not None
+        assert "def f(a: int, b: str) -> Any:" in out
+        assert "a: Any" not in out
+
+    def test_fully_annotated_no_change(self):
+        src = ["def g(a: int, b: str) -> int:", "    return a"]
+        assert _fix_untyped_params(src, 1) is None

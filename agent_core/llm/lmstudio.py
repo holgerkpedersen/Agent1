@@ -1,5 +1,6 @@
 """LM Studio provider implementation."""
 import json
+from typing import Any, cast
 import logging
 import os
 import urllib.request
@@ -24,12 +25,12 @@ def _management_url() -> str:
     return f"{base}/api/v1"
 
 
-def _http_get_json(url: str, timeout: int = 10) -> dict | None:
+def _http_get_json(url: str, timeout: int = 10) -> dict[str, Any] | None:
     """Synchronous HTTP GET that returns parsed JSON, or None on failure."""
     try:
         resp = httpx.get(url, timeout=timeout)
         resp.raise_for_status()
-        return resp.json()
+        return cast(dict[str, Any], resp.json())
     except (httpx.ConnectError, httpx.ConnectTimeout):
         return None
     except httpx.HTTPStatusError as e:
@@ -40,7 +41,7 @@ def _http_get_json(url: str, timeout: int = 10) -> dict | None:
         return None
 
 
-def _http_post_json(url: str, body: dict, timeout: int = 30) -> dict | None:
+def _http_post_json(url: str, body: dict[str, Any], timeout: int = 30) -> dict[str, Any] | None:
     """Synchronous HTTP POST that returns parsed JSON, or None on connection failure.
 
     HTTP error responses (4xx, 5xx) are returned as-is so callers can inspect
@@ -49,7 +50,7 @@ def _http_post_json(url: str, body: dict, timeout: int = 30) -> dict | None:
     """
     try:
         resp = httpx.post(url, json=body, timeout=timeout)
-        return resp.json()
+        return cast(dict[str, Any], resp.json())
     except (httpx.ConnectError, httpx.ConnectTimeout):
         logger.warning("LM Studio POST error: could not connect to %s", url)
         return None
@@ -58,7 +59,7 @@ def _http_post_json(url: str, body: dict, timeout: int = 30) -> dict | None:
         return None
 
 
-def get_models_status() -> list[dict]:
+def get_models_status() -> list[dict[str, Any]]:
     """Return every LLM model from LM Studio with loaded status, size, and params.
 
     Each dict has keys: key, display_name, size_bytes, params_string,
@@ -89,7 +90,7 @@ def get_models_status() -> list[dict]:
     ]
 
 
-def get_vram_info() -> dict:
+def get_vram_info() -> dict[str, Any]:
     """Return VRAM usage summary.
 
     Returns: {"total_bytes": int, "loaded_count": int, "models": [dict, ...]}
@@ -171,8 +172,8 @@ def resolve_model_name(query: str) -> str | None:
     if not models:
         return None
 
-    keys = [m["key"] for m in models]
-    qlo = query.lower()
+    keys = [str(m["key"]) for m in models]
+    qlo: str = query.lower()
 
     # Exact key match
     if query in keys:
@@ -180,40 +181,40 @@ def resolve_model_name(query: str) -> str | None:
 
     # Search display names and params as well, but return the key
     by_display = {m["display_name"].lower(): m["key"] for m in models if m["display_name"]}
-    by_params = {m["params_string"].lower(): m["key"] for m in models if m["params_string"]}
+    by_params: dict[str, str] = {m["params_string"].lower(): str(m["key"]) for m in models if m["params_string"]}
 
     # Exact display name match
     if qlo in by_display:
-        return by_display[qlo]
+        return by_display.get(qlo)
 
     # Exact params match (e.g. "9b")
     if qlo in by_params:
-        return by_params[qlo]
+        return by_params.get(qlo)
 
     # Substring match on keys
     sub_keys = [k for k in keys if qlo in k.lower()]
-    if len(sub_keys) == 1:
-        return sub_keys[0]
+    if len(sub_keys) == 1 and (key := sub_keys[0]):
+        return key
 
     # Substring match on display names
     sub_display = [v for k, v in by_display.items() if qlo in k]
     if len(sub_display) == 1:
-        return sub_display[0]
+        return sub_display[0] if sub_display else None
 
     # Substring match on params
     sub_params = [v for k, v in by_params.items() if qlo in k]
     if len(sub_params) == 1:
-        return sub_params[0]
+        return sub_params[0] if sub_params else None
 
     # difflib fuzzy on keys
     matches = difflib.get_close_matches(query, keys, n=1, cutoff=0.3)
     if matches:
-        return matches[0]
+        return matches[0] if matches else None
 
     # difflib on display names
     matches = difflib.get_close_matches(query, list(by_display.keys()), n=1, cutoff=0.3)
     if matches:
-        return by_display[matches[0]]
+        return by_display.get(matches[0])
 
     return None
 
@@ -241,12 +242,12 @@ class LMStudioProvider:
     
     def _build_payload(
         self, 
-        messages: list[dict], 
-        tools: list[dict] | None = None,
+        messages: list[dict[str, Any]], 
+        tools: list[dict[str, Any]] | None = None,
         stream: bool = False,
         override_max_tokens: int | None = None,
         disable_thinking: bool = False,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Build request payload for LM Studio API.
 
         When thinking is disabled, sends several knobs that each LM Studio API
@@ -275,8 +276,8 @@ class LMStudioProvider:
         if disable_thinking or model_info.get("thinking") is False:
             payload["thinking"] = {"type": "disabled"}
             extra = model_info.get("disable_thinking_kwargs")
-            if extra:
-                payload.update(extra)
+            if isinstance(extra, dict):
+                payload.update(cast(dict[str, Any], extra))
             # Generic top-level knobs that some LM Studio API versions read.
             payload.setdefault("reasoning", "off")
             payload.setdefault("enableThinking", False)
@@ -290,11 +291,12 @@ class LMStudioProvider:
                 "chat_template_kwargs",
                 {"enable_thinking": False, "preserve_thinking": False},
             )
+            assert isinstance(ctk, dict)
             ctk.setdefault("enable_thinking", False)
             ctk.setdefault("preserve_thinking", False)
         return payload
     
-    def _make_request(self, payload: dict, timeout: int = 3600) -> dict:
+    def _make_request(self, payload: dict[str, Any], timeout: int = 3600) -> dict[str, Any]:
         """Make synchronous HTTP request to LM Studio."""
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(
@@ -307,7 +309,7 @@ class LMStudioProvider:
             method='POST'
         )
         with urllib.request.urlopen(req, timeout=timeout) as response:
-            return json.loads(response.read().decode())
+            return cast(dict[str, Any], json.loads(response.read().decode()))
     
     def _check_thinking_error(self, content: str, reasoning: str, finish_reason: str | None = None) -> str | None:
         """Check if model used all tokens thinking with no output.
@@ -340,8 +342,8 @@ class LMStudioProvider:
     
     async def chat(
         self, 
-        messages: list[dict], 
-        tools: list[dict] | None = None,
+        messages: list[dict[str, Any]], 
+        tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         disable_thinking: bool = False,
     ) -> str:
@@ -355,7 +357,7 @@ class LMStudioProvider:
             label = f"[model: {payload['model']} | profile={self._profile_name} t={self.temperature} tok={self.max_tokens}]"
         print(f"  {label}", end="", flush=True)
         
-        async def _do_request():
+        async def _do_request() -> Any:
             result = self._make_request(payload)
             
             if 'choices' in result and len(result['choices']) > 0:
@@ -379,7 +381,7 @@ class LMStudioProvider:
             
             return ""
         
-        def _on_retry(attempt, error_msg, wait_time):
+        def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
             print(f"  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s...")
         
         try:
@@ -390,11 +392,11 @@ class LMStudioProvider:
         except Exception as e:
             return f"[Error after {self.retry_policy.max_retries} retries: {e}]"
     
-    async def chat_stream(self, messages: list[dict]) -> str:
+    async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """Chat with real-time token streaming to console."""
         payload = self._build_payload(messages, stream=True)
         
-        async def _do_stream():
+        async def _do_stream() -> Any:
             data = json.dumps(payload).encode('utf-8')
             req = urllib.request.Request(
                 f"{self.lmstudio_url}/chat/completions",
@@ -445,7 +447,7 @@ class LMStudioProvider:
             
             return full_content
         
-        def _on_retry(attempt, error_msg, wait_time):
+        def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
             print(f"\n  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s...")
         
         try:

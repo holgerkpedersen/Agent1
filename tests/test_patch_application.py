@@ -696,6 +696,36 @@ class TestAnchoredPatchApplication:
         assert ok is False
         assert "Cannot anchor" in err
 
+    def test_anchored_exact_match_beats_fuzzy_near_miss(self) -> None:
+        """A verbatim copy (score 1.0) must win over a similar-but-different
+        line (e.g. ``str`` vs ``str | None``) — otherwise near-duplicate
+        declarations like split_patch_hunks/apply_patch veto valid patches."""
+        from agent_core.patch_utils import apply_anchored_patch
+        src_lines = (
+            "def splitter():\n"
+            "    chunks: list[tuple[str, str]] = []\n"          # similar, not the target
+            "    for line in body.split('\\n'):\n"
+            "        chunks.append(('-', line[1:]))\n"
+            "    return chunks\n"
+            "\n"
+            "def applier():\n"
+            "    chunks: list[tuple[str, str | None]] = []\n"    # exact target
+            "    for line in body.split('\\n'):\n"
+            "        chunks.append(('-', line[1:]))\n"
+            "    return chunks\n"
+        ).split("\n")
+        patch = (
+            "@@ -7,3 +7,3 @@\n"
+            "-    chunks: list[tuple[str, str | None]] = []\n"
+            "+    chunks: list[tuple[str, str]] = []\n"
+            "     for line in body.split('\\n'):\n"
+        )
+        ok, result = apply_anchored_patch(patch, src_lines)
+        assert ok is True, f"expected anchor at exact copy, got: {result}"
+        assert src_lines[1] == "    chunks: list[tuple[str, str]] = []"
+        assert "    chunks: list[tuple[str, str | None]] = []\n" not in result
+        assert "    chunks: list[tuple[str, str]] = []\n" in result
+
     def test_anchored_single_line_hunk_picks_nearest_copy(self) -> None:
         """A one-line hunk whose '-' line appears many times must still
         anchor at the copy nearest the claimed line — refusing it caused
@@ -828,3 +858,138 @@ class TestCommaEndingPatchApply:
         hunk = "@@ -1,1 +1,1 @@\n- x = 1\n+ x ="
         ok, err = apply_patch(hunk, lines)
         assert ok is False
+
+
+class TestMypyFixHardening:
+    """Tests for _enclosing_function_extent, _function_can_fall_off_end,
+    _classify_error [return] marker, and _apply_fix_blocks failure list."""
+
+    def test_enclosing_function_extent_finds_function(self) -> None:
+        from agent_core.commands.fix_cmd import _enclosing_function_extent
+        source = (
+            "def foo():\n"
+            "    return 1\n"
+            "\n"
+            "def bar():\n"
+            "    x = 2\n"
+            "    return x\n"
+        )
+        lines = source.split('\n')
+        # AST uses 1-indexed line numbers; def bar() is at line 4, body ends at line 6
+        assert _enclosing_function_extent(lines, 1) == (1, 2)
+        assert _enclosing_function_extent(lines, 4) == (4, 6)
+        assert _enclosing_function_extent(lines, 3) is None
+
+    def test_enclosing_function_extent_async(self) -> None:
+        from agent_core.commands.fix_cmd import _enclosing_function_extent
+        source = (
+            "class C:\n"
+            "    async def method(self):\n"
+            "        if True:\n"
+            "            return 1\n"
+        )
+        lines = source.split('\n')
+        assert _enclosing_function_extent(lines, 2) == (2, 4)
+
+    def test_function_can_fall_off_end_with_if_only(self) -> None:
+        from agent_core.commands.fix_cmd import _function_can_fall_off_end
+        source = (
+            "def foo(cmd):\n"
+            "    if cmd == 'a':\n"
+            "        return 1\n"
+            "    if cmd == 'b':\n"
+            "        return 2\n"
+        )
+        assert _function_can_fall_off_end(source, 1) is True
+
+    def test_function_can_fall_off_end_with_if_else(self) -> None:
+        from agent_core.commands.fix_cmd import _function_can_fall_off_end
+        source = (
+            "def foo(cmd):\n"
+            "    if cmd == 'a':\n"
+            "        return 1\n"
+            "    else:\n"
+            "        return 2\n"
+        )
+        assert _function_can_fall_off_end(source, 1) is False
+
+    def test_function_can_fall_off_end_with_fallback(self) -> None:
+        from agent_core.commands.fix_cmd import _function_can_fall_off_end
+        source = (
+            "def foo(cmd):\n"
+            "    if cmd == 'a':\n"
+            "        return 1\n"
+            "    return 0\n"
+        )
+        assert _function_can_fall_off_end(source, 1) is False
+
+    def test_function_can_fall_off_end_try_except(self) -> None:
+        from agent_core.commands.fix_cmd import _function_can_fall_off_end
+        source = (
+            "def foo():\n"
+            "    try:\n"
+            "        return 1\n"
+            "    except:\n"
+            "        return 2\n"
+        )
+        assert _function_can_fall_off_end(source, 1) is False
+
+    def test_function_can_fall_off_end_try_no_except(self) -> None:
+        from agent_core.commands.fix_cmd import _function_can_fall_off_end
+        source = (
+            "def foo():\n"
+            "    try:\n"
+            "        return 1\n"
+            "    except:\n"
+            "        pass\n"
+        )
+        assert _function_can_fall_off_end(source, 1) is True
+
+    def test_classify_error_return_marker(self) -> None:
+        from agent_core.commands.implement_cmd import _classify_error
+        before, after, instruction = _classify_error(
+            "agent.py:162: error: Missing return statement  [return]"
+        )
+        assert before == -1
+        assert after == -1
+        assert "ENTIRE enclosing function" in instruction
+
+    def test_apply_fix_blocks_returns_failures(self, tmp_path) -> None:
+        from agent_core.commands.fix_cmd import FixCommand
+        target = tmp_path / "test.py"
+        target.write_text("def foo():\n    pass\n", encoding="utf-8")
+        cmd = FixCommand()
+        # A patch with wrong context lines → should fail and return failures
+        response = (
+            "[PATCH: test.py]\n"
+            "@@ -1,2 +1,2 @@\n"
+            "- def foo():\n"
+            "-     pass\n"
+            "+ def foo():\n"
+            "+     return 1\n"
+        )
+        applied, failures = cmd._apply_fix_blocks(
+            response, str(tmp_path), "test.py",
+            auto_yes=True,
+            context_errors=["test.py:1: error: Missing return statement  [return]"],
+        )
+        assert isinstance(applied, int)
+        assert isinstance(failures, list)
+
+    def test_apply_fix_blocks_success_no_failures(self, tmp_path) -> None:
+        from agent_core.commands.fix_cmd import FixCommand
+        target = tmp_path / "test.py"
+        target.write_text("def foo():\n    pass\n", encoding="utf-8")
+        cmd = FixCommand()
+        response = (
+            "[PATCH: test.py]\n"
+            "@@ -1,2 +1,2 @@\n"
+            "def foo():\n"
+            "-    pass\n"
+            "+    return 1\n"
+        )
+        applied, failures = cmd._apply_fix_blocks(
+            response, str(tmp_path), "test.py", auto_yes=True,
+        )
+        assert applied == 1
+        assert failures == []

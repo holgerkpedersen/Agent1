@@ -15,6 +15,10 @@ _SIGNATURE_PATTERN: Final[str] = (
 class AnalyzeCommand:
     """Analyze a Python source file and report structural signatures."""
 
+    @staticmethod
+    def register(cls: type | None = None) -> None:
+        """Registry compatibility placeholder (registry not used here)."""
+
     @property
     def name(self) -> str:
         return "analyze"
@@ -105,7 +109,3 @@ class AnalyzeCommand:
                 signatures.append((node.name, param_names, return_annotation))
 
         return signatures
-
-
-# Registry compatibility placeholder
-AnalyzeCommand.register = lambda cls=None: None  # noqa: E731

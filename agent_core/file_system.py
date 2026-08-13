@@ -101,3 +101,29 @@ class FileSystem:
             return f"Permission denied: {path}"
         except Exception as e:
             return f"Error editing file: {e}"
+
+    async def list_files(self, path: str, pattern: str = "*") -> str:
+        """List directory entries (dirs marked with /), one per line."""
+        local_path = self.safe_path(path)
+        try:
+            entries = os.listdir(local_path)
+        except OSError as e:
+            return f"List error: {e}"
+        lines = []
+        for entry in sorted(entries)[:50]:
+            full = os.path.join(local_path, entry)
+            suffix = "/" if os.path.isdir(full) else ""
+            lines.append(f"  {entry}{suffix}")
+        return "\n".join(lines)
+
+    async def delete(self, path: str) -> str:
+        """Delete a file (or empty directory)."""
+        local_path = self.safe_path(path)
+        try:
+            if os.path.isdir(local_path):
+                os.rmdir(local_path)
+            else:
+                os.remove(local_path)
+            return f"Deleted {path}"
+        except OSError as e:
+            return f"Delete error: {e}"

@@ -1,5 +1,5 @@
 """Tool dispatcher with registry pattern for agent."""
-from typing import Callable, Awaitable
+from typing import Callable, Awaitable, Any
 
 
 class ToolDispatcher:
@@ -10,10 +10,10 @@ class ToolDispatcher:
     existing code.
     """
     
-    def __init__(self):
+    def __init__(self) -> None:
         self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
     
-    def register(self, name: str, handler: Callable[..., Awaitable[str]]):
+    def register(self, name: str, handler: Callable[..., Awaitable[str]]) -> None:
         """Register a tool handler.
         
         Args:
@@ -22,7 +22,7 @@ class ToolDispatcher:
         """
         self._handlers[name] = handler
     
-    async def execute(self, tool_name: str, args: dict) -> str:
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> str:
         """Execute a tool by name.
         
         Args:

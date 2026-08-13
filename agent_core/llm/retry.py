@@ -1,6 +1,6 @@
 """Retry policy for transient LLM API errors."""
 import asyncio
-from typing import Callable, TypeVar
+from typing import Awaitable, Callable, TypeVar, Any
 
 T = TypeVar('T')
 
@@ -27,10 +27,10 @@ class RetryPolicy:
     
     async def execute_with_retry(
         self, 
-        func: Callable[..., T], 
-        *args,
+        func: Callable[..., Awaitable[T]], 
+        *args: Any,
         on_retry: Callable[[int, str, float], None] | None = None,
-        **kwargs
+        **kwargs: Any
     ) -> T:
         """Execute function with retry on transient errors.
         
@@ -46,7 +46,7 @@ class RetryPolicy:
         Raises:
             Last exception if all retries exhausted
         """
-        last_error = None
+        last_error: BaseException | None = None
         
         for attempt in range(self.max_retries):
             try:
@@ -64,4 +64,6 @@ class RetryPolicy:
                 # Non-retryable error, raise immediately
                 raise
         
-        raise last_error
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("all retries exhausted")

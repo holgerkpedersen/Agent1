@@ -7,7 +7,7 @@ from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, persist_model_choi
 from agent_core.llm import lmstudio as _lms
 from agent_core.llm import model_profiles as _profiles
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -71,13 +71,13 @@ class ModelCommand(Command):
     #  Internal helpers
     # ------------------------------------------------------------------
 
-    def _fetch_models(self) -> tuple[list[dict], list[str]]:
+    def _fetch_models(self) -> tuple[list[dict[str, Any]], list[str]]:
         """Return (all_models, loaded_instance_ids) from the LM Studio API."""
         models = _lms.get_models_status()
         loaded_ids = [m["instance_id"] for m in models if m["loaded"] and m["instance_id"]]
         return models, loaded_ids
 
-    def _get_vram_display(self, models: list[dict]) -> str:
+    def _get_vram_display(self, models: list[dict[str, Any]]) -> str:
         """Build a one-line VRAM summary string."""
         loaded = [m for m in models if m["loaded"]]
         total_bytes = sum(m["size_bytes"] for m in loaded)
@@ -250,7 +250,7 @@ class ModelCommand(Command):
     #  Load / Unload
     # ------------------------------------------------------------------
 
-    def _unload_current_if_needed(self, models: list[dict], new_key: str) -> None:
+    def _unload_current_if_needed(self, models: list[dict[str, Any]], new_key: str) -> None:
         """Unload currently loaded models to free VRAM before loading a new one."""
         loaded = [m for m in models if m["loaded"] and m["key"] != new_key]
         for m in loaded:
@@ -438,7 +438,7 @@ class ModelCommand(Command):
     #  Helpers
     # ------------------------------------------------------------------
 
-    def _resolve_match(self, query: str, models: list[dict]) -> str | None:
+    def _resolve_match(self, query: str, models: list[dict[str, Any]]) -> str | None:
         """Fuzzy-match *query* against model keys and display names."""
         if not query:
             return None
@@ -447,28 +447,28 @@ class ModelCommand(Command):
         # Search keys and display names (return the key)
         for m in models:
             if qlo == m["key"].lower() or qlo == m["display_name"].lower():
-                return m["key"]
+                return str(m["key"])
 
         # Substring match on keys
         sub_keys = [m for m in models if qlo in m["key"].lower()]
         if len(sub_keys) == 1:
-            return sub_keys[0]["key"]
+            return str(sub_keys[0]["key"])
 
         # Substring match on display names
         sub_disp = [m for m in models if qlo in m["display_name"].lower()]
         if len(sub_disp) == 1:
-            return sub_disp[0]["key"]
+            return str(sub_disp[0]["key"])
 
         # Substring match on params (e.g. "9b", "27b")
         sub_params = [m for m in models if m["params_string"] and qlo in m["params_string"].lower()]
         if len(sub_params) == 1:
-            return sub_params[0]["key"]
+            return str(sub_params[0]["key"])
 
         # difflib on keys
         keys = [m["key"] for m in models]
         matches = difflib.get_close_matches(query, keys, n=1, cutoff=0.3)
         if matches:
-            return matches[0]
+            return str(matches[0])
 
         # difflib on display names
         names = [m["display_name"] for m in models]
@@ -476,6 +476,6 @@ class ModelCommand(Command):
         if matches:
             for m in models:
                 if m["display_name"] == matches[0]:
-                    return m["key"]
+                    return str(m["key"])
 
         return None

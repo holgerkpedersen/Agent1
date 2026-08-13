@@ -202,10 +202,15 @@ while True:
                     ┌─────────────┼─────────────┐
                     │             │             │
               registry cmd    quit/exit    natural language
-              (13 commands)               ──> agent.process_query()
+              (14 commands)               ──> agent.chat_nlp()
                                                   │
-                                          _parse_natural_language()
-                                          execute_tool()
+                                          ToolLoopRunner
+                                          (native tool_calls)
+                                                  │
+                                    NLP_TOOL_SCHEMAS ──> _execute_tool_call()
+                                    (search/read/write/edit/
+                                     run/git/diff/tests/fix/
+                                     analyze/list_files)
 ```
 
 ## 4. File Operations

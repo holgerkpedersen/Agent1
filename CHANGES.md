@@ -194,3 +194,240 @@
 
 **Change**: Modified `agent_core/commands/base.py`, `fix_cmd.py`, `optimize_cmd.py`, `implement_cmd.py`, `decide_cmd.py`, `workflow_cmd.py`, `agent.py`, `patch_utils.py`, `tests/test_flow_control.py`, `tests/test_patch_application.py`, `Architecture.md`, `model.json`
 **Reason**: Introduce flow-stop controls (Ctrl+C / "stop"/"q" wind down whole runs) and show what issues each patch targets at presentation time.  Also fix ambiguous hunk anchoring for common one-line patterns, clean up redundant casts and return-type annotations in agent.py tool handlers.
+
+## 2026-08-12 13:06 — fix --mypy
+
+**Change**: Modified `common.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 13:28 — fix --mypy
+
+**Change**: Modified `optimize_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 13:35 — fix --mypy
+
+**Change**: Modified `patterns.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 13:51 — fix --mypy
+
+**Change**: Modified `patterns.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 13:55 — fix --mypy
+
+**Change**: Modified `patterns.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 13:57 — fix --mypy
+
+**Change**: Modified `patterns.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 14:15 — fix --mypy
+
+**Change**: Modified `patterns.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 14:15 — fix --mypy
+
+**Change**: Modified `patterns.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 15:08 — fix --mypy
+
+**Change**: Modified `patterns.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 15:10 — fix --mypy
+
+**Change**: Modified `patterns.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 15:50 — fix --mypy
+
+**Change**: Modified `patterns.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 16:09 — fix --mypy
+
+**Change**: Modified `retry.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 18:41 — fix --mypy
+
+**Change**: Modified `_implement_raw.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 18:43 — fix --mypy
+
+**Change**: Modified `_implement_raw.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 18:45 — fix --mypy
+
+**Change**: Modified `cache_io.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 18:47 — fix --mypy
+
+**Change**: Modified `entities.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 18:48 — fix --mypy
+
+**Change**: Modified `_implement_raw.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 18:49 — fix --mypy
+
+**Change**: Modified `analyze_handler.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 18:51 — fix --mypy
+
+**Change**: Modified `analyze_handler.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 18:52 — fix --mypy
+
+**Change**: Modified `analyze_handler.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 18:52 — fix --mypy
+
+**Change**: Modified `context_management.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 18:54 — fix --mypy
+
+**Change**: Modified `analyze_handler.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 18:55 — fix --mypy
+
+**Change**: Modified `analyze_handler.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 18:59 — fix --mypy
+
+**Change**: Modified `optimize_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 19:57 — fix --mypy
+
+**Change**: Modified `fix_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 19:57 — fix --mypy
+
+**Change**: Modified `fix_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 19:59 — fix --mypy
+
+**Change**: Modified `lmstudio.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 19:59 — fix --mypy
+
+**Change**: Modified `lmstudio.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 20:01 — fix --mypy
+
+**Change**: Modified `constants.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 20:14 — fix --mypy
+
+**Change**: Modified `fix_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 20:15 — fix --mypy
+
+**Change**: Modified `fix_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 22:19 — fix --mypy
+
+**Change**: Modified `optimize_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 22:43 — fix --mypy
+
+**Change**: Modified `optimize_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 22:55 — fix --mypy
+
+**Change**: Modified `lmstudio.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 23:07 — fix --mypy
+
+**Change**: Modified `fix_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 23:09 — fix --mypy
+
+**Change**: Modified `decisions.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 23:27 — fix --mypy
+
+**Change**: Modified `lmstudio.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 23:36 — fix --mypy
+
+**Change**: Modified `decisions.py`
+**Reason**: mypy error fixes
+
+## 2026-08-12 23:37 — fix --mypy
+
+**Change**: Modified `fix_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-13 11:41 — fix --mypy
+
+**Change**: Modified `optimize_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-13 11:41 — fix --mypy
+
+**Change**: Modified `optimize_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-13 11:42 — fix --mypy
+
+**Change**: Modified `lmstudio.py`
+**Reason**: mypy error fixes
+
+## 2026-08-13 11:42 — fix --mypy
+
+**Change**: Modified `lmstudio.py`
+**Reason**: mypy error fixes
+
+## 2026-08-13 11:56 — fix --mypy
+
+**Change**: Modified `optimize_cmd.py`
+**Reason**: mypy error fixes
+
+## 2026-08-13 12:22 — fix --mypy
+
+**Change**: Modified `agent.py`
+**Reason**: mypy error fixes
+
+## 2026-08-13 12:24 — fix --mypy
+
+**Change**: Modified `decisions.py`
+**Reason**: mypy error fixes
+
+## 2026-08-13 13:38 — structured NLP tool calling
+
+**Change**: NLP natural-language turns now use native OpenAI-format tool calling instead of the ReAct <tool_call> text-tag loop.
+**Reason**: The text-tag approach let the model describe an action ("I will read the file...") without taking it. Native tool_calls force the model to either call a tool or answer in text, every call is shown as [tool] name(args) with its result, writes are followed by a py_compile verification summary, and tool errors are fed back for retry.
+**Files**: agent.py (chat_nlp, _execute_tool_call, _verify_file), agent_core/tool_schemas.py (new), agent_core/llm/tool_loop.py (iterate + display + last-text), agent_core/commands/analyze_cmd.py, tests/test_tool_loop_nlp.py (new)
+
