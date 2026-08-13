@@ -292,6 +292,12 @@ class Agent:
                 output = r.stdout
                 if r.stderr:
                     output += f"\n[STDERR]\n{r.stderr}"
+                    if re.search(r"is not recognized|not found", r.stderr, re.I):
+                        output += _unix_command_hint()
+                elif os.name == "nt" and r.returncode == 255 and not r.stdout:
+                    # cmd.exe silently fails whole pipelines (rc 255, no output)
+                    # when a pipe element or command does not exist.
+                    output += _unix_command_hint()
                 if len(output) > 5000:
                     output = output[:2500] + "\n... [truncated] ...\n" + output[-2500:]
                 return output if output else "(no output)"
@@ -629,6 +635,10 @@ class Agent:
                     "4. Finish with a short report: what you changed, where, and the "
                     "verification/test evidence.\n\n"
                     "RULES:\n"
+                    f"- The shell for the run tool is: {_detect_shell()}. On Windows there "
+                    "is NO tail/grep/ls/find. Never pipe with '2>&1 | tail -40' — use Python "
+                    "one-liners (python -c \"...\") or the built-in tools; run output is "
+                    "truncated to 5000 chars automatically.\n"
                     "- Prefer targeted edits over rewriting whole files.\n"
                     "- If a tool fails, read the error and try a different approach.\n"
                     "- When the request is ambiguous, make a reasonable assumption and state it, "
@@ -799,6 +809,31 @@ _DANGEROUS_SHELL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"format-volume", re.I), "Format-Volume"),
     (re.compile(r"invoke-expression", re.I), "Invoke-Expression"),
 ]
+
+
+def _unix_command_hint() -> str:
+    """Return a hint appended to run results when a Unix-ism fails on
+    Windows (tail/grep/ls/mypy-as-command are not available in cmd.exe)."""
+    return (
+        f"\nHint: this shell ({_detect_shell()}) has no Unix tools like tail/grep/ls, "
+        "and installed Python tools must be called as 'python -m <tool>'. Use Python "
+        "one-liners (python -c \"...\") or the built-in tools — run output is truncated "
+        "automatically, so pipes like '2>&1 | tail -40' are neither needed nor supported."
+    )
+
+
+def _detect_shell() -> str:
+    """Return a human-readable name for the shell the run tool will use.
+
+    The run tool executes via ``subprocess.run(..., shell=True)``, which on
+    Windows means %COMSPEC% (cmd.exe by default, PowerShell if configured).
+    """
+    if os.name != "nt":
+        return "bash (or the default POSIX shell)"
+    comspec = os.environ.get("COMSPEC", "").lower()
+    if comspec.endswith(("powershell.exe", "pwsh.exe")):
+        return "PowerShell"
+    return "cmd.exe (Windows Command Prompt)"
 
 
 def _blocked_shell_command(command: str) -> str | None:

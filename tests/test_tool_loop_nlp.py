@@ -531,6 +531,53 @@ class TestNoShellInjection:
         assert "hello-ok" in asyncio.run(run())
 
 
+class TestRunToolShellAwareness:
+    """The run tool must tell the model which shell it is on and give a hint
+    when a Unix-ism like tail/grep is not available (cmd.exe on Windows)."""
+
+    def test_detect_shell_returns_something_sensible(self):
+        import os
+        from agent import _detect_shell
+        shell = _detect_shell()
+        assert isinstance(shell, str) and shell
+        if os.name == "nt":
+            assert shell.startswith("cmd.exe") or shell.startswith("PowerShell")
+        else:
+            assert "bash" in shell
+
+    def test_unknown_command_gets_shell_hint(self):
+        import asyncio
+        from agent import Agent
+        agent = Agent(workspace=".")
+
+        async def run():
+            return await agent._execute_tool_call("run", {"command": "tail -40 x"})
+
+        result = asyncio.run(run())
+        assert "Hint" in result
+        assert "tail" in result
+
+    def test_silent_pipeline_failure_gets_shell_hint(self):
+        """cmd.exe fails whole Unix-style pipelines silently (rc 255, no
+        output) — the exact 'mypy ... 2>&1 | tail -40' case."""
+        import os
+        import asyncio
+        from agent import Agent
+        agent = Agent(workspace=".")
+
+        async def run():
+            return await agent._execute_tool_call(
+                "run", {"command": "mypy nonexistent_module 2>&1 | tail -40"},
+            )
+
+        result = asyncio.run(run())
+        if os.name == "nt":
+            assert "Hint" in result
+            assert "python -m" in result
+        else:
+            assert result  # on POSIX the pipeline simply produces output/errors
+
+
 class TestPersistentChatHistory:
     """The NLP conversation must survive REPL restarts via chat_history.json."""
 
