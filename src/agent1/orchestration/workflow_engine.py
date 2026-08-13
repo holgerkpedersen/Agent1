@@ -74,6 +74,9 @@ class WorkflowEngine:
         """Run an entire workflow sequentially and collect results.
 
         Returns a dictionary containing the overall status and per-step results.
+        A cancellation only takes effect after the currently-running step has
+        reached a terminal (COMPLETED/FAILED) status — no RUNNING step is left
+        orphaned when control returns to the caller.
         """
         if name not in self.workflows:
             raise KeyError(f"Workflow '{name}' is not registered")
@@ -83,8 +86,11 @@ class WorkflowEngine:
         step_results: List[Dict[str, Any]] = []
 
         for step in steps:
-            if self.workflow_statuses[name] == WorkflowStatus.CANCELLED:
+            if self.workflow_statuses[name] == WorkflowStatus.CANCELLED and step.status != WorkflowStatus.RUNNING:
                 break
+            # If a cancellation arrived while this step is RUNNING, let it finish
+            # its bounded execution (step.execute() enforces the timeout) so that
+            # every RUNNING task reaches a terminal status before we stop.
             result = await step.execute()
             step_results.append({
                 "name": step.name,

@@ -23,6 +23,33 @@ except ImportError:  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
+# Graph backend protocol (shared by networkx.DiGraph and _FallbackDiGraph)
+# ---------------------------------------------------------------------------
+class GraphBackend(Protocol):
+    """Common interface satisfied by both the networkx backend and fallback.
+
+    Declaring this lets mypy verify ``DependencyGraph`` against a single typed
+    surface instead of losing method typing when ``nx`` is absent, removing the
+    cluster of ``type: ignore[union-attr/index/operator]`` markers throughout the
+    class body.  Both backends implement every member below with identical semantics.
+    """
+
+    def add_node(self, node_id: str, **attrs: object) -> None: ...
+    def add_edge(self, u: str, v: str) -> None: ...
+    def has_node(self, node_id: str) -> bool: ...
+    @property
+    def nodes(self) -> Dict[str, Dict[str, object]]: ...
+    @property
+    def edges(self) -> List[Tuple[str, str]]: ...
+    def successors(self, node_id: str) -> Iterator[str]: ...
+    def predecessors(self, node_id: str) -> Iterator[str]: ...
+    def number_of_nodes(self) -> int: ...
+    def number_of_edges(self) -> int: ...
+    def in_degree(self, node_id: str) -> int: ...
+    def out_degree(self, node_id: str) -> int: ...
+
+
+# ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
 class DependencyGraphError(Exception):
@@ -112,7 +139,7 @@ class DependencyGraph:
     def __init__(self, name: Optional[str] = None) -> None:
         self.name: str = name or "default"
         if nx is not None:
-            self._graph: object = nx.DiGraph()  # type: ignore[assignment]
+            self._graph: GraphBackend = nx.DiGraph()  # type: ignore[assignment]
         else:
             self._graph = _FallbackDiGraph()
 
@@ -134,7 +161,7 @@ class DependencyGraph:
         node = TaskNode(
             node_id=node_id, task_type=task_type, priority=priority, metadata=metadata
         )
-        self._graph.add_node(node_id, _task_node=node)  # type: ignore[union-attr]
+        self._graph.add_node(node_id, _task_node=node)
         return node
 
     def add_edge(self, from_node: str, to_node: str) -> None:
@@ -148,7 +175,7 @@ class DependencyGraph:
                 raise UnknownNodeError(nid)
         if from_node == to_node:
             raise DependencyGraphError("Self-loops are not permitted")
-        self._graph.add_edge(from_node, to_node)  # type: ignore[union-attr]
+        self._graph.add_edge(from_node, to_node)
 
     def add_dependency(self, dependent: str, dependency: str) -> None:
         """Alias for :meth:`add_edge` using a more readable argument order.
@@ -159,34 +186,34 @@ class DependencyGraph:
 
     # -- queries -----------------------------------------------------------
     def has_node(self, node_id: str) -> bool:
-        return self._graph.has_node(node_id)  # type: ignore[union-attr]
+        return self._graph.has_node(node_id)
 
     def get_node(self, node_id: str) -> TaskNode:
         if not self.has_node(node_id):
             raise UnknownNodeError(node_id)
-        data = self._graph.nodes[node_id]  # type: ignore[index]
-        return data["_task_node"]  # type: ignore[index]
+        data = self._graph.nodes[node_id]
+        return data["_task_node"]
 
     def neighbors(self, node_id: str) -> List[str]:
         """Return the immediate successors (dependents) of ``node_id``."""
         if not self.has_node(node_id):
             raise UnknownNodeError(node_id)
-        return list(self._graph.successors(node_id))  # type: ignore[union-attr]
+        return list(self._graph.successors(node_id))
 
     def predecessors(self, node_id: str) -> List[str]:
         """Return the immediate dependencies (sources) of ``node_id``."""
         if not self.has_node(node_id):
             raise UnknownNodeError(node_id)
-        return list(self._graph.predecessors(node_id))  # type: ignore[union-attr]
+        return list(self._graph.predecessors(node_id))
 
     def all_nodes(self) -> List[str]:
-        return list(self._graph.nodes)  # type: ignore[union-attr]
+        return list(self._graph.nodes)
 
     def node_count(self) -> int:
-        return self._graph.number_of_nodes()  # type: ignore[union-attr]
+        return self._graph.number_of_nodes()
 
     def edge_count(self) -> int:
-        return self._graph.number_of_edges()  # type: ignore[union-attr]
+        return self._graph.number_of_edges()
 
     # -- metadata ----------------------------------------------------------
     def set_metadata(self, node_id: str, key: str, value: object) -> None:
@@ -207,10 +234,10 @@ class DependencyGraph:
         """
         if nx is not None:
             try:
-                return list(nx.topological_sort(self._graph))  # type: ignore[arg-type]
+                return list(nx.topological_sort(self._graph))
             except nx.NetworkXUnfeasible as exc:  # pragma: no cover - backend
                 raise CycleError(str(exc), cycle=self.find_cycle()) from exc
-        order, _ = self._graph.topological_sort()  # type: ignore[union-attr]
+        order, _ = self._graph.topological_sort()
         return order
 
     def find_cycle(self) -> List[str]:
@@ -220,11 +247,11 @@ class DependencyGraph:
         """
         if nx is not None:
             try:
-                edges = nx.find_cycle(self._graph, orientation="original")  # type: ignore[arg-type]
+                edges = nx.find_cycle(self._graph, orientation="original")
                 return [edges[0][0]] + [e[1] for e in edges]
             except nx.NetworkXNoCycle:
                 return []
-        cycle = self._graph.find_cycle()  # type: ignore[union-attr]
+        cycle = self._graph.find_cycle()
         return list(cycle)
 
     def transitive_closure(self, node_id: str) -> Set[str]:
@@ -233,7 +260,7 @@ class DependencyGraph:
             raise UnknownNodeError(node_id)
         if nx is not None:
             return set(nx.descendants(self._graph, node_id)) | {node_id}  # type: ignore[operator]
-        reachable = self._graph.reachable_from(node_id)  # type: ignore[union-attr]
+        reachable = self._graph.reachable_from(node_id)
         return set(reachable)
 
     def ancestors(self, node_id: str) -> Set[str]:
@@ -242,7 +269,7 @@ class DependencyGraph:
             raise UnknownNodeError(node_id)
         if nx is not None:
             return set(nx.ancestors(self._graph, node_id))  # type: ignore[operator]
-        return set(self._graph.ancestors_of(node_id))  # type: ignore[union-attr]
+        return set(self._graph.ancestors_of(node_id))  # type: ignore[operator]
 
     def descendants(self, node_id: str) -> Set[str]:
         """All nodes that depend (directly or transitively) on ``node_id``."""
@@ -268,19 +295,19 @@ class DependencyGraph:
             dag = self._graph  # type: ignore[assignment]
             longest = nx.dag_longest_path(dag, weight=_weight)  # type: ignore[arg-type]
             return list(longest)
-        return self._graph.longest_path(weight=_weight)  # type: ignore[union-attr]
+        return self._graph.longest_path(weight=_weight)
 
     def roots(self) -> List[str]:
         """Nodes with no dependencies."""
         if nx is not None:
             return [n for n in self._graph.nodes if self._graph.in_degree(n) == 0]  # type: ignore[operator]
-        return list(self._graph.roots())  # type: ignore[union-attr]
+        return list(self._graph.roots())
 
     def leaves(self) -> List[str]:
         """Nodes that nothing else depends on."""
         if nx is not None:
             return [n for n in self._graph.nodes if self._graph.out_degree(n) == 0]  # type: ignore[operator]
-        return list(self._graph.leaves())  # type: ignore[union-attr]
+        return list(self._graph.leaves())
 
     def validate_acyclic(self) -> bool:
         """Return ``True`` when the graph is acyclic, else raise."""
@@ -296,9 +323,9 @@ class DependencyGraph:
             node = self.get_node(nid)
             nodes.append(node.to_dict())
         if nx is not None:
-            edge_iter: Iterator[Tuple[str, str]] = iter(self._graph.edges)  # type: ignore[var-annotated]
+            edge_iter: Iterator[Tuple[str, str]] = iter(self._graph.edges)
         else:
-            edge_iter = iter(self._graph.edges())  # type: ignore[union-attr]
+            edge_iter = iter(self._graph.edges)
         for u, v in edge_iter:
             edges.append([u, v])
         return {"name": self.name, "nodes": nodes, "edges": edges}
@@ -535,9 +562,9 @@ def merge_graphs(*graphs: DependencyGraph) -> DependencyGraph:
                 metadata=dict(node.metadata),
             )
         if nx is not None:
-            edge_iter: Iterator[Tuple[str, str]] = iter(g._graph.edges)  # type: ignore[var-annotated]
+            edge_iter: Iterator[Tuple[str, str]] = iter(g._graph.edges)
         else:
-            edge_iter = iter(g._graph.edges())  # type: ignore[union-attr]
+            edge_iter = iter(g._graph.edges)
         for u, v in edge_iter:
             merged.add_edge(u, v)
     return merged

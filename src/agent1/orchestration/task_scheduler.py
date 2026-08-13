@@ -97,6 +97,9 @@ class TaskScheduler:
         self._handlers: List[Callable[[AgentMessage], None]] = []
         self._running: bool = False
         self._loop_task: Optional[asyncio.Task[None]] = None
+        # Track in-flight task executions so stop() can drain them before returning,
+        # guaranteeing every RUNNING task reaches a terminal (COMPLETED/FAILED) status.
+        self._inflight: Set[asyncio.Task[Any]] = set()
 
     def register_executor(self, task_id: str, executor: TaskExecutor) -> None:
         self._executors[task_id] = executor
@@ -156,6 +159,10 @@ class TaskScheduler:
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 pass
         self._loop_task = None
+        # Drain every in-flight execution so no RUNNING task is orphaned when the
+        # scheduler stops; each reaches a terminal (COMPLETED/FAILED) status.
+        if self._inflight:
+            await asyncio.gather(*self._inflight, return_exceptions=True)
 
     async def _monitor(self) -> None:
         while self._running:
@@ -175,7 +182,10 @@ class TaskScheduler:
                         due_ids.append(tid)
             for tid in due_ids:
                 agent_id = self._scheduled[tid][1]
-                asyncio.create_task(self._execute_task(tid, agent_id))
+                # Track the spawned coroutine so stop() can drain it before exiting.
+                task_coro = asyncio.create_task(self._execute_task(tid, agent_id))
+                self._inflight.add(task_coro)
+                task_coro.add_done_callback(self._inflight.discard)
                 del self._scheduled[tid]
             await asyncio.sleep(0.05)
 

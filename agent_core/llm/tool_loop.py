@@ -31,6 +31,12 @@ _STUCK_SYNTHESIS_NOTE = (
 )
 
 
+#: Console display cap for [result] lines. The model ALWAYS receives the full
+#: result; this only bounds what the human observer sees in the REPL (was 200,
+#: which made read/search output look cut off).
+_RESULT_DISPLAY_LIMIT = 1500
+
+
 class ToolLoopRunner:
     """Orchestrates tool calling loop with LLM.
 
@@ -149,7 +155,7 @@ class ToolLoopRunner:
                         )
                     prev_was_duplicate = True
                     print(f"  [tool] {tool_name}({_fmt_args(args)}) (duplicate, not re-executed)")
-                    print(f"  [result] {result_str[:200]}")
+                    print(f"  [result] {result_str[:_RESULT_DISPLAY_LIMIT]}")
                     current_messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
@@ -164,7 +170,7 @@ class ToolLoopRunner:
                     result_str = await execute_tool_fn(tool_name, args)
                 except Exception as exc:
                     result_str = f"Tool error: {exc}"
-                print(f"  [result] {result_str[:200]}")
+                print(f"  [result] {result_str[:_RESULT_DISPLAY_LIMIT]}")
                 prev_call_key = call_key
                 prev_was_duplicate = False
                 prev_result = result_str
