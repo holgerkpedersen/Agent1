@@ -1,4 +1,5 @@
-from typing import Any, Optional, Union
+from typing import Any, Optional
+
 import json
 
 def convert_value(value: str) -> Any:

@@ -380,7 +380,7 @@ class TestTypeContext:
         err = 't.py:5: error: Item "None" of "str | None" has no attribute "strip"  [union-attr]'
         ctx = _type_context(self.SRC, err, 5)
         # "a" is on the error line but the message names no variable ->
-        # fejllinjen bruges, "a in args" skal med
+        # the error line is used, so "a in args" must be included
         assert "a in args" in ctx
 
     def test_empty_outside_function(self):
@@ -388,7 +388,7 @@ class TestTypeContext:
         assert _type_context(src, "t.py:1: error: Name 'x' is not defined  [name-defined]", 1) == ""
 
     def test_value_returning_no_annotations(self):
-        """Funktion med hverken param- eller retur-annotationer (den klasse
+        """A function with neither param nor return annotations (the class
         where the LLM fails) must get : Any params + -> Any."""
         src = [
             "def _fix_dead_assignment(wl, idx, line, basename, finding):",
@@ -402,7 +402,7 @@ class TestTypeContext:
         assert "from typing import Any" in out
 
     def test_annotated_params_missing_return(self):
-        """Annoterede parametre men manglende retur-annotation -> kun -> Any."""
+        """Annotated params but a missing return annotation -> only -> Any."""
         src = [
             "def f(a: int, b: str):",
             "    return a + len(b)",

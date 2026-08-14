@@ -554,3 +554,10 @@
 **Change**: The display-mode contract says QUIET hides only intermediate tool output ('only the final answer is printed'), but chat_nlp guarded the final print with `display_mode != QUIET` — so in QUIET mode the user saw NO output at all between prompts. The final answer is now printed in every mode; [auto-continue]/[stopped] status lines are gated on non-QUIET (headless/piping cleanliness). Also: .env had AGENT_DISPLAY_MODE=quiet left behind by the qwen session's `display quiet` test — removed so the default VERBOSE applies again.
 **Files**: agent.py (final-answer print + status-line gating), .env (runtime, not committed), tests/test_tool_loop_nlp.py (QUIET test now asserts the answer is actually printed)
 
+
+## 2026-08-15 00:40 — implement --review: 'y' deletes the whole orphaned component
+
+**Change**: Answering 'y' to the review delete prompt only removed the directly flagged files, leaving sibling orphans behind (e.g. a base module whose only importers were deleted) plus empty generated packages. Now the delete set is expanded to its TRANSITIVE CLOSURE (_unwired_closure): a generated file referenced only by other to-be-deleted generated files joins the set; files referenced by surviving generated code or by real project code stay pinned. Empty packages left behind are pruned (_prune_empty_dirs: removes __init__.py markers and rmdirs empty dirs; pre-existing packages with other content are untouched).
+**Change**: Remaining Danish comments/docstrings in tests translated to English; two phantom 'fix --mypy' CHANGES entries (referencing a nonexistent agent_20260729_201150.py) removed.
+**Files**: agent_core/commands/implement_cmd.py (_unwired_closure, _prune_empty_dirs, delete block), tests/test_implement_safety.py (+4 tests), tests/test_fix_helpers.py (English), agent_core/diff/semantic_parser.py + agent_core/utils/common.py (unused-import cleanups from the workflow's fix phase, verified)
+

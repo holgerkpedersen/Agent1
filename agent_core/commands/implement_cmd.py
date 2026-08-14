@@ -514,6 +514,82 @@ def _apply_patch(patch_text: str, fpath: str, original_lines: list[str]) -> tupl
     return apply_patch(patch_text, original_lines)
 
 
+def _unwired_closure(py_new: list[str], ws: str, initial: set[str]) -> set[str]:
+    """Expand an initial delete set to its transitive closure.
+
+    A generated file that is only referenced by other to-be-deleted generated
+    files (or by nothing at all) joins the set, so answering 'y' removes the
+    whole orphaned component — no dead module survives as a leftover. Files
+    referenced by surviving generated files or by real project code are
+    pinned and never added.
+
+    Uses the same substring heuristic as ``detect_unwired_modules`` but
+    operates on the LOGICAL set (files still on disk are ignored once they
+    are in the delete set), so the cascade works before any file is removed.
+    """
+    import os as _os
+
+    def _referencers(mod_name: str, self_file: str) -> set[str]:
+        refs: set[str] = set()
+        for root, dirs, files in _os.walk(ws):
+            dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache")]
+            for f in files:
+                if not f.endswith(".py"):
+                    continue
+                fp = _os.path.join(root, f)
+                try:
+                    with open(fp, "r", encoding="utf-8") as fh:
+                        content = fh.read()
+                except OSError:
+                    continue
+                if mod_name in content:
+                    rel = _os.path.relpath(fp, ws).replace(_os.sep, "/")
+                    if rel != self_file:
+                        refs.add(rel)
+        return refs
+
+    delete_set = set(initial)
+    changed = True
+    while changed:
+        changed = False
+        for f in py_new:
+            if f in delete_set:
+                continue
+            mod_name = f.replace("/", ".").replace(".py", "")
+            refs = _referencers(mod_name, f)
+            # Pinned while any reference comes from a file that survives.
+            if refs - delete_set:
+                continue
+            delete_set.add(f)
+            changed = True
+    return delete_set
+
+
+def _prune_empty_dirs(ws: str, deleted_files: set[str]) -> None:
+    """Remove package __init__.py files and directories left empty after
+    deletion (e.g. a generated package whose only module was deleted)."""
+    dirs: set[str] = set()
+    for f in deleted_files:
+        parent = os.path.dirname(f)
+        if parent:
+            dirs.add(parent)
+    for d in sorted(dirs, key=lambda p: p.count(os.sep), reverse=True):
+        full = os.path.join(ws, d.replace("/", os.sep))
+        try:
+            entries = list(Path(full).iterdir())
+        except OSError:
+            continue
+        if entries and all(e.name == "__init__.py" for e in entries):
+            for e in entries:
+                e.unlink()
+                print(f"    Removed empty package marker: {e}")
+        try:
+            Path(full).rmdir()
+            print(f"    Removed empty directory: {full}")
+        except OSError:
+            pass
+
+
 def _run_python_snippet(ws: str, extra_paths: list[str], code_lines: list[str]) -> subprocess.CompletedProcess[str]:
     """Run a Python snippet in a temp file with workspace and extra paths in sys.path.
 
@@ -1956,17 +2032,24 @@ class ImplementCommand(Command):
                 print(f"\n  [review] {len(dangerous_files)} file(s) have issues ({', '.join(reasons)}):")
                 for df in sorted(dangerous_files):
                     print(f"    {df}")
-                choice = read_input("  Delete these files to prevent import collisions? (y/N): ").strip().lower()
+                choice = read_input("  Delete these files (and any generated files only they import)? (y/N): ").strip().lower()
                 if stop_requested():
                     return True
                 if choice == "y":
-                    for df in dangerous_files:
+                    # Delete the flagged files, then the TRANSITIVE CLOSURE:
+                    # a generated file that is only imported by other deleted
+                    # generated files becomes unwired itself and is removed
+                    # too, so no orphaned dead code survives. Empty packages
+                    # left behind are pruned as well.
+                    delete_set = _unwired_closure(py_new, ws, dangerous_files)
+                    for df in sorted(delete_set):
                         if stop_requested():
                             break
                         path = Path(ws) / df
                         if path.exists():
                             path.unlink()
                             print(f"    Deleted: {df}")
+                    _prune_empty_dirs(ws, delete_set)
 
             if unwired and not dangerous_files:
                 print(f"\n  [review] {len(unwired)} new module(s) are not imported. Use 'model profile use' to wire them.")
