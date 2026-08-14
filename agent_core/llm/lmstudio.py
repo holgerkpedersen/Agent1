@@ -239,6 +239,9 @@ class LMStudioProvider:
         self.temperature: float = 0.7
         self.max_tokens: int = 50000
         self._profile_name: str | None = None
+        #: Last printed status label — printed once per session and only
+        #: re-printed when it changes (model/profile/temperature/tokens).
+        self._last_label: str | None = None
     
     def _build_payload(
         self, 
@@ -355,7 +358,11 @@ class LMStudioProvider:
         label = f"[model: {payload['model']}]"
         if self._profile_name:
             label = f"[model: {payload['model']} | profile={self._profile_name} t={self.temperature} tok={self.max_tokens}]"
-        print(f"  {label}", end="", flush=True)
+        # Print the status label once per session; re-print only when the
+        # model/profile/temperature/tokens change mid-session.
+        if label != self._last_label:
+            print(f"  {label}", end="", flush=True)
+            self._last_label = label
         
         async def _do_request() -> Any:
             result = self._make_request(payload)

@@ -535,3 +535,9 @@
 **Change**: Test strings translated to English (project convention).
 **Files**: agent.py (continuation policy, seen_calls, [stopped] hint), agent_core/llm/tool_loop.py (seen_calls registry + note), tests/test_tool_loop_nlp.py (+2 no-continuation tests, cap test uses distinct calls)
 
+
+## 2026-08-14 15:07 — [model: ...] status label printed once per session
+
+**Change**: LMStudioProvider.chat() printed the '[model: X | profile=... t=... tok=...]' label before EVERY LLM call, so a tool loop showed it dozens of times. The label is now printed once per provider instance (session) and only re-printed when it changes mid-session (model/profile/temperature/max_tokens switch).
+**Files**: agent_core/llm/lmstudio.py (_last_label dedup), tests/test_lmstudio_label.py (new: once-per-session, profile change, model change)
+
