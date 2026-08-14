@@ -528,3 +528,10 @@
 - system prompt: 'effectively unlimited budget — do not rush or plan around a budget' and 'never request tiny read slices (limit < 1000)'
 **Files**: agent_core/llm/tool_loop.py (MUTATING_TOOLS, nudge/force notes, counter), agent.py (_MAX_CHAINED_RUNS, prompt rules), tests/test_tool_loop_nlp.py (+3 progress-guard tests, capped-chain updated)
 
+
+## 2026-08-14 14:58 — recovery from stuck state: no chaining after stuck/no_progress
+
+**Change**: A session spun endlessly: after a run ended 'stuck' (repeated identical calls), auto-continue started a fresh run whose duplicate counter was reset — the model re-ran the SAME probe in every run (observed: 5 chained runs of an identical `run(python -c ...)`). Two fixes: (1) chat_nlp now auto-continues ONLY on 'cap' (genuine budget run-out while progressing) or an 'answer' that signals unfinished work — 'stuck' and 'no_progress' are explicit no-progress verdicts and end the turn with a [stopped] hint instead; (2) ToolLoopRunner gained a cross-run `seen_calls` registry (shared across chained runs) so the duplicate note reports the TOTAL executions of a call, flagging repeated probes as known dead-ends even after a restart.
+**Change**: Test strings translated to English (project convention).
+**Files**: agent.py (continuation policy, seen_calls, [stopped] hint), agent_core/llm/tool_loop.py (seen_calls registry + note), tests/test_tool_loop_nlp.py (+2 no-continuation tests, cap test uses distinct calls)
+

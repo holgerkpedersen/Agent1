@@ -173,7 +173,7 @@ class TestToolLoopExecution:
         assert final_text == "The symbol does not exist in current code."
         notes = [m["content"] for m in messages if m["role"] == "tool"]
         assert len(notes) == 2
-        assert "NOTE: This exact call was just executed" in notes[1]
+        assert "NOTE: This exact call has now been executed" in notes[1]
 
     def test_non_consecutive_identical_call_still_executes(self):
         """A legit re-read (read -> edit -> read) must still work."""
@@ -587,7 +587,7 @@ class TestPersistentChatHistory:
         history_file = tmp_path / "chat_history.json"
         history_file.write_text(
             json.dumps([
-                {"role": "user", "content": "Analyser projektet"},
+                {"role": "user", "content": "Analyze the project"},
                 {"role": "assistant", "content": "Jeg fandt 5 ting."},
             ]),
             encoding="utf-8",
@@ -595,7 +595,7 @@ class TestPersistentChatHistory:
         with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
             agent = Agent(workspace=".")
             assert len(agent._chat_history) == 2
-            assert agent._chat_history[0]["content"] == "Analyser projektet"
+            assert agent._chat_history[0]["content"] == "Analyze the project"
 
     def test_corrupt_history_file_falls_back_to_empty(self, tmp_path):
         from unittest.mock import patch
@@ -621,7 +621,7 @@ class TestPersistentChatHistory:
             agent.llm = FakeLLM()
 
             async def run():
-                await agent.chat_nlp("Analyser projektet")
+                await agent.chat_nlp("Analyze the project")
 
             asyncio.run(run())
 
@@ -629,7 +629,7 @@ class TestPersistentChatHistory:
             saved = json.loads(history_file.read_text(encoding="utf-8"))
             roles = [m["role"] for m in saved]
             assert roles == ["system", "user", "assistant"]
-            assert saved[1]["content"] == "Analyser projektet"
+            assert saved[1]["content"] == "Analyze the project"
             assert saved[2]["content"] == "Summary of the analysis."
 
     def test_trim_keeps_system_prompt_and_tail(self, tmp_path):
@@ -668,29 +668,29 @@ class TestPersistentChatHistory:
         from agent import _project_chat_history
         messages = [
             {"role": "system", "content": "SYS"},
-            {"role": "user", "content": "gammel opgave"},
-            {"role": "assistant", "content": "gammelt svar"},
-            {"role": "user", "content": "ny opgave"},
-            {"role": "assistant", "content": "nyt svar"},
+            {"role": "user", "content": "old task"},
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "new task"},
+            {"role": "assistant", "content": "new answer"},
         ]
         projected = _project_chat_history(messages)
         roles = [m["content"] for m in projected]
-        assert roles == ["SYS", "ny opgave", "nyt svar"]
+        assert roles == ["SYS", "new task", "new answer"]
 
     def test_projection_drops_steering_notes_and_empty_placeholders(self):
         from agent import _project_chat_history
         messages = [
             {"role": "system", "content": "SYS"},
-            {"role": "user", "content": "opgave"},
+            {"role": "user", "content": "task"},
             {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
             {"role": "tool", "tool_call_id": "t1", "content": "resultat"},
             {"role": "tool", "tool_call_id": "t2", "content": "NOTE: This exact call was just executed ..."},
             {"role": "assistant", "content": ""},
-            {"role": "assistant", "content": "endeligt svar"},
+            {"role": "assistant", "content": "final answer"},
         ]
         projected = _project_chat_history(messages)
         assert [m["content"] for m in projected if m["content"]] == [
-            "SYS", "opgave", "resultat", "endeligt svar",
+            "SYS", "task", "resultat", "final answer",
         ]
         # The empty assistant WITH tool_calls stays (it pairs with the result)…
         tool_calls = [m for m in projected if m.get("tool_calls")]
@@ -854,7 +854,7 @@ class TestAutoContinue:
             agent.llm = seq_llm
 
             async def go():
-                await agent.chat_nlp("gør opgaven færdig")
+                await agent.chat_nlp("finish the task")
 
             asyncio.run(go())
             return agent, seq_llm
@@ -887,15 +887,15 @@ class TestAutoContinue:
         assert agent._chat_history[-1]["role"] == "assistant"
 
     def test_no_continuation_on_complete_answer(self, tmp_path):
-        llm = self._seq_llm(["Færdig — alt er implementeret og testet."])
+        llm = self._seq_llm(["Done — everything is implemented and tested."])
         agent, llm = self._run(tmp_path, llm)
         assert llm.calls == 1
-        assert agent._chat_history[-1]["content"].startswith("Færdig")
+        assert agent._chat_history[-1]["content"].startswith("Done")
 
     def test_continues_after_cap_with_tool_use(self, tmp_path):
         """A cap-ended run must chain a new run that uses tools again before
         answering. ToolLoopRunner is patched to max_iterations=3 so the cap
-        hits quickly."""
+        hits quickly — calls are DISTINCT so the stuck guard does not fire."""
         import asyncio
         from unittest.mock import patch
         from agent import Agent
@@ -913,14 +913,14 @@ class TestAutoContinue:
                     for m in messages
                 )
                 if continued:
-                    return "Nu er den færdig."
+                    return "All done now."
                 return json.dumps({
                     "content": "",
                     "tool_calls": [{
                         "id": "c1", "type": "function",
                         "function": {
                             "name": "search",
-                            "arguments": json.dumps({"query": "x"}),
+                            "arguments": json.dumps({"query": f"x{self.calls}"}),
                         },
                     }],
                 })
@@ -935,11 +935,257 @@ class TestAutoContinue:
                 agent.llm = llm
 
                 async def go():
-                    await agent.chat_nlp("gør opgaven færdig")
+                    await agent.chat_nlp("finish the task")
 
                 asyncio.run(go())
 
         # Run 1: 3 loop calls + 1 forced synthesis (no CONTINUE note yet).
         # Run 2: 1 call — the fake sees the continuation note and answers.
         assert llm.calls == 5
-        assert agent._chat_history[-1]["content"] == "Nu er den færdig."
+        assert agent._chat_history[-1]["content"] == "All done now."
+
+    def test_no_continuation_after_stuck(self, tmp_path):
+        """A stuck run (repeated identical calls) must NOT auto-continue — the
+        model already proved it cannot progress, so chaining would only re-enter
+        the same loop."""
+        import asyncio
+        from unittest.mock import patch
+        from agent import Agent
+        history_file = tmp_path / "chat_history.json"
+
+        class StuckLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def chat(self, messages, tools=None, **kwargs):
+                self.calls += 1
+                if self.calls <= 3:
+                    return json.dumps({
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "c1", "type": "function",
+                            "function": {
+                                "name": "search",
+                                "arguments": json.dumps({"query": "same"}),
+                            },
+                        }],
+                    })
+                return "I cannot make progress — here is my answer."
+
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            agent = Agent(workspace=".")
+            llm = StuckLLM()
+            agent.llm = llm
+
+            async def go():
+                await agent.chat_nlp("finish the task")
+
+            asyncio.run(go())
+
+        # 3 loop calls + 1 forced synthesis — and NOTHING more: no chain.
+        assert llm.calls == 4
+        assert agent._chat_history[-1]["content"] == "I cannot make progress — here is my answer."
+
+    def test_no_continuation_after_no_progress(self, tmp_path):
+        """A no_progress run must not auto-continue either."""
+        import asyncio
+        from unittest.mock import patch
+        from agent import Agent
+        from agent_core.llm.tool_loop import ToolLoopRunner
+        history_file = tmp_path / "chat_history.json"
+
+        class ExploreLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def chat(self, messages, tools=None, **kwargs):
+                self.calls += 1
+                if self.calls <= 4:
+                    return json.dumps({
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "c1", "type": "function",
+                            "function": {
+                                "name": "read",
+                                "arguments": json.dumps({"path": f"f{self.calls}.py"}),
+                            },
+                        }],
+                    })
+                return "Exploration only — here is my answer."
+
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            with patch(
+                "agent.ToolLoopRunner",
+                lambda *a, **k: ToolLoopRunner(
+                    max_iterations=50, no_mutation_limit=2, force_after_no_mutation=4,
+                ),
+            ):
+                agent = Agent(workspace=".")
+                llm = ExploreLLM()
+                agent.llm = llm
+
+                async def go():
+                    await agent.chat_nlp("finish the task")
+
+                asyncio.run(go())
+
+        # 4 distinct reads (no mutation) + 1 forced synthesis — no chain.
+        assert llm.calls == 5
+        assert agent._chat_history[-1]["content"] == "Exploration only — here is my answer."
+
+
+class TestDisplayModes:
+    """The display_mode flag shapes what is printed to stdout WITHOUT changing
+    what the model receives or the returned history/final text."""
+
+    def test_default_runner_is_verbose(self):
+        import asyncio
+        from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
+        runner = ToolLoopRunner(max_iterations=5)
+        assert runner.display_mode == DisplayMode.VERBOSE
+
+    def test_clean_prints_reason_line_before_tool_and_summarizes_result(self):
+        """CLEAN mode must emit a [reason] line before each [tool], and summarize
+        the result (N lines returned + snippet), while the model still gets the
+        full payload in the role:tool message."""
+        import asyncio
+        from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
+
+        fake = _ScriptedLLM([
+            ("read", {"path": "big.py"}),
+            "Done.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append((name, args))
+            return "line0\n" + "x" * 4000
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="clean")
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert runner.display_mode == DisplayMode.CLEAN
+        assert executed == [("read", {"path": "big.py"})]
+        # The model receives the full result verbatim.
+        tool_msg = next(m for m in messages if m["role"] == "tool")
+        assert "line0" in tool_msg["content"] and len(tool_msg["content"]) > 1500
+        assert final_text == "Done."
+
+    def test_quiet_suppresses_tool_and_result_stdout_but_keeps_model_payload(self):
+        """QUIET hides [tool]/[result] from stdout, yet the full result is still
+        fed to the model as a role:tool message and final text/history unchanged."""
+        import asyncio
+        from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
+
+        fake = _ScriptedLLM([
+            ("read", {"path": "a.py"}),
+            "Answer.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append((name, args))
+            return "full-result-content"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="quiet")
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert runner.display_mode == DisplayMode.QUIET
+        assert executed == [("read", {"path": "a.py"})]
+        tool_msg = next(m for m in messages if m["role"] == "tool")
+        assert tool_msg["content"] == "full-result-content"  # full payload intact
+        assert final_text == "Answer."
+
+    def test_clean_folds_narration_preamble_in_chat_nlp(self, tmp_path):
+        """In CLEAN mode chat_nlp folds a stray 'I will ...' narration into a
+        short preamble so the report reads as one coherent answer."""
+        import asyncio
+        from unittest.mock import patch
+        from agent_core.config import AgentDisplayMode
+
+        history_file = tmp_path / "chat_history.json"
+
+        class NarrationLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def chat(self, messages, tools=None, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    # Narration that ALSO carries a tool call — exercises both the
+                    # [reason] line (CLEAN) and the preamble folding on a real call.
+                    return json.dumps({
+                        "content": "I will read the file and then answer.",
+                        "tool_calls": [{
+                            "id": "c1", "type": "function",
+                            "function": {
+                                "name": "read",
+                                "arguments": json.dumps({"path": "a.py"}),
+                            },
+                        }],
+                    })
+                return "I will read the file and then answer."
+
+        from agent import Agent
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            agent = Agent(workspace=".")
+            agent.llm = NarrationLLM()
+            captured: list[str] = []
+
+            def _spy(*a, **k):
+                text = " ".join(str(x) for x in a) if a else ""
+                captured.append(text)
+
+            with patch("builtins.print", side_effect=_spy):
+                with patch("agent._resolve_display_mode", return_value=AgentDisplayMode.CLEAN):
+                    async def go():
+                        await agent.chat_nlp("read a.py")
+
+                    asyncio.run(go())
+        assert agent.llm.calls == 2  # tool-narration turn + final-answer turn
+        # CLEAN mode printed a [reason] line before the executed tool call.
+        reason_lines = [c for c in captured if "[reason]" in str(c)]
+        assert reason_lines, "CLEAN should emit a [reason] line per executed call"
+        # The final printed answer must be folded into a preamble (not raw narration).
+        last = next((c for c in reversed(captured) if c), "")
+        assert last.startswith("Plan: I will read")
+
+    def test_quiet_chat_nlp_only_prints_final_answer(self, tmp_path):
+        """In QUIET mode chat_nlp must not print [tool]/[result] lines; only the
+        final answer is emitted and history persists normally."""
+        import asyncio
+        from unittest.mock import patch
+        from agent_core.config import AgentDisplayMode
+
+        history_file = tmp_path / "chat_history.json"
+
+        class QuietLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def chat(self, messages, tools=None, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return json.dumps({
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "c1", "type": "function",
+                            "function": {
+                                "name": "read",
+                                "arguments": json.dumps({"path": "a.py"}),
+                            },
+                        }],
+                    })
+                return "Final quiet answer."
+
+        from agent import Agent
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            agent = Agent(workspace=".")
+            agent.llm = QuietLLM()
+            with patch("agent._resolve_display_mode", return_value=AgentDisplayMode.QUIET):
+                async def go():
+                    await agent.chat_nlp("read a.py")
+
+                asyncio.run(go())
+        assert agent._chat_history[-1]["role"] == "assistant"
+        assert agent._chat_history[-1]["content"] == "Final quiet answer."

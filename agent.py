@@ -12,6 +12,7 @@ import sys
 from collections import defaultdict
 from agent_core import to_windows_path
 from agent_core.constants import resolve_model, CHAT_HISTORY_JSON_PATH
+from agent_core.config import load_agent_settings, AgentDisplayMode
 from agent_core.llm.lmstudio import LMStudioProvider
 from agent_core.file_system import FileSystem
 from agent_core.file_searcher import FileSearcher
@@ -36,6 +37,7 @@ from agent_core.commands.workflow_cmd import WorkflowCommand
 from agent_core.commands.optimize_cmd import OptimizeCommand
 from agent_core.commands.paste_cmd import PasteCommand
 from agent_core.commands.perf_cmd import PerfCommand, PerfTracker
+from agent_core.commands.display_cmd import DisplayCommand
 from agent_core.commands.decide_cmd import DecideCommand
 from pathlib import Path
 import subprocess
@@ -694,26 +696,44 @@ class Agent:
         final_text = ""
         final_messages = self._chat_history
         continuations = 0
+        display_mode = _resolve_display_mode()
+        #: Cross-run call registry: how many times each exact call has been
+        #: executed across ALL chained runs of this turn, so repeated probes
+        #: cannot hide behind a fresh run's duplicate counter.
+        seen_calls: dict[tuple[str, str], int] = {}
         while True:
-            loop = ToolLoopRunner(max_iterations=150)
+            loop = ToolLoopRunner(max_iterations=150, display_mode=display_mode)
             final_text, final_messages = await loop.run(
                 messages=final_messages,
                 llm_chat_fn=llm_chat_fn,
                 execute_tool_fn=self._execute_tool_call,
                 tools=list(NLP_TOOL_SCHEMAS),
+                seen_calls=seen_calls,
             )
             reason = loop.termination_reason
-            needs_more = reason != "answer" or _looks_incomplete(final_text)
+            # Only "cap" (genuine budget run-out while progressing) and an
+            # "answer" that signals unfinished work justify chaining. "stuck"
+            # and "no_progress" are explicit verdicts that the model is NOT
+            # making progress — continuing would only re-enter the same loop.
+            needs_more = (
+                reason == "cap" or (reason == "answer" and _looks_incomplete(final_text))
+            )
             if needs_more and continuations < _MAX_CHAINED_RUNS:
                 continuations += 1
                 print(
                     f"\n  [auto-continue] Run {continuations}: "
-                    f"{'iteration budget exhausted' if reason == 'cap' else 'stuck on repeated calls' if reason == 'stuck' else 'no changes made for many calls' if reason == 'no_progress' else 'answer signals unfinished work'} — continuing automatically.\n"
+                    f"{'iteration budget exhausted' if reason == 'cap' else 'answer signals unfinished work'} — continuing automatically.\n"
                 )
                 final_messages = list(final_messages) + [
                     {"role": "system", "content": _CONTINUE_NOTE},
                 ]
                 continue
+            if reason in ("stuck", "no_progress"):
+                print(
+                    f"\n  [stopped] The model stopped making progress "
+                    f"({'stuck on repeated calls' if reason == 'stuck' else 'too many calls without changing anything'}). "
+                    "The answer above is the best it produced — rephrase or ask something more specific to continue.\n"
+                )
             break
 
         # The continuation note is only meant for the run it precedes — strip
@@ -731,10 +751,24 @@ class Agent:
 
         clean = re.sub(r'</?tool_call>', '', final_text)
         clean = re.sub(r'</?function_call>', '', clean)
-        if clean.strip():
-            print(clean)
-        else:
-            print("  (The assistant did not produce a response. Try rephrasing.)")
+
+        if display_mode == AgentDisplayMode.CLEAN:
+            # Fold any stray "I will ..." narration into a short preamble so the
+            # report reads as one coherent answer (what changed / where / evidence).
+            _NARRATION_PREFIX = re.compile(
+                r"^\s*(i\s+(will|'ll|going\sto|am\ngoing)|let\s+me)\b", re.I,
+            )
+            if _NARRATION_PREFIX.match(clean):
+                clean = "Plan: " + clean.strip()
+
+        # VERBOSE and CLEAN both print the final answer. QUIET suppresses only
+        # intermediate tool output (already hidden in ToolLoopRunner) — the
+        # end-user still gets the final report.
+        if display_mode != AgentDisplayMode.QUIET:
+            if clean.strip():
+                print(clean)
+            else:
+                print("  (The assistant did not produce a response. Try rephrasing.)")
         self._nlp_workspace = None
 
     def check_stale_files(self) -> list[str]:
@@ -848,6 +882,21 @@ def _looks_incomplete(text: str) -> bool:
     """Heuristic: did the model's final answer signal unfinished work?"""
     low = text.lower()
     return any(marker in low for marker in _INCOMPLETE_MARKERS)
+
+
+def _resolve_display_mode() -> AgentDisplayMode:
+    """Resolve the agent's display mode from settings/env.
+
+    Falls back to VERBOSE (current behaviour) when no value is configured, so
+    existing REPL output and tests are unchanged by default."""
+    try:
+        return load_agent_settings().display_mode
+    except Exception:
+        raw = os.environ.get("AGENT_DISPLAY_MODE", "").strip().lower() or "verbose"
+        try:
+            return AgentDisplayMode(raw)
+        except ValueError:
+            return AgentDisplayMode.VERBOSE
 
 #: Destructive shell patterns the ``run`` tool refuses (word-boundary,
 #: case-insensitive) — the command injection surface of the NLP loop.
@@ -1000,6 +1049,7 @@ async def run_interactive() -> None:
     print("  optimize <file|dir> [--apply] [--yes] [--stdin] — Find and apply optimizations")
     print("  perf [--detail|--reset|--html] — Command performance dashboard")
     print("  clear              - Clear agent memory")
+    print("  display [verbose|clean|quiet] - Show/set NLP output verbosity")
     print("  paste [--workspace <path>] - Paste multiline text for AI analysis (Ctrl+Z / Ctrl+D to finish)")
     print("  quit               - Exit")
     print("=" * 50)
@@ -1022,6 +1072,7 @@ async def run_interactive() -> None:
     registry.register(OptimizeCommand())
     registry.register(PerfCommand())
     registry.register(PasteCommand())
+    registry.register(DisplayCommand())
     registry.register(DecideCommand())
 
     while True:
@@ -1045,7 +1096,7 @@ async def run_interactive() -> None:
             command = parts[0].lower()
 
             # Try commands from registry
-            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste", "decide"]:
+            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste", "display", "decide"]:
                 import time as _time
                 _start = _time.perf_counter()
                 clear_stop()

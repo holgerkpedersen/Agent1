@@ -379,7 +379,7 @@ class TestTypeContext:
     def test_message_identifiers_win_over_line(self):
         err = 't.py:5: error: Item "None" of "str | None" has no attribute "strip"  [union-attr]'
         ctx = _type_context(self.SRC, err, 5)
-        # "a" står på fejllinjen, men beskeden nævner ingen variabel ->
+        # "a" is on the error line but the message names no variable ->
         # fejllinjen bruges, "a in args" skal med
         assert "a in args" in ctx
 
@@ -389,7 +389,7 @@ class TestTypeContext:
 
     def test_value_returning_no_annotations(self):
         """Funktion med hverken param- eller retur-annotationer (den klasse
-        LLM'en fejler på) skal få : Any-params + -> Any."""
+        where the LLM fails) must get : Any params + -> Any."""
         src = [
             "def _fix_dead_assignment(wl, idx, line, basename, finding):",
             "    if 'never used after' in finding.get('suggestion', ''):",

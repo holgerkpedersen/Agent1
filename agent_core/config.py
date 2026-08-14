@@ -1,12 +1,30 @@
+import enum
+import json as _json
 import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from .exceptions import ConfigurationError
 
 logger = logging.getLogger(__name__)
+
+
+class AgentDisplayMode(str, enum.Enum):
+    """How much tool-call activity is printed to the end user during NLP turns.
+
+    VERBOSE (default) — current behaviour: every call prints ``[tool] name(args)``
+    and its full (truncated) result ``[result] ...``.
+    CLEAN   — a short human-readable reason precedes each call, results are
+    summarized for display only; the model always receives the full payload.
+    QUIET   — tool calls/results are hidden from stdout; only the final answer
+    is printed (useful when piping output or running headless).
+    """
+
+    VERBOSE = "verbose"
+    CLEAN = "clean"
+    QUIET = "quiet"
 
 
 @dataclass(frozen=True)
@@ -18,6 +36,9 @@ class AgentSettings:
     max_concurrent_tools: int = 5
     search_command_timeout_sec: float = 30.0
     compilation_check_timeout_sec: float = 30.0
+    display_mode: AgentDisplayMode = field(
+        default_factory=lambda: _parse_display_mode(os.environ.get("AGENT_DISPLAY_MODE"))
+    )
 
 
 def _validate_settings(settings: AgentSettings) -> None:
@@ -94,6 +115,19 @@ def _parse_float(value: str | None, default: float) -> float:
         return default
 
 
+def _parse_display_mode(value: str | None, default: AgentDisplayMode = AgentDisplayMode.VERBOSE) -> AgentDisplayMode:
+    """Safely parse the display mode from a string."""
+    if value is None:
+        return default
+    try:
+        return AgentDisplayMode(value.strip().lower())
+    except ValueError:
+        logger.warning(
+            "Invalid AGENT_DISPLAY_MODE '%s', using default %s", value, default.value
+        )
+        return default
+
+
 def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
     """Load agent settings from environment variables with type-safe defaults.
 
@@ -103,6 +137,7 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         AGENT_MAX_CONCURRENT_TOOLS -> max_concurrent_tools (int)
         AGENT_SEARCH_COMMAND_TIMEOUT_SEC -> search_command_timeout_sec (float)
         AGENT_COMPILATION_CHECK_TIMEOUT_SEC -> compilation_check_timeout_sec (float)
+        AGENT_DISPLAY_MODE -> display_mode (AgentDisplayMode: verbose|clean|quiet, default verbose)
     """
     env_vars = _load_env_file(env_path)
 
@@ -113,6 +148,9 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         if key in os.environ:
             merged[key] = os.environ[key]
 
+    # AGENT_DISPLAY_MODE may also live in the .env file (merged already covers it).
+    display_mode_raw = os.environ.get("AGENT_DISPLAY_MODE") or env_vars.get("AGENT_DISPLAY_MODE")
+
     workspace_root_str = merged.get("AGENT_WORKSPACE_ROOT")
     workspace_root = Path(workspace_root_str) if workspace_root_str else Path.cwd()
 
@@ -122,6 +160,7 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         max_concurrent_tools=_parse_int(merged.get("AGENT_MAX_CONCURRENT_TOOLS"), 5),
         search_command_timeout_sec=_parse_float(merged.get("AGENT_SEARCH_COMMAND_TIMEOUT_SEC"), 30.0),
         compilation_check_timeout_sec=_parse_float(merged.get("AGENT_COMPILATION_CHECK_TIMEOUT_SEC"), 30.0),
+        display_mode=_parse_display_mode(display_mode_raw, AgentDisplayMode.VERBOSE),
     )
 
     _validate_settings(settings)

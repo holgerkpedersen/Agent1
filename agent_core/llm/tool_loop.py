@@ -1,6 +1,13 @@
 """Tool calling loop orchestrator for LLM conversations."""
+import enum
 import json
 from typing import Callable, Awaitable, Any
+
+#: How much tool-call activity is printed to the end user during NLP turns.
+class DisplayMode(str, enum.Enum):
+    VERBOSE = "verbose"   # every call + full (truncated) result shown
+    CLEAN = "clean"      # reason line per call; results summarized for display only
+    QUIET = "quiet"      # tool calls/results hidden; only final answer printed
 
 #: Injected into the history when only a few iterations remain, so the model
 #: starts wrapping up instead of discovering the cap when it is too late.
@@ -65,6 +72,7 @@ class ToolLoopRunner:
         deadline_window: int = 2,
         no_mutation_limit: int = 30,
         force_after_no_mutation: int = 50,
+        display_mode: DisplayMode | str | None = None,
     ):
         self.max_iterations = max_iterations
         #: Number of final iterations where the model is warned (and
@@ -74,6 +82,18 @@ class ToolLoopRunner:
         #: a steering note is injected; the count resets on write/edit/fix.
         self.no_mutation_limit = max(1, no_mutation_limit)
         self.force_after_no_mutation = max(self.no_mutation_limit + 1, force_after_no_mutation)
+        #: Console display mode for this run. Defaults to VERBOSE so existing
+        #: behaviour (and tests that assert on history/final_text, not stdout)
+        #: is unchanged when the caller does not specify a mode.
+        if isinstance(display_mode, DisplayMode):
+            self.display_mode = display_mode
+        elif isinstance(display_mode, str):
+            try:
+                self.display_mode = DisplayMode(display_mode.lower())
+            except ValueError:
+                self.display_mode = DisplayMode.VERBOSE
+        else:
+            self.display_mode = DisplayMode.VERBOSE
         #: How this run ended: "answer" (model answered in text), "cap"
         #: (iteration cap hit), "stuck" (repeated identical calls), or
         #: "no_progress" (too many calls without modifying any file).
@@ -85,6 +105,7 @@ class ToolLoopRunner:
         llm_chat_fn: Callable[[list[dict[str, Any]], list[dict[str, Any]]], Awaitable[tuple[str, list[dict[str, Any]]]]],
         execute_tool_fn: Callable[[str, dict[str, Any]], Awaitable[str]],
         tools: list[dict[str, Any]] | None = None,
+        seen_calls: dict[tuple[str, str], int] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run conversation with automatic tool calling loop.
 
@@ -94,6 +115,9 @@ class ToolLoopRunner:
                         (response_text, updated_messages_with_reasoning)
             execute_tool_fn: Async function that executes a tool and returns result
             tools: Optional tool schemas (uses default if None)
+            seen_calls: Optional shared registry (call_key -> executions) across
+                        chained runs, so a repeated probe cannot hide behind a
+                        fresh run's duplicate counter.
 
         Returns:
             Tuple of (final_text, updated_messages)
@@ -165,6 +189,10 @@ class ToolLoopRunner:
             if not tool_calls:
                 break
 
+            #: The model's own narration preceding these tool calls — used as the
+            #: human-readable reason in CLEAN mode so bare calls are explained.
+            prev_text = str(last_msg.get("content") or "")
+
             # Execute each tool call
             for tc in tool_calls:
                 tc_id = tc.get("id", "")
@@ -182,6 +210,12 @@ class ToolLoopRunner:
                     json.dumps(args, sort_keys=True, default=str),
                 )
                 if call_key == prev_call_key:
+                    #: Total executions of this exact call across ALL chained
+                    #: runs (shared registry), so a repeated probe is flagged as
+                    #: a known dead-end even after an auto-continue restart.
+                    total_runs = (
+                        seen_calls.get(call_key, 1) if seen_calls is not None else 1
+                    )
                     if prev_was_duplicate:
                         # Third consecutive identical call: the model is stuck.
                         # Stop the loop right here and force a text answer.
@@ -193,14 +227,19 @@ class ToolLoopRunner:
                         stuck = True
                     else:
                         result_str = (
-                            f"NOTE: This exact call was just executed (result: "
-                            f"{prev_result[:160]}). It is not re-executed — unless the file "
-                            "changed, the result is identical. Take a different action or "
-                            "answer in text."
+                            f"NOTE: This exact call has now been executed {total_runs} "
+                            f"time(s) in this conversation (result: {prev_result[:160]}). "
+                            "It is not re-executed — unless the file changed, the result is "
+                            "identical. Take a different action or answer in text."
                         )
                     prev_was_duplicate = True
-                    print(f"  [tool] {tool_name}({_fmt_args(args)}) (duplicate, not re-executed)")
-                    print(f"  [result] {result_str[:_RESULT_DISPLAY_LIMIT]}")
+                    if self.display_mode != DisplayMode.QUIET:
+                        print(f"  [tool] {tool_name}({_fmt_args(args)}) (duplicate, not re-executed)")
+                        if self.display_mode == DisplayMode.CLEAN:
+                            print(f"  [reason] {_derive_reason(tool_name, args, prev_text)}")
+                            print(f"  [result] {_summarize_result(tool_name, result_str)[:_RESULT_DISPLAY_LIMIT]}")
+                        else:
+                            print(f"  [result] {result_str[:_RESULT_DISPLAY_LIMIT]}")
                     current_messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
@@ -210,15 +249,23 @@ class ToolLoopRunner:
                         break
                     continue
 
-                print(f"  [tool] {tool_name}({_fmt_args(args)})")
+                if self.display_mode != DisplayMode.QUIET:
+                    print(f"  [tool] {tool_name}({_fmt_args(args)})")
                 try:
                     result_str = await execute_tool_fn(tool_name, args)
                 except Exception as exc:
                     result_str = f"Tool error: {exc}"
-                print(f"  [result] {result_str[:_RESULT_DISPLAY_LIMIT]}")
+                if self.display_mode != DisplayMode.QUIET:
+                    if self.display_mode == DisplayMode.CLEAN:
+                        print(f"  [reason] {_derive_reason(tool_name, args, prev_text)}")
+                        print(f"  [result] {_summarize_result(tool_name, result_str)[:_RESULT_DISPLAY_LIMIT]}")
+                    else:
+                        print(f"  [result] {result_str[:_RESULT_DISPLAY_LIMIT]}")
                 prev_call_key = call_key
                 prev_was_duplicate = False
                 prev_result = result_str
+                if seen_calls is not None:
+                    seen_calls[call_key] = seen_calls.get(call_key, 0) + 1
                 calls_since_mutation = (
                     0 if tool_name in MUTATING_TOOLS else calls_since_mutation + 1
                 )
@@ -282,3 +329,68 @@ def _fmt_args(args: dict[str, Any]) -> str:
             text = text[:57] + "..."
         pieces.append(f"{key}={text}")
     return ", ".join(pieces)
+
+
+def _derive_reason(tool_name: str, args: dict[str, Any], prior_text: str | None) -> str:
+    """Build a short human-readable reason for why a tool call was made.
+
+    Uses the model's own reasoning when it supplied one (via ``assistant``
+    message content), otherwise falls back to a small heuristic keyed on the
+    tool name and its arguments so bare calls are never unexplained."""
+    if prior_text:
+        first = " ".join(prior_text.split())[:140]
+        return f"{tool_name}({_fmt_args(args)}) — {first}"
+    # Heuristic fallback keyed on the tool name + args.
+    arg_summary = _fmt_args(args) or ""
+    if tool_name == "read":
+        path = str(args.get("path", ""))[:60]
+        return f"read({arg_summary}) — to inspect {path}"
+    if tool_name == "search":
+        query = str(args.get("query", ""))[:60]
+        return f"search({arg_summary}) — to locate '{query}' in the workspace"
+    if tool_name == "list_files":
+        path = str(args.get("path", "."))[:60]
+        return f"list_files({arg_summary}) — to enumerate {path}"
+    if tool_name == "write":
+        path = str(args.get("path", ""))[:60]
+        return f"write({arg_summary}) — to create/update {path}"
+    if tool_name == "edit":
+        path = str(args.get("path", ""))[:60]
+        return f"edit({arg_summary}) — to patch {path}"
+    if tool_name in ("run", "git", "tests"):
+        target = arg_summary or "(command)"
+        return f"{tool_name}({arg_summary}) — to execute/verify {target}"
+    if tool_name == "diff":
+        file1 = str(args.get("file1", ""))[:60]
+        return f"diff({arg_summary}) — to compare changes in {file1}"
+    if tool_name == "analyze":
+        target = arg_summary or "(code)"
+        return f"analyze({arg_summary}) — to review {target}"
+    return f"{tool_name}({arg_summary}) — model action"
+
+
+def _summarize_result(tool_name: str, result_str: str) -> str:
+    """Display-only summary of a tool result (the model always receives the
+    full payload; this only shapes what the human sees in CLEAN mode)."""
+    if not result_str:
+        return "(no output)"
+    lines = result_str.splitlines()
+    n = len(lines)
+    head = "\n".join(lines[:6])
+    tail = "\n".join(lines[-3:]) if n > 9 else ""
+
+    # Verification line from write/edit/fix is end-user evidence — keep it.
+    verify_match = None
+    for ln in lines:
+        if ln.startswith("[verify] py_compile"):
+            verify_match = ln.strip()
+            break
+
+    summary = f"{n} line(s) returned"
+    if head:
+        summary += f":\n{head}"
+    if tail and n > 9:
+        summary += f"\n... [truncated — see full result in model context] ...\n{tail}"
+    if verify_match:
+        summary = f"{verify_match}\n{summary}"
+    return summary
