@@ -724,15 +724,16 @@ class Agent:
             )
             if needs_more and continuations < _MAX_CHAINED_RUNS:
                 continuations += 1
-                print(
-                    magenta(f"\n  [auto-continue] Run {continuations}: ")
-                    + yellow(f"{'iteration budget exhausted' if reason == 'cap' else 'answer signals unfinished work'} — continuing automatically.\n")
-                )
+                if display_mode != AgentDisplayMode.QUIET:
+                    print(
+                        magenta(f"\n  [auto-continue] Run {continuations}: ")
+                        + yellow(f"{'iteration budget exhausted' if reason == 'cap' else 'answer signals unfinished work'} — continuing automatically.\n")
+                    )
                 final_messages = list(final_messages) + [
                     {"role": "system", "content": _CONTINUE_NOTE},
                 ]
                 continue
-            if reason in ("stuck", "no_progress"):
+            if reason in ("stuck", "no_progress") and display_mode != AgentDisplayMode.QUIET:
                 print(
                     magenta("\n  [stopped] The model stopped making progress ")
                     + yellow(f"{'stuck on repeated calls' if reason == 'stuck' else 'too many calls without changing anything'}). ")
@@ -765,14 +766,13 @@ class Agent:
             if _NARRATION_PREFIX.match(clean):
                 clean = "Plan: " + clean.strip()
 
-        # VERBOSE and CLEAN both print the final answer. QUIET suppresses only
-        # intermediate tool output (already hidden in ToolLoopRunner) — the
-        # end-user still gets the final report.
-        if display_mode != AgentDisplayMode.QUIET:
-            if clean.strip():
-                print(green(clean))
-            else:
-                print(yellow("  (The assistant did not produce a response. Try rephrasing.)"))
+        # The final answer is ALWAYS printed — in every display mode, including
+        # QUIET (which only hides intermediate tool output, per the display-mode
+        # contract: "only the final answer is printed").
+        if clean.strip():
+            print(green(clean))
+        else:
+            print(yellow("  (The assistant did not produce a response. Try rephrasing.)"))
         self._nlp_workspace = None
 
     def check_stale_files(self) -> list[str]:

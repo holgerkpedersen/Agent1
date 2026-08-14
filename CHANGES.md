@@ -548,3 +548,9 @@
 **Change (cleanup)**: nlp_parser.py was left corrupted by the session (duplicate import re + orphaned IntentType docstring -> IndentationError, breaking the whole agent) — restored. Paste command-list typo fixed ('[--workspace <path>]'). Unused imports removed (config.py Any/_json, agent.py red/colorize_result). tests tool timeout raised 120 -> 300s (the full suite takes ~2.5min; 120s made the agent split runs). tool_loop color fallback simplified. 10 probe temp files at repo root deleted.
 **Files**: agent_core/colors.py (new), tests/test_sanitizer.py (new), agent.py, agent_core/llm/tool_loop.py, agent_core/security/sanitizer.py, agent_core/nlp_parser.py, agent_core/config.py
 
+
+## 2026-08-14 22:39 — fix: QUIET display mode no longer swallows the final answer
+
+**Change**: The display-mode contract says QUIET hides only intermediate tool output ('only the final answer is printed'), but chat_nlp guarded the final print with `display_mode != QUIET` — so in QUIET mode the user saw NO output at all between prompts. The final answer is now printed in every mode; [auto-continue]/[stopped] status lines are gated on non-QUIET (headless/piping cleanliness). Also: .env had AGENT_DISPLAY_MODE=quiet left behind by the qwen session's `display quiet` test — removed so the default VERBOSE applies again.
+**Files**: agent.py (final-answer print + status-line gating), .env (runtime, not committed), tests/test_tool_loop_nlp.py (QUIET test now asserts the answer is actually printed)
+

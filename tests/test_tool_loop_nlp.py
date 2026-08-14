@@ -1150,7 +1150,7 @@ class TestDisplayModes:
         last = next((c for c in reversed(captured) if c), "")
         assert last.startswith("Plan: I will read")
 
-    def test_quiet_chat_nlp_only_prints_final_answer(self, tmp_path):
+    def test_quiet_chat_nlp_only_prints_final_answer(self, tmp_path, capsys):
         """In QUIET mode chat_nlp must not print [tool]/[result] lines; only the
         final answer is emitted and history persists normally."""
         import asyncio
@@ -1189,3 +1189,7 @@ class TestDisplayModes:
                 asyncio.run(go())
         assert agent._chat_history[-1]["role"] == "assistant"
         assert agent._chat_history[-1]["content"] == "Final quiet answer."
+        # QUIET hides tool activity but MUST still print the final answer.
+        out = capsys.readouterr().out
+        assert "Final quiet answer." in out
+        assert "[tool]" not in out
