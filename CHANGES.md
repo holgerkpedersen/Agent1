@@ -512,3 +512,9 @@
 **Note**: the model was also reading files in tiny 90-char windows (limit=90), compounding the effect — the read schema's default remains 5000 chars.
 **Files**: agent_core/llm/tool_loop.py
 
+
+## 2026-08-14 11:17 — auto-continue: the agent no longer stops on tool budget
+
+**Change**: The tool loop used to end when its iteration budget ran out (or the model repeated calls), forcing the end-user to say 'continue' over and over — the model cannot predict its own budget. chat_nlp now chains runs automatically: if a run ends on the iteration cap, on stuck repetition, or with an answer that signals unfinished work (marker heuristics like 'budget exhausted', 'would need', 'remaining'), a fresh run starts with a fresh budget and a 'CONTINUE THE TASK' note (max 3 chains as an infinite-loop guard). ToolLoopRunner now exposes termination_reason ('answer'/'cap'/'stuck'); iteration budget raised 20 -> 40. Continuation notes are stripped before persisting history so a finished task is never resumed by a future session.
+**Files**: agent.py (chat_nlp chaining, _CONTINUE_NOTE, _looks_incomplete), agent_core/llm/tool_loop.py (termination_reason), tests/test_tool_loop_nlp.py (+4 auto-continue tests)
+

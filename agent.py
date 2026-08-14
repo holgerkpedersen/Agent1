@@ -618,6 +618,11 @@ class Agent:
         taking it.  Every tool call is executed, its result is fed back, and the
         loop continues until the model answers in text or the iteration cap is
         reached.
+
+        The loop auto-continues: if a run ends on the iteration cap, on repeated
+        calls, or with an answer that signals unfinished work, a fresh run starts
+        automatically (up to ``_MAX_CHAINED_RUNS``) so the model does not stop
+        mid-task and wait for the end-user.
         """
         if not self._chat_history:
             self._chat_history.append({
@@ -679,13 +684,38 @@ class Agent:
             updated.append({"role": "assistant", "content": raw})
             return raw, updated
 
-        loop = ToolLoopRunner(max_iterations=20)
-        final_text, final_messages = await loop.run(
-            messages=self._chat_history,
-            llm_chat_fn=llm_chat_fn,
-            execute_tool_fn=self._execute_tool_call,
-            tools=list(NLP_TOOL_SCHEMAS),
-        )
+        final_text = ""
+        final_messages = self._chat_history
+        continuations = 0
+        while True:
+            loop = ToolLoopRunner(max_iterations=40)
+            final_text, final_messages = await loop.run(
+                messages=final_messages,
+                llm_chat_fn=llm_chat_fn,
+                execute_tool_fn=self._execute_tool_call,
+                tools=list(NLP_TOOL_SCHEMAS),
+            )
+            reason = loop.termination_reason
+            needs_more = reason != "answer" or _looks_incomplete(final_text)
+            if needs_more and continuations < _MAX_CHAINED_RUNS:
+                continuations += 1
+                print(
+                    f"\n  [auto-continue] Run {continuations}: "
+                    f"{'iteration budget exhausted' if reason == 'cap' else 'stuck on repeated calls' if reason == 'stuck' else 'answer signals unfinished work'} — continuing automatically.\n"
+                )
+                final_messages = list(final_messages) + [
+                    {"role": "system", "content": _CONTINUE_NOTE},
+                ]
+                continue
+            break
+
+        # The continuation note is only meant for the run it precedes — strip
+        # it (and any earlier ones) before the history is persisted, so a
+        # finished task is not resumed by a future session.
+        final_messages = [
+            m for m in final_messages
+            if not (m.get("role") == "system" and m.get("content") == _CONTINUE_NOTE)
+        ]
         self._chat_history = final_messages
         # Keep the conversation bounded and persist it so the next session
         # (or a follow-up prompt) can continue the dialogue.
@@ -784,6 +814,32 @@ class Agent:
 
 
 _MAX_CHAT_MESSAGES = 60
+
+#: How many automatic continuation runs chat_nlp may chain before handing
+#: control back to the user.  The model cannot predict its own tool budget,
+#: so instead of stopping mid-task it continues with a fresh budget — this
+#: cap only guards against a genuinely infinite loop.
+_MAX_CHAINED_RUNS = 3
+
+_CONTINUE_NOTE = (
+    "The previous tool session ended before you finished. A fresh tool budget "
+    "is available now. CONTINUE THE TASK where you left off — use the tools as "
+    "needed, complete the remaining work, then give your final answer. Do not "
+    "describe what remains; do it."
+)
+
+_INCOMPLETE_MARKERS = (
+    "budget", "tool budget", "not finished", "could not", "couldn't",
+    "would need", "needs one more", "needs 1 more", "needs 2 more",
+    "remaining", "unfinished", "incomplete", "exhausted", "ran out",
+    "out of tool", "more tool call", "cannot complete", "still needs",
+)
+
+
+def _looks_incomplete(text: str) -> bool:
+    """Heuristic: did the model's final answer signal unfinished work?"""
+    low = text.lower()
+    return any(marker in low for marker in _INCOMPLETE_MARKERS)
 
 #: Destructive shell patterns the ``run`` tool refuses (word-boundary,
 #: case-insensitive) — the command injection surface of the NLP loop.

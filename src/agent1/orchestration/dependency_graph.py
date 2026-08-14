@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from typing import Dict, Iterable, Iterator, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, Iterator, List, Optional, Protocol, Set, Tuple
 
 try:  # pragma: no cover - networkx is an optional dependency in some envs
     import networkx as nx
@@ -485,7 +485,7 @@ class _FallbackDiGraph:
             frontier = nxt_frontier
         return seen
 
-    def longest_path(self, weight=None) -> List[str]:
+    def longest_path(self, weight: Optional[Callable[[str, str], int]] = None) -> List[str]:
         order, _ = self.topological_sort()
         best: Dict[str, Tuple[int, Optional[str]]] = {n: (0 if not weight else 0, None) for n in self._nodes}
         # seed with priority of each node as its own length contribution

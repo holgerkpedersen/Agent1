@@ -710,3 +710,137 @@ class TestPersistentChatHistory:
             agent.clear_history()
             assert agent._chat_history == []
             assert not history_file.exists()
+
+
+class TestAutoContinue:
+    """chat_nlp must keep working when a run ends on budget/stuck or with an
+    unfinished answer — the model cannot predict its own tool budget."""
+
+    @staticmethod
+    def _seq_llm(responses):
+        """A fake LLM that replays a fixed sequence; dict entries become tool
+        calls, strings become plain-text answers."""
+        import asyncio
+        from agent import Agent
+
+        class SeqLLM:
+            def __init__(self):
+                self.responses = list(responses)
+                self.calls = 0
+
+            async def chat(self, messages, tools=None, **kwargs):
+                self.calls += 1
+                step = self.responses.pop(0)
+                if isinstance(step, dict):
+                    return json.dumps({
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "c1", "type": "function",
+                            "function": {
+                                "name": "search",
+                                "arguments": json.dumps(step["args"]),
+                            },
+                        }],
+                    })
+                return step
+
+        return SeqLLM()
+
+    def _run(self, tmp_path, seq_llm):
+        import asyncio
+        from unittest.mock import patch
+        from agent import Agent
+        history_file = tmp_path / "chat_history.json"
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            agent = Agent(workspace=".")
+            agent.llm = seq_llm
+
+            async def go():
+                await agent.chat_nlp("gør opgaven færdig")
+
+            asyncio.run(go())
+            return agent, seq_llm
+
+    def test_continues_after_incomplete_answer(self, tmp_path):
+        llm = self._seq_llm([
+            {"args": {"query": "x"}},
+            "The budget was exhausted — I would need one more call to finish.",
+            "All done.",
+        ])
+        agent, llm = self._run(tmp_path, llm)
+        # Run 1 (tool call + incomplete answer) + run 2 (final answer).
+        assert llm.calls == 3
+        assert agent._chat_history[-1]["role"] == "assistant"
+        assert agent._chat_history[-1]["content"] == "All done."
+        # The continuation note must not leak into the persisted history.
+        assert not any(
+            m.get("role") == "system" and "CONTINUE THE TASK" in str(m.get("content"))
+            for m in agent._chat_history
+        )
+
+    def test_continuation_is_capped(self, tmp_path):
+        llm = self._seq_llm([
+            "The tool budget is exhausted, I still need more calls.",
+        ] * 10)
+        agent, llm = self._run(tmp_path, llm)
+        # Initial run + _MAX_CHAINED_RUNS continuations, no infinite loop.
+        assert llm.calls == 1 + 3
+        assert agent._chat_history[-1]["role"] == "assistant"
+
+    def test_no_continuation_on_complete_answer(self, tmp_path):
+        llm = self._seq_llm(["Færdig — alt er implementeret og testet."])
+        agent, llm = self._run(tmp_path, llm)
+        assert llm.calls == 1
+        assert agent._chat_history[-1]["content"].startswith("Færdig")
+
+    def test_continues_after_cap_with_tool_use(self, tmp_path):
+        """A cap-ended run must chain a new run that uses tools again before
+        answering. ToolLoopRunner is patched to max_iterations=3 so the cap
+        hits quickly."""
+        import asyncio
+        from unittest.mock import patch
+        from agent import Agent
+        from agent_core.llm.tool_loop import ToolLoopRunner
+        history_file = tmp_path / "chat_history.json"
+
+        class CapLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def chat(self, messages, tools=None, **kwargs):
+                self.calls += 1
+                continued = any(
+                    "CONTINUE THE TASK" in str(m.get("content", ""))
+                    for m in messages
+                )
+                if continued:
+                    return "Nu er den færdig."
+                return json.dumps({
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "c1", "type": "function",
+                        "function": {
+                            "name": "search",
+                            "arguments": json.dumps({"query": "x"}),
+                        },
+                    }],
+                })
+
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            with patch(
+                "agent.ToolLoopRunner",
+                lambda *a, **k: ToolLoopRunner(max_iterations=3),
+            ):
+                agent = Agent(workspace=".")
+                llm = CapLLM()
+                agent.llm = llm
+
+                async def go():
+                    await agent.chat_nlp("gør opgaven færdig")
+
+                asyncio.run(go())
+
+        # Run 1: 3 loop calls + 1 forced synthesis (no CONTINUE note yet).
+        # Run 2: 1 call — the fake sees the continuation note and answers.
+        assert llm.calls == 5
+        assert agent._chat_history[-1]["content"] == "Nu er den færdig."

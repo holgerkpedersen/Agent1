@@ -49,6 +49,9 @@ class ToolLoopRunner:
         #: Number of final iterations where the model is warned (and
         #: steered) toward producing a text answer before the cap hits.
         self.deadline_window = max(1, min(deadline_window, max_iterations))
+        #: How this run ended: "answer" (model answered in text), "cap"
+        #: (iteration cap hit), or "stuck" (repeated identical calls).
+        self.termination_reason: str = "answer"
 
     async def run(
         self,
@@ -189,6 +192,7 @@ class ToolLoopRunner:
             hit_cap = True
 
         if hit_cap or stuck:
+            self.termination_reason = "stuck" if stuck else "cap"
             note = _STUCK_SYNTHESIS_NOTE if stuck else _FORCED_SYNTHESIS_NOTE
             current_messages.append({"role": "system", "content": note})
             injected_notes.append(note)
@@ -196,6 +200,8 @@ class ToolLoopRunner:
             current_messages = updated_messages
             if response_text:
                 all_text_parts.append(response_text)
+        else:
+            self.termination_reason = "answer"
 
         # Only the LAST non-empty text matters: earlier texts are the model's
         # intermediate narration ("I will read the file...") and would clutter
