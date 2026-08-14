@@ -541,3 +541,10 @@
 **Change**: LMStudioProvider.chat() printed the '[model: X | profile=... t=... tok=...]' label before EVERY LLM call, so a tool loop showed it dozens of times. The label is now printed once per provider instance (session) and only re-printed when it changes mid-session (model/profile/temperature/max_tokens switch).
 **Files**: agent_core/llm/lmstudio.py (_last_label dedup), tests/test_lmstudio_label.py (new: once-per-session, profile change, model change)
 
+
+## 2026-08-14 22:04 — colors in REPL output + sanitizer fix + qwen session cleanup
+
+**Change (agent session)**: New agent_core/colors.py (ANSI helpers, degrades off-TTY/NO_COLOR, __all__ fix) wired into the REPL banner, command list, tool-loop [tool]/[result] lines (colorize_result heuristic) and auto-continue/[stopped] messages. Sanitizer hardened: the malformed pipe pattern `r"|\\s*"` (matched a literal backslash, never pipes) is replaced by `r"|\s*\S.*"` so '| ls -la' is stripped entirely; separators now strip separator+command instead of leaving fragments. +24 tests (tests/test_sanitizer.py).
+**Change (cleanup)**: nlp_parser.py was left corrupted by the session (duplicate import re + orphaned IntentType docstring -> IndentationError, breaking the whole agent) — restored. Paste command-list typo fixed ('[--workspace <path>]'). Unused imports removed (config.py Any/_json, agent.py red/colorize_result). tests tool timeout raised 120 -> 300s (the full suite takes ~2.5min; 120s made the agent split runs). tool_loop color fallback simplified. 10 probe temp files at repo root deleted.
+**Files**: agent_core/colors.py (new), tests/test_sanitizer.py (new), agent.py, agent_core/llm/tool_loop.py, agent_core/security/sanitizer.py, agent_core/nlp_parser.py, agent_core/config.py
+

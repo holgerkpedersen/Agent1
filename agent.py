@@ -11,6 +11,7 @@ import re
 import sys
 from collections import defaultdict
 from agent_core import to_windows_path
+from agent_core.colors import cyan, green, yellow, blue, magenta, gray
 from agent_core.constants import resolve_model, CHAT_HISTORY_JSON_PATH
 from agent_core.config import load_agent_settings, AgentDisplayMode
 from agent_core.llm.lmstudio import LMStudioProvider
@@ -103,7 +104,7 @@ class LLMClient:
 
             stripped = full_response.rstrip()
             if stripped and not stripped.endswith(('```', '}', ')', ']', '"', "'", '.', '\n')):
-                print(f"\n[auto-resume] Truncated ({len(result)} chars), continuing ({i+1}/{max_continues})...")
+                print(magenta(f"\n[auto-resume] Truncated ({len(result)} chars), continuing ({i+1}/{max_continues})..."))
                 current_messages.append({"role": "assistant", "content": result})
                 current_messages.append({"role": "user", "content": "Continue exactly where you stopped. Output the remaining code without repeating anything."})
                 continue
@@ -400,6 +401,9 @@ class Agent:
         if name == "tests":
             test_path = self._resolve_nlp_path(str(args.get("path") or "."))
             framework = str(args.get("framework") or "pytest")
+            #: The full suite takes ~2.5 minutes, so 120s is too short and made
+            #: the agent split runs into subsets. 300s covers whole-suite runs.
+            timeout = 300
             try:
                 if framework == "pytest":
                     cmd = [sys.executable, "-m", "pytest", test_path, "-v"]
@@ -410,7 +414,7 @@ class Agent:
                     capture_output=True,
                     text=True,
                     cwd=ws_dir,
-                    timeout=120,
+                    timeout=timeout,
                 )
                 output = r.stdout
                 if r.stderr:
@@ -419,7 +423,7 @@ class Agent:
                     output = output[:2500] + "\n... [truncated] ...\n" + output[-2500:]
                 return output if output else "(no output)"
             except subprocess.TimeoutExpired:
-                return "Tests timed out after 120s"
+                return f"Tests timed out after {timeout}s"
             except Exception as e:
                 return f"Error: {e}"
 
@@ -721,8 +725,8 @@ class Agent:
             if needs_more and continuations < _MAX_CHAINED_RUNS:
                 continuations += 1
                 print(
-                    f"\n  [auto-continue] Run {continuations}: "
-                    f"{'iteration budget exhausted' if reason == 'cap' else 'answer signals unfinished work'} — continuing automatically.\n"
+                    magenta(f"\n  [auto-continue] Run {continuations}: ")
+                    + yellow(f"{'iteration budget exhausted' if reason == 'cap' else 'answer signals unfinished work'} — continuing automatically.\n")
                 )
                 final_messages = list(final_messages) + [
                     {"role": "system", "content": _CONTINUE_NOTE},
@@ -730,9 +734,9 @@ class Agent:
                 continue
             if reason in ("stuck", "no_progress"):
                 print(
-                    f"\n  [stopped] The model stopped making progress "
-                    f"({'stuck on repeated calls' if reason == 'stuck' else 'too many calls without changing anything'}). "
-                    "The answer above is the best it produced — rephrase or ask something more specific to continue.\n"
+                    magenta("\n  [stopped] The model stopped making progress ")
+                    + yellow(f"{'stuck on repeated calls' if reason == 'stuck' else 'too many calls without changing anything'}). ")
+                    + gray("The answer above is the best it produced — rephrase or ask something more specific to continue.\n")
                 )
             break
 
@@ -766,9 +770,9 @@ class Agent:
         # end-user still gets the final report.
         if display_mode != AgentDisplayMode.QUIET:
             if clean.strip():
-                print(clean)
+                print(green(clean))
             else:
-                print("  (The assistant did not produce a response. Try rephrasing.)")
+                print(yellow("  (The assistant did not produce a response. Try rephrasing.)"))
         self._nlp_workspace = None
 
     def check_stale_files(self) -> list[str]:
@@ -1019,40 +1023,47 @@ async def run_interactive() -> None:
     # Create agent instance (resolves persisted model choice from model.json)
     agent = Agent(workspace=Agent.DEFAULT_WORKSPACE)
 
-    print("=" * 50)
-    print("Agent Interactive Mode with LM Studio")
-    print(f"Workspace: {Agent.DEFAULT_WORKSPACE}")
+    banner = blue("=" * 50)
+    print(banner)
+    print(blue("Agent Interactive Mode with LM Studio"))
+    print(f"Workspace: {cyan(Agent.DEFAULT_WORKSPACE)}")
     model_label = agent.llm.model_name
-    print(f"Model: {model_label}" + (f"  |  Profile: {agent.llm._profile_name}" if agent.llm._profile_name else ""))
+    profile_part = (f"  |  Profile: {agent.llm._profile_name}" if agent.llm._profile_name else "")
+    print(f"Model: {cyan(model_label)}{gray(profile_part)}")
     try:
         from agent_core.llm.lmstudio import get_models_status
         models = get_models_status()
         loaded = [m for m in models if m.get("loaded")]
-        print(f"LM Studio: online ({len(loaded)}/{len(models)} models loaded)" if models else "LM Studio: online")
+        status = f"LM Studio: online ({len(loaded)}/{len(models)} models loaded)" if models else "LM Studio: online"
+        print(green(status) if models else yellow(status))
     except Exception:
-        print("LM Studio: offline")
-    print("Commands:")
-    print("  read <path>        - Read a file")
-    print("  write <path> <content> - Write content to file")
-    print("  search <query>     - Search for string in files")
-    print("  analyze <file> [--desc \"q\"] [--stdin] [--deep] — AI analysis via LM Studio")
-    print("  plan <analysis.md> <plan.md> - Generate coding plan from analysis")
-    print("  entities <analysis.md> <plan.md> [entities.md] - Generate shared entities")
-    print("  taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks")
-    print("  implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--force] [--fix] [--retry] [--review] [--workspace <path>] — Implement files")
-    print("  fix \"<traceback>\"   - Paste a traceback to auto-fix the error")
-    print("  fix <file> --desc \"text\" [--full] - Describe an issue, LLM analyzes full codebase and fixes it")
-    print("  fix --mypy [path...] [--limit N] [--rounds N] [--yes] - Batch-fix mypy errors via LLM")
-    print("  cleanup             - Show unreferenced files and reference graph")
-    print("  workflow <target> [--from spec.md] [--stdin] [--brainstorm] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>] — Full pipeline")
-    print("  model [list|load|unload|reload|name|profile] — Manage models via LM Studio API")
-    print("  optimize <file|dir> [--apply] [--yes] [--stdin] — Find and apply optimizations")
-    print("  perf [--detail|--reset|--html] — Command performance dashboard")
-    print("  clear              - Clear agent memory")
-    print("  display [verbose|clean|quiet] - Show/set NLP output verbosity")
-    print("  paste [--workspace <path>] - Paste multiline text for AI analysis (Ctrl+Z / Ctrl+D to finish)")
-    print("  quit               - Exit")
-    print("=" * 50)
+        print(yellow("LM Studio: offline"))
+    print(cyan("Commands:"))
+    _CMD_LIST = [
+        ("read <path>", "Read a file"),
+        ("write <path> <content>", "Write content to file"),
+        ("search <query>", "Search for string in files"),
+        ("analyze <file> [--desc \"q\"] [--stdin] [--deep]", "AI analysis via LM Studio"),
+        ("plan <analysis.md> <plan.md>", "Generate coding plan from analysis"),
+        ("entities <analysis.md> <plan.md> [entities.md]", "Generate shared entities"),
+        ("taskplan <analysis.md> <plan.md> [tasks.md]", "Generate implementation tasks"),
+        ("implement <taskplan.md> ... [--keep] [--force] [--fix] [--retry] [--review] [--workspace <path>]", "Implement files"),
+        ('fix "<traceback>"', "Paste a traceback to auto-fix the error"),
+        ('fix <file> --desc "text" [--full]', "Describe an issue, LLM analyzes full codebase and fixes it"),
+        ("fix --mypy [path...] [--limit N] [--rounds N] [--yes]", "Batch-fix mypy errors via LLM"),
+        ("cleanup", "Show unreferenced files and reference graph"),
+        ("workflow <target> ... [--from spec.md] [--stdin] [--brainstorm] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>]", "Full pipeline"),
+        ("model [list|load|unload|reload|name|profile]", "Manage models via LM Studio API"),
+        ("optimize <file|dir> [--apply] [--yes] [--stdin]", "Find and apply optimizations"),
+        ("perf [--detail|--reset|--html]", "Command performance dashboard"),
+        ("clear", "Clear agent memory"),
+        ("display [verbose|clean|quiet]", "Show/set NLP output verbosity"),
+        ("paste [--workspace <path>]", "Paste multiline text for AI analysis (Ctrl+Z / Ctrl+D to finish)"),
+        ("quit", "Exit"),
+    ]
+    for name, desc in _CMD_LIST:
+        print(f"  {cyan(name)} - {gray(desc)}")
+    print(blue("=" * 50))
     
     # Set up command registry with simple commands
     registry = CommandRegistry()
@@ -1085,7 +1096,7 @@ async def run_interactive() -> None:
             
             # Check for quit command
             if user_input.lower() in ["quit", "exit", "q"]:
-                print("Goodbye!")
+                print(green("Goodbye!"))
                 break
             
             # Parse and execute commands
@@ -1099,6 +1110,7 @@ async def run_interactive() -> None:
             if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste", "display", "decide"]:
                 import time as _time
                 _start = _time.perf_counter()
+                print(f"  [cmd] {cyan(command)} running...")
                 clear_stop()
                 _llm = getattr(agent, "llm", None)
                 _chat = getattr(_llm, "chat", None)
@@ -1108,17 +1120,19 @@ async def run_interactive() -> None:
                     try:
                         await registry.execute(command, parts[1:], agent)
                     except FlowStopped:
-                        print("  Flow stopped by user.")
+                        print(yellow("  Flow stopped by user."))
                 finally:
                     if _llm is not None and _chat is not None:
                         _llm.chat = _chat
-                PerfTracker.record(command, _time.perf_counter() - _start, user_input)
+                elapsed = _time.perf_counter() - _start
+                print(f"  [cmd] {cyan(command)} done in {green(f'{elapsed:.2f}s')}")
+                PerfTracker.record(command, elapsed, user_input)
                 continue
 
             else:
                 await agent.chat_nlp(user_input)
         except KeyboardInterrupt:
-            print("\nInterrupted — the current run was stopped. Use 'quit' to exit.")
+            print(yellow("\nInterrupted — the current run was stopped. Use 'quit' to exit."))
         except EOFError:
             break
 

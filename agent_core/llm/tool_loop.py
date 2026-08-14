@@ -3,6 +3,17 @@ import enum
 import json
 from typing import Callable, Awaitable, Any
 
+try:
+    from agent_core.colors import cyan, green, red, yellow, magenta, gray, colorize_result
+except Exception:  # pragma: no cover - colors degrade gracefully if unavailable
+    def _identity(text: str, *, bold: bool = False) -> str:  # noqa: ARG001
+        return text
+
+    cyan = green = red = yellow = magenta = gray = _identity
+
+    def colorize_result(result: str) -> str:
+        return result
+
 #: How much tool-call activity is printed to the end user during NLP turns.
 class DisplayMode(str, enum.Enum):
     VERBOSE = "verbose"   # every call + full (truncated) result shown
@@ -234,12 +245,16 @@ class ToolLoopRunner:
                         )
                     prev_was_duplicate = True
                     if self.display_mode != DisplayMode.QUIET:
-                        print(f"  [tool] {tool_name}({_fmt_args(args)}) (duplicate, not re-executed)")
+                        print(f"  {yellow('[tool]')} {cyan(tool_name)}({gray(_fmt_args(args))}) (duplicate, not re-executed)")
                         if self.display_mode == DisplayMode.CLEAN:
-                            print(f"  [reason] {_derive_reason(tool_name, args, prev_text)}")
-                            print(f"  [result] {_summarize_result(tool_name, result_str)[:_RESULT_DISPLAY_LIMIT]}")
+                            print(f"  {yellow('[reason]')} {_derive_reason(tool_name, args, prev_text)}")
+                            summary = _summarize_result(tool_name, result_str)[:_RESULT_DISPLAY_LIMIT]
+                            print(f"  {yellow('[result]')} {colorize_result(summary)}")
                         else:
-                            print(f"  [result] {result_str[:_RESULT_DISPLAY_LIMIT]}")
+                            shown = colorize_result(result_str[:_RESULT_DISPLAY_LIMIT])
+                            if "note:" in shown.lower():
+                                shown = magenta(shown)
+                            print(f"  {yellow('[result]')} {shown}")
                     current_messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
@@ -250,17 +265,22 @@ class ToolLoopRunner:
                     continue
 
                 if self.display_mode != DisplayMode.QUIET:
-                    print(f"  [tool] {tool_name}({_fmt_args(args)})")
+                    tool_label = cyan(tool_name) + "(" + gray(_fmt_args(args)) + ")"
+                    print(f"  {yellow('[tool]')} {tool_label}")
                 try:
                     result_str = await execute_tool_fn(tool_name, args)
                 except Exception as exc:
                     result_str = f"Tool error: {exc}"
                 if self.display_mode != DisplayMode.QUIET:
                     if self.display_mode == DisplayMode.CLEAN:
-                        print(f"  [reason] {_derive_reason(tool_name, args, prev_text)}")
-                        print(f"  [result] {_summarize_result(tool_name, result_str)[:_RESULT_DISPLAY_LIMIT]}")
+                        print(f"  {yellow('[reason]')} {_derive_reason(tool_name, args, prev_text)}")
+                        summary = _summarize_result(tool_name, result_str)[:_RESULT_DISPLAY_LIMIT]
+                        print(f"  {yellow('[result]')} {colorize_result(summary)}")
                     else:
-                        print(f"  [result] {result_str[:_RESULT_DISPLAY_LIMIT]}")
+                        shown = colorize_result(result_str[:_RESULT_DISPLAY_LIMIT])
+                        if "tool error:" in shown.lower() or "error" in shown.lower():
+                            shown = red(shown)
+                        print(f"  {yellow('[result]')} {shown}")
                 prev_call_key = call_key
                 prev_was_duplicate = False
                 prev_result = result_str
@@ -272,7 +292,7 @@ class ToolLoopRunner:
                 current_messages.append({
                     "role": "tool",
                     "tool_call_id": tc_id,
-                    "content": result_str
+                    "content": result_str,
                 })
 
             if stuck:

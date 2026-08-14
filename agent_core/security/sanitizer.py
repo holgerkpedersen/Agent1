@@ -1,6 +1,6 @@
 import html
 import re
-from typing import Any, Dict, List, Union
+from typing import Any
 
 
 class Sanitizer:
@@ -9,7 +9,10 @@ class Sanitizer:
     specifically targeting LLM-based code execution and XSS vulnerabilities.
     """
 
-    # Patterns for shell injection and python code execution keywords
+    # Patterns for shell injection and python code execution keywords.
+    # Each pattern strips the *separator plus its chained command* so that a
+    # payload like "echo hello | ls -la" collapses to "echo hello" rather than
+    # merely deleting the "|" (which would leave an executable fragment behind).
     _FORBIDDEN_PATTERNS = [
         r"eval\(",
         r"exec\(",
@@ -19,10 +22,15 @@ class Sanitizer:
         r"os\.popen",
         r"getattr\(",
         r"setattr\(",
-        r";\s*",
-        r"\|\|\s*",
-        r"&&\s*",
-        r"\|\\s*",
+        # Command separators followed by a command token (e.g. "; cat /etc/passwd")
+        r";\s*\S.*",
+        r"\|\|\s*\S.*",
+        r"&&\s*\S.*",
+        # Pipe-chained commands: "| ls -la" -> stripped entirely. The previous
+        # pattern ``r"\|\\s*"`` was a malformed regex (raw-string ``\\`` matches
+        # a literal backslash, not whitespace) so it never matched and pipe-based
+        # injection survived sanitization unchanged — see tests/test_sanitizer.py.
+        r"\|\s*\S.*",
         r"\$\(.*\)",
         r"`.*`",
     ]

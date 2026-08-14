@@ -1,10 +1,9 @@
 import enum
-import json as _json
 import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 from .exceptions import ConfigurationError
 
