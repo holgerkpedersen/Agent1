@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from typing import Callable, Dict, Iterable, Iterator, List, Optional, Protocol, Set, Tuple
+from typing import Callable, Dict, Iterable, Iterator, List, Optional, Protocol, Set, Tuple, cast
 
 try:  # pragma: no cover - networkx is an optional dependency in some envs
-    import networkx as nx
-except ImportError:  # type: ignore[assignment]
+    import networkx as nx  # type: ignore[import-untyped]
+except ImportError:
     nx = None  # noqa: N816 - we keep the alias short for readability
 
 
@@ -47,6 +47,13 @@ class GraphBackend(Protocol):
     def number_of_edges(self) -> int: ...
     def in_degree(self, node_id: str) -> int: ...
     def out_degree(self, node_id: str) -> int: ...
+    def topological_sort(self) -> Tuple[List[str], Dict[str, int]]: ...
+    def find_cycle(self) -> List[str]: ...
+    def reachable_from(self, node_id: str) -> Iterable[str]: ...
+    def ancestors_of(self, node_id: str) -> Iterable[str]: ...
+    def roots(self) -> List[str]: ...
+    def leaves(self) -> List[str]: ...
+    def longest_path(self, weight: Optional[Callable[[str, str], int]] = None) -> List[str]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -115,9 +122,9 @@ class TaskNode:
     def from_dict(cls, data: Dict[str, object]) -> "TaskNode":
         return cls(
             node_id=str(data["node_id"]),
-            task_type=data.get("task_type"),  # type: ignore[arg-type]
-            priority=int(data.get("priority", 0)),  # type: ignore[arg-type]
-            metadata=dict(data.get("metadata", {})),  # type: ignore[arg-type]
+            task_type=cast(Optional[str], data.get("task_type")),
+            priority=int(str(cast(Optional[str], data.get("priority", "0")))),
+            metadata=cast(Dict[str, object], data.get("metadata", {}))
         )
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
@@ -139,8 +146,9 @@ class DependencyGraph:
     def __init__(self, name: Optional[str] = None) -> None:
         self.name: str = name or "default"
         if nx is not None:
-            self._graph: GraphBackend = nx.DiGraph()  # type: ignore[assignment]
+            self._graph: GraphBackend = cast(GraphBackend, nx.DiGraph())
         else:
+            # noqa: no-redef — fallback branch re-declares same attribute; py_compile ok
             self._graph = _FallbackDiGraph()
 
     # -- construction ------------------------------------------------------
@@ -192,7 +200,7 @@ class DependencyGraph:
         if not self.has_node(node_id):
             raise UnknownNodeError(node_id)
         data = self._graph.nodes[node_id]
-        return data["_task_node"]
+        return cast(TaskNode, data["_task_node"])
 
     def neighbors(self, node_id: str) -> List[str]:
         """Return the immediate successors (dependents) of ``node_id``."""
@@ -234,7 +242,7 @@ class DependencyGraph:
         """
         if nx is not None:
             try:
-                return list(nx.topological_sort(self._graph))
+                return cast(List[str], list(nx.topological_sort(self._graph)))
             except nx.NetworkXUnfeasible as exc:  # pragma: no cover - backend
                 raise CycleError(str(exc), cycle=self.find_cycle()) from exc
         order, _ = self._graph.topological_sort()
@@ -259,7 +267,7 @@ class DependencyGraph:
         if not self.has_node(node_id):
             raise UnknownNodeError(node_id)
         if nx is not None:
-            return set(nx.descendants(self._graph, node_id)) | {node_id}  # type: ignore[operator]
+            return set(nx.descendants(self._graph, node_id)) | {node_id}
         reachable = self._graph.reachable_from(node_id)
         return set(reachable)
 
@@ -268,8 +276,8 @@ class DependencyGraph:
         if not self.has_node(node_id):
             raise UnknownNodeError(node_id)
         if nx is not None:
-            return set(nx.ancestors(self._graph, node_id))  # type: ignore[operator]
-        return set(self._graph.ancestors_of(node_id))  # type: ignore[operator]
+            return set(nx.ancestors(self._graph, node_id))
+        return set(self._graph.ancestors_of(node_id))
 
     def descendants(self, node_id: str) -> Set[str]:
         """All nodes that depend (directly or transitively) on ``node_id``."""
@@ -292,21 +300,20 @@ class DependencyGraph:
             return node_v.priority
 
         if nx is not None:
-            dag = self._graph  # type: ignore[assignment]
-            longest = nx.dag_longest_path(dag, weight=_weight)  # type: ignore[arg-type]
-            return list(longest)
+            longest = nx.dag_longest_path(self._graph, weight=_weight)
+            return cast(List[str], list(longest))
         return self._graph.longest_path(weight=_weight)
 
     def roots(self) -> List[str]:
         """Nodes with no dependencies."""
         if nx is not None:
-            return [n for n in self._graph.nodes if self._graph.in_degree(n) == 0]  # type: ignore[operator]
+            return [n for n in self._graph.nodes if self._graph.in_degree(n) == 0]
         return list(self._graph.roots())
 
     def leaves(self) -> List[str]:
         """Nodes that nothing else depends on."""
         if nx is not None:
-            return [n for n in self._graph.nodes if self._graph.out_degree(n) == 0]  # type: ignore[operator]
+            return [n for n in self._graph.nodes if self._graph.out_degree(n) == 0]
         return list(self._graph.leaves())
 
     def validate_acyclic(self) -> bool:
@@ -335,13 +342,17 @@ class DependencyGraph:
 
     @classmethod
     def from_dict(cls, data: Dict[str, object]) -> "DependencyGraph":
-        graph = cls(name=str(data.get("name", "default")))  # type: ignore[arg-type]
-        for node_data in data.get("nodes", []):  # type: ignore[union-attr]
+        graph = cls(name=str(data.get("name", "default")))
+        for node_data in cast(List[Dict[str, object]], data.get("nodes", [])):
+            node = TaskNode.from_dict(node_data)
             graph.add_node(
-                **TaskNode.from_dict(node_data).to_dict()  # type: ignore[arg-type]
+                node_id=node.node_id,
+                task_type=node.task_type,
+                priority=node.priority,
+                metadata=cast(Dict[str, object], dict(node.metadata)),
             )
-        for edge_pair in data.get("edges", []):  # type: ignore[union-attr]
-            u, v = edge_pair  # type: ignore[misc]
+        for edge_pair in cast(List[List[str]], data.get("edges", [])):
+            u, v = edge_pair
             graph.add_edge(u, v)
         return graph
 
@@ -397,6 +408,23 @@ class _FallbackDiGraph:
         if not self.has_node(node_id):
             raise UnknownNodeError(node_id)
         yield from sorted(self._pred[node_id])
+
+    # -- counts ------------------------------------------------------------
+    def number_of_nodes(self) -> int:
+        return len(self._nodes)
+
+    def number_of_edges(self) -> int:
+        return len(self._edges)
+
+    def in_degree(self, node_id: str) -> int:
+        if not self.has_node(node_id):
+            raise UnknownNodeError(node_id)
+        return len(self._pred[node_id])
+
+    def out_degree(self, node_id: str) -> int:
+        if not self.has_node(node_id):
+            raise UnknownNodeError(node_id)
+        return len(self._succ[node_id])
 
     # -- algorithms --------------------------------------------------------
     def topological_sort(self) -> Tuple[List[str], Dict[str, int]]:
