@@ -30,6 +30,21 @@ _STUCK_SYNTHESIS_NOTE = (
     "state exactly what is missing and what you would need."
 )
 
+#: Tools that count as making progress (they change the workspace).
+MUTATING_TOOLS = frozenset({"write", "edit", "fix"})
+
+_NO_PROGRESS_NUDGE = (
+    "NOTE: You have now made {count} tool calls without modifying any file. "
+    "Exploration alone does not finish tasks — either take action with "
+    "write/edit/fix, or give your final answer now."
+)
+
+_NO_PROGRESS_FORCE = (
+    "You have made {count} tool calls without modifying any file, so the tool "
+    "loop is stopping. Do NOT call any more tools. Give your final answer now "
+    "— report what you found and what you would change."
+)
+
 
 #: Console display cap for [result] lines. The model ALWAYS receives the full
 #: result; this only bounds what the human observer sees in the REPL (was 200,
@@ -44,13 +59,24 @@ class ToolLoopRunner:
     from LLM communication. This enables testing tool logic without a running LLM.
     """
 
-    def __init__(self, max_iterations: int = 15, deadline_window: int = 2):
+    def __init__(
+        self,
+        max_iterations: int = 150,
+        deadline_window: int = 2,
+        no_mutation_limit: int = 30,
+        force_after_no_mutation: int = 50,
+    ):
         self.max_iterations = max_iterations
         #: Number of final iterations where the model is warned (and
         #: steered) toward producing a text answer before the cap hits.
         self.deadline_window = max(1, min(deadline_window, max_iterations))
+        #: Progress guard: after this many consecutive non-mutating tool calls
+        #: a steering note is injected; the count resets on write/edit/fix.
+        self.no_mutation_limit = max(1, no_mutation_limit)
+        self.force_after_no_mutation = max(self.no_mutation_limit + 1, force_after_no_mutation)
         #: How this run ended: "answer" (model answered in text), "cap"
-        #: (iteration cap hit), or "stuck" (repeated identical calls).
+        #: (iteration cap hit), "stuck" (repeated identical calls), or
+        #: "no_progress" (too many calls without modifying any file).
         self.termination_reason: str = "answer"
 
     async def run(
@@ -85,6 +111,7 @@ class ToolLoopRunner:
         deadline_injected = False
         hit_cap = False
         stuck = False
+        no_progress_forced = False
         #: Contents of the steering notes injected during this run.  They are
         #: stripped from the returned history so a follow-up turn is not
         #: confused by a stale "budget exhausted / no more tools" instruction.
@@ -96,8 +123,23 @@ class ToolLoopRunner:
         prev_call_key: tuple[str, str] | None = None
         prev_was_duplicate = False
         prev_result: str = ""
+        #: Progress guard: non-mutating calls (read/search/list/run/git/diff/
+        #: tests/analyze) since the last write/edit/fix.  A long streak means
+        #: exploration without converging — nudge, then force synthesis.
+        calls_since_mutation = 0
+        nudge_injected = False
 
         for iteration in range(self.max_iterations):
+            # Progress guard: too many calls without changing anything.
+            if calls_since_mutation >= self.force_after_no_mutation:
+                no_progress_forced = True
+                break
+            if not nudge_injected and calls_since_mutation == self.no_mutation_limit:
+                note = _NO_PROGRESS_NUDGE.format(count=calls_since_mutation)
+                current_messages.append({"role": "system", "content": note})
+                injected_notes.append(note)
+                nudge_injected = True
+
             # Steer toward wrapping up before the cap is actually reached.
             if not deadline_injected and (
                 self.max_iterations - iteration <= self.deadline_window
@@ -177,6 +219,9 @@ class ToolLoopRunner:
                 prev_call_key = call_key
                 prev_was_duplicate = False
                 prev_result = result_str
+                calls_since_mutation = (
+                    0 if tool_name in MUTATING_TOOLS else calls_since_mutation + 1
+                )
                 current_messages.append({
                     "role": "tool",
                     "tool_call_id": tc_id,
@@ -191,9 +236,16 @@ class ToolLoopRunner:
             # the tool results already gathered.
             hit_cap = True
 
-        if hit_cap or stuck:
-            self.termination_reason = "stuck" if stuck else "cap"
-            note = _STUCK_SYNTHESIS_NOTE if stuck else _FORCED_SYNTHESIS_NOTE
+        if hit_cap or stuck or no_progress_forced:
+            if no_progress_forced:
+                self.termination_reason = "no_progress"
+                note = _NO_PROGRESS_FORCE.format(count=calls_since_mutation)
+            elif stuck:
+                self.termination_reason = "stuck"
+                note = _STUCK_SYNTHESIS_NOTE
+            else:
+                self.termination_reason = "cap"
+                note = _FORCED_SYNTHESIS_NOTE
             current_messages.append({"role": "system", "content": note})
             injected_notes.append(note)
             response_text, updated_messages = await llm_chat_fn(current_messages, [])

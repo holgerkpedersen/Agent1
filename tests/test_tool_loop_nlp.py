@@ -712,6 +712,104 @@ class TestPersistentChatHistory:
             assert not history_file.exists()
 
 
+class TestNoProgressGuard:
+    """The loop must not be bounded by call count alone: a model that keeps
+    making DISTINCT calls without changing anything gets nudged, then forced
+    to synthesize — while edits reset the progress counter."""
+
+    def test_many_distinct_calls_without_changes_forces_synthesis(self):
+        fake = _ScriptedLLM([
+            ("read", {"path": "a.py"}),
+            ("read", {"path": "b.py"}),
+            ("read", {"path": "c.py"}),
+            ("read", {"path": "d.py"}),
+            ("read", {"path": "e.py"}),
+            "I only explored — here is my answer.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return "x"
+
+        runner = ToolLoopRunner(
+            max_iterations=50, no_mutation_limit=3, force_after_no_mutation=5,
+        )
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert runner.termination_reason == "no_progress"
+        assert executed == ["read"] * 5
+        assert final_text == "I only explored — here is my answer."
+        # The nudge is injected exactly once, after the 3rd non-mutating call:
+        # absent from the first LLM call, present (as a single message) in the last.
+        nudge_in_first = any(
+            m.get("role") == "system"
+            and str(m.get("content")).startswith("NOTE: You have now made")
+            for m in fake.calls[0][0]
+        )
+        nudge_in_last = sum(
+            1 for m in fake.calls[-1][0]
+            if m.get("role") == "system"
+            and str(m.get("content")).startswith("NOTE: You have now made")
+        )
+        assert not nudge_in_first
+        assert nudge_in_last == 1
+        # Steering notes must not leak into the returned history.
+        assert not any(
+            m.get("role") == "system" and "without modifying any file" in str(m.get("content"))
+            for m in messages
+        )
+
+    def test_edit_resets_progress_counter(self):
+        fake = _ScriptedLLM([
+            ("read", {"path": "a.py"}),
+            ("read", {"path": "b.py"}),
+            ("write", {"path": "b.py", "content": "x"}),
+            ("read", {"path": "c.py"}),
+            ("read", {"path": "d.py"}),
+            ("read", {"path": "e.py"}),
+            "Edited and done.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return "x"
+
+        runner = ToolLoopRunner(
+            max_iterations=50, no_mutation_limit=2, force_after_no_mutation=4,
+        )
+        final_text, _ = _loop_runner_sync(runner, fake, execute_tool)
+
+        # 2 reads -> counter 2 (nudge) -> write resets to 0 -> 3 reads reach 3
+        # (< force 4) -> the model then answers; no forced synthesis.
+        assert runner.termination_reason == "answer"
+        assert executed == ["read", "read", "write", "read", "read", "read"]
+        assert final_text == "Edited and done."
+
+    def test_writes_keep_loop_running_far_past_default_cap(self):
+        """With edits between reads, a run may far exceed any small cap — the
+        progress guard must not stop a genuinely working model."""
+        script: list = []
+        for i in range(12):
+            script.append(("read", {"path": f"f{i}.py"}))
+            script.append(("edit", {"path": f"f{i}.py", "old_text": "a", "new_text": "b"}))
+        script.append("All twelve files updated.")
+        fake = _ScriptedLLM(script)
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return "x"
+
+        runner = ToolLoopRunner(max_iterations=150)
+        final_text, _ = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert runner.termination_reason == "answer"
+        assert len(executed) == 24
+        assert final_text == "All twelve files updated."
+
+
 class TestAutoContinue:
     """chat_nlp must keep working when a run ends on budget/stuck or with an
     unfinished answer — the model cannot predict its own tool budget."""
@@ -779,12 +877,13 @@ class TestAutoContinue:
         )
 
     def test_continuation_is_capped(self, tmp_path):
+        from agent import _MAX_CHAINED_RUNS
         llm = self._seq_llm([
             "The tool budget is exhausted, I still need more calls.",
-        ] * 10)
+        ] * 20)
         agent, llm = self._run(tmp_path, llm)
         # Initial run + _MAX_CHAINED_RUNS continuations, no infinite loop.
-        assert llm.calls == 1 + 3
+        assert llm.calls == 1 + _MAX_CHAINED_RUNS
         assert agent._chat_history[-1]["role"] == "assistant"
 
     def test_no_continuation_on_complete_answer(self, tmp_path):

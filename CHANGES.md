@@ -518,3 +518,13 @@
 **Change**: The tool loop used to end when its iteration budget ran out (or the model repeated calls), forcing the end-user to say 'continue' over and over — the model cannot predict its own budget. chat_nlp now chains runs automatically: if a run ends on the iteration cap, on stuck repetition, or with an answer that signals unfinished work (marker heuristics like 'budget exhausted', 'would need', 'remaining'), a fresh run starts with a fresh budget and a 'CONTINUE THE TASK' note (max 3 chains as an infinite-loop guard). ToolLoopRunner now exposes termination_reason ('answer'/'cap'/'stuck'); iteration budget raised 20 -> 40. Continuation notes are stripped before persisting history so a finished task is never resumed by a future session.
 **Files**: agent.py (chat_nlp chaining, _CONTINUE_NOTE, _looks_incomplete), agent_core/llm/tool_loop.py (termination_reason), tests/test_tool_loop_nlp.py (+4 auto-continue tests)
 
+
+## 2026-08-14 11:33 — progress-based loop termination instead of call-count caps
+
+**Change**: A fixed iteration budget is the wrong control: a model that spawns many small tool calls (tiny read slices, one-off run probes) exhausts any artificial cap even though it is making real progress. The loop now terminates on PROGRESS, not on call count:
+- per-run budget raised to 150 iterations (was 40); ToolLoopRunner.termination_reason adds 'no_progress'
+- progress guard: after 30 consecutive non-mutating calls (read/search/list/run/git/diff/tests/analyze) a nudge is injected ('exploration alone does not finish tasks — edit/write/fix or answer'); at 50 the loop stops with forced synthesis; write/edit/fix reset the counter
+- auto-continue chains raised 3 -> 6 (safe now: every chained run has its own no-progress/stuck/deadline guards)
+- system prompt: 'effectively unlimited budget — do not rush or plan around a budget' and 'never request tiny read slices (limit < 1000)'
+**Files**: agent_core/llm/tool_loop.py (MUTATING_TOOLS, nudge/force notes, counter), agent.py (_MAX_CHAINED_RUNS, prompt rules), tests/test_tool_loop_nlp.py (+3 progress-guard tests, capped-chain updated)
+

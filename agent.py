@@ -644,6 +644,13 @@ class Agent:
                     "is NO tail/grep/ls/find. Never pipe with '2>&1 | tail -40' — use Python "
                     "one-liners (python -c \"...\") or the built-in tools; run output is "
                     "truncated to 5000 chars automatically.\n"
+                    "- You have an effectively unlimited tool budget: do not rush, do not "
+                    "stop early, and do not plan around a budget. Take as many tool calls "
+                    "as the task needs — but make steady progress: when exploration is "
+                    "done, actually edit/write/fix instead of only reading.\n"
+                    "- read returns up to 5000 chars per call by default — never request "
+                    "tiny slices (limit < 1000). Read big chunks and continue with the "
+                    "offset hint; avoid many small read calls.\n"
                     "- Prefer targeted edits over rewriting whole files.\n"
                     "- If a tool fails, read the error and try a different approach.\n"
                     "- When the request is ambiguous, make a reasonable assumption and state it, "
@@ -688,7 +695,7 @@ class Agent:
         final_messages = self._chat_history
         continuations = 0
         while True:
-            loop = ToolLoopRunner(max_iterations=40)
+            loop = ToolLoopRunner(max_iterations=150)
             final_text, final_messages = await loop.run(
                 messages=final_messages,
                 llm_chat_fn=llm_chat_fn,
@@ -701,7 +708,7 @@ class Agent:
                 continuations += 1
                 print(
                     f"\n  [auto-continue] Run {continuations}: "
-                    f"{'iteration budget exhausted' if reason == 'cap' else 'stuck on repeated calls' if reason == 'stuck' else 'answer signals unfinished work'} — continuing automatically.\n"
+                    f"{'iteration budget exhausted' if reason == 'cap' else 'stuck on repeated calls' if reason == 'stuck' else 'no changes made for many calls' if reason == 'no_progress' else 'answer signals unfinished work'} — continuing automatically.\n"
                 )
                 final_messages = list(final_messages) + [
                     {"role": "system", "content": _CONTINUE_NOTE},
@@ -817,9 +824,10 @@ _MAX_CHAT_MESSAGES = 60
 
 #: How many automatic continuation runs chat_nlp may chain before handing
 #: control back to the user.  The model cannot predict its own tool budget,
-#: so instead of stopping mid-task it continues with a fresh budget — this
-#: cap only guards against a genuinely infinite loop.
-_MAX_CHAINED_RUNS = 3
+#: so instead of stopping mid-task it continues with a fresh budget.  Each
+#: chained run has its own guards (no-progress, stuck, deadline), so a high
+#: cap cannot turn into an infinite loop — it only bounds total work.
+_MAX_CHAINED_RUNS = 6
 
 _CONTINUE_NOTE = (
     "The previous tool session ended before you finished. A fresh tool budget "
