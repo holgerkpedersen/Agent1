@@ -598,3 +598,11 @@
 **Change**: The .docs/<timestamp>/ run-folder carry-over copied plan/entities/taskplan from the PREVIOUS run unconditionally — a new `workflow --desc <different task>` without --force silently reused the old task's plan and would have implemented the wrong files. _reuse now only carries over when the previous run's project_spec.md content matches the current spec (true resume); a different spec prints 'Previous run ... has a DIFFERENT spec — regenerating (no carry-over)' and regenerates all docs. New module-level _specs_match helper (tested).
 **Files**: agent_core/commands/workflow_cmd.py (_reuse gate + _specs_match), tests/test_workflow_cmd.py (+3 tests); stale .docs/2026-08-15_12-03-09 run folder (spec-only, wrong-task leftovers) removed
 
+
+## 2026-08-15 12:56 — autonomous mode + tailored next command
+
+**Change**: One autonomy layer in agent_core/commands/base.py — is_autonomous() (AGENT_AUTONOMOUS env, read at call time), set_autonomous() (per-command --auto flag overrides env, None clears), and auto_choice() (interactive = read_input as today; autonomous = safe default without prompting, auto_default is ALWAYS the safe option — never auto-approval).
+**Change**: workflow --auto: the 'Next: implement ...' message is now TAILORED to the current codebase (_tailored_implement_parts): positionals in implement's order incl. analysis, a duplicate pre-check via the existing gate (warning + no --force so the MODIFY filter can run), and --keep only on a matching implement cache. After the hint, 'Run this command now? (y/N)' — default N interactively, auto-runs inline in autonomous mode (_run_next wraps ImplementCommand exactly like the REPL, incl. flow-stop). The analysis verification gate auto-DENIES in autonomous mode. All three Next sites unified via _offer_next.
+**Change**: implement's three interactive gates (Layer-1 options, delete y/N, wire-in y/N) now use auto_choice with safe auto-defaults (m/n/n) — interactive behaviour is byte-identical; only autonomous runs change.
+**Files**: agent_core/commands/base.py, agent_core/commands/workflow_cmd.py, agent_core/commands/implement_cmd.py, tests/test_autonomy.py (new, 11 tests)
+

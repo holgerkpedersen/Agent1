@@ -183,6 +183,48 @@ def chat_stoppable(chat: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitab
     return wrapped
 
 
+# ---------------------------------------------------------------------------
+# Autonomous mode
+# ---------------------------------------------------------------------------
+#: Explicit override set by a per-command ``--auto`` flag; None = follow the
+#: AGENT_AUTONOMOUS env var (read at call time, so runtime changes apply).
+_AUTONOMOUS_OVERRIDE: bool | None = None
+
+
+def is_autonomous() -> bool:
+    """True when interactive prompts should auto-select their safe defaults."""
+    if _AUTONOMOUS_OVERRIDE is not None:
+        return _AUTONOMOUS_OVERRIDE
+    return os.environ.get("AGENT_AUTONOMOUS", "").strip().lower() in ("1", "true", "yes")
+
+
+def set_autonomous(flag: "bool | None") -> None:
+    """Enable/disable autonomous mode for the current invocation (``--auto``).
+
+    An explicit flag overrides the environment variable; pass ``None`` to
+    clear the override and follow the env var again.
+    """
+    global _AUTONOMOUS_OVERRIDE
+    _AUTONOMOUS_OVERRIDE = flag
+
+
+def auto_choice(prompt: str, default: str, auto_default: str | None = None) -> str:
+    """Read a choice from the user — or pick the safe default autonomously.
+
+    Interactive mode: behaves exactly like ``read_input`` (EOF → ``""``,
+    Ctrl+C → flow stop + ``""``).
+    Autonomous mode: returns ``auto_default or default`` WITHOUT prompting and
+    prints the choice, so runs can proceed headless.  ``auto_default`` must
+    always be the SAFE option (decline/halt) for safety gates — autonomous
+    mode never auto-approves.
+    """
+    if is_autonomous():
+        choice = auto_default if auto_default is not None else default
+        print(f"  {prompt.strip()} (auto: {choice})")
+        return choice
+    return read_input(prompt)
+
+
 def show_file_diff(basename: str, original: str, new: str) -> None:
     """Display a side-by-side diff with aligned columns, line numbers, 5 lines of context, and colors."""
     original_lines = original.splitlines()

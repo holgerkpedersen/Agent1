@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from .base import Command, show_file_diff, read_input, stop_requested
+from .base import Command, auto_choice, show_file_diff, read_input, stop_requested
 from .doc_paths import find_input
 from agent_core import to_windows_path, workspace_path
 from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
@@ -972,13 +972,12 @@ class ImplementCommand(Command):
                     print("\n  [implement] Planned files duplicate existing modules:")
                     for reason in dup_reasons:
                         print(f"    {reason}")
-                    try:
-                        choice = read_input(
-                            "  Options: [m]odify-existing (drop duplicates, continue with the rest) "
-                            "[f]orce-generate anyway [a]bort (default m): "
-                        ).strip().lower()
-                    except EOFError:
-                        choice = ""
+                    choice = auto_choice(
+                        "  Options: [m]odify-existing (drop duplicates, continue with the rest) "
+                        "[f]orce-generate anyway [a]bort (default m): ",
+                        default="m",
+                        auto_default="m",
+                    ).strip().lower()
                     if stop_requested():
                         return True
                     if choice in ("", "m", "modify", "modify-existing"):
@@ -2277,7 +2276,11 @@ class ImplementCommand(Command):
                 print(f"\n  [review] {len(dangerous_files)} file(s) have issues ({', '.join(reasons)}):")
                 for df in sorted(dangerous_files):
                     print(f"    {df}")
-                choice = read_input("  Delete these files (and any generated files only they import)? (y/N): ").strip().lower()
+                choice = auto_choice(
+                    "  Delete these files (and any generated files only they import)? (y/N): ",
+                    default="n",
+                    auto_default="n",
+                ).strip().lower()
                 if stop_requested():
                     return True
                 if choice == "y":
@@ -2306,12 +2309,11 @@ class ImplementCommand(Command):
                 print(f"\n  [review] {len(kept_unwired)} new module(s) are not imported by any code:")
                 for fname in kept_unwired:
                     print(f"    {fname}  → suggested consumer(s): {', '.join(suggestions[fname])}")
-                try:
-                    wire_choice = read_input(
-                        "  Wire them into consumers (LLM pass, max 3 files)? (y/N): "
-                    ).strip().lower()
-                except EOFError:
-                    wire_choice = ""
+                wire_choice = auto_choice(
+                    "  Wire them into consumers (LLM pass, max 3 files)? (y/N): ",
+                    default="n",
+                    auto_default="n",
+                ).strip().lower()
                 if stop_requested():
                     return True
                 if wire_choice in ("y", "yes"):

@@ -6,7 +6,17 @@ import sys
 from pathlib import Path
 
 from .analysis_verifier import verify_analysis_claims
-from .base import Command, read_stdin, read_input, stop_requested
+from .base import (
+    Command,
+    FlowStopped,
+    auto_choice,
+    chat_stoppable,
+    clear_stop,
+    read_input,
+    read_stdin,
+    set_autonomous,
+    stop_requested,
+)
 from .doc_paths import latest_run_dir, new_run_dir
 from .reasoning_strip import strip_reasoning
 from agent_core import to_windows_path
@@ -124,6 +134,76 @@ def _specs_match(prev_spec_path: "str | Path", current_spec_text: str) -> bool:
     except OSError:
         return False
     return prev.strip() == current_spec_text.strip()
+
+
+def _planned_files_from_taskplan(taskplan_content: str) -> list[str]:
+    """Backticked file paths from the taskplan (same extraction as implement)."""
+    files = re.findall(r'`([^`]+\.py)`', taskplan_content)
+    if not files:
+        files = re.findall(r'`([^`\s]+\.[a-z]{2,4})`', taskplan_content)
+    return list(dict.fromkeys(files))
+
+
+def _tailored_implement_parts(
+    tasks_md: str,
+    plan_md: str,
+    entities_md: str,
+    analysis_md: str | None,
+    ws: str,
+    taskplan_content: str,
+) -> tuple[list[str], str]:
+    """Build the 'implement' parts + a codebase-aware hint for this run.
+
+    Tailoring (deterministic, precision-first):
+    - positionals in implement's expected order (tasks, analysis, plan, entities)
+    - duplicate pre-check via the existing gate → warning, and NO ``--force``
+      so the Layer-1 gate can offer the MODIFY filter
+    - ``--keep`` only when a matching implement cache exists (true resume)
+    """
+    from .implement_cmd import _check_planned_duplicates
+
+    parts = ["implement", tasks_md, plan_md, entities_md]
+    if analysis_md and os.path.exists(analysis_md):
+        parts.insert(2, analysis_md)
+    parts += ["--workspace", ws]
+
+    hints: list[str] = []
+    planned = _planned_files_from_taskplan(taskplan_content)
+    if planned:
+        dup_reasons = _check_planned_duplicates(planned, ws, taskplan_content)
+        if dup_reasons:
+            example = dup_reasons[0].split(" — ", 1)[-1]
+            example = example.replace("duplicates existing module(s): ", "")
+            hints.append(
+                f"{len(dup_reasons)} planned file(s) duplicate existing modules "
+                f"(e.g. {example}) — implement will offer to drop them; no --force is used."
+            )
+
+    cache_file = os.path.join(
+        os.path.dirname(os.path.realpath(tasks_md)), ".implement_cache.json"
+    )
+    if os.path.exists(cache_file):
+        try:
+            import hashlib as _hashlib
+            import json as _json
+
+            with open(cache_file, "r", encoding="utf-8") as f:
+                cache = _json.load(f)
+            cached_hash = cache.get("taskplan_hash", "")
+            current_hash = _hashlib.md5(taskplan_content.encode()).hexdigest()[:8]
+            if cache.get("taskplan") == tasks_md and cached_hash == current_hash:
+                parts += ["--keep"]
+                hints.append("--keep: matching implement cache found (true resume).")
+        except Exception:
+            pass
+
+    hint = (
+        "\n".join(f"  {h}" for h in hints)
+        if hints
+        else "  No known conflicts — the plan matches the current codebase."
+    )
+    hint += "\n  Optional verification: append --review --fix."
+    return parts, hint
 
 
 def _module_inventory(workspace: str, limit: int = 150) -> str:
@@ -247,10 +327,9 @@ def _analysis_flag_gate(checked: int, flagged: int, force: bool, report_text: st
     report = report_text.split("## Verification Report", 1)[-1].strip()
     for line in report.splitlines()[:10]:
         print(f"    {line}")
-    try:
-        answer = input("  Continue to planning anyway? (y/N): ").strip().lower()
-    except EOFError:
-        answer = ""
+    # Autonomous mode auto-DENIES (safe default); only an explicit answer or
+    # --force may continue past unverifiable claims.
+    answer = auto_choice("  Continue to planning anyway? (y/N): ", default="n", auto_default="n").strip().lower()
     return answer in ("y", "yes")
 
 
@@ -331,6 +410,10 @@ class WorkflowCommand(Command):
 
         force = "--force" in parts
         brainstorm = "--brainstorm" in parts
+        auto_flag = "--auto" in parts
+        if auto_flag:
+            set_autonomous(True)
+            print("\n[auto] Autonomous mode — prompts auto-select safe defaults.")
 
         spec_file = None
         greenfield = False
@@ -492,6 +575,45 @@ class WorkflowCommand(Command):
                         f"regenerating {label} (no carry-over)."
                     )
             return False
+
+        async def _run_next(parts_next: list[str]) -> None:
+            """Run the tailored 'implement' command inline — exactly the same
+            command the REPL would execute, with the same flow-stop wrapping."""
+            from .implement_cmd import ImplementCommand
+
+            print(f"\n[workflow] Running next step: implement {parts_next[1] if len(parts_next) > 1 else ''} ...")
+            clear_stop()
+            _llm = getattr(agent, "llm", None)
+            _chat = getattr(_llm, "chat", None)
+            if _llm is not None and _chat is not None:
+                _llm.chat = chat_stoppable(_chat)
+            try:
+                try:
+                    await ImplementCommand().execute(parts_next, agent)
+                except FlowStopped:
+                    print("  Flow stopped by user.")
+            finally:
+                if _llm is not None and _chat is not None:
+                    _llm.chat = _chat
+
+        async def _offer_next(tasks_md: str, plan_md: str, entities_md: str, analysis_md: str | None, target_ws: str) -> None:
+            """Print the tailored next command and (interactively or
+            autonomously) run it inline."""
+            try:
+                taskplan_content = Path(tasks_md).read_text(encoding="utf-8")
+            except OSError:
+                taskplan_content = ""
+            parts_next, hint = _tailored_implement_parts(
+                tasks_md, plan_md, entities_md, analysis_md,
+                target_ws, taskplan_content,
+            )
+            print(f"\nNext: {' '.join(parts_next)}")
+            print(hint)
+            choice = auto_choice("  Run this command now? (y/N): ", default="n", auto_default="y")
+            if stop_requested():
+                return
+            if choice in ("y", "yes"):
+                await _run_next(parts_next)
 
         if spec_file:
             with open(spec_file, "r", encoding="utf-8") as f:
@@ -706,7 +828,7 @@ class WorkflowCommand(Command):
                     f.write(strip_reasoning(r, mode="light"))
                 print("[taskplan] Written")
 
-            print(f"\nNext: implement {tasks_md} {plan_md} {entities_md} --workspace {target_workspace} --force")
+            await _offer_next(tasks_md, plan_md, entities_md, analysis_md, str(target_workspace))
 
         elif features_file:
             with open(features_file, "r", encoding="utf-8") as f:
@@ -820,7 +942,7 @@ class WorkflowCommand(Command):
                     f.write(f"\n\n---\n\n{strip_reasoning(r, mode="light")}")
                 print("[taskplan] Appended")
 
-            print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
+            await _offer_next(tasks_md, plan_md, entities_md, analysis_md, str(target_workspace))
 
         else:
             if not force and _reuse("project_analysis.md", "analyze"):
@@ -947,6 +1069,8 @@ class WorkflowCommand(Command):
                     f.write(strip_reasoning(r, mode="light"))
                 print("[taskplan] Written")
 
-            print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
+            await _offer_next(tasks_md, plan_md, entities_md, analysis_md, str(target_workspace))
 
+        if auto_flag:
+            set_autonomous(False)
         return True
