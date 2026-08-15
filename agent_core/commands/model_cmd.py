@@ -32,7 +32,7 @@ class ModelCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "model [list|load|unload|reload|profile|name] — Manage LLM models"
+        return "model [list|load|unload|reload|provider|profile|name] — Manage LLM models and providers"
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         sub = args[0].strip().lower() if args else ""
@@ -44,6 +44,10 @@ class ModelCommand(Command):
 
         if sub in ("list", "ls"):
             self._list_models(agent)
+            return True
+
+        if sub == "provider":
+            await self._handle_provider(rest, agent)
             return True
 
         if sub == "load":
@@ -90,19 +94,52 @@ class ModelCommand(Command):
     # ------------------------------------------------------------------
 
     def _list_models(self, agent: "Agent", interactive: bool = False) -> None:
-        """Show available models from the LM Studio API."""
+        """Show available models per LLM provider (LM Studio + opencode)."""
+        current = agent.llm.model_name
+        from agent_core.llm.provider import provider_for
+        from agent_core.config import load_agent_settings
+
+        try:
+            settings = load_agent_settings()
+            active_provider = provider_for(current, settings.llm_provider)
+        except Exception:
+            active_provider = "lmstudio"
+
+        # ---- opencode provider models ----
+        opencode_models: list[str] = []
+        try:
+            from agent_core.llm.opencode_provider import OpencodeProvider
+            oc = OpencodeProvider(
+                model_name="opencode-go/placeholder",
+                server_url=getattr(settings, "opencode_server_url", "http://127.0.0.1:4096"),
+                password=getattr(settings, "opencode_password", ""),
+            )
+            opencode_models = oc.list_models()
+        except Exception:
+            opencode_models = []
+
+        print(f"\n  Providers: lmstudio (active: {'*' if active_provider == 'lmstudio' else ' '})"
+              f"  opencode (active: {'*' if active_provider == 'opencode' else ' '})")
+        if opencode_models:
+            print(f"  [opencode] {len(opencode_models)} model(s):\n")
+            for key in opencode_models:
+                is_current = key == current
+                marker = "  *" if is_current else "   "
+                print(f"{marker} {key}")
+        else:
+            print("  [opencode] server not reachable — start 'opencode serve --port 4096'")
+            print("            (models appear once the server is running)\n")
+
+        # ---- LM Studio models ----
         models, loaded_ids = self._fetch_models()
 
         if not models:
-            print("  (LM Studio server not reachable at localhost:1234)")
-            print("  Is the LM Studio server running? Developer tab > Start Server, or 'lms server start'")
-            print("  Showing cached model list instead:\n")
+            print("  [lmstudio] LM Studio server not reachable at localhost:1234")
+            print("  [lmstudio] Developer tab > Start Server, or 'lms server start'")
             self._list_known_only(agent)
             return
 
-        print(f"\n  {self._get_vram_display(models)}\n")
-        current = agent.llm.model_name
-
+        print(f"\n  [lmstudio] {self._get_vram_display(models)}\n")
         for i, m in enumerate(models, 1):
             key = m["key"]
             name = m["display_name"]
@@ -148,8 +185,28 @@ class ModelCommand(Command):
     # ------------------------------------------------------------------
 
     async def _switch_model(self, args: list[str], agent: "Agent") -> None:
-        """Fuzzy-match args against real API model keys and switch."""
+        """Switch the model — provider-aware.
+
+        ``opencode-go/...`` names select the opencode provider directly;
+        everything else goes through the LM Studio fuzzy match.
+        """
         query = " ".join(args).strip()
+        lowered = query.lower()
+
+        if lowered.startswith("opencode-go/") or lowered.startswith("opencode/"):
+            old = agent.llm.model_name
+            if query == old:
+                print(f"  Already using: {query}")
+                return
+            from agent_core.config import load_agent_settings
+            from agent_core.llm.provider import build_provider
+            settings = load_agent_settings()
+            agent.llm._provider = build_provider(settings, query)
+            agent.llm.model_name = query
+            persist_model_choice(query, provider="opencode")
+            print(f"  Switched: {old} -> {query}  (provider=opencode)")
+            return
+
         models, loaded_ids = self._fetch_models()
 
         if not models:
@@ -183,8 +240,48 @@ class ModelCommand(Command):
         info = KNOWN_MODELS.get(matched, {})
         old = agent.llm.model_name
         agent.llm.model_name = matched
-        persist_model_choice(matched)
+        persist_model_choice(matched, provider="lmstudio")
         print(f"  Switched: {old} -> {matched}  ({info.get('desc', '')})")
+
+    async def _handle_provider(self, args: list[str], agent: "Agent") -> None:
+        """`model provider [lmstudio|opencode]` — show or switch the provider."""
+        if not args:
+            from agent_core.config import load_agent_settings
+            from agent_core.llm.provider import provider_for
+            settings = load_agent_settings()
+            current = provider_for(agent.llm.model_name, settings.llm_provider)
+            print(f"  Provider: {current}  (model: {agent.llm.model_name})")
+            print("  Options: model provider lmstudio | model provider opencode")
+            return
+
+        target = args[0].strip().lower()
+        if target not in ("lmstudio", "opencode"):
+            print(f"  Unknown provider '{target}'. Options: lmstudio, opencode.")
+            return
+
+        from agent_core.constants import load_model_json, persist_model_choice
+        from agent_core.config import load_agent_settings
+        from agent_core.llm.provider import build_provider, provider_for
+
+        settings = load_agent_settings()
+        current = provider_for(agent.llm.model_name, settings.llm_provider)
+        if target == current:
+            print(f"  Already on provider '{target}'.")
+            return
+
+        if target == "opencode":
+            model = settings.opencode_model
+        else:
+            from agent_core.constants import DEFAULT_MODEL
+            persisted = load_model_json()
+            model = str(persisted.get("model") or DEFAULT_MODEL)
+            if model.startswith("opencode"):
+                model = DEFAULT_MODEL
+
+        agent.llm._provider = build_provider(settings, model)
+        agent.llm.model_name = model
+        persist_model_choice(model, provider=target)
+        print(f"  Provider switched: {current} -> {target}  (model: {model})")
 
     async def _switch_known(self, query: str, agent: "Agent") -> None:
         """Fallback switch using hardcoded KNOWN_MODELS."""
@@ -243,8 +340,8 @@ class ModelCommand(Command):
             print(f"  Done: {active_key}")
 
     def _persist_model(self, model_name: str) -> None:
-        """Persist the active model choice to disk."""
-        persist_model_choice(model_name)
+        """Persist the active model choice to disk (LM Studio sync path)."""
+        persist_model_choice(model_name, provider="lmstudio")
 
     # ------------------------------------------------------------------
     #  Load / Unload

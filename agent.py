@@ -47,15 +47,22 @@ from typing import Any
 
 
 class LLMClient:
-    """Thin wrapper around LMStudioProvider for backward compatibility.
-    
-    Delegates to LMStudioProvider for all LLM operations.
+    """Thin wrapper around an LLM provider for backward compatibility.
+
+    Delegates to the provider selected by :func:`build_provider` (decision
+    #007 — one abstraction; LM Studio default, opencode-go selectable).
     """
     
     def __init__(self, model_name: str | None = None, api_key: str | None = None):
         self._model_name: str = resolve_model(model_name)
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        self._provider = LMStudioProvider(model_name=self._model_name, api_key=self.api_key)
+        from agent_core.config import load_agent_settings
+        from agent_core.llm.provider import build_provider
+        try:
+            settings = load_agent_settings()
+        except Exception:
+            settings = None
+        self._provider = build_provider(settings, self._model_name)
         self._profile_name: str | None = None
         # Restore active profile from model.json on startup
         try:

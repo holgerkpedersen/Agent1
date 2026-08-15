@@ -66,6 +66,10 @@ KNOWN_MODELS = {
 
 DEFAULT_MODEL = os.environ.get("AGENT_MODEL", "laguna-s-2.1")
 
+#: Default opencode-go model when the opencode provider is active and no
+#: explicit model is configured.
+DEFAULT_OPENCODE_MODEL = "opencode-go/deepseek-v4-flash"
+
 _MODEL_JSON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "model.json")
 CHAT_HISTORY_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "chat_history.json")
@@ -78,16 +82,36 @@ CHAT_HISTORY_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "chat_history.json")
 def resolve_model(explicit: str | None = None) -> str:
     """Return the best model name to use, checking sources in priority order.
 
-    1. Explicit argument (caller override)
-    2. What is actually loaded in LM Studio right now (via API)
-    3. Persisted model.json (set by ``model`` command)
-    4. ``AGENT_MODEL`` environment variable
-    5. Hardcoded fallback (``laguna-s-2.1``)
+    1. Explicit argument (caller override) — its prefix selects the provider
+    2. Configured opencode model when the active provider is opencode
+    3. What is actually loaded in LM Studio right now (via API) — lmstudio only
+    4. Persisted model.json (set by ``model`` command, provider-aware)
+    5. ``AGENT_MODEL`` environment variable
+    6. Hardcoded fallback (``laguna-s-2.1``)
     """
     if explicit:
         return explicit
 
-    # Query LM Studio — what model is actually in VRAM?
+    from agent_core.llm.provider import provider_for
+    from agent_core.config import load_agent_settings
+
+    # Provider selection: persisted/env setting, or a model prefix if present.
+    persisted = load_model_json()
+    persisted_model = str(persisted.get("model") or "")
+    persisted_provider = str(persisted.get("provider") or "lmstudio")
+    try:
+        settings = load_agent_settings()
+        provider_setting = settings.llm_provider
+        opencode_model = settings.opencode_model
+    except Exception:
+        provider_setting = "lmstudio"
+        opencode_model = DEFAULT_OPENCODE_MODEL
+
+    provider = provider_for(persisted_model, provider_setting)
+    if provider == "opencode":
+        return persisted_model if persisted_model.startswith("opencode") else opencode_model
+
+    # LM Studio path — what model is actually in VRAM?
     try:
         from agent_core.llm.lmstudio import get_models_status
         models = get_models_status()
@@ -98,9 +122,8 @@ def resolve_model(explicit: str | None = None) -> str:
         print("Warning: silenced exception in constants.py:95")
 
     # Persisted choice from model.json
-    persisted = load_model_json()
-    if persisted.get("model") in KNOWN_MODELS:
-        return str(persisted["model"])
+    if persisted_model in KNOWN_MODELS:
+        return persisted_model
 
     return DEFAULT_MODEL
 
@@ -129,10 +152,17 @@ def save_model_json(data: dict[str, Any]) -> None:
         print("Warning: silenced exception in constants.py:126")
 
 
-def persist_model_choice(model_name: str) -> None:
-    """Write *model_name* to model.json and .env so it survives restarts."""
+def persist_model_choice(model_name: str, provider: str | None = None) -> None:
+    """Write *model_name* (and its provider) to model.json and .env.
+
+    The provider is inferred from the model prefix when not given.
+    """
+    from agent_core.llm.provider import provider_for
+
+    effective_provider = provider or provider_for(model_name)
     data = load_model_json()
     data["model"] = model_name
+    data["provider"] = effective_provider
     save_model_json(data)
 
     env_path = ".env"

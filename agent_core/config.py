@@ -38,6 +38,26 @@ class AgentSettings:
     display_mode: AgentDisplayMode = field(
         default_factory=lambda: _parse_display_mode(os.environ.get("AGENT_DISPLAY_MODE"))
     )
+    #: LLM provider selection (decision #009/#010): lmstudio (default) or
+    #: opencode.  A model prefix ("opencode-go/...") overrides this.
+    llm_provider: str = field(
+        default_factory=lambda: os.environ.get("AGENT_LLM_PROVIDER", "lmstudio").strip().lower()
+    )
+    #: opencode server connection (decision #008 configured provider).
+    opencode_server_url: str = field(
+        default_factory=lambda: os.environ.get("OPENCODE_SERVER_URL", "http://127.0.0.1:4096")
+    )
+    opencode_password: str = field(
+        default_factory=lambda: os.environ.get("OPENCODE_SERVER_PASSWORD", "")
+    )
+    opencode_model: str = field(
+        default_factory=lambda: os.environ.get(
+            "AGENT_OPENCODE_MODEL", "opencode-go/deepseek-v4-flash"
+        )
+    )
+
+
+_LLM_PROVIDERS = ("lmstudio", "opencode")
 
 
 def _validate_settings(settings: AgentSettings) -> None:
@@ -55,6 +75,11 @@ def _validate_settings(settings: AgentSettings) -> None:
 
     if settings.max_concurrent_tools <= 0:
         raise ConfigurationError("max_concurrent_tools must be positive")
+
+    if settings.llm_provider not in _LLM_PROVIDERS:
+        raise ConfigurationError(
+            f"llm_provider must be one of {', '.join(_LLM_PROVIDERS)}, got '{settings.llm_provider}'"
+        )
 
 
 def _load_env_file(env_path: Path | None = None) -> dict[str, str]:
@@ -160,6 +185,10 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         search_command_timeout_sec=_parse_float(merged.get("AGENT_SEARCH_COMMAND_TIMEOUT_SEC"), 30.0),
         compilation_check_timeout_sec=_parse_float(merged.get("AGENT_COMPILATION_CHECK_TIMEOUT_SEC"), 30.0),
         display_mode=_parse_display_mode(display_mode_raw, AgentDisplayMode.VERBOSE),
+        llm_provider=(os.environ.get("AGENT_LLM_PROVIDER") or env_vars.get("AGENT_LLM_PROVIDER") or "lmstudio").strip().lower(),
+        opencode_server_url=os.environ.get("OPENCODE_SERVER_URL") or env_vars.get("OPENCODE_SERVER_URL") or "http://127.0.0.1:4096",
+        opencode_password=os.environ.get("OPENCODE_SERVER_PASSWORD") or env_vars.get("OPENCODE_SERVER_PASSWORD") or "",
+        opencode_model=os.environ.get("AGENT_OPENCODE_MODEL") or env_vars.get("AGENT_OPENCODE_MODEL") or "opencode-go/deepseek-v4-flash",
     )
 
     _validate_settings(settings)

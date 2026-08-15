@@ -2,6 +2,37 @@
 from typing import Any, Protocol
 
 
+def provider_for(model_name: str | None, provider_setting: str = "lmstudio") -> str:
+    """Provider selection (decisions #007/#009/#010).
+
+    Priority: an explicit model prefix wins ("opencode-go/..." or "opencode/..."
+    → opencode; known LM Studio prefixes → lmstudio); otherwise the configured
+    ``llm_provider`` setting applies; unknown values fall back to lmstudio.
+    """
+    m = (model_name or "").lower()
+    if m.startswith("opencode"):
+        return "opencode"
+    if m.startswith(("laguna", "qwen", "kwaipilot", "gemma", "meta/", "prism", "lmstudio")):
+        return "lmstudio"
+    return provider_setting if provider_setting in ("lmstudio", "opencode") else "lmstudio"
+
+
+def build_provider(settings: Any, model_name: str) -> "LLMProvider":
+    """Configured provider factory (decision #008): build the concrete
+    provider for the selected provider, keeping LM Studio the default (#009)."""
+    if provider_for(model_name, getattr(settings, "llm_provider", "lmstudio")) == "opencode":
+        from .opencode_provider import OpencodeProvider
+
+        return OpencodeProvider(
+            model_name=model_name,
+            server_url=getattr(settings, "opencode_server_url", "http://127.0.0.1:4096"),
+            password=getattr(settings, "opencode_password", ""),
+        )
+    from .lmstudio import LMStudioProvider
+
+    return LMStudioProvider(model_name=model_name)
+
+
 class LLMProvider(Protocol):
     """Abstract interface for LLM providers.
     
