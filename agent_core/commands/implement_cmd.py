@@ -831,6 +831,7 @@ class ImplementCommand(Command):
         fix_mode = "--fix" in parts
         retry_mode = "--retry" in parts
         review_mode = "--review" in parts
+        allow_rewrite = "--allow-rewrite" in parts
 
         target_workspace = agent.workspace
         if "--workspace" in parts:
@@ -838,7 +839,7 @@ class ImplementCommand(Command):
             if ws_idx + 1 < len(parts):
                 target_workspace = parts[ws_idx + 1].strip('"')
 
-        skip_tokens = ["--keep", "--refresh", "--force", "--fix", "--retry", "--review", "--workspace", target_workspace]
+        skip_tokens = ["--keep", "--refresh", "--force", "--fix", "--retry", "--review", "--workspace", "--allow-rewrite", target_workspace]
         filtered_parts = [p for p in parts if p not in skip_tokens]
 
         taskplan_file = filtered_parts[0] if filtered_parts else ""
@@ -1565,6 +1566,22 @@ class ImplementCommand(Command):
                             if match:
                                 new_content = match.group(2).strip()
                                 if len(new_content) > len(content) * 0.5:
+                                    if (
+                                        filepath.exists()
+                                        and filename.endswith(".py")
+                                        and not allow_rewrite
+                                    ):
+                                        existing_text = filepath.read_text(encoding="utf-8")
+                                        similarity = _difflib.SequenceMatcher(
+                                            None, existing_text, new_content
+                                        ).ratio()
+                                        if existing_text.strip() and similarity < 0.5:
+                                            print(
+                                                f"  REJECTED: {filename} retry would be a wholesale "
+                                                f"rewrite (similarity {similarity:.2f}) — refusing."
+                                            )
+                                            file_outcomes[filename] = "rejected — wholesale rewrite of existing file"
+                                            continue
                                     with open(filepath, "w", encoding="utf-8") as f:
                                         f.write(new_content)
                                     content = new_content
@@ -1580,6 +1597,33 @@ class ImplementCommand(Command):
                         errors.append(f"{filename}: {r.stderr}")
                         print(f"  Compile error in {filename}")
                     else:
+                        # MODIFY-rewrite guard: never let a batch wholesale-replace
+                        # an existing file.  Observed: a MODIFY task replaced
+                        # tool_loop.py's 416 lines with a 4-line stub and gutted
+                        # tool_schemas.py.  Only --allow-rewrite permits it.
+                        if (
+                            filepath.exists()
+                            and filename.endswith(".py")
+                            and not allow_rewrite
+                        ):
+                            try:
+                                existing_text = filepath.read_text(encoding="utf-8")
+                            except OSError:
+                                existing_text = ""
+                            if existing_text.strip():
+                                import difflib as _difflib
+                                similarity = _difflib.SequenceMatcher(
+                                    None, existing_text, content
+                                ).ratio()
+                                if similarity < 0.5:
+                                    os.unlink(tmp_path)
+                                    print(
+                                        f"  REJECTED: {filename} would be a wholesale rewrite "
+                                        f"(similarity {similarity:.2f}) — refusing to replace an "
+                                        "existing file; use --allow-rewrite to replace it."
+                                    )
+                                    file_outcomes[filename] = "rejected — wholesale rewrite of existing file"
+                                    continue
                         os.replace(tmp_path, filepath)
                         print(f"  Compiled OK: {filename}")
                 else:

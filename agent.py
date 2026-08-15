@@ -441,6 +441,25 @@ class Agent:
             except Exception as e:
                 return f"Analyze error: {e}"
 
+        if name == "web_search":
+            query = str(args.get("query", "")).strip()
+            if not query:
+                return "Error: web_search requires a query."
+            try:
+                from agent_core.tools.web_search import (
+                    MAX_RESULTS_LIMIT,
+                    format_results,
+                    sanitize_query,
+                    search_ddg,
+                )
+                max_results = max(1, min(int(args.get("max_results") or 5), MAX_RESULTS_LIMIT))
+                clean_query = sanitize_query(query)
+                results = search_ddg(clean_query, max_results=max_results)
+                output = format_results(clean_query, results)
+                return output if len(output) <= 5000 else output[:5000]
+            except Exception as e:
+                return f"Web search error: {e}"
+
         return f"Unknown tool: {name}. Available: {', '.join(sorted(NLP_TOOL_NAMES))}"
 
 
