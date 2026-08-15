@@ -592,3 +592,9 @@
 **Change**: New agent_core/utils/module_similarity.py adds a precision-first semantic layer to the planned-module gates: TF-IDF cosine over module docstrings + task-plan descriptions (the strongest signal), with an optional LM Studio /v1/embeddings backend (AGENT_EMBEDDING_MODEL; probed once, never silently degrades — evidence reports which signal fired). Calibrated against ground truth from the failing workflow run: true pairs score 0.64-0.71, false pairs 0.27-0.49, threshold 0.55 with self-exclusion and a production-only corpus (tests/benchmarks excluded). _check_planned_duplicates now combines name gates + geometric findings, each with evidence ('TF-IDF top-1 0.704 → path_utils.py'). Corpus is cached per workspace, invalidated by max-mtime (identical precision, faster repeats). Embeddings A/B-verified against the same fixtures before activation.
 **Files**: agent_core/utils/module_similarity.py (new), agent_core/commands/implement_cmd.py (gate integration + task descriptions), tests/test_module_similarity.py (new, 9 tests), tests/test_implement_safety.py (+1 semantic-gate test)
 
+
+## 2026-08-15 12:19 — spec-aware carry-over in .docs workflow runs
+
+**Change**: The .docs/<timestamp>/ run-folder carry-over copied plan/entities/taskplan from the PREVIOUS run unconditionally — a new `workflow --desc <different task>` without --force silently reused the old task's plan and would have implemented the wrong files. _reuse now only carries over when the previous run's project_spec.md content matches the current spec (true resume); a different spec prints 'Previous run ... has a DIFFERENT spec — regenerating (no carry-over)' and regenerates all docs. New module-level _specs_match helper (tested).
+**Files**: agent_core/commands/workflow_cmd.py (_reuse gate + _specs_match), tests/test_workflow_cmd.py (+3 tests); stale .docs/2026-08-15_12-03-09 run folder (spec-only, wrong-task leftovers) removed
+

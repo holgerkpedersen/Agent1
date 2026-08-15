@@ -4,7 +4,28 @@ import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
-from agent_core.commands.workflow_cmd import _scan_workspace_context, _analysis_flag_gate
+from agent_core.commands.workflow_cmd import (
+    _scan_workspace_context,
+    _analysis_flag_gate,
+    _specs_match,
+)
+
+
+class TestSpecsMatch:
+    """Carry-over of plan/entities/taskplan is only safe for the SAME task."""
+
+    def test_identical_spec_matches(self, tmp_path: Path) -> None:
+        spec = tmp_path / "project_spec.md"
+        spec.write_text("# Spec\n\nsearch the web via duckduckgo", encoding="utf-8")
+        assert _specs_match(spec, "# Spec\n\nsearch the web via duckduckgo") is True
+
+    def test_different_spec_does_not_match(self, tmp_path: Path) -> None:
+        spec = tmp_path / "project_spec.md"
+        spec.write_text("# Spec\n\nold task", encoding="utf-8")
+        assert _specs_match(spec, "# Spec\n\nnew task") is False
+
+    def test_missing_prev_spec_does_not_match(self, tmp_path: Path) -> None:
+        assert _specs_match(tmp_path / "missing.md", "anything") is False
 
 
 class TestAnalysisFlagGate:

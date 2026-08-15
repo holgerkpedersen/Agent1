@@ -113,6 +113,19 @@ def _spec_mentions_agent(spec_content: str) -> bool:
     return any(kw in text for kw in _AGENT_SPEC_KEYWORDS)
 
 
+def _specs_match(prev_spec_path: "str | Path", current_spec_text: str) -> bool:
+    """True when the previous run's spec equals the current one.
+
+    Carry-over of plan/entities/taskplan is only safe when the TASK is the
+    same — a different spec must regenerate everything from scratch.
+    """
+    try:
+        prev = Path(prev_spec_path).read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return prev.strip() == current_spec_text.strip()
+
+
 def _module_inventory(workspace: str, limit: int = 150) -> str:
     """Compact list of existing modules (rel path + first docstring line).
 
@@ -459,7 +472,9 @@ class WorkflowCommand(Command):
 
             Checks the current run folder first, then the previous run — a
             doc carried over from the previous run is copied into this run
-            folder so each run folder stays self-contained.
+            folder so each run folder stays self-contained.  Carry-over only
+            happens when the previous run's spec matches the current one (same
+            task); a different spec must be regenerated from scratch.
             """
             cur = run_dir / name
             if cur.is_file():
@@ -468,9 +483,14 @@ class WorkflowCommand(Command):
             if prev_run is not None:
                 cand = prev_run / name
                 if cand.is_file():
-                    shutil.copy2(cand, cur)
-                    print(f"\n[Skipping {label}] exists — carried over from {prev_run.name}")
-                    return True
+                    if _specs_match(prev_run / "project_spec.md", spec_content):
+                        shutil.copy2(cand, cur)
+                        print(f"\n[Skipping {label}] exists — carried over from {prev_run.name}")
+                        return True
+                    print(
+                        f"\n[analyze] Previous run {prev_run.name} has a DIFFERENT spec — "
+                        f"regenerating {label} (no carry-over)."
+                    )
             return False
 
         if spec_file:
