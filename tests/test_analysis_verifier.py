@@ -163,10 +163,12 @@ class TestWriteVerifiedAnalysis:
         (tmp_path / "agent.py").write_text(_AGENT_PY, encoding="utf-8")
         analysis_md = str(tmp_path / "project_analysis.md")
         analysis = "The bug is in `non_existent.py`."
-        written = asyncio.run(_write_verified_analysis(analysis, analysis_md, tmp_path))
+        written, checked, flagged = asyncio.run(_write_verified_analysis(analysis, analysis_md, tmp_path))
         assert written == Path(analysis_md).read_text(encoding="utf-8")
         assert "## Verification Report" in written
         assert "[UNVERIFIED]" in written
+        assert checked == 1
+        assert flagged == 1
 
     def test_skips_rewrite_when_no_claims(self, tmp_path: Path) -> None:
         from agent_core.commands.workflow_cmd import _write_verified_analysis
@@ -175,6 +177,8 @@ class TestWriteVerifiedAnalysis:
         analysis_md = str(tmp_path / "project_analysis.md")
         with open(analysis_md, "w", encoding="utf-8") as f:
             f.write("placeholder")
-        written = asyncio.run(_write_verified_analysis("No code references here.", analysis_md, tmp_path))
+        written, checked, flagged = asyncio.run(_write_verified_analysis("No code references here.", analysis_md, tmp_path))
         assert written == "No code references here."
+        assert checked == 0
+        assert flagged == 0
         assert Path(analysis_md).read_text(encoding="utf-8") == "placeholder"

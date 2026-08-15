@@ -565,6 +565,128 @@ def _unwired_closure(py_new: list[str], ws: str, initial: set[str]) -> set[str]:
     return delete_set
 
 
+def _filter_duplicate_planned(all_files: list[str], dup_reasons: list[str]) -> tuple[list[str], list[str]]:
+    """Split *all_files* into (remaining, blocked_duplicates).
+
+    Files named in *dup_reasons* are dropped; everything else is kept so the
+    run can continue with the genuinely new / [MODIFY] entries.
+    """
+    blocked = {reason.split(" — ", 1)[0] for reason in dup_reasons}
+    remaining = [f for f in all_files if f not in blocked]
+    return remaining, sorted(blocked)
+
+
+_CONSUMER_CONCEPTS: dict[str, list[str]] = {
+    "chain_limiter": ["agent.py"],
+    "self_mod_guard": ["agent.py"],
+    "output_sanitizer": ["agent_core/security/sanitizer.py"],
+    "tool_schema": ["agent_core/tool_schemas.py"],
+    "shell_allowlist": ["agent_core/security/allowlist.py"],
+    "path_guard": ["agent_core/path_utils.py", "agent_core/security/path_utils.py"],
+    "normalizer": ["agent_core/path_utils.py"],
+    "sanitizer_fix": ["agent_core/security/sanitizer.py"],
+}
+
+
+def _suggest_consumers(unwired_files: list[str], ws: str) -> dict[str, list[str]]:
+    """Deterministic consumer suggestions for unwired modules.
+
+    Uses shared-name-token matching against existing modules, a small concept
+    map for known cases, and ``agent.py`` as the final fallback.
+    """
+    from agent_core.patterns import _shared_name_tokens
+
+    existing: list[str] = []
+    for root, dirs, files in os.walk(ws):
+        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
+        for f in files:
+            if f.endswith(".py") and not f.endswith("__init__.py"):
+                existing.append(os.path.relpath(os.path.join(root, f), ws).replace("\\", "/"))
+
+    suggestions: dict[str, list[str]] = {}
+    for fname in unwired_files:
+        stem = fname.rsplit("/", 1)[-1].replace(".py", "")
+        hits: list[str] = []
+        for other in existing:
+            if other == fname:
+                continue
+            other_stem = other.rsplit("/", 1)[-1].replace(".py", "")
+            if _shared_name_tokens(stem, other_stem):
+                hits.append(other)
+        hits.extend(_CONSUMER_CONCEPTS.get(stem, []))
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for h in hits:
+            if h not in seen:
+                seen.add(h)
+                ordered.append(h)
+        suggestions[fname] = ordered[:3] or ["agent.py"]
+    return suggestions
+
+
+async def _wire_in_modules(agent: "Agent", files: list[str], suggestions: dict[str, list[str]], ws: str) -> None:
+    """One LLM pass that imports + wires each module into its suggested
+    consumer; every patch is applied and py_compile-verified.  Unwirable
+    modules are reported honestly instead of being marked wired."""
+    for fname in files:
+        if stop_requested():
+            break
+        path = Path(ws) / fname
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"    Could not read {fname}: {exc}")
+            continue
+        consumers = suggestions.get(fname, ["agent.py"])[:1]
+        consumer_path = Path(ws) / consumers[0]
+        if not consumer_path.exists():
+            print(f"    Consumer {consumers[0]} missing — skipping {fname}")
+            continue
+        consumer_src = consumer_path.read_text(encoding="utf-8")
+        prompt = (
+            "Wire the module below into the consumer file. Produce ONLY [PATCH: <consumer>] "
+            "unified-diff blocks that add the import and ONE sensible usage call site. "
+            "Do not rewrite the consumer.\n\n"
+            f"## Module to wire: {fname}\n{content[:4000]}\n\n"
+            f"## Consumer: {consumers[0]}\n{consumer_src[:6000]}"
+        )
+        r = await agent.llm.chat([
+            {"role": "system", "content": (
+                "You are a Python integrator. Output ONLY [PATCH: file] blocks in unified-diff "
+                "format. No prose, no [FILE:], no XML tags."
+            )},
+            {"role": "user", "content": prompt},
+        ])
+        if r.startswith("[Error") or r.startswith("[LM Studio"):
+            print(f"    Wire-in failed for {fname}: {r[:120]}")
+            continue
+        ok_count = 0
+        for m in re.finditer(r"\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\Z)", r, re.DOTALL):
+            patch_file = m.group(1).strip().strip("`")
+            patch_text = m.group(2)
+            target = Path(ws) / patch_file
+            if not target.exists():
+                print(f"    Wire-in: patch target {patch_file} does not exist — skipped")
+                continue
+            original = target.read_text(encoding="utf-8").splitlines()
+            ok, result = _apply_patch(patch_text, str(target), original)
+            if ok:
+                verify = subprocess.run(
+                    ["python", "-m", "py_compile", str(target)],
+                    capture_output=True, text=True,
+                )
+                if verify.returncode == 0:
+                    print(f"    Wired: {patch_file} (imports {fname})")
+                    ok_count += 1
+                else:
+                    detail = verify.stderr.strip().splitlines()[-1][:120] if verify.stderr else ""
+                    print(f"    Patch applied but py_compile failed for {patch_file} — manual check needed: {detail}")
+            else:
+                print(f"    Wire-in patch failed for {patch_file}: {result[:120]}")
+        if ok_count == 0:
+            print(f"    Could not wire {fname} automatically — left for manual integration.")
+
+
 def _check_planned_duplicates(planned_new: list[str], ws: str) -> list[str]:
     """Return human-readable reasons why *planned_new* modules duplicate
     existing project modules (name similarity or shared concept tokens)."""
@@ -799,8 +921,9 @@ class ImplementCommand(Command):
 
         # ---- Layer 1: planned-new-file gate (before any generation) ----
         # A plan that proposes modules duplicating existing ones (e.g.
-        # shell_allowlist.py vs allowlist.py) is almost always wrong — abort
-        # before writing anything unless --force explicitly overrides.
+        # shell_allowlist.py vs allowlist.py) is almost always wrong — offer to
+        # drop the duplicates and continue with the rest (default), force the
+        # generation anyway, or abort.
         if not force_mode:
             planned_new = [
                 f for f in all_files
@@ -810,15 +933,41 @@ class ImplementCommand(Command):
             if planned_new:
                 dup_reasons = _check_planned_duplicates(planned_new, str(target_workspace))
                 if dup_reasons:
-                    print("\n  [implement] BLOCKED — planned files duplicate existing modules:")
+                    print("\n  [implement] Planned files duplicate existing modules:")
                     for reason in dup_reasons:
                         print(f"    {reason}")
-                    print(
-                        "  These modules already cover the concern — extend the existing module "
-                        "instead of creating a near-duplicate. Use --force only if you really "
-                        "intend to create them anyway."
-                    )
-                    return True
+                    try:
+                        choice = read_input(
+                            "  Options: [m]odify-existing (drop duplicates, continue with the rest) "
+                            "[f]orce-generate anyway [a]bort (default m): "
+                        ).strip().lower()
+                    except EOFError:
+                        choice = ""
+                    if stop_requested():
+                        return True
+                    if choice in ("", "m", "modify", "modify-existing"):
+                        remaining, blocked = _filter_duplicate_planned(all_files, dup_reasons)
+                        dropped = set(all_files) - set(remaining)
+                        if dropped:
+                            print(
+                                f"  Dropped {len(dropped)} planned duplicate(s) — "
+                                "extend the existing module(s) instead:"
+                            )
+                            for b in blocked:
+                                print(f"    - {b}")
+                            all_files = remaining
+                            try:
+                                cache_data["files"] = all_files
+                                with open(cache_file, "w", encoding="utf-8") as f:
+                                    json.dump(cache_data, f)
+                            except Exception:
+                                print("Warning: failed to update cache after filtering")
+                    elif choice in ("f", "force"):
+                        force_mode = True
+                        print("  --force semantics: generating the duplicate modules anyway.")
+                    else:
+                        print("  Aborted.")
+                        return True
 
         def file_needs_generation(fname: str) -> tuple[bool, str]:
             raw_ws = workspace_path(target_workspace)
@@ -2108,10 +2257,26 @@ class ImplementCommand(Command):
                             print(f"    Deleted: {df}")
                     _prune_empty_dirs(ws, delete_set)
 
-            if unwired and not dangerous_files:
-                print(f"\n  [review] {len(unwired)} new module(s) are not imported. Use 'model profile use' to wire them.")
-                for uw in unwired:
-                    print(f"    {uw['file']}")
+            # ---- Wire-in offer for kept unwired modules ----
+            kept_unwired = [
+                uw["file"] for uw in unwired
+                if (Path(ws) / uw["file"]).exists()
+            ]
+            if kept_unwired:
+                suggestions = _suggest_consumers(kept_unwired, ws)
+                print(f"\n  [review] {len(kept_unwired)} new module(s) are not imported by any code:")
+                for fname in kept_unwired:
+                    print(f"    {fname}  → suggested consumer(s): {', '.join(suggestions[fname])}")
+                try:
+                    wire_choice = read_input(
+                        "  Wire them into consumers (LLM pass, max 3 files)? (y/N): "
+                    ).strip().lower()
+                except EOFError:
+                    wire_choice = ""
+                if stop_requested():
+                    return True
+                if wire_choice in ("y", "yes"):
+                    await _wire_in_modules(agent, kept_unwired[:3], suggestions, ws)
 
             # ---- Per-file LLM review ----
             for fname in list(all_content.keys())[:8]:

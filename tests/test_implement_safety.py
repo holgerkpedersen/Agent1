@@ -12,7 +12,43 @@ from agent_core.commands.implement_cmd import (
     _unwired_closure,
     _prune_empty_dirs,
     _check_planned_duplicates,
+    _filter_duplicate_planned,
+    _suggest_consumers,
 )
+
+
+class TestFilterDuplicatePlanned:
+    def test_duplicates_dropped_rest_kept(self) -> None:
+        remaining, blocked = _filter_duplicate_planned(
+            ["a.py", "b.py", "c.py"],
+            ["b.py — duplicates existing module(s): allowlist.py", "c.py — duplicates existing module(s): sanitizer.py"],
+        )
+        assert remaining == ["a.py"]
+        assert blocked == ["b.py", "c.py"]
+
+    def test_no_duplicates_unchanged(self) -> None:
+        remaining, blocked = _filter_duplicate_planned(["a.py", "b.py"], [])
+        assert remaining == ["a.py", "b.py"]
+        assert blocked == []
+
+
+class TestSuggestConsumers:
+    def test_token_based_and_concept_map(self, tmp_path) -> None:
+        (tmp_path / "agent.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "agent_core").mkdir()
+        (tmp_path / "agent_core" / "tool_schemas.py").write_text("X = 1\n", encoding="utf-8")
+
+        suggestions = _suggest_consumers(
+            ["agent_core/nlp/tool_schema.py", "agent_core/nlp/chain_limiter.py"],
+            str(tmp_path),
+        )
+        assert any("tool_schemas.py" in s for s in suggestions["agent_core/nlp/tool_schema.py"])
+        assert "agent.py" in suggestions["agent_core/nlp/chain_limiter.py"]
+
+    def test_fallback_is_agent_py(self, tmp_path) -> None:
+        (tmp_path / "agent.py").write_text("x = 1\n", encoding="utf-8")
+        suggestions = _suggest_consumers(["agent_core/nlp/oddball.py"], str(tmp_path))
+        assert suggestions["agent_core/nlp/oddball.py"] == ["agent.py"]
 
 
 class TestPlannedDuplicates:

@@ -2,8 +2,37 @@ import os
 import tempfile
 import textwrap
 from pathlib import Path
+from unittest.mock import patch
 
-from agent_core.commands.workflow_cmd import _scan_workspace_context
+from agent_core.commands.workflow_cmd import _scan_workspace_context, _analysis_flag_gate
+
+
+class TestAnalysisFlagGate:
+    """Any unverifiable code claim pauses the run for confirmation."""
+
+    def test_clean_analysis_passes_without_input(self) -> None:
+        assert _analysis_flag_gate(checked=10, flagged=0, force=False) is True
+
+    def test_flagged_with_force_only_warns(self) -> None:
+        with patch("builtins.input", side_effect=AssertionError("must not prompt")):
+            assert _analysis_flag_gate(checked=10, flagged=3, force=True) is True
+
+    def test_flagged_without_force_confirms(self) -> None:
+        with patch("builtins.input", return_value="y"):
+            assert _analysis_flag_gate(checked=10, flagged=3, force=False) is True
+        with patch("builtins.input", return_value="n"):
+            assert _analysis_flag_gate(checked=10, flagged=3, force=False) is False
+
+    def test_flagged_eof_defaults_to_halt(self) -> None:
+        with patch("builtins.input", side_effect=EOFError):
+            assert _analysis_flag_gate(checked=10, flagged=1, force=False) is False
+
+    def test_report_text_display_does_not_crash(self, capsys) -> None:
+        report = "Some claim\n## Verification Report\n- fake.py:12: not found\n- missing symbol"
+        with patch("builtins.input", return_value="n"):
+            _analysis_flag_gate(checked=2, flagged=2, force=False, report_text=report)
+        out = capsys.readouterr().out
+        assert "fake.py" in out
 
 
 class TestScanWorkspaceContext:

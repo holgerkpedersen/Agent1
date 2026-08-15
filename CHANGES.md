@@ -571,3 +571,11 @@
 **Change**: detect_module_collisions gains a shared-name-token check (catches path_guard vs path_utils, which fuzzy ratios miss); generic tokens (cmd/core/util/...) are ignored.
 **Files**: agent_core/patterns.py (_shared_name_tokens), agent_core/commands/implement_cmd.py (_check_planned_duplicates, Layer 1 gate, Layer 2 skip), agent_core/commands/workflow_cmd.py (_module_inventory, MODULE POLICY in prompt_context + plan prompt), tests (+4)
 
+
+## 2026-08-15 09:32 — quality gates: analysis verification + MODIFY-filter + wire-in
+
+**A — Analysis verification gate (workflow_cmd.py)**: _write_verified_analysis now returns (text, checked, flagged), and a new _analysis_flag_gate pauses the run for confirmation when ANY code claim could not be verified (fabricated paths/symbols poison the downstream plan); the flagged claims are shown (top 10); --force downgrades the gate to a warning; EOF defaults to halt. Applied at all three analyze branches.
+**B — MODIFY-filter in the Layer-1 gate (implement_cmd.py)**: instead of a hard abort on planned near-duplicates, the gate now offers [m]odify-existing (default: drop the duplicate planned files, print 'extend the existing module instead', refresh the cache, continue with the rest), [f]orce-generate anyway, or [a]bort.
+**C — Wire-in offer (implement_cmd.py)**: kept-but-unwired modules now get a deterministic consumer suggestion (_suggest_consumers: token matching + concept map + agent.py fallback) and an optional one-shot LLM wiring pass (_wire_in_modules: [PATCH:] blocks applied per patch with py_compile verification, max 3 files, honest 'left for manual integration' reporting). Legacy 'Use model profile use to wire them' message removed.
+**Files**: agent_core/commands/workflow_cmd.py, agent_core/commands/implement_cmd.py, tests/test_workflow_cmd.py (+5), tests/test_implement_safety.py (+4), tests/test_analysis_verifier.py (updated for tuple return)
+

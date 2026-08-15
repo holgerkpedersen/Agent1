@@ -193,12 +193,12 @@ def _scan_workspace_context(ws_path: Path, spec_content: str) -> tuple[bool, str
     return bool(combined), combined
 
 
-async def _write_verified_analysis(text: str, analysis_md: str, ws_path: Path) -> str:
+async def _write_verified_analysis(text: str, analysis_md: str, ws_path: Path) -> tuple[str, int, int]:
     """Verify code claims in *text* against *ws_path*, then write to *analysis_md*.
 
     Unverifiable file paths, symbol names, line numbers, and code snippets are
     flagged in an appended ``## Verification Report`` instead of being trusted
-    silently. Returns the verified analysis content.
+    silently. Returns ``(verified_content, checked_count, flagged_count)``.
     """
     result = await verify_analysis_claims(text, ws_path)
     if result.text != text:
@@ -207,7 +207,36 @@ async def _write_verified_analysis(text: str, analysis_md: str, ws_path: Path) -
     if result.checked:
         status = "clean" if not result.flagged else f"{result.flagged} flagged"
         print(f"  [analyze] Verified {result.checked} code claims ({status})")
-    return result.text
+    return result.text, result.checked, result.flagged
+
+
+def _analysis_flag_gate(checked: int, flagged: int, force: bool, report_text: str = "") -> bool:
+    """Gate on the analysis verification report before planning.
+
+    A single unverifiable claim (fabricated file path, symbol, or line) can
+    poison the whole downstream plan, so ANY flagged claim pauses the run for
+    confirmation — unless ``--force`` was given, which only warns.
+    """
+    if flagged <= 0:
+        return True
+    if force:
+        print(
+            f"  [analyze] WARNING: {flagged} of {checked} code claim(s) could not be "
+            "verified — continuing (--force)."
+        )
+        return True
+    print(
+        f"\n  [analyze] {flagged} of {checked} code claims could not be verified "
+        "(fabricated paths/symbols/lines would poison the downstream plan):"
+    )
+    report = report_text.split("## Verification Report", 1)[-1].strip()
+    for line in report.splitlines()[:10]:
+        print(f"    {line}")
+    try:
+        answer = input("  Continue to planning anyway? (y/N): ").strip().lower()
+    except EOFError:
+        answer = ""
+    return answer in ("y", "yes")
 
 
 async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: str | Path) -> None:
@@ -548,7 +577,10 @@ class WorkflowCommand(Command):
 
                     with open(analysis_md, "r", encoding="utf-8") as f:
                         final_analysis = f.read()
-                    await _write_verified_analysis(final_analysis, analysis_md, ws_path)
+                    v_text, v_checked, v_flagged = await _write_verified_analysis(final_analysis, analysis_md, ws_path)
+                    if not _analysis_flag_gate(v_checked, v_flagged, force, report_text=v_text):
+                        print("\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force.")
+                        return True
 
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
@@ -658,7 +690,10 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
-                await _write_verified_analysis(r, analysis_md, ws_path)
+                v_text, v_checked, v_flagged = await _write_verified_analysis(r, analysis_md, ws_path)
+                if not _analysis_flag_gate(v_checked, v_flagged, force, report_text=v_text):
+                    print("\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force.")
+                    return True
                 await _extract_decisions_if_any(agent, analysis_md, ws_path)
 
             if not force and os.path.exists(plan_md):
@@ -786,7 +821,10 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
-                await _write_verified_analysis(r, analysis_md, ws_path)
+                v_text, v_checked, v_flagged = await _write_verified_analysis(r, analysis_md, ws_path)
+                if not _analysis_flag_gate(v_checked, v_flagged, force, report_text=v_text):
+                    print("\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force.")
+                    return True
                 await _extract_decisions_if_any(agent, analysis_md, ws_path)
 
             if not force and os.path.exists(plan_md):
