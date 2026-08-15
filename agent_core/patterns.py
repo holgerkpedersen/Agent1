@@ -1110,7 +1110,9 @@ def detect_module_collisions(generated_files: list[str], existing_files: list[st
     """Flag generated modules whose names overlap with existing project modules.
 
     Checks for near-duplicate filenames (e.g., ``lm_studio_provider.py``
-    overlapping with ``lmstudio.py``).  Also verifies via importlib.
+    overlapping with ``lmstudio.py``) AND shared meaningful name tokens
+    (e.g. ``path_guard.py`` vs ``path_utils.py`` both carry ``path``).  Also
+    verifies via importlib.
 
     Returns findings with "module_collision" pattern.
     """
@@ -1141,7 +1143,8 @@ def detect_module_collisions(generated_files: list[str], existing_files: list[st
             ratio = difflib.SequenceMatcher(None, stem, other_stem).ratio()
             substring_match = stem in other_stem or other_stem in stem
             prefix_match = other_stem.startswith(stem[:6]) or stem.startswith(other_stem[:6])
-            if ratio > 0.6 or substring_match or prefix_match:
+            token_match = _shared_name_tokens(stem, other_stem)
+            if ratio > 0.6 or substring_match or prefix_match or token_match:
                 collisions.append(other)
         if collisions:
             findings.append({
@@ -1151,6 +1154,33 @@ def detect_module_collisions(generated_files: list[str], existing_files: list[st
                 "suggestion": f"Module name similar to existing: {', '.join(collisions[:3])}. Consider a more distinct name.",
             })
     return findings
+
+
+#: Name tokens too generic to indicate duplication (``cmd``, ``core``, ...).
+_GENERIC_NAME_TOKENS = frozenset({
+    "core", "util", "utils", "helper", "helpers", "base", "common", "main",
+    "app", "service", "command", "cmd", "test", "tests", "module", "impl",
+    "support", "shared", "misc", "miscellaneous",
+})
+
+
+def _shared_name_tokens(stem1: str, stem2: str) -> bool:
+    """True when two module stems share a meaningful name token.
+
+    Splits snake_case/``-``/``_``-separated stems and compares tokens of
+    length >= 4, ignoring generic tokens (``core``, ``cmd``, ...).  Catches
+    concept duplication that fuzzy ratios miss (``path_guard`` vs
+    ``path_utils`` both carry ``path``).
+    """
+    import re as _re
+
+    def _tokens(stem: str) -> set[str]:
+        return {
+            t for t in _re.split(r"[^a-zA-Z0-9]+", stem.lower())
+            if len(t) >= 4 and t not in _GENERIC_NAME_TOKENS
+        }
+
+    return bool(_tokens(stem1) & _tokens(stem2))
 
 
 def detect_attribute_errors(source_files: dict[str, str], project_root: str) -> list[dict[str, Any]]:

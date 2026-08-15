@@ -111,6 +111,38 @@ def _spec_mentions_agent(spec_content: str) -> bool:
     return any(kw in text for kw in _AGENT_SPEC_KEYWORDS)
 
 
+def _module_inventory(workspace: str, limit: int = 150) -> str:
+    """Compact list of existing modules (rel path + first docstring line).
+
+    Fed into the plan/taskplan prompts so the LLM sees the ground-truth
+    module names instead of inventing near-duplicates (e.g. it cannot propose
+    ``shell_allowlist.py`` when ``security/allowlist.py`` is listed).
+    """
+    entries: list[str] = []
+    for root, dirs, files in os.walk(workspace):
+        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
+        for f in files:
+            if not f.endswith(".py"):
+                continue
+            fp = os.path.join(root, f)
+            rel = os.path.relpath(fp, workspace).replace("\\", "/")
+            purpose = ""
+            try:
+                with open(fp, "r", encoding="utf-8") as fh:
+                    src = fh.read()
+                for line in src.splitlines()[:8]:
+                    stripped = line.strip()
+                    if stripped.startswith('"""') or stripped.startswith("'''"):
+                        purpose = stripped.strip('"\'').strip()[:70]
+                        break
+            except Exception:
+                continue
+            entries.append(f"{rel}{(' — ' + purpose) if purpose else ''}")
+            if len(entries) >= limit:
+                break
+    return "\n".join(entries)
+
+
 def _scan_workspace_context(ws_path: Path, spec_content: str) -> tuple[bool, str]:
     """Scan target workspace for relevant Python files when spec mentions agent/self-improvement.
 
@@ -358,6 +390,20 @@ class WorkflowCommand(Command):
             "  Use distinct names (e.g. `log_utils/` not `logging/`)."
         )
         prompt_context = collision_warning + path_rule + "\n\nSIZE RULES: New files max 150 lines (SRP). Split large concepts. Modifying: minimal changes only." + stdlib_shadow
+        prompt_context += (
+            "\n\nMODULE POLICY (CRITICAL): This is an established repository. "
+            "Prefer [MODIFY] over [NEW]: if an existing module already covers the "
+            "concern, extend it — never create a near-duplicate module (e.g. do not "
+            "propose an allow-list module when security/allowlist.py exists). Only "
+            "propose a [NEW] file when NO existing module addresses the concern, and "
+            "name the closest existing module in the task description."
+        )
+        inventory = _module_inventory(str(ws_path))
+        if inventory:
+            prompt_context += (
+                "\n\nEXISTING MODULES (never create near-duplicates of these):\n"
+                + inventory
+            )
 
         analysis_md = str(ws_path / "project_analysis.md")
         plan_md = str(ws_path / "project_plan.md")
@@ -518,7 +564,7 @@ class WorkflowCommand(Command):
 
                 print("\n[plan] Creating plan...")
                 r = await agent.llm.chat([
-                    {"role": "system", "content": "You are an expert software architect. Create a detailed coding plan with ALL files needed. Follow SOLID principles — each file has a single responsibility. New files should be small and focused (max 150 lines). If a concept needs more code, split across multiple files. Ensure all Python code passes mypy strict type checking. No unbound TypeVars, no type mismatches. Never use <tool_call> or XML tags."},
+                    {"role": "system", "content": "You are an expert software architect. Create a detailed coding plan with ALL files needed. Follow SOLID principles — each file has a single responsibility. New files should be small and focused (max 150 lines). If a concept needs more code, split across multiple files. Ensure all Python code passes mypy strict type checking. No unbound TypeVars, no type mismatches. Never use <tool_call> or XML tags." + prompt_context},
                     {"role": "user", "content": f"Create coding plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}"}
                 ])
                 if not step_ok(r):

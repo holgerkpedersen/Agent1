@@ -565,6 +565,27 @@ def _unwired_closure(py_new: list[str], ws: str, initial: set[str]) -> set[str]:
     return delete_set
 
 
+def _check_planned_duplicates(planned_new: list[str], ws: str) -> list[str]:
+    """Return human-readable reasons why *planned_new* modules duplicate
+    existing project modules (name similarity or shared concept tokens)."""
+    from agent_core.patterns import detect_module_collisions
+
+    existing: list[str] = []
+    for root, dirs, files in os.walk(ws):
+        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
+        for f in files:
+            if f.endswith(".py"):
+                existing.append(os.path.relpath(os.path.join(root, f), ws).replace("\\", "/"))
+
+    reasons: list[str] = []
+    for finding in detect_module_collisions(planned_new, existing_files=existing):
+        fname = finding["file"]
+        suggestion = finding["suggestion"]
+        hits = [e for e in existing if e.rsplit("/", 1)[-1] in suggestion]
+        reasons.append(f"{fname} — duplicates existing module(s): {', '.join(hits[:3])}")
+    return reasons
+
+
 def _prune_empty_dirs(ws: str, deleted_files: set[str]) -> None:
     """Remove package __init__.py files and directories left empty after
     deletion (e.g. a generated package whose only module was deleted)."""
@@ -775,6 +796,29 @@ class ImplementCommand(Command):
                 print("Warning: failed to save cache")
 
         print(f"Found {len(all_files)} files to implement: {', '.join(all_files)}")
+
+        # ---- Layer 1: planned-new-file gate (before any generation) ----
+        # A plan that proposes modules duplicating existing ones (e.g.
+        # shell_allowlist.py vs allowlist.py) is almost always wrong — abort
+        # before writing anything unless --force explicitly overrides.
+        if not force_mode:
+            planned_new = [
+                f for f in all_files
+                if f.endswith(".py")
+                and not (Path(workspace_path(target_workspace)) / f).exists()
+            ]
+            if planned_new:
+                dup_reasons = _check_planned_duplicates(planned_new, str(target_workspace))
+                if dup_reasons:
+                    print("\n  [implement] BLOCKED — planned files duplicate existing modules:")
+                    for reason in dup_reasons:
+                        print(f"    {reason}")
+                    print(
+                        "  These modules already cover the concern — extend the existing module "
+                        "instead of creating a near-duplicate. Use --force only if you really "
+                        "intend to create them anyway."
+                    )
+                    return True
 
         def file_needs_generation(fname: str) -> tuple[bool, str]:
             raw_ws = workspace_path(target_workspace)
@@ -1191,6 +1235,19 @@ class ImplementCommand(Command):
                     )
                     if result.returncode == 0:
                         skip_reason = "Already exists and compiles OK"
+
+            # ---- Layer 2: near-duplicate module gate (pre-generation) ----
+            # A NEW module whose name/concept duplicates an existing one is
+            # skipped instead of generated; the existing module is the right
+            # place for the change.
+            if skip_reason is None and not force_mode and not is_analyzed_file:
+                if filename.endswith(".py") and not filepath.exists():
+                    dup_reasons = _check_planned_duplicates([filename], str(target_workspace))
+                    if dup_reasons:
+                        skip_reason = (
+                            f"Near-duplicate of existing module — {dup_reasons[0].split(' — ', 1)[-1]} "
+                            "(extend the existing module; use --force to generate anyway)"
+                        )
 
             if skip_reason:
                 print(f"  Skipping {filename}: {skip_reason}")

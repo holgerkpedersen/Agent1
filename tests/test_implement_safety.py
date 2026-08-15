@@ -11,7 +11,49 @@ from agent_core.commands.implement_cmd import (
     _find_safe_subpackage,
     _unwired_closure,
     _prune_empty_dirs,
+    _check_planned_duplicates,
 )
+
+
+class TestPlannedDuplicates:
+    """Planned NEW modules that duplicate existing ones must be flagged before
+    any generation happens."""
+
+    def test_flags_near_duplicate_planned_modules(self, tmp_path):
+        (tmp_path / "agent_core").mkdir(parents=True)
+        (tmp_path / "agent_core" / "security").mkdir()
+        (tmp_path / "agent_core" / "security" / "allowlist.py").write_text(
+            '"""Command allow-list."""\nSAFE = set()\n', encoding="utf-8",
+        )
+        (tmp_path / "agent_core" / "security" / "sanitizer.py").write_text(
+            '"""Input sanitizer."""\nX = 1\n', encoding="utf-8",
+        )
+
+        reasons = _check_planned_duplicates(
+            [
+                "agent_core/security/shell_allowlist.py",
+                "agent_core/security/sanitizer_fix.py",
+                "agent_core/nlp/output_sanitizer.py",
+                "agent_core/nlp/chain_limiter.py",
+            ],
+            str(tmp_path),
+        )
+
+        text = "\n".join(reasons)
+        assert "shell_allowlist.py" in text and "allowlist.py" in text
+        assert "sanitizer_fix.py" in text and "sanitizer.py" in text
+        assert "output_sanitizer.py" in text and "sanitizer.py" in text
+        assert "chain_limiter.py" not in text  # no existing counterpart
+
+    def test_distinct_planned_modules_pass(self, tmp_path):
+        (tmp_path / "agent_core" / "security").mkdir(parents=True)
+        (tmp_path / "agent_core" / "security" / "allowlist.py").write_text(
+            '"""Command allow-list."""\nSAFE = set()\n', encoding="utf-8",
+        )
+        reasons = _check_planned_duplicates(
+            ["agent_core/commands/reporting_cmd.py"], str(tmp_path),
+        )
+        assert reasons == []
 
 
 class TestUnwiredClosure:

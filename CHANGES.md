@@ -561,3 +561,13 @@
 **Change**: Remaining Danish comments/docstrings in tests translated to English; two phantom 'fix --mypy' CHANGES entries (referencing a nonexistent agent_20260729_201150.py) removed.
 **Files**: agent_core/commands/implement_cmd.py (_unwired_closure, _prune_empty_dirs, delete block), tests/test_implement_safety.py (+4 tests), tests/test_fix_helpers.py (English), agent_core/diff/semantic_parser.py + agent_core/utils/common.py (unused-import cleanups from the workflow's fix phase, verified)
 
+
+## 2026-08-15 08:58 — prevent superfluous generated files (3 layers)
+
+**Change**: A `workflow . --desc ...` run generated 8 modules that duplicated existing ones (shell_allowlist vs allowlist.py, path_guard vs path_utils.py, tool_schema vs tool_schemas.py, sanitizer_fix/output_sanitizer vs sanitizer.py). Prevention now works in three layers before any code is written:
+1. **Taskplan gate (implement)**: planned NEW modules are checked against existing modules before generation — near-duplicates abort the run with a clear message ('extend the existing module instead'); --force overrides. This would have BLOCKED 6 of the 8 files in the failing run.
+2. **Pre-generation skip (implement)**: the same check runs per file in the generation loop; duplicates are skipped with a message instead of written.
+3. **Prompt policy + module inventory (workflow)**: plan/taskplan prompts now state 'prefer [MODIFY] over [NEW], name the closest existing module' and receive a compact inventory of existing modules (rel path + first docstring line) so the LLM cannot invent near-duplicate names ('shell_allowlist' when 'security/allowlist.py' is listed).
+**Change**: detect_module_collisions gains a shared-name-token check (catches path_guard vs path_utils, which fuzzy ratios miss); generic tokens (cmd/core/util/...) are ignored.
+**Files**: agent_core/patterns.py (_shared_name_tokens), agent_core/commands/implement_cmd.py (_check_planned_duplicates, Layer 1 gate, Layer 2 skip), agent_core/commands/workflow_cmd.py (_module_inventory, MODULE POLICY in prompt_context + plan prompt), tests (+4)
+

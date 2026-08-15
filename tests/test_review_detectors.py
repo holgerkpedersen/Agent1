@@ -51,6 +51,24 @@ class TestModuleCollisions:
         )
         assert len(findings) == 1
 
+    def test_shared_concept_token_flagged(self):
+        """path_guard vs path_utils share the 'path' token — fuzzy ratio alone
+        misses it, the token check must catch it."""
+        findings = detect_module_collisions(
+            ["agent_core/security/path_guard.py"],
+            existing_files=["agent_core/security/path_utils.py"],
+        )
+        assert len(findings) == 1
+        assert "path_utils.py" in findings[0]["suggestion"]
+
+    def test_generic_tokens_do_not_flag(self):
+        """Shared generic tokens (cmd/core/util) must NOT count as duplication."""
+        findings = detect_module_collisions(
+            ["agent_core/commands/analyze_cmd.py"],
+            existing_files=["agent_core/commands/workflow_cmd.py"],
+        )
+        assert len(findings) == 0
+
 
 class TestAttributeErrors:
     def test_missing_attribute_detected(self):
