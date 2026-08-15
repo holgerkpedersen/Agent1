@@ -18,12 +18,19 @@ Two connection modes, both implementing the SAME chat contract as
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
+import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+#: HTTP statuses that are safe to retry — the hosted gateway sits behind
+#: Cloudflare and intermittently returns 5xx on healthy requests (observed
+#: live: a single HTTP 500 that succeeded on the immediate retry).
+_TRANSIENT_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 #: OpenAI-compatible hosted endpoint for opencode-go (verified live: the
 #: embedded base URL in the opencode CLI binary, /models returns the
@@ -95,6 +102,8 @@ class OpencodeProvider:
         api_key: str = "",
         profile_name: str | None = None,
         read_store: bool = True,
+        max_retries: int | None = None,
+        retry_base_delay: float = 2.0,
     ) -> None:
         self.model_name = model_name
         self.server_url = server_url.rstrip("/")
@@ -111,7 +120,17 @@ class OpencodeProvider:
         self._session_id: str | None = None
         self._last_label: str | None = None
         self._server_timeout = float(os.environ.get("OPENCODE_SERVER_TIMEOUT", "600"))
-        self._api_timeout = float(os.environ.get("OPENCODE_TIMEOUT", "120"))
+        #: Long reads are normal for big prompts (workflow plan steps); 600s
+        #: matches the server-mode default. Override via OPENCODE_TIMEOUT.
+        self._api_timeout = float(os.environ.get("OPENCODE_TIMEOUT", "600"))
+        #: Transient-failure retry (default 3 attempts, exponential backoff).
+        #: A single intermittent gateway 5xx must not abort a workflow run.
+        self._max_retries = (
+            max(0, int(os.environ.get("OPENCODE_MAX_RETRIES", "3")))
+            if max_retries is None
+            else max(0, int(max_retries))
+        )
+        self._retry_base_delay = max(0.0, float(retry_base_delay))
 
     # ------------------------------------------------------------------
     # Labeling (once per session, like LM Studio)
@@ -155,6 +174,38 @@ class OpencodeProvider:
             raw = resp.read().decode("utf-8", errors="replace")
             return json.loads(raw) if raw.strip() else None
 
+    async def _with_retry(
+        self, factory: Callable[[], Any], *, label: str
+    ) -> Any:
+        """Run *factory* with exponential backoff on transient failures.
+
+        Retries HTTP 429/5xx responses and network timeouts — the hosted
+        gateway intermittently returns HTTP 500 on healthy requests
+        (observed live). Permanent client errors (4xx other than 429)
+        propagate immediately. Raises the last error after retries are
+        exhausted so callers can format it as an ``[Error ...]`` string.
+        """
+        last_error: BaseException | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                return factory()
+            except urllib.error.HTTPError as exc:
+                if exc.code not in _TRANSIENT_HTTP_STATUSES:
+                    raise
+                last_error = exc
+            except (TimeoutError, OSError) as exc:
+                last_error = exc
+            if attempt < self._max_retries:
+                wait = self._retry_base_delay * (2 ** attempt)
+                print(
+                    f"  [retry {attempt + 1}/{self._max_retries}] {label}: "
+                    f"{last_error}, waiting {wait:.0f}s...",
+                    flush=True,
+                )
+                await asyncio.sleep(wait)
+        assert last_error is not None
+        raise last_error
+
     # ------------------------------------------------------------------
     # Direct API mode (OpenAI-compatible, NATIVE tool calling)
     # ------------------------------------------------------------------
@@ -174,8 +225,12 @@ class OpencodeProvider:
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         try:
-            result = self._request(
-                "POST", f"{self.api_url}/chat/completions", payload, timeout=self._api_timeout
+            result = await self._with_retry(
+                lambda: self._request(
+                    "POST", f"{self.api_url}/chat/completions", payload,
+                    timeout=self._api_timeout,
+                ),
+                label="opencode chat/completions",
             )
         except Exception as exc:
             return f"[Error: opencode API request failed: {exc}]"
@@ -284,9 +339,12 @@ class OpencodeProvider:
         if max_tokens is not None:
             body["maxTokens"] = max_tokens
         try:
-            result = self._request(
-                "POST", f"{self.server_url}/session/{session}/message", body,
-                timeout=self._server_timeout,
+            result = await self._with_retry(
+                lambda: self._request(
+                    "POST", f"{self.server_url}/session/{session}/message", body,
+                    timeout=self._server_timeout,
+                ),
+                label="opencode message",
             )
         except Exception as exc:
             return f"[Error: opencode request failed: {exc}]"

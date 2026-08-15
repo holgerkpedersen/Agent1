@@ -1,4 +1,10 @@
-﻿## 2026-08-15 - opencode-go direct API mode
+﻿## 2026-08-16 - fix: opencode API read timeout killed workflow plan step
+
+**Change**: agent_core/llm/opencode_provider.py, .env.example
+
+**Reason**: Workflow plan step failed with 'opencode API request failed: The read operation timed out' after 694s — the direct-API default timeout was 120s (OPENCODE_TIMEOUT) while large plan prompts take minutes to generate. Raised the default to 600s (same as server mode) and documented OPENCODE_TIMEOUT in .env.example.
+
+## 2026-08-15 - opencode-go direct API mode
 
 **Change**: agent_core/llm/opencode_provider.py, agent_core/config.py, agent_core/llm/provider.py, agent_core/commands/model_cmd.py, tests/test_opencode_provider.py
 
