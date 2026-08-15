@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .base import Command, read_input, stop_requested
-from .doc_paths import find_doc
+from .doc_paths import find_input
 from agent_core.decisions import (
     add_decision,
     check_contradictions,
@@ -188,6 +188,7 @@ class DecideCommand(Command):
         overlaps = find_overlaps(
             {"tags": [], "affected_files": _extract_file_refs(text)},
             decisions,
+            ws,
         )
         if overlaps:
             ids = ", ".join(f"#{d['id']}" for d in overlaps)
@@ -248,12 +249,10 @@ class DecideCommand(Command):
 
     async def _cmd_extract(self, args: list[str], agent: "Agent") -> bool:
         source = _extract_flag(args, "--from") or "project_analysis.md"
-        # Analysis docs live in .docs/<timestamp>/ — fall back to the newest
-        # run folder (then the workspace root) when the name is not found.
-        if not Path(source).is_file():
-            found = find_doc(str(agent.workspace), source)
-            if found:
-                source = found
+        # Relative inputs are resolved against the WORKSPACE (never the
+        # process CWD); analysis docs live in .docs/<timestamp>/, so the
+        # newest run folder (then the workspace root) is used as fallback.
+        source = find_input(str(agent.workspace), source)
         try:
             analysis = Path(source).read_text(encoding="utf-8")
         except OSError:

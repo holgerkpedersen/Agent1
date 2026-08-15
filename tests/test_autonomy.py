@@ -1,5 +1,7 @@
 """Tests for autonomous mode primitives and the tailored next command."""
 import json
+import re
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -124,3 +126,71 @@ class TestPlannedFiles:
             "3. `agent_core/nlp/a.py` — dup"
         )
         assert files == ["agent_core/nlp/a.py", "agent_core/nlp/b.py"]
+
+
+def _chat_call_sites(src: str) -> list[str]:
+    """Every ``agent.llm.chat(...)`` call site (multi-line aware)."""
+    sites: list[str] = []
+    idx = 0
+    while True:
+        start = src.find("agent.llm.chat(", idx)
+        if start == -1:
+            break
+        depth = 0
+        i = start + len("agent.llm.chat(")
+        while i < len(src):
+            c = src[i]
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            i += 1
+        sites.append(src[start:i + 1])
+        idx = i + 1
+    return sites
+
+
+class TestChatCallsDisableThinking:
+    """Regression guard: generation-phase chat calls must carry
+    disable_thinking=True — otherwise a thinking model burns its output
+    budget on reasoning and returns an empty [FILE:]/JSON response
+    (finish_reason 'length'). Analysis-phase calls (contradiction checks,
+    workflow analyze) intentionally keep thinking enabled."""
+
+    def test_implement_cmd_all_chat_calls_disable_thinking(self):
+        src = Path("agent_core/commands/implement_cmd.py").read_text(encoding="utf-8")
+        sites = _chat_call_sites(src)
+        assert sites, "no agent.llm.chat( calls found in implement_cmd.py"
+        missing = [s for s in sites if "disable_thinking=True" not in s]
+        assert not missing, (
+            f"chat call(s) without disable_thinking=True in implement_cmd.py: {missing}"
+        )
+
+    def test_decisions_extract_calls_disable_thinking(self):
+        """The deterministic JSON-extraction calls must disable thinking; the
+        contradiction analysis calls (check/resolve) intentionally keep it."""
+        src = Path("agent_core/decisions.py").read_text(encoding="utf-8")
+        lines = src.splitlines()
+        defs = {}
+        for i, line in enumerate(lines):
+            m = re.match(r"async def (\w+)\(", line)
+            if m:
+                defs[m.group(1)] = i
+        for fn in ("extract_from_analysis", "extract_from_changes"):
+            start = defs[fn]
+            end = min((v for k, v in defs.items() if v > start), default=len(lines))
+            segment = "\n".join(lines[start:end])
+            sites = _chat_call_sites(segment)
+            assert sites, f"no chat calls in {fn}"
+            missing = [s for s in sites if "disable_thinking=True" not in s]
+            assert not missing, f"{fn} chat call(s) without disable_thinking=True: {missing}"
+
+    def test_tool_call_tokens_survive_in_implement_cmd(self):
+        """The fix pipeline once stripped <tool_call> tokens from implement's
+        prompt and detection logic — the angle-bracket tokens must exist."""
+        src = Path("agent_core/commands/implement_cmd.py").read_text(encoding="utf-8")
+        assert "NEVER use <tool_call>, <function_call>, or XML tags" in src
+        assert '("<tool_call" in impl_response or "<tool_call>" in impl_response)' in src
+        assert "No <tool_call> tags." in src

@@ -657,7 +657,7 @@ async def _wire_in_modules(agent: "Agent", files: list[str], suggestions: dict[s
                 "format. No prose, no [FILE:], no XML tags."
             )},
             {"role": "user", "content": prompt},
-        ])
+        ], disable_thinking=True)
         if r.startswith("[Error") or r.startswith("[LM Studio"):
             print(f"    Wire-in failed for {fname}: {r[:120]}")
             continue
@@ -928,7 +928,7 @@ class ImplementCommand(Command):
                     {"role": "system", "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations.\n\nUse EXACTLY the filenames from the task plan. Do not rename or invent new filenames. Every file MUST use a sub-package prefix — never bare root-level names."},
                     {"role": "user", "content": f"List every file that needs to be created or modified from this task plan:\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}"}
                 ]
-                file_list_response = await agent.llm.chat(list_messages)
+                file_list_response = await agent.llm.chat(list_messages, disable_thinking=True)
                 if not file_list_response or file_list_response.startswith("[Error") or file_list_response.startswith("[LM Studio"):
                     self.error(f"LM Studio API not responding or returned an error: {file_list_response}")
                     return True
@@ -1283,12 +1283,16 @@ class ImplementCommand(Command):
             impl_response = None
             for attempt in range(3):
                 try:
-                    impl_response = await agent.llm.chat(impl_messages, max_tokens=12000)
+                    impl_response = await agent.llm.chat(impl_messages, max_tokens=12000, disable_thinking=True)
                     if impl_response and not impl_response.startswith("[Error:"):
                         break
                     print(f"  Attempt {attempt + 1} failed, retrying...")
+                    if "reasoning" in str(impl_response).lower():
+                        impl_messages.append({"role": "user", "content": "Answer immediately — no reasoning, output only [FILE:] blocks."})
                 except Exception as e:
                     print(f"  Attempt {attempt + 1} error: {e}, retrying...")
+                    if "reasoning" in str(e).lower():
+                        impl_messages.append({"role": "user", "content": "Answer immediately — no reasoning, output only [FILE:] blocks."})
                     if attempt == 2:
                         impl_response = None
 
@@ -1311,7 +1315,7 @@ class ImplementCommand(Command):
             if not matches and ("<tool_call" in impl_response or "<tool_call>" in impl_response):
                 print("  Detected tool calls, retrying with plain text instruction...")
                 impl_messages.append({"role": "user", "content": "Respond ONLY in [FILE: filename.py] format. No <tool_call> tags."})
-                impl_response = await agent.llm.chat(impl_messages)
+                impl_response = await agent.llm.chat(impl_messages, disable_thinking=True)
                 for pattern in patterns:
                     matches = list(re.findall(pattern, impl_response, re.DOTALL))
                     if matches:
@@ -1552,7 +1556,7 @@ class ImplementCommand(Command):
                             {"role": "system", "content": "Generate ONLY the complete code for this file. Output as:\n[FILE: filename.py]\n```python\n# complete code here\n```"},
                             {"role": "user", "content": f"Generate complete code for {filename}."}
                         ]
-                        retry_content = await agent.llm.chat(retry_msgs)
+                        retry_content = await agent.llm.chat(retry_msgs, disable_thinking=True)
                         # Restore original profile
                         agent.llm._provider.temperature = old_temp
                         agent.llm._provider.max_tokens = old_tok
@@ -2056,7 +2060,7 @@ class ImplementCommand(Command):
                             downstream_errs,
                             prefer_file=(fname in patch_failed)
                         )
-                        fixed = await agent.llm.chat(fix_msgs)
+                        fixed = await agent.llm.chat(fix_msgs, disable_thinking=True)
                         if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
                             print(f"  LLM error: {fixed}")
                             continue
@@ -2121,7 +2125,7 @@ class ImplementCommand(Command):
                             current_code = f.read()
 
                         fix_msgs = _build_fix_prompt(err, current_code, fname, prefer_file=(fname in patch_failed))
-                        fixed = await agent.llm.chat(fix_msgs)
+                        fixed = await agent.llm.chat(fix_msgs, disable_thinking=True)
                         if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
                             print(f"  LLM error: {fixed}")
                             continue
@@ -2256,7 +2260,7 @@ class ImplementCommand(Command):
                 print("\n  [review] Class/function name conflicts with existing code:")
                 for cc in class_conflicts:
                     print(f"    {cc['file']}:{cc['line']}: {cc['suggestion']}")
-                    issues_found.append(f"{cc['file']}: {cc['suggestion']}")
+                    issues_found.append(f"{cc['file']}:{cc['line']}: {cc['suggestion']}")
 
             static_summary = ""
             if issues_found:
@@ -2340,7 +2344,7 @@ class ImplementCommand(Command):
                     )},
                     {"role": "user", "content": f"{static_summary}Review this file for bugs:\n\n```python\n{content}\n```"},
                 ]
-                review = await agent.llm.chat(review_msg)
+                review = await agent.llm.chat(review_msg, disable_thinking=True)
                 if review.startswith("[Error") or review.startswith("[LM Studio"):
                     continue
                 if any(kw in review.lower() for kw in ("bug", "issue", "error", "broken", "missing", "invalid", "fix", "should", "incorrect", "fails", "dup", "duplicate", "dry", "repeat", "same as")):

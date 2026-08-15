@@ -27,6 +27,55 @@ def _decision_path(workspace: str | Path) -> Path:
     return Path(workspace) / _DECISIONS_FILE
 
 
+def _canonical_rel(workspace: str | Path, path: str) -> str | None:
+    """Workspace-relative canonical form (forward slashes), or None when the
+    path does not resolve under the workspace.
+
+    A relative path is interpreted against the WORKSPACE (not the process
+    CWD) — the absolute form is always derivable via ``join(workspace, rel)``.
+    """
+    ws = Path(workspace).resolve()
+    p = Path(path)
+    if not p.is_absolute():
+        p = ws / p
+    try:
+        rel = p.resolve().relative_to(ws)
+    except (ValueError, OSError):
+        return None
+    return rel.as_posix()
+
+
+def normalize_affected_files(workspace: str | Path, files: list[str] | None) -> list[str]:
+    """Canonical workspace-relative forms for *files*.
+
+    - relative entries are resolved against the workspace
+    - absolute entries are relativized when under the workspace
+    - entries that do not resolve under the workspace (e.g. ``../ReactAgent``
+      escapes) or do not exist are dropped
+    - doc basenames (e.g. ``project_analysis.md``) fall back to the newest
+      ``.docs/<ts>/`` run folder via ``find_doc``
+    """
+    ws = Path(workspace).resolve()
+    out: list[str] = []
+    for raw in files or []:
+        f = str(raw).strip().replace("\\", "/")
+        if not f:
+            continue
+        rel = _canonical_rel(ws, f)
+        if rel is None:
+            continue
+        if not (ws / rel).exists():
+            from agent_core.commands.doc_paths import find_doc
+            found = find_doc(str(ws), f.rsplit("/", 1)[-1])
+            if found:
+                rel = _canonical_rel(ws, found)
+            if rel is None or not (ws / rel).exists():
+                continue
+        if rel not in out:
+            out.append(rel)
+    return out
+
+
 def load_decisions(workspace: str | Path) -> list[dict[str, Any]]:
     fp = _decision_path(workspace)
     if not fp.exists():
@@ -34,10 +83,15 @@ def load_decisions(workspace: str | Path) -> list[dict[str, Any]]:
     try:
         parsed = json.loads(fp.read_text(encoding="utf-8"))
         if isinstance(parsed, list):
-            return [d for d in parsed if isinstance(d, dict)]
-        return []
+            decisions = [d for d in parsed if isinstance(d, dict)]
+        else:
+            return []
     except (json.JSONDecodeError, OSError):
         return []
+    # Normalize legacy affected_files so matching is on ONE canonical form.
+    for d in decisions:
+        d["affected_files"] = normalize_affected_files(workspace, d.get("affected_files"))
+    return decisions
 
 
 def save_decisions(workspace: str | Path, decisions: list[dict[str, Any]]) -> None:
@@ -73,7 +127,7 @@ def add_decision(
         "context": context,
         "decision": decision,
         "rationale": rationale,
-        "affected_files": affected_files or [],
+        "affected_files": normalize_affected_files(workspace, affected_files or []),
         "tags": tags or [],
         "contradictions": [],
         "resolved_by": None,
@@ -98,8 +152,10 @@ def find_decisions(
     for d in decisions:
         if tags and not any(t in d.get("tags", []) for t in tags):
             continue
-        if files and not any(f in d.get("affected_files", []) for f in files):
-            continue
+        if files:
+            canon = {_canonical_rel(workspace, f) for f in files}
+            if not any(c in d.get("affected_files", []) for c in canon if c):
+                continue
         if keyword:
             text = json.dumps(d).lower()
             if keyword.lower() not in text:
@@ -111,13 +167,19 @@ def find_decisions(
 # ── Simple overlap check (instant, no LLM) ──────────────────────────────────
 
 
-def find_overlaps(new_decision: dict[str, Any], existing: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def find_overlaps(
+    new_decision: dict[str, Any],
+    existing: list[dict[str, Any]],
+    workspace: str | Path,
+) -> list[dict[str, Any]]:
     new_tags = set(new_decision.get("tags", []))
-    new_files = set(new_decision.get("affected_files", []))
+    new_files = {
+        c for c in (_canonical_rel(workspace, f) for f in new_decision.get("affected_files", [])) if c
+    }
     overlaps = []
     for d in existing:
         old_tags = set(d.get("tags", []))
-        old_files = set(d.get("affected_files", []))
+        old_files = set(d.get("affected_files", []))  # already canonical (add/load normalized)
         tag_overlap = bool(new_tags & old_tags)
         file_overlap = bool(new_files & old_files)
         if tag_overlap or file_overlap:
@@ -253,7 +315,7 @@ async def extract_from_analysis(
     response = await agent.llm.chat([
         {"role": "system", "content": sys_msg},
         {"role": "user", "content": f"Extract decisions from:\n\n{analysis_text}"},
-    ])
+    ], disable_thinking=True)
     return _parse_json_array(response)
 
 
@@ -294,7 +356,7 @@ async def extract_from_changes(
     response = await agent.llm.chat([
         {"role": "system", "content": sys_msg},
         {"role": "user", "content": user_msg},
-    ])
+    ], disable_thinking=True)
     result = _parse_json_array(response)
     ws = str(Path(agent.workspace).resolve())
     return _filter_candidates(result, ws)
@@ -367,4 +429,3 @@ def _filter_candidates(
 
         filtered.append(c)
     return filtered
-

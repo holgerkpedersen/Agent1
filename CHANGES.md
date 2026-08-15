@@ -606,3 +606,24 @@
 **Change**: implement's three interactive gates (Layer-1 options, delete y/N, wire-in y/N) now use auto_choice with safe auto-defaults (m/n/n) — interactive behaviour is byte-identical; only autonomous runs change.
 **Files**: agent_core/commands/base.py, agent_core/commands/workflow_cmd.py, agent_core/commands/implement_cmd.py, tests/test_autonomy.py (new, 11 tests)
 
+
+## 2026-08-15 15:12 — fix --desc
+
+**Change**: Modified `implement_cmd.py`
+**Reason**: In agent_core/commands/implement_cmd.py, EVERY call to agent.llm.chat(...)
+must pass disable_thinking=True, exactly like fix_cmd.py and optimize_cmd.py
+already do. The model currently burns the whole 
+
+## 2026-08-15 15:12 — fix --desc
+
+**Change**: Modified `decisions.py`
+**Reason**: In agent_core/commands/implement_cmd.py, EVERY call to agent.llm.chat(...)
+must pass disable_thinking=True, exactly like fix_cmd.py and optimize_cmd.py
+already do. The model currently burns the whole 
+
+## 2026-08-15 15:44 — canonical workspace paths + implement length-fix verification
+
+**Change (paths)**: Relative paths are now canonicalized against the WORKSPACE (never the process CWD) before any processing, with the absolute form always derivable. decisions.py: normalize_affected_files stores affected_files as canonical workspace-relative forms at record time (non-existent/escape entries like '../ReactAgent' dropped; doc basenames fall back to the newest .docs/<ts>/ run); load_decisions normalizes legacy entries so matching is on ONE form; find_decisions and find_overlaps match canonically (absolute caller paths included). doc_paths.find_input now resolves relative inputs against the workspace first and always returns an absolute path. decide_cmd --from/default resolves via find_input. .decisions.json persisted with canonical forms (#003-006; '../ReactAgent' removed, 'project_spec.md' resolved into .docs/2026-08-15_12-06-06/).
+**Change (implement length fix, from the fix --stdin run)**: verified and repaired — all 8 agent.llm.chat call sites now carry disable_thinking=True (generation, file-list, mypy retry, fix applications, review, wire-in), the retry loop appends an 'Answer immediately — no reasoning' note on reasoning errors, and the fix pipeline's <tool_call>-token stripping was repaired (system prompt prohibition and the tool-call detection condition restored; a stripped token had turned the condition into a permanent true). check_contradictions/resolve_contradictions intentionally keep thinking enabled (analysis quality).
+**Tests**: test_decision_paths.py (new, 12): canonical_rel, normalize_affected_files, find_input contract, decision matching; test_autonomy.py: meta-guards asserting every implement/decisions-extraction chat call carries disable_thinking=True and that <tool_call> tokens survive; test_doc_paths.py updated to the always-absolute contract.
+

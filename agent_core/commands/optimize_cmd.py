@@ -2019,7 +2019,7 @@ class OptimizeCommand(Command):
                             if past:
                                 fix_tags = _infer_tags_from_finding(pattern)
                                 overlaps = find_overlaps(
-                                    {"tags": fix_tags, "affected_files": [basename]}, past
+                                    {"tags": fix_tags, "affected_files": [basename]}, past, ws
                                 )
                                 if overlaps:
                                     ids = ", ".join(f"#{d['id']}" for d in overlaps)

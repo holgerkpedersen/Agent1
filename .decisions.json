@@ -7,7 +7,6 @@
     "decision": "Introduced `agent_core/security/tool_schema.py` using Pydantic models to validate all NLP tool arguments before execution. Invalid or non-conforming payloads are rejected prior to any tool invocation.",
     "rationale": "Pydantic provides declarative type coercion and constraint enforcement, guaranteeing that only well-formed, expected argument structures reach downstream tools. This shifts validation from runtime defensive checks inside each tool to a single upfront schema gate, improving reliability and security posture.",
     "affected_files": [
-      "agent_core/security/tool_schema.py",
       "agent_core/llm/tool_loop.py"
     ],
     "tags": [
@@ -26,15 +25,92 @@
     "context": "No mechanism existed to detect or block the agent from modifying files within its own `agent_core/security/` directory, which could allow a compromised agent to disable containment, shell allowlists, schema validation, or sanitizers.",
     "decision": "",
     "rationale": "Protecting security-critical source paths is essential for defense-in-depth: if an attacker can alter the guardrails themselves, all other protections become meaningless. This guard acts as a final barrier ensuring the integrity of the enforcement layer cannot be subverted from within.",
-    "affected_files": [
-      "agent_core/security/self_mod_guard.py",
-      "agent_core/paths/normalizer.py"
-    ],
+    "affected_files": [],
     "tags": [
       "self-modification-prevention",
       "integrity-protection",
       "defense-in-depth",
       "source-path-guarding"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "003",
+    "date": "2026-08-15T11:03:28+00:00",
+    "title": "Add DuckDuckGo web search as an NLP tool",
+    "context": "The analysis asks for DuckDuckGo web search to be added to agent.py, reused from ReactAgent, and integrated into the NLP tool loop.",
+    "decision": "Add a web_search tool schema and handler so natural-language prompts can invoke DuckDuckGo search through the existing NLP tool loop.",
+    "rationale": "This is the core requested capability and fits the existing ToolLoopRunner and NLP tool pattern.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/tool_schemas.py",
+      ".docs/2026-08-15_12-06-06/project_spec.md"
+    ],
+    "tags": [
+      "feature",
+      "nlp",
+      "tool",
+      "web-search"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "004",
+    "date": "2026-08-15T11:03:28+00:00",
+    "title": "Define the web_search tool contract",
+    "context": "The analysis identifies missing details for exact tool name, arguments, output format, max_results, allowed domains, and rate-limit/offline behavior.",
+    "decision": "Define the tool name, accepted arguments, return shape, truncation limits, allowed domains, and failure behavior for web_search.",
+    "rationale": "A clear contract is needed for the NLP schema, handler, tests, and predictable model behavior.",
+    "affected_files": [
+      "agent_core/tool_schemas.py",
+      "agent.py",
+      ".docs/2026-08-15_12-06-06/project_spec.md"
+    ],
+    "tags": [
+      "api",
+      "tool-contract",
+      "nlp"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "005",
+    "date": "2026-08-15T11:03:28+00:00",
+    "title": "Treat web search results as untrusted input",
+    "context": "The threat model identifies prompt injection via search results and notes that web content can steer later tool calls.",
+    "decision": "Wrap all web search results as untrusted data and prevent automatic execution of sensitive tools based solely on web content.",
+    "rationale": "External web content is a prompt-injection vector and must not be treated as trusted instructions.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "security",
+      "prompt-injection",
+      "untrusted-content"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "006",
+    "date": "2026-08-15T11:03:28+00:00",
+    "title": "Decide whether web_search may fetch URLs",
+    "context": "The scope says no arbitrary URL fetch unless specified, and the analysis lists URL follow-up as an open question.",
+    "decision": "Decide whether web_search returns snippets only or also fetches page content; if URL fetch is allowed, require URL validation, domain allowlisting, and SSRF protections.",
+    "rationale": "URL fetch expands the attack surface through SSRF, exfiltration, and possible authenticated actions.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/llm/lmstudio.py",
+      ".docs/2026-08-15_12-06-06/project_spec.md"
+    ],
+    "tags": [
+      "security",
+      "ssrf",
+      "scope",
+      "web-search"
     ],
     "contradictions": [],
     "resolved_by": null

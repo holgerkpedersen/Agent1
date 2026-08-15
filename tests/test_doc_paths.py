@@ -91,8 +91,12 @@ class TestFindInput:
             run / "project_analysis.md"
         )
 
-    def test_missing_name_returns_input_unchanged(self, tmp_path):
-        assert find_input(tmp_path, "nope.md") == "nope.md"
+    def test_missing_name_returns_resolved_absolute(self, tmp_path):
+        # Contract: find_input always returns an absolute path — a missing
+        # file resolves against the workspace so the caller's own
+        # "file not found" error still fires with a usable path.
+        assert find_input(tmp_path, "nope.md") == str(tmp_path / "nope.md")
+        assert Path(find_input(tmp_path, "nope.md")).is_absolute()
 
 
 class TestResolveOutput:

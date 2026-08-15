@@ -88,15 +88,19 @@ def find_doc(workspace: str | Path, name: str) -> str | None:
 def find_input(workspace: str | Path, path: str) -> str:
     """Resolve an input argument.
 
-    *path* is returned unchanged when it exists; otherwise the newest
-    ``.docs`` run folder (or root) copy of its basename is used.  When
-    nothing is found, *path* is returned unchanged so the caller's own
-    "file not found" error still fires.
+    *path* is interpreted against the WORKSPACE: relative inputs are joined
+    with *workspace* FIRST (never the process CWD), then checked; the newest
+    ``.docs`` run folder (or root) copy of its basename is used as fallback.
+    Always returns an absolute path; when nothing is found, the resolved
+    absolute path is returned so the caller's own "file not found" error
+    still fires.
     """
-    if os.path.exists(path):
-        return path
-    found = find_doc(workspace, os.path.basename(path))
-    return found if found else path
+    ws = str(Path(workspace).resolve())
+    abs_path = path if os.path.isabs(path) else os.path.join(ws, path)
+    if os.path.exists(abs_path):
+        return abs_path
+    found = find_doc(ws, os.path.basename(abs_path))
+    return found if found else abs_path
 
 
 def resolve_output(workspace: str | Path, out_arg: str, sibling_of: str | None = None) -> str:
