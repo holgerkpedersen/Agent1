@@ -1,0 +1,42 @@
+[
+  {
+    "id": "001",
+    "date": "2026-08-15T07:18:50+00:00",
+    "title": "Pydantic schema validation for NLP tool arguments replacing raw json.loads",
+    "context": "Tool argument parsing at `_execute_tool_call` used untrusted `json.loads` with no structural or type validation, exposing the agent to malformed inputs, injection vectors, and unexpected data shapes.",
+    "decision": "Introduced `agent_core/security/tool_schema.py` using Pydantic models to validate all NLP tool arguments before execution. Invalid or non-conforming payloads are rejected prior to any tool invocation.",
+    "rationale": "Pydantic provides declarative type coercion and constraint enforcement, guaranteeing that only well-formed, expected argument structures reach downstream tools. This shifts validation from runtime defensive checks inside each tool to a single upfront schema gate, improving reliability and security posture.",
+    "affected_files": [
+      "agent_core/security/tool_schema.py",
+      "agent_core/llm/tool_loop.py"
+    ],
+    "tags": [
+      "input-validation",
+      "pydantic-schema",
+      "json-parsing-hardening",
+      "type-safety"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "002",
+    "date": "2026-08-15T07:18:50+00:00",
+    "title": "Self-modification guard to prevent agent tampering with its own security modules",
+    "context": "No mechanism existed to detect or block the agent from modifying files within its own `agent_core/security/` directory, which could allow a compromised agent to disable containment, shell allowlists, schema validation, or sanitizers.",
+    "decision": "",
+    "rationale": "Protecting security-critical source paths is essential for defense-in-depth: if an attacker can alter the guardrails themselves, all other protections become meaningless. This guard acts as a final barrier ensuring the integrity of the enforcement layer cannot be subverted from within.",
+    "affected_files": [
+      "agent_core/security/self_mod_guard.py",
+      "agent_core/paths/normalizer.py"
+    ],
+    "tags": [
+      "self-modification-prevention",
+      "integrity-protection",
+      "defense-in-depth",
+      "source-path-guarding"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  }
+]
