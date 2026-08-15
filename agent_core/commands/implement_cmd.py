@@ -688,10 +688,17 @@ async def _wire_in_modules(agent: "Agent", files: list[str], suggestions: dict[s
             print(f"    Could not wire {fname} automatically — left for manual integration.")
 
 
-def _check_planned_duplicates(planned_new: list[str], ws: str) -> list[str]:
+def _check_planned_duplicates(planned_new: list[str], ws: str, taskplan_content: str = "") -> list[str]:
     """Return human-readable reasons why *planned_new* modules duplicate
-    existing project modules (name similarity or shared concept tokens)."""
+    existing project modules.
+
+    Combines the deterministic name gates (:func:`detect_module_collisions`)
+    with the precision-first semantic layer (:class:`ModuleSimilarity`): TF-IDF
+    cosine over docstrings + task descriptions, and an optional embeddings
+    backend.  Each reason carries the evidence that fired.
+    """
     from agent_core.patterns import detect_module_collisions
+    from agent_core.utils.module_similarity import ModuleSimilarity, PlannedModule
 
     existing: list[str] = []
     for root, dirs, files in os.walk(ws):
@@ -706,6 +713,21 @@ def _check_planned_duplicates(planned_new: list[str], ws: str) -> list[str]:
         suggestion = finding["suggestion"]
         hits = [e for e in existing if e.rsplit("/", 1)[-1] in suggestion]
         reasons.append(f"{fname} — duplicates existing module(s): {', '.join(hits[:3])}")
+
+    # Semantic (geometric) layer — task descriptions sharpen the features.
+    descriptions = {}
+    if taskplan_content:
+        for fname in planned_new:
+            descriptions[fname] = _extract_task_line(taskplan_content, fname)
+    planned = [
+        PlannedModule(fname, descriptions.get(fname, "")) for fname in planned_new
+    ]
+    if planned:
+        sim = ModuleSimilarity(ws)
+        for finding in sim.find_duplicates(planned):
+            reasons.append(
+                f"{finding.file} — {finding.evidence} → {finding.existing}"
+            )
     return reasons
 
 
@@ -942,7 +964,10 @@ class ImplementCommand(Command):
                 and not (Path(workspace_path(target_workspace)) / f).exists()
             ]
             if planned_new:
-                dup_reasons = _check_planned_duplicates(planned_new, str(target_workspace))
+                dup_reasons = _check_planned_duplicates(
+                    planned_new, str(target_workspace),
+                    taskplan_content if taskplan_content else "",
+                )
                 if dup_reasons:
                     print("\n  [implement] Planned files duplicate existing modules:")
                     for reason in dup_reasons:
@@ -1402,7 +1427,10 @@ class ImplementCommand(Command):
             # place for the change.
             if skip_reason is None and not force_mode and not is_analyzed_file:
                 if filename.endswith(".py") and not filepath.exists():
-                    dup_reasons = _check_planned_duplicates([filename], str(target_workspace))
+                    dup_reasons = _check_planned_duplicates(
+                        [filename], str(target_workspace),
+                        taskplan_content if taskplan_content else "",
+                    )
                     if dup_reasons:
                         skip_reason = (
                             f"Near-duplicate of existing module — {dup_reasons[0].split(' — ', 1)[-1]} "

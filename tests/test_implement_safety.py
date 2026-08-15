@@ -91,6 +91,26 @@ class TestPlannedDuplicates:
         )
         assert reasons == []
 
+    def test_semantic_layer_fires_through_gate(self, tmp_path):
+        """The geometric layer must flag a planned module whose DESCRIPTION
+        matches an existing module semantically — even when no name token is
+        shared."""
+        (tmp_path / "agent_core" / "security").mkdir(parents=True)
+        (tmp_path / "agent_core" / "security" / "sanitizer.py").write_text(
+            '"""Input sanitizer stripping shell-injection payloads before re-injection."""\nX = 1\n',
+            encoding="utf-8",
+        )
+        taskplan = (
+            "1. `agent_core/nlp/safe_text.py` — Sanitize text with the input sanitizer "
+            "before re-injection into the model\n"
+        )
+        reasons = _check_planned_duplicates(
+            ["agent_core/nlp/safe_text.py"],
+            str(tmp_path),
+            taskplan,
+        )
+        assert any("TF-IDF" in r for r in reasons), reasons
+
 
 class TestUnwiredClosure:
     """'y' on the review delete prompt must remove the whole orphaned

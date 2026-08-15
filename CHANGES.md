@@ -586,3 +586,9 @@
 **Migration**: the five existing root `project_*.md` files were moved to `.docs/2026-08-15_11-17-11/` (one-off, not automatic).
 **Files**: agent_core/commands/doc_paths.py (new), agent_core/commands/workflow_cmd.py (run folder + carry-over), agent_core/commands/plan_cmd.py, entities_cmd.py, taskplan_cmd.py (bare output -> .docs, input fallback), agent_core/commands/implement_cmd.py (input fallback), agent_core/commands/fix_cmd.py (find_doc), agent_core/commands/decide_cmd.py (extract fallback), agent_core/file_searcher.py (.docs excluded), .gitignore (.docs/), tests/test_doc_paths.py (new, 16 tests), tests/test_file_searcher.py (+1)
 
+
+## 2026-08-15 11:52 — geometric duplicate detection (TF-IDF + optional embeddings)
+
+**Change**: New agent_core/utils/module_similarity.py adds a precision-first semantic layer to the planned-module gates: TF-IDF cosine over module docstrings + task-plan descriptions (the strongest signal), with an optional LM Studio /v1/embeddings backend (AGENT_EMBEDDING_MODEL; probed once, never silently degrades — evidence reports which signal fired). Calibrated against ground truth from the failing workflow run: true pairs score 0.64-0.71, false pairs 0.27-0.49, threshold 0.55 with self-exclusion and a production-only corpus (tests/benchmarks excluded). _check_planned_duplicates now combines name gates + geometric findings, each with evidence ('TF-IDF top-1 0.704 → path_utils.py'). Corpus is cached per workspace, invalidated by max-mtime (identical precision, faster repeats). Embeddings A/B-verified against the same fixtures before activation.
+**Files**: agent_core/utils/module_similarity.py (new), agent_core/commands/implement_cmd.py (gate integration + task descriptions), tests/test_module_similarity.py (new, 9 tests), tests/test_implement_safety.py (+1 semantic-gate test)
+
