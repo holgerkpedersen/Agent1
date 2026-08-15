@@ -85,6 +85,29 @@ class TestFileSearcher:
         assert len(lines) == 51  # 50 matches + "… and N more"
         assert "and 10 more matches" in lines[-1]
 
+    def test_docs_run_folders_are_not_code_matches(self, tmp_path):
+        """Workflow docs now live in .docs/<timestamp>/ — a symbol that only
+        lives in them must not appear as a code match (like the old
+        root-level project_*.md rule)."""
+        run = tmp_path / ".docs" / "2026-08-15_11-17-11"
+        run.mkdir(parents=True)
+        (run / "project_plan.md").write_text(
+            "[MUST] Patch `_execute_nlp_tool` command injection vulnerability",
+            encoding="utf-8",
+        )
+        (run / "project_tasks.md").write_text(
+            "1. `_execute_nlp_tool` shell=True replacement",
+            encoding="utf-8",
+        )
+        (tmp_path / "src.py").write_text("def _execute_tool_call():\n    pass\n", encoding="utf-8")
+
+        result = asyncio.run(FileSearcher().search("_execute_nlp_tool", str(tmp_path)))
+        assert result == "No matches found"
+
+        result2 = asyncio.run(FileSearcher().search("_execute_tool_call", str(tmp_path)))
+        assert "src.py" in result2
+        assert ".docs" not in result2
+
 
 class TestSearchToolHandler:
     """Drive Agent._execute_tool_call('search', ...) — regression for the

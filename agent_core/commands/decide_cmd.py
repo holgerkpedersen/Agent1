@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .base import Command, read_input, stop_requested
+from .doc_paths import find_doc
 from agent_core.decisions import (
     add_decision,
     check_contradictions,
@@ -247,6 +248,12 @@ class DecideCommand(Command):
 
     async def _cmd_extract(self, args: list[str], agent: "Agent") -> bool:
         source = _extract_flag(args, "--from") or "project_analysis.md"
+        # Analysis docs live in .docs/<timestamp>/ — fall back to the newest
+        # run folder (then the workspace root) when the name is not found.
+        if not Path(source).is_file():
+            found = find_doc(str(agent.workspace), source)
+            if found:
+                source = found
         try:
             analysis = Path(source).read_text(encoding="utf-8")
         except OSError:

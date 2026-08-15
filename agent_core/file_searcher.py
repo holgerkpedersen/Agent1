@@ -14,6 +14,9 @@ _IGNORED_DIRS = {
     ".coverage", ".opencode", ".poolside", ".vscode", ".tox", ".nox",
     "venv", ".venv", "env", ".env", "node_modules", "backups",
     "htmlcov", ".eggs", "dist", "build", ".idea",
+    # .docs holds timestamped workflow docs (spec/analysis/plan/tasks),
+    # not source — must not surface as code matches.
+    ".docs",
 }
 
 #: Individual files never searched (runtime/session state).

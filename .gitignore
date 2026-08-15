@@ -119,7 +119,9 @@ Desktop.ini
 .project_memory.json
 chat_history.json
 
-# Temporary workflow command artifacts (spec -> analysis -> plan -> tasks -> entities)
+# Workflow command docs (spec -> analysis -> plan -> tasks -> entities),
+# one timestamped folder per run.  Legacy root artifacts remain ignored too.
+.docs/
 project_*.md
 
 .github/workflows/

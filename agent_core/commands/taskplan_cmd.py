@@ -3,6 +3,7 @@ import os
 import re
 
 from .base import Command
+from .doc_paths import find_input, resolve_output
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -67,9 +68,13 @@ class TaskplanCommand(Command):
             self.error("Usage: taskplan <analysis.md> <plan.md> [tasks.md]")
             return True
         
-        analysis_file = args[0]
-        plan_file = args[1]
-        tasks_file = args[2] if len(args) > 2 else "tasks.md"
+        ws = agent.workspace
+        analysis_file = find_input(ws, args[0])
+        plan_file = find_input(ws, args[1])
+        # Bare output filenames go to .docs/<timestamp>/ (the input's run
+        # folder when it has one) — explicit paths are kept.
+        tasks_file = resolve_output(ws, args[2] if len(args) > 2 else "tasks.md",
+                                    sibling_of=analysis_file)
         
         try:
             with open(analysis_file, "r", encoding="utf-8") as f:
@@ -87,8 +92,13 @@ class TaskplanCommand(Command):
             with open(entities_py, "r", encoding="utf-8") as f:
                 entities_content = f.read()
         
-        # Build collision warning from workspace
-        ws_dir = os.path.dirname(os.path.abspath(analysis_file))
+        # Build collision warning from workspace — the analysis file may live
+        # in a .docs/<timestamp>/ run folder, which is not the workspace.
+        analysis_parent = os.path.dirname(os.path.abspath(analysis_file))
+        if os.path.basename(os.path.dirname(analysis_parent)) == ".docs":
+            ws_dir = ws
+        else:
+            ws_dir = analysis_parent
         collision_warning = _collision_scan(ws_dir)
 
         # Dynamic path rules

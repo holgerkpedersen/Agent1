@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .base import Command, show_file_diff, save_file_py, read_choice, stop_requested
+from .doc_paths import find_doc
 from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
 from .implement_cmd import (
     _apply_patch as _impl_apply_patch,
@@ -1063,8 +1064,9 @@ class FixCommand(Command):
 
             _TASK_FILE_RE = re.compile(r'`([^`]+\.py)`')
             resp_matched = set()
-            tasks_md_path = os.path.join(ws_dir, "project_tasks.md")
-            if os.path.exists(tasks_md_path):
+            # Docs live in .docs/<timestamp>/ — newest run first, root (legacy) second.
+            tasks_md_path = find_doc(ws_dir, "project_tasks.md")
+            if tasks_md_path:
                 current_file = None
                 with open(tasks_md_path, "r", encoding="utf-8") as tf:
                     for line in tf:
@@ -1082,8 +1084,8 @@ class FixCommand(Command):
                     candidate_files |= resp_matched
                     print(f"  + {len(resp_matched)} files from project_tasks.md responsibility matching")
 
-            plan_md_path = os.path.join(ws_dir, "project_plan.md")
-            if os.path.exists(plan_md_path):
+            plan_md_path = find_doc(ws_dir, "project_plan.md")
+            if plan_md_path:
                 plan_matched = set()
                 with open(plan_md_path, "r", encoding="utf-8") as pf:
                     plan_text = pf.read()

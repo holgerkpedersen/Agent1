@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .base import Command, show_file_diff, read_input, stop_requested
+from .doc_paths import find_input
 from agent_core import to_windows_path, workspace_path
 from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
 
@@ -832,6 +833,16 @@ class ImplementCommand(Command):
             plan_file = os.path.join(target_workspace, plan_file)
         if not os.path.isabs(entities_file):
             entities_file = os.path.join(target_workspace, entities_file)
+
+        # Docs now live in .docs/<timestamp>/ — when a name is not found as
+        # given, fall back to the newest run folder (then the workspace root).
+        resolved_taskplan = find_input(target_workspace, taskplan_file)
+        if resolved_taskplan != taskplan_file:
+            print(f"  Resolved taskplan: {resolved_taskplan}")
+            taskplan_file = resolved_taskplan
+        analysis_file = find_input(target_workspace, analysis_file)
+        plan_file = find_input(target_workspace, plan_file)
+        entities_file = find_input(target_workspace, entities_file)
 
         cache_file = os.path.join(os.path.dirname(os.path.realpath(taskplan_file)), ".implement_cache.json")
 

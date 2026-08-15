@@ -1,5 +1,8 @@
 """Entities command for agent interactive mode."""
+import os
+
 from .base import Command
+from .doc_paths import find_input, resolve_output
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -22,9 +25,13 @@ class EntitiesCommand(Command):
             self.error("Usage: entities <analysis.md> <plan.md> [entities.md]")
             return True
         
-        analysis_file = args[0]
-        plan_file = args[1]
-        entities_file = args[2] if len(args) > 2 else "entities.md"
+        ws = agent.workspace
+        analysis_file = find_input(ws, args[0])
+        plan_file = find_input(ws, args[1])
+        # Bare output filenames go to .docs/<timestamp>/ (the input's run
+        # folder when it has one) — explicit paths are kept.
+        entities_file = resolve_output(ws, args[2] if len(args) > 2 else "entities.md",
+                                       sibling_of=analysis_file)
         
         try:
             with open(analysis_file, "r", encoding="utf-8") as f:

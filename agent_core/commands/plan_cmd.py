@@ -1,5 +1,6 @@
 """Plan command for agent interactive mode."""
 from .base import Command
+from .doc_paths import find_input, resolve_output
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -22,8 +23,11 @@ class PlanCommand(Command):
             self.error("Usage: plan <analysis.md> <plan.md>")
             return True
         
-        analysis_file = args[0]
-        plan_file = args[1]
+        # Bare input filenames fall back to the newest .docs run folder.
+        analysis_file = find_input(agent.workspace, args[0])
+        # Bare output filenames go to .docs/<timestamp>/ (the input's run
+        # folder when it has one) — explicit paths are kept.
+        plan_file = resolve_output(agent.workspace, args[1], sibling_of=analysis_file)
         
         try:
             with open(analysis_file, "r", encoding="utf-8") as f:

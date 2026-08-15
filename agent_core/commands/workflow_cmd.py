@@ -1,11 +1,13 @@
 """Workflow command for agent interactive mode."""
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
 from .analysis_verifier import verify_analysis_claims
 from .base import Command, read_stdin, read_input, stop_requested
+from .doc_paths import latest_run_dir, new_run_dir
 from .reasoning_strip import strip_reasoning
 from agent_core import to_windows_path
 from agent_core.decisions import add_decision, extract_from_analysis
@@ -301,7 +303,9 @@ class WorkflowCommand(Command):
             "[--features spec.md] [--workspace <path>] — Full pipeline\n"
             "  Greenfield analyze auto-scans the target workspace when the spec references\n"
             "  agent/self-improvement/security. Produces a structured 8-section analysis and\n"
-            "  halts at an ambiguity gate (print clarifying questions) unless --force is given."
+            "  halts at an ambiguity gate (print clarifying questions) unless --force is given.\n"
+            "  Docs (spec/analysis/plan/entities/tasks) are written to .docs/<timestamp>/\n"
+            "  (git-ignored) — one folder per run; the newest run is found by readers."
         )
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
@@ -331,11 +335,19 @@ class WorkflowCommand(Command):
 
         _ws_dir().mkdir(parents=True, exist_ok=True)
 
+        # Every generated doc for this run goes into a fresh .docs/<timestamp>/
+        # folder (git-ignored) instead of polluting the workspace root.  The
+        # previous run folder is captured BEFORE creating the new one so the
+        # skip/carry-over logic below can resume from it.
+        prev_run = latest_run_dir(_ws_dir())
+        run_dir = new_run_dir(_ws_dir())
+        print(f"Run folder: {run_dir}")
+
         if "--desc" in parts:
             di = parts.index("--desc")
             if di + 1 < len(parts):
                 desc_text = parts[di + 1].strip('"')
-                spec_file = str(_ws_dir() / "project_spec.md")
+                spec_file = str(run_dir / "project_spec.md")
                 with open(spec_file, "w", encoding="utf-8") as f:
                     f.write(f"# Project Specification\n\n{desc_text}")
                 greenfield = True
@@ -344,7 +356,7 @@ class WorkflowCommand(Command):
             text = read_stdin("Paste spec or description. Type --- on its own line when done:")
             parts = [p for p in parts if p != "--stdin"]
             if text.strip():
-                spec_file = str(_ws_dir() / "project_spec.md")
+                spec_file = str(run_dir / "project_spec.md")
                 with open(spec_file, "w", encoding="utf-8") as f:
                     f.write(f"# Project Specification\n\n{text}")
                 greenfield = True
@@ -365,7 +377,7 @@ class WorkflowCommand(Command):
             if feat_val is not None and os.path.isfile(feat_val):
                 features_file = feat_val
             elif feat_val is not None:
-                features_file = str(_ws_dir() / "project_features.md")
+                features_file = str(run_dir / "project_features.md")
                 with open(features_file, "w", encoding="utf-8") as f:
                     f.write(f"# Feature Requirements\n\n{feat_val}")
                 print(f"\n[features] {feat_val}")
@@ -434,24 +446,43 @@ class WorkflowCommand(Command):
                 + inventory
             )
 
-        analysis_md = str(ws_path / "project_analysis.md")
-        plan_md = str(ws_path / "project_plan.md")
-        entities_md = str(ws_path / "project_entities.md")
-        tasks_md = str(ws_path / "project_tasks.md")
+        analysis_md = str(run_dir / "project_analysis.md")
+        plan_md = str(run_dir / "project_plan.md")
+        entities_md = str(run_dir / "project_entities.md")
+        tasks_md = str(run_dir / "project_tasks.md")
 
         def step_ok(result: str) -> bool:
             return not (result.startswith("[Error") or result.startswith("[LM Studio"))
+
+        def _reuse(name: str, label: str) -> bool:
+            """True when *label* can be skipped because its doc already exists.
+
+            Checks the current run folder first, then the previous run — a
+            doc carried over from the previous run is copied into this run
+            folder so each run folder stays self-contained.
+            """
+            cur = run_dir / name
+            if cur.is_file():
+                print(f"\n[Skipping {label}] exists")
+                return True
+            if prev_run is not None:
+                cand = prev_run / name
+                if cand.is_file():
+                    shutil.copy2(cand, cur)
+                    print(f"\n[Skipping {label}] exists — carried over from {prev_run.name}")
+                    return True
+            return False
 
         if spec_file:
             with open(spec_file, "r", encoding="utf-8") as f:
                 spec_content = f.read()
             print(f"\n[spec] Loaded from {spec_file}")
 
-            if not force and os.path.exists(plan_md):
-                print("\n[Skipping plan] exists")
+            if not force and _reuse("project_plan.md", "plan"):
+                pass  # skipped — message printed by _reuse
             else:
-                if not force and os.path.exists(analysis_md):
-                    print("\n[Skipping analyze] exists")
+                if not force and _reuse("project_analysis.md", "analyze"):
+                    pass  # skipped — message printed by _reuse
                 else:
                     print("\n[analyze] Analyzing spec...")
 
@@ -606,8 +637,8 @@ class WorkflowCommand(Command):
                     f.write(strip_reasoning(r, mode="light"))
                 print("[plan] Written")
 
-            if not force and os.path.exists(entities_md):
-                print("\n[Skipping entities] exists")
+            if not force and _reuse("project_entities.md", "entities"):
+                pass  # skipped — message printed by _reuse
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read() if os.path.exists(analysis_md) else ""
@@ -624,8 +655,8 @@ class WorkflowCommand(Command):
                     f.write(strip_reasoning(r, mode="light"))
                 print("[entities] Written")
 
-            if not force and os.path.exists(tasks_md):
-                print("\n[Skipping taskplan] exists")
+            if not force and _reuse("project_tasks.md", "taskplan"):
+                pass  # skipped — message printed by _reuse
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read() if os.path.exists(analysis_md) else ""
@@ -662,8 +693,8 @@ class WorkflowCommand(Command):
                 features = f.read()
             print(f"\n[features] Loaded from {features_file}")
 
-            if not force and os.path.exists(analysis_md):
-                print("\n[Skipping analyze] exists")
+            if not force and _reuse("project_analysis.md", "analyze"):
+                pass  # skipped — message printed by _reuse
             else:
                 print("\n[analyze] Scanning existing py files...")
                 py_files = []
@@ -696,8 +727,8 @@ class WorkflowCommand(Command):
                     return True
                 await _extract_decisions_if_any(agent, analysis_md, ws_path)
 
-            if not force and os.path.exists(plan_md):
-                print("\n[Skipping plan] exists")
+            if not force and _reuse("project_plan.md", "plan"):
+                pass  # skipped — message printed by _reuse
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
@@ -719,8 +750,8 @@ class WorkflowCommand(Command):
                     f.write(f"\n\n---\n\n{strip_reasoning(r, mode="light")}")
                 print(f"[plan] Appended to {plan_md}")
 
-            if not force and os.path.exists(entities_md):
-                print("\n[Skipping entities] exists")
+            if not force and _reuse("project_entities.md", "entities"):
+                pass  # skipped — message printed by _reuse
             else:
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
@@ -739,8 +770,8 @@ class WorkflowCommand(Command):
                     f.write(f"\n\n---\n\n{strip_reasoning(r, mode="light")}")
                 print("[entities] Appended")
 
-            if not force and os.path.exists(tasks_md):
-                print("\n[Skipping taskplan] exists")
+            if not force and _reuse("project_tasks.md", "taskplan"):
+                pass  # skipped — message printed by _reuse
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
@@ -772,8 +803,8 @@ class WorkflowCommand(Command):
             print(f"\nNext: implement {tasks_md} {analysis_md} {plan_md} {entities_md} --workspace {target_workspace} --keep")
 
         else:
-            if not force and os.path.exists(analysis_md):
-                print("\n[Skipping analyze] exists")
+            if not force and _reuse("project_analysis.md", "analyze"):
+                pass  # skipped — message printed by _reuse
             else:
                 print("\n[analyze] Scanning py files...")
                 py_files = []
@@ -827,8 +858,8 @@ class WorkflowCommand(Command):
                     return True
                 await _extract_decisions_if_any(agent, analysis_md, ws_path)
 
-            if not force and os.path.exists(plan_md):
-                print("\n[Skipping plan] exists")
+            if not force and _reuse("project_plan.md", "plan"):
+                pass  # skipped — message printed by _reuse
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
@@ -849,8 +880,8 @@ class WorkflowCommand(Command):
                     f.write(strip_reasoning(r, mode="light"))
                 print("[plan] Written")
 
-            if not force and os.path.exists(entities_md):
-                print("\n[Skipping entities] exists")
+            if not force and _reuse("project_entities.md", "entities"):
+                pass  # skipped — message printed by _reuse
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
@@ -867,8 +898,8 @@ class WorkflowCommand(Command):
                     f.write(strip_reasoning(r, mode="light"))
                 print("[entities] Written")
 
-            if not force and os.path.exists(tasks_md):
-                print("\n[Skipping taskplan] exists")
+            if not force and _reuse("project_tasks.md", "taskplan"):
+                pass  # skipped — message printed by _reuse
             else:
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
