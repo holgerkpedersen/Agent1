@@ -55,6 +55,16 @@ class AgentSettings:
             "AGENT_OPENCODE_MODEL", "opencode-go/deepseek-v4-flash"
         )
     )
+    #: Direct hosted API mode (OpenAI-compatible, the opencode-go gateway).
+    #: When a key is available (OPENCODE_API_KEY or opencode's auth.json
+    #: store) the provider uses direct API mode with NATIVE tool calling
+    #: instead of a local opencode server.
+    opencode_api_url: str = field(
+        default_factory=lambda: os.environ.get("OPENCODE_API_URL", "https://opencode.ai/zen/go/v1")
+    )
+    opencode_api_key: str = field(
+        default_factory=lambda: os.environ.get("OPENCODE_API_KEY", "")
+    )
 
 
 _LLM_PROVIDERS = ("lmstudio", "opencode")
@@ -189,6 +199,8 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         opencode_server_url=os.environ.get("OPENCODE_SERVER_URL") or env_vars.get("OPENCODE_SERVER_URL") or "http://127.0.0.1:4096",
         opencode_password=os.environ.get("OPENCODE_SERVER_PASSWORD") or env_vars.get("OPENCODE_SERVER_PASSWORD") or "",
         opencode_model=os.environ.get("AGENT_OPENCODE_MODEL") or env_vars.get("AGENT_OPENCODE_MODEL") or "opencode-go/deepseek-v4-flash",
+        opencode_api_url=os.environ.get("OPENCODE_API_URL") or env_vars.get("OPENCODE_API_URL") or "https://opencode.ai/zen/go/v1",
+        opencode_api_key=os.environ.get("OPENCODE_API_KEY") or env_vars.get("OPENCODE_API_KEY") or "",
     )
 
     _validate_settings(settings)

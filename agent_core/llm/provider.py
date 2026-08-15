@@ -27,6 +27,8 @@ def build_provider(settings: Any, model_name: str) -> "LLMProvider":
             model_name=model_name,
             server_url=getattr(settings, "opencode_server_url", "http://127.0.0.1:4096"),
             password=getattr(settings, "opencode_password", ""),
+            api_url=getattr(settings, "opencode_api_url", "https://opencode.ai/zen/go/v1"),
+            api_key=getattr(settings, "opencode_api_key", ""),
         )
     from .lmstudio import LMStudioProvider
 

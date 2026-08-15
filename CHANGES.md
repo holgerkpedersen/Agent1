@@ -1,3 +1,9 @@
+﻿## 2026-08-15 - opencode-go direct API mode
+
+**Change**: agent_core/llm/opencode_provider.py, agent_core/config.py, agent_core/llm/provider.py, agent_core/commands/model_cmd.py, tests/test_opencode_provider.py
+
+**Reason**: Fully integrated opencode-go as an LLM provider: the provider now has two modes sharing the same chat contract - (1) DIRECT hosted API (https://opencode.ai/zen/go/v1, OpenAI-compatible, verified live) with NATIVE tool calling, activated automatically when an API key is available (OPENCODE_API_KEY env or opencode's auth.json store, opencode-go entry); (2) the existing local opencode serve fallback. Key resolution env-first, never logged. model list shows the hosted catalog (26 opencode-go models) in API mode, server catalog otherwise. Hosted model ids are unprefixed in payloads (verified: prefixed ids get 403 Model not supported), re-prefixed (opencode-go/...) for agent consistency. Sends a browser-like User-Agent (Cloudflare blocks Python-urllib, error 1010). Verified end-to-end live (chat + list). 24 provider tests green, full suite 802 passed.
+
 
 ## 2026-07-26 17:35 — fix --desc
 

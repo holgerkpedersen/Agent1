@@ -1,19 +1,20 @@
 """Opencode LLM provider (opencode-go family) for the agent.
 
-Talks to a running ``opencode serve`` HTTP server (port 4096 by default)
-and implements the SAME chat contract as :class:`LMStudioProvider`:
+Two connection modes, both implementing the SAME chat contract as
+:class:`LMStudioProvider` (plain text, or an OpenAI-style JSON string with
+``tool_calls``; errors as ``[Error ...]`` strings):
 
-- ``chat(...)`` returns plain text, or an OpenAI-style JSON string with
-  ``tool_calls`` when the model requests tools
-- errors are returned as ``[Error ...]`` strings
-- ``temperature``/``max_tokens``/``_profile_name`` attributes exist so
-  callers that poke provider state (e.g. implement's profile switch) work
-
-opencode's message API executes its OWN built-in tools server-side and
-takes ``tools`` as an enable/disable map, not custom schemas.  The agent's
-tool loop is therefore TEXT-MEDIATED: pending tool parts from the response
-are mapped to this agent's tools via a fixed table, executed by the caller,
-and fed back as text parts on the next turn.
+1. **Direct API mode** (default when a key is available): OpenAI-compatible
+   ``https://opencode.ai/v1`` chat/completions with NATIVE tool calling —
+   the agent's tool schemas are passed through unchanged.  The API key
+   resolves from ``OPENCODE_API_KEY`` first, then from opencode's
+   credentials store (``~/.local/share/opencode/auth.json``, ``opencode-go``
+   entry).  The key is never logged or persisted in agent state.
+2. **Server mode**: a local ``opencode serve`` session whose message API
+   executes its OWN built-in tools server-side (tools are an enable/disable
+   map, not custom schemas), so the agent's tool loop is TEXT-MEDIATED:
+   pending tool parts are mapped to this agent's tools via a fixed table and
+   results fed back as text parts on the next turn.
 """
 from __future__ import annotations
 
@@ -21,14 +22,28 @@ import base64
 import json
 import os
 import urllib.request
+from pathlib import Path
 from typing import Any
+
+#: OpenAI-compatible hosted endpoint for opencode-go (verified live: the
+#: embedded base URL in the opencode CLI binary, /models returns the
+#: opencode-go catalog with UNPREFIXED ids like "deepseek-v4-flash").
+DEFAULT_API_BASE = "https://opencode.ai/zen/go/v1"
+
+#: Model ids on the hosted API are unprefixed; this agent's persisted names
+#: keep the "opencode-go/..." prefix for provider resolution.
+def _hosted_model_id(model_name: str) -> str:
+    for prefix in ("opencode-go/", "opencode/"):
+        if model_name.startswith(prefix):
+            return model_name[len(prefix):]
+    return model_name
 
 #: Default port for ``opencode serve``.
 DEFAULT_SERVER_URL = "http://127.0.0.1:4096"
 
-#: Map opencode's built-in tool names to this agent's NLP tools.  Only tools
-#: with overlapping semantics are mapped; anything else is reported as an
-#: unmapped-tool error so the loop can continue.
+#: Map opencode's built-in tool names to this agent's NLP tools (server mode).
+#: Only tools with overlapping semantics are mapped; anything else is reported
+#: as an unmapped-tool error so the loop can continue.
 _TOOL_MAP: dict[str, str] = {
     "bash": "run",
     "read": "read",
@@ -51,66 +66,141 @@ _ENABLED_TOOLS: dict[str, bool] = {
 }
 
 
+def _api_key_from_store() -> str:
+    """Read the opencode-go API key from opencode's credentials store."""
+    candidates = [
+        Path.home() / ".local" / "share" / "opencode" / "auth.json",
+        Path(os.environ.get("APPDATA", "")) / "opencode" / "auth.json",
+    ]
+    for path in candidates:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            key = data.get("opencode-go", {}).get("key")
+            if key:
+                return str(key)
+        except Exception:
+            continue
+    return ""
+
+
 class OpencodeProvider:
-    """opencode server-backed LLM provider (opencode-go models)."""
+    """opencode-go LLM provider — direct hosted API or local server mode."""
 
     def __init__(
         self,
         model_name: str,
         server_url: str = DEFAULT_SERVER_URL,
         password: str = "",
+        api_url: str = DEFAULT_API_BASE,
+        api_key: str = "",
         profile_name: str | None = None,
+        read_store: bool = True,
     ) -> None:
         self.model_name = model_name
         self.server_url = server_url.rstrip("/")
         self.password = password
+        self.api_url = api_url.rstrip("/")
+        stored = _api_key_from_store() if read_store else ""
+        self.api_key = api_key or os.environ.get("OPENCODE_API_KEY", "") or stored
+        #: Direct API mode when a key is available; otherwise local server.
+        self.api_mode = bool(self.api_key)
         #: Compatibility attributes — callers poke provider state directly.
         self.temperature: float = 0.7
         self.max_tokens: int = 50000
         self._profile_name: str | None = profile_name
         self._session_id: str | None = None
         self._last_label: str | None = None
-        self._timeout = float(os.environ.get("OPENCODE_SERVER_TIMEOUT", "600"))
+        self._server_timeout = float(os.environ.get("OPENCODE_SERVER_TIMEOUT", "600"))
+        self._api_timeout = float(os.environ.get("OPENCODE_TIMEOUT", "120"))
 
     # ------------------------------------------------------------------
-    # HTTP plumbing
+    # Labeling (once per session, like LM Studio)
     # ------------------------------------------------------------------
-
-    def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
-        if self.password:
-            token = base64.b64encode(f"opencode:{self.password}".encode()).decode()
-            headers["Authorization"] = f"Basic {token}"
-        return headers
-
-    def _request(self, method: str, path: str, body: Any = None) -> Any:
-        data = json.dumps(body).encode("utf-8") if body is not None else None
-        req = urllib.request.Request(
-            self.server_url + path,
-            data=data,
-            headers=self._headers(),
-            method=method,
-        )
-        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-            return json.loads(raw) if raw.strip() else None
 
     def _label(self) -> str:
-        label = f"[model: {self.model_name} | provider=opencode]"
+        mode = "api" if self.api_mode else "server"
+        label = f"[model: {self.model_name} | provider=opencode ({mode})]"
         if label != self._last_label:
             print(f"  {label}", end="", flush=True)
             self._last_label = label
         return label
 
     # ------------------------------------------------------------------
-    # Session management
+    # HTTP plumbing
+    # ------------------------------------------------------------------
+
+    def _headers(self, json_body: bool = True) -> dict[str, str]:
+        headers: dict[str, str] = {
+            #: The hosted gateway sits behind Cloudflare, which rejects the
+            #: default "Python-urllib" user agent (error 1010).
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+        if json_body:
+            headers["Content-Type"] = "application/json"
+        if self.api_mode and self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        elif self.password:
+            token = base64.b64encode(f"opencode:{self.password}".encode()).decode()
+            headers["Authorization"] = f"Basic {token}"
+        return headers
+
+    def _request(
+        self, method: str, url: str, body: Any = None, timeout: float | None = None
+    ) -> Any:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(
+            url, data=data, headers=self._headers(body is not None), method=method
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            return json.loads(raw) if raw.strip() else None
+
+    # ------------------------------------------------------------------
+    # Direct API mode (OpenAI-compatible, NATIVE tool calling)
+    # ------------------------------------------------------------------
+
+    async def _chat_api(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        max_tokens: int | None,
+    ) -> str:
+        payload: dict[str, Any] = {
+            "model": _hosted_model_id(self.model_name), "messages": messages
+        }
+        if tools:
+            payload["tools"] = tools
+        payload["temperature"] = self.temperature
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        try:
+            result = self._request(
+                "POST", f"{self.api_url}/chat/completions", payload, timeout=self._api_timeout
+            )
+        except Exception as exc:
+            return f"[Error: opencode API request failed: {exc}]"
+        choices = result.get("choices") if isinstance(result, dict) else None
+        if not choices:
+            return "[Error: opencode API returned no choices]"
+        message = choices[0].get("message") or {}
+        content = message.get("content") or ""
+        tool_calls = message.get("tool_calls")
+        if tool_calls:
+            return json.dumps({"content": content, "tool_calls": tool_calls})
+        return content if content else "(no output)"
+
+    # ------------------------------------------------------------------
+    # Server mode (opencode serve session)
     # ------------------------------------------------------------------
 
     async def _ensure_session(self) -> str:
         if self._session_id is not None:
             return self._session_id
         try:
-            session = self._request("POST", "/session", {"title": "agent1"})
+            session = self._request(
+                "POST", f"{self.server_url}/session", {"title": "agent1"},
+                timeout=self._server_timeout,
+            )
         except Exception as exc:
             return f"[Error: opencode server unreachable at {self.server_url}: {exc}]"
         sid = session.get("id") if isinstance(session, dict) else None
@@ -118,10 +208,6 @@ class OpencodeProvider:
         if not self._session_id:
             return "[Error: opencode did not return a session id]"
         return self._session_id
-
-    # ------------------------------------------------------------------
-    # Message <-> parts mapping
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _messages_to_parts(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
@@ -184,24 +270,7 @@ class OpencodeProvider:
                     tool_calls.append(call)
         return "\n".join(content_parts), tool_calls
 
-    # ------------------------------------------------------------------
-    # LLMProvider contract
-    # ------------------------------------------------------------------
-
-    async def chat(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
-        max_tokens: int | None = None,
-        disable_thinking: bool = False,
-    ) -> str:
-        """Send chat request to the opencode server.
-
-        *disable_thinking* and *tools* are intentionally ignored: opencode
-        manages reasoning and its own tool set server-side (decision #011 —
-        LM Studio knobs never reach other providers).
-        """
-        self._label()
+    async def _chat_server(self, messages: list[dict[str, Any]], max_tokens: int | None) -> str:
         session = await self._ensure_session()
         if session.startswith("[Error"):
             return session
@@ -215,7 +284,10 @@ class OpencodeProvider:
         if max_tokens is not None:
             body["maxTokens"] = max_tokens
         try:
-            result = self._request("POST", f"/session/{session}/message", body)
+            result = self._request(
+                "POST", f"{self.server_url}/session/{session}/message", body,
+                timeout=self._server_timeout,
+            )
         except Exception as exc:
             return f"[Error: opencode request failed: {exc}]"
         if not isinstance(result, dict):
@@ -224,11 +296,29 @@ class OpencodeProvider:
         parts = raw_parts if isinstance(raw_parts, list) else []
         content, tool_calls = self._parts_to_response(parts)
         if tool_calls:
-            return json.dumps({
-                "content": content,
-                "tool_calls": tool_calls,
-            })
+            return json.dumps({"content": content, "tool_calls": tool_calls})
         return content if content else "(no output)"
+
+    # ------------------------------------------------------------------
+    # LLMProvider contract
+    # ------------------------------------------------------------------
+
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
+        disable_thinking: bool = False,
+    ) -> str:
+        """Send chat request — direct API (native tools) or server mode.
+
+        *disable_thinking* is intentionally ignored: LM Studio knobs never
+        reach other providers (decision #011).
+        """
+        self._label()
+        if self.api_mode:
+            return await self._chat_api(messages, tools, max_tokens)
+        return await self._chat_server(messages, max_tokens)
 
     async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """No streaming support — return the full text response."""
@@ -246,13 +336,20 @@ class OpencodeProvider:
     # ------------------------------------------------------------------
 
     def list_models(self) -> list[str]:
-        """Models available from the opencode provider (via /config/providers).
+        """Models for this provider.
 
-        Returns the model ids of every provider listed by the server (the
-        model command renders them grouped by provider).
+        API mode: GET /models (the hosted opencode-go catalog, ids like
+        ``opencode-go/...``).  Server mode: /config/providers (model ids of
+        every provider, grouped as ``provider/model``).
         """
         try:
-            config = self._request("GET", "/config/providers")
+            if self.api_mode:
+                data = self._request("GET", f"{self.api_url}/models", timeout=15)
+                items = data.get("data") if isinstance(data, dict) else []
+                return sorted(
+                    f"opencode-go/{m.get('id')}" for m in (items or []) if isinstance(m, dict)
+                )
+            config = self._request("GET", f"{self.server_url}/config/providers", timeout=15)
         except Exception:
             return []
         providers = config.get("providers") if isinstance(config, dict) else None

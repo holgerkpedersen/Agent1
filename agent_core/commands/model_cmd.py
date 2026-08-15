@@ -113,6 +113,8 @@ class ModelCommand(Command):
                 model_name="opencode-go/placeholder",
                 server_url=getattr(settings, "opencode_server_url", "http://127.0.0.1:4096"),
                 password=getattr(settings, "opencode_password", ""),
+                api_url=getattr(settings, "opencode_api_url", "https://opencode.ai/v1"),
+                api_key=getattr(settings, "opencode_api_key", ""),
             )
             opencode_models = oc.list_models()
         except Exception:
@@ -127,8 +129,10 @@ class ModelCommand(Command):
                 marker = "  *" if is_current else "   "
                 print(f"{marker} {key}")
         else:
-            print("  [opencode] server not reachable — start 'opencode serve --port 4096'")
-            print("            (models appear once the server is running)\n")
+            hint = ("'opencode serve --port 4096'" if not oc.api_mode
+                    else "set OPENCODE_API_KEY to reach the hosted opencode-go API")
+            print(f"  [opencode] unreachable — start {hint}")
+            print("            (models appear once the connection works)\n")
 
         # ---- LM Studio models ----
         models, loaded_ids = self._fetch_models()

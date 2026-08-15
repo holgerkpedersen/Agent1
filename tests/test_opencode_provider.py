@@ -61,6 +61,7 @@ class TestOpencodeChat:
         return OpencodeProvider(
             model_name="opencode-go/glm-5.2",
             server_url="http://127.0.0.1:4096",
+            read_store=False,
         )
 
     def test_returns_plain_text(self):
@@ -143,7 +144,7 @@ class TestOpencodeChat:
 
 class TestListModels:
     def test_lists_models_from_server(self):
-        prov = OpencodeProvider("opencode-go/x", server_url="http://x:4096")
+        prov = OpencodeProvider("opencode-go/x", server_url="http://x:4096", read_store=False)
         payload = {
             "providers": [
                 {"id": "opencode-go", "models": {"glm-5.2": {}, "kimi-k2.7-code": {}}},
@@ -157,7 +158,7 @@ class TestListModels:
         assert "opencode/deepseek-v4-flash" in models
 
     def test_offline_returns_empty(self):
-        prov = OpencodeProvider("opencode-go/x", server_url="http://x:4096")
+        prov = OpencodeProvider("opencode-go/x", server_url="http://x:4096", read_store=False)
         with patch("urllib.request.urlopen", side_effect=OSError("offline")):
             assert prov.list_models() == []
 
@@ -185,3 +186,91 @@ class TestPersistProvider:
             assert const.resolve_model(None) == "opencode-go/deepseek-v4-flash"
         assert const.resolve_model("opencode-go/glm-5.2") == "opencode-go/glm-5.2"
         assert DEFAULT_OPENCODE_MODEL.startswith("opencode-go/")
+
+
+class TestDirectApiMode:
+    def test_api_mode_auto_detected_with_key(self):
+        p = OpencodeProvider("opencode-go/x", api_key="sk-test", read_store=False)
+        assert p.api_mode is True
+
+    def test_server_mode_without_key(self):
+        p = OpencodeProvider("opencode-go/x", read_store=False)
+        assert p.api_mode is False
+
+    def test_env_key_beats_store(self, monkeypatch):
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-env")
+        p = OpencodeProvider("opencode-go/x", read_store=False)
+        assert p.api_key == "sk-env"
+
+    def test_chat_api_returns_plain_text(self):
+        import asyncio
+        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+        payload = {"choices": [{"message": {"role": "assistant", "content": "Direkte svar"}}]}
+        with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out == "Direkte svar"
+
+    def test_chat_api_returns_tool_calls(self):
+        import asyncio
+        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+        tc = {"id": "c1", "type": "function",
+              "function": {"name": "search", "arguments": "{\"query\": \"x\"}"}}
+        payload = {"choices": [{"message": {"role": "assistant", "content": "",
+                                            "tool_calls": [tc]}}]}
+        with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "søg"}],
+                                        tools=[{"type": "function"}]))
+        parsed = json.loads(out)
+        assert parsed["tool_calls"][0]["function"]["name"] == "search"
+
+    def test_chat_api_error(self):
+        import asyncio
+        prov = OpencodeProvider("opencode-go/x", api_key="sk-test", read_store=False)
+        with patch("urllib.request.urlopen", side_effect=OSError("http 401")):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out.startswith("[Error")
+
+    def test_chat_api_sends_bearer_and_tools(self):
+        import asyncio
+        import urllib.request
+        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+        payload = {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+        seen = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["url"] = req.full_url
+            seen["auth"] = req.get_header("Authorization")
+            seen["body"] = json.loads(req.data)
+            return _FakeHttp(payload)
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            asyncio.run(prov.chat([{"role": "user", "content": "hi"}],
+                                  tools=[{"type": "function", "function": {"name": "x"}}],
+                                  max_tokens=123))
+        assert seen["url"].endswith("/chat/completions")
+        assert seen["auth"] == "Bearer sk-test"
+        assert seen["body"]["tools"][0]["function"]["name"] == "x"
+        assert seen["body"]["max_tokens"] == 123
+        assert seen["body"]["model"] == "glm-5.2"  # hosted ids are unprefixed
+
+    def test_list_models_via_api(self):
+        prov = OpencodeProvider("opencode-go/x", api_key="sk-test", read_store=False)
+        payload = {"data": [{"id": "a"}, {"id": "b"}]}
+        with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
+            models = prov.list_models()
+        assert models == ["opencode-go/a", "opencode-go/b"]
+
+    def test_hosted_ids_prefixed_for_agent(self):
+        prov = OpencodeProvider("opencode-go/x", api_key="sk-test", read_store=False)
+        payload = {"data": [{"id": "deepseek-v4-flash"}, {"id": "glm-5.2"}]}
+        with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
+            models = prov.list_models()
+        assert models == ["opencode-go/deepseek-v4-flash", "opencode-go/glm-5.2"]
+
+    def test_analyze_code_uses_api(self):
+        import asyncio
+        prov = OpencodeProvider("opencode-go/x", api_key="sk-test", read_store=False)
+        payload = {"choices": [{"message": {"role": "assistant", "content": "lgtm"}}]}
+        with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
+            out = asyncio.run(prov.analyze_code("def f(): pass"))
+        assert out == "lgtm"
