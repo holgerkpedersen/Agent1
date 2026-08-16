@@ -2,25 +2,42 @@
 from typing import Any, Protocol
 
 
-def provider_for(model_name: str | None, provider_setting: str = "lmstudio") -> str:
+def provider_for(
+    model_name: str | None,
+    provider_setting: str = "lmstudio",
+    persisted_provider: str | None = None,
+) -> str:
     """Provider selection (decisions #007/#009/#010).
 
     Priority: an explicit model prefix wins ("opencode-go/..." or "opencode/..."
-    → opencode; known LM Studio prefixes → lmstudio); otherwise the configured
-    ``llm_provider`` setting applies; unknown values fall back to lmstudio.
+    → opencode; known LM Studio prefixes → lmstudio); then the provider the
+    user last persisted in model.json (``model`` command writes it) — this
+    keeps LM Studio models on LM Studio even when AGENT_LLM_PROVIDER is
+    opencode; finally the configured ``llm_provider`` setting; unknown values
+    fall back to lmstudio.
     """
     m = (model_name or "").lower()
     if m.startswith("opencode"):
         return "opencode"
     if m.startswith(("laguna", "qwen", "kwaipilot", "gemma", "meta/", "prism", "lmstudio")):
         return "lmstudio"
+    if persisted_provider in ("lmstudio", "opencode"):
+        return persisted_provider
     return provider_setting if provider_setting in ("lmstudio", "opencode") else "lmstudio"
 
 
 def build_provider(settings: Any, model_name: str) -> "LLMProvider":
     """Configured provider factory (decision #008): build the concrete
     provider for the selected provider, keeping LM Studio the default (#009)."""
-    if provider_for(model_name, getattr(settings, "llm_provider", "lmstudio")) == "opencode":
+    from agent_core.constants import load_model_json
+
+    persisted = load_model_json()
+    persisted_provider = str(persisted.get("provider") or "")
+    if provider_for(
+        model_name,
+        getattr(settings, "llm_provider", "lmstudio"),
+        persisted_provider,
+    ) == "opencode":
         from .opencode_provider import OpencodeProvider
 
         return OpencodeProvider(

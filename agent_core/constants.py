@@ -98,7 +98,7 @@ def resolve_model(explicit: str | None = None) -> str:
     # Provider selection: persisted/env setting, or a model prefix if present.
     persisted = load_model_json()
     persisted_model = str(persisted.get("model") or "")
-    persisted_provider = str(persisted.get("provider") or "lmstudio")
+    persisted_provider = str(persisted.get("provider") or "")
     try:
         settings = load_agent_settings()
         provider_setting = settings.llm_provider
@@ -107,7 +107,7 @@ def resolve_model(explicit: str | None = None) -> str:
         provider_setting = "lmstudio"
         opencode_model = DEFAULT_OPENCODE_MODEL
 
-    provider = provider_for(persisted_model, provider_setting)
+    provider = provider_for(persisted_model, provider_setting, persisted_provider)
     if provider == "opencode":
         return persisted_model if persisted_model.startswith("opencode") else opencode_model
 

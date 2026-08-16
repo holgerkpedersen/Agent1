@@ -1,4 +1,54 @@
-﻿## 2026-08-16 - fix: opencode API read timeout killed workflow plan step
+﻿## 2026-08-16 - fix: LM Studio models routed to opencode API (401)
+
+**Change**: agent_core/llm/provider.py, agent_core/constants.py, agent_core/commands/model_cmd.py, tests/test_opencode_provider.py
+
+**Reason**: After switching to an LM Studio model (e.g. reactagent-1.5b), chat still hit the hosted opencode API and 401'd. Two bugs: (1) the model command updated agent.llm.model_name but never rebuilt the provider, so a previously selected opencode provider kept receiving LM Studio models; (2) provider_for() ignored the provider persisted in model.json and fell back to AGENT_LLM_PROVIDER for unrecognized names. Fix: persisted provider (model.json) now wins over the setting for unprefixed names; all LM Studio switch paths (switch/known-fallback/sync) rebuild the provider via _rebuild_provider; provider display calls pass the persisted provider. Also fixed resolve_model defaulting an empty model.json to lmstudio, which defeated the opencode setting. Verified live: reactagent-1.5b -> LMStudioProvider, opencode-go/* -> OpencodeProvider. 830 tests green.
+
+## 2026-08-16 - feat: HarnessFix phases 0-4 (trace-grounded harness repair)
+
+**Change**: new `harnessfix/` package (tracing, reader, htir, links, diagnose,
+corpus, gates, loop, repairs/), instrumented `agent_core/llm/tool_loop.py`,
+wired `agent.py` chat_nlp trace capture, root `conftest.py`, .gitignore.
+
+**Reason**: Implement docs/HARNESSFIX_SPEC.md — the closed loop that captures
+per-task tool-loop traces, compiles them to a layer-faceted HTIR graph with
+provenance/control-flow links, diagnoses failures to one of the 7 harness
+layers, applies a scoped revertible code-level repair, and keeps it only if
+the pytest + security + benchmark gates pass with no regression.
+
+- **Phase 0 tracing**: `ToolLoopRunner.run()` accepts an optional trace sink;
+  emits `step_start|llm_response|tool_call|tool_result|tool_error|
+  guard_triggered|loop_end` JSONL events to `reports/traces/{task_id}.jsonl`,
+  each tagged with a layer facet + correlation id. Non-invasive: no sink ==
+  byte-identical behaviour (verified by test); AGENT_NO_TRACE=1 opt-out.
+  `agent.py` attaches a `TraceWriter` per run() invocation (decision #029).
+- **Phase 1 HTIR**: `htir.py` compiles a trace to a `TraceGraph`
+  (reproducible from the trace alone); `links.py` infers provenance links
+  (tool args reusing earlier result tokens) and control-flow links (steps
+  caused by injected guard notes, stuck cycles).
+- **Phase 2 diagnosis**: `diagnose.py` heuristic tier maps each failed trace
+  to exactly one layer (tool_interface / execution_environment / governance /
+  verification / context / lifecycle) with evidence link ids + confidence;
+  writes `reports/harnessfix/diagnoses/{task_id}.json`.
+- **Phase 3 repair catalog**: `repairs/tool_interface.py` — seed repair
+  (include exception type in fed-back tool errors); apply/revert are exact
+  source transforms verified by py_compile.
+- **Phase 4 loop**: `python -m harnessfix.loop` collects traces, diagnoses
+  failed ones, proposes the highest-frequency layer's repair, applies it
+  behind a human review gate (`--approve`, fail-closed headless), runs
+  pytest + security (+ optional benchmark pass-rate) gates, and accepts only
+  if tests/security pass and the benchmark did not regress; verdict and
+  per-layer deltas land in `reports/harnessfix/summary.json`.
+
+Verified: `python -m harnessfix.loop` on a synthetic corpus diagnosed 2
+failed traces (tool_interface + lifecycle), proposed the tool-interface
+repair, and — on the real pytest gate — correctly REJECTED and reverted it
+because the existing test `test_tool_error_is_fed_back_not_crashing` asserts
+the old error string (gate-driven acceptance working). 22 new harnessfix
+tests green; full suite 831 passed, 1 skipped; mypy strict clean on the new
+package.
+
+## 2026-08-16 - fix: opencode API read timeout killed workflow plan step
 
 **Change**: agent_core/llm/opencode_provider.py, .env.example
 

@@ -101,7 +101,9 @@ class ModelCommand(Command):
 
         try:
             settings = load_agent_settings()
-            active_provider = provider_for(current, settings.llm_provider)
+            from agent_core.constants import load_model_json
+            persisted_provider = str(load_model_json().get("provider") or "")
+            active_provider = provider_for(current, settings.llm_provider, persisted_provider)
         except Exception:
             active_provider = "lmstudio"
 
@@ -245,15 +247,27 @@ class ModelCommand(Command):
         old = agent.llm.model_name
         agent.llm.model_name = matched
         persist_model_choice(matched, provider="lmstudio")
+        # Rebuild the provider: a previously selected opencode provider must
+        # not keep receiving LM Studio models (it would 401 on the hosted API).
+        self._rebuild_provider(agent, matched)
         print(f"  Switched: {old} -> {matched}  ({info.get('desc', '')})")
+
+    def _rebuild_provider(self, agent: "Agent", model_name: str) -> None:
+        """Rebuild the agent's LLM provider for *model_name* (provider-aware)."""
+        from agent_core.config import load_agent_settings
+        from agent_core.llm.provider import build_provider
+
+        agent.llm._provider = build_provider(load_agent_settings(), model_name)
 
     async def _handle_provider(self, args: list[str], agent: "Agent") -> None:
         """`model provider [lmstudio|opencode]` — show or switch the provider."""
         if not args:
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import provider_for
+            from agent_core.constants import load_model_json
             settings = load_agent_settings()
-            current = provider_for(agent.llm.model_name, settings.llm_provider)
+            persisted_provider = str(load_model_json().get("provider") or "")
+            current = provider_for(agent.llm.model_name, settings.llm_provider, persisted_provider)
             print(f"  Provider: {current}  (model: {agent.llm.model_name})")
             print("  Options: model provider lmstudio | model provider opencode")
             return
@@ -268,7 +282,9 @@ class ModelCommand(Command):
         from agent_core.llm.provider import build_provider, provider_for
 
         settings = load_agent_settings()
-        current = provider_for(agent.llm.model_name, settings.llm_provider)
+        from agent_core.constants import load_model_json
+        persisted_provider = str(load_model_json().get("provider") or "")
+        current = provider_for(agent.llm.model_name, settings.llm_provider, persisted_provider)
         if target == current:
             print(f"  Already on provider '{target}'.")
             return
@@ -296,6 +312,7 @@ class ModelCommand(Command):
         if query in KNOWN_MODELS:
             agent.llm.model_name = query
             self._persist_model(query)
+            self._rebuild_provider(agent, query)
             print(f"  Switched: {current} -> {query}")
             return
         sub_matches = [m for m in KNOWN_MODELS if query.lower() in m.lower()]
@@ -303,12 +320,14 @@ class ModelCommand(Command):
             best = sub_matches[0]
             agent.llm.model_name = best
             self._persist_model(best)
+            self._rebuild_provider(agent, best)
             print(f"  Switched: {current} -> {best}")
             return
         close = difflib.get_close_matches(query, KNOWN_MODELS.keys(), n=1, cutoff=0.3)
         if close:
             agent.llm.model_name = close[0]
             self._persist_model(close[0])
+            self._rebuild_provider(agent, close[0])
             print(f"  Switched: {current} -> {close[0]}")
             return
         print(f"  No match for '{query}'")
@@ -341,6 +360,7 @@ class ModelCommand(Command):
             print("  Syncing agent to match LM Studio...")
             agent.llm.model_name = active_key
             self._persist_model(active_key)
+            self._rebuild_provider(agent, active_key)
             print(f"  Done: {active_key}")
 
     def _persist_model(self, model_name: str) -> None:

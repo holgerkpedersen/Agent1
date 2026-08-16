@@ -21,6 +21,12 @@ class TestProviderFor:
         assert provider_for("model-x", "lmstudio") == "lmstudio"
         assert provider_for("model-x", "bogus") == "lmstudio"
 
+    def test_persisted_provider_wins_over_setting(self):
+        assert provider_for("reactagent-1.5b", "opencode", "lmstudio") == "lmstudio"
+        assert provider_for("model-x", "lmstudio", "opencode") == "opencode"
+        assert provider_for("model-x", "opencode", "bogus") == "opencode"
+        assert provider_for("reactagent-1.5b", "opencode") == "opencode"  # unchanged without persisted
+
 
 class TestBuildProvider:
     def test_lmstudio_default(self):
@@ -37,6 +43,15 @@ class TestBuildProvider:
         prov = build_provider(settings, "opencode-go/glm-5.2")
         assert isinstance(prov, OpencodeProvider)
         assert prov.model_name == "opencode-go/glm-5.2"
+
+    def test_persisted_lmstudio_keeps_lmstudio_provider(self, monkeypatch):
+        settings = type("S", (), {"llm_provider": "opencode"})()
+        monkeypatch.setattr(
+            "agent_core.constants.load_model_json",
+            lambda: {"model": "reactagent-1.5b", "provider": "lmstudio"},
+        )
+        prov = build_provider(settings, "reactagent-1.5b")
+        assert type(prov).__name__ == "LMStudioProvider"
 
 
 class _FakeHttp:
@@ -136,6 +151,82 @@ class TestOpencodeChat:
         with patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
             out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert out.startswith("[Error")
+
+
+class TestOpencodeRetry:
+    """Retry-on-transient-5xx behavior (the workflow [analyze] HTTP 500 fix)."""
+
+    def _provider(self, **kw):
+        return OpencodeProvider(
+            model_name="opencode-go/glm-5.2",
+            api_key="sk-test",
+            read_store=False,
+            **kw,
+        )
+
+    @staticmethod
+    def _http_error(code: int):
+        import urllib.error
+        return urllib.error.HTTPError("http://x", code, "boom", {}, None)
+
+    def test_http_500_retried_then_succeeds(self):
+        import asyncio
+        calls = {"n": 0}
+
+        def fake_urlopen(req, timeout=None):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise self._http_error(500)
+            return _FakeHttp({"choices": [{"message": {"content": "ok"}}]})
+
+        prov = self._provider(max_retries=2, retry_base_delay=0.01)
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out == "ok"
+        assert calls["n"] == 3  # 2 failed attempts + 1 success
+
+    def test_http_500_exhausted_returns_error(self):
+        import asyncio
+
+        def fake_urlopen(req, timeout=None):
+            raise self._http_error(500)
+
+        prov = self._provider(max_retries=2, retry_base_delay=0.01)
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out.startswith("[Error: opencode API request failed")
+        assert "500" in out
+
+    def test_http_400_not_retried(self):
+        import asyncio
+        calls = {"n": 0}
+
+        def fake_urlopen(req, timeout=None):
+            calls["n"] += 1
+            raise self._http_error(400)
+
+        prov = self._provider(max_retries=3, retry_base_delay=0.01)
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out.startswith("[Error")
+        assert calls["n"] == 1  # permanent error — no retry
+
+    def test_timeout_retried_then_succeeds(self):
+        import asyncio
+        calls = {"n": 0}
+
+        def fake_urlopen(req, timeout=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise TimeoutError("read timed out")
+            return _FakeHttp({"choices": [{"message": {"content": "recovered"}}]})
+
+        prov = self._provider(max_retries=2, retry_base_delay=0.01)
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out == "recovered"
+        assert calls["n"] == 2
+
 
     def test_tool_map_covers_expected_names(self):
         for oc_name in ("bash", "read", "write", "edit", "list", "grep", "webfetch"):
