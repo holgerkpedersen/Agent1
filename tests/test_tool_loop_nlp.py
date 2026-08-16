@@ -939,9 +939,10 @@ class TestAutoContinue:
 
                 asyncio.run(go())
 
-        # Run 1: 3 loop calls + 1 forced synthesis (no CONTINUE note yet).
+        # Run 1: 3 loop calls + 1 forced synthesis + 1 empty-synthesis retry
+        # (the fake returns empty content for the forced calls).
         # Run 2: 1 call — the fake sees the continuation note and answers.
-        assert llm.calls == 5
+        assert llm.calls == 6
         assert agent._chat_history[-1]["content"] == "All done now."
 
     def test_no_continuation_after_stuck(self, tmp_path):

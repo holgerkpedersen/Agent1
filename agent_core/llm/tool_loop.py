@@ -3,7 +3,7 @@ import enum
 import json
 import sys
 import time
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, Awaitable, Callable
 
 from harnessfix.tracing import (
     GUARD_BUDGET,
@@ -71,6 +71,14 @@ _STUCK_SYNTHESIS_NOTE = (
     "state exactly what is missing and what you would need."
 )
 
+#: Used when a forced synthesis call still comes back empty (large contexts
+#: make models occasionally return nothing): one explicit second chance.
+_FORCED_SYNTHESIS_RETRY = (
+    "Your previous response was empty. You MUST answer in text now — no tools "
+    "are available. State the conclusion of your analysis in a few sentences, "
+    "even if it is partial or only a summary of what you could not do."
+)
+
 #: Tools that count as making progress (they change the workspace).
 MUTATING_TOOLS = frozenset({"write", "edit", "fix"})
 
@@ -136,6 +144,12 @@ class ToolLoopRunner:
         #: (iteration cap hit), "stuck" (repeated identical calls), or
         #: "no_progress" (too many calls without modifying any file).
         self.termination_reason: str = "answer"
+        #: Observability stats for the final-answer fallback: what the run
+        #: actually did when the model produced no usable answer.
+        self.tool_calls_made: int = 0
+        self.tools_used: dict[str, int] = {}
+        self.last_tool_call: str = ""
+        self.iterations_used: int = 0
 
     async def run(
         self,
@@ -308,6 +322,9 @@ class ToolLoopRunner:
                 tc_id = tc.get("id", "")
                 func = tc.get("function", {})
                 tool_name = func.get("name", "")
+                self.tool_calls_made += 1
+                self.tools_used[tool_name] = self.tools_used.get(tool_name, 0) + 1
+                self.last_tool_call = tool_name
                 try:
                     args = json.loads(func.get("arguments", "{}"))
                     if not isinstance(args, dict):
@@ -484,6 +501,15 @@ class ToolLoopRunner:
             injected_notes.append(note)
             response_text, updated_messages = await llm_chat_fn(current_messages, [])
             current_messages = updated_messages
+            self._emit_synthesis_response(iteration, response_text)
+            # Large contexts occasionally make the model return nothing even
+            # when forced; one explicit second chance keeps the guarantee that
+            # the loop never ends without an answer (decision #034).
+            if not response_text or response_text.strip() == "(no output)":
+                current_messages.append({"role": "system", "content": _FORCED_SYNTHESIS_RETRY})
+                response_text, updated_messages = await llm_chat_fn(current_messages, [])
+                current_messages = updated_messages
+                self._emit_synthesis_response(iteration, response_text)
             if response_text:
                 all_text_parts.append(response_text)
         else:
@@ -504,7 +530,19 @@ class ToolLoopRunner:
                 m for m in current_messages
                 if not (m.get("role") == "system" and m.get("content") in injected_notes)
             ]
+        self.iterations_used = min(iteration + 1, self.max_iterations)
         return final_text, current_messages
+
+    def _emit_synthesis_response(self, iteration: int, response_text: str) -> None:
+        """Trace the forced-synthesis LLM call (decision #034: every loop
+        event, including the final tool-less call, is recorded)."""
+        self._emit(
+            KIND_LLM_RESPONSE,
+            LAYER_OBSERVABILITY,
+            iteration=iteration,
+            text=truncate(response_text or "", TEXT_CAP),
+            tool_calls_requested=0,
+        )
 
 
 def _fmt_args(args: dict[str, Any]) -> str:

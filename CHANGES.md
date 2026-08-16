@@ -1,4 +1,10 @@
-﻿## 2026-08-16 - fix: run timeout killed only the shell, orphaning children
+﻿## 2026-08-16 - fix: cryptic 'no answer' in quiet mode -> forced-synthesis retry + concrete fallback
+
+**Change**: agent.py, agent_core/llm/tool_loop.py, tests/test_loop_synthesis.py (ny), tests/test_tool_loop_nlp.py
+
+**Reason**: After a long tool-loop run (72 iterations, 87 calls) the no_mutation guard fired with 'Give your final answer now' but the forced synthesis returned nothing (large context) and the user got only the cryptic '(The assistant did not produce a response...)' — especially bad in QUIET mode. Three fixes: (1) the forced-synthesis LLM call is now traced (decision #034: every loop event, incl. the final tool-less call); (2) an empty forced response triggers ONE explicit retry (_FORCED_SYNTHESIS_RETRY) so the loop keeps its never-ends-without-an-answer guarantee; (3) chat_nlp now prints a CONCRETE fallback with loop statistics (calls made, tools used, last action, termination reason) instead of the generic message, and providers' '(no output)' is normalized to empty so the fallback/retry triggers. Verified live: quiet mode prints the concrete answer only. 862 tests green (5 new).
+
+## 2026-08-16 - fix: run timeout killed only the shell, orphaning children
 
 **Change**: agent.py (run-tool branch + _kill_process_tree), agent_core/commands/run_cmd.py, tests/test_run_cmd.py, tests/test_run_timeout.py (ny)
 

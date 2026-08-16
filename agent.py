@@ -727,6 +727,11 @@ class Agent:
             """Call the LLM with tools; parse a JSON tool_calls message back into
             the message list so ToolLoopRunner can execute them."""
             raw = await self.llm.chat(messages, tools=tools, disable_thinking=True)
+            if raw.strip() == "(no output)":
+                # Providers use "(no output)" for an empty response — treat it
+                # as empty so the loop's forced-synthesis retry / the concrete
+                # fallback message kick in instead of showing cryptic text.
+                raw = ""
             if raw.startswith("[Error") or raw.startswith("[LM Studio"):
                 return raw, messages
             try:
@@ -826,7 +831,9 @@ class Agent:
         if clean.strip():
             print(green(clean))
         else:
-            print(yellow("  (The assistant did not produce a response. Try rephrasing.)"))
+            # No usable answer: tell the user CONCRETELY what the loop did
+            # instead of the cryptic "did not produce a response".
+            print(yellow(_final_answer_fallback(loop)))
         self._nlp_workspace = None
 
     def check_stale_files(self) -> list[str]:
@@ -993,7 +1000,28 @@ def _unix_command_hint() -> str:
     )
 
 
-def _kill_process_tree(proc: "subprocess.Popen") -> None:
+def _final_answer_fallback(loop: "ToolLoopRunner") -> str:
+    """Concrete stand-in when the model produced no usable answer.
+
+    Instead of the cryptic "did not produce a response", report what the loop
+    actually did (budget spent, tools used, last action, termination reason)
+    so the user can react concretely — especially in QUIET mode, where tool
+    noise is hidden and this is the only signal.
+    """
+    used = ", ".join(
+        f"{tool}x{count}"
+        for tool, count in sorted(loop.tools_used.items(), key=lambda kv: -kv[1])
+    )
+    return (
+        f"The model made {loop.tool_calls_made} tool call(s) over "
+        f"{loop.iterations_used} iteration(s) but produced no final answer "
+        f"(terminated: {loop.termination_reason}). "
+        f"Tools used: {used or 'none'}. Last action: {loop.last_tool_call or '-'}. "
+        "Rephrase or ask something more specific to continue."
+    )
+
+
+def _kill_process_tree(proc: "subprocess.Popen[Any]") -> None:
     """Kill *proc* and its whole child tree (Windows: taskkill /T /F).
 
     A plain kill only terminates the shell; the orphaned children keep
