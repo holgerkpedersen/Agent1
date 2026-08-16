@@ -1,7 +1,30 @@
 """Tool calling loop orchestrator for LLM conversations."""
 import enum
 import json
-from typing import Callable, Awaitable, Any
+import sys
+import time
+from typing import Any, Awaitable, Callable, Protocol
+
+from harnessfix.tracing import (
+    GUARD_BUDGET,
+    GUARD_DEADLINE,
+    GUARD_NO_MUTATION,
+    GUARD_STUCK,
+    KIND_GUARD_TRIGGERED,
+    KIND_LLM_RESPONSE,
+    KIND_LOOP_END,
+    KIND_STEP_START,
+    KIND_TOOL_CALL,
+    KIND_TOOL_ERROR,
+    KIND_TOOL_RESULT,
+    LAYER_LIFECYCLE,
+    LAYER_OBSERVABILITY,
+    LAYER_TOOL_INTERFACE,
+    RESULT_CAP,
+    TEXT_CAP,
+    TraceSink,
+    truncate,
+)
 
 try:
     from agent_core.colors import cyan, green, red, yellow, magenta, gray, colorize_result
@@ -84,6 +107,7 @@ class ToolLoopRunner:
         no_mutation_limit: int = 30,
         force_after_no_mutation: int = 50,
         display_mode: DisplayMode | str | None = None,
+        trace: TraceSink | None = None,
     ):
         self.max_iterations = max_iterations
         #: Number of final iterations where the model is warned (and
@@ -105,6 +129,9 @@ class ToolLoopRunner:
                 self.display_mode = DisplayMode.VERBOSE
         else:
             self.display_mode = DisplayMode.VERBOSE
+        #: Optional trace sink (harnessfix.tracing.TraceWriter).  When None the
+        #: loop emits nothing and behaves byte-identically to before tracing.
+        self._trace = trace
         #: How this run ended: "answer" (model answered in text), "cap"
         #: (iteration cap hit), "stuck" (repeated identical calls), or
         #: "no_progress" (too many calls without modifying any file).
@@ -117,6 +144,7 @@ class ToolLoopRunner:
         execute_tool_fn: Callable[[str, dict[str, Any]], Awaitable[str]],
         tools: list[dict[str, Any]] | None = None,
         seen_calls: dict[tuple[str, str], int] | None = None,
+        trace: TraceSink | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run conversation with automatic tool calling loop.
 
@@ -129,6 +157,8 @@ class ToolLoopRunner:
             seen_calls: Optional shared registry (call_key -> executions) across
                         chained runs, so a repeated probe cannot hide behind a
                         fresh run's duplicate counter.
+            trace: Optional trace sink (harnessfix.tracing.TraceWriter) that
+                        receives one JSON event per loop step.  None = untraced.
 
         Returns:
             Tuple of (final_text, updated_messages)
@@ -138,6 +168,48 @@ class ToolLoopRunner:
         is hit while tool calls are still pending, one final tool-less call
         forces the model to synthesize the answer from the gathered results.
         """
+        self._trace = self._trace if trace is None else trace
+        try:
+            return await self._run_traced(
+                messages, llm_chat_fn, execute_tool_fn, tools, seen_calls
+            )
+        finally:
+            # Trace completeness: a loop_end event is ALWAYS written, even when
+            # an exception escapes the loop (outcome becomes "error").
+            self._emit_loop_end()
+
+    def _emit(self, kind: str, layer: str, **fields: Any) -> None:
+        """Emit one trace event when a sink is attached; never raises."""
+        if self._trace is not None:
+            self._trace.emit({"kind": kind, "layer": layer, **fields})
+
+    def _emit_loop_end(self) -> None:
+        if self._trace is None:
+            return
+        outcome = {
+            "answer": "completed",
+            "cap": "budget_exhausted",
+            "stuck": "stuck",
+            "no_progress": "no_progress",
+        }.get(self.termination_reason, "error")
+        if sys.exc_info()[0] is not None:
+            outcome = "error"
+        self._emit(
+            KIND_LOOP_END,
+            LAYER_LIFECYCLE,
+            outcome=outcome,
+            termination_reason=self.termination_reason,
+        )
+
+    async def _run_traced(
+        self,
+        messages: list[dict[str, Any]],
+        llm_chat_fn: Callable[[list[dict[str, Any]], list[dict[str, Any]]], Awaitable[tuple[str, list[dict[str, Any]]]]],
+        execute_tool_fn: Callable[[str, dict[str, Any]], Awaitable[str]],
+        tools: list[dict[str, Any]] | None,
+        seen_calls: dict[tuple[str, str], int] | None,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Body of run(): the tool-calling loop with trace event emission."""
         if not tools:
             tools = []
 
@@ -165,6 +237,12 @@ class ToolLoopRunner:
         nudge_injected = False
 
         for iteration in range(self.max_iterations):
+            self._emit(
+                KIND_STEP_START,
+                LAYER_LIFECYCLE,
+                iteration=iteration,
+                budget_remaining=self.max_iterations - iteration,
+            )
             # Progress guard: too many calls without changing anything.
             if calls_since_mutation >= self.force_after_no_mutation:
                 no_progress_forced = True
@@ -174,6 +252,13 @@ class ToolLoopRunner:
                 current_messages.append({"role": "system", "content": note})
                 injected_notes.append(note)
                 nudge_injected = True
+                self._emit(
+                    KIND_GUARD_TRIGGERED,
+                    LAYER_LIFECYCLE,
+                    guard=GUARD_NO_MUTATION,
+                    iteration=iteration,
+                    note=note,
+                )
 
             # Steer toward wrapping up before the cap is actually reached.
             if not deadline_injected and (
@@ -184,6 +269,13 @@ class ToolLoopRunner:
                 current_messages.append({"role": "system", "content": note})
                 injected_notes.append(note)
                 deadline_injected = True
+                self._emit(
+                    KIND_GUARD_TRIGGERED,
+                    LAYER_LIFECYCLE,
+                    guard=GUARD_DEADLINE,
+                    iteration=iteration,
+                    note=note,
+                )
 
             # Call LLM
             response_text, updated_messages = await llm_chat_fn(current_messages, tools)
@@ -195,6 +287,13 @@ class ToolLoopRunner:
             # Check for tool calls in the last assistant message
             last_msg = current_messages[-1] if current_messages else {}
             tool_calls = last_msg.get("tool_calls", [])
+            self._emit(
+                KIND_LLM_RESPONSE,
+                LAYER_OBSERVABILITY,
+                iteration=iteration,
+                text=truncate(response_text, TEXT_CAP),
+                tool_calls_requested=len(tool_calls) if isinstance(tool_calls, list) else 0,
+            )
 
             # No tool calls - we're done
             if not tool_calls:
@@ -220,6 +319,7 @@ class ToolLoopRunner:
                     tool_name,
                     json.dumps(args, sort_keys=True, default=str),
                 )
+                args_hash = call_key[1]
                 if call_key == prev_call_key:
                     #: Total executions of this exact call across ALL chained
                     #: runs (shared registry), so a repeated probe is flagged as
@@ -236,6 +336,14 @@ class ToolLoopRunner:
                             "action or give your final answer now."
                         )
                         stuck = True
+                        self._emit(
+                            KIND_GUARD_TRIGGERED,
+                            LAYER_LIFECYCLE,
+                            guard=GUARD_STUCK,
+                            iteration=iteration,
+                            tool=tool_name,
+                            note=_STUCK_SYNTHESIS_NOTE,
+                        )
                     else:
                         result_str = (
                             f"NOTE: This exact call has now been executed {total_runs} "
@@ -244,6 +352,15 @@ class ToolLoopRunner:
                             "identical. Take a different action or answer in text."
                         )
                     prev_was_duplicate = True
+                    self._emit(
+                        KIND_TOOL_CALL,
+                        LAYER_TOOL_INTERFACE,
+                        iteration=iteration,
+                        tool=tool_name,
+                        args_hash=args_hash,
+                        tc_id=tc_id,
+                        duplicate=True,
+                    )
                     if self.display_mode != DisplayMode.QUIET:
                         print(f"  {yellow('[tool]')} {cyan(tool_name)}({gray(_fmt_args(args))}) (duplicate, not re-executed)")
                         if self.display_mode == DisplayMode.CLEAN:
@@ -260,6 +377,16 @@ class ToolLoopRunner:
                         "tool_call_id": tc_id,
                         "content": result_str,
                     })
+                    self._emit(
+                        KIND_TOOL_RESULT,
+                        LAYER_TOOL_INTERFACE,
+                        iteration=iteration,
+                        tool=tool_name,
+                        args_hash=args_hash,
+                        tc_id=tc_id,
+                        duplicate=True,
+                        result=truncate(result_str, RESULT_CAP),
+                    )
                     if stuck:
                         break
                     continue
@@ -267,10 +394,40 @@ class ToolLoopRunner:
                 if self.display_mode != DisplayMode.QUIET:
                     tool_label = cyan(tool_name) + "(" + gray(_fmt_args(args)) + ")"
                     print(f"  {yellow('[tool]')} {tool_label}")
+                self._emit(
+                    KIND_TOOL_CALL,
+                    LAYER_TOOL_INTERFACE,
+                    iteration=iteration,
+                    tool=tool_name,
+                    args_hash=args_hash,
+                    tc_id=tc_id,
+                    duplicate=False,
+                )
+                t_call = time.monotonic()
                 try:
                     result_str = await execute_tool_fn(tool_name, args)
                 except Exception as exc:
+                    self._emit(
+                        KIND_TOOL_ERROR,
+                        LAYER_TOOL_INTERFACE,
+                        iteration=iteration,
+                        tool=tool_name,
+                        args_hash=args_hash,
+                        exception=type(exc).__name__,
+                        message=str(exc)[:500],
+                    )
                     result_str = f"Tool error: {exc}"
+                self._emit(
+                    KIND_TOOL_RESULT,
+                    LAYER_TOOL_INTERFACE,
+                    iteration=iteration,
+                    tool=tool_name,
+                    args_hash=args_hash,
+                    tc_id=tc_id,
+                    duplicate=False,
+                    duration_s=time.monotonic() - t_call,
+                    result=truncate(result_str, RESULT_CAP),
+                )
                 if self.display_mode != DisplayMode.QUIET:
                     if self.display_mode == DisplayMode.CLEAN:
                         print(f"  {yellow('[reason]')} {_derive_reason(tool_name, args, prev_text)}")
@@ -307,12 +464,22 @@ class ToolLoopRunner:
             if no_progress_forced:
                 self.termination_reason = "no_progress"
                 note = _NO_PROGRESS_FORCE.format(count=calls_since_mutation)
+                guard = GUARD_NO_MUTATION
             elif stuck:
                 self.termination_reason = "stuck"
                 note = _STUCK_SYNTHESIS_NOTE
+                guard = GUARD_STUCK
             else:
                 self.termination_reason = "cap"
                 note = _FORCED_SYNTHESIS_NOTE
+                guard = GUARD_BUDGET
+            self._emit(
+                KIND_GUARD_TRIGGERED,
+                LAYER_LIFECYCLE,
+                guard=guard,
+                iteration=iteration,
+                note=note,
+            )
             current_messages.append({"role": "system", "content": note})
             injected_notes.append(note)
             response_text, updated_messages = await llm_chat_fn(current_messages, [])

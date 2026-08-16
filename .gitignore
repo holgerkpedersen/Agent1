@@ -124,6 +124,12 @@ chat_history.json
 .docs/
 project_*.md
 
+# HarnessFix generated artifacts (traces + diagnoses/summary) — ground truth
+# for repairs but not source; kept out of version control (decision #033).
+reports/traces/
+reports/harnessfix/
+reports/benchmark_harnessfix.json
+
 .github/workflows/
 nul
 .poolside/

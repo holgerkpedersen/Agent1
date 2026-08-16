@@ -114,5 +114,515 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "007",
+    "date": "2026-08-15T18:48:35+00:00",
+    "title": "Standardize on one LLM provider abstraction",
+    "context": "The analysis identifies three conflicting provider abstractions: LLMProvider Protocol, AsyncLLMProvider ABC with registry, and a separate httpx LLMClient, while the spec requires supporting providers other than LM Studio.",
+    "decision": "Choose one canonical provider abstraction, likely the LLMProvider Protocol, and bridge or deprecate the other two.",
+    "rationale": "A single contract prevents duplicated behavior, config loss, and tool-loop breakage when adding providers.",
+    "affected_files": [
+      "agent_core/llm/provider.py",
+      "agent1/providers/async_llm.py",
+      "agent_core/llm_client.py",
+      "agent.py"
+    ],
+    "tags": [
+      "architecture",
+      "provider",
+      "abstraction"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "008",
+    "date": "2026-08-15T18:48:35+00:00",
+    "title": "Introduce configured provider factory or registry",
+    "context": "LLMClient hardcodes LMStudioProvider and the existing registry may create default instances without passing provider config.",
+    "decision": "Implement a factory or registry that accepts provider name and settings such as base_url, api_key, and model, then returns a configured provider instance.",
+    "rationale": "Enables runtime provider selection without hardcoding and avoids silently dropping provider configuration.",
+    "affected_files": [
+      "agent.py",
+      "agent1/providers/async_llm.py",
+      "agent_core/config.py",
+      "agent_core/llm/provider.py"
+    ],
+    "tags": [
+      "architecture",
+      "configuration",
+      "provider"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "009",
+    "date": "2026-08-15T18:48:35+00:00",
+    "title": "Keep LM Studio as default provider",
+    "context": "The scope requires keeping LM Studio functional while adding other providers, and the analysis assumes LM Studio remains default when nothing is configured.",
+    "decision": "Default to LM Studio when no provider is explicitly configured.",
+    "rationale": "Preserves backward compatibility and a local fallback for existing users.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/config.py",
+      "agent_core/llm/lmstudio.py"
+    ],
+    "tags": [
+      "compatibility",
+      "provider",
+      "configuration"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "010",
+    "date": "2026-08-15T18:48:35+00:00",
+    "title": "Make model resolution provider-aware",
+    "context": "resolve_model and KNOWN_MODELS are described as LM Studio specific, and the model REPL command manages models via the LM Studio API.",
+    "decision": "Replace LM Studio-specific model resolution with provider-aware model discovery, defaults, and validation.",
+    "rationale": "Other providers cannot rely on LM Studio model endpoints or model lists.",
+    "affected_files": [
+      "agent_core/constants.py",
+      "agent_core/commands/model_cmd.py",
+      "agent_core/llm/lmstudio.py",
+      "agent_core/llm/model_profiles.py"
+    ],
+    "tags": [
+      "provider",
+      "model",
+      "configuration"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "011",
+    "date": "2026-08-15T18:48:35+00:00",
+    "title": "Normalize provider-specific payload construction",
+    "context": "LMStudioProvider._build_payload sends LM Studio-only knobs for disable_thinking, which other providers may reject or ignore.",
+    "decision": "Move provider-specific payload logic into each provider implementation and keep the shared contract minimal.",
+    "rationale": "Prevents 400 errors and behavior drift when the same tool loop runs against different providers.",
+    "affected_files": [
+      "agent_core/llm/lmstudio.py",
+      "agent_core/llm/provider.py",
+      "agent.py",
+      "agent_core/llm/tool_loop.py"
+    ],
+    "tags": [
+      "provider",
+      "payload",
+      "compatibility"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "012",
+    "date": "2026-08-15T18:48:35+00:00",
+    "title": "Make model profiles and prompt cache provider-aware",
+    "context": "model_profiles.py, prompt_cache.py, metrics_tracker.py, and meta_policy.py may assume LM Studio-specific profiles or lack a provider dimension.",
+    "decision": "Update model profiles, prompt templates, and performance tracking to include provider-specific variants or fallbacks.",
+    "rationale": "Different providers may require different prompt formats, model profiles, or performance baselines.",
+    "affected_files": [
+      "agent_core/llm/model_profiles.py",
+      "agent_core/llm/prompt_cache.py",
+      "agent_core/llm/metrics_tracker.py",
+      "agent_core/llm/meta_policy.py"
+    ],
+    "tags": [
+      "architecture",
+      "provider",
+      "prompts"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "013",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Construct a dedicated harnessfix sub-package",
+    "context": "Scope says to build a new harnessfix/ sub-package covering tracing, HTIR, links, diagnose, repairs, and loop/reader, and to instrument ToolLoopRunner.run().",
+    "decision": "Create harnessfix/ with tracing, HTIR, link, diagnose, repairs/, and loop/reader modules; expose it as python -m harnessfix.loop.",
+    "rationale": "Keeps all new code in one prefix, avoids scattering instrumentation, and makes the closed loop runnable as a module.",
+    "affected_files": [
+      "agent_core/llm/tool_loop.py"
+    ],
+    "tags": [
+      "architecture",
+      "tracing",
+      "harness-repair"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "014",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Restrict repair scope to the harness layer",
+    "context": "Boundaries state no model changes, no prompt-tuning-as-primary-lever, and no security-policy changes without trace evidence.",
+    "decision": "Limit changes to harness/tool-loop behavior; prohibit model changes and prompt-tuning as the primary lever; require trace evidence for security-policy changes.",
+    "rationale": "Prevents the repair loop from silently altering model behavior or security enforcement, preserving benchmark meaning.",
+    "affected_files": [
+      "agent_core/llm/tool_loop.py"
+    ],
+    "tags": [
+      "security",
+      "repair-scope"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "015",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Require a human review gate before merging repairs",
+    "context": "Threat model and boundaries say no auto-merge without a human review gate, while the loop section describes automated accept/reject.",
+    "decision": "Add an explicit human approval step before any accepted repair is merged; decide whether it fires per-repair or after the summary batch.",
+    "rationale": "A fully automated loop could accept subtle security regressions; human oversight is required to catch what tests miss.",
+    "affected_files": [],
+    "tags": [
+      "human-in-loop",
+      "security",
+      "merge"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "016",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Enforce mypy strict and ≤150 lines per file",
+    "context": "Scope says all new code under the harnessfix/ prefix must be ≤150 lines/file and pass mypy strict.",
+    "decision": "Keep every new file under 150 lines and run mypy strict on the harnessfix package.",
+    "rationale": "Limits module size and typing rigor to make the repair loop auditable and less error-prone.",
+    "affected_files": [],
+    "tags": [
+      "code-quality",
+      "mypy",
+      "architecture"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "017",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Use Pydantic v2 for HTIR models",
+    "context": "Dependencies say Pydantic v2, already present in tool_router.py, is to be used for HTIR models.",
+    "decision": "Define HTIR trace and graph models with Pydantic v2.",
+    "rationale": "Leverages an existing dependency, provides schema validation for untrusted traces, and reduces new dependencies.",
+    "affected_files": [
+      "tool_router.py"
+    ],
+    "tags": [
+      "dependencies",
+      "models",
+      "validation"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "018",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Select a single canonical CorrelationIdContext",
+    "context": "Risk: both agent_core/context_management.py and logging_config.py define CorrelationIdContext with different defaults; the tracer must not add a third.",
+    "decision": "Make agent_core/context_management.py the canonical source and adapt logging_config.py to use it, or explicitly prefer one for tracing.",
+    "rationale": "Avoids conflicting defaults and ensures every trace event can share one correlation ID source.",
+    "affected_files": [
+      "agent_core/context_management.py",
+      "logging_config.py"
+    ],
+    "tags": [
+      "architecture",
+      "correlation-id",
+      "tracing"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "019",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Define 'execution environment' facet around shell execution",
+    "context": "Assumptions interpret 'execution environment' as the subprocess/shell execution paths in agent.py _execute_tool_call and tool_router.py ShellCommandHandler.",
+    "decision": "Map the execution-environment facet to the shell/subprocess code paths in _execute_tool_call and ShellCommandHandler.",
+    "rationale": "Gives the facet a concrete, discoverable implementation and enables future heuristic signatures.",
+    "affected_files": [
+      "agent.py",
+      "tool_router.py"
+    ],
+    "tags": [
+      "taxonomy",
+      "architecture"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "020",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Treat guard-note strings in tool_loop.py as trusted static text",
+    "context": "Diagnosis matches on _DEADLINE_NOTE / _STUCK_SYNTHESIS_NOTE; a lifecycle repair changing those strings silently disables diagnosis.",
+    "decision": "Mark guard-note strings as immutable/trusted during repair runs and protect them in repair whitelists; all non-guard trace-derived text is untrusted.",
+    "rationale": "Keeps diagnosis signatures stable and prevents repairs from accidentally blinding the diagnostic tier.",
+    "affected_files": [
+      "agent_core/llm/tool_loop.py"
+    ],
+    "tags": [
+      "security",
+      "diagnosis",
+      "trust-boundary"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "021",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Sanitize tool results before any LLM consumption",
+    "context": "Threat model: _execute_tool_call returns raw file contents and stdout/stderr into traces, enabling prompt injection via tool results.",
+    "decision": "Pass all tool results through Sanitizer.sanitize_and_mask before storing in traces or sending to the LLM diagnostic tier.",
+    "rationale": "Treats tool output as untrusted and prevents poisoned workspace files from steering repairs or reviewer agents.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/security/sanitizer.py"
+    ],
+    "tags": [
+      "security",
+      "prompt-injection",
+      "sanitization"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "022",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Schema-validate and size-limit parsed trace files",
+    "context": "Risk: reports/traces/*.jsonl is re-parsed by harnessfix/reader.py; forged traces could steer diagnosis.",
+    "decision": "Implement schema validation and maximum size limits in harnessfix/reader.py for all trace JSONL inputs.",
+    "rationale": "Prevents trace-file poisoning and malformed data from corrupting diagnosis or the repair loop.",
+    "affected_files": [],
+    "tags": [
+      "security",
+      "parsing",
+      "tracing"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "023",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Make the acceptance gate and benchmark scorers immutable during a repair run",
+    "context": "Risk of self-referential verification: if the loop can modify benchmark.py scorers, 'pass rate improves' is trivially hackable.",
+    "decision": "Hash-verify and exclude benchmark.py answering/scoring functions and the loop's acceptance gates from the repairable set.",
+    "rationale": "Prevents reward hacking by ensuring pass-rate improvements are measured against a fixed, trusted evaluator.",
+    "affected_files": [
+      "benchmark.py"
+    ],
+    "tags": [
+      "security",
+      "benchmark",
+      "gate"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "024",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Create a repair-target whitelist and forbid high-risk paths",
+    "context": "Threat model lists off-limits files/dirs: harnessfix/ itself, benchmark.py scorers, _blocked_shell_command, and agent_core/security allowlists.",
+    "decision": "Define an explicit whitelist of files the repair loop may change; forbid repairs to the acceptance gate, benchmark scoring, security enforcement, and the harnessfix package itself.",
+    "rationale": "Contains capability escalation and prevents the loop from weakening sandbox or gate logic.",
+    "affected_files": [
+      "agent.py",
+      "benchmark.py",
+      "agent_core/security"
+    ],
+    "tags": [
+      "security",
+      "repair-scope",
+      "whitelist"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "025",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Use git-revertible standalone commits for repairs",
+    "context": "Success/recovery says each repair is standalone and git-revertible; the loop restores workspace to clean state between iterations.",
+    "decision": "Make harnessfix.loop create one git-revertible commit per repair and reset the workspace between iterations.",
+    "rationale": "Makes rejection trivial, preserves audit trail, and avoids accumulated uncommitted changes.",
+    "affected_files": [],
+    "tags": [
+      "git",
+      "repair",
+      "recovery"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "026",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Attach correlation ID and layer facet to every trace event",
+    "context": "Audit trail says every trace event carries correlation ID + layer facet; diagnoses cite HTIR link IDs.",
+    "decision": "Require the tracer to stamp each event with the canonical correlation ID and one of the seven layer facets, and require diagnoses to reference HTIR link IDs.",
+    "rationale": "Enables end-to-end auditability and maps failures to taxonomy facets.",
+    "affected_files": [],
+    "tags": [
+      "audit",
+      "tracing",
+      "taxonomy"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "027",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Use pass-rate gain and zero-regression as acceptance criteria",
+    "context": "Success metrics require 0 regressions in pytest + security benchmarks and ≥1pt pass-rate gain to accept a repair.",
+    "decision": "Accept a repair only if the full pytest suite and security benchmarks have zero regressions and the benchmark pass rate improves by at least 1 percentage point.",
+    "rationale": "Establishes a safe, measurable bar for harness repairs and prevents overfitting to one trace.",
+    "affected_files": [
+      "benchmarks/security_benchmarks.py",
+      "benchmark.py"
+    ],
+    "tags": [
+      "benchmark",
+      "gate",
+      "metrics"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "028",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Decide how the closed loop exercises the tool-loop harness",
+    "context": "Risk: benchmark.py query_model makes single-shot urllib calls and never invokes ToolLoopRunner; as specced, harness repairs cannot change benchmark pass rate.",
+    "decision": "Choose and implement either a new agentic benchmark routed through ToolLoopRunner or a harness-routed mode of benchmark.py with byte-identical --no-trace behavior.",
+    "rationale": "The closed-loop acceptance metrics are only meaningful if repairs measurably affect a harness-exercising benchmark.",
+    "affected_files": [
+      "benchmark.py",
+      "agent_core/llm/tool_loop.py"
+    ],
+    "tags": [
+      "architecture",
+      "benchmark",
+      "blocked"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "029",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Define the task_id unit for trace files",
+    "context": "Missing info: ToolLoopRunner.run() has no task_id, chat_nlp chains up to _MAX_CHAINED_RUNS = 6, benchmark uses question_idx; unclear unit for reports/traces/{task_id}.jsonl.",
+    "decision": "Decide whether a trace file maps to one run() invocation, one chat_nlp turn including chained sub-runs, one benchmark question, or a new explicit task_id parameter on run().",
+    "rationale": "Trace granularity affects diagnosis scope and the ability to correlate repairs with benchmark outcomes.",
+    "affected_files": [
+      "agent_core/llm/tool_loop.py",
+      "agent.py",
+      "benchmark.py"
+    ],
+    "tags": [
+      "tracing",
+      "task-id",
+      "architecture"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "030",
+    "date": "2026-08-15T22:38:48+00:00",
+    "title": "Establish the precision metric and labeled set for LLM-tier activation",
+    "context": "Missing info: 'LLM tier must not run unless heuristic precision < 70%' has no denominator or labeled gold set.",
+    "decision": "Choose a labeled gold set of historical failed traces or bootstrap labels from first-round repair acceptances; define heuristic precision as an agreed metric before enabling the LLM tier.",
+    "rationale": "Without a denominator the <70% gate is vacuous and the LLM tier could run prematurely.",
+    "affected_files": [],
+    "tags": [
+      "diagnosis",
+      "metrics",
+      "llm"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "031",
+    "date": "2026-08-15T22:38:49+00:00",
+    "title": "Place the human review gate at a defined point in the loop",
+    "context": "Clarifying question: does the gate pause after each accepted repair or review the whole repair set after summary.json; behavior in headless/CI is also unspecified.",
+    "decision": "Define whether approval is per-repair or post-batch and specify headless/CI behavior, such as fail-closed if no human approver is available.",
+    "rationale": "Resolves conflicting specs and ensures no auto-merge occurs without explicit human approval.",
+    "affected_files": [],
+    "tags": [
+      "human-in-loop",
+      "workflow"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "032",
+    "date": "2026-08-15T22:38:49+00:00",
+    "title": "Choose repair application and rollback mechanics",
+    "context": "Missing info: how repairs are applied (AST patch, unified diff, or manual commit) and how failed/accepted repairs are rolled back cleanly between loop iterations.",
+    "decision": "Specify whether repair generation emits AST patches, unified diffs, or manual commits; implement matching rollback in harnessfix.loop.",
+    "rationale": "Determines how the loop can cleanly revert and re-run, and is required for reproducible iterations.",
+    "affected_files": [],
+    "tags": [
+      "repair",
+      "architecture"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "033",
+    "date": "2026-08-15T22:38:49+00:00",
+    "title": "Create reports directories and add them to .gitignore",
+    "context": "Dependencies say reports/traces/ and reports/harnessfix/ must be created and presumably git-ignored.",
+    "decision": "Ensure reports/traces/ and reports/harnessfix/ exist at runtime and add them to .gitignore.",
+    "rationale": "Keeps generated artifacts out of version control while preserving the required output paths.",
+    "affected_files": [
+      ".gitignore"
+    ],
+    "tags": [
+      "filesystem",
+      "git"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "034",
+    "date": "2026-08-15T22:38:49+00:00",
+    "title": "Add payload-invariance and trace-completeness automated tests",
+    "context": "Safety metrics require byte-identical LLM request payloads with tracing on vs --no-trace, every loop_end event present, every guard firing recorded, and no unsanitized tool results reaching LLM tiers.",
+    "decision": "Implement automated tests asserting payload invariance, trace completeness, guard_triggered records, and absence of unsanitized tool content in traces/LLM input.",
+    "rationale": "Makes safety properties verifiable in CI and catches regressions in the tracing layer.",
+    "affected_files": [
+      "agent.py",
+      "tests"
+    ],
+    "tags": [
+      "testing",
+      "safety",
+      "tracing"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]
