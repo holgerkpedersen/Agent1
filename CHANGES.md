@@ -1,4 +1,10 @@
-﻿## 2026-08-16 - feat: LLM-free un REPL command + LM Studio 400 diagnostics
+﻿## 2026-08-16 - fix: run timeout killed only the shell, orphaning children
+
+**Change**: agent.py (run-tool branch + _kill_process_tree), agent_core/commands/run_cmd.py, tests/test_run_cmd.py, tests/test_run_timeout.py (ny)
+
+**Reason**: un python -m harnessfix.loop --traces ... timed out after 120s but kept working: subprocess.run on Windows kills only cmd.exe on timeout, leaving the harnessfix.loop child orphaned and holding the captured pipes — the REPL then waited until the orphan finished (165s) while the message said 'timed out'. Fixes: (1) the run tool now starts the shell in its own process group (CREATE_NEW_PROCESS_GROUP) and kills the WHOLE tree on timeout via taskkill /T /F (verified live: returns at 8s, grandchild gone from tasklist); (2) the run REPL command now defaults to 600s and accepts --timeout <sec>; (3) the timeout message says the tree was killed. 845 tests green (6 new). agent.py also carries the graceful harnessfix tracing wiring (try/except degrades to no-op when harnessfix/ is absent).
+
+## 2026-08-16 - feat: LLM-free un REPL command + LM Studio 400 diagnostics
 
 **Change**: agent_core/commands/run_cmd.py (ny), agent.py (REPL-wiring, ucommitted pga. harnessfix-afhaengighed), agent_core/llm/lmstudio.py, tests/test_run_cmd.py (ny), tests/test_lmstudio_http.py (ny)
 

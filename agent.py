@@ -20,6 +20,13 @@ from agent_core.file_searcher import FileSearcher
 from agent_core.tool_dispatcher import ToolDispatcher
 from agent_core.tool_schemas import NLP_TOOL_SCHEMAS, NLP_TOOL_NAMES
 from agent_core.llm.tool_loop import ToolLoopRunner
+try:
+    from harnessfix.tracing import TraceWriter, trace_enabled
+except Exception:  # pragma: no cover - tracing degrades gracefully if unavailable
+    TraceWriter = None  # type: ignore[assignment, misc]
+
+    def trace_enabled() -> bool:
+        return False
 from agent_core.commands.base import save_file_py, chat_stoppable, clear_stop, FlowStopped
 from agent_core.commands.registry import CommandRegistry
 from agent_core.commands.read_cmd import ReadCommand
@@ -40,6 +47,7 @@ from agent_core.commands.paste_cmd import PasteCommand
 from agent_core.commands.perf_cmd import PerfCommand, PerfTracker
 from agent_core.commands.display_cmd import DisplayCommand
 from agent_core.commands.decide_cmd import DecideCommand
+from agent_core.commands.run_cmd import RunCommand
 from pathlib import Path
 import subprocess
 import shlex
@@ -290,31 +298,44 @@ class Agent:
             blocked = _blocked_shell_command(cmd_to_run)
             if blocked:
                 return f"Error: Dangerous command blocked ({blocked}): {cmd_to_run}"
+            # Windows: start the shell in its own process group so a timeout
+            # can kill the WHOLE tree. Killing only cmd.exe leaves orphaned
+            # children (e.g. a harnessfix.loop python process) running and
+            # holding the captured pipes open — the caller then waits far
+            # beyond the timeout while the "killed" command keeps working.
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
             try:
-                r = subprocess.run(
+                proc = subprocess.Popen(
                     cmd_to_run,
                     shell=True,
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                     cwd=ws_dir,
-                    timeout=timeout,
+                    creationflags=creationflags,
                 )
-                output = r.stdout
-                if r.stderr:
-                    output += f"\n[STDERR]\n{r.stderr}"
-                    if re.search(r"is not recognized|not found", r.stderr, re.I):
-                        output += _unix_command_hint()
-                elif os.name == "nt" and r.returncode == 255 and not r.stdout:
-                    # cmd.exe silently fails whole pipelines (rc 255, no output)
-                    # when a pipe element or command does not exist.
-                    output += _unix_command_hint()
-                if len(output) > 5000:
-                    output = output[:2500] + "\n... [truncated] ...\n" + output[-2500:]
-                return output if output else "(no output)"
-            except subprocess.TimeoutExpired:
-                return f"Command timed out after {timeout}s"
+                try:
+                    output, err = proc.communicate(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    _kill_process_tree(proc)
+                    output, err = proc.communicate()
+                    return (
+                        f"Command timed out after {timeout}s — process tree killed. "
+                        "For long-running jobs, pass a larger timeout."
+                    )
             except Exception as e:
                 return f"Error: {e}"
+            if err:
+                output += f"\n[STDERR]\n{err}"
+                if re.search(r"is not recognized|not found", err, re.I):
+                    output += _unix_command_hint()
+            elif os.name == "nt" and proc.returncode == 255 and not output:
+                # cmd.exe silently fails whole pipelines (rc 255, no output)
+                # when a pipe element or command does not exist.
+                output += _unix_command_hint()
+            if len(output) > 5000:
+                output = output[:2500] + "\n... [truncated] ...\n" + output[-2500:]
+            return output if output else "(no output)"
 
         if name == "git":
             subcmd = str(args.get("subcommand") or "status").lower()
@@ -732,7 +753,12 @@ class Agent:
         #: cannot hide behind a fresh run's duplicate counter.
         seen_calls: dict[tuple[str, str], int] = {}
         while True:
-            loop = ToolLoopRunner(max_iterations=150, display_mode=display_mode)
+            #: Per-run trace writer (one JSONL file per run() invocation,
+            #: decision #029).  AGENT_NO_TRACE=1 disables trace capture.
+            trace_writer = TraceWriter() if (trace_enabled() and TraceWriter is not None) else None
+            loop = ToolLoopRunner(
+                max_iterations=150, display_mode=display_mode, trace=trace_writer
+            )
             final_text, final_messages = await loop.run(
                 messages=final_messages,
                 llm_chat_fn=llm_chat_fn,
@@ -740,6 +766,8 @@ class Agent:
                 tools=list(NLP_TOOL_SCHEMAS),
                 seen_calls=seen_calls,
             )
+            if trace_writer is not None:
+                trace_writer.close()
             reason = loop.termination_reason
             # Only "cap" (genuine budget run-out while progressing) and an
             # "answer" that signals unfinished work justify chaining. "stuck"
@@ -965,6 +993,25 @@ def _unix_command_hint() -> str:
     )
 
 
+def _kill_process_tree(proc: "subprocess.Popen") -> None:
+    """Kill *proc* and its whole child tree (Windows: taskkill /T /F).
+
+    A plain kill only terminates the shell; the orphaned children keep
+    running and hold the captured pipes open.  Best effort — never raises.
+    """
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+            )
+        else:
+            proc.kill()
+    except Exception:
+        pass
+
+
 def _detect_shell() -> str:
     """Return a human-readable name for the shell the run tool will use.
 
@@ -1085,6 +1132,7 @@ async def run_interactive() -> None:
         ("clear", "Clear agent memory"),
         ("display [verbose|clean|quiet]", "Show/set NLP output verbosity"),
         ("paste [--workspace <path>]", "Paste multiline text for AI analysis (Ctrl+Z / Ctrl+D to finish)"),
+        ("run <command>", "Execute a shell command directly, no LLM"),
         ("quit", "Exit"),
     ]
     for name, desc in _CMD_LIST:
@@ -1111,6 +1159,7 @@ async def run_interactive() -> None:
     registry.register(PasteCommand())
     registry.register(DisplayCommand())
     registry.register(DecideCommand())
+    registry.register(RunCommand())
 
     while True:
         try:
@@ -1133,7 +1182,7 @@ async def run_interactive() -> None:
             command = parts[0].lower()
 
             # Try commands from registry
-            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste", "display", "decide"]:
+            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste", "display", "decide", "run"]:
                 import time as _time
                 _start = _time.perf_counter()
                 print(f"  [cmd] {cyan(command)} running...")

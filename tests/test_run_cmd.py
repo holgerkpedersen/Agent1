@@ -2,7 +2,7 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from agent_core.commands.run_cmd import RunCommand
+from agent_core.commands.run_cmd import RunCommand, _DEFAULT_TIMEOUT
 
 
 class _FakeAgent:
@@ -22,17 +22,54 @@ class TestRunCommand:
         with patch("builtins.print") as p:
             out = asyncio.run(cmd.execute(["python", "-m", "x", "--flag"], agent))
         agent._execute_tool_call.assert_awaited_once_with(
-            "run", {"command": "python -m x --flag"}
+            "run", {"command": "python -m x --flag", "timeout": _DEFAULT_TIMEOUT}
         )
         assert out is True
         printed = " ".join(str(c.args) for c in p.call_args_list)
         assert "hello world" in printed
+
+    def test_default_timeout_is_600(self):
+        assert _DEFAULT_TIMEOUT == 600
+        agent = _FakeAgent()
+        cmd = RunCommand()
+        with patch("builtins.print"):
+            asyncio.run(cmd.execute(["python", "-m", "x"], agent))
+        agent._execute_tool_call.assert_awaited_once_with(
+            "run", {"command": "python -m x", "timeout": 600}
+        )
+
+    def test_timeout_flag_parsed(self):
+        agent = _FakeAgent()
+        cmd = RunCommand()
+        with patch("builtins.print"):
+            asyncio.run(cmd.execute(["--timeout", "900", "python", "-m", "x"], agent))
+        agent._execute_tool_call.assert_awaited_once_with(
+            "run", {"command": "python -m x", "timeout": 900}
+        )
+
+    def test_invalid_timeout_rejected(self):
+        agent = _FakeAgent()
+        cmd = RunCommand()
+        with patch("builtins.print") as p:
+            out = asyncio.run(cmd.execute(["--timeout", "abc", "x"], agent))
+        agent._execute_tool_call.assert_not_awaited()
+        assert out is True
+        printed = " ".join(str(c.args) for c in p.call_args_list)
+        assert "expects seconds" in printed
 
     def test_requires_command(self):
         agent = _FakeAgent()
         cmd = RunCommand()
         with patch("builtins.print"):
             out = asyncio.run(cmd.execute([], agent))
+        agent._execute_tool_call.assert_not_awaited()
+        assert out is True
+
+    def test_timeout_flag_without_command_rejected(self):
+        agent = _FakeAgent()
+        cmd = RunCommand()
+        with patch("builtins.print"):
+            out = asyncio.run(cmd.execute(["--timeout", "60"], agent))
         agent._execute_tool_call.assert_not_awaited()
         assert out is True
 
