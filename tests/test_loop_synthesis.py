@@ -27,6 +27,8 @@ class TestForcedSynthesisRetry:
         fake = _ScriptedLLM([
             ("read", {"path": "a.py"}),
             ("read", {"path": "b.py"}),
+            ("read", {"path": "a.py"}),
+            ("read", {"path": "b.py"}),
             "",
             "Det konkrete svar om trace-analysen.",
         ])
@@ -42,8 +44,9 @@ class TestForcedSynthesisRetry:
         final_text, _ = _loop_runner_sync(runner, fake, execute_tool)
 
         assert runner.termination_reason == "no_progress"
-        # 2 loop calls + 2 forced calls (empty first, then the retry).
-        assert len(fake.calls) == 4
+        # 4 loop calls (alternating repeats, no new discovery) + 2 forced
+        # calls (empty first, then the retry).
+        assert len(fake.calls) == 6
         assert final_text == "Det konkrete svar om trace-analysen."
         # The retry note is present in the second forced call's messages.
         retry_note_in = any(
@@ -56,6 +59,8 @@ class TestForcedSynthesisRetry:
 
     def test_synthesis_llm_response_events_traced(self):
         fake = _ScriptedLLM([
+            ("read", {"path": "a.py"}),
+            ("read", {"path": "b.py"}),
             ("read", {"path": "a.py"}),
             ("read", {"path": "b.py"}),
             "Svar.",
@@ -83,7 +88,9 @@ class TestForcedSynthesisRetry:
         fake = _ScriptedLLM([
             ("read", {"path": "a.py"}),
             ("read", {"path": "b.py"}),
-            ("search", {"query": "x"}),
+            ("read", {"path": "a.py"}),
+            ("read", {"path": "b.py"}),
+            ("read", {"path": "a.py"}),
             "Svar.",
         ])
         sink = _Sink()
@@ -96,11 +103,11 @@ class TestForcedSynthesisRetry:
         )
         _loop_runner_sync(runner, fake, execute_tool)
 
-        assert runner.tool_calls_made == 3
-        assert runner.tools_used == {"read": 2, "search": 1}
-        assert runner.last_tool_call == "search"
-        # Iterations 0..3 entered; iteration 3 was the guard check that broke.
-        assert runner.iterations_used == 4
+        assert runner.tool_calls_made == 5
+        assert runner.tools_used == {"read": 5}
+        assert runner.last_tool_call == "read"
+        # Iterations 0..5 entered; iteration 5 was the guard check that broke.
+        assert runner.iterations_used == 6
 
 
 class TestFinalAnswerFallback:
@@ -133,15 +140,16 @@ class TestFinalAnswerFallback:
 
             async def chat(self, messages, tools=None, **kw):
                 self.calls += 1
-                # First two calls: real tool calls → the no-mutation guard
-                # builds up.  Forced-synthesis calls: empty output.
-                if self.calls <= 2:
+                # First three calls: the SAME search → the stuck guard fires
+                # on the third consecutive identical call.  Forced-synthesis
+                # calls return empty output.
+                if self.calls <= 3:
                     return json.dumps({
                         "content": "",
                         "tool_calls": [{
                             "id": f"c{self.calls}", "type": "function",
                             "function": {"name": "search",
-                                        "arguments": json.dumps({"query": f"x{self.calls}"})},
+                                        "arguments": json.dumps({"query": "x"})},
                         }],
                     })
                 return "(no output)"
@@ -179,10 +187,10 @@ class TestFinalAnswerFallback:
             )
 
         final_text, _ = asyncio.run(go())
-        assert runner.termination_reason == "no_progress"
-        # 2 loop calls + 2 forced calls — all normalized away.
+        assert runner.termination_reason == "stuck"
+        # 3 loop calls + 2 forced calls — all normalized away.
         assert final_text == ""  # the concrete fallback message applies
-        assert fake.calls == 4
+        assert fake.calls == 5
 
 
 def _loop_runner_sync_imports() -> None:

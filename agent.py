@@ -774,19 +774,27 @@ class Agent:
             if trace_writer is not None:
                 trace_writer.close()
             reason = loop.termination_reason
-            # Only "cap" (genuine budget run-out while progressing) and an
-            # "answer" that signals unfinished work justify chaining. "stuck"
-            # and "no_progress" are explicit verdicts that the model is NOT
-            # making progress — continuing would only re-enter the same loop.
+            # "cap" (budget run-out while progressing), an "answer" that
+            # signals unfinished work, and — as a safety net — a "no_progress"
+            # verdict whose forced answer STILL signals unfinished work justify
+            # chaining.  Plain "stuck"/"no_progress" verdicts are explicit
+            # "model is not making progress" signals — continuing would only
+            # re-enter the same loop.
             needs_more = (
-                reason == "cap" or (reason == "answer" and _looks_incomplete(final_text))
+                reason == "cap"
+                or (reason in ("answer", "no_progress") and _looks_incomplete(final_text))
             )
             if needs_more and continuations < _MAX_CHAINED_RUNS:
                 continuations += 1
                 if display_mode != AgentDisplayMode.QUIET:
+                    why = {
+                        "cap": "iteration budget exhausted",
+                        "answer": "answer signals unfinished work",
+                        "no_progress": "the final answer signals unfinished work",
+                    }.get(reason, reason)
                     print(
                         magenta(f"\n  [auto-continue] Run {continuations}: ")
-                        + yellow(f"{'iteration budget exhausted' if reason == 'cap' else 'answer signals unfinished work'} — continuing automatically.\n")
+                        + yellow(f"{why} — continuing automatically.\n")
                     )
                 final_messages = list(final_messages) + [
                     # User role: strict chat templates (qwen Jinja) reject
@@ -797,7 +805,7 @@ class Agent:
             if reason in ("stuck", "no_progress") and display_mode != AgentDisplayMode.QUIET:
                 print(
                     magenta("\n  [stopped] The model stopped making progress ")
-                    + yellow(f"{'stuck on repeated calls' if reason == 'stuck' else 'too many calls without changing anything'}). ")
+                    + yellow(f"{'stuck on repeated calls' if reason == 'stuck' else 'too many calls without making new progress'}). ")
                     + gray("The answer above is the best it produced — rephrase or ask something more specific to continue.\n")
                 )
             break
@@ -942,6 +950,7 @@ _INCOMPLETE_MARKERS = (
     "would need", "needs one more", "needs 1 more", "needs 2 more",
     "remaining", "unfinished", "incomplete", "exhausted", "ran out",
     "out of tool", "more tool call", "cannot complete", "still needs",
+    "not covered", "follow-up",
 )
 
 

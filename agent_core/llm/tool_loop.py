@@ -83,15 +83,17 @@ _FORCED_SYNTHESIS_RETRY = (
 MUTATING_TOOLS = frozenset({"write", "edit", "fix"})
 
 _NO_PROGRESS_NUDGE = (
-    "NOTE: You have now made {count} tool calls without modifying any file. "
-    "Exploration alone does not finish tasks — either take action with "
-    "write/edit/fix, or give your final answer now."
+    "NOTE: You have now made {count} calls without discovering anything new "
+    "or changing any file — you are repeating or circling. Either explore "
+    "something NEW (a different file, search, directory, or command), take "
+    "action with write/edit/fix, or give your final answer now."
 )
 
 _NO_PROGRESS_FORCE = (
-    "You have made {count} tool calls without modifying any file, so the tool "
-    "loop is stopping. Do NOT call any more tools. Give your final answer now "
-    "— report what you found and what you would change."
+    "You have made {count} calls without discovering anything new or changing "
+    "any file, so the tool loop is stopping. Do NOT call any more tools. "
+    "Give your final answer now — report what you found and what you would "
+    "change."
 )
 
 
@@ -150,6 +152,9 @@ class ToolLoopRunner:
         self.tools_used: dict[str, int] = {}
         self.last_tool_call: str = ""
         self.iterations_used: int = 0
+        #: Keys of calls that already counted as discovery this run — a
+        #: repeated key is a stuck signal, not progress.
+        self._seen_progress_keys: set[Any] = set()
 
     async def run(
         self,
@@ -226,6 +231,8 @@ class ToolLoopRunner:
         """Body of run(): the tool-calling loop with trace event emission."""
         if not tools:
             tools = []
+        # Discovery tracking is per-run: a fresh run has a fresh "known" set.
+        self._seen_progress_keys.clear()
 
         all_text_parts = []
         current_messages = [dict(m) for m in messages]
@@ -244,10 +251,14 @@ class ToolLoopRunner:
         prev_call_key: tuple[str, str] | None = None
         prev_was_duplicate = False
         prev_result: str = ""
-        #: Progress guard: non-mutating calls (read/search/list/run/git/diff/
-        #: tests/analyze) since the last write/edit/fix.  A long streak means
-        #: exploration without converging — nudge, then force synthesis.
-        calls_since_mutation = 0
+        #: Progress guard: calls since the last MUTATION or DISCOVERY of new
+        #: information.  Read-only tasks (audits, reviews) never mutate, so
+        #: mutation alone was a wrong progress proxy that stopped them
+        #: mid-work; a call that reads a new file, searches a new query,
+        #: lists a new directory, or runs a new command counts as progress.
+        #: A long streak of repeats means genuine stuck behaviour — nudge,
+        #: then force synthesis.
+        calls_without_progress = 0
         nudge_injected = False
 
         for iteration in range(self.max_iterations):
@@ -257,12 +268,12 @@ class ToolLoopRunner:
                 iteration=iteration,
                 budget_remaining=self.max_iterations - iteration,
             )
-            # Progress guard: too many calls without changing anything.
-            if calls_since_mutation >= self.force_after_no_mutation:
+            # Progress guard: too many calls without any new progress.
+            if calls_without_progress >= self.force_after_no_mutation:
                 no_progress_forced = True
                 break
-            if not nudge_injected and calls_since_mutation == self.no_mutation_limit:
-                note = _NO_PROGRESS_NUDGE.format(count=calls_since_mutation)
+            if not nudge_injected and calls_without_progress == self.no_mutation_limit:
+                note = _NO_PROGRESS_NUDGE.format(count=calls_without_progress)
                 # User role, not system: strict chat templates (qwen Jinja)
                 # reject system messages anywhere but the leading block.
                 current_messages.append({"role": "user", "content": note})
@@ -339,6 +350,13 @@ class ToolLoopRunner:
                     json.dumps(args, sort_keys=True, default=str),
                 )
                 args_hash = call_key[1]
+                # Progress = mutation or discovering something NEW; repeats
+                # of known calls (same read window / query / dir / command)
+                # increment the stuck counter instead.
+                if self._is_progress(tool_name, args):
+                    calls_without_progress = 0
+                else:
+                    calls_without_progress += 1
                 if call_key == prev_call_key:
                     #: Total executions of this exact call across ALL chained
                     #: runs (shared registry), so a repeated probe is flagged as
@@ -462,9 +480,6 @@ class ToolLoopRunner:
                 prev_result = result_str
                 if seen_calls is not None:
                     seen_calls[call_key] = seen_calls.get(call_key, 0) + 1
-                calls_since_mutation = (
-                    0 if tool_name in MUTATING_TOOLS else calls_since_mutation + 1
-                )
                 current_messages.append({
                     "role": "tool",
                     "tool_call_id": tc_id,
@@ -482,7 +497,7 @@ class ToolLoopRunner:
         if hit_cap or stuck or no_progress_forced:
             if no_progress_forced:
                 self.termination_reason = "no_progress"
-                note = _NO_PROGRESS_FORCE.format(count=calls_since_mutation)
+                note = _NO_PROGRESS_FORCE.format(count=calls_without_progress)
                 guard = GUARD_NO_MUTATION
             elif stuck:
                 self.termination_reason = "stuck"
@@ -547,6 +562,30 @@ class ToolLoopRunner:
             text=truncate(response_text or "", TEXT_CAP),
             tool_calls_requested=0,
         )
+
+    def _is_progress(self, tool_name: str, args: dict[str, Any]) -> bool:
+        """Progress = mutation or discovering something NEW.
+
+        Read-only tasks (audits, reviews, analysis) never mutate, so the old
+        mutation-only proxy stopped them mid-work while they were still
+        learning.  A call counts as progress when it reads a new file window,
+        searches a new query, lists a new directory, or runs a new command;
+        repeating a known call does not — that is the genuine stuck signal.
+        """
+        if tool_name in MUTATING_TOOLS:
+            return True
+        if tool_name == "read":
+            key: Any = (str(args.get("path", "")), int(args.get("offset") or 0))
+        elif tool_name == "search":
+            key = (str(args.get("query", "")), str(args.get("path", "")))
+        elif tool_name == "list_files":
+            key = str(args.get("path", ""))
+        else:
+            key = json.dumps(args, sort_keys=True, default=str)
+        if key in self._seen_progress_keys:
+            return False
+        self._seen_progress_keys.add(key)
+        return True
 
 
 def _fmt_args(args: dict[str, Any]) -> str:

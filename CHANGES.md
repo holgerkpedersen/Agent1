@@ -1,4 +1,10 @@
-﻿## 2026-08-16 - fix: qwen 400 'System message must be at the beginning'
+﻿## 2026-08-16 - fix: read-only tasks (audits) stopped mid-work by the mutation-based progress guard
+
+**Change**: agent_core/llm/tool_loop.py, agent.py, tests/test_tool_loop_nlp.py, tests/test_loop_synthesis.py
+
+**Reason**: The fan-platform security audit (trace b705348b...) was cut off at 51 tool calls (iteration 29 of 150, ~80% budget left) by the no-mutation guard even though the model was still discovering NEW files every call — read-only tasks never mutate, so mutation was a wrong progress proxy. Fix: the progress guard is now CONVERGENCE-based — progress = mutation OR discovering something new (new read window, search query, directory, or command); only repeats of known calls increment the stuck counter (the genuine stuck signal, e.g. the earlier agent.py paging spiral). Nudge/force texts updated accordingly. Safety net: a forced synthesis whose answer still signals unfinished work ('not covered', 'follow-up' markers added) now chains one continuation run even after no_progress. Verified live (qwen): read-only task runs to completion with a concrete answer. 869 tests green (new audit-runs-to-completion test).
+
+## 2026-08-16 - fix: qwen 400 'System message must be at the beginning'
 
 **Change**: agent_core/llm/tool_loop.py, agent.py, agent_core/llm/lmstudio.py, agent_core/llm/opencode_provider.py, tests/test_lmstudio_payload.py, tests/test_tool_loop_nlp.py, tests/test_loop_synthesis.py
 

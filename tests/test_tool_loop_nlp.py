@@ -717,13 +717,17 @@ class TestNoProgressGuard:
     making DISTINCT calls without changing anything gets nudged, then forced
     to synthesize — while edits reset the progress counter."""
 
-    def test_many_distinct_calls_without_changes_forces_synthesis(self):
+    def test_many_repeated_calls_without_new_discovery_forces_synthesis(self):
+        """Repeating known calls (no new files/searches) is the genuine stuck
+        signal — distinct reads count as progress (audits run to completion)."""
         fake = _ScriptedLLM([
             ("read", {"path": "a.py"}),
             ("read", {"path": "b.py"}),
-            ("read", {"path": "c.py"}),
-            ("read", {"path": "d.py"}),
-            ("read", {"path": "e.py"}),
+            ("read", {"path": "a.py"}),
+            ("read", {"path": "b.py"}),
+            ("read", {"path": "a.py"}),
+            ("read", {"path": "b.py"}),
+            ("read", {"path": "a.py"}),
             "I only explored — here is my answer.",
         ])
         executed = []
@@ -738,9 +742,9 @@ class TestNoProgressGuard:
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
 
         assert runner.termination_reason == "no_progress"
-        assert executed == ["read"] * 5
+        assert executed == ["read"] * 7
         assert final_text == "I only explored — here is my answer."
-        # The nudge is injected exactly once, after the 3rd non-mutating call:
+        # The nudge is injected exactly once, after 3 repeating calls:
         # absent from the first LLM call, present (as a single message) in the last.
         nudge_in_first = any(
             str(m.get("content")).startswith("NOTE: You have now made")
@@ -754,9 +758,30 @@ class TestNoProgressGuard:
         assert nudge_in_last == 1
         # Steering notes must not leak into the returned history.
         assert not any(
-            m.get("role") == "system" and "without modifying any file" in str(m.get("content"))
+            "without discovering anything new" in str(m.get("content"))
             for m in messages
         )
+
+    def test_read_only_audit_runs_to_completion(self):
+        """A read-only task that keeps discovering NEW files must never be
+        stopped by the progress guard — it runs until the model answers."""
+        fake = _ScriptedLLM([
+            ("read", {"path": f"file{i}.py"}) for i in range(8)
+        ] + ["Audit complete — no vulnerabilities found."])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return "x"
+
+        runner = ToolLoopRunner(
+            max_iterations=50, no_mutation_limit=3, force_after_no_mutation=5,
+        )
+        final_text, _ = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert runner.termination_reason == "answer"
+        assert executed == ["read"] * 8
+        assert final_text == "Audit complete — no vulnerabilities found."
 
     def test_edit_resets_progress_counter(self):
         fake = _ScriptedLLM([
@@ -999,14 +1024,16 @@ class TestAutoContinue:
 
             async def chat(self, messages, tools=None, **kwargs):
                 self.calls += 1
-                if self.calls <= 4:
+                if self.calls <= 6:
+                    # Alternating known reads: no new discovery → stuck counter.
+                    path = f"f{1 if self.calls % 2 == 1 else 2}.py"
                     return json.dumps({
                         "content": "",
                         "tool_calls": [{
                             "id": "c1", "type": "function",
                             "function": {
                                 "name": "read",
-                                "arguments": json.dumps({"path": f"f{self.calls}.py"}),
+                                "arguments": json.dumps({"path": path}),
                             },
                         }],
                     })
@@ -1028,8 +1055,9 @@ class TestAutoContinue:
 
                 asyncio.run(go())
 
-        # 4 distinct reads (no mutation) + 1 forced synthesis — no chain.
-        assert llm.calls == 5
+        # 6 alternating repeated reads (no new discovery) + 1 forced synthesis.
+        # The answer carries no unfinished-work markers → no chain.
+        assert llm.calls == 7
         assert agent._chat_history[-1]["content"] == "Exploration only — here is my answer."
 
 
