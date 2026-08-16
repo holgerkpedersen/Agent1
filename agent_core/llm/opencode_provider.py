@@ -216,8 +216,11 @@ class OpencodeProvider:
         tools: list[dict[str, Any]] | None,
         max_tokens: int | None,
     ) -> str:
+        from .lmstudio import sanitize_message_roles
+
         payload: dict[str, Any] = {
-            "model": _hosted_model_id(self.model_name), "messages": messages
+            "model": _hosted_model_id(self.model_name),
+            "messages": sanitize_message_roles(messages),
         }
         if tools:
             payload["tools"] = tools

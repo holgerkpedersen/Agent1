@@ -264,13 +264,13 @@ class TestToolLoopExecution:
 
         sent_notes = [
             m["content"] for call in fake.calls for m in call[0]
-            if m.get("role") == "system" and "BUDGET WARNING" in str(m.get("content"))
+            if "BUDGET WARNING" in str(m.get("content"))
         ]
         assert len(sent_notes) == 1
         assert "1 tool call" in sent_notes[0] or "tool call" in sent_notes[0]
         # The steering note must not persist into the returned history.
         assert not any(
-            m.get("role") == "system" and "BUDGET WARNING" in str(m.get("content"))
+            "BUDGET WARNING" in str(m.get("content"))
             for m in messages
         )
 
@@ -743,14 +743,12 @@ class TestNoProgressGuard:
         # The nudge is injected exactly once, after the 3rd non-mutating call:
         # absent from the first LLM call, present (as a single message) in the last.
         nudge_in_first = any(
-            m.get("role") == "system"
-            and str(m.get("content")).startswith("NOTE: You have now made")
+            str(m.get("content")).startswith("NOTE: You have now made")
             for m in fake.calls[0][0]
         )
         nudge_in_last = sum(
             1 for m in fake.calls[-1][0]
-            if m.get("role") == "system"
-            and str(m.get("content")).startswith("NOTE: You have now made")
+            if str(m.get("content")).startswith("NOTE: You have now made")
         )
         assert not nudge_in_first
         assert nudge_in_last == 1

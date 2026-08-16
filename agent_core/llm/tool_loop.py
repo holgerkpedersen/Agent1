@@ -263,7 +263,9 @@ class ToolLoopRunner:
                 break
             if not nudge_injected and calls_since_mutation == self.no_mutation_limit:
                 note = _NO_PROGRESS_NUDGE.format(count=calls_since_mutation)
-                current_messages.append({"role": "system", "content": note})
+                # User role, not system: strict chat templates (qwen Jinja)
+                # reject system messages anywhere but the leading block.
+                current_messages.append({"role": "user", "content": note})
                 injected_notes.append(note)
                 nudge_injected = True
                 self._emit(
@@ -280,7 +282,7 @@ class ToolLoopRunner:
             ):
                 remaining = self.max_iterations - iteration
                 note = _DEADLINE_NOTE.format(remaining=remaining)
-                current_messages.append({"role": "system", "content": note})
+                current_messages.append({"role": "user", "content": note})
                 injected_notes.append(note)
                 deadline_injected = True
                 self._emit(
@@ -497,7 +499,7 @@ class ToolLoopRunner:
                 iteration=iteration,
                 note=note,
             )
-            current_messages.append({"role": "system", "content": note})
+            current_messages.append({"role": "user", "content": note})
             injected_notes.append(note)
             response_text, updated_messages = await llm_chat_fn(current_messages, [])
             current_messages = updated_messages
@@ -506,7 +508,7 @@ class ToolLoopRunner:
             # when forced; one explicit second chance keeps the guarantee that
             # the loop never ends without an answer (decision #034).
             if not response_text or response_text.strip() == "(no output)":
-                current_messages.append({"role": "system", "content": _FORCED_SYNTHESIS_RETRY})
+                current_messages.append({"role": "user", "content": _FORCED_SYNTHESIS_RETRY})
                 response_text, updated_messages = await llm_chat_fn(current_messages, [])
                 current_messages = updated_messages
                 self._emit_synthesis_response(iteration, response_text)
@@ -525,10 +527,12 @@ class ToolLoopRunner:
                 break
         # Steering notes were only meant for the current loop; a fresh turn has
         # a fresh budget, so they must not leak into the persisted history.
+        # Matched on content (any role): the notes travel as "user" messages
+        # because strict chat templates reject mid-conversation system roles.
         if injected_notes:
             current_messages = [
                 m for m in current_messages
-                if not (m.get("role") == "system" and m.get("content") in injected_notes)
+                if m.get("content") not in injected_notes
             ]
         self.iterations_used = min(iteration + 1, self.max_iterations)
         return final_text, current_messages

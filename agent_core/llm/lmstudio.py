@@ -14,6 +14,32 @@ from agent_core.constants import KNOWN_MODELS, resolve_model
 logger = logging.getLogger(__name__)
 
 
+def sanitize_message_roles(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert mid-conversation ``system`` messages to ``user`` role.
+
+    Strict chat templates (qwen's Jinja: "System message must be at the
+    beginning") reject any system message that is not in the leading block.
+    Steering notes injected by the tool loop — and any system message that
+    leaked into a persisted chat history — must therefore travel as user
+    messages.  The leading system block is preserved untouched.
+    """
+    seen_non_system = False
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") == "system" and seen_non_system:
+            content = str(message.get("content") or "")
+            out.append({
+                **message,
+                "role": "user",
+                "content": f"[System note] {content}" if content else "",
+            })
+        else:
+            if message.get("role") != "system":
+                seen_non_system = True
+            out.append(dict(message))
+    return out
+
+
 def _model_load_hint(detail: str) -> bool:
     """True when LM Studio's error body says the model is not in VRAM.
 
@@ -281,7 +307,7 @@ class LMStudioProvider:
         max_tok = override_max_tokens or self.max_tokens
         payload = {
             "model": self.model_name,
-            "messages": messages,
+            "messages": sanitize_message_roles(messages),
             "temperature": self.temperature,
             "max_tokens": max_tok,
         }

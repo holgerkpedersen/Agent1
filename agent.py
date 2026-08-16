@@ -789,7 +789,9 @@ class Agent:
                         + yellow(f"{'iteration budget exhausted' if reason == 'cap' else 'answer signals unfinished work'} — continuing automatically.\n")
                     )
                 final_messages = list(final_messages) + [
-                    {"role": "system", "content": _CONTINUE_NOTE},
+                    # User role: strict chat templates (qwen Jinja) reject
+                    # system messages mid-conversation.
+                    {"role": "user", "content": _CONTINUE_NOTE},
                 ]
                 continue
             if reason in ("stuck", "no_progress") and display_mode != AgentDisplayMode.QUIET:
@@ -805,7 +807,7 @@ class Agent:
         # finished task is not resumed by a future session.
         final_messages = [
             m for m in final_messages
-            if not (m.get("role") == "system" and m.get("content") == _CONTINUE_NOTE)
+            if not (m.get("content") == _CONTINUE_NOTE)
         ]
         self._chat_history = final_messages
         # Keep the conversation bounded and persist it so the next session

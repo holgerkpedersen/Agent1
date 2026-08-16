@@ -1,4 +1,10 @@
-﻿## 2026-08-16 - fix: cryptic 'no answer' in quiet mode -> forced-synthesis retry + concrete fallback
+﻿## 2026-08-16 - fix: qwen 400 'System message must be at the beginning'
+
+**Change**: agent_core/llm/tool_loop.py, agent.py, agent_core/llm/lmstudio.py, agent_core/llm/opencode_provider.py, tests/test_lmstudio_payload.py, tests/test_tool_loop_nlp.py, tests/test_loop_synthesis.py
+
+**Reason**: The tool loop injected steering notes (no-mutation nudge, budget warning, forced-synthesis note, continuation note) as role=system MID-conversation; qwen's Jinja chat template rejects any system message outside the leading block ('System message must be at the beginning') -> LM Studio predict 500 wrapped as HTTP 400, killing long sessions. Fix, three layers: (1) all injected steering notes now travel as role=user (leading system block untouched) and the history-strip filters match on content; (2) NEW provider-level sanitize_message_roles() converts any system message after the leading block to user role ('[System note] ...') in both LM Studio and opencode payloads - a safety net that also neutralizes old leaked notes in persisted chat_history.json; (3) verified live against qwen/qwen3.8-27b: raw mid-list system payload reproduces the exact error, sanitized payload returns 200. 866 tests green (4 new sanitizer tests).
+
+## 2026-08-16 - fix: cryptic 'no answer' in quiet mode -> forced-synthesis retry + concrete fallback
 
 **Change**: agent.py, agent_core/llm/tool_loop.py, tests/test_loop_synthesis.py (ny), tests/test_tool_loop_nlp.py
 

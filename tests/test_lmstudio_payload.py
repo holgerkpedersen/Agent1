@@ -111,3 +111,49 @@ def test_load_model_payload_sends_eval_batch_size_4096(monkeypatch) -> None:
     posted = sent.get("http://localhost:1234/api/v1/models/load", {})
     assert posted.get("model") == "qwen3.6-27b-mtp"
     assert posted.get("eval_batch_size") == 4096
+
+
+class TestSanitizeMessageRoles:
+    """Strict chat templates (qwen Jinja) reject system messages mid-list."""
+
+    def _payload(self, messages, model="qwen3.6-27b-mtp"):
+        return _provider(model)._build_payload(messages)
+
+    def test_leading_system_block_preserved(self):
+        payload = self._payload([
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "hej"},
+        ])
+        assert payload["messages"][0] == {"role": "system", "content": "SYS"}
+
+    def test_mid_conversation_system_converted_to_user(self):
+        payload = self._payload([
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "hej"},
+            {"role": "system", "content": "BUDGET WARNING: wrap up"},
+            {"role": "assistant", "content": "svar"},
+        ])
+        msgs = payload["messages"]
+        assert msgs[0]["role"] == "system"
+        assert msgs[2]["role"] == "user"
+        assert "[System note]" in msgs[2]["content"]
+        assert "BUDGET WARNING" in msgs[2]["content"]
+        assert msgs[3]["role"] == "assistant"
+
+    def test_consecutive_mid_list_systems_all_converted(self):
+        payload = self._payload([
+            {"role": "user", "content": "a"},
+            {"role": "system", "content": "n1"},
+            {"role": "system", "content": "n2"},
+            {"role": "user", "content": "b"},
+        ])
+        roles = [m["role"] for m in payload["messages"]]
+        assert roles == ["user", "user", "user", "user"]
+
+    def test_history_without_system_untouched(self):
+        payload = self._payload([
+            {"role": "user", "content": "a"},
+            {"role": "assistant", "content": "b"},
+        ])
+        assert [m["role"] for m in payload["messages"]] == ["user", "assistant"]
+

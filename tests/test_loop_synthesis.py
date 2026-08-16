@@ -47,7 +47,7 @@ class TestForcedSynthesisRetry:
         assert final_text == "Det konkrete svar om trace-analysen."
         # The retry note is present in the second forced call's messages.
         retry_note_in = any(
-            m.get("role") == "system" and "previous response was empty" in str(m.get("content"))
+            "previous response was empty" in str(m.get("content"))
             for m in fake.calls[-1][0]
         )
         assert retry_note_in
