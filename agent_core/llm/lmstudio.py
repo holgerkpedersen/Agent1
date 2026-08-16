@@ -22,6 +22,10 @@ def sanitize_message_roles(messages: list[dict[str, Any]]) -> list[dict[str, Any
     Steering notes injected by the tool loop — and any system message that
     leaked into a persisted chat history — must therefore travel as user
     messages.  The leading system block is preserved untouched.
+
+    Also drops ORPHAN ``tool`` messages (tool_call_id without a matching
+    assistant tool_calls message): strict gateways (opencode Console Go)
+    reject those with HTTP 400.
     """
     seen_non_system = False
     out: list[dict[str, Any]] = []
@@ -37,7 +41,16 @@ def sanitize_message_roles(messages: list[dict[str, Any]]) -> list[dict[str, Any
             if message.get("role") != "system":
                 seen_non_system = True
             out.append(dict(message))
-    return out
+    valid_ids: set[str] = set()
+    for message in out:
+        if message.get("role") == "assistant":
+            for tc in message.get("tool_calls") or []:
+                if isinstance(tc, dict) and tc.get("id"):
+                    valid_ids.add(str(tc["id"]))
+    return [
+        m for m in out
+        if not (m.get("role") == "tool" and m.get("tool_call_id") not in valid_ids)
+    ]
 
 
 def _model_load_hint(detail: str) -> bool:

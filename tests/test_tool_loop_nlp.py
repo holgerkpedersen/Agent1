@@ -696,6 +696,43 @@ class TestPersistentChatHistory:
         tool_calls = [m for m in projected if m.get("tool_calls")]
         assert len(tool_calls) == 1
 
+    def test_orphan_tool_messages_dropped(self):
+        """A tool message without a matching assistant tool_calls message is
+        an orphan — strict gateways (opencode Console Go) reject those with
+        HTTP 400, so they must never reach the payload."""
+        from agent import _drop_orphan_tool_messages
+        messages = [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "a"},
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "c1", "type": "function",
+                             "function": {"name": "read", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "res"},
+            {"role": "user", "content": "b"},
+            {"role": "tool", "tool_call_id": "ghost-1", "content": "no matching assistant"},
+        ]
+        cleaned = _drop_orphan_tool_messages(messages)
+        assert [m["role"] for m in cleaned] == ["system", "user", "assistant", "tool", "user"]
+        assert [m.get("tool_call_id") for m in cleaned if m.get("role") == "tool"] == ["c1"]
+
+    def test_trim_boundary_orphan_dropped(self):
+        """When trimming cuts between an assistant tool_calls message and its
+        tool result, the surviving orphan tool message is dropped."""
+        from agent import _MAX_CHAT_MESSAGES, _trim_chat_history
+        messages = [{"role": "system", "content": "SYS"}]
+        # Assistant with tool_calls early (dropped by the trim window)…
+        messages.append({"role": "assistant", "content": "",
+                         "tool_calls": [{"id": "cut", "type": "function",
+                                         "function": {"name": "read", "arguments": "{}"}}]})
+        # …its tool result late (inside the kept window) → orphan.
+        messages += [{"role": "user", "content": f"filler-{i}"} for i in range(_MAX_CHAT_MESSAGES - 3)]
+        messages.append({"role": "tool", "tool_call_id": "cut", "content": "res"})
+        messages.append({"role": "user", "content": "end"})
+
+        trimmed = _trim_chat_history(messages)
+        assert len(trimmed) == _MAX_CHAT_MESSAGES - 1  # system + tail, orphan removed
+        assert not any(m.get("tool_call_id") == "cut" for m in trimmed)
+
     def test_clear_history_deletes_file(self, tmp_path):
         from unittest.mock import patch
         from agent import Agent

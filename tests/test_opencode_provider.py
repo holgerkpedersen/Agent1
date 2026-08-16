@@ -321,6 +321,23 @@ class TestDirectApiMode:
             out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert out.startswith("[Error")
 
+    def test_chat_api_error_surfaces_gateway_body(self):
+        """A gateway 400 must show its explanation (e.g. orphan tool message)
+        instead of the useless bare '400: Bad Request'."""
+        import asyncio
+        import urllib.error
+        from io import BytesIO
+        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+
+        def boom(req, timeout=None):
+            body = b'{"error": {"message": "Messages with role \'tool\' must be a response to a preceding message with \'tool_calls\'"}}'
+            raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, BytesIO(body))
+
+        with patch("urllib.request.urlopen", side_effect=boom):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert "400" in out
+        assert "must be a response to a preceding message" in out
+
     def test_chat_api_sends_bearer_and_tools(self):
         import asyncio
         import urllib.request

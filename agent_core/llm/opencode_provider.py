@@ -235,6 +235,13 @@ class OpencodeProvider:
                 ),
                 label="opencode chat/completions",
             )
+        except urllib.error.HTTPError as exc:
+            # Surface the gateway's explanation (e.g. "Messages with role
+            # 'tool' must be a response to a preceding message with
+            # 'tool_calls'") — the bare "400: Bad Request" is useless.
+            body = exc.read().decode("utf-8", "replace").strip()
+            detail = body or str(exc.reason)
+            return f"[Error: opencode API request failed: HTTP Error {exc.code}: {detail}]"
         except Exception as exc:
             return f"[Error: opencode API request failed: {exc}]"
         choices = result.get("choices") if isinstance(result, dict) else None

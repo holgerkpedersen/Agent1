@@ -15,6 +15,102 @@ from agent_core.constants import (
 )
 
 
+class TestModelCommandProviderSync:
+    """`model list` / `model reload` must never sync an OPENCODE model to the
+    LM Studio-loaded model (the user's chosen model was being silently
+    replaced and provider=lmstudio persisted)."""
+
+    @staticmethod
+    def _opencode_agent():
+        from agent_core.llm.opencode_provider import OpencodeProvider
+
+        provider = OpencodeProvider("opencode-go/deepseek-v4-flash", read_store=False)
+        llm = type("L", (), {
+            "model_name": "opencode-go/deepseek-v4-flash",
+            "_provider": provider,
+        })()
+        return type("A", (), {"llm": llm})()
+
+    @staticmethod
+    def _settings(provider: str):
+        return type("S", (), {
+            "llm_provider": provider,
+            "opencode_server_url": "http://127.0.0.1:4096",
+            "opencode_password": "",
+            "opencode_api_url": "https://opencode.ai/zen/go/v1",
+            "opencode_api_key": "",
+        })()
+
+    def test_list_models_skips_autosync_for_opencode(self, monkeypatch, capsys):
+        from agent_core.llm.opencode_provider import OpencodeProvider
+
+        cmd = ModelCommand()
+        agent = self._opencode_agent()
+        fake_models = [{
+            "key": "qwen/qwen3.8-27b", "display_name": "Qwen3.8 27B",
+            "params_string": "27B", "size_bytes": 100, "loaded": True,
+            "instance_id": "i1",
+        }]
+        monkeypatch.setattr("agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
+        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: self._settings("opencode"))
+        monkeypatch.setattr(
+            "agent_core.constants.load_model_json",
+            lambda: {"model": "opencode-go/deepseek-v4-flash", "provider": "opencode"},
+        )
+        monkeypatch.setattr(
+            OpencodeProvider, "list_models",
+            lambda self: ["opencode-go/deepseek-v4-flash"],
+        )
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd.persist_model_choice",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not persist on opencode list")),
+        )
+
+        cmd._list_models(agent)
+        out = capsys.readouterr().out
+        assert "switching" not in out.lower()
+        assert agent.llm.model_name == "opencode-go/deepseek-v4-flash"
+
+    def test_reload_skips_sync_for_opencode(self, monkeypatch, capsys):
+        cmd = ModelCommand()
+        agent = self._opencode_agent()
+        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: self._settings("opencode"))
+        monkeypatch.setattr(
+            "agent_core.constants.load_model_json",
+            lambda: {"model": "opencode-go/deepseek-v4-flash", "provider": "opencode"},
+        )
+
+        cmd._sync_with_lmstudio(agent)
+        out = capsys.readouterr().out
+        assert "no LM Studio sync needed" in out
+        assert agent.llm.model_name == "opencode-go/deepseek-v4-flash"
+
+    def test_sync_still_switches_when_lmstudio_active(self, monkeypatch, capsys):
+        from agent_core.llm.lmstudio import LMStudioProvider
+
+        provider = LMStudioProvider(model_name="laguna-s-2.1")
+        llm = type("L", (), {"model_name": "laguna-s-2.1", "_provider": provider})()
+        agent = type("A", (), {"llm": llm})()
+        fake_models = [{
+            "key": "qwen/qwen3.8-27b", "display_name": "Qwen3.8 27B",
+            "params_string": "27B", "size_bytes": 100, "loaded": True,
+            "instance_id": "i1",
+        }]
+        monkeypatch.setattr("agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
+        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: self._settings("lmstudio"))
+        monkeypatch.setattr(
+            "agent_core.constants.load_model_json",
+            lambda: {"model": "laguna-s-2.1", "provider": "lmstudio"},
+        )
+        monkeypatch.setattr("agent_core.commands.model_cmd.persist_model_choice", lambda *a, **k: None)
+
+        cmd = ModelCommand()
+        cmd._sync_with_lmstudio(agent)
+        out = capsys.readouterr().out
+        assert "Syncing agent" in out
+        assert agent.llm.model_name == "qwen/qwen3.8-27b"
+
+
 class TestModelCommandResolveMatch:
     """Test _resolve_match without needing LM Studio running."""
 

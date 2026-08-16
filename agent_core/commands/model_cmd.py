@@ -169,14 +169,21 @@ class ModelCommand(Command):
         print(f"\n  Current model: {current}{profile_info}  ({kinfo.get('desc', '')})")
         print(f"  {len(models)} models available from LM Studio API")
 
-        # Auto-sync: if agent's model isn't loaded in LM Studio, switch to what is
-        loaded_keys = [m["key"] for m in models if m["loaded"]]
-        if loaded_keys and current not in loaded_keys:
-            print(f"\n  ⚠ {current} not loaded, switching to {loaded_keys[0]}")
-            agent.llm.model_name = loaded_keys[0]
-            persist_model_choice(loaded_keys[0])
-        elif not loaded_keys and current:
-            print(f"\n  ⚠ No models loaded in LM Studio. Agent is set to: {current}")
+        # Auto-sync: only when the ACTIVE provider is lmstudio.  An opencode
+        # model (opencode-go/...) never needs LM Studio loading, so the list
+        # command must not silently switch the user's chosen model to the
+        # LM Studio-loaded one (observed: opencode-go/deepseek-v4-flash was
+        # replaced by qwen and provider=lmstudio persisted).
+        if active_provider == "lmstudio":
+            loaded_keys = [m["key"] for m in models if m["loaded"]]
+            if loaded_keys and current not in loaded_keys:
+                print(f"\n  ⚠ {current} not loaded, switching to {loaded_keys[0]}")
+                self._rebuild_provider(agent, loaded_keys[0])
+                self._persist_model(loaded_keys[0])
+            elif not loaded_keys and current:
+                print(f"\n  ⚠ No models loaded in LM Studio. Agent is set to: {current}")
+        elif current:
+            print(f"\n  [{active_provider}] {current} — no LM Studio sync needed.")
 
     def _list_known_only(self, agent: "Agent") -> None:
         """Fallback: show the hardcoded KNOWN_MODELS."""
@@ -337,7 +344,27 @@ class ModelCommand(Command):
     # ------------------------------------------------------------------
 
     def _sync_with_lmstudio(self, agent: "Agent") -> None:
-        """Check what LM Studio has loaded and align agent's model_name."""
+        """Check what LM Studio has loaded and align agent's model_name.
+
+        Only meaningful when the active provider is lmstudio: an opencode
+        model never needs LM Studio loading, so sync must not replace the
+        user's chosen model with the LM Studio-loaded one.
+        """
+        current = agent.llm.model_name
+        try:
+            from agent_core.config import load_agent_settings
+            from agent_core.constants import load_model_json
+            from agent_core.llm.provider import provider_for
+
+            settings = load_agent_settings()
+            persisted_provider = str(load_model_json().get("provider") or "")
+            active_provider = provider_for(current, settings.llm_provider, persisted_provider)
+        except Exception:
+            active_provider = "lmstudio"
+        if active_provider != "lmstudio":
+            print(f"  {current} is an {active_provider} model — no LM Studio sync needed.")
+            return
+
         models, loaded_ids = self._fetch_models()
         current = agent.llm.model_name
 

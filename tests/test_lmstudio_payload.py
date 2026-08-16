@@ -157,3 +157,18 @@ class TestSanitizeMessageRoles:
         ])
         assert [m["role"] for m in payload["messages"]] == ["user", "assistant"]
 
+    def test_orphan_tool_messages_dropped(self):
+        """tool messages without a matching assistant tool_calls are dropped —
+        strict gateways 400 on orphans (opencode Console Go)."""
+        payload = self._payload([
+            {"role": "user", "content": "a"},
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "c1", "type": "function",
+                             "function": {"name": "x", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "res"},
+            {"role": "tool", "tool_call_id": "ghost", "content": "orphan"},
+        ])
+        ids = [m.get("tool_call_id") for m in payload["messages"]]
+        assert "ghost" not in ids
+        assert "c1" in ids
+

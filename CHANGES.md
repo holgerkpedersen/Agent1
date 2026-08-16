@@ -1,4 +1,10 @@
-﻿## 2026-08-16 - fix: read-only tasks (audits) stopped mid-work by the mutation-based progress guard
+﻿## 2026-08-16 - fix: model jumps away from opencode + 400 root cause (orphan tool messages)
+
+**Change**: agent_core/commands/model_cmd.py, agent.py, agent_core/llm/lmstudio.py, agent_core/llm/opencode_provider.py, tests (model_helpers, lmstudio_payload, opencode_provider, tool_loop_nlp)
+
+**Reason**: (1) model list auto-synced the agent to the LM Studio-loaded model whenever the current model was 'not loaded' — REGARDLESS of provider — so opencode-go/deepseek-v4-flash was silently replaced by qwen and provider=lmstudio persisted, across sessions. Auto-sync (list + reload) is now gated on the active provider being lmstudio; sync also rebuilds the provider (stale-provider fix). (2) The repeated 400 'Bad Request' from the opencode API was traced to ORPHAN tool messages: _trim_chat_history can cut between an assistant tool_calls message and its tool result; strict gateways reject the surviving orphan with HTTP 400 (verified live: 'Messages with role tool must be a response to a preceding message with tool_calls'). Fixes: orphan tool messages are dropped in _trim_chat_history AND in the provider-level sanitizer (defense in depth, also cleans old persisted histories); opencode provider errors now surface the gateway body (the lmstudio provider already did). Verified live: model list keeps opencode-go/deepseek-v4-flash; orphan payload succeeds (no 400). 876 tests green (7 new).
+
+## 2026-08-16 - fix: read-only tasks (audits) stopped mid-work by the mutation-based progress guard
 
 **Change**: agent_core/llm/tool_loop.py, agent.py, tests/test_tool_loop_nlp.py, tests/test_loop_synthesis.py
 

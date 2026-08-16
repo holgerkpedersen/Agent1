@@ -1074,13 +1074,38 @@ def _blocked_shell_command(command: str) -> str | None:
     return None
 
 
+def _drop_orphan_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop ``tool`` messages whose ``tool_call_id`` has no matching assistant
+    ``tool_calls`` message.
+
+    Trimming can cut between an assistant tool_calls message and its tool
+    result, leaving an orphan — strict gateways (opencode Console Go) reject
+    those with HTTP 400 ("Messages with role 'tool' must be a response to a
+    preceding message with 'tool_calls'").
+    """
+    valid_ids: set[str] = set()
+    for m in messages:
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                if isinstance(tc, dict) and tc.get("id"):
+                    valid_ids.add(str(tc["id"]))
+    return [
+        m for m in messages
+        if not (m.get("role") == "tool" and m.get("tool_call_id") not in valid_ids)
+    ]
+
+
 def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep the system prompt plus the last N-1 messages so the conversation
-    stays within a bounded context; returns a new list."""
+    stays within a bounded context; returns a new list.
+
+    Also drops orphan tool messages that a cut could leave behind (see
+    :func:`_drop_orphan_tool_messages`).
+    """
     if len(messages) <= _MAX_CHAT_MESSAGES:
-        return list(messages)
+        return _drop_orphan_tool_messages(messages)
     head = messages[:1]
-    return head + list(messages[-(_MAX_CHAT_MESSAGES - 1):])
+    return _drop_orphan_tool_messages(head + list(messages[-(_MAX_CHAT_MESSAGES - 1):]))
 
 
 def _project_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
