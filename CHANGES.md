@@ -1,4 +1,10 @@
-﻿## 2026-08-16 - fix: LM Studio models routed to opencode API (401)
+﻿## 2026-08-16 - feat: LLM-free un REPL command + LM Studio 400 diagnostics
+
+**Change**: agent_core/commands/run_cmd.py (ny), agent.py (REPL-wiring, ucommitted pga. harnessfix-afhaengighed), agent_core/llm/lmstudio.py, tests/test_run_cmd.py (ny), tests/test_lmstudio_http.py (ny)
+
+**Reason**: (1) un <shell command> in the REPL executes shell commands DIRECTLY without the LLM - deterministic byte-exact output (harnessfix dashboard dumps), zero tokens, works when the provider is down. Reuses the guarded run-tool path (blocked-command allowlist + truncation); verified live (python -c print works, rm -rf / blocked). (2) The 400 the user hit surfaced as a useless 'HTTP Error 400: Bad Request' - LM Studio's response body (e.g. 'model is not loaded, load it first') was swallowed, and the 'after 3 retries' wording was misleading because HTTPError is not in RetryPolicy.retryable_errors so it fails on the first attempt. Fix: _make_request now surfaces the response body, auto-loads the model once when a 400 says it is not in VRAM, and the error message is reworded honestly. 839 tests green (9 new).
+
+## 2026-08-16 - fix: LM Studio models routed to opencode API (401)
 
 **Change**: agent_core/llm/provider.py, agent_core/constants.py, agent_core/commands/model_cmd.py, tests/test_opencode_provider.py
 

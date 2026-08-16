@@ -14,6 +14,19 @@ from agent_core.constants import KNOWN_MODELS, resolve_model
 logger = logging.getLogger(__name__)
 
 
+def _model_load_hint(detail: str) -> bool:
+    """True when LM Studio's error body says the model is not in VRAM.
+
+    LM Studio answers such requests with HTTP 400 ("model is not loaded,
+    load it first"); retrying does not help — the model must be loaded first.
+    """
+    d = detail.lower()
+    return any(
+        needle in d
+        for needle in ("not loaded", "is not loaded", "load it first", "load the model")
+    )
+
+
 def _management_url() -> str:
     """Return the LM Studio model-management base URL (REST API, not OpenAI-compat)."""
     base = os.environ.get("LMSTUDIO_URL", "http://localhost:1234/v1")
@@ -300,7 +313,12 @@ class LMStudioProvider:
         return payload
     
     def _make_request(self, payload: dict[str, Any], timeout: int = 3600) -> dict[str, Any]:
-        """Make synchronous HTTP request to LM Studio."""
+        """Make synchronous HTTP request to LM Studio.
+
+        HTTP errors surface their response body (LM Studio explains the
+        reason there — e.g. "model is not loaded"); a 400 whose body says the
+        model is not in VRAM triggers an automatic load + single retry.
+        """
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(
             f"{self.lmstudio_url}/chat/completions",
@@ -311,8 +329,21 @@ class LMStudioProvider:
             },
             method='POST'
         )
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            return cast(dict[str, Any], json.loads(response.read().decode()))
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return cast(dict[str, Any], json.loads(response.read().decode()))
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode('utf-8', 'replace').strip()
+            detail = body or str(exc.reason)
+            if exc.code == 400 and _model_load_hint(detail):
+                ok, msg = load_model(self.model_name)
+                if ok:
+                    with urllib.request.urlopen(req, timeout=timeout) as response:
+                        return cast(dict[str, Any], json.loads(response.read().decode()))
+                detail = f"{detail} (auto-load failed: {msg})"
+            raise RuntimeError(f"HTTP Error {exc.code}: {detail}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"LM Studio returned non-JSON response: {exc}") from exc
     
     def _check_thinking_error(self, content: str, reasoning: str, finish_reason: str | None = None) -> str | None:
         """Check if model used all tokens thinking with no output.
@@ -397,7 +428,7 @@ class LMStudioProvider:
                 on_retry=_on_retry
             )
         except Exception as e:
-            return f"[Error after {self.retry_policy.max_retries} retries: {e}]"
+            return f"[Error: {e}]"
     
     async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """Chat with real-time token streaming to console."""
