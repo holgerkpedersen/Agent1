@@ -741,3 +741,11 @@ already do. The model currently burns the whole
 **Change (model command)**: `model list` now shows the models of EVERY LLM provider — [opencode] models from the server (/config/providers) plus [lmstudio] VRAM/models — with active-provider markers; `model provider [lmstudio|opencode]` switches the provider; `model name opencode-go/<m>` selects an opencode model directly.
 **Files**: agent_core/config.py, agent_core/llm/provider.py, agent_core/llm/opencode_provider.py (new), agent_core/constants.py, agent.py (LLMClient), agent_core/commands/model_cmd.py, .env.example, tests/test_opencode_provider.py (new, 14 tests)
 
+## 2026-08-17 — feat: implement --modify diff-apply mode for existing modules + tests
+
+**Change**: `implement <taskplan> --modify` merges generated content into existing compile-OK `.py` modules as a reviewed unified diff instead of skipping them (default `--keep`) or overwriting them wholesale (`--force`). The diff is produced via difflib, applied through the shared tolerant patch_utils machinery (strict + anchored fallback), py_compile verified, shown with show_file_diff, and applied only after approval — safe auto-default declines in autonomous mode. Wholesale rewrites are rejected unless similarity ≥ 0.5; `--allow-rewrite` opts in. Unchanged content is skipped; non-.py files and unreadable files are skipped with a note. Flow-stop (Ctrl+C / "stop"/"q") honored during the approval prompt.
+
+**Reason**: The gap between skip (`--keep`) and overwrite (`--force`) left no middle ground for extending existing modules — `--modify` lets the LLM propose a minimal reviewed diff so the user sees exactly what changes before it lands, with compile + similarity guards preventing accidental gut rewrites (the broken run that replaced tool_loop.py's 416 lines with a 4-line stub is now impossible).
+
+**Files**: agent_core/commands/implement_cmd.py (`_apply_modify_diff`, modify_mode flag, modify_target gate in the generation loop, help text), tests/test_implement_safety.py (`TestModifyMode`: apply-after-approval, decline-without-approval, unchanged-skip, wholesale-rewrite-rejected, allow-rewrite-applies)
+

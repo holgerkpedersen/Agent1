@@ -32,12 +32,14 @@ plan <analysis> <plan>           Generate coding plan
 entities <analysis> <plan>       Generate shared entities
 taskplan <analysis> <plan>       Generate implementation tasks
 implement <taskplan> [opts]      Implement files from task plan
-                                 --force            Overwrite existing files
-                                 --keep             Skip files that compile OK
-                                 --fix              Retry compilation errors
-                                  --retry            Re-generate only missing files (cache auto-invalidates on taskplan change)
-                                  --review           Review new files + offer to delete dangerous/unwired files
-                                 --workspace <path> Target workspace
+                                  --force            Overwrite existing files (wholesale)
+                                  --keep             Skip files that compile OK
+                                  --modify           Merge generated content into existing compile-OK modules as a reviewed diff
+                                  --fix              Retry compilation errors
+                                   --retry            Re-generate only missing files (cache auto-invalidates on taskplan change)
+                                   --review           Review new files + offer to delete dangerous/unwired files
+                                  --allow-rewrite    Opt in to wholesale rewrite of existing file under --modify
+                                  --workspace <path> Target workspace
 fix <traceback>                  Paste traceback to auto-fix root cause
     <file> --desc "text"        On-demand — top-5 files by keyword match, LLM requests more with [READ:]
     <file> --desc "text" --full  Send entire project context (old behavior)
@@ -133,6 +135,7 @@ The `fix` and `implement` commands include automatic protections against common 
 - **`--review` flag**: adds LLM deep analysis + offers to delete dangerous files with a y/N prompt
 - **`--review` flag**: adds LLM deep analysis + offers to delete dangerous files with a y/N prompt
 - **Patch-based fixing**: LLM outputs minimal `[PATCH:]` diffs instead of full-file rewrites. Shows changed lines with +/-, asks y/N before applying. Safety checks: old lines must exist, result must compile. `[FILE:]` still works as fallback.
+- **`--modify` mode**: merges generated content into existing compile-OK modules via a reviewed unified diff (diff-apply) — the middle ground between `--keep` (skip) and `--force` (wholesale overwrite). Wholesale rewrites are rejected unless similarity ≥ 0.5; `--allow-rewrite` opts in.
 - **Anchored patch fallback**: When LLM ``@@`` line numbers are wrong (a common failure mode), a content-based anchored matcher locates the correct position by matching actual file text in a ±60-line window — absorbing fence-wrapped diffs, fused headers, and ``N |`` numbered-context artifacts.
 - **Workspace-agnostic**: path rules detected dynamically from workspace structure (finds `__init__.py` directories). No hardcoded prefixes — works in any project.
 - **SOLID enforcement**: implement system prompt enforces SRP. New files capped at 150 lines — LLM splits large concepts. Modifying existing code uses minimal changes. Prefers composition over inheritance.
@@ -260,3 +263,4 @@ pytest tests/ -v
 - **Decision tracking system**: record, search, and enforce design decisions. `decide` command for manual recording. Auto-extracts decision candidates from `workflow`, `implement`, and `fix` runs. Past decisions are injected as hard constraints into LLM prompts — preventing accidental contradictions. LLM-powered contradiction detection and resolution.
 - Patch application tests for strict, anchored, deletion-only, and `N |`-prefix stripping
 - LM Studio thinking-disable payload tests across models and server versions
+- **`implement --modify`** mode: diff-apply merge of generated content into existing compile-OK modules as a reviewed unified diff (middle ground between `--keep` skip and `--force` overwrite), with wholesale-rewrite rejection unless similarity ≥ 0.5 (`--allow-rewrite`)
