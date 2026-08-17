@@ -1,15 +1,26 @@
 from collections import defaultdict
+from typing import Any
 
 from .llm_types import TaskType, ProfileType
 
 
 class MetricsTracker:
-    """Tracks success/failure metrics per profile+task combination."""
+    """Tracks success/failure metrics per profile+task combination.
+
+    Also accumulates per-turn token and cost counters (plan ARCH item 16):
+    :meth:`record_turn` accepts a :class:`~agent_core.llm.provider.ResponseMetrics`
+    (or plain token/cost values) captured from a provider's
+    ``last_response_metrics``.
+    """
 
     def __init__(self) -> None:
         self._success_counts: dict[tuple[str, str], int] = defaultdict(int)
         self._failure_counts: dict[tuple[str, str], int] = defaultdict(int)
         self._latencies: dict[tuple[str, str], list[float]] = defaultdict(list)
+        self._token_counts: dict[tuple[str, str], int] = defaultdict(int)
+        self._token_entries: dict[tuple[str, str], int] = defaultdict(int)
+        self._costs: dict[tuple[str, str], float] = defaultdict(float)
+        self._cost_entries: dict[tuple[str, str], int] = defaultdict(int)
 
     def record_success(self, task_type: TaskType, profile_type: ProfileType, latency_seconds: float) -> None:
         key = (task_type.value, profile_type.value)
@@ -19,6 +30,37 @@ class MetricsTracker:
     def record_failure(self, task_type: TaskType, profile_type: ProfileType) -> None:
         key = (task_type.value, profile_type.value)
         self._failure_counts[key] += 1
+
+    def record_turn(
+        self,
+        task_type: TaskType,
+        profile_type: ProfileType,
+        latency_seconds: float | None = None,
+        tokens: int | None = None,
+        cost: float | None = None,
+        metrics: Any | None = None,
+    ) -> None:
+        """Record a successful turn's token/latency/cost accounting.
+
+        *metrics* may be a ``ResponseMetrics`` object (then tokens/cost are
+        taken from it); explicit *tokens*/*cost* override it.  *latency_seconds*
+        defaults to ``metrics.latency_ms / 1000`` when available.
+        """
+        key = (task_type.value, profile_type.value)
+        if metrics is not None:
+            tokens = tokens if tokens is not None else getattr(metrics, "total_tokens", None)
+            cost = cost if cost is not None else getattr(metrics, "cost", 0.0)
+            if latency_seconds is None:
+                latency_seconds = getattr(metrics, "latency_ms", 0.0) / 1000.0
+        self._success_counts[key] += 1
+        if latency_seconds is not None:
+            self._latencies[key].append(latency_seconds)
+        if tokens is not None:
+            self._token_counts[key] += tokens
+            self._token_entries[key] += 1
+        if cost is not None:
+            self._costs[key] += cost
+            self._cost_entries[key] += 1
 
     def get_success_rate(self, profile_type: ProfileType) -> float:
         """Return overall success rate for a profile across all task types."""
@@ -66,10 +108,18 @@ class MetricsTracker:
         failures = self._failure_counts[key]
         latencies = self._latencies[key]
         avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+        tokens = self._token_counts[key]
+        token_entries = self._token_entries[key]
+        costs = self._costs[key]
+        cost_entries = self._cost_entries[key]
         return {
             "success_count": successes,
             "failure_count": failures,
             "avg_latency": avg_latency,
+            "total_tokens": tokens,
+            "avg_tokens": round(tokens / token_entries, 1) if token_entries else 0,
+            "total_cost": round(costs, 6),
+            "avg_cost": round(costs / cost_entries, 6) if cost_entries else 0.0,
             "last_updated": float(successes + failures),
         }
 
@@ -78,3 +128,7 @@ class MetricsTracker:
         self._success_counts.clear()
         self._failure_counts.clear()
         self._latencies.clear()
+        self._token_counts.clear()
+        self._token_entries.clear()
+        self._costs.clear()
+        self._cost_entries.clear()

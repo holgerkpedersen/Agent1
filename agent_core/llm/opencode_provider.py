@@ -27,6 +27,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
+from .provider import ResponseMetrics
+
 #: HTTP statuses that are safe to retry — the hosted gateway sits behind
 #: Cloudflare and intermittently returns 5xx on healthy requests (observed
 #: live: a single HTTP 500 that succeeded on the immediate retry).
@@ -165,6 +167,8 @@ class OpencodeProvider:
         self.temperature: float = 0.7
         self.max_tokens: int = 50000
         self._profile_name: str | None = profile_name
+        #: Per-turn token/latency/cost of the last API chat call (plan ARCH 17).
+        self.last_response_metrics: ResponseMetrics | None = None
         self._session_id: str | None = None
         self._last_label: str | None = None
         self._server_timeout = float(os.environ.get("OPENCODE_SERVER_TIMEOUT", "600"))
@@ -307,6 +311,12 @@ class OpencodeProvider:
         reasoning = message.get("reasoning_content") or ""
         finish_reason = first.get("finish_reason")
         tool_calls = message.get("tool_calls")
+        # Per-turn token/latency/cost accounting (plan ARCH item 17).
+        usage = result.get("usage") if isinstance(result, dict) else None
+        self.last_response_metrics = ResponseMetrics(
+            prompt_tokens=int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0,
+            completion_tokens=int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0,
+        )
         if tool_calls:
             return json.dumps({"content": content, "tool_calls": tool_calls})
         thinking_err = _reasoning_exhausted(content, reasoning, finish_reason)

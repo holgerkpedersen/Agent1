@@ -1,5 +1,6 @@
 """LM Studio provider implementation."""
 import json
+import time as _time
 from typing import Any, cast
 import logging
 import os
@@ -8,6 +9,7 @@ import urllib.error
 
 import httpx
 
+from .provider import ResponseMetrics
 from .retry import RetryPolicy
 from agent_core.constants import KNOWN_MODELS, resolve_model
 
@@ -291,6 +293,8 @@ class LMStudioProvider:
         self.temperature: float = 0.7
         self.max_tokens: int = 50000
         self._profile_name: str | None = None
+        #: Per-turn token/latency/cost of the last chat call (plan ARCH 17).
+        self.last_response_metrics: ResponseMetrics | None = None
         #: Last printed status label — printed once per session and only
         #: re-printed when it changes (model/profile/temperature/tokens).
         self._last_label: str | None = None
@@ -435,27 +439,37 @@ class LMStudioProvider:
             self._last_label = label
         
         async def _do_request() -> Any:
+            start_time = _time.monotonic()
             result = self._make_request(payload)
-            
+            elapsed_ms = (_time.monotonic() - start_time) * 1000.0
+
             if 'choices' in result and len(result['choices']) > 0:
                 choice = result['choices'][0]
                 message = choice.get('message', {})
                 content = message.get('content') or ""
                 reasoning = message.get('reasoning_content') or ""
-                
+
+                # Per-turn token/latency/cost accounting (plan ARCH item 17).
+                usage = result.get("usage") if isinstance(result, dict) else None
+                self.last_response_metrics = ResponseMetrics(
+                    prompt_tokens=int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0,
+                    completion_tokens=int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0,
+                    latency_ms=elapsed_ms,
+                )
+
                 # If tools present and model returned tool_calls, return full message
                 if tools and message.get('tool_calls'):
                     return json.dumps(message)
-                
+
                 # Check for thinking error
                 thinking_err = self._check_thinking_error(
                     content, reasoning, finish_reason=choice.get('finish_reason')
                 )
                 if thinking_err:
                     return thinking_err
-                
+
                 return content or reasoning
-            
+
             return ""
         
         def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:

@@ -1,5 +1,37 @@
 """LLM Provider Protocol - abstract interface for LLM backends."""
+from dataclasses import dataclass
 from typing import Any, Protocol
+
+
+@dataclass(frozen=True)
+class ResponseMetrics:
+    """Per-call token/latency/cost accounting (plan ARCH item 14).
+
+    Providers that expose usage data set ``provider.last_response_metrics``
+    after every ``chat`` call so callers can report per-turn token/latency/
+    cost without changing the ``chat`` return contract (which stays a str).
+    """
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    latency_ms: float = 0.0
+    cost: float = 0.0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+
+#: Attribute name providers set with the last call's metrics.
+LAST_METRICS_ATTR = "last_response_metrics"
+
+
+def get_last_metrics(provider: Any) -> ResponseMetrics | None:
+    """Return the provider's last-call metrics, or None when unsupported."""
+    if provider is None:
+        return None
+    metrics = getattr(provider, LAST_METRICS_ATTR, None)
+    return metrics if isinstance(metrics, ResponseMetrics) else None
 
 
 def provider_for(
@@ -58,6 +90,11 @@ class LLMProvider(Protocol):
     This protocol defines the contract that all LLM providers must implement.
     It enables dependency inversion - Agent depends on this abstraction,
     not on concrete LMStudio implementation.
+
+    Metrics contract: providers with usage data additionally expose
+    ``last_response_metrics: ResponseMetrics | None`` after each ``chat``
+    (see :func:`get_last_metrics`) — the return type itself stays ``str`` so
+    every existing caller keeps working.
     """
     
     model_name: str
