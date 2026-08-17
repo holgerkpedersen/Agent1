@@ -61,6 +61,54 @@ _TOOL_MAP: dict[str, str] = {
     "webfetch": "web_search",
 }
 
+
+def _apply_thinking_knob(
+    messages: list[dict[str, Any]], enabled: bool
+) -> list[dict[str, Any]]:
+    """Prepend the Nemotron-3 reasoning gate (``/think`` / ``/no_think``) to the
+    leading system message.
+
+    NVIDIA documents the ``/think`` / ``/no_think`` system-prompt directive as
+    the control for Nemotron-3-Super reasoning (RAG blueprint docs).  Honoring
+    ``disable_thinking`` this way stops these models from burning their whole
+    output budget in ``reasoning_content`` and returning empty ``content``.
+    """
+    directive = "/think" if enabled else "/no_think"
+    out: list[dict[str, Any]] = [dict(m) for m in messages]
+    for m in out:
+        if m.get("role") == "system":
+            content = str(m.get("content") or "")
+            m["content"] = f"{directive}\n\n{content}".rstrip()
+            break
+    return out
+
+
+def _reasoning_exhausted(
+    content: str, reasoning: str, finish_reason: str | None = None
+) -> str | None:
+    """Detect when a reasoning model used its budget thinking and left no usable
+    output (Nemotron-3 and similar).  Returns an actionable ``[Error: ...]``
+    string instead of silently collapsing to ``(no output)`` — callers retry
+    with thinking disabled rather than burning more reasoning tokens."""
+    if not content.strip() and reasoning and len(reasoning) > 300:
+        return (
+            f"[Error: model consumed {len(reasoning)} reasoning bytes with "
+            "no output — reasoning models burn their budget thinking. Retry "
+            "with disable_thinking=True (injects /no_think for Nemotron-3).]"
+        )
+    if (
+        finish_reason == "length"
+        and reasoning
+        and len(reasoning) > 300
+        and len(content) < len(reasoning)
+    ):
+        return (
+            f"[Error: model hit the output limit ({len(reasoning)} reasoning "
+            "bytes) and the response was truncated before the output completed. "
+            "Retry with disable_thinking=True or a larger output budget.]"
+        )
+    return None
+
 #: opencode built-in tools we enable on sessions (the model may call these).
 _ENABLED_TOOLS: dict[str, bool] = {
     "bash": True,
@@ -215,9 +263,15 @@ class OpencodeProvider:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         max_tokens: int | None,
+        disable_thinking: bool = False,
     ) -> str:
         from .lmstudio import sanitize_message_roles
 
+        # Nemotron-3 models gate reasoning through /think vs /no_think in the
+        # system prompt (NVIDIA docs). Honor disable_thinking for them — no
+        # other model responds to the directive, so the payload stays as-is.
+        if disable_thinking and "nemotron" in self.model_name.lower():
+            messages = _apply_thinking_knob(messages, enabled=False)
         payload: dict[str, Any] = {
             "model": _hosted_model_id(self.model_name),
             "messages": sanitize_message_roles(messages),
@@ -247,11 +301,17 @@ class OpencodeProvider:
         choices = result.get("choices") if isinstance(result, dict) else None
         if not choices:
             return "[Error: opencode API returned no choices]"
-        message = choices[0].get("message") or {}
+        first = choices[0] if isinstance(choices, list) else choices
+        message = first.get("message") or {}
         content = message.get("content") or ""
+        reasoning = message.get("reasoning_content") or ""
+        finish_reason = first.get("finish_reason")
         tool_calls = message.get("tool_calls")
         if tool_calls:
             return json.dumps({"content": content, "tool_calls": tool_calls})
+        thinking_err = _reasoning_exhausted(content, reasoning, finish_reason)
+        if thinking_err:
+            return thinking_err
         return content if content else "(no output)"
 
     # ------------------------------------------------------------------
@@ -335,11 +395,16 @@ class OpencodeProvider:
                     tool_calls.append(call)
         return "\n".join(content_parts), tool_calls
 
-    async def _chat_server(self, messages: list[dict[str, Any]], max_tokens: int | None) -> str:
+    async def _chat_server(
+        self, messages: list[dict[str, Any]], max_tokens: int | None,
+        disable_thinking: bool = False,
+    ) -> str:
         session = await self._ensure_session()
         if session.startswith("[Error"):
             return session
         system, parts = self._messages_to_parts(messages)
+        if disable_thinking and "nemotron" in self.model_name.lower():
+            system = "/no_think\n\n" + system
         body: dict[str, Any] = {
             "model": self.model_name,
             "system": system,
@@ -380,13 +445,15 @@ class OpencodeProvider:
     ) -> str:
         """Send chat request — direct API (native tools) or server mode.
 
-        *disable_thinking* is intentionally ignored: LM Studio knobs never
-        reach other providers (decision #011).
+        *disable_thinking* is honored for Nemotron models via the documented
+        ``/no_think`` system-prompt gate (and surfaced as a clear error for
+        other reasoning backends that exhaust their budget thinking).  LM
+        Studio API knobs never reach this provider (decision #011).
         """
         self._label()
         if self.api_mode:
-            return await self._chat_api(messages, tools, max_tokens)
-        return await self._chat_server(messages, max_tokens)
+            return await self._chat_api(messages, tools, max_tokens, disable_thinking)
+        return await self._chat_server(messages, max_tokens, disable_thinking)
 
     async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """No streaming support — return the full text response."""

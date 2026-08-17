@@ -382,3 +382,100 @@ class TestDirectApiMode:
         with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
             out = asyncio.run(prov.analyze_code("def f(): pass"))
         assert out == "lgtm"
+
+
+class TestNemotronThinkingKnob:
+    """Nemotron-3 models gate reasoning through /no_think in the system prompt
+    (NVIDIA RAG docs). disable_thinking=True must inject it — otherwise these
+    models burn their budget in reasoning_content and return empty content."""
+
+    def _nemotron(self):
+        return OpencodeProvider(
+            "opencode-go/nvidia-nemotron-3-super", api_key="sk-test", read_store=False,
+        )
+
+    def test_disable_thinking_injects_no_think(self):
+        import asyncio
+        prov = self._nemotron()
+        seen = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["body"] = json.loads(req.data)
+            return _FakeHttp({
+                "choices": [{"message": {"role": "assistant", "content": "answer"},
+                             "finish_reason": "stop"}],
+            })
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat(
+                [{"role": "system", "content": "You are a coder."},
+                 {"role": "user", "content": "fix it"}],
+                disable_thinking=True,
+            ))
+        assert out == "answer"
+        system_text = seen["body"]["messages"][0]["content"]
+        assert system_text.startswith("/no_think")
+
+    def test_thinking_on_for_other_models_untouched(self):
+        import asyncio
+        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+        seen = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["body"] = json.loads(req.data)
+            return _FakeHttp({
+                "choices": [{"message": {"role": "assistant", "content": "ok"},
+                             "finish_reason": "stop"}],
+            })
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            asyncio.run(prov.chat(
+                [{"role": "system", "content": "You are a coder."},
+                 {"role": "user", "content": "hi"}],
+                disable_thinking=True,
+            ))
+        assert seen["body"]["messages"][0]["content"] == "You are a coder."
+
+    def test_thinking_mode_rows_through(self):
+        import asyncio
+        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+        payload = {"choices": [{"message": {"role": "assistant", "content": "ok"},
+                                "finish_reason": "stop"}]}
+        with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out == "ok"
+
+    def test_reasoning_exhaustion_empty_content_returns_error(self):
+        import asyncio
+        prov = self._nemotron()
+
+        def fake_urlopen(req, timeout=None):
+            return _FakeHttp({
+                "choices": [{"message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "x" * 4000,
+                }, "finish_reason": "length"}],
+            })
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "fix"}]))
+        assert out.startswith("[Error:")
+        assert "reasoning" in out
+
+    def test_reasoning_with_answer_passes_through(self):
+        import asyncio
+        prov = self._nemotron()
+
+        def fake_urlopen(req, timeout=None):
+            return _FakeHttp({
+                "choices": [{"message": {
+                    "role": "assistant",
+                    "content": "the answer",
+                    "reasoning_content": "y" * 2000,
+                }, "finish_reason": "stop"}],
+            })
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "q"}]))
+        assert out == "the answer"
