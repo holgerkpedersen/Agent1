@@ -601,7 +601,7 @@ async def run_category(
 
 async def run_benchmark(
     models: list[str],
-    categories: dict[str, list[tuple[str, str | None]],
+    categories: dict[str, list[tuple[str, str | None]]],
     repetitions: int = 1,
 ) -> list[ModelResult]:
     results = []

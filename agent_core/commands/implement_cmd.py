@@ -97,13 +97,28 @@ def _is_dangerous_filename(filename: str, workspace: Path) -> tuple[bool, str]:
     if "/" not in filename and "\\" not in filename:
         return True, f"bare workspace-root file {filename!r} — needs sub-package prefix"
 
-    # Check if any directory in the path shadows a stdlib module.
-    parts = filename.replace("\\", "/").split("/")
-    for part in parts[:-1]:
-        if part in _STDLIB_COMMON:
-            return True, f"directory '{part}' shadows stdlib module"
+    # Check if any directory in the path shadows a stdlib module, ignoring
+    # existing project packages (e.g. `agent_core/utils/`).
+    shadow = _shadowing_stdlib_dir(filename, workspace)
+    if shadow:
+        return True, f"directory '{shadow}' shadows stdlib module"
 
     return False, ""
+
+
+def _shadowing_stdlib_dir(filename: str, workspace: Path) -> str:
+    """Return the first path segment that would shadow a stdlib/common module.
+
+    A segment only "shadows" when the corresponding directory does NOT yet
+    exist in the workspace.  An existing package such as ``agent_core/utils/``
+    is a deliberate project choice and never shadows — planned paths under it
+    must not be renamed.
+    """
+    parts = filename.replace("\\", "/").split("/")
+    for idx, part in enumerate(parts[:-1]):
+        if part in _STDLIB_COMMON and not (workspace / "/".join(parts[: idx + 1])).exists():
+            return part
+    return ""
 
 
 def _extract_file_context(source: str, filename: str, radius: int = 400) -> str:
@@ -1026,12 +1041,8 @@ class ImplementCommand(Command):
         if retry_mode:
             missing = []
             for fname in all_files:
-                parts = fname.replace("\\", "/").split("/")
-                shadow = any(p in _STDLIB_COMMON for p in parts[:-1])
-                if shadow:
-                    shadow_name = next(
-                        p for p in parts[:-1] if p in _STDLIB_COMMON
-                    )
+                shadow_name = _shadowing_stdlib_dir(fname, Path(workspace_path(target_workspace)))
+                if shadow_name:
                     missing.append(fname)
                     print(f"  SHADOW: {fname} shadows stdlib '{shadow_name}'")
                 elif file_needs_generation(fname)[0]:
@@ -1074,14 +1085,8 @@ class ImplementCommand(Command):
                     files_to_skip.append(f"{fname}: {reason}")
                     file_outcomes[fname] = f"needs generation — {reason}"
                 else:
-                    parts = fname.replace("\\", "/").split("/")
-                    shadow = any(
-                        p in _STDLIB_COMMON for p in parts[:-1]
-                    )
-                    if shadow:
-                        shadow_name = next(
-                            p for p in parts[:-1] if p in _STDLIB_COMMON
-                        )
+                    shadow_name = _shadowing_stdlib_dir(fname, Path(workspace_path(target_workspace)))
+                    if shadow_name:
                         files_to_skip.append(
                             f"{fname}: COMPILED BUT SHADOWS stdlib '{shadow_name}' — must be renamed"
                         )
@@ -1219,27 +1224,25 @@ class ImplementCommand(Command):
             analysis_context = _extract_file_context(analysis_content, target_file)
             plan_context = _extract_file_context(plan_content, target_file)
 
-            # Redirect stdlib-shadowing paths to safe alternatives
+            # Redirect stdlib-shadowing paths to safe alternatives. Only
+            # redirect when the directory segment does NOT already exist in
+            # the workspace — an existing package like `agent_core/utils/` is
+            # a deliberate project choice and must not be rewritten.
             stdlib_shadow_warning = ""
             redirected_batch = []
-            for f in batch:
-                f_parts = f.replace("\\", "/").split("/")
-                shadow_part = None
-                for p in f_parts[:-1]:
-                    if p in _STDLIB_COMMON:
-                        shadow_part = p
-                        break
+            for planned_f in batch:
+                shadow_part = _shadowing_stdlib_dir(planned_f, Path(workspace_path(target_workspace)))
                 if shadow_part:
                     safe_name = shadow_part + "_utils"
-                    new_f = f.replace(shadow_part + "/", safe_name + "/", 1)
+                    new_f = planned_f.replace(shadow_part + "/", safe_name + "/", 1)
                     redirected_batch.append(new_f)
                     stdlib_shadow_warning = (
-                        f"\n\nCRITICAL — The original path '{f}' shadows stdlib module "
+                        f"\n\nCRITICAL — The original path '{planned_f}' shadows stdlib module "
                         f"'{shadow_part}'. You MUST use '{new_f}' instead. "
                         f"Do NOT write to the shadowing path."
                     )
                 else:
-                    redirected_batch.append(f)
+                    redirected_batch.append(planned_f)
             if redirected_batch != batch:
                 batch = redirected_batch
                 target_file = batch[0]
@@ -1322,9 +1325,28 @@ class ImplementCommand(Command):
                     if matches:
                         break
 
+            # Transient/empty LLM responses: re-ask for the batch instead of
+            # silently dropping the file. Give up only after extra retries.
+            parse_retries = 0
+            while not matches and parse_retries < 2:
+                print(f"  No [FILE:] blocks parsed — retry {parse_retries + 1}/2...")
+                impl_messages.append(
+                    {"role": "user", "content": f"Output exactly one [FILE: {batch[0]}] block with the complete implementation. No preamble, no prose, no tool calls."}
+                )
+                try:
+                    impl_response = await agent.llm.chat(impl_messages, max_tokens=12000, disable_thinking=True)
+                except Exception as e:
+                    print(f"  Retry error: {e}")
+                    impl_response = None
+                for pattern in patterns:
+                    matches = list(re.findall(pattern, impl_response or "", re.DOTALL))
+                    if matches:
+                        break
+                parse_retries += 1
+
             if not matches:
                 print("  Warning: Could not parse files from batch response")
-                print(f"  Raw response: {impl_response[:500]}")
+                print(f"  Raw response: {str(impl_response)[:500]}")
                 continue
 
             for filename, content in matches:
@@ -1782,7 +1804,7 @@ class ImplementCommand(Command):
                 fp = Path(ws) / fname
                 if not fp.exists():
                     continue
-                with open(fp, "r") as sf:
+                with open(fp, "r", encoding="utf-8", errors="replace") as sf:
                     src = sf.read()
                 src_dir = str(fp.parent.resolve())
                 imports_by_class: dict[str, str] = {}

@@ -9,6 +9,7 @@ import pytest
 from agent_core.commands.implement_cmd import (
     _is_dangerous_filename,
     _find_safe_subpackage,
+    _shadowing_stdlib_dir,
     _unwired_closure,
     _prune_empty_dirs,
     _check_planned_duplicates,
@@ -234,6 +235,33 @@ class TestIsDangerousFilename:
             ws = Path(td)
             dangerous, _ = _is_dangerous_filename("types.py", ws)
             assert dangerous
+
+
+class TestShadowingStdlibDir:
+    """A path segment only 'shadows' when the directory does NOT already
+    exist in the workspace — an existing package like ``agent_core/utils/``
+    is a deliberate project choice and must not be renamed."""
+
+    def test_existing_dir_is_not_a_shadow(self, tmp_path):
+        (tmp_path / "agent_core" / "utils").mkdir(parents=True)
+        assert _shadowing_stdlib_dir("agent_core/utils/lint_guard.py", tmp_path) == ""
+        assert _shadowing_stdlib_dir("agent_core/utils/module_similarity.py", tmp_path) == ""
+
+    def test_new_dir_is_a_shadow(self, tmp_path):
+        assert _shadowing_stdlib_dir("logging/log.py", tmp_path) == "logging"
+
+    def test_bare_name_is_not_a_shadow(self, tmp_path):
+        assert _shadowing_stdlib_dir("constants.py", tmp_path) == ""
+
+    def test_dangerous_filename_ignores_existing_project_package(self, tmp_path):
+        (tmp_path / "agent_core" / "utils").mkdir(parents=True)
+        dangerous, _ = _is_dangerous_filename("agent_core/utils/lint_guard.py", tmp_path)
+        assert not dangerous
+
+    def test_dangerous_filename_flags_new_stdlib_dir(self, tmp_path):
+        dangerous, reason = _is_dangerous_filename("logging/log.py", tmp_path)
+        assert dangerous
+        assert "shadows stdlib" in reason
 
 
 class TestFindSafeSubpackage:

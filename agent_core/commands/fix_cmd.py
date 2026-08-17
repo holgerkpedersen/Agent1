@@ -1041,7 +1041,7 @@ class FixCommand(Command):
             def get_imported_files(filepath: str) -> set[str]:
                 result = set()
                 try:
-                    with open(filepath, "r") as f:
+                    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
                         content = f.read()
                     for match in _IMPORT_FROM_RE.finditer(content):
                         module = match.group(1)
@@ -2362,7 +2362,7 @@ class FixCommand(Command):
                 if fp_name.endswith(".py"):
                     full = os.path.join(root, fp_name)
                     try:
-                        with open(full, "r") as pf:
+                        with open(full, "r", encoding="utf-8", errors="replace") as pf:
                             src = pf.read()
                         exports = set()
                         for m in re.finditer(r'^(?:class|def)\s+(\w+)', src, re.MULTILINE):
