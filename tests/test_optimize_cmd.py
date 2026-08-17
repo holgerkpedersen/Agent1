@@ -1460,7 +1460,7 @@ class TestChangedImports:
         assert "Applied: sample.py" in out
         final = target.read_text(encoding="utf-8")
         assert "import os" not in final
-        assert "Warning: silenced exception" in final
+        assert "Silenced exception" in final
         assert "pass" not in final
 
     def test_unchanged_imports_accepted(
@@ -2758,6 +2758,45 @@ class TestMechanicalUnusedImport:
         finding = {"suggestion": "Imported 'annotations' is never used. Remove the import."}
         hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
         assert hunk is None
+
+
+class TestMissingImportRefs:
+    """A patch must never delete an import whose names the file still uses —
+    deleting a whole multi-name import line when only ONE name is unused breaks
+    the code (SQLiteStorage case) and compile() cannot catch it.  Names that
+    were never provided in the original (external globals) must not flag."""
+
+    def test_flags_used_name_removed_with_unused(self) -> None:
+        from agent_core.commands.optimize_cmd import _regressed_imports
+        good = (
+            "from src.agent1.core import AgentMessage, MessageType, SQLiteStorage\n"
+            "def f():\n    x = SQLiteStorage(':memory:')\n"
+        )
+        bad = good.replace("from src.agent1.core import AgentMessage, MessageType, SQLiteStorage\n", "")
+        assert _regressed_imports(good, good) == []
+        assert "SQLiteStorage" in _regressed_imports(good, bad)
+
+    def test_unused_import_removal_is_allowed(self) -> None:
+        from agent_core.commands.optimize_cmd import _regressed_imports
+        orig = "import pytest\n\ndef f():\n    return 1\n"
+        patched = "def f():\n    return 1\n"
+        assert _regressed_imports(orig, patched) == []
+
+    def test_external_globals_not_flagged(self) -> None:
+        from agent_core.commands.optimize_cmd import _regressed_imports
+        orig = "def build():\n    lines = []\n    for item in items:\n        lines.append(item)\n    return ''.join(lines)\n"
+        patched = "def build():\n    lines = [item for item in items]\n    return ''.join(lines)\n"
+        assert _regressed_imports(orig, patched) == []
+
+    def test_builtins_and_module_imports_ok(self) -> None:
+        from agent_core.commands.optimize_cmd import _regressed_imports
+        code = "import os\nimport pathlib\n\ndef f():\n    return os.path.join('a', 'b', pathlib.Path('c'))\n"
+        assert _regressed_imports(code, code) == []
+
+    def test_alias_imports_ok(self) -> None:
+        from agent_core.commands.optimize_cmd import _regressed_imports
+        code = "import numpy as np\n\ndef f():\n    return np.zeros(3)\n"
+        assert _regressed_imports(code, code) == []
 
 
 class TestMechanicalListAppendJoin:

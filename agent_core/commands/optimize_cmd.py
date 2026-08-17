@@ -757,6 +757,15 @@ def _fix_dead_assignment(wl: list[str], idx: int, line: int, basename: str, find
 
 
 def _fix_silent_except(wl: list[str], idx: int, line: int, basename: str, finding: dict[str, Any]) -> str | None:
+    # Only reference ``logger`` when the file actually provides it — the old
+    # fixer emitted ``logger.warning(...)`` unconditionally, which is a
+    # NameError in files without a logger.  Fall back to a plain print so the
+    # replacement never introduces an undefined name.
+    has_logger = any(
+        re.search(r"\blogger\s*=|(?:from\s+\S+\s+import\s+[^\n]*\blogger\b|\bimport\s+logger\b)", ln)
+        and not ln.lstrip().startswith("#")
+        for ln in wl
+    )
     ei = idx
     e_indent = len(wl[ei]) - len(wl[ei].lstrip())
     for j in range(ei + 1, min(ei + 20, len(wl))):
@@ -768,10 +777,13 @@ def _fix_silent_except(wl: list[str], idx: int, line: int, basename: str, findin
             break
         if _MECH_PASS_RE.match(nxt):
             indent = " " * nxt_indent
+            if has_logger:
+                stmt = f'{indent}logger.warning("Silenced exception in {basename}:{line}")'
+            else:
+                stmt = f'{indent}print("Silenced exception in {basename}:{line}")'
             return (f"@@ -{j + 1},1 +{j + 1},1 @@\n"
                     f"-{nxt}\n"
-                    f"+{indent}print(\"Warning: silenced exception in "
-                    f"{basename}:{line}\")")
+                    f"+{stmt}")
     return None
 
 
@@ -1567,7 +1579,7 @@ async def _repair_merged_file(
                 continue
             return candidate, []
         except Exception as e:
-            print(f"    Repair error: {e}")
+            logger.warning("    Repair error: %s", e)
             if attempt < max_retries:
                 continue
             break
@@ -1639,6 +1651,58 @@ def _import_entry_counts(code: str) -> dict[str, int]:
                     entry = f"from {module} import {a.name}"
                 counts[entry] = counts.get(entry, 0) + 1
     return counts
+
+
+def _regressed_imports(original: str, patched: str) -> list[str]:
+    """Names that were provided (imported / defined / stored / parameter) in
+    *original*, are still loaded in *patched*, but are no longer provided
+    there — i.e. a patch deleted an import or definition the file still uses.
+
+    Catches patches that delete a whole ``from m import a, b`` line when only
+    ``a`` was unused: ``b`` stays referenced (Load) but is no longer provided.
+    ``compile()`` cannot catch this (imports are not ``Store`` nodes) and the
+    other guards only model assignments, hence this separate pass.  Names
+    never provided in the original (external globals like ``items``, builtins)
+    are ignored, so removing a genuinely unused import stays allowed.
+    """
+    import builtins
+    try:
+        o_tree = ast.parse(original)
+        p_tree = ast.parse(patched)
+    except SyntaxError:
+        return []
+
+    def _provided(tree: ast.AST) -> set[str]:
+        names: set[str] = set(dir(builtins))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    names.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "*":  # star imports cannot be validated cheaply
+                        continue
+                    names.add(alias.asname or alias.name)
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                names.add(node.id)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.arg):
+                names.add(node.arg)
+        return names
+
+    orig_provided = _provided(o_tree)
+    patched_provided = _provided(p_tree)
+    missing: set[str] = set()
+    for node in ast.walk(p_tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if (
+                not node.id.startswith("_")
+                and node.id in orig_provided
+                and node.id not in patched_provided
+            ):
+                missing.add(node.id)
+    return sorted(missing)
 
 
 def _blocked_added_imports(candidate: str, original: str) -> set[str]:
@@ -1922,6 +1986,8 @@ class OptimizeCommand(Command):
                                 ok = False
                             if ok and _undefined_hoisted_names(patched):
                                 ok = False
+                            if ok and _regressed_imports("\n".join(work_lines), patched):
+                                ok = False
                             if ok and _count_any_increased("\n".join(work_lines), patched, exclude=pattern):
                                 ok = False
                             if ok:
@@ -1985,7 +2051,7 @@ class OptimizeCommand(Command):
                                 disable_thinking=True,
                             )
                         except Exception as exc:
-                            print(f"    Error: {exc}")
+                            logger.warning("    Error: %s", exc)
                             resolved = False
                             break
                         if llm_response.startswith("[Error") or llm_response.startswith("[LM Studio"):
@@ -2094,7 +2160,7 @@ class OptimizeCommand(Command):
                                 "Regenerate valid Python."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
-                                print(f"    Feedback: {feedback[:240]}")
+                                logger.warning("    Feedback: %s", feedback[:240])
                                 continue
                             resolved = False
                             break
@@ -2114,6 +2180,18 @@ class OptimizeCommand(Command):
                             feedback = (
                                 f"Your patch removed the definition of: {', '.join(dropped_names)}. "
                                 "Restore the original definitions or keep the old code unchanged."
+                            )
+                            if attempt < FINDING_MAX_ATTEMPTS - 1:
+                                print(f"    Feedback: {feedback[:240]}")
+                                continue
+                            resolved = False
+                            break
+                        missing_imports = _regressed_imports(original, patched)
+                        if missing_imports:
+                            feedback = (
+                                f"Your patch removed an import that the file still uses: "
+                                f"{', '.join(missing_imports)}. Remove ONLY the unused name(s) "
+                                "from the import; keep every imported name that is referenced."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
                                 print(f"    Feedback: {feedback[:240]}")
@@ -2205,7 +2283,7 @@ class OptimizeCommand(Command):
                 if original.endswith("\n") and new_full:
                     new_full += "\n"
                 if new_full != original:
-                    all_fixes[basename] = new_full
+                    all_fixes[fpath] = new_full
                     print(f"  {basename}: patched ({len(original)} -> {len(new_full)} bytes)")
         if not all_fixes:
             print("\n  No fixes were generated.")
@@ -2219,14 +2297,11 @@ class OptimizeCommand(Command):
         print("\n  Applying fixes...")
         applied = 0
 
-        for fpath in targets:
+        for fpath, new_code in all_fixes.items():
             basename = os.path.basename(fpath)
             if stop_requested():
                 break
-            if basename not in all_fixes:
-                continue
 
-            new_code = all_fixes[basename]
             original = file_contents.get(fpath, "")
             original_size = len(original)
             new_size = len(new_code)
@@ -2259,26 +2334,20 @@ class OptimizeCommand(Command):
                 for w in _post_apply_verify(basename, fpath, original, new_code):
                     print(w)
             except Exception as e:
-                print(f"  Error writing {basename}: {e}")
+                logger.warning("  Error writing %s: %s", basename, e)
 
         # Report residual findings on the files we actually changed.
-        changed = [os.path.basename(fp) for fp in targets if os.path.basename(fp) in all_fixes]
+        changed = list(all_fixes.keys())
         if changed:
             print("\n  Post-apply residual static findings (non-blocking):")
-            for basename in changed:
-                for fp in targets:
-                    if os.path.basename(fp) == basename:
-                        new_src = file_contents.get(fp, "")
-                        try:
-                            with open(fp, encoding="utf-8") as src_f:
-                                new_src = src_f.read()
-                        except Exception as exc:
-                            logger.debug("Could not re-read %s: %s", fp, exc)
-                        res = static_analyze(new_src)
-                        if res:
-                            for r in res:
-                                print(f"    {basename}:{r['line']} [{r['pattern']}]")
-                        break
+            for fpath in changed:
+                try:
+                    with open(fpath, encoding="utf-8") as src_f:
+                        new_src = src_f.read()
+                except Exception:
+                    new_src = file_contents.get(fpath, "")
+                for r in static_analyze(new_src):
+                    print(f"    {os.path.basename(fpath)}:{r['line']} [{r['pattern']}]")
 
         print(f"\n  Done. Applied {applied}/{len(all_fixes)} fix(es).")
         return True
