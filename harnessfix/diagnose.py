@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from .htir import TraceGraph, compile_trace
 from .tracing import (
+    GUARD_STUCK,
     LAYER_CONTEXT,
     LAYER_EXECUTION,
     LAYER_GOVERNANCE,
@@ -64,18 +65,16 @@ def diagnose_graph(graph: TraceGraph) -> Diagnosis:
     """Classify a compiled trace graph against the heuristic signatures."""
     task_id = graph.task_id
     guards: list[str] = []
-    stuck_counts: dict[str, int] = {}
+    guard_indices: list[int] = []
     tool_errors: list[dict[str, Any]] = []
 
     for step in graph.steps:
         payload = step.payload
         if step.kind == "guard_triggered":
             guards.append(str(payload.get("guard", "")))
+            guard_indices.append(step.index)
         if step.kind == "tool_error":
             tool_errors.append(payload)
-        if step.kind == "tool_call":
-            key = f"{payload.get('tool', '')}:{payload.get('args_hash', '')}"
-            stuck_counts[key] = stuck_counts.get(key, 0) + 1
 
     # 1. Explicit signatures (tool errors, verification, context pressure).
     for step in graph.steps:
@@ -84,19 +83,34 @@ def diagnose_graph(graph: TraceGraph) -> Diagnosis:
             layer, mechanism = hit
             return _build(graph, layer, mechanism, step.index)
 
-    # 2. Repeated identical tool call >= 3 times -> lifecycle (stuck).
-    worst = max(stuck_counts.values(), default=0)
-    if worst >= 3:
+    # 2. Stuck cycle -> lifecycle.  Mirrors the harness's own semantics
+    #    (tool_loop.py stops the loop on a third *consecutive* identical
+    #    call, marks the duplicates and fires the "stuck" guard): the
+    #    diagnosis is definitive when that guard fired, and falls back to
+    #    three consecutive identical calls in the tool-call sequence.
+    #    Non-consecutive repeats are legitimate re-reads (e.g. paging a
+    #    large file) and must not be misdiagnosed as a stuck cycle.
+    stuck_guard_idx = next(
+        (i for g, i in zip(guards, guard_indices) if g == GUARD_STUCK), None
+    )
+    worst_run, run_start = _max_consecutive_identical_run(graph)
+    if stuck_guard_idx is not None or worst_run >= 3:
+        count = worst_run if worst_run >= 3 else 3
         return _build(
             graph,
             LAYER_LIFECYCLE,
-            f"model repeated an identical tool call {worst}x (stuck cycle)",
-            first_index=0,
+            f"model repeated an identical tool call {count}x (stuck cycle)",
+            first_index=stuck_guard_idx if stuck_guard_idx is not None else run_start,
         )
 
     # 3. Any guard fired -> lifecycle (deadline / stuck / no-mutation / budget).
     if guards:
-        return _build(graph, LAYER_LIFECYCLE, f"lifecycle guard fired: {', '.join(guards)}")
+        return _build(
+            graph,
+            LAYER_LIFECYCLE,
+            f"lifecycle guard fired: {', '.join(guards)}",
+            first_index=guard_indices[-1],
+        )
 
     # 4. Tool errors without a matching signature -> tool interface.
     if tool_errors:
@@ -108,6 +122,29 @@ def diagnose_graph(graph: TraceGraph) -> Diagnosis:
         "loop did not complete; no signature matched (fallback)",
         first_index=0,
     )
+
+
+def _max_consecutive_identical_run(graph: TraceGraph) -> tuple[int, int]:
+    """Longest run of *consecutive* identical tool calls (same tool +
+    args_hash) in the tool-call sequence, and the step index where that run
+    starts.  Other event kinds between calls (step_start / llm_response /
+    tool_result) do not break the run: each loop iteration emits them around
+    the call.  Returns (0, 0) when the trace has no tool calls."""
+    worst, worst_start = 0, 0
+    run, run_start = 0, 0
+    prev_key: str | None = None
+    for step in graph.steps:
+        if step.kind != "tool_call":
+            continue
+        key = f"{step.payload.get('tool', '')}:{step.payload.get('args_hash', '')}"
+        if key == prev_key:
+            run += 1
+        else:
+            run, run_start = 1, step.index
+        prev_key = key
+        if run > worst:
+            worst, worst_start = run, run_start
+    return worst, worst_start
 
 
 def _build(

@@ -1,4 +1,3 @@
-import pytest
 
 from src.agent1.core import VectorDatabase
 from src.agent1.monitoring.metrics_collector import MetricsCollector

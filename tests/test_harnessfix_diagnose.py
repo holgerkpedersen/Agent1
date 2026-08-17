@@ -104,6 +104,48 @@ def test_repeated_identical_call_maps_to_lifecycle_stuck():
     assert "identical tool call" in d.mechanism
 
 
+def test_non_consecutive_repeats_are_not_a_stuck_cycle():
+    """Regression: the same call repeated 5x *interleaved* with other calls
+    (e.g. paging a large file) is not a stuck cycle.  The harness's own
+    stuck detector never fired (no duplicate=true, no guard=stuck), so the
+    diagnosis must fall through to the guard that actually ended the loop."""
+    g = _graph(
+        [
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "a", "duplicate": False}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "b", "duplicate": False}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "a", "duplicate": False}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "c", "duplicate": False}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "a", "duplicate": False}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "b", "duplicate": False}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "a", "duplicate": False}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "a", "duplicate": False}),
+            ("guard_triggered", LAYER_LIFECYCLE, {"guard": "no_mutation", "note": "nudge"}),
+            ("guard_triggered", LAYER_LIFECYCLE, {"guard": "no_mutation", "note": "force"}),
+            _loop_end("no_progress"),
+        ]
+    )
+    d = diagnose_graph(g)
+    assert d.root_layer == "lifecycle"
+    assert "stuck cycle" not in d.mechanism
+    assert "no_mutation" in d.mechanism
+
+
+def test_stuck_guard_event_maps_to_lifecycle_stuck():
+    g = _graph(
+        [
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h", "duplicate": False}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h", "duplicate": True}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h", "duplicate": True}),
+            ("guard_triggered", LAYER_LIFECYCLE, {"guard": "stuck", "note": "stop"}),
+            _loop_end("stuck"),
+        ]
+    )
+    d = diagnose_graph(g)
+    assert d.root_layer == "lifecycle"
+    assert "identical tool call" in d.mechanism
+    assert "stuck cycle" in d.mechanism
+
+
 def test_budget_guard_maps_to_lifecycle():
     g = _graph(
         [

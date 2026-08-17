@@ -1,4 +1,5 @@
 {
-  "model": "qwen/qwen3.8-27b",
-  "profile": "deep-analysis"
+  "model": "nvidia/nemotron-3-super",
+  "profile": "fast-codegen",
+  "provider": "lmstudio"
 }

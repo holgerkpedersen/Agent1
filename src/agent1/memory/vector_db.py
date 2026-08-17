@@ -1,5 +1,4 @@
 from typing import Dict, Any, List, Optional
-import numpy as np
 
 from ..core import EmbeddingService, VectorDatabase, VectorEmbeddingModel
 

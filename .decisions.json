@@ -624,5 +624,189 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "035",
+    "date": "2026-08-16T15:44:31+00:00",
+    "title": "Consolidate duplicate LLMClient and logging configs",
+    "context": "Duplicate `LLMClient` definitions (agent.py, agent_core/llm_client.py) and two diverging `logging_config` modules create drift risk; three overlapping LLM client abstractions and duplicate CorrelationIdContext make module boundaries unclear.",
+    "decision": "Create one shared LLM client abstraction and one logging configuration/correlation-context module to be used across all components.",
+    "rationale": "Eliminates duplicated code, prevents drift, and clarifies module boundaries.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/llm_client.py"
+    ],
+    "tags": [
+      "architecture",
+      "refactoring",
+      "llm",
+      "logging"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "036",
+    "date": "2026-08-16T20:00:38+00:00",
+    "title": "Workspace containment enforcement via path normalization",
+    "context": "Path utilities needed to prevent directory traversal attacks. Alternatives: (a) block-listing specific patterns like `..` and absolute paths, (b) allow-listing only known-safe relative paths within workspace, (c) full canonicalization with symlink resolution plus boundary check.",
+    "decision": "Chose full canonicalization approach — resolve symlinks and normalize paths then verify the resolved path remains within the designated workspace root before any file operation proceeds.",
+    "rationale": "Canonicalization is robust against indirect traversal via symlinks or encoded sequences that block-lists would miss. It provides a single source of truth for containment rather than maintaining fragile pattern lists, aligning with defense-in-depth principles where every filesystem access validates boundaries post-resolution.",
+    "affected_files": [
+      "agent_core/security/path_utils.py",
+      "agent_core/file_system.py"
+    ],
+    "tags": [
+      "security",
+      "path-traversal",
+      "symlink",
+      "canonicalization",
+      "workspace-containment",
+      "defense-in-depth"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "037",
+    "date": "2026-08-16T20:00:38+00:00",
+    "title": "Allow-list validation with shell metacharacter rejection for command safety",
+    "context": "Shell operation allow-list previously only block-listed known-dangerous patterns. Alternatives: (a) continue refining the block-list of regex patterns, (b) switch to structural parsing/tokenization rejecting any token containing shell metacharacters, pipes, redirection operators, or command chaining syntax, (c) sandbox execution in restricted subprocess with seccomp/capabilities.",
+    "decision": "Adopted structural tokenization approach — parse input into tokens and reject commands where any token contains shell metacharacters (`;`, `|`, `&`, `>`, `<`, backticks, `$()`, etc.) rather than relying on pattern matching alone.",
+    "rationale": "Block-lists are inherently incomplete against novel injection vectors; structural rejection of all metacharacters eliminates entire classes of chained-command and redirection attacks. This shifts validation from 'deny known bad' to 'permit only safe structure', reducing false negatives while keeping legitimate single-command execution viable.",
+    "affected_files": [
+      "agent_core/security/allowlist.py",
+      "agent_core/tools/shell_ops.py"
+    ],
+    "tags": [
+      "security",
+      "command-injection",
+      "shell-metacharacters",
+      "allow-list",
+      "block-list-rejected",
+      "tokenization",
+      "input-validation"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "038",
+    "date": "2026-08-16T20:00:38+00:00",
+    "title": "Secret-manager utility backed by OS keyring with encrypted file fallback replacing plaintext .env",
+    "context": "Secrets were stored in plaintext `.env` files. Alternatives: (a) keep plaintext env files but add gitignore rules, (b) use a dedicated secrets manager service (e.g., HashiCorp Vault), (c) local OS keyring API with encrypted-on-disk fallback for portability.",
+    "decision": "Implemented local secret-manager utility using the OS-native keyring API as primary store, with an AES-encrypted file fallback when no system keyring is available.",
+    "rationale": "OS keyring provides hardware/TEE-backed protection on supported platforms without external service dependencies. Encrypted-file fallback ensures functionality across headless/CI environments where keyring daemons are absent, balancing security and portability. This removes plaintext secrets from the repository entirely while avoiding infrastructure overhead of a networked vault.",
+    "affected_files": [
+      "agent_core/config.py"
+    ],
+    "tags": [
+      "security",
+      "secrets-management",
+      "keyring",
+      "encrypted-storage",
+      "plaintext-env-rejected",
+      "portability",
+      "aes-encryption"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "039",
+    "date": "2026-08-16T20:00:38+00:00",
+    "title": "Command registry pattern with explicit subcommand registration replacing ad-hoc dispatch",
+    "context": "Agent commands were dispatched via loose function mapping. Alternatives: (a) maintain flat dict of command name to handler, (b) class-based command objects with metadata and validation hooks, (c) centralized registry with declarative registration decorators.",
+    "decision": "Adopted a registry pattern in `agent_core/commands/registry.py` using decorator-based registration where each subcommand declares its schema, allowlist requirements, and execution entrypoint.",
+    "rationale": "The registry provides a single authoritative list of available commands enabling discovery, help generation, and uniform pre-execution security checks (allowlist validation) before any handler runs. Declarative metadata co-located with handlers reduces drift between documentation and implementation, rejecting the implicit dispatch approach that hid command surfaces from static analysis.",
+    "affected_files": [
+      "agent_core/commands/registry.py",
+      "agent_core/commands/__init__.py",
+      "agent_core/commands/fix_cmd.py",
+      "agent_core/commands/workflow_cmd.py",
+      "agent_core/commands/optimize_cmd.py",
+      "agent_core/commands/implement_cmd.py",
+      "agent_core/commands/write_cmd.py"
+    ],
+    "tags": [
+      "architecture",
+      "command-registry",
+      "dispatch-pattern",
+      "declarative-registration",
+      "ad-hoc-dispatch-rejected",
+      "metadata-co-location",
+      "security-gate"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "040",
+    "date": "2026-08-16T20:00:38+00:00",
+    "title": "Lint guard as pre-execution static analysis gate for generated code",
+    "context": "Agent-generated code was written directly without validation. Alternatives: (a) execute and rely on runtime errors, (b) optional linting post-write, (c) mandatory lint pass before file write completes.",
+    "decision": "Implemented `agent_core/utils/lint_guard.py` to run static analysis (syntax check + style rules) synchronously during the write command; writes are rejected if lint fails.",
+    "rationale": "Pre-execution linting prevents syntactically broken or policy-violating code from entering the workspace, reducing downstream runtime failures and catching issues before they propagate through tool chains. Mandatory gating rejects post-hoc cleanup that would leave invalid artifacts in place during partial execution sequences.",
+    "affected_files": [
+      "agent_core/utils/lint_guard.py",
+      "agent_core/commands/write_cmd.py"
+    ],
+    "tags": [
+      "quality-gate",
+      "linting",
+      "pre-execution-validation",
+      "static-analysis",
+      "runtime-error-rejected",
+      "write-safety"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "041",
+    "date": "2026-08-16T20:00:38+00:00",
+    "title": "Unified logging configuration with security-sensitive redaction policy",
+    "context": "Logging was configured inconsistently across modules and could capture sensitive data. Alternatives: (a) per-module loggers with no filtering, (b) global filter redacting known secret patterns via regex, (c) structured logger with explicit allow-list of loggable fields and automatic scrubbing of paths/secrets.",
+    "decision": "Consolidated logging into `agent_core/logging_config.py` using a structured logger that scrubs resolved secrets, normalized workspace-relative paths, and shell tokens before emission; only declared safe metadata fields are logged by default.",
+    "rationale": "Structured redaction prevents accidental leakage of credentials or absolute filesystem locations in logs while preserving operational observability. Allow-listing loggable fields shifts from 'filter known bad' to 'emit known good', rejecting raw per-module logging that could expose secrets through unanticipated debug statements.",
+    "affected_files": [
+      "agent_core/logging_config.py",
+      "logging_config.py",
+      "agent_core/security/path_utils.py"
+    ],
+    "tags": [
+      "security",
+      "logging-redaction",
+      "structured-logging",
+      "secret-scrubbing",
+      "allow-list-fields",
+      "raw-logging-rejected",
+      "observability-security"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "042",
+    "date": "2026-08-16T20:00:38+00:00",
+    "title": "Decision record pattern for explicit architecture tradeoff documentation",
+    "context": "Architectural choices were implicit in code without rationale capture. Alternatives: (a) inline comments only, (b) separate ADR documents outside codebase, (c) lightweight decision records embedded as structured entries within the agent core.",
+    "decision": "Added `agent_core/decisions.py` maintaining a catalog of named decisions with context, chosen option, and rationale accessible at runtime for introspection and audit.",
+    "rationale": "Embedding decisions in-code keeps tradeoff documentation co-located with implementation so reviewers see intent alongside behavior. Runtime accessibility enables agents to reference design rationale when explaining actions, rejecting scattered comments that fragment understanding across files.",
+    "affected_files": [
+      "agent_core/decisions.py",
+      "agent_core/security/path_utils.py",
+      "agent_core/commands/registry.py"
+    ],
+    "tags": [
+      "documentation",
+      "adr-pattern",
+      "tradeoff-capture",
+      "runtime-introspection",
+      "inline-comments-rejected",
+      "auditability"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]
