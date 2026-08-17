@@ -1,6 +1,9 @@
 """Shared constants for agent configuration."""
+import logging
 import os
 from typing import Any, cast
+
+logger = logging.getLogger(__name__)
 
 KNOWN_MODELS = {
     "qwen3.6-27b-mtp": {
@@ -103,7 +106,8 @@ def resolve_model(explicit: str | None = None) -> str:
         settings = load_agent_settings()
         provider_setting = settings.llm_provider
         opencode_model = settings.opencode_model
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to load agent settings, using defaults: %s", exc)
         provider_setting = "lmstudio"
         opencode_model = DEFAULT_OPENCODE_MODEL
 
@@ -118,8 +122,8 @@ def resolve_model(explicit: str | None = None) -> str:
         loaded = [m["key"] for m in models if m["loaded"]]
         if loaded:
             return str(loaded[0])
-    except Exception:
-        print("Warning: silenced exception in constants.py:95")
+    except Exception as exc:
+        logger.warning("Could not determine the active LM Studio model: %s", exc)
 
     # Persisted choice from model.json
     if persisted_model in KNOWN_MODELS:
@@ -139,6 +143,7 @@ def load_model_json() -> dict[str, Any]:
         with open(MODEL_JSON_PATH, "r") as f:
             return cast(dict[str, Any], _json.load(f))
     except (FileNotFoundError, _json.JSONDecodeError):
+        logger.debug("model.json missing or unreadable — using empty state")
         return {}
 
 
@@ -148,8 +153,8 @@ def save_model_json(data: dict[str, Any]) -> None:
     try:
         with open(MODEL_JSON_PATH, "w") as f:
             _json.dump(data, f, indent=2)
-    except OSError:
-        print("Warning: silenced exception in constants.py:126")
+    except OSError as exc:
+        logger.warning("Failed to save model.json: %s", exc)
 
 
 def persist_model_choice(model_name: str, provider: str | None = None) -> None:

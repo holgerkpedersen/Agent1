@@ -9,6 +9,7 @@ Integration points:
 """
 
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agent import Agent
+
+logger = logging.getLogger(__name__)
 
 _DECISIONS_FILE = ".decisions.json"
 
@@ -106,7 +109,7 @@ def _next_id(decisions: list[dict[str, Any]]) -> str:
         try:
             max_id = max(max_id, int(d.get("id", "0")))
         except (ValueError, TypeError):
-            pass
+            logger.debug("Skipping non-numeric decision id: %r", d.get("id"))
     return str(max_id + 1).zfill(3)
 
 
@@ -293,7 +296,11 @@ def _parse_json_array(response: str) -> list[dict[str, Any]]:
                 if isinstance(parsed, list):
                     return [d for d in parsed if isinstance(d, dict)]
             except json.JSONDecodeError:
-                pass
+                logger.debug(
+                    "Could not parse a JSON array from the LLM response "
+                    "(contradiction/detection extraction) — response was: %.200s",
+                    response,
+                )
     return []
 
 
