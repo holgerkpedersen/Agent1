@@ -264,6 +264,72 @@ class TestShadowingStdlibDir:
         assert "shadows stdlib" in reason
 
 
+class TestModifyMode:
+    """--modify merges generated content into existing compile-OK modules as
+    a reviewed diff instead of skipping them (default) or overwriting them
+    wholesale (--force)."""
+
+    @staticmethod
+    def _run(tmp_path, stub_content, extra_args=(), auto="y"):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from agent_core.commands.implement_cmd import ImplementCommand
+
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        target = pkg / "mod_me.py"
+        target.write_text("def foo():\n    return 1\n", encoding="utf-8")
+        (tmp_path / "tasks.md").write_text(
+            "1. `pkg/mod_me.py` — extend foo\n", encoding="utf-8"
+        )
+
+        async def chat(messages, **kwargs):
+            return f"[FILE: pkg/mod_me.py]\n```python\n{stub_content}```\n"
+
+        agent = SimpleNamespace(workspace=str(tmp_path), llm=SimpleNamespace(chat=chat))
+        with patch("agent_core.commands.implement_cmd.auto_choice", return_value=auto):
+            ok = asyncio.run(
+                ImplementCommand().execute(
+                    [str(tmp_path / "tasks.md"), "--modify", *extra_args], agent
+                )
+            )
+        return ok, target
+
+    def test_applies_diff_after_approval(self, tmp_path):
+        ok, target = self._run(tmp_path, "def foo():\n    return 2\n")
+        assert ok is True
+        assert target.read_text(encoding="utf-8") == "def foo():\n    return 2\n"
+
+    def test_declines_without_approval(self, tmp_path):
+        ok, target = self._run(tmp_path, "def foo():\n    return 2\n", auto="n")
+        assert ok is True
+        assert target.read_text(encoding="utf-8") == "def foo():\n    return 1\n"
+
+    def test_unchanged_content_skipped(self, tmp_path):
+        ok, target = self._run(tmp_path, "def foo():\n    return 1\n")
+        assert ok is True
+        assert target.read_text(encoding="utf-8") == "def foo():\n    return 1\n"
+
+    def test_wholesale_rewrite_rejected_without_allow_rewrite(self, tmp_path):
+        ok, target = self._run(
+            tmp_path,
+            "def totally_different_interface():\n    return [i for i in range(50)]\n",
+        )
+        assert ok is True
+        assert target.read_text(encoding="utf-8") == "def foo():\n    return 1\n"
+
+    def test_wholesale_rewrite_applies_with_allow_rewrite(self, tmp_path):
+        ok, target = self._run(
+            tmp_path,
+            "def totally_different_interface():\n    return [i for i in range(50)]\n",
+            extra_args=["--allow-rewrite"],
+        )
+        assert ok is True
+        assert target.read_text(encoding="utf-8").startswith("def totally_different_interface")
+
+
 class TestFindSafeSubpackage:
     def setup_method(self):
         self._tmp = tempfile.TemporaryDirectory()

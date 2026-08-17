@@ -798,7 +798,67 @@ class ImplementCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "implement <taskplan.md> [--keep|--force|--fix|--retry|--review] - Implement files from task plan"
+        return "implement <taskplan.md> [--keep|--force|--modify|--fix|--retry|--review] - Implement files from task plan"
+
+    def _apply_modify_diff(self, filename: str, filepath: Path, content: str, allow_rewrite: bool) -> tuple[bool, str]:
+        """--modify: merge *content* into the existing *filepath* as a reviewed
+        unified diff instead of skipping it (default) or overwriting it
+        wholesale (--force).
+
+        Returns (applied, note).  The diff is generated from the two buffers,
+        applied through the shared tolerant ``patch_utils`` machinery, compiled,
+        shown with ``show_file_diff``, and applied only after approval (safe
+        auto-default: decline in autonomous mode).
+        """
+        import difflib as _difflib
+        try:
+            prev = filepath.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            return False, f"skipped — cannot read existing file: {exc}"
+        if not filename.endswith(".py"):
+            return False, "skipped — --modify applies to .py files only"
+        if prev.strip() == content.strip():
+            return False, "unchanged — generated content matches the file"
+
+        similarity = _difflib.SequenceMatcher(None, prev, content).ratio()
+        if similarity < 0.5 and not allow_rewrite:
+            return False, (
+                f"rejected — wholesale rewrite of existing file "
+                f"(similarity {similarity:.2f}); use --allow-rewrite to force"
+            )
+
+        diff_text = "\n".join(
+            _difflib.unified_diff(prev.splitlines(), content.splitlines(), lineterm="")
+        )
+        if not diff_text.strip():
+            return False, "unchanged — no diff"
+
+        from agent_core.patch_utils import apply_patch, apply_anchored_patch
+        ok, patched = apply_patch(diff_text, prev.splitlines())
+        if not ok:
+            ok, patched = apply_anchored_patch(diff_text, prev.splitlines())
+        if not ok:
+            return False, f"rejected — could not apply generated diff: {str(patched)[:200]}"
+        patched_text = str(patched)
+        if patched_text == prev:
+            return False, "unchanged — diff produced no change"
+
+        try:
+            compile(patched_text, filename, "exec")
+        except SyntaxError as exc:
+            return False, f"rejected — patched file does not compile: {exc}"
+
+        show_file_diff(filename, prev, patched_text)
+        choice = auto_choice(f"  Apply {filename}? (y/N): ", default="n", auto_default="n").strip().lower()
+        if choice not in ("y", "yes"):
+            if stop_requested():
+                print("  Stopping the flow — no further changes will be applied.")
+            return False, "skipped by user"
+        try:
+            filepath.write_text(patched_text, encoding="utf-8")
+        except OSError as exc:
+            return False, f"skipped — write failed: {exc}"
+        return True, f"modified ({diff_text.count(chr(10)) + 1} diff lines)"
 
     @staticmethod
     def _auto_review(py_new: list[str], ws: str) -> None:
@@ -837,12 +897,13 @@ class ImplementCommand(Command):
         parts = args
 
         if len(parts) < 1:
-            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--fix] [--retry] [--review] [--workspace <path>]")
+            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--modify] [--fix] [--retry] [--review] [--allow-rewrite] [--workspace <path>]")
             return True
 
         keep_mode = "--keep" in parts
         refresh_cache = "--refresh" in parts
         force_mode = "--force" in parts
+        modify_mode = "--modify" in parts
         fix_mode = "--fix" in parts
         retry_mode = "--retry" in parts
         review_mode = "--review" in parts
@@ -854,7 +915,7 @@ class ImplementCommand(Command):
             if ws_idx + 1 < len(parts):
                 target_workspace = parts[ws_idx + 1].strip('"')
 
-        skip_tokens = ["--keep", "--refresh", "--force", "--fix", "--retry", "--review", "--workspace", "--allow-rewrite", target_workspace]
+        skip_tokens = ["--keep", "--refresh", "--force", "--modify", "--fix", "--retry", "--review", "--workspace", "--allow-rewrite", target_workspace]
         filtered_parts = [p for p in parts if p not in skip_tokens]
 
         taskplan_file = filtered_parts[0] if filtered_parts else ""
@@ -1435,6 +1496,10 @@ class ImplementCommand(Command):
 
             skip_reason = None
             is_analyzed_file = analyzed_file and filename == analyzed_file
+            #: --modify target: existing compile-OK module whose generated
+            #: content is merged in as a reviewed diff instead of being
+            #: skipped (default) or overwritten wholesale (--force).
+            modify_target = False
 
             if not force_mode and not is_analyzed_file and filepath.exists() and filepath.stat().st_size > 0:
                 if filename.endswith(".py"):
@@ -1445,7 +1510,10 @@ class ImplementCommand(Command):
                         text=True
                     )
                     if result.returncode == 0:
-                        skip_reason = "Already exists and compiles OK"
+                        if modify_mode:
+                            modify_target = True
+                        else:
+                            skip_reason = "Already exists and compiles OK"
 
             # ---- Layer 2: near-duplicate module gate (pre-generation) ----
             # A NEW module whose name/concept duplicates an existing one is
@@ -1466,6 +1534,16 @@ class ImplementCommand(Command):
             if skip_reason:
                 print(f"  Skipping {filename}: {skip_reason}")
                 file_outcomes.setdefault(filename, skip_reason)
+                if filename not in implemented:
+                    implemented.append(filename)
+                continue
+
+            if modify_target:
+                ok_modify, note = self._apply_modify_diff(
+                    filename, filepath, content, allow_rewrite,
+                )
+                print(f"  {filename}: {note}")
+                file_outcomes[filename] = note
                 if filename not in implemented:
                     implemented.append(filename)
                 continue
