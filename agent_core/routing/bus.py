@@ -137,11 +137,13 @@ class RoutingBus:
                 logger.error("Missing task node '%s' during graph walk", node_name)
                 raise RoutingError(f"Dependency {node_name} not found") from exc
 
+            # Mark BEFORE recursing: dependency cycles (a -> b -> a) must
+            # terminate instead of overflowing the stack.
+            visited.add(node_name)
             for dep in node.dependencies:
                 walk(dep)
 
             results[node_name] = self.execute_task(node_name, message)
-            visited.add(node_name)
 
         try:
             logger.info("Starting graph execution from '%s'", start_node)
