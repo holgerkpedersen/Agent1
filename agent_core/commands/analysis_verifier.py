@@ -75,6 +75,7 @@ class _Claim:
     check_absence: bool = False
     status: str = _STATUS_SKIP
     reason: str = ""
+    segment_start: int = 0
 
 
 def _list_files(ws_path: Path) -> list[str]:
@@ -174,7 +175,7 @@ def _extract_claims(segment: str, seg_start: int) -> list[_Claim]:
     for m in _FILE_RE.finditer(masked):
         rel = m.group(1).replace("\\", "/")
         offset = seg_start + m.start()
-        claims.append(_Claim(kind="file", text=rel, offset=offset, file=rel))
+        claims.append(_Claim(kind="file", text=rel, offset=offset, file=rel, segment_start=seg_start))
         line_m = re.match(r":(\d+)", segment[m.end():])
         if line_m:
             claims.append(_Claim(
@@ -183,6 +184,7 @@ def _extract_claims(segment: str, seg_start: int) -> list[_Claim]:
                 offset=offset + m.end() - m.start(),
                 file=rel,
                 line=int(line_m.group(1)),
+                segment_start=seg_start,
             ))
 
     for m in _BACKTICK_RE.finditer(segment):
@@ -191,11 +193,11 @@ def _extract_claims(segment: str, seg_start: int) -> list[_Claim]:
         offset = seg_start + m.start()
         if kind == "file":
             rel = content.replace("\\", "/")
-            claims.append(_Claim(kind="file", text=rel, offset=offset, file=rel))
+            claims.append(_Claim(kind="file", text=rel, offset=offset, file=rel, segment_start=seg_start))
         elif kind == "symbol":
-            claims.append(_Claim(kind="symbol", text=content, offset=offset))
+            claims.append(_Claim(kind="symbol", text=content, offset=offset, segment_start=seg_start))
         else:
-            claims.append(_Claim(kind="snippet", text=content, offset=offset))
+            claims.append(_Claim(kind="snippet", text=content, offset=offset, segment_start=seg_start))
 
     for m in _LINE_RE.finditer(segment):
         if not _is_inside_backticks(segment, m.start()):
@@ -205,6 +207,7 @@ def _extract_claims(segment: str, seg_start: int) -> list[_Claim]:
                 offset=seg_start + m.start(),
                 line=int(m.group(2)),
                 approx=bool(m.group(1)),
+                segment_start=seg_start,
             ))
 
     for c in claims:
@@ -333,7 +336,12 @@ def _verify_snippet(snippet: str, file: str | None, contents: dict[str, str]) ->
 
 
 def _pair_symbol_with_line(claims: list[_Claim]) -> None:
-    """Flag a line claim when a symbol on the same line is defined elsewhere."""
+    """Flag a line claim when a symbol on the same source segment is defined elsewhere.
+
+    Pairing is restricted to claims sharing the same analysis source-line (segment_start)
+    so a ``line N`` mention in one bullet point cannot bleed into a symbol verified in an
+    adjacent bullet — matching _iter_lines' "avoiding bleed between bullet points" design.
+    """
     lines = [c for c in claims if c.kind == "line" and c.status == _STATUS_OK and c.file]
     for c in claims:
         if c.kind != "symbol" or c.status != _STATUS_OK:
@@ -350,14 +358,13 @@ def _pair_symbol_with_line(claims: list[_Claim]) -> None:
                 continue
             file, def_line = c.file, int(m.group(1))
         best: _Claim | None = None
-        best_dist = 1_000_000
         for lc in lines:
-            if lc.file != file:
+            if lc.file != file or lc.segment_start != c.segment_start:
                 continue
             dist = abs(lc.offset - c.offset)
-            if dist < best_dist:
-                best, best_dist = lc, dist
-        if best is None or best_dist > 200:
+            if dist < 200 and (best is None or dist < abs(best.offset - c.offset)):
+                best = lc
+        if best is None:
             continue
         tol = _LINE_TOLERANCE_APPROX if best.approx else _LINE_TOLERANCE_EXACT
         if abs((best.line or 0) - def_line) > tol:

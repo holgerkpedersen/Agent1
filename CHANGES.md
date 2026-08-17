@@ -749,3 +749,11 @@ already do. The model currently burns the whole
 
 **Files**: agent_core/commands/implement_cmd.py (`_apply_modify_diff`, modify_mode flag, modify_target gate in the generation loop, help text), tests/test_implement_safety.py (`TestModifyMode`: apply-after-approval, decline-without-approval, unchanged-skip, wholesale-rewrite-rejected, allow-rewrite-applies)
 
+## 2026-08-17 — fix: verifier symbol-line pairing no longer bleeds across bullet points
+
+**Change**: `agent_core/commands/analysis_verifier.py` `_pair_symbol_with_line` paired a verified symbol with the nearest `line N` claim by absolute offset distance (≤200 chars) on the same file — crossing analysis bullet boundaries and contradicting `_iter_lines`'s "avoiding bleed between bullet points" design. A `line ~86` mention in one bullet could be falsely attributed to a `_safe_path` symbol verified in an adjacent bullet, producing misleading `[UNVERIFIED] \`line 86\` � _safe_path is defined at agent.py:554 (claimed line 86)` reports even though the two claims were unrelated. Pairing now requires `segment_start` equality — symbols and lines must share the same source segment before any mismatch flagging; distance filtering removed in favor of exact-segment scoping. `_Claim` gains a `segment_start` field populated by every claim constructor in `_extract_claims`.
+
+**Reason**: The verifier's stated design scopes file/line context only to claims on the same analysis line, but `_pair_symbol_with_line` ignored that and paired globally — turning unrelated adjacent bullets into false positives (observed: 6 flagged where 5 were genuine against real source). Segment-scoped pairing restores intent.
+
+**Files**: agent_core/commands/analysis_verifier.py (`_Claim.segment_start`, all constructors in `_extract_claims`, `_pair_symbol_with_line` rewrite), tests/test_analysis_verifier.py (`test_symbol_line_does_not_bleed_across_bullets` new; fixture gains `FileSystem.read`/`_safe_path`; `_flagged_lines` helper)
+

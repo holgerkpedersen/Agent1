@@ -1,5 +1,6 @@
 """Tests for deterministic code-claim verification of LLM-generated analysis."""
 import asyncio
+import re
 from pathlib import Path
 
 from agent_core.commands.analysis_verifier import VerificationResult, verify_analysis_claims
@@ -15,8 +16,16 @@ _AGENT_PY = "\n".join([
     "    )",
     "    return result",
     "",
-    "def helper():",
-    "    return 1",
+    "class FileSystem:",
+    "    def read(self, path: str):",
+    "        local_path = self._safe_path(path)",
+    "        with open(local_path) as f:",
+    "            return f.read()",
+    "",
+    "def _safe_path(self, path: str) -> str:",
+    "    if path.startswith('./'):",
+    "        path = path[2:]",
+    "    return path",
     "",
     "_FORBIDDEN_PATTERNS = ('eval(',)",
     *[f"filler_{i} = {i}" for i in range(40)],
@@ -28,6 +37,11 @@ class TestVerifyAnalysisClaims:
 
     async def _verify(self, ws: Path, analysis: str) -> VerificationResult:
         return await verify_analysis_claims(analysis, ws)
+
+    @staticmethod
+    def _flagged_lines(result: VerificationResult) -> list[str]:
+        """Return the individual [UNVERIFIED] bullet lines from a result."""
+        return re.findall(r"- \[UNVERIFIED\] `[^`]*` — .*", result.text)
 
     @staticmethod
     def _build_ws(tmp_path: Path) -> Path:
@@ -102,6 +116,16 @@ class TestVerifyAnalysisClaims:
         analysis = "`_execute_nlp_tool` is defined at line 4 in `agent.py`."
         result = asyncio.run(self._verify(ws, analysis))
         assert result.flagged == 0
+
+    def test_symbol_line_does_not_bleed_across_bullets(self, tmp_path: Path) -> None:
+        ws = self._build_ws(tmp_path)
+        analysis = (
+            "- Broad exception swallowing masks failures at `agent.py` line ~86.\n"
+            "- DRY violations between agent.py and FileSystem/FileSearcher: `_safe_path`, "
+            "`FileSystem.read` duplicate path normalization."
+        )
+        result = asyncio.run(self._verify(ws, analysis))
+        assert not any("claimed line 86" in flag for flag in self._flagged_lines(result))
 
     def test_stdlib_symbol_not_flagged(self, tmp_path: Path) -> None:
         ws = self._build_ws(tmp_path)
