@@ -11,10 +11,9 @@ import re
 import sys
 from collections import defaultdict
 from agent_core import to_windows_path
-from agent_core.colors import cyan, green, yellow, blue, magenta, gray
+from agent_core.colors import cyan, green, yellow, blue, magenta, gray, red
 from agent_core.constants import resolve_model, CHAT_HISTORY_JSON_PATH
 from agent_core.config import load_agent_settings, AgentDisplayMode
-from agent_core.llm.lmstudio import LMStudioProvider
 from agent_core.file_system import FileSystem
 from agent_core.file_searcher import FileSearcher
 from agent_core.tool_dispatcher import ToolDispatcher
@@ -85,7 +84,7 @@ class LLMClient:
                 self._provider.temperature = profile.temperature
                 self._provider.max_tokens = profile.max_tokens
         except Exception:
-            pass
+            print("Warning: silenced exception in agent.py:86")
     
     @property
     def model_name(self) -> str:
@@ -237,15 +236,21 @@ class Agent:
         if name == "read":
             path = self._resolve_nlp_path(str(args.get("path", "")).strip('"').strip("'"))
             try:
-                offset = max(0, int(args.get("offset") or 0))
-                limit = max(1, int(args.get("limit") or 5000))
+                # Paging is LINE-BASED (1-indexed): models and callers pass the
+                # starting line number and a line count, not character offsets —
+                # char offsets kept landing every read in the same short
+                # docstring, causing repeated-read loops.
+                offset = max(1, int(args.get("offset") or 1))
+                limit = max(1, int(args.get("limit") or 100))
                 content = await self.read_file(path, track_read=False)
                 if content.startswith("File not found") or content.startswith("Error"):
                     return content
-                if offset >= len(content):
-                    return f"Offset {offset} is beyond the end of {path} ({len(content)} chars)."
-                chunk = content[offset:offset + limit]
-                if offset + limit < len(content):
+                lines = content.splitlines()
+                if offset > len(lines):
+                    return f"Offset {offset} is beyond the end of {path} ({len(lines)} lines)."
+                chunk_lines = lines[offset - 1: offset - 1 + limit]
+                chunk = "\n".join(chunk_lines)
+                if offset - 1 + limit < len(lines):
                     return f"{chunk}\n[truncated — use read with offset={offset + limit} to continue]"
                 return chunk
             except Exception as e:
@@ -499,7 +504,7 @@ class Agent:
             try:
                 self._file_mtimes[safe] = os.path.getmtime(safe)
             except OSError:
-                pass
+                print("Warning: silenced exception in agent.py:506")
         return result
 
     async def _tool_write_file(self, path: str, content: str, **kwargs: Any) -> str:
@@ -563,7 +568,7 @@ class Agent:
                 try:
                     self._file_mtimes[local_path] = os.path.getmtime(local_path)
                 except OSError:
-                    pass
+                    print("Warning: silenced exception in agent.py:570")
 
             return content
 
@@ -721,6 +726,16 @@ class Agent:
 
         self._chat_history.append({"role": "user", "content": user_input})
 
+        #: Provider-level failures (reasoning-budget exhaustion, HTTP errors,
+        #: unreachable server, ...) are DETECTED here.  They must never be
+        #: mistaken for a model answer, fed into auto-continue chaining, or
+        #: printed as the green final answer — bad LLM behavior is surfaced
+        #: explicitly instead.
+        llm_error: list[str] = []
+        #: Last non-empty answer of a chained run — a byte-identical repeat
+        #: means the model is stuck emitting the same incomplete answer.
+        last_answer = ""
+
         async def llm_chat_fn(
             messages: list[dict[str, Any]], tools: list[dict[str, Any]],
         ) -> tuple[str, list[dict[str, Any]]]:
@@ -733,6 +748,8 @@ class Agent:
                 # fallback message kick in instead of showing cryptic text.
                 raw = ""
             if raw.startswith("[Error") or raw.startswith("[LM Studio"):
+                if not llm_error:
+                    llm_error.append(raw)
                 return raw, messages
             try:
                 parsed = json.loads(raw)
@@ -774,6 +791,10 @@ class Agent:
             if trace_writer is not None:
                 trace_writer.close()
             reason = loop.termination_reason
+            # A provider-level failure is not an answer: never auto-continue —
+            # chaining would only re-burn the same broken LLM call.
+            if llm_error:
+                break
             # "cap" (budget run-out while progressing), an "answer" that
             # signals unfinished work, and — as a safety net — a "no_progress"
             # verdict whose forced answer STILL signals unfinished work justify
@@ -785,6 +806,17 @@ class Agent:
                 or (reason in ("answer", "no_progress") and _looks_incomplete(final_text))
             )
             if needs_more and continuations < _MAX_CHAINED_RUNS:
+                if final_text and final_text == last_answer:
+                    # Same incomplete answer twice in a row — the model is
+                    # stuck, not working.  Stop chaining instead of looping.
+                    if display_mode != AgentDisplayMode.QUIET:
+                        print(
+                            magenta("\n  [stopped] The model repeated the same answer ")
+                            + yellow("twice — ending the turn. ")
+                            + gray("Rephrase or ask something more specific to continue.\n")
+                        )
+                    break
+                last_answer = final_text
                 continuations += 1
                 if display_mode != AgentDisplayMode.QUIET:
                     why = {
@@ -826,6 +858,20 @@ class Agent:
         clean = re.sub(r'</?tool_call>', '', final_text)
         clean = re.sub(r'</?function_call>', '', clean)
 
+        if llm_error:
+            # A provider-level failure was detected during the run: show the
+            # actual error (not the generic fallback, not a green "answer").
+            err = llm_error[0].strip()
+            print(yellow("\n  [llm-error] The model did not produce a usable response:"))
+            print(red(f"  {err[:400]}"))
+            if "reasoning" in err.lower():
+                print(
+                    yellow("  The reasoning model exhausted its thinking budget. ")
+                    + gray("Switch to a non-reasoning model (model <name>) or retry the request.\n")
+                )
+            self._nlp_workspace = None
+            return
+
         if display_mode == AgentDisplayMode.CLEAN:
             # Fold any stray "I will ..." narration into a short preamble so the
             # report reads as one coherent answer (what changed / where / evidence).
@@ -856,7 +902,7 @@ class Agent:
             except FileNotFoundError:
                 stale.append(path)
             except OSError:
-                pass
+                print("Warning: silenced exception in agent.py:863")
         return stale
 
     def invalidate_stale(self) -> int:
@@ -894,7 +940,7 @@ class Agent:
         try:
             os.remove(CHAT_HISTORY_JSON_PATH)
         except OSError:
-            pass
+            print("Warning: silenced exception in agent.py:901")
 
     # ------------------------------------------------------------------
     #  Persistent NLP chat history (chat_history.json)
@@ -926,7 +972,7 @@ class Agent:
             with open(CHAT_HISTORY_JSON_PATH, "w", encoding="utf-8") as f:
                 json.dump(_project_chat_history(self._chat_history), f, ensure_ascii=False, indent=2)
         except OSError:
-            pass
+            print("Warning: silenced exception in agent.py:933")
 
 
 _MAX_CHAT_MESSAGES = 60
@@ -1048,7 +1094,7 @@ def _kill_process_tree(proc: "subprocess.Popen[Any]") -> None:
         else:
             proc.kill()
     except Exception:
-        pass
+        print("Warning: silenced exception in agent.py:1055")
 
 
 def _detect_shell() -> str:

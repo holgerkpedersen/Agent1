@@ -335,28 +335,29 @@ class TestAgentExecuteToolCall:
         assert target.read_text(encoding="utf-8").startswith("def hello")
 
     def test_read_supports_offset_pagination(self, tmp_path):
-        """read must page through large files with offset/limit instead of
-        re-returning the same first chunk (the cause of repeated read loops)."""
+        """read pages by LINES (1-based offset, count limit) instead of
+        character offsets — char offsets kept every read landing in the same
+        short region, causing repeated read loops."""
         import asyncio
         from agent import Agent
         agent = Agent(workspace=str(tmp_path))
         target = tmp_path / "big.py"
-        target.write_text("line0\n" + "x" * 6000, encoding="utf-8")
+        target.write_text("".join(f"line{i}\n" for i in range(250)), encoding="utf-8")
 
         async def first_page():
             return await agent._execute_tool_call("read", {"path": str(target)})
 
         async def second_page():
             return await agent._execute_tool_call(
-                "read", {"path": str(target), "offset": 5000},
+                "read", {"path": str(target), "offset": 101},
             )
 
         page1 = asyncio.run(first_page())
         assert "line0" in page1
-        assert "use read with offset=5000" in page1
+        assert "use read with offset=101" in page1
         page2 = asyncio.run(second_page())
-        assert "x" in page2
-        assert "offset=5000" not in page2
+        assert "line100" in page2
+        assert "offset=101" not in page2
 
     def test_read_offset_beyond_end(self, tmp_path):
         import asyncio
@@ -938,9 +939,12 @@ class TestAutoContinue:
 
     def test_continuation_is_capped(self, tmp_path):
         from agent import _MAX_CHAINED_RUNS
-        llm = self._seq_llm([
-            "The tool budget is exhausted, I still need more calls.",
-        ] * 20)
+        # Distinct answers per run: only the cap bounds the chaining (an
+        # identical repeat would trip the repeat-guard instead, which has its
+        # own dedicated test).
+        llm = self._seq_llm(
+            [f"The tool budget is exhausted, I still need more calls — attempt {i}." for i in range(20)]
+        )
         agent, llm = self._run(tmp_path, llm)
         # Initial run + _MAX_CHAINED_RUNS continuations, no infinite loop.
         assert llm.calls == 1 + _MAX_CHAINED_RUNS
@@ -1257,3 +1261,75 @@ class TestDisplayModes:
         out = capsys.readouterr().out
         assert "Final quiet answer." in out
         assert "[tool]" not in out
+
+
+class TestLLMBadBehaviorDetection:
+    """chat_nlp must DETECT bad LLM behavior instead of surfacing it as an
+    answer: provider errors (reasoning-budget exhaustion, HTTP failures) get a
+    distinct [llm-error] block and never auto-continue; byte-identical
+    incomplete answers stop chaining."""
+
+    def test_llm_error_surfaced_and_not_chained(self, tmp_path, capsys):
+        import asyncio
+        from unittest.mock import patch
+        from agent import Agent
+        history_file = tmp_path / "chat_history.json"
+
+        class ErrorLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def chat(self, messages, tools=None, **kwargs):
+                self.calls += 1
+                return ("[Error: model consumed 4000 reasoning bytes with no output — "
+                        "reasoning models burn their budget thinking. Retry with "
+                        "disable_thinking=True (injects /no_think for Nemotron-3).]")
+
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            agent = Agent(workspace=".")
+            llm = ErrorLLM()
+            agent.llm = llm
+
+            async def go():
+                await agent.chat_nlp("fix the bug")
+
+            asyncio.run(go())
+
+        # Exactly one LLM call: the error must NOT be chained or retried as an answer.
+        assert llm.calls == 1
+        out = capsys.readouterr().out
+        assert "[llm-error]" in out
+        assert "reasoning" in out
+        # The raw error must not be printed as the green final answer.
+        assert "model consumed 4000 reasoning" in out  # shown inside the error block
+        assert agent._chat_history[-1]["role"] == "user"  # no fake assistant answer saved
+
+    def test_repeated_identical_incomplete_answer_stops_chaining(self, tmp_path, capsys):
+        import asyncio
+        from unittest.mock import patch
+        from agent import Agent
+        history_file = tmp_path / "chat_history.json"
+
+        class RepeatingLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def chat(self, messages, tools=None, **kwargs):
+                self.calls += 1
+                # Signals unfinished work -> auto-continue would chain.
+                return "I could not complete the analysis yet — would need more budget."
+
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+            agent = Agent(workspace=".")
+            llm = RepeatingLLM()
+            agent.llm = llm
+
+            async def go():
+                await agent.chat_nlp("analyze the project")
+
+            asyncio.run(go())
+
+        # First run + one chained run that repeats the SAME answer -> stopped.
+        assert llm.calls == 2
+        out = capsys.readouterr().out
+        assert "repeated the same answer" in out
