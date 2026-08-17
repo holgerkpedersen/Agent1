@@ -1,4 +1,34 @@
-"""Fix command for agent interactive mode."""
+"""Fix command for agent interactive mode.
+
+Invocation (inside the REPL)::
+
+    fix [--desc <change description>] [<file or directory>...]
+    fix --mypy [<path>...] [--limit N] [--rounds N]
+    fix [--yes] <pasted-traceback-lines>
+
+Modes
+-----
+- Default: ``_fix_traceback`` — repairs a pasted runtime traceback (or
+  ``--desc``-described change) by locating the failing file/line, extracting
+  the enclosing block, asking the LLM for a ``[PATCH: file.py]`` hunk, and
+  applying it with a ``py_compile`` gate.
+- ``--mypy``: runs mypy over the target set (default ``agent_core/``,
+  ``agent1/``, ``agent.py``), groups errors by enclosing function, and
+  LLM-fixes them leaves-first; any patch that ripples new errors elsewhere
+  is rolled back.
+- ``--desc``: applies an LLM-described change to the given files with an
+  interactive diff review (``read_choice`` y/N) unless ``--yes``.
+
+Arguments
+---------
+Files/directories default to the current workspace scan when omitted.
+``--limit`` caps mypy findings per file, ``--rounds`` caps patch attempts.
+
+Exit / return
+-------------
+``execute`` returns ``True``; per-file outcomes are printed (``Fixed N/M
+files.``) and appended to ``CHANGES.md`` under a timestamped ``fix`` entry.
+"""
 import ast
 import os
 import re
@@ -970,7 +1000,15 @@ def extract_signatures(source: str) -> dict[str, Any]:
 
 
 class FixCommand(Command):
-    """Fix code errors from traceback or description."""
+    """Fix code errors from traceback, mypy output, or an LLM-described change.
+
+    Invocation: ``fix [--desc <text>] [files...]``, ``fix --mypy [--limit N]
+    [--rounds N]``, or ``fix <pasted traceback>`` (see the module docstring).
+
+    Return value: ``execute`` returns ``True``; the number of successfully
+    fixed files is printed (``Fixed N/M files.``) and a timestamped entry is
+    appended to ``CHANGES.md``.
+    """
 
     @property
     def name(self) -> str:

@@ -1,4 +1,38 @@
-"""Workflow command for agent interactive mode."""
+"""Workflow command for agent interactive mode.
+
+Invocation (inside the REPL)::
+
+    workflow . --desc <feature description> [--auto]
+    workflow . --continue
+
+Stages
+------
+The workflow runs the greenfield pipeline and writes each phase into a
+timestamped ``.docs/<ts>/`` folder (git-ignored; the newest folder is the
+fallback lookup target for ``implement``):
+
+1. **analyze** — scans the codebase and produces ``project_analysis.md``
+   with verification of code claims (``analysis_verifier``).
+2. **plan** — derives ``project_plan.md`` (FIX/FEATURE/ARCH/OPS priorities).
+3. **entities** — emits ``project_entities.py`` with the dataclass/enum
+   contract shared by the plan documents.
+4. **taskplan** — writes ``project_tasks.md``, one backticked file path per
+   task, the input for ``implement``.
+
+Configuration
+-------------
+- ``--desc <text>`` — the feature/change description that seeds the pipeline.
+- ``--auto`` — autonomous mode: skips confirmations, runs the tailored
+  ``implement`` command inline at the end.
+- ``--continue`` — resumes from the newest ``.docs/<ts>/`` run folder.
+- Past decisions (``.decisions.json``) are injected as design constraints in
+  the analysis prompt; reasoning output is stripped from LLM responses.
+
+Return
+------
+``execute`` returns ``True`` after printing the next-command hint
+(``implement ... --workspace <ws>``) unless ``--auto`` runs it inline.
+"""
 import os
 import re
 import shutil
@@ -382,7 +416,13 @@ async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: s
 
 
 class WorkflowCommand(Command):
-    """Full pipeline: analyze, plan, entities, taskplan."""
+    """Full pipeline: analyze, plan, entities, taskplan.
+
+    Invocation: ``workflow . --desc <feature description> [--auto]`` or
+    ``workflow . --continue`` (see the module docstring for stages and
+    configuration).  Returns ``True`` and prints the tailored next
+    ``implement`` command unless ``--auto`` runs it inline.
+    """
 
     @property
     def name(self) -> str:

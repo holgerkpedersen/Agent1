@@ -1,4 +1,31 @@
-"""NLP parsing and intent classification module."""
+"""NLP parsing and intent classification for the chat_nlp entry point.
+
+This module defines the contract between free-text user input and the
+natural-language tool loop (``agent.chat_nlp``):
+
+System-prompt contract
+----------------------
+``chat_nlp`` builds the loop's system prompt itself (workspace facts, shell
+hints, tool rules); ``NLPParser`` is NOT the loop's parser — the loop uses
+native OpenAI tool-calling.  This module powers the lighter REPL pre-routing
+intent checks (e.g. ``clear``/``help``/``exit`` keyword routing) and any
+caller that needs a structured ``(intent, entities)`` view of user input.
+
+Intent classes
+--------------
+:class:`IntentType` — ``IMPLEMENT``, ``CLEAR``, ``CHAT``, ``HELP``,
+``EXIT``, ``UNKNOWN``.  ``classify_intent`` scores keyword overlap per
+intent (``_score_intent``); below the confidence threshold the input is
+treated as ``CHAT`` (free conversation for the tool loop).
+
+Extraction guarantees
+---------------------
+- ``ParsedInput`` is immutable (frozen dataclass) with ``intent``,
+  ``raw_text``, ``entities``, ``keywords``, ``confidence``.
+- ``extract_files`` returns file-like tokens (word characters with dots,
+  length > 2, not all-uppercase) — a heuristic, not a path validator.
+- ``_score_intent`` is deterministic and pure: same text, same score.
+"""
 
 from __future__ import annotations
 

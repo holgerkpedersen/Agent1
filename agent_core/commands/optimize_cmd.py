@@ -7,6 +7,32 @@ Usage:
     optimize <file> --yes        Scan, apply all suggestions without asking
     optimize <dir>               Scan all .py files in directory
 
+Analysis phases
+---------------
+1. **Static analysis** (``agent_core.patterns.analyze``) — pure-Python
+   detectors over each file: unused imports, dead assignments, regex-in-loop,
+   silent excepts, list-append-join, fstring-without-placeholder, walrus
+   leaks, string-concat-in-loop, and more.  Findings are grouped per file.
+2. **Deterministic mechanical fixes** (``_tri_mech_fix``) — well-defined
+   findings (unused imports, silent excepts, regex hoisting, ...) are fixed
+   with generated hunks WITHOUT calling the LLM; each patch must compile and
+   shrink the finding count.
+3. **LLM patch loop** (per unresolved finding) — the model sees the numbered
+   enclosing block and must answer with exactly one ``[PATCH: file.py]``
+   hunk.  Patches are validated: compile, pattern-count shrink, no import
+   regressions (``_regressed_imports``), no new findings, no undefined names,
+   no placeholders — violations feed corrective feedback and retry.
+4. **Apply phase** (``--apply``/``--yes``) — fixed files are shown as diffs
+   and applied per-file after approval; residual findings are reported.
+
+LLM suggestion contract
+-----------------------
+The model receives the finding (line + pattern + suggestion), the numbered
+context, and past decisions; it must return ONLY the ``[PATCH: <basename>]``
+hunk (absolute line numbers, exact source lines) or an ``[UNRESOLVED:]``
+note.  Provider errors (reasoning-budget exhaustion, HTTP failures) are
+detected and reported instead of being treated as answers.
+
 Batching:
     Files are grouped into batches to stay within LLM token limits.
     Each batch is processed independently with its own context window.
@@ -1823,7 +1849,13 @@ def _post_apply_verify(basename: str, fpath: str, original: str, new_code: str) 
 
 
 class OptimizeCommand(Command):
-    """Find and optionally apply performance/memory/quality optimizations."""
+    """Find and optionally apply performance/memory/quality optimizations.
+
+    Invocation: ``optimize <file|dir> [--list] [--apply] [--yes] [--force]``
+    (see the module docstring for the analysis phases and the LLM suggestion
+    contract).  Returns ``True``; with ``--apply`` the number of applied
+    fixes is reported (``Applied N/M fix(es).``).
+    """
 
     @property
     def name(self) -> str:
