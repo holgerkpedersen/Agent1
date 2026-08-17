@@ -47,6 +47,7 @@ from agent_core.commands.perf_cmd import PerfCommand, PerfTracker
 from agent_core.commands.display_cmd import DisplayCommand
 from agent_core.commands.decide_cmd import DecideCommand
 from agent_core.commands.run_cmd import RunCommand
+from agent_core.commands.self_heal_cmd import SelfHealCommand
 from pathlib import Path
 import subprocess
 import shlex
@@ -1258,6 +1259,7 @@ async def run_interactive() -> None:
         ("display [verbose|clean|quiet]", "Show/set NLP output verbosity"),
         ("paste [--workspace <path>]", "Paste multiline text for AI analysis (Ctrl+Z / Ctrl+D to finish)"),
         ("run <command>", "Execute a shell command directly, no LLM"),
+        ("self_heal [path] [--rounds N] [--yes]", "Patch failing tests and re-run until green"),
         ("quit", "Exit"),
     ]
     for name, desc in _CMD_LIST:
@@ -1285,6 +1287,7 @@ async def run_interactive() -> None:
     registry.register(DisplayCommand())
     registry.register(DecideCommand())
     registry.register(RunCommand())
+    registry.register(SelfHealCommand())
 
     while True:
         try:
@@ -1307,7 +1310,7 @@ async def run_interactive() -> None:
             command = parts[0].lower()
 
             # Try commands from registry
-            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste", "display", "decide", "run"]:
+            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste", "display", "decide", "run", "self_heal"]:
                 import time as _time
                 _start = _time.perf_counter()
                 print(f"  [cmd] {cyan(command)} running...")
