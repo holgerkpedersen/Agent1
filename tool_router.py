@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
-import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, TypeVar
 
 from pydantic import BaseModel, Field, ValidationError
@@ -121,27 +121,41 @@ DEFAULT_TOOL_DEFINITIONS: list[ToolDefinition] = [
 # ---------------------------------------------------------------------------
 
 class ShellCommandHandler:
-    """Handles execution of validated shell commands."""
+    """Handles execution of validated shell commands.
 
-    def __init__(self) -> None:
-        self._allowed_binaries = (
-            "echo", "ls", "dir", "cat", "type", "python", "py",
-            "grep", "findstr", "head", "tail", "wc", "pwd", "whoami",
-            "git",
-        )
+    Security decisions are DELEGATED to the shared modules — ``agent_core.
+    security.allowlist`` (binary allow-list + structural shell-pattern
+    rejection) — instead of the duplicated local allow-list / block-list of
+    the old implementation (plan ARCH item 6).  Windows shell builtins
+    (echo, dir, type, ...) have no ``.exe`` so they still run through the
+    shell, but only AFTER the allow-list and metacharacter gates above —
+    chaining, pipes, and redirection cannot survive those gates.
+    """
 
     def execute(self, args: ShellCommandArgs) -> str | dict[str, Any]:
-        """Execute a command after binary allow-list + metacharacter checks.
-
-        Windows shell builtins (echo, dir, type, ...) cannot run without the
-        shell, so this stays shell-based — but injection is impossible: the
-        binary must be allow-listed AND no shell metacharacter may appear
-        outside double quotes (no ``&``, ``|``, ``;`` chaining or redirection).
-        """
-        import re
+        """Execute a command after the shared security gates."""
         import shlex
         import subprocess
+        from agent_core.security.allowlist import (
+            find_unsafe_shell_pattern,
+            is_command_allowed,
+        )
+
         cmd = args.command.strip()
+        if not cmd:
+            raise ToolExecutionError(
+                "Empty command", details={"command": cmd},
+            )
+
+        # Gate 1 — structural safety: no pipes / redirection / chaining.
+        unsafe = find_unsafe_shell_pattern(cmd)
+        if unsafe is not None:
+            raise ToolExecutionError(
+                f"Command '{cmd}' contains {unsafe}",
+                details={"command": cmd},
+            )
+
+        # Gate 2 — parse and allow-list the binary (shared module).
         try:
             tokens = shlex.split(cmd)
         except ValueError as exc:
@@ -149,17 +163,17 @@ class ShellCommandHandler:
                 f"Invalid command: {cmd}",
                 details={"command": cmd, "error": str(exc)},
             )
-        if not tokens or tokens[0] not in self._allowed_binaries:
+        if not tokens:
+            raise ToolExecutionError(
+                f"Invalid command: {cmd}", details={"command": cmd},
+            )
+        binary = Path(tokens[0]).name  # strip any path component for allowlist check
+        if not is_command_allowed(binary):
             raise ToolExecutionError(
                 f"Command '{cmd}' is not in the allowed command list",
                 details={"command": cmd},
             )
-        unquoted = re.sub(r'"[^"]*"', "", cmd)
-        if re.search(r"[&|;<>()^`$]", unquoted):
-            raise ToolExecutionError(
-                f"Command '{cmd}' contains shell metacharacters",
-                details={"command": cmd},
-            )
+
         try:
             result = subprocess.run(
                 cmd,

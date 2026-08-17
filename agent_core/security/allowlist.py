@@ -26,6 +26,23 @@ SAFE_COMMANDS: Final[Set[str]] = {
     "pwd",
 }
 
+#: Structural shell patterns that must never appear in a command string —
+#: pipes, redirection, chaining, command substitution.  Even with
+#: ``shell=False`` these are rejected up front so no caller can smuggle a
+#: chained command past the binary allow-list (plan OPS item 2).
+_UNSAFE_SHELL_TOKENS: Final[tuple[tuple[str, str], ...]] = (
+    ("&&", "command chaining (&&)"),
+    ("||", "command chaining (||)"),
+    (";", "command separator (;)"),
+    ("|", "pipe (|)"),
+    (">", "redirection (>)"),
+    ("<", "redirection (<)"),
+    ("`", "command substitution (`)"),
+    ("$(", "command substitution ($()"),
+    ("\n", "embedded newline"),
+    ("\r", "embedded newline"),
+)
+
 # ---------------------------------------------------------------------------
 # Dynamic Allowlist State & Logger
 # ---------------------------------------------------------------------------
@@ -47,6 +64,22 @@ def _normalize(binary_name: str) -> str:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+def find_unsafe_shell_pattern(cmd_str: str) -> str | None:
+    """Return a description of the first unsafe shell pattern in *cmd_str*.
+
+    Rejects shell metacharacters, pipes, redirection operators, command
+    chaining (``&&`` / ``||`` / ``;``), and command substitution.  Returns
+    ``None`` when the command string is structurally safe — the binary
+    allow-list then decides whether the command may run.
+    """
+    if not cmd_str:
+        return None
+    for token, description in _UNSAFE_SHELL_TOKENS:
+        if token in cmd_str:
+            return description
+    return None
+
 
 def is_command_allowed(binary_name: str) -> bool:
     """Check if a shell command binary is in the allow-list.

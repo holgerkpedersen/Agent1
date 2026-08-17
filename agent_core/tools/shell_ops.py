@@ -6,7 +6,10 @@ import subprocess
 from pathlib import Path
 from typing import Tuple
 
-from agent_core.security.allowlist import is_command_allowed
+from agent_core.security.allowlist import (
+    find_unsafe_shell_pattern,
+    is_command_allowed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,14 +17,20 @@ logger = logging.getLogger(__name__)
 def run_command(workspace_root: Path, cmd_str: str) -> Tuple[int, str, str]:
     """Execute a sandboxed shell command.
 
-    1. Parse the binary name from *cmd_str*.
-    2. Verify it is on the allow-list via ``is_command_allowed``.
+    1. Reject structural shell patterns (pipes, redirection, chaining).
+    2. Parse the binary name from *cmd_str* and verify the allow-list.
     3. Run with ``shell=False`` to prevent injection attacks.
 
     Returns ``(returncode, stdout, stderr)``.
     """
     if not cmd_str.strip():
         return 1, "", "Empty command string."
+
+    # --- Structural safety: no pipes / redirection / chaining ---------
+    unsafe = find_unsafe_shell_pattern(cmd_str)
+    if unsafe is not None:
+        logger.warning("Rejected command with unsafe shell pattern %r: %s", cmd_str, unsafe)
+        return 1, "", f"Command rejected: {unsafe}."
 
     # --- Parse safely -----------------------------------------------
     try:
