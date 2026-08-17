@@ -4,11 +4,81 @@ plus the optional LLM-judge fallback."""
 import asyncio
 
 from benchmark import (
+    accuracy_delta,
     answers_match,
     judge_answer,
+    load_models_json,
+    load_report_snapshots,
+    model_accuracy_history,
     score_instruction_following,
     score_question,
+    trend_summary,
 )
+
+
+def _snap(model: str, acc: float | None) -> dict:
+    return {"model": model, "overall_accuracy": acc}
+
+
+class TestTrendHelpers:
+    def test_load_models_json_missing(self, tmp_path):
+        assert load_models_json(str(tmp_path / "nope.json")) == {}
+
+    def test_load_models_json_parses(self, tmp_path):
+        p = tmp_path / "models.json"
+        p.write_text('{"m1": {"overall_accuracy": 80.0}}', encoding="utf-8")
+        assert load_models_json(str(p))["m1"]["overall_accuracy"] == 80.0
+
+    def test_snapshot_loading_sorted(self, tmp_path):
+        (tmp_path / "benchmark_20260701_100000.json").write_text(
+            '{"models": [{"model": "m1", "overall_accuracy": 60.0}]}', encoding="utf-8"
+        )
+        (tmp_path / "benchmark_20260702_100000.json").write_text(
+            '{"models": [{"model": "m1", "overall_accuracy": 70.0}, {"model": "m2", "overall_accuracy": 90.0}]}',
+            encoding="utf-8",
+        )
+        snaps = load_report_snapshots(str(tmp_path))
+        assert [m["model"] for _, m in snaps] == ["m1", "m1", "m2"]
+
+    def test_history_with_gaps(self):
+        snaps = [
+            ("s1", _snap("m1", 60.0)),
+            ("s2", _snap("m1", None)),
+            ("s3", _snap("m1", 70.0)),
+        ]
+        history = model_accuracy_history("m1", snaps)
+        assert [acc for _, acc in history] == [60.0, None, 70.0]
+
+    def test_delta_latest_vs_previous(self):
+        snaps = [
+            ("s1", _snap("m1", 60.0)),
+            ("s2", _snap("m1", 75.0)),
+        ]
+        assert accuracy_delta("m1", snaps) == 15.0
+
+    def test_delta_needs_two_scored_runs(self):
+        snaps = [("s1", _snap("m1", 60.0)), ("s2", _snap("m1", None))]
+        assert accuracy_delta("m1", snaps) is None
+
+    def test_trend_summary_direction_and_confidence(self):
+        snaps = [
+            ("s1", _snap("m1", 50.0)),
+            ("s2", _snap("m1", 60.0)),
+            ("s3", _snap("m1", 70.0)),
+        ]
+        summary = trend_summary("m1", snaps)
+        assert summary["direction"] == "improved"
+        assert summary["delta"] == 10.0
+        assert summary["confidence"] is True
+
+    def test_trend_summary_regression_low_confidence(self):
+        snaps = [
+            ("s1", _snap("m1", 80.0)),
+            ("s2", _snap("m1", 70.0)),
+        ]
+        summary = trend_summary("m1", snaps)
+        assert summary["direction"] == "regressed"
+        assert summary["confidence"] is False
 
 
 class TestAnswersMatchTightened:

@@ -846,6 +846,122 @@ def save_models_json(results: list[ModelResult], path: str) -> None:
     print(f"  models.json saved to: {out_path} ({len(existing)} model(s) total)")
 
 
+def load_models_json(path: str = "reports/models.json") -> dict[str, Any]:
+    """Load the aggregate models.json (model name -> latest result entry).
+
+    Returns an empty dict when the file is missing or unreadable.
+    """
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def load_report_snapshots(
+    reports_dir: str = "reports",
+) -> list[tuple[str, dict[str, Any]]]:
+    """Load every ``benchmark_*.json`` snapshot as ``(snapshot_id, model)``.
+
+    Snapshot files are produced by ``save_json_report`` (list of model dicts
+    under ``models``); the snapshot id is the file stem (timestamp), sorted
+    chronologically so trend helpers see the oldest run first.
+    """
+    snapshots: list[tuple[str, dict[str, Any]]] = []
+    d = Path(reports_dir)
+    if not d.is_dir():
+        return snapshots
+    for fp in sorted(d.glob("benchmark_*.json")):
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        models = data.get("models") if isinstance(data, dict) else None
+        if isinstance(models, list):
+            for m in models:
+                if isinstance(m, dict) and m.get("model"):
+                    snapshots.append((fp.stem, m))
+    return snapshots
+
+
+def model_accuracy_history(
+    model: str, snapshots: list[tuple[str, dict[str, Any]]]
+) -> list[tuple[str, float | None]]:
+    """Per-model accuracy history: ``[(snapshot_id, overall_accuracy)]``.
+
+    Missing / unscored runs appear with ``None`` accuracy so callers can see
+    gaps instead of misreading a skip as zero.
+    """
+    return [
+        (sid, m.get("overall_accuracy"))
+        for sid, m in snapshots
+        if m.get("model") == model
+    ]
+
+
+def accuracy_delta(
+    model: str, snapshots: list[tuple[str, dict[str, Any]]]
+) -> float | None:
+    """Latest vs previous accuracy delta in percentage points, or None when
+    fewer than two scored runs exist."""
+    scored = [
+        acc for _, acc in model_accuracy_history(model, snapshots) if acc is not None
+    ]
+    if len(scored) < 2:
+        return None
+    return round(scored[-1] - scored[-2], 1)
+
+
+def trend_summary(
+    model: str, snapshots: list[tuple[str, dict[str, Any]]]
+) -> dict[str, Any]:
+    """Compact per-model trend summary: history, delta, direction, and a
+    confidence flag (True only when >= 3 scored runs agree on the direction)."""
+    history = model_accuracy_history(model, snapshots)
+    delta = accuracy_delta(model, snapshots)
+    scored = [acc for _, acc in history if acc is not None]
+
+    direction: str = "flat"
+    if delta is not None:
+        direction = "improved" if delta > 0 else ("regressed" if delta < 0 else "flat")
+
+    confidence = False
+    if len(scored) >= 3:
+        diffs = [b - a for a, b in zip(scored, scored[1:]) if b is not None and a is not None]
+        if diffs:
+            confidence = all(d > 0 for d in diffs) or all(d < 0 for d in diffs)
+
+    return {
+        "model": model,
+        "history": [{"snapshot": sid, "overall_accuracy": acc} for sid, acc in history],
+        "delta": delta,
+        "direction": direction,
+        "confidence": confidence,
+    }
+
+
+def print_trend(model: str, snapshots: list[tuple[str, dict[str, Any]]]) -> None:
+    """Print a human-readable trend report for *model*."""
+    summary = trend_summary(model, snapshots)
+    print(f"\n  Trend for '{model}' over {len(summary['history'])} snapshot(s):")
+    for entry in summary["history"]:
+        acc = entry["overall_accuracy"]
+        acc_str = f"{acc:.1f}%" if acc is not None else "N/A"
+        print(f"    {entry['snapshot']:<28} {acc_str}")
+    delta = summary["delta"]
+    print(
+        f"  Delta: {delta:+.1f}pp ({summary['direction']})"
+        if delta is not None
+        else "  Delta: N/A (need >= 2 scored runs)"
+    )
+    print(f"  Confidence: {'high' if summary['confidence'] else 'low (needs >= 3 consistent runs)'}")
+
+
 def save_json_report(results: list[ModelResult], path: str) -> None:
     """Save detailed results to a JSON file (all models combined)."""
     data = {
@@ -871,11 +987,12 @@ def parse_args() -> argparse.Namespace:
         epilog=(
             "Examples:\n"
             '  python benchmark.py --model qwen2.5-coder-7b\n'
-            '  python benchmark.py --model m1 m2 --repetitions 3\n',
+            '  python benchmark.py --model m1 m2 --repetitions 3\n'
+            '  python benchmark.py --trend qwen2.5-coder-7b\n'
         ),
     )
     parser.add_argument(
-        "--model", nargs="+", required=True,
+        "--model", nargs="+", required=False,
         help="Model name(s) as registered in LM Studio",
     )
     parser.add_argument(
@@ -895,11 +1012,24 @@ def parse_args() -> argparse.Namespace:
         "--url", type=str, default=BASE_URL,
         help=f"LM Studio API URL (default: {BASE_URL})",
     )
+    parser.add_argument(
+        "--trend", type=str, default=None, metavar="MODEL",
+        help="Print the accuracy trend for MODEL over reports/benchmark_*.json snapshots and exit",
+    )
     return parser.parse_args()
 
 
 async def main() -> None:
     args = parse_args()
+
+    if args.trend:
+        snapshots = load_report_snapshots()
+        print_trend(args.trend, snapshots)
+        return
+
+    if not args.model:
+        print("Error: --model is required unless --trend is used.")
+        return
 
     global BASE_URL  # noqa: PLW0603
     BASE_URL = args.url.rstrip("/")
