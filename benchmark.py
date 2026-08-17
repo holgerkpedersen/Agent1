@@ -286,13 +286,19 @@ def answers_match(response: str, expected: str) -> bool:
     if norm_resp == norm_exp:
         return True
 
-    if norm_exp in norm_resp or norm_resp in norm_exp:
+    # Word-bounded containment ONLY: raw substring matching produced false
+    # positives ("42" inside "142", "true" inside "retry").  The WHOLE
+    # expected answer must appear as a word-bounded phrase in the response.
+    if (
+        len(norm_exp) >= 2
+        and re.search(rf"(?<!\w){re.escape(norm_exp)}(?!\w)", norm_resp)
+    ):
         return True
 
-    # Numeric tolerance for math answers
+    # Numeric tolerance for math answers (also accept "1 000" for "1,000")
     try:
-        r_val = float(norm_resp.replace(",", ""))
-        e_val = float(norm_exp.replace(",", ""))
+        r_val = float(norm_resp.replace(",", "").replace(" ", ""))
+        e_val = float(norm_exp.replace(",", "").replace(" ", ""))
         if abs(r_val - e_val) < 0.5:
             return True
     except (ValueError, TypeError):
@@ -307,19 +313,26 @@ def answers_match(response: str, expected: str) -> bool:
                 other = normalize_answer(
                     norm_exp if frac == norm_resp else norm_resp
                 )
-                oval = float(other.replace(",", ""))
+                oval = float(other.replace(",", "").replace(" ", ""))
                 if abs(fval - oval) < 0.01:
                     return True
             except (ValueError, ZeroDivisionError):
                 logger.debug("Fraction comparison failed for %r", frac)
 
-    # Keyword overlap for knowledge questions
+    # Keyword overlap for knowledge questions — TIGHTENED: overlap must be
+    # substantial (>= 0.85 of the expected words), at least two words must
+    # match, and the response must not pad the expected answer with many
+    # extra words (the old >= 0.7 overlap accepted one-keyword guesses).
     resp_words = set(norm_resp.split())
     exp_words = set(norm_exp.split())
-    if len(exp_words) > 0 and len(resp_words & exp_words) / len(
-        exp_words
-    ) >= 0.7:
-        return True
+    if len(exp_words) > 0:
+        overlap = len(resp_words & exp_words) / len(exp_words)
+        if (
+            overlap >= 0.85
+            and len(resp_words & exp_words) >= 2
+            and len(resp_words) <= len(exp_words) * 2 + 5
+        ):
+            return True
 
     return False
 
@@ -395,17 +408,27 @@ def score_instruction_following(prompt: str, response: str) -> float:
         if actual != n:
             score -= 0.5
 
-    # "nothing else" / "only" constraints -- penalize extra text
+    # "nothing else" / "only" constraints -- penalize extra text.  The old
+    # check credited any response containing the target as a substring plus
+    # up to 3 extra words ("true and false" for target "true").  Now the
+    # response must be an exact echo of the target (punctuation-insensitive):
+    # the word sets must be identical.
     if "nothing else" in pl or "and nothing else" in pl:
         expected_match = re.search(
             r"(?:output|respond|repeat)\s+(?:with\s+)?(?:exactly\s+)?"
-            r'["\']?([^"\']+?)["\']?\s*(?:\.|$)',
+            r'["\']?([^"\']+?)["\']?\s*(?:\.|and nothing else|$)',
             pl,
             re.IGNORECASE,
         )
         if expected_match:
             target = expected_match.group(1).strip().lower()
-            if rl != target and not (target in rl and len(rl.split()) <= 3):
+            target_clean = target.strip(".,!?;:()\"' ")
+            resp_clean = rl.strip(".,!?;:()\"' ")
+            target_words = set(target_clean.split())
+            resp_words = set(resp_clean.split())
+            if resp_clean != target_clean and not (
+                target_words and resp_words == target_words
+            ):
                 score -= 0.5
 
     # "no punctuation" constraint
@@ -438,23 +461,69 @@ def score_instruction_following(prompt: str, response: str) -> float:
         ):
             score -= 0.3
 
-    # "lowercase only" / "all lowercase"
-    if "only lowercase" in pl:
-        if rl != rl.lower():
+    # "lowercase only" / "all lowercase" — compare the RAW response; rl is
+    # already lowercased so comparing rl to rl.lower() could never fire.
+    if "only lowercase" in pl or "all lowercase" in pl:
+        raw = response.strip()
+        if raw != raw.lower():
             score -= 0.3
 
     return max(0.0, min(1.0, round(score, 2)))
 
 
-def score_question(
-    prompt: str, response: str, expected: str | None, category: str
+async def judge_answer(
+    judge_fn: Any, response: str, expected: str
+) -> bool | None:
+    """LLM-judged verdict when heuristics cannot decide.
+
+    *judge_fn* is an async callable ``(response, expected) -> str``.  Returns
+    True/False on a clear verdict, None when the judge is absent, raises, or
+    is ambiguous.  The judge is a FALLBACK only — exact/numeric/overlap
+    matches never consult it.
+    """
+    if judge_fn is None:
+        return None
+    try:
+        verdict = await judge_fn(response, expected)
+    except Exception:
+        return None
+    low = str(verdict).strip().lower()
+    if low.startswith(("yes", "true", "correct", "match", "similar")):
+        return True
+    if low.startswith(("no", "false", "incorrect", "different", "not")):
+        return False
+    return None
+
+
+async def _correct_with_judge(
+    response: str, expected: str, judge_fn: Any
+) -> bool:
+    """answers_match with the optional LLM-judge fallback."""
+    correct = answers_match(response, expected)
+    if correct or judge_fn is None:
+        return correct
+    judged = await judge_answer(judge_fn, response, expected)
+    return correct if judged is None else judged
+
+
+async def score_question(
+    prompt: str,
+    response: str,
+    expected: str | None,
+    category: str,
+    judge_fn: Any = None,
 ) -> tuple[bool | None, float]:
-    """Returns (correct_bool_or_None, score_0_to_1)."""
+    """Returns (correct_bool_or_None, score_0_to_1).
+
+    *judge_fn* (async ``(response, expected) -> str``) is consulted only when
+    the heuristic scorer returns False — LLM-judged matching for answers the
+    exact/numeric/keyword checks cannot decide (plan FIX item 21).
+    """
 
     if category == "instruction_following":
         inst_score = score_instruction_following(prompt, response)
         if expected:
-            match_result = answers_match(response, expected)
+            match_result = await _correct_with_judge(response, expected, judge_fn)
             return match_result, max(inst_score, 1.0 if match_result else 0.0)
         return None, inst_score
 
@@ -474,14 +543,14 @@ def score_question(
                 return False, 0.0
 
         # For output-prediction questions
-        matched = answers_match(response, expected)
+        matched = await _correct_with_judge(response, expected, judge_fn)
         return matched, 1.0 if matched else 0.0
 
     # Reasoning / Math / Knowledge
     if expected is None:
         return None, 0.5  # Unscoreable -- give neutral score
 
-    correct = answers_match(response, expected)
+    correct = await _correct_with_judge(response, expected, judge_fn)
     return correct, 1.0 if correct else 0.0
 
 
@@ -564,6 +633,7 @@ async def run_category(
     category: str,
     questions: list[tuple[str, str | None]],
     repetition: int = 0,
+    judge_fn: Any = None,
 ) -> CategoryResult:
     cat_result = CategoryResult(category=category)
     total = len(questions)
@@ -575,7 +645,9 @@ async def run_category(
 
         try:
             response, latency_ms, tokens = await query_model(model, prompt)
-            correct, score = score_question(prompt, response, expected, category)
+            correct, score = await score_question(
+                prompt, response, expected, category, judge_fn=judge_fn
+            )
         except ModelAPIError as e:
             response = str(e)
             latency_ms = 0.0
@@ -603,6 +675,7 @@ async def run_benchmark(
     models: list[str],
     categories: dict[str, list[tuple[str, str | None]]],
     repetitions: int = 1,
+    judge_fn: Any = None,
 ) -> list[ModelResult]:
     results = []
 
@@ -614,7 +687,9 @@ async def run_benchmark(
         model_result = ModelResult(model=model)
         for cat_name, questions in categories.items():
             if repetitions == 1:
-                cat_res = await run_category(model, cat_name, questions)
+                cat_res = await run_category(
+                    model, cat_name, questions, judge_fn=judge_fn
+                )
                 model_result.categories[cat_name] = cat_res
             else:
                 # Run multiple times and average scores
@@ -622,7 +697,7 @@ async def run_benchmark(
                 for rep in range(repetitions):
                     print(f"\n  --- Repetition {rep + 1}/{repetitions} ---")
                     cr = await run_category(
-                        model, cat_name, questions, repetition=rep
+                        model, cat_name, questions, repetition=rep, judge_fn=judge_fn
                     )
                     all_cat_results.append(cr)
 

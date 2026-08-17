@@ -999,10 +999,25 @@ _INCOMPLETE_MARKERS = (
     "not covered", "follow-up",
 )
 
+#: Strong completion signals — their presence means the answer is finished
+#: even when a weak marker (budget/remaining/could not) also appears, which
+#: reduces false auto-continues (plan FIX item 21).
+_COMPLETE_MARKERS = (
+    "all done", "is done", "done.", "completed", "finished",
+    "is complete", "fully resolved", "all fixed", "task is complete",
+)
+
 
 def _looks_incomplete(text: str) -> bool:
-    """Heuristic: did the model's final answer signal unfinished work?"""
+    """Heuristic: did the model's final answer signal unfinished work?
+
+    Strong completion signals (``all done``, ``is complete``, ...) override
+    weak markers — "The remaining issue is fixed — all done." is finished even
+    though it contains the word "remaining".
+    """
     low = text.lower()
+    if any(marker in low for marker in _COMPLETE_MARKERS):
+        return False
     return any(marker in low for marker in _INCOMPLETE_MARKERS)
 
 
