@@ -1,5 +1,5 @@
 {
-  "model": "nvidia/nemotron-3-super",
+  "model": "opencode-go/deepseek-v4-flash",
   "profile": "fast-codegen",
-  "provider": "lmstudio"
+  "provider": "opencode"
 }

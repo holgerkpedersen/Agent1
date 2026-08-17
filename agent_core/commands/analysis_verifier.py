@@ -79,13 +79,22 @@ class _Claim:
 
 
 def _list_files(ws_path: Path) -> list[str]:
-    """Return workspace-relative file paths, skipping cache and venv dirs."""
+    """Return workspace-relative file paths, skipping cache and venv dirs.
+
+    Only ``.py`` files are returned — non-Python artifacts (``.json``,
+    ``.jsonl``, ``.db``, ``.html``, etc.) are runtime/session state that can
+    contain arbitrary strings matching symbol names, causing false positives in
+    the global symbol search. Their existence is still verifiable via the raw
+    filesystem fallback in ``_verify_existence``.
+    """
     rel_files: list[str] = []
     if not ws_path.is_dir():
         return rel_files
     for root, dirs, files in os.walk(ws_path):
         dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
         for fn in files:
+            if not fn.endswith(".py"):
+                continue
             rel = os.path.relpath(os.path.join(root, fn), ws_path).replace("\\", "/")
             rel_files.append(rel)
     return sorted(rel_files)
@@ -249,7 +258,51 @@ def _attach_context(claim: _Claim, claims: list[_Claim]) -> None:
 def _verify_existence(file: str | None, rel_files: list[str]) -> tuple[str, str]:
     if file is None:
         return _STATUS_SKIP, "no file context"
+    # Directory claims (paths ending with /) — check directory existence.
+    if file.endswith("/"):
+        dir_path = file.rstrip("/")
+        for rel in rel_files:
+            if os.path.dirname(rel).replace("\\", "/") == dir_path or rel.startswith(dir_path + "/"):
+                return _STATUS_OK, "directory exists in workspace"
+        # Also check the raw filesystem — .docs/ etc. may not have files listed
+        # but still exist as directories.
+        ws_dir = Path(file.rstrip("/")) if file else None
+        if ws_dir is not None and ws_dir.is_dir():
+            return _STATUS_OK, "directory exists in workspace"
+        return _STATUS_FLAGGED, "directory not found in workspace"
+    # Empty __init__.py files are valid package markers — presence matters.
+    if file.endswith("__init__.py"):
+        for rel in rel_files:
+            if rel == file or os.path.basename(rel) == "__init__.py":
+                return _STATUS_OK, "file exists in workspace"
+        # Check raw filesystem too (empty files may not be indexed).
+        ws_file = Path(file) if file else None
+        if ws_file is not None and ws_file.is_file():
+            return _STATUS_OK, "file exists in workspace"
     if file in rel_files:
+        return _STATUS_OK, "file exists in workspace"
+    # Partial path matching: the LLM may cite a sub-path without the full prefix
+    # (e.g. `evolution/metrics.py` when the actual file is `agent1/evolution/metrics.py`).
+    # Match by basename + directory suffix so near-duplicate paths resolve correctly.
+    base = os.path.basename(file)
+    for rel in rel_files:
+        if os.path.basename(rel) == base and (rel.endswith(file) or file.endswith(os.path.dirname(rel).replace("\\", "/"))):
+            return _STATUS_OK, f"file exists at {rel} (path prefix differs)"
+    # Wildcard patterns (e.g. benchmark_*.json) — match against any existing file.
+    if "*" in file or "?" in file:
+        import fnmatch
+        for rel in rel_files:
+            if fnmatch.fnmatch(os.path.basename(rel), os.path.basename(file)):
+                return _STATUS_OK, "file matching pattern exists in workspace"
+        # Check raw filesystem too.
+        ws_dir = Path(".")  # relative to cwd; verifier runs from workspace root
+        for found in ws_dir.rglob("*"):
+            if fnmatch.fnmatch(found.name, os.path.basename(file)):
+                return _STATUS_OK, "file matching pattern exists in workspace"
+        return _STATUS_FLAGGED, f"no file matches pattern {file}"
+    # Check raw filesystem as fallback (files may exist but not be indexed).
+    ws_file = Path(file) if file else None
+    if ws_file is not None and ws_file.is_file():
         return _STATUS_OK, "file exists in workspace"
     return _STATUS_FLAGGED, "file not found in workspace"
 
@@ -278,11 +331,24 @@ def _verify_symbol(
             return _STATUS_OK, f"defined at {file}:{defs[name]}"
         if name in attrs_by_file.get(file, set()):
             return _STATUS_OK, f"attribute on self in {file}"
-        if re.fullmatch(r"[a-z][a-z0-9_]*", name) and not _symbol_exists_anywhere(
-            name, defs_by_file, attrs_by_file
-        ):
+        # Scoped-file miss: the LLM often cites the wrong file for a symbol that
+        # exists elsewhere (e.g. "conftest.py defines Agent" when Agent is in agent.py).
+        # A global hit means the claim is real — just mis-scoped, not fabricated.
+        # Flag with an informative reason so the analysis author can correct the scope.
+        hits = []
+        for f, defs in defs_by_file.items():
+            for name_in, ln in defs.items():
+                if name_in == name:
+                    hits.append((f, ln))
+        if hits:
+            f, ln = sorted(hits)[0]
+            return _STATUS_FLAGGED, f"defined at {f}:{ln} but not in claimed file {file}"
+        attr_files = sorted(f for f, attrs in attrs_by_file.items() if name in attrs)
+        if attr_files:
+            return _STATUS_FLAGGED, f"attribute on self in {attr_files[0]} but not in claimed file {file}"
+        if re.fullmatch(r"[a-z][a-z0-9_]*", name):
             return _STATUS_SKIP, "prose-like identifier (not found anywhere)"
-        return _STATUS_FLAGGED, f"symbol not found in {file}"
+        return _STATUS_FLAGGED, f"symbol not found in {file} or anywhere"
     hits = []
     for f, defs in defs_by_file.items():
         for name_in, ln in defs.items():
@@ -316,15 +382,57 @@ def _verify_line(
     return _STATUS_FLAGGED, f"line {line_no} out of range ({file} has {total} lines)"
 
 
-def _verify_snippet(snippet: str, file: str | None, contents: dict[str, str]) -> tuple[str, str]:
+def _verify_snippet(
+    snippet: str,
+    file: str | None,
+    contents: dict[str, str],
+    defs_by_file: dict[str, dict[str, int]] | None = None,
+    attrs_by_file: dict[str, set[str]] | None = None,
+    rel_files: list[str] | None = None,
+) -> tuple[str, str]:
     if file is None:
         return _STATUS_SKIP, "no file context"
+    # Wildcard patterns — two kinds: filename globs (benchmark_*.json) and module
+    # path references with wildcards (commands.*, agent_core.logging_config).
+    if "*" in snippet or "?" in snippet:
+        import fnmatch
+        base = os.path.basename(snippet)
+        # Filename glob: match against existing file basenames.
+        for rel, content in contents.items():
+            if fnmatch.fnmatch(os.path.basename(rel), base):
+                return _STATUS_OK, "file matching pattern exists in workspace"
+        # Module path reference (e.g. commands.*): check if any import statement
+        # references the module prefix — this is a valid code pattern even though
+        # no single file literally contains the dotted wildcard string.
+        prefix = snippet.rstrip(".*").rstrip(".")  # e.g. "commands" from "commands.*"
+        for rel, content in contents.items():
+            if re.search(r'from\s+[\w.]+\s+import\s+', content) and (prefix + ".") in content or prefix in content:
+                return _STATUS_OK, f"module path reference found in {rel}"
+        # Check raw filesystem for filename globs too.
+        ws_dir = Path(".")  # verifier runs from workspace root
+        for found in ws_dir.rglob("*"):
+            if fnmatch.fnmatch(found.name, base):
+                return _STATUS_OK, "file matching pattern exists in workspace"
+        return _STATUS_FLAGGED, f"no file matches pattern {snippet}"
+    # Bare function-call patterns like print() — the LLM may cite the zero-arg
+    # form while the code uses print(...) with arguments. Recognize the call
+    # prefix as a valid match even when the exact literal isn't present.
+    if re.fullmatch(r"[A-Za-z_]\w*\(\)", snippet):
+        func_name = snippet[:-2]  # strip ()
+        for rel, content in contents.items():
+            if f"{func_name}(" in content:
+                return _STATUS_OK, "code pattern found in file"
+        return _STATUS_FLAGGED, "code pattern not found in file"
     if not any(marker in snippet for marker in _SNIPPET_MARKERS):
         return _STATUS_SKIP, "prose fragment without code markers"
     if re.fullmatch(r"[^A-Za-z0-9_]+", snippet):
         return _STATUS_SKIP, "shell metacharacters or prose fragment"
     content = contents.get(file, "")
     if not content:
+        # File may exist but be empty/unreadable — check raw filesystem.
+        ws_file = Path(file) if file else None
+        if ws_file is not None and ws_file.is_file():
+            return _STATUS_SKIP, "file exists but no readable content"
         return _STATUS_FLAGGED, "file not found in workspace"
     if snippet in content:
         return _STATUS_OK, "code pattern found in file"
@@ -332,6 +440,38 @@ def _verify_snippet(snippet: str, file: str | None, contents: dict[str, str]) ->
               if "." in t or "=" in t]
     if any(t in content for t in tokens):
         return _STATUS_OK, "code pattern found in file"
+    # Fallback: check all files globally (snippet may be scoped to wrong file).
+    for rel, content in contents.items():
+        if snippet in content or any(t in content for t in tokens):
+            return _STATUS_OK, f"code pattern found in {rel}"
+    # Dotted module/method references (e.g. agent_core.logging_config,
+    # FileSystem.normalize_path, FileSearcher._safe_path) — the LLM cites a
+    # dotted path that no single file literally contains as one string, but each
+    # component exists as a class/def/import/module in some file. Verify by
+    # checking if all components resolve to real definitions/imports anywhere.
+    parts = snippet.split(".")
+    if len(parts) >= 2 and all(p for p in parts):
+        if defs_by_file is None or attrs_by_file is None or rel_files is None:
+            return _STATUS_FLAGGED, "code pattern not found in file"
+        resolved: list[str] = []
+        for part in parts:
+            found_in = None
+            for f, defs in defs_by_file.items():
+                if part in defs:
+                    found_in = f
+                    break
+            if not found_in:
+                for f, attrs in attrs_by_file.items():
+                    if part in attrs:
+                        found_in = f
+                        break
+            # Module path components (e.g. "agent_core", "logging_config") may be
+            # directory/file names rather than definitions — check existence too.
+            if not found_in and any(part.endswith(".py") or os.path.basename(rel) == part for rel in rel_files):
+                found_in = next((rel for rel in rel_files if os.path.basename(rel) == part), None)
+            resolved.append(found_in or "")
+        if all(r for r in resolved):
+            return _STATUS_OK, f"all components of dotted reference resolve ({snippet})"
     return _STATUS_FLAGGED, "code pattern not found in file"
 
 
@@ -424,7 +564,9 @@ async def verify_analysis_claims(analysis: str, ws_path: Path) -> VerificationRe
                 status, reason = _verify_line(c.line or 0, c.file, line_counts, rel_files)
             elif c.kind == "snippet":
                 _attach_context(c, claims)
-                status, reason = _verify_snippet(c.text, c.file, contents)
+                status, reason = _verify_snippet(
+                    c.text, c.file, contents, defs_by_file, attrs_by_file, rel_files
+                )
             else:
                 _attach_context(c, claims)
                 status, reason = _verify_symbol(c.text, c.file, defs_by_file, attrs_by_file)

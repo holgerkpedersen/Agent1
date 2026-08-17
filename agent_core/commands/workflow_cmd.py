@@ -64,6 +64,14 @@ _AGENT_SPEC_KEYWORDS = frozenset([
     "agent", "self-improvement", "self improvement", "vulnerability",
     "safe", "safety", "security", "hardening", "remediation",
     "llm", "prompt injection", "reward hacking", "capability escalation",
+    # Internal identifiers: specs about the agent's own loop internals must also
+    # trigger the workspace context scan, otherwise the model has no path
+    # knowledge and (per the PATH VERIFICATION rule) BLOCKs asking where things
+    # are instead of answering (observed: "chat_nlp ... stuck detection" spec
+    # with no context → BLOCKED).
+    "chat_nlp", "auto-continue", "auto continue", "stuck detection",
+    "_looks_incomplete", "heuristics", "untested", "test coverage",
+    "semantic index", "tool loop", "orchestrator", "decisions", "trace",
 ])
 
 _PRIORITIZED_LLM_FILES = [
@@ -80,6 +88,19 @@ _HIGH_RISK_STDLIB_NAMES = frozenset({
     "asyncio", "collections", "functools", "itertools", "typing",
     "importlib", "inspect", "threading", "multiprocessing", "signal",
 })
+
+#: Prompt rule injected into every analysis-adjacent system prompt (decision #035).
+#: Models like laguna-s-2.1 fabricate file paths and symbol locations instead of
+#: checking what exists; this rule forces them to ground citations in the workspace
+#: context listing rather than inventing paths, which previously led to a stuck
+#: state where the model kept retrying non-existent paths.
+_PATH_VERIFICATION_RULE = (
+    "PATH VERIFICATION (CRITICAL): Every file path you cite MUST come from the "
+    "workspace context listing provided above. If a path is NOT in that listing, do "
+    "NOT cite it — write `UNVERIFIED` instead of guessing a location or line number. "
+    "Never invent paths: if unsure whether a symbol exists in a file, first list the "
+    "directory and read the real file before stating where it is defined."
+)
 
 
 def _detect_subpackages(workspace: str) -> list[str]:
@@ -365,6 +386,79 @@ def _analysis_flag_gate(checked: int, flagged: int, force: bool, report_text: st
     # --force may continue past unverifiable claims.
     answer = auto_choice("  Continue to planning anyway? (y/N): ", default="n", auto_default="n").strip().lower()
     return answer in ("y", "yes")
+
+
+async def _repair_analysis(
+    agent: "Agent", analysis_text: str, report_text: str, ws_path_str: str
+) -> tuple[str | None, int, int]:
+    """One-shot LLM repair round for flagged claims (decision #036).
+
+    Feeds the original analysis + its Verification Report + the ground-truth module
+    inventory back to the model and asks it to rewrite ONLY the flagged lines with
+    correct paths/symbols/lines. Re-verifies; returns ``(repaired_text, checked,
+    flagged)`` — repaired_text is None when repair did not clear all flags (caller
+    falls back to today's gate). The inventory teaches the model what actually
+    exists so it stops inventing paths that laguna-s-2.1-style models fabricate.
+    """
+    inventory = _module_inventory(ws_path_str) or "(no modules found)"
+    report = report_text.split("## Verification Report", 1)[-1].strip()
+    repair_system = (
+        _PATH_VERIFICATION_RULE + "\n\n"
+        "You are a precise code auditor. The analysis below has UNVERIFIED claims — paths,\n"
+        "symbols, or line numbers that could not be confirmed against the workspace.\n"
+        "Rewrite ONLY those flagged lines with correct values drawn from the module inventory\n"
+        "and file listings given above; leave every verified claim unchanged. Output the full\n"
+        "corrected analysis text — no intro, no tags."
+    )
+    repair_user = (
+        f"## Module inventory (ground truth):\n{inventory}\n\n"
+        f"## Verification Report:\n{report}\n\n"
+        f"## Analysis to repair:\n{analysis_text}"
+    )
+    try:
+        repaired = await agent.llm.chat([
+            {"role": "system", "content": repair_system},
+            {"role": "user", "content": repair_user},
+        ], max_tokens=8000)
+    except Exception as exc:  # pragma: no cover - defensive, never raises
+        print(f"  [analyze] Repair round failed (non-blocking): {exc}")
+        return None, 0, 0
+    if not repaired or repaired.startswith("[Error") or repaired.startswith("File not found"):
+        return None, 0, 0
+    result = await verify_analysis_claims(repaired, Path(ws_path_str))
+    print(
+        f"  [analyze] Repair round re-verified {result.checked} claims "
+        f"({result.flagged if result.flagged else 'clean'})"
+    )
+    return (repaired if result.flagged == 0 else None), result.checked, result.flagged
+
+
+async def _verify_or_repair_gate(
+    agent: "Agent", analysis_text: str, analysis_md: str, ws_path: Path | str, checked: int,
+    flagged: int, report_text: str, force: bool,
+) -> bool:
+    """Verify gate with an automatic path-existence repair pass (decision #036).
+
+    On any unverifiable claim (and not ``--force``), run one LLM repair round; if it
+    clears all flags the analysis is rewritten in *analysis_md* and planning proceeds
+    without a pause. Otherwise today's confirmation gate applies (``--force`` only
+    warns). Returns True when the run may continue past verification.
+    """
+    ws_path_str = str(ws_path)
+    v_text = report_text
+    v_flagged = flagged
+    if v_flagged > 0 and not force:
+        print("  [analyze] Running path-existence repair pass for flagged claims...")
+        repaired, rep_checked, rep_flagged = await _repair_analysis(
+            agent, analysis_text, v_text, ws_path_str
+        )
+        if repaired is not None:
+            with open(analysis_md, "w", encoding="utf-8") as f:
+                f.write(repaired)
+            print(f"  [analyze] Repair re-verified {rep_checked} claims ({rep_flagged})")
+            v_text = repaired
+            v_flagged = rep_flagged
+    return _analysis_flag_gate(checked, v_flagged, force, report_text=v_text)
 
 
 async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: str | Path) -> None:
@@ -672,6 +766,7 @@ class WorkflowCommand(Command):
                     ws_ctx_found, ws_code_context = _scan_workspace_context(ws_path, spec_content)
                     if ws_ctx_found:
                         print("  [analyze] Included workspace code context (self-improvement detected)")
+                    module_inventory = _module_inventory(str(ws_path))
                     trace_header = f"# Analysis for workspace {ws_path}\n"
                     if spec_file:
                         trace_header += f"| Spec file: {os.path.basename(spec_file)}\n\n"
@@ -679,6 +774,7 @@ class WorkflowCommand(Command):
                         trace_header += "\n"
 
                     analyze_system = (
+                        _PATH_VERIFICATION_RULE + "\n"
                         "You are an expert software analyst and security reviewer. Produce a structured analysis.\n"
                         "Use exactly these section headers, in this order:\n\n"
                         "## 1. SCOPE\n"
@@ -716,6 +812,15 @@ class WorkflowCommand(Command):
                     )
 
                     user_prompt = f"Analyze this specification for the agent in workspace {ws_path}:\n\n{spec_content}"
+                    # Always provide the ground-truth module listing: the PATH
+                    # VERIFICATION rule requires every cited path to come from the
+                    # workspace context, so without this the model must either
+                    # fabricate (forbidden) or BLOCK asking for locations.
+                    if module_inventory:
+                        user_prompt += (
+                            "\n\n## Workspace module inventory (ground truth — only these modules exist):\n"
+                            f"{module_inventory}\n"
+                        )
                     if ws_ctx_found:
                         user_prompt += (
                             "\n\n## Workspace code context (target agent being hardened):\n"
@@ -751,7 +856,19 @@ class WorkflowCommand(Command):
                                 later_idx = r.find(later, idx + 1)
                                 if later_idx != -1 and later_idx < next_section:
                                     next_section = later_idx
-                            print(f"\n{r[idx:next_section].strip()}")
+                            section_text = r[idx:next_section].strip()
+                            # Models occasionally repeat a section header (observed
+                            # with the "## 7." heading); show each section once.
+                            seen: list[str] = []
+                            parts = section_text.splitlines()
+                            for line in parts:
+                                stripped = line.strip()
+                                if stripped == section_marker and section_marker in seen:
+                                    continue
+                                if stripped == section_marker:
+                                    seen.append(section_marker)
+                                print(line)
+                            print("")
                         print("\nNext steps:")
                         print("  1. Answer the questions above, then run again with --desc \"<answers>\"")
                         print("     or create a file and pass it via --from <file>")
@@ -773,6 +890,7 @@ class WorkflowCommand(Command):
                         )
                     critique_r = await agent.llm.chat([
                         {"role": "system", "content": (
+                            _PATH_VERIFICATION_RULE + "\n"
                             "You are a senior security engineer. Critique the following analysis.\n"
                             "List concrete gaps, missed attack vectors, missing metrics, or overlooked\n"
                             "code references. Be specific — cite file paths and line-level concerns.\n"
@@ -791,7 +909,7 @@ class WorkflowCommand(Command):
                     with open(analysis_md, "r", encoding="utf-8") as f:
                         final_analysis = f.read()
                     v_text, v_checked, v_flagged = await _write_verified_analysis(final_analysis, analysis_md, ws_path)
-                    if not _analysis_flag_gate(v_checked, v_flagged, force, report_text=v_text):
+                    if not await _verify_or_repair_gate(agent, final_analysis, analysis_md, ws_path, v_checked, v_flagged, v_text, force):
                         print("\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force.")
                         return True
 
@@ -848,6 +966,7 @@ class WorkflowCommand(Command):
                     entities = f.read()
                 r = await agent.llm.chat([
                     {"role": "system", "content": (
+                        _PATH_VERIFICATION_RULE + "\n\n"
                         "Create a numbered task plan. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
                         "FORMAT — exactly one task per line:\n"
                         "  N. `path/to/file.py` — short description\n\n"
@@ -904,7 +1023,7 @@ class WorkflowCommand(Command):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
                 v_text, v_checked, v_flagged = await _write_verified_analysis(r, analysis_md, ws_path)
-                if not _analysis_flag_gate(v_checked, v_flagged, force, report_text=v_text):
+                if not await _verify_or_repair_gate(agent, r, analysis_md, ws_path, v_checked, v_flagged, v_text, force):
                     print("\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force.")
                     return True
                 await _extract_decisions_if_any(agent, analysis_md, ws_path)
@@ -961,6 +1080,7 @@ class WorkflowCommand(Command):
                     plan = f.read()
                 r = await agent.llm.chat([
                     {"role": "system", "content": (
+                        _PATH_VERIFICATION_RULE + "\n\n"
                         "Create a numbered task plan for adding these features. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
                         "FORMAT — exactly one task per line:\n"
                         "  N. [NEW] `path/to/new.py` — short description\n"
@@ -1035,7 +1155,7 @@ class WorkflowCommand(Command):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
                 v_text, v_checked, v_flagged = await _write_verified_analysis(r, analysis_md, ws_path)
-                if not _analysis_flag_gate(v_checked, v_flagged, force, report_text=v_text):
+                if not await _verify_or_repair_gate(agent, r, analysis_md, ws_path, v_checked, v_flagged, v_text, force):
                     print("\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force.")
                     return True
                 await _extract_decisions_if_any(agent, analysis_md, ws_path)
@@ -1048,6 +1168,7 @@ class WorkflowCommand(Command):
                 print("\n[plan] Creating plan...")
                 r = await agent.llm.chat([
                     {"role": "system", "content": (
+                        _PATH_VERIFICATION_RULE + "\n"
                         "Create a prioritized implementation plan. "
                         "Categorize: [FIX], [FEATURE], [ARCH], [OPS]. "
                         "Priorities: MUST, SHOULD, COULD. Max 3 items per category. "
@@ -1089,6 +1210,7 @@ class WorkflowCommand(Command):
                     plan = f.read()
                 r = await agent.llm.chat([
                     {"role": "system", "content": (
+                        _PATH_VERIFICATION_RULE + "\n\n"
                         "Create a numbered task plan. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
                         "FORMAT — exactly one task per line:\n"
                         "  N. `path/to/file.py` — short description\n\n"

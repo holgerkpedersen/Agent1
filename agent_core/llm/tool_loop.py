@@ -96,11 +96,80 @@ _NO_PROGRESS_FORCE = (
     "change."
 )
 
+#: Result prefixes that signal a path does not exist in the workspace (the agent's
+#: read_file/write_file/apply_patch return these verbatim).  These are exactly what
+#: laguna-s-2.1-style models see when they cite an invented path instead of checking
+#: it exists — without this, the model loops retrying the same dead path forever.
+_PATH_MISS_PREFIXES = ("File not found:", "Error reading file:")
+
+#: Steering note injected with a parent-directory listing when a tool result shows
+#: a missing path — supplies the simple existence check the model lacks so it can
+#: progress instead of getting stuck on the same non-existent path (decision #035).
+_PATH_RECOVERY_NOTE = (
+    "PATH RECOVERY: The requested path does not exist. Parent directory listing:\n"
+    "{listing}\n\nRead or use a path from this listing instead — do NOT retry the\n"
+    "same non-existent path."
+)
+
 
 #: Console display cap for [result] lines. The model ALWAYS receives the full
 #: result; this only bounds what the human observer sees in the REPL (was 200,
 #: which made read/search output look cut off).
 _RESULT_DISPLAY_LIMIT = 1500
+
+#: Tools whose result a missing-path recovery can meaningfully follow up on.
+_PATH_SENSITIVE_TOOLS = frozenset({"read", "edit", "write"})
+
+#: Trace guard label for the path-existence recovery (decision #035). Defined here
+#: because harnessfix.tracing does not expose a dedicated enum value.
+GUARD_PATH_MISS = "path_miss"
+
+
+def _is_path_miss(result_str: str) -> bool:
+    """True when *result_str* reports that the requested path does not exist."""
+    return any(result_str.startswith(p) for p in _PATH_MISS_PREFIXES)
+
+
+def _parent_dir_of(args: dict[str, Any]) -> str:
+    """Derive a parent directory to list from tool args (``path``/``file``)."""
+    import pathlib
+
+    raw = ""
+    if isinstance(args, dict):
+        for key in ("path", "file"):
+            val = args.get(key)
+            if isinstance(val, str) and val:
+                raw = val
+                break
+    parent = str(pathlib.PurePath(raw).parent) if raw else "."
+    return parent
+
+
+async def _recover_path_miss(
+    execute_tool_fn: Callable[[str, dict[str, Any]], Awaitable[str]],
+    args: dict[str, Any],
+    result_str: str,
+) -> tuple[str, bool]:
+    """Attach a PATH RECOVERY note with the parent directory listing.
+
+    Returns ``(augmented_result, discovered)`` — ``discovered`` is True when a
+    fresh directory listing was obtained (counts as progress so the stuck guard
+    does not fire on retrying an invented path).  Any failure still yields a
+    textual recovery hint without the listing rather than leaving the model dead.
+    """
+    parent = _parent_dir_of(args)
+    listing = ""
+    discovered = False
+    try:
+        listing = await execute_tool_fn("list_files", {"path": str(parent)})
+        if not _is_path_miss(listing):
+            discovered = True
+    except Exception as exc:  # pragma: no cover - defensive, never raises
+        listing = f"(listing failed: {exc})"
+    note = _PATH_RECOVERY_NOTE.format(
+        listing=truncate(listing or "(empty)", RESULT_CAP) if listing else "(empty)"
+    )
+    return f"{result_str}\n\n{note}", discovered
 
 
 class ToolLoopRunner:
@@ -364,7 +433,23 @@ class ToolLoopRunner:
                     total_runs = (
                         seen_calls.get(call_key, 1) if seen_calls is not None else 1
                     )
-                    if prev_was_duplicate:
+                    # If the repeated call's prior result was a missing path and this
+                    # tool can follow up with a listing, recover before declaring stuck —
+                    # an invented-path retry gets un-stuck instead of dead-ending (decision #035).
+                    if _is_path_miss(prev_result) and tool_name in _PATH_SENSITIVE_TOOLS:
+                        result_str, discovered = await _recover_path_miss(
+                            execute_tool_fn, args, prev_result
+                        )
+                        calls_without_progress = 0 if discovered else calls_without_progress + 1
+                        self._emit(
+                            KIND_GUARD_TRIGGERED,
+                            LAYER_LIFECYCLE,
+                            guard=GUARD_PATH_MISS,
+                            iteration=iteration,
+                            tool=tool_name,
+                            note=_PATH_RECOVERY_NOTE.format(listing="..."),
+                        )
+                    elif prev_was_duplicate:
                         # Third consecutive identical call: the model is stuck.
                         # Stop the loop right here and force a text answer.
                         result_str = (
@@ -454,6 +539,25 @@ class ToolLoopRunner:
                         message=str(exc)[:500],
                     )
                     result_str = f"Tool error: {exc}"
+
+                #: Path-existence recovery (decision #035): when a read/edit/write
+                #: reports the path does not exist, augment the result with a parent-
+                #: directory listing so the model can discover the real path instead of
+                #: looping on an invented one — this is the simple existence check laguna-s-2.1 lacked.
+                if _is_path_miss(result_str) and tool_name in _PATH_SENSITIVE_TOOLS:
+                    result_str, discovered = await _recover_path_miss(
+                        execute_tool_fn, args, result_str
+                    )
+                    if discovered:
+                        calls_without_progress = 0
+                    self._emit(
+                        KIND_GUARD_TRIGGERED,
+                        LAYER_LIFECYCLE,
+                        guard=GUARD_PATH_MISS,
+                        iteration=iteration,
+                        tool=tool_name,
+                        note=_PATH_RECOVERY_NOTE.format(listing="..."),
+                    )
                 self._emit(
                     KIND_TOOL_RESULT,
                     LAYER_TOOL_INTERFACE,

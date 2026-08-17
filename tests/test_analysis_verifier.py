@@ -147,7 +147,9 @@ class TestVerifyAnalysisClaims:
         )
         result = asyncio.run(self._verify(ws, analysis))
         assert result.flagged >= 1
-        assert "symbol not found in agent.py" in result.text
+        # Mis-scoped symbol (exists elsewhere but claimed in wrong file) is flagged
+        # with an informative reason pointing to the actual definition location.
+        assert "but not in claimed file agent.py" in result.text
 
     def test_backslash_path_in_backticks(self, tmp_path: Path) -> None:
         ws = self._build_ws(tmp_path)
