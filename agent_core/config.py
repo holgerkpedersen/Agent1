@@ -70,6 +70,20 @@ class AgentSettings:
 _LLM_PROVIDERS = ("lmstudio", "opencode")
 
 
+def _store_secret(name: str) -> str:
+    """Secure-store lookup (OS keyring / encrypted file) without env fallback.
+
+    Used as the last tier in secret resolution: env var -> .env -> store
+    (plan OPS item 4).  Never raises — settings load must not break.
+    """
+    try:
+        from agent_core.security.secrets import get_secret
+        return get_secret(name, "")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Secret store lookup failed for %s: %s", name, exc)
+        return ""
+
+
 def _validate_settings(settings: AgentSettings) -> None:
     """Validate the given settings and raise ConfigurationError if invalid."""
 
@@ -197,10 +211,10 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         display_mode=_parse_display_mode(display_mode_raw, AgentDisplayMode.VERBOSE),
         llm_provider=(os.environ.get("AGENT_LLM_PROVIDER") or env_vars.get("AGENT_LLM_PROVIDER") or "lmstudio").strip().lower(),
         opencode_server_url=os.environ.get("OPENCODE_SERVER_URL") or env_vars.get("OPENCODE_SERVER_URL") or "http://127.0.0.1:4096",
-        opencode_password=os.environ.get("OPENCODE_SERVER_PASSWORD") or env_vars.get("OPENCODE_SERVER_PASSWORD") or "",
+        opencode_password=os.environ.get("OPENCODE_SERVER_PASSWORD") or env_vars.get("OPENCODE_SERVER_PASSWORD") or _store_secret("OPENCODE_SERVER_PASSWORD"),
         opencode_model=os.environ.get("AGENT_OPENCODE_MODEL") or env_vars.get("AGENT_OPENCODE_MODEL") or "opencode-go/deepseek-v4-flash",
         opencode_api_url=os.environ.get("OPENCODE_API_URL") or env_vars.get("OPENCODE_API_URL") or "https://opencode.ai/zen/go/v1",
-        opencode_api_key=os.environ.get("OPENCODE_API_KEY") or env_vars.get("OPENCODE_API_KEY") or "",
+        opencode_api_key=os.environ.get("OPENCODE_API_KEY") or env_vars.get("OPENCODE_API_KEY") or _store_secret("OPENCODE_API_KEY"),
     )
 
     _validate_settings(settings)
