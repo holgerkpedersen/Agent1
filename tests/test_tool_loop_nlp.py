@@ -659,13 +659,16 @@ class TestPersistentChatHistory:
                 await agent.chat_nlp("hello")
 
             asyncio.run(run())
-            # The SAVED history is projected: only the last exchange survives.
+            # The SAVED history is the projected bounded window: system prompt
+            # plus the last 59 messages (msg-23..msg-79, hello, done).
             saved = json.loads(history_file.read_text(encoding="utf-8"))
+            assert len(saved) == 60
             assert saved[0]["content"] == "SYS"
-            assert saved[1]["content"] == "hello"
-            assert saved[2]["content"] == "done"
+            assert saved[1]["content"] == "msg-23"
+            assert saved[-2]["content"] == "hello"
+            assert saved[-1]["content"] == "done"
 
-    def test_projection_keeps_only_last_exchange(self):
+    def test_projection_keeps_bounded_multi_exchange(self):
         from agent import _project_chat_history
         messages = [
             {"role": "system", "content": "SYS"},
@@ -675,8 +678,11 @@ class TestPersistentChatHistory:
             {"role": "assistant", "content": "new answer"},
         ]
         projected = _project_chat_history(messages)
-        roles = [m["content"] for m in projected]
-        assert roles == ["SYS", "new task", "new answer"]
+        # Multi-exchange history survives the projection (bounded only by
+        # _trim_chat_history), so a fresh session continues the dialogue.
+        assert [m["content"] for m in projected] == [
+            "SYS", "old task", "old answer", "new task", "new answer",
+        ]
 
     def test_projection_drops_steering_notes_and_empty_placeholders(self):
         from agent import _project_chat_history
@@ -748,6 +754,111 @@ class TestPersistentChatHistory:
             agent.clear_history()
             assert agent._chat_history == []
             assert not history_file.exists()
+
+
+class TestPersistentMemory:
+    """Cross-session memory (agent_memory.json) must survive REPL restarts."""
+
+    def _write_history(self, tmp_path):
+        history_file = tmp_path / "chat_history.json"
+        history_file.write_text("[]", encoding="utf-8")
+        return str(history_file)
+
+    def test_loads_memory_from_previous_session(self, tmp_path):
+        from unittest.mock import patch
+        from agent import Agent
+        memory_file = tmp_path / "agent_memory.json"
+        memory_file.write_text(json.dumps({
+            "files_read": ["a.py", "b.py"],
+            "semantic_index": {"word": [1, 2, 3]},
+            "knowledge_graph": {"nodes": ["n1"]},
+            "working_memory": ["note"],
+            "history": [{"role": "user", "content": "old"}],
+        }), encoding="utf-8")
+        with patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)), \
+             patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)):
+            agent = Agent(workspace=".")
+            assert agent._files_read == {"a.py", "b.py"}
+            assert agent._semantic_index == {"word": {1, 2, 3}}
+            assert agent._knowledge_graph == {"nodes": ["n1"]}
+            assert agent._working_memory == ["note"]
+            assert agent._history == [{"role": "user", "content": "old"}]
+
+    def test_missing_memory_file_defaults(self, tmp_path):
+        from unittest.mock import patch
+        from agent import Agent
+        with patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)), \
+             patch("agent.AGENT_MEMORY_JSON_PATH", str(tmp_path / "none.json")):
+            agent = Agent(workspace=".")
+            assert agent._files_read == set()
+            assert agent._semantic_index == {}
+            assert agent._knowledge_graph == {}
+            assert agent._working_memory == []
+            assert agent._history == []
+
+    def test_corrupt_memory_file_defaults(self, tmp_path):
+        from unittest.mock import patch
+        from agent import Agent
+        memory_file = tmp_path / "agent_memory.json"
+        memory_file.write_text("{not valid json", encoding="utf-8")
+        with patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)), \
+             patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)):
+            agent = Agent(workspace=".")
+            assert agent._files_read == set()
+            assert agent._semantic_index == {}
+            assert agent._knowledge_graph == {}
+
+    def test_clear_history_removes_memory_file(self, tmp_path):
+        from unittest.mock import patch
+        from agent import Agent
+        memory_file = tmp_path / "agent_memory.json"
+        memory_file.write_text(json.dumps({
+            "files_read": ["a.py"],
+            "semantic_index": {},
+            "knowledge_graph": {},
+            "working_memory": [],
+            "history": [],
+        }), encoding="utf-8")
+        with patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)), \
+             patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)):
+            agent = Agent(workspace=".")
+            assert agent._files_read == {"a.py"}
+            agent.clear_history()
+            assert agent._files_read == set()
+            assert agent._knowledge_graph == {}
+            assert not memory_file.exists()
+
+    def test_chat_nlp_persists_memory(self, tmp_path):
+        import asyncio
+        from unittest.mock import patch
+        from agent import Agent
+        memory_file = tmp_path / "agent_memory.json"
+
+        class FakeLLM:
+            async def chat(self, messages, tools=None, **kwargs):
+                return "done"
+
+        with patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)), \
+             patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)):
+            agent = Agent(workspace=".")
+            agent.llm = FakeLLM()
+            agent._files_read = {"a.py", "b.py"}
+            agent._working_memory = ["note"]
+            agent._knowledge_graph = {"nodes": ["n1"]}
+            agent._build_semantic_index(["hello"], 0)
+
+            async def run():
+                await agent.chat_nlp("hello")
+
+            asyncio.run(run())
+
+            assert memory_file.exists()
+            saved = json.loads(memory_file.read_text(encoding="utf-8"))
+            assert saved["files_read"] == ["a.py", "b.py"]
+            assert saved["working_memory"] == ["note"]
+            assert saved["knowledge_graph"] == {"nodes": ["n1"]}
+            assert "hello" in saved["semantic_index"]
+            assert saved["history"] == []
 
 
 class TestNoProgressGuard:

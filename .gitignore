@@ -134,5 +134,6 @@ reports/benchmark_harnessfix.json
 nul
 .poolside/
 agent_memory.db
+agent_memory.json
 backups/
 model

@@ -12,7 +12,11 @@ import sys
 from collections import defaultdict
 from agent_core import to_windows_path
 from agent_core.colors import cyan, green, yellow, blue, magenta, gray, red
-from agent_core.constants import resolve_model, CHAT_HISTORY_JSON_PATH
+from agent_core.constants import (
+    resolve_model,
+    CHAT_HISTORY_JSON_PATH,
+    AGENT_MEMORY_JSON_PATH,
+)
 from agent_core.config import load_agent_settings, AgentDisplayMode
 from agent_core.file_system import FileSystem
 from agent_core.file_searcher import FileSearcher
@@ -156,6 +160,11 @@ class Agent:
         #: session continues where the previous one left off.
         self._chat_history: list[dict[str, Any]] = self._load_chat_history()
         self._nlp_workspace: str | None = None  # workspace override for NLP tools (set by paste --workspace)
+
+        #: Cross-session memory (files read, semantic index, knowledge graph,
+        #: working memory) — restored from agent_memory.json so work done in a
+        #: previous session is not forgotten.
+        self._load_memory()
 
         # Initialize LLM client for AI analysis (LM Studio)
         self.llm = LLMClient(model_name=self.model_name)
@@ -855,6 +864,7 @@ class Agent:
         # (or a follow-up prompt) can continue the dialogue.
         self._chat_history = _trim_chat_history(self._chat_history)
         self._save_chat_history()
+        self._save_memory()
 
         clean = re.sub(r'</?tool_call>', '', final_text)
         clean = re.sub(r'</?function_call>', '', clean)
@@ -940,6 +950,7 @@ class Agent:
         self._semantic_index.clear()
         try:
             os.remove(CHAT_HISTORY_JSON_PATH)
+            os.remove(AGENT_MEMORY_JSON_PATH)
         except OSError:
             print("Warning: silenced exception in agent.py:901")
 
@@ -950,9 +961,9 @@ class Agent:
     def _load_chat_history(self) -> list[dict[str, Any]]:
         """Load the persisted NLP conversation from the previous session.
 
-        The persisted history only contains the last exchange (see
-        ``_project_chat_history``), so a fresh prompt can never be anchored to
-        an ancient request from an earlier session.
+        The persisted history holds a bounded multi-exchange window (see
+        ``_project_chat_history``), so a fresh session continues the dialogue
+        instead of forgetting it.
         """
         try:
             with open(CHAT_HISTORY_JSON_PATH, "r", encoding="utf-8") as f:
@@ -974,6 +985,62 @@ class Agent:
                 json.dump(_project_chat_history(self._chat_history), f, ensure_ascii=False, indent=2)
         except OSError:
             print("Warning: silenced exception in agent.py:933")
+
+    # ------------------------------------------------------------------
+    #  Persistent agent memory (agent_memory.json)
+    # ------------------------------------------------------------------
+
+    def _load_memory(self) -> None:
+        """Load cross-session memory from the previous session.
+
+        Restores files read, the semantic index, the knowledge graph, and
+        working memory so a fresh session resumes with accumulated context
+        instead of starting from zero.  Missing or corrupt files fall back to
+        the empty defaults.  File mtimes are intentionally NOT persisted —
+        staleness detection is scoped to the current session.
+        """
+        try:
+            with open(AGENT_MEMORY_JSON_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return
+            files = data.get("files_read")
+            if isinstance(files, list):
+                self._files_read = {str(p) for p in files}
+            index = data.get("semantic_index")
+            if isinstance(index, dict):
+                self._semantic_index = defaultdict(
+                    set,
+                    {k: set(v) for k, v in index.items() if isinstance(v, list)},
+                )
+            kg = data.get("knowledge_graph")
+            if isinstance(kg, dict):
+                self._knowledge_graph = kg
+            wm = data.get("working_memory")
+            if isinstance(wm, list):
+                self._working_memory = wm
+            hist = data.get("history")
+            if isinstance(hist, list):
+                self._history = hist
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+
+    def _save_memory(self) -> None:
+        """Persist cross-session memory so the next session resumes with it."""
+        try:
+            data = {
+                "files_read": sorted(self._files_read),
+                "semantic_index": {
+                    k: sorted(v) for k, v in self._semantic_index.items()
+                },
+                "knowledge_graph": self._knowledge_graph,
+                "working_memory": self._working_memory,
+                "history": self._history,
+            }
+            with open(AGENT_MEMORY_JSON_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError:
+            print("Warning: silenced exception in agent.py:1009")
 
 
 _MAX_CHAT_MESSAGES = 60
@@ -1173,33 +1240,25 @@ def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _project_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Project a conversation down to what the NEXT session should see.
 
-    Keeps the system prompt plus the exchange starting at the LAST user
-    message, and drops loop steering notes (``NOTE: This ...`` tool messages)
-    and empty assistant placeholders.  Older topics are deliberately discarded
-    so they can never anchor a fresh session to a stale request — the root
-    cause of the agent repeatedly re-answering an old question.
+    Keeps the system prompt plus a bounded multi-exchange window (see
+    :func:`_trim_chat_history`) so a fresh session continues the dialogue
+    instead of forgetting it.  Loop steering notes (``NOTE: This ...`` tool
+    messages), empty assistant placeholders, and orphan tool messages are
+    dropped as cross-session noise.
     """
     if not messages:
         return []
-    projected: list[dict[str, Any]] = []
-    for i, m in enumerate(messages):
-        if m.get("role") == "user":
-            # Restart the projection at the most recent user request.
-            projected = [m]
-        elif projected:
-            projected.append(m)
     head = messages[:1] if messages and messages[0].get("role") == "system" else []
-    if head:
-        projected = head + projected
+    body = messages[1:] if head else messages
     cleaned = []
-    for m in projected:
+    for m in body:
         content = str(m.get("content") or "")
         if m.get("role") == "tool" and content.startswith("NOTE: This"):
             continue  # loop steering noise — meaningless in a fresh session
         if m.get("role") == "assistant" and not content and not m.get("tool_calls"):
             continue  # empty placeholder with no action
         cleaned.append(m)
-    return _trim_chat_history(cleaned)
+    return _trim_chat_history(head + cleaned)
 
 
 def _is_similar(content1: str, content2: str, threshold: float = 0.8) -> bool:
@@ -1299,6 +1358,7 @@ async def run_interactive() -> None:
             
             # Check for quit command
             if user_input.lower() in ["quit", "exit", "q"]:
+                agent._save_memory()
                 print(green("Goodbye!"))
                 break
             
@@ -1337,6 +1397,7 @@ async def run_interactive() -> None:
         except KeyboardInterrupt:
             print(yellow("\nInterrupted — the current run was stopped. Use 'quit' to exit."))
         except EOFError:
+            agent._save_memory()
             break
 
 

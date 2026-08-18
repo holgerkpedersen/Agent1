@@ -76,6 +76,9 @@ DEFAULT_OPENCODE_MODEL = "opencode-go/deepseek-v4-flash"
 _MODEL_JSON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "model.json")
 CHAT_HISTORY_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "chat_history.json")
+#: Cross-session memory (files read, semantic index, knowledge graph, working
+#: memory) — reloaded on the next session so work done is not forgotten.
+AGENT_MEMORY_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "agent_memory.json")
 
 
 # ---------------------------------------------------------------------------
