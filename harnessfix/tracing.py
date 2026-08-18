@@ -52,6 +52,10 @@ KIND_TOOL_RESULT = "tool_result"
 KIND_TOOL_ERROR = "tool_error"
 KIND_GUARD_TRIGGERED = "guard_triggered"
 KIND_LOOP_END = "loop_end"
+#: Emitted once per task (by the caller, before the loop starts): carries
+#: the user prompt, model and profile so a trace is self-describing for the
+#: human review gate and cross-model corpus comparison (decision #050).
+KIND_TASK_BEGIN = "task_begin"
 KINDS: frozenset[str] = frozenset(
     {
         KIND_STEP_START,
@@ -61,6 +65,7 @@ KINDS: frozenset[str] = frozenset(
         KIND_TOOL_ERROR,
         KIND_GUARD_TRIGGERED,
         KIND_LOOP_END,
+        KIND_TASK_BEGIN,
     }
 )
 
@@ -74,6 +79,9 @@ GUARD_BUDGET = "budget_exhausted"
 #: these bounds only keep trace files small (spec: "result truncated to a cap").
 RESULT_CAP = 2000
 TEXT_CAP = 1000
+#: Cap for the user prompt stored in the task_begin event — prompts can be
+#: pasted documents; the trace only needs enough to identify the task.
+PROMPT_CAP = 500
 
 
 class TraceSink(Protocol):
@@ -99,13 +107,33 @@ class TraceWriter:
     """Appends JSONL events for one task to reports/traces/{task_id}.jsonl.
 
     emit() never raises: trace capture must not change loop behaviour.
+
+    ``meta`` is stamped onto EVERY record (model, profile, ...) so a trace
+    is self-describing; the caller emits a task_begin event carrying the
+    user prompt via ``emit_task_begin``.
     """
 
-    def __init__(self, task_id: str | None = None, directory: Path | None = None) -> None:
+    def __init__(
+        self,
+        task_id: str | None = None,
+        directory: Path | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
         self.task_id = task_id or uuid.uuid4().hex
         self.directory = directory or TRACE_DIR
         self.path = self.directory / f"{self.task_id}.jsonl"
+        self._meta = dict(meta or {})
         self._closed = False
+
+    def emit_task_begin(self, user_input: str) -> None:
+        """Record the task prompt (model/profile arrive via ``meta``)."""
+        self.emit(
+            {
+                "kind": KIND_TASK_BEGIN,
+                "layer": LAYER_CONTEXT,
+                "user_input": truncate(user_input, PROMPT_CAP),
+            }
+        )
 
     def emit(self, event: dict[str, Any]) -> None:
         if self._closed:
@@ -116,6 +144,7 @@ class TraceWriter:
                 "task_id": self.task_id,
                 "ts": time.time(),
                 "correlation_id": CORRELATION_ID_CTX.get(),
+                **self._meta,
                 **event,
             }
             with self.path.open("a", encoding="utf-8") as fh:

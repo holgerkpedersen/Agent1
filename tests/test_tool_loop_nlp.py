@@ -651,11 +651,14 @@ class TestTraceFileEffectsChatNlp:
             def emit(self, record):
                 self.events.append(dict(record))
 
+            def emit_task_begin(self, user_input):
+                self.emit({"kind": "task_begin", "layer": "context", "user_input": user_input})
+
             def close(self):
                 pass
 
         writer = FakeTraceWriter()
-        with patch("agent.TraceWriter", lambda: writer), \
+        with patch("agent.TraceWriter", lambda **kw: writer), \
              patch("agent.trace_enabled", lambda: True):
             agent = Agent(workspace=str(tmp_path))
             agent.llm = FakeLLM()

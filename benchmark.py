@@ -237,7 +237,15 @@ class CategoryResult:
 @dataclass
 class ModelResult:
     model: str
+    profile: str = ""
     categories: dict[str, CategoryResult] = field(default_factory=dict)
+
+    @property
+    def display_name(self) -> str:
+        """Result key: ``model|profile`` when a profile is set (decision #055)
+        — the same model behaves differently under deep-analysis vs
+        fast-codegen, so results must be keyed by the full context."""
+        return f"{self.model}|{self.profile}" if self.profile else self.model
 
     @property
     def total_correct(self) -> int:
@@ -566,6 +574,7 @@ async def query_model(
     prompt: str,
     max_retries: int = 3,
     base_delay: float = 1.0,
+    max_tokens: int = 2048,
 ) -> tuple[str, float, int | None]:
     """Returns (response_text, latency_ms, tokens_used). Raises ModelAPIError on failure."""
     import urllib.request
@@ -576,7 +585,12 @@ async def query_model(
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
-            "max_tokens": 512,
+            # Reasoning models (e.g. qwen3.8-27b) consume the budget in
+            # reasoning_content BEFORE emitting content: with 512 tokens the
+            # answer came back empty (finish_reason "length"), scoring a
+            # False the model did not deserve.  2048 gives the reasoning
+            # room to finish AND the answer room to exist.
+            "max_tokens": max_tokens,
         }
     ).encode("utf-8")
 
@@ -634,6 +648,7 @@ async def run_category(
     questions: list[tuple[str, str | None]],
     repetition: int = 0,
     judge_fn: Any = None,
+    max_tokens: int = 2048,
 ) -> CategoryResult:
     cat_result = CategoryResult(category=category)
     total = len(questions)
@@ -644,7 +659,7 @@ async def run_category(
         sys.stdout.flush()
 
         try:
-            response, latency_ms, tokens = await query_model(model, prompt)
+            response, latency_ms, tokens = await query_model(model, prompt, max_tokens=max_tokens)
             correct, score = await score_question(
                 prompt, response, expected, category, judge_fn=judge_fn
             )
@@ -676,19 +691,23 @@ async def run_benchmark(
     categories: dict[str, list[tuple[str, str | None]]],
     repetitions: int = 1,
     judge_fn: Any = None,
+    profile: str = "",
+    max_tokens: int = 2048,
 ) -> list[ModelResult]:
     results = []
 
     for model in models:
         print(f"\n{'=' * 60}")
         print(f"  Benchmarking: {model}")
+        if profile:
+            print(f"  Profile:      {profile}")
         print(f"{'=' * 60}")
 
-        model_result = ModelResult(model=model)
+        model_result = ModelResult(model=model, profile=profile)
         for cat_name, questions in categories.items():
             if repetitions == 1:
                 cat_res = await run_category(
-                    model, cat_name, questions, judge_fn=judge_fn
+                    model, cat_name, questions, judge_fn=judge_fn, max_tokens=max_tokens
                 )
                 model_result.categories[cat_name] = cat_res
             else:
@@ -697,7 +716,8 @@ async def run_benchmark(
                 for rep in range(repetitions):
                     print(f"\n  --- Repetition {rep + 1}/{repetitions} ---")
                     cr = await run_category(
-                        model, cat_name, questions, repetition=rep, judge_fn=judge_fn
+                        model, cat_name, questions, repetition=rep, judge_fn=judge_fn,
+                        max_tokens=max_tokens
                     )
                     all_cat_results.append(cr)
 
@@ -761,7 +781,7 @@ def print_report(results: list[ModelResult]) -> None:
     print("-" * len(header))
 
     for r in results:
-        line = f"{r.model:<30}"
+        line = f"{r.display_name:<30}"
         for cat in cat_names:
             cr = r.categories.get(cat)
             if cr and cr.accuracy is not None:
@@ -786,6 +806,8 @@ def build_model_json(model_result: ModelResult) -> dict[str, Any]:
     """Build a JSON-serializable dict for a single model's results."""
     model_data: dict[str, Any] = {
         "model": model_result.model,
+        "profile": model_result.profile,
+        "display_name": model_result.display_name,
         "overall_accuracy": model_result.overall_accuracy,
         "total_correct": model_result.total_correct,
         "total_scoreable": model_result.total_scoreable,
@@ -839,7 +861,7 @@ def save_models_json(results: list[ModelResult], path: str) -> None:
             existing = {}
 
     for r in results:
-        existing[r.model] = build_model_json(r)
+        existing[r.display_name] = build_model_json(r)
 
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(existing, f, indent=2, ensure_ascii=False)
@@ -996,6 +1018,18 @@ def parse_args() -> argparse.Namespace:
         help="Model name(s) as registered in LM Studio",
     )
     parser.add_argument(
+        "--profile", type=str, default="",
+        help="Profile tag for the run (e.g. deep-analysis); results are keyed "
+             "model|profile so the same model under different profiles is "
+             "compared like with like (decision #055)",
+    )
+    parser.add_argument(
+        "--max-tokens", type=int, default=2048,
+        help="Token budget per question (default: 2048). Reasoning models "
+             "consume the budget in reasoning_content before emitting the "
+             "answer; 512 starves it into empty responses.",
+    )
+    parser.add_argument(
         "--categories", nargs="+", default=list(ALL_CATEGORIES.keys()),
         choices=list(ALL_CATEGORIES.keys()),
         help="Categories to run (default: all)",
@@ -1042,6 +1076,8 @@ async def main() -> None:
     print(f"\n  Benchmark Configuration")
     print(f"  {'-' * 40}")
     print(f"  Models:        {', '.join(args.model)}")
+    if args.profile:
+        print(f"  Profile:       {args.profile}")
     print(f"  Categories:    {', '.join(categories.keys())}")
     print(
         f"  Questions:     "
@@ -1049,10 +1085,14 @@ async def main() -> None:
         f"({total_q} total with repetitions)"
     )
     print(f"  Repetitions:   {args.repetitions}")
+    print(f"  Max tokens:    {args.max_tokens} per question")
     print(f"  API URL:       {BASE_URL}")
     print()
 
-    results = await run_benchmark(args.model, categories, args.repetitions)
+    results = await run_benchmark(
+        args.model, categories, args.repetitions,
+        profile=args.profile, max_tokens=args.max_tokens,
+    )
 
     print_report(results)
 

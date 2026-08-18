@@ -28,6 +28,7 @@ def run_loop(
     *,
     approve: bool,
     model: str | None,
+    profile: str | None = None,
     output_dir: Path = SUMMARY_PATH.parent,
 ) -> dict[str, Any]:
     """One HarnessFix iteration; headless-safe (fail-closed without approval)."""
@@ -55,16 +56,25 @@ def run_loop(
     # String-collision guard: a repair that rewrites a runtime string must
     # not break test assertions pinning the old string.  Any hit skips the
     # repair (fail-safe; recorded for the human gate) instead of burning a
-    # full gate run and reverting afterwards.
-    collisions_hits = collisions.find_test_collisions(
-        repair.collision_fragments, tests_dir=collisions.DEFAULT_TESTS_DIR
+    # full gate run and reverting afterwards.  The guard's OWN fixture tests
+    # (GUARD_TEST_FILENAMES) are excluded: they contain the fragments as
+    # literals, not as pins of the OLD runtime string (decision #051).
+    all_hits = collisions.find_test_collisions(
+        repair.collision_fragments,
+        tests_dir=collisions.DEFAULT_TESTS_DIR,
+        exclude_files=frozenset(),
     )
+    guard_test_names = collisions.GUARD_TEST_FILENAMES
+    guard_hits = [h for h in all_hits if h.path.name in guard_test_names]
+    collisions_hits = [h for h in all_hits if h.path.name not in guard_test_names]
+    if guard_hits:
+        summary["ignored_guard_test_hits"] = len(guard_hits)
     if collisions_hits:
         summary["verdict"] = "skipped_test_collision"
         summary["collisions"] = [c.to_dict() for c in collisions_hits]
         return _finish(summary, output_dir)
 
-    baseline_rate = gates.run_benchmark_gate(model)
+    baseline_rate = gates.run_benchmark_gate(model, profile)
     try:
         summary["repair_applied"] = repair.applied_summary()
     except Exception as exc:  # apply/revert must never corrupt the tree silently
@@ -74,7 +84,7 @@ def run_loop(
 
     tests_passed, tests_tail = gates.run_test_gate()
     security_passed, security_tail = gates.run_security_gate()
-    post_rate = gates.run_benchmark_gate(model)
+    post_rate = gates.run_benchmark_gate(model, profile)
     accepted = gates.should_accept(tests_passed, security_passed, baseline_rate, post_rate)
     summary.update(
         tests_passed=tests_passed,
@@ -113,9 +123,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--traces", type=Path, default=TRACE_DIR, help="trace corpus dir")
     parser.add_argument("--approve", action="store_true", help="human review gate: approve the proposed repair")
     parser.add_argument("--model", default=None, help="benchmark gate model (needs a live API)")
+    parser.add_argument("--profile", default=None, help="benchmark profile tag (decision #055)")
     parser.add_argument("--output", type=Path, default=SUMMARY_PATH.parent, help="reports/harnessfix output dir")
     args = parser.parse_args(argv)
-    summary = run_loop(args.traces, approve=args.approve, model=args.model, output_dir=args.output)
+    summary = run_loop(
+        args.traces, approve=args.approve, model=args.model,
+        profile=args.profile, output_dir=args.output,
+    )
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     return 0
 

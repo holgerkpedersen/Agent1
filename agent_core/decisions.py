@@ -113,6 +113,29 @@ def save_decisions(workspace: str | Path, decisions: list[dict[str, Any]]) -> No
     )
 
 
+def find_stale_decisions(
+    workspace: str | Path, decisions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Decisions whose recorded affected_files no longer exist on disk.
+
+    A stale reference means the decision's subject was deleted or renamed —
+    a candidate for verification or supersession, not a broken ledger.  The
+    decision ledger is a living document; the human gate decides what to do
+    with it (decision #054).
+    """
+    stale: list[dict[str, Any]] = []
+    for d in decisions:
+        missing = [
+            f for f in d.get("affected_files", [])
+            if not (Path(str(workspace)) / f).exists()
+        ]
+        if missing:
+            d = dict(d)
+            d["_missing_files"] = missing
+            stale.append(d)
+    return stale
+
+
 def _next_id(decisions: list[dict[str, Any]]) -> str:
     max_id = 0
     for d in decisions:

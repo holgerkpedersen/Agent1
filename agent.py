@@ -23,6 +23,7 @@ from agent_core.file_searcher import FileSearcher
 from agent_core.tool_dispatcher import ToolDispatcher
 from agent_core.tool_schemas import NLP_TOOL_SCHEMAS, NLP_TOOL_NAMES
 from agent_core.llm.tool_loop import ToolLoopRunner
+from agent_core.context_management import CorrelationIdContext
 try:
     from harnessfix.tracing import TraceWriter, trace_enabled
 except Exception:  # pragma: no cover - tracing degrades gracefully if unavailable
@@ -50,6 +51,7 @@ from agent_core.commands.paste_cmd import PasteCommand
 from agent_core.commands.perf_cmd import PerfCommand, PerfTracker
 from agent_core.commands.display_cmd import DisplayCommand
 from agent_core.commands.decide_cmd import DecideCommand
+from agent_core.commands.review_cmd import ReviewCommand
 from agent_core.commands.run_cmd import RunCommand
 from agent_core.commands.self_heal_cmd import SelfHealCommand
 from pathlib import Path
@@ -818,80 +820,97 @@ class Agent:
         #: executed across ALL chained runs of this turn, so repeated probes
         #: cannot hide behind a fresh run's duplicate counter.
         seen_calls: dict[tuple[str, str], int] = {}
-        while True:
-            #: Per-run trace writer (one JSONL file per run() invocation,
-            #: decision #029).  AGENT_NO_TRACE=1 disables trace capture.
-            trace_writer = TraceWriter() if (trace_enabled() and TraceWriter is not None) else None
-            #: File-effects recording (self-improvement): armed only while a
-            #: trace sink exists — untraced runs stay byte-identical (decision
-            #: #048).  The buffer is drained by _take_trace_effects after each
-            #: tool call and discarded when the run ends.
-            self._pending_effects = [] if trace_writer is not None else None
-            loop = ToolLoopRunner(
-                max_iterations=150, display_mode=display_mode, trace=trace_writer
-            )
-            final_text, final_messages = await loop.run(
-                messages=final_messages,
-                llm_chat_fn=llm_chat_fn,
-                execute_tool_fn=self._execute_tool_call,
-                tools=list(NLP_TOOL_SCHEMAS),
-                seen_calls=seen_calls,
-                effects_fn=self._take_trace_effects,
-            )
-            self._pending_effects = None
-            if trace_writer is not None:
-                trace_writer.close()
-            reason = loop.termination_reason
-            # A provider-level failure is not an answer: never auto-continue —
-            # chaining would only re-burn the same broken LLM call.
-            if llm_error:
-                break
-            # "cap" (budget run-out while progressing), an "answer" that
-            # signals unfinished work, and — as a safety net — a "no_progress"
-            # verdict whose forced answer STILL signals unfinished work justify
-            # chaining.  Plain "stuck"/"no_progress" verdicts are explicit
-            # "model is not making progress" signals — continuing would only
-            # re-enter the same loop.
-            needs_more = (
-                reason == "cap"
-                or (reason in ("answer", "no_progress") and _looks_incomplete(final_text))
-            )
-            if needs_more and continuations < _MAX_CHAINED_RUNS:
-                if final_text and final_text == last_answer:
-                    # Same incomplete answer twice in a row — the model is
-                    # stuck, not working.  Stop chaining instead of looping.
-                    if display_mode != AgentDisplayMode.QUIET:
-                        print(
-                            magenta("\n  [stopped] The model repeated the same answer ")
-                            + yellow("twice — ending the turn. ")
-                            + gray("Rephrase or ask something more specific to continue.\n")
-                        )
-                    break
-                last_answer = final_text
-                continuations += 1
-                if display_mode != AgentDisplayMode.QUIET:
-                    why = {
-                        "cap": "iteration budget exhausted",
-                        "answer": "answer signals unfinished work",
-                        "no_progress": "the final answer signals unfinished work",
-                    }.get(reason, reason)
-                    print(
-                        magenta(f"\n  [auto-continue] Run {continuations}: ")
-                        + yellow(f"{why} — continuing automatically.\n")
+        #: One correlation id per TURN: every chained run of this chat_nlp
+        #: call shares it, so a single task is linkable across its traces
+        #: (decision #050).
+        with CorrelationIdContext():
+            while True:
+                #: Per-run trace writer (one JSONL file per run() invocation,
+                #: decision #029).  AGENT_NO_TRACE=1 disables trace capture.
+                #: Model/profile are stamped on every record so a trace is
+                #: self-describing for review and cross-model comparison (decision #050).
+                trace_writer = (
+                    TraceWriter(
+                        meta={
+                            "model": self.model_name,
+                            "profile": getattr(self.llm, "_profile_name", None) or "",
+                        }
                     )
-                final_messages = list(final_messages) + [
-                    # User role: strict chat templates (qwen Jinja) reject
-                    # system messages mid-conversation.
-                    {"role": "user", "content": _CONTINUE_NOTE},
-                ]
-                continue
-            if reason in ("stuck", "no_progress") and display_mode != AgentDisplayMode.QUIET:
-                print(
-                    magenta("\n  [stopped] The model stopped making progress ")
-                    + yellow(f"{'stuck on repeated calls' if reason == 'stuck' else 'too many calls without making new progress'}). ")
-                    + gray("The answer above is the best it produced — rephrase or ask something more specific to continue.\n")
+                    if (trace_enabled() and TraceWriter is not None)
+                    else None
                 )
-            break
+                if trace_writer is not None:
+                    trace_writer.emit_task_begin(user_input)
+                #: File-effects recording (self-improvement): armed only while a
+                #: trace sink exists — untraced runs stay byte-identical (decision
+                #: #048).  The buffer is drained by _take_trace_effects after each
+                #: tool call and discarded when the run ends.
+                self._pending_effects = [] if trace_writer is not None else None
+                loop = ToolLoopRunner(
+                    max_iterations=150, display_mode=display_mode, trace=trace_writer
+                )
+                final_text, final_messages = await loop.run(
+                    messages=final_messages,
+                    llm_chat_fn=llm_chat_fn,
+                    execute_tool_fn=self._execute_tool_call,
+                    tools=list(NLP_TOOL_SCHEMAS),
+                    seen_calls=seen_calls,
+                    effects_fn=self._take_trace_effects,
+                )
+                self._pending_effects = None
+                if trace_writer is not None:
+                    trace_writer.close()
+                reason = loop.termination_reason
+                # A provider-level failure is not an answer: never auto-continue —
+                # chaining would only re-burn the same broken LLM call.
+                if llm_error:
+                    break
+                # "cap" (budget run-out while progressing), an "answer" that
+                # signals unfinished work, and — as a safety net — a "no_progress"
+                # verdict whose forced answer STILL signals unfinished work justify
+                # chaining.  Plain "stuck"/"no_progress" verdicts are explicit
+                # "model is not making progress" signals — continuing would only
+                # re-enter the same loop.
+                needs_more = (
+                    reason == "cap"
+                    or (reason in ("answer", "no_progress") and _looks_incomplete(final_text))
+                )
+                if needs_more and continuations < _MAX_CHAINED_RUNS:
+                    if final_text and final_text == last_answer:
+                        # Same incomplete answer twice in a row — the model is
+                        # stuck, not working.  Stop chaining instead of looping.
+                        if display_mode != AgentDisplayMode.QUIET:
+                            print(
+                                magenta("\n  [stopped] The model repeated the same answer ")
+                                + yellow("twice — ending the turn. ")
+                                + gray("Rephrase or ask something more specific to continue.\n")
+                            )
+                        break
+                    last_answer = final_text
+                    continuations += 1
+                    if display_mode != AgentDisplayMode.QUIET:
+                        why = {
+                            "cap": "iteration budget exhausted",
+                            "answer": "answer signals unfinished work",
+                            "no_progress": "the final answer signals unfinished work",
+                        }.get(reason, reason)
+                        print(
+                            magenta(f"\n  [auto-continue] Run {continuations}: ")
+                            + yellow(f"{why} — continuing automatically.\n")
+                        )
+                    final_messages = list(final_messages) + [
+                        # User role: strict chat templates (qwen Jinja) reject
+                        # system messages mid-conversation.
+                        {"role": "user", "content": _CONTINUE_NOTE},
+                    ]
+                    continue
+                if reason in ("stuck", "no_progress") and display_mode != AgentDisplayMode.QUIET:
+                    print(
+                        magenta("\n  [stopped] The model stopped making progress ")
+                        + yellow(f"{'stuck on repeated calls' if reason == 'stuck' else 'too many calls without making new progress'}). ")
+                        + gray("The answer above is the best it produced — rephrase or ask something more specific to continue.\n")
+                    )
+                break
 
         # The continuation note is only meant for the run it precedes — strip
         # it (and any earlier ones) before the history is persisted, so a
@@ -1386,6 +1405,7 @@ async def run_interactive() -> None:
     registry.register(PasteCommand())
     registry.register(DisplayCommand())
     registry.register(DecideCommand())
+    registry.register(ReviewCommand())
     registry.register(RunCommand())
     registry.register(SelfHealCommand())
 

@@ -57,17 +57,29 @@ def run_security_gate() -> tuple[bool, str]:
         return False, f"security gate error: {exc}"
 
 
-def run_benchmark_gate(model: str | None) -> float | None:
+def _benchmark_key(model: str, profile: str = "") -> str:
+    """Benchmark result key.  Benchmarks are per MODEL, and per PROFILE when
+    a profile is set: the same model under deep-analysis vs fast-codegen
+    behaves differently, and the gate must compare like with like
+    (decision #055)."""
+    return f"{model}|{profile}" if profile else model
+
+
+def run_benchmark_gate(
+    model: str | None, profile: str | None = None
+) -> float | None:
     """Single-shot benchmark pass rate (percent) via benchmark.py, or None."""
     if not model:
         return None
     out = Path("reports") / "benchmark_harnessfix.json"
+    key = _benchmark_key(model, profile or "")
+    cmd = [sys.executable, "benchmark.py", "--model", model,
+           "--output", str(out), "--repetitions", "1"]
+    if profile:
+        cmd += ["--profile", profile]
     try:
         proc = subprocess.run(
-            [
-                sys.executable, "benchmark.py", "--model", model,
-                "--output", str(out), "--repetitions", "1",
-            ],
+            cmd,
             capture_output=True,
             text=True,
             timeout=_GATE_TIMEOUT,
@@ -76,9 +88,23 @@ def run_benchmark_gate(model: str | None) -> float | None:
             return None
         with out.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
-        accuracy: Any = data.get("models", {}).get(model, {}).get("overall_accuracy")
+        # benchmark.py's --output file stores models as a LIST of records
+        # (save_json_report), each carrying display_name = model|profile.
+        # models.json (save_models_json) stores a dict keyed the same way.
+        # Support both; never crash on unexpected shapes.
+        models: Any = data.get("models")
+        accuracy: Any = None
+        if isinstance(models, list):
+            for m in models:
+                if isinstance(m, dict) and m.get("display_name") == key:
+                    accuracy = m.get("overall_accuracy")
+                    break
+        elif isinstance(models, dict):
+            entry = models.get(key)
+            if isinstance(entry, dict):
+                accuracy = entry.get("overall_accuracy")
         return float(accuracy) if accuracy is not None else None
-    except (OSError, json.JSONDecodeError, KeyError, ValueError):
+    except (OSError, json.JSONDecodeError, KeyError, ValueError, AttributeError, TypeError):
         return None
 
 

@@ -94,4 +94,33 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`.
   read/write/edit/fix targets. REPL registry **commands** still uninstrumented
   (next increment); trace consumers (`harnessfix/reader`) not yet reading
   `affected_files`.
+- ✅ **#050-#056 — verification gate increment (DONE, 2026-08-18)**:
+  - #050 — traces self-describing: `TraceWriter(meta={model, profile})` stamps
+    every record; `task_begin` event carries the user prompt (`PROMPT_CAP=500`);
+    `chat_nlp` wraps the loop in `CorrelationIdContext`; dashboard shows
+    prompt/model/profile/affected-files per task.
+  - #051 — collision guard no longer self-blocks: `GUARD_TEST_FILENAMES`
+    (guard fixture tests) excluded by default; hits recorded as
+    `ignored_guard_test_hits`; real pinning tests still block.
+  - #052 — interrupted runs (no `loop_end`, >=3 events) count as failed;
+    abandonment diagnosis uses `affected_files` ("task ended non-completed
+    after mutating N file(s)"); stuck mechanism names the repeating tool.
+  - #053 — **human verification gate**: `harnessfix/review.py` + REPL `review`
+    command (`refresh/list/show/label/export`); ledger
+    `reports/harnessfix/review.json` (gitignored); dispositions
+    bug|regression|noise|ok; `export` writes diagnosis-pinning pytest files.
+  - #054 — `decide review`: `find_stale_decisions` (non-mutating) flags
+    decisions whose `affected_files` no longer exist; reports open
+    contradictions.
+  - #055 — benchmark keyed `model|profile` (`--profile` flag, gate reads
+    `model|profile` key, list-form report parsing fixed); `--max-tokens`
+    default 2048 (reasoning models starved at 512 → empty content).
+    **Baseline: qwen/qwen3.8-27b|deep-analysis = 84.7%** (coding 93.3,
+    avg 12.3s).
+  - #056 — `scripts/audit_invariants.py` (git-dirty, paired memory files,
+    phantom modules from latest `.docs/`, trace health, backups/; `--strict`
+    escalates git-dirty to ERROR).
+  - **Manual next steps for the user**: `review refresh` to build the ledger
+    over the ~64 real traces; label the first batch; the benchmark gate now
+    works with the qwen3.8-27b baseline in `reports/benchmark_harnessfix.json`.
 - Taskplan-time phantom-module gate (plan-time existence check for planned files).

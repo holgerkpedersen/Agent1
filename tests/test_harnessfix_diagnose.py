@@ -171,3 +171,82 @@ def test_diagnosis_has_evidence_and_confidence():
     assert d.evidence  # at least one step/link reference
     assert d.repair_proposal
     assert d.root_layer in {"tool_interface", "execution_environment", "governance", "verification", "context", "lifecycle"}
+
+
+def test_abandonment_detected_via_affected_files():
+    """Decision #052: files were mutated (decision #049 affected_files) yet
+    the run ended non-completed — the model stopped mid-task."""
+    g = _graph(
+        [
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "write", "args_hash": "w"}),
+            (KIND_TOOL_RESULT, LAYER_TOOL_INTERFACE, {"tool": "write", "affected_files": ["a.py"]}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "r"}),
+            (KIND_TOOL_RESULT, LAYER_TOOL_INTERFACE, {"tool": "read", "affected_files": ["b.py"]}),
+            _loop_end("cap"),
+        ]
+    )
+    d = diagnose_graph(g)
+    assert d.root_layer == "lifecycle"
+    assert "mutating 2 file(s)" in d.mechanism
+    assert "a.py" in d.mechanism
+    assert g.affected_files() == ["a.py", "b.py"]
+
+
+def test_interrupted_run_without_loop_end_is_failed():
+    """A trace with >=3 events but no loop_end is an interrupted run (the
+    loop always writes loop_end via finally) — diagnosed as lifecycle."""
+    g = _graph(
+        [
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "r"}),
+            (KIND_TOOL_RESULT, LAYER_TOOL_INTERFACE, {"tool": "read"}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "s"}),
+        ]
+    )
+    assert not g.has_loop_end()
+    d = diagnose_graph(g)
+    assert d.root_layer == "lifecycle"
+    assert "no loop_end" in d.mechanism
+
+
+def test_stuck_mechanism_names_the_repeating_tool():
+    g = _graph(
+        [
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h", "duplicate": False}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h", "duplicate": True}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h", "duplicate": True}),
+            ("guard_triggered", LAYER_LIFECYCLE, {"guard": "stuck", "note": "stop"}),
+            _loop_end("stuck"),
+        ]
+    )
+    d = diagnose_graph(g)
+    assert "stuck cycle" in d.mechanism
+    assert "(search)" in d.mechanism
+
+
+def test_corpus_flags_interrupted_traces_but_not_stubs(tmp_path):
+    """diagnose_corpus: >=3 events without loop_end is failed; 1-2 event
+    stubs (aborted demo writes) are not (decision #052)."""
+    from harnessfix.corpus import diagnose_corpus
+    from harnessfix.tracing import KIND_TOOL_CALL, KIND_TOOL_RESULT, TraceWriter
+
+    real = tmp_path / "traces"
+    real.mkdir()
+    writer = TraceWriter(task_id="interrupted", directory=real)
+    writer.emit({"kind": KIND_TOOL_CALL, "layer": "tool_interface", "tool": "read"})
+    writer.emit({"kind": KIND_TOOL_RESULT, "layer": "tool_interface", "tool": "read"})
+    writer.emit({"kind": KIND_TOOL_CALL, "layer": "tool_interface", "tool": "read"})
+    writer.close()
+
+    stub = TraceWriter(task_id="stub", directory=real)
+    stub.emit({"kind": KIND_TOOL_CALL, "layer": "tool_interface", "tool": "read"})
+    stub.close()
+
+    ok = TraceWriter(task_id="ok", directory=real)
+    ok.emit({"kind": KIND_TOOL_CALL, "layer": "tool_interface", "tool": "read"})
+    ok.emit({"kind": KIND_TOOL_RESULT, "layer": "tool_interface", "tool": "read"})
+    ok.emit({"kind": "loop_end", "layer": "lifecycle", "outcome": "completed"})
+    ok.close()
+
+    diags = diagnose_corpus([p for p in real.glob("*.jsonl")], tmp_path / "diags")
+    ids = {d.task_id for d in diags}
+    assert ids == {"interrupted"}

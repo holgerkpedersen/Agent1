@@ -23,6 +23,7 @@ from agent_core.decisions import (
     extract_from_analysis,
     find_decisions,
     find_overlaps,
+    find_stale_decisions,
     load_decisions,
     resolve_contradictions,
     save_decisions,
@@ -53,7 +54,11 @@ _DECIDE_HELP = """decide — Track design decisions for this workspace
       Link two decisions as related
 
   decide extract [--from analysis.md]
-      Auto-extract decision candidates from a project analysis file"""
+      Auto-extract decision candidates from a project analysis file
+
+  decide review
+      Health check on the ledger: stale affected_files, unlinked
+      contradictions, unresolved candidates"""
 
 
 class DecideCommand(Command):
@@ -85,6 +90,8 @@ class DecideCommand(Command):
             return await self._cmd_link(args[1:], agent)
         elif sub == "extract":
             return await self._cmd_extract(args[1:], agent)
+        elif sub == "review":
+            return await self._cmd_review(args[1:], agent)
         else:
             return await self._cmd_add(args, agent)
 
@@ -340,7 +347,54 @@ class DecideCommand(Command):
         return True
 
 
-# ── helpers ──────────────────────────────────────────────────────────────
+# ── review ───────────────────────────────────────────────────────────
+
+    async def _cmd_review(self, args: list[str], agent: "Agent") -> bool:
+        """Ledger health check: stale affected_files, contradictions that
+        were never resolved, unresolved candidate decisions (decision #054)."""
+        ws = str(Path(agent.workspace).resolve())
+        decisions = load_decisions(ws)
+        if not decisions:
+            print("No decisions recorded.")
+            return True
+
+        stale = find_stale_decisions(ws, decisions)
+        unresolved = [
+            d for d in decisions
+            if d.get("contradictions")
+            and any(
+                c.get("status") not in ("resolved", "superseded")
+                for c in d["contradictions"]
+            )
+        ]
+        print(f"{len(decisions)} decision(s) recorded.")
+
+        if stale:
+            print(f"\n{len(stale)} decision(s) reference missing files:")
+            for d in stale:
+                print(
+                    f"  #{d['id']}  {d['title']}\n"
+                    f"         missing: {', '.join(d['_missing_files'])}"
+                )
+        else:
+            print("\nAll recorded affected_files exist on disk.")
+
+        if unresolved:
+            print(f"\n{len(unresolved)} decision(s) with open contradictions:")
+            for d in unresolved:
+                open_ids = [
+                    c["id"] for c in d["contradictions"]
+                    if c.get("status") not in ("resolved", "superseded")
+                ]
+                print(f"  #{d['id']}  {d['title']}  -> open vs {', '.join(open_ids)}")
+        else:
+            print("No open contradictions.")
+
+        print("\nTip: `decide show <id>` for details; `decide resolve <id1> <id2>` "
+              "for open contradictions.")
+        return True
+
+    # ── helpers ──────────────────────────────────────────────────────────────
 
 
 def _extract_flag(args: list[str], *names: str) -> str:

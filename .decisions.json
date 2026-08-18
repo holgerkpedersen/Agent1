@@ -928,5 +928,149 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "050",
+    "date": "2026-08-18T12:17:55+00:00",
+    "title": "Stamp traces with model/profile metadata and record the user prompt as the first event",
+    "context": "Trace corpus analysis showed traces carried no prompt, model name, or profile, and correlation_id was empty everywhere. The verification gate cannot attribute failures to model+profile context without it.",
+    "decision": "TraceWriter gains a meta dict (model, profile) stamped onto EVERY record via {**self._meta, **event}; agent.py chat_nlp wraps the tool-call loop in CorrelationIdContext and constructs the writer with meta={model: self.model_name, profile: getattr(self.llm, \"_profile_name\", None)}; a new KIND_TASK_BEGIN event (emit_task_begin) records the user input, truncated to PROMPT_CAP=500. Dashboard renders prompt/model/profile and the aggregated affected_files per task.",
+    "rationale": "Meta stamping at the writer boundary keeps the emitter (tool_loop) schema-agnostic; per-turn correlation ids via contextvar survive the async loop; old traces degrade gracefully (empty columns) in the dashboard.",
+    "affected_files": [
+      "harnessfix/tracing.py",
+      "harnessfix/dashboard.py",
+      "agent.py",
+      "agent_core/context_management.py",
+      "tests/test_harnessfix_tracing.py",
+      "tests/test_tool_loop_nlp.py"
+    ],
+    "tags": [
+      "verification-gate",
+      "tracing",
+      "metadata"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "051",
+    "date": "2026-08-18T12:17:55+00:00",
+    "title": "String-collision guard must exclude the guard's own fixture tests",
+    "context": "The repair loop was self-blocked: the only real repair (tool-interface-error-detail, fragment \"Tool error: \") collided with its own guard tests (test_harnessfix_collisions.py, test_harnessfix_loop.py) which contain the fragment as a literal. Verdict was permanently skipped_test_collision.",
+    "decision": "find_test_collisions gains exclude_files (default GUARD_TEST_FILENAMES = the two guard test files). The loop scans once without exclusion, splits hits into guard-test hits (recorded as ignored_guard_test_hits) vs real pinning tests (still blocking). Guard tests are updated alongside any repair, so they never pin the OLD runtime string.",
+    "rationale": "A guard that blocks every repair is a dead loop; excluding fixtures whose content is exercise-literals, not pins, restores the gate while real assertion pins (e.g. test_tool_loop_nlp.py) still block.",
+    "affected_files": [
+      "harnessfix/repairs/collisions.py",
+      "harnessfix/loop.py",
+      "tests/test_harnessfix_collisions.py"
+    ],
+    "tags": [
+      "verification-gate",
+      "repair-loop",
+      "collision-guard"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "052",
+    "date": "2026-08-18T12:17:55+00:00",
+    "title": "Diagnose interrupted runs and task abandonment via trace shape and affected_files",
+    "context": "Real corpus had traces with 300+ events and no loop_end that diagnose_corpus skipped entirely (not is_failed). Others mutated files then ended non-completed; diagnosis fell through to a crude stuck heuristic.",
+    "decision": "has_loop_end() and affected_files() on TraceGraph; corpus counts any trace without loop_end and >= MIN_ACTIVITY_EVENTS (3) as failed; diagnose adds: abandonment signature (affected_files present + non-completed end or no loop_end, lifecycle 'task ended non-completed after mutating N file(s)'), explicit interrupted-run signature (no loop_end), and the stuck mechanism now names the repeating tool. Order: explicit tool errors > abandonment > stuck > interrupted > guards.",
+    "rationale": "loop_end is ALWAYS written by the runner's finally, so a missing one is a crash/kill/provider loss, not a normal end; 1-2 event stubs (aborted demo writes) are filtered to avoid noise. Effect-aware abandonment is more specific than stuck heuristics and uses the #049 field.",
+    "affected_files": [
+      "harnessfix/htir.py",
+      "harnessfix/corpus.py",
+      "harnessfix/diagnose.py",
+      "tests/test_harnessfix_diagnose.py"
+    ],
+    "tags": [
+      "verification-gate",
+      "diagnosis",
+      "interrupted-runs"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "053",
+    "date": "2026-08-18T12:17:55+00:00",
+    "title": "Human verification gate: review command with labeling and diagnosis-pinning regression export",
+    "context": "The loop produces verdicts and diagnoses, but nothing helped the human gate review WHY a task failed: no per-task prompt/model/effects/outcome view, no labeling, no way to pin a diagnosis against future changes.",
+    "decision": "New harnessfix/review.py builds a per-task ReviewRecord ledger (prompt, model, profile, outcome, guards, affected_files, root_layer, mechanism) from traces + persisted diagnoses; REPL command 'review' (refresh/list/show/label/export) persists reports/harnessfix/review.json (gitignored) with dispositions bug|regression|noise|ok and exports labeled tasks as generated pytest pins (reports/harnessfix/generated) asserting the diagnosis layer and a mechanism substring.",
+    "rationale": "Labels feed the improvement loop (which failure types dominate per model+profile); generated pins make diagnosis changes fail loudly at the gate instead of silently reclassifying reviewed tasks. Ledger stays human-owned, out of git.",
+    "affected_files": [
+      "harnessfix/review.py",
+      "agent_core/commands/review_cmd.py",
+      "agent.py",
+      "tests/test_harnessfix_review.py"
+    ],
+    "tags": [
+      "verification-gate",
+      "review",
+      "labeling"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "054",
+    "date": "2026-08-18T12:17:55+00:00",
+    "title": "Decide review: flag decisions whose affected_files no longer exist",
+    "context": "The decision ledger is a living document; nothing checked whether recorded affected_files still exist on disk, so superseded decisions lingered silently as authoritative.",
+    "decision": "agent_core/decisions.py gains find_stale_decisions (workspace, decisions) -> decisions annotated with _missing_files (non-mutating); decide review subcommand reports stale files per decision, open contradictions (status not resolved/superseded), and a tip line.",
+    "rationale": "Stale references are candidates for verification or supersession; the human gate decides, the command only surfaces them.",
+    "affected_files": [
+      "agent_core/decisions.py",
+      "agent_core/commands/decide_cmd.py",
+      "tests/test_decisions_review.py"
+    ],
+    "tags": [
+      "verification-gate",
+      "decisions",
+      "staleness"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "055",
+    "date": "2026-08-18T12:17:55+00:00",
+    "title": "Key benchmark results by model|profile and give reasoning models a real token budget",
+    "context": "Benchmark results were keyed by model name only, though the same model under deep-analysis vs fast-codegen behaves differently. Worse, qwen3.8-27b (a reasoning model) burned the 512 max_tokens on reasoning_content and returned EMPTY content (finish_reason length), scoring False it did not deserve.",
+    "decision": "ModelResult gains profile; results keyed model|profile everywhere (benchmark.py, reports/models.json, gates._benchmark_key); benchmark.py gets --profile and --max-tokens (default 2048) with the query raising the budget so reasoning finishes AND the answer exists; run_benchmark_gate accepts profile, passes it through, and parses the LIST-form --output file (was crashing on .get() of a list). Baseline recorded: qwen/qwen3.8-27b|deep-analysis = 84.7% overall (coding 93.3, avg latency 12.3s).",
+    "rationale": "Like-with-like comparison is a precondition for the benchmark gate to mean anything; the empty-content bug made every reasoning-model score a lower bound. Verified: same question with 2048 tokens yields content with finish_reason stop.",
+    "affected_files": [
+      "benchmark.py",
+      "harnessfix/gates.py",
+      "harnessfix/loop.py",
+      "tests/test_harnessfix_loop.py"
+    ],
+    "tags": [
+      "verification-gate",
+      "benchmark",
+      "reasoning-models"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "056",
+    "date": "2026-08-18T12:17:55+00:00",
+    "title": "scripts/audit_invariants.py: automated AGENTS.md invariant audit",
+    "context": "Invariants (commit-after-session, paired memory files, phantom-module check, trace health) were memory-only; nothing enforced or reported them.",
+    "decision": "Standalone audit script: git status --porcelain (WARN normally, ERROR with --strict), .decisions.json validity, agent_memory.json/chat_history.json both-or-neither, phantom modules named in latest .docs/<ts>/ docs but missing on disk, trace corpus interrupted-run ratio (decision #052) plus last loop verdict, backups/ existence. Exit 1 only on errors; warnings are informational.",
+    "rationale": "A zero-dependency script the gate can invoke post-commit; keeps invariant enforcement in the repo rather than in the model's memory.",
+    "affected_files": [
+      "scripts/audit_invariants.py"
+    ],
+    "tags": [
+      "verification-gate",
+      "invariants",
+      "audit"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]

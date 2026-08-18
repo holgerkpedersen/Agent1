@@ -63,6 +63,23 @@ class TestFindTestCollisions:
         hits = find_test_collisions(("Tool error: ",), tests_dir)
         assert len(hits) == 2
 
+    def test_guard_fixture_files_excluded_by_default(self, tmp_path):
+        """Decision #051: the guard's own fixture tests contain the runtime
+        fragments as literals, so they are excluded by default — otherwise
+        every repair would self-block."""
+        from harnessfix.repairs.collisions import GUARD_TEST_FILENAMES
+
+        assert "test_harnessfix_collisions.py" in GUARD_TEST_FILENAMES
+        tests_dir = tmp_path / "tests"
+        _write_asserting_test(
+            tests_dir, 'a = "Tool error: x"\n', "test_harnessfix_collisions.py"
+        )
+        assert find_test_collisions(("Tool error: ",), tests_dir) == []
+        # Opting out of the exclusion still finds it.
+        hits = find_test_collisions(("Tool error: ",), tests_dir, exclude_files=frozenset())
+        assert len(hits) == 1
+        assert hits[0].path.name == "test_harnessfix_collisions.py"
+
 
 class TestLoopCollisionGuard:
     def test_repair_skipped_when_tests_assert_the_string(self, tmp_path, monkeypatch):
@@ -103,7 +120,7 @@ class TestLoopCollisionGuard:
         )
         monkeypatch.setattr(gates, "run_test_gate", lambda: (True, "passed"))
         monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
-        monkeypatch.setattr(gates, "run_benchmark_gate", lambda model: None)
+        monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
 
         from harnessfix.repairs.tool_interface import revert
 
@@ -111,6 +128,38 @@ class TestLoopCollisionGuard:
         try:
             summary = run_loop(traces_dir, approve=True, model=None, output_dir=out)
             assert summary["verdict"] == "accepted"
+            assert _NEW in _loop_source()
+        finally:
+            revert()
+        assert _OLD in _loop_source()
+
+    def test_guard_fixture_hits_are_ignored_and_recorded(self, tmp_path, monkeypatch):
+        """Decision #051: matches inside the guard's OWN test files no longer
+        block the repair; they are reported as ignored_guard_test_hits."""
+        traces_dir = tmp_path / "traces"
+        traces_dir.mkdir()
+        _write_tool_error_trace(traces_dir, "tr3")
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        _write_asserting_test(
+            tests_dir, 'a = "Tool error: x"\n', "test_harnessfix_collisions.py"
+        )
+        monkeypatch.setattr(
+            "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tests_dir
+        )
+        monkeypatch.setattr(gates, "run_test_gate", lambda: (True, "passed"))
+        monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+        monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+
+        from harnessfix.repairs.tool_interface import revert
+
+        out = tmp_path / "out"
+        try:
+            summary = run_loop(traces_dir, approve=True, model=None, output_dir=out)
+            assert summary["verdict"] == "accepted"
+            assert summary["ignored_guard_test_hits"] >= 1
+            assert "collisions" not in summary
             assert _NEW in _loop_source()
         finally:
             revert()

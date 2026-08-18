@@ -137,3 +137,4 @@ agent_memory.db
 agent_memory.json
 backups/
 model
+reports/models.json

@@ -9,9 +9,20 @@ from collections import Counter
 from pathlib import Path
 
 from .diagnose import Diagnosis, diagnose_graph
-from .htir import compile_trace
+from .htir import TraceGraph, compile_trace
 from .reader import TraceValidationError
 from .repairs import Repair, repairs_for_layer
+
+#: A trace without loop_end is an interrupted run (the loop ALWAYS writes
+#: loop_end via finally), but only real sessions count — 1-2-event stubs
+#: (aborted demo writes, empty writers) are noise, not failures.
+MIN_ACTIVITY_EVENTS = 3
+
+
+def _is_failed_trace(graph: TraceGraph) -> bool:
+    if any(s.is_failed() for s in graph.steps):
+        return True
+    return not graph.has_loop_end() and len(graph.steps) >= MIN_ACTIVITY_EVENTS
 
 
 def collect_traces(trace_dir: Path) -> list[Path]:
@@ -25,7 +36,8 @@ def diagnose_corpus(traces: list[Path], output_dir: Path) -> list[Diagnosis]:
     """Compile+diagnose every FAILED trace; persist one JSON per task.
 
     Successful traces (completed loop, no tool errors) are skipped: diagnosis
-    is for failed traces only (spec section 3.5 step 2).
+    is for failed traces only (spec section 3.5 step 2).  Interrupted runs
+    (no loop_end event) count as failed too (decision #052).
     """
     diagnoses: list[Diagnosis] = []
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -34,7 +46,7 @@ def diagnose_corpus(traces: list[Path], output_dir: Path) -> list[Diagnosis]:
             graph = compile_trace(path)
         except TraceValidationError:
             continue
-        if not any(s.is_failed() for s in graph.steps):
+        if not _is_failed_trace(graph):
             continue
         diag = diagnose_graph(graph)
         diagnoses.append(diag)

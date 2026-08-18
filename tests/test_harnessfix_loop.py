@@ -50,6 +50,44 @@ def test_should_accept_rejects_benchmark_regression():
     assert should_accept(True, True, 60.0, 59.9, regression_tolerance=0.2) is True
 
 
+def test_benchmark_key_is_profile_aware():
+    """Decision #055: benchmark results are keyed by model|profile so the
+    same model under different profiles is compared like with like."""
+    from harnessfix.gates import _benchmark_key
+
+    assert _benchmark_key("qwen3.8-27b") == "qwen3.8-27b"
+    assert _benchmark_key("qwen3.8-27b", "deep-analysis") == "qwen3.8-27b|deep-analysis"
+    assert _benchmark_key("m", "deep-analysis") != _benchmark_key("m", "fast-codegen")
+
+
+def test_benchmark_gate_reads_list_form_report(tmp_path, monkeypatch):
+    """Regression: benchmark.py's --output file stores models as a LIST
+    (save_json_report); the gate used to call .get(key) on the list and
+    crash with AttributeError."""
+    import json as _json
+
+    from harnessfix import gates as _gates
+
+    payload = {
+        "models": [
+            {"model": "m", "profile": "deep-analysis",
+             "display_name": "m|deep-analysis", "overall_accuracy": 87.5},
+        ]
+    }
+
+    def fake_run(cmd, **kw):
+        out = Path("reports") / "benchmark_harnessfix.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(_json.dumps(payload), encoding="utf-8")
+        return type("P", (), {"returncode": 0})()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(_gates.subprocess, "run", fake_run)
+    assert _gates.run_benchmark_gate("m", "deep-analysis") == 87.5
+    assert _gates.run_benchmark_gate("m", "fast-codegen") is None
+    assert _gates.run_benchmark_gate(None) is None
+
+
 def test_loop_rejects_repair_that_fails_tests(tmp_path, monkeypatch):
     traces_dir = tmp_path / "traces"
     traces_dir.mkdir()
@@ -57,7 +95,7 @@ def test_loop_rejects_repair_that_fails_tests(tmp_path, monkeypatch):
 
     monkeypatch.setattr(gates, "run_test_gate", lambda: (False, "1 failed"))
     monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
-    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model: None)
+    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
     # The collision guard must not skip these flows: point it at an empty dir.
     (tmp_path / "no_tests").mkdir()
     monkeypatch.setattr(
@@ -100,7 +138,7 @@ def test_loop_accepts_repair_when_all_gates_pass(tmp_path, monkeypatch):
 
     monkeypatch.setattr(gates, "run_test_gate", lambda: (True, "passed"))
     monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
-    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model: None)
+    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
     # Collision guard: empty tests dir so the apply/accept path is exercised.
     (tmp_path / "no_tests2").mkdir()
     monkeypatch.setattr(

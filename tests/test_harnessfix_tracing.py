@@ -162,3 +162,39 @@ def test_reader_rejects_malformed_trace(tmp_path):
     no_layer.write_text('{"kind": "step_start"}\n', encoding="utf-8")
     with pytest.raises(TraceValidationError):
         read_trace(no_layer)
+
+
+def test_task_begin_and_meta_stamp_every_record(tmp_path):
+    """Decision #050: the caller stamps model/profile via meta and records the
+    user prompt as the first event, so traces are self-describing."""
+    from harnessfix.tracing import KIND_TASK_BEGIN, LAYER_CONTEXT
+
+    writer = TraceWriter(
+        task_id="t3", directory=tmp_path,
+        meta={"model": "qwen3.8-27b", "profile": "deep-analysis"},
+    )
+    writer.emit_task_begin("refactor the verifier please")
+    writer.emit({"kind": KIND_STEP_START, "layer": "lifecycle", "iteration": 0})
+
+    events = read_trace(writer.path)
+    assert len(events) == 2
+    assert events[0]["kind"] == KIND_TASK_BEGIN
+    assert events[0]["layer"] == LAYER_CONTEXT
+    assert events[0]["user_input"] == "refactor the verifier please"
+    # meta reaches EVERY record, not just the task_begin event
+    for ev in events:
+        assert ev["model"] == "qwen3.8-27b"
+        assert ev["profile"] == "deep-analysis"
+    from harnessfix.tracing import KINDS
+    assert KIND_TASK_BEGIN in KINDS
+
+
+def test_task_begin_truncates_long_prompts(tmp_path):
+    from harnessfix.tracing import KIND_TASK_BEGIN
+
+    writer = TraceWriter(task_id="t4", directory=tmp_path)
+    writer.emit_task_begin("x" * 5000)
+    events = read_trace(writer.path)
+    assert events[0]["kind"] == KIND_TASK_BEGIN
+    assert len(events[0]["user_input"]) < 1000
+    assert "[truncated" in events[0]["user_input"]

@@ -83,6 +83,32 @@ def diagnose_graph(graph: TraceGraph) -> Diagnosis:
             layer, mechanism = hit
             return _build(graph, layer, mechanism, step.index)
 
+    # 1b. Task abandonment (decision #052): files were actually mutated
+    # (decision #049 affected_files) yet the run did not complete — the model
+    # wrote/edited then stopped mid-task.  More specific than the stuck/
+    # lifecycle heuristics, less specific than an explicit tool error.
+    affected = graph.affected_files()
+    if affected and not graph.has_loop_end():
+        return _build(
+            graph,
+            LAYER_LIFECYCLE,
+            f"task interrupted after mutating {len(affected)} file(s) "
+            f"(e.g. {', '.join(affected[:3])})",
+            first_index=_first_mutation_index(graph),
+        )
+    if affected:
+        end = next(
+            (s for s in reversed(graph.steps) if s.kind == "loop_end"), None
+        )
+        if end is not None and end.payload.get("outcome") != "completed":
+            return _build(
+                graph,
+                LAYER_LIFECYCLE,
+                f"task ended non-completed after mutating {len(affected)} file(s) "
+                f"(e.g. {', '.join(affected[:3])})",
+                first_index=_first_mutation_index(graph),
+            )
+
     # 2. Stuck cycle -> lifecycle.  Mirrors the harness's own semantics
     #    (tool_loop.py stops the loop on a third *consecutive* identical
     #    call, marks the duplicates and fires the "stuck" guard): the
@@ -96,11 +122,25 @@ def diagnose_graph(graph: TraceGraph) -> Diagnosis:
     worst_run, run_start = _max_consecutive_identical_run(graph)
     if stuck_guard_idx is not None or worst_run >= 3:
         count = worst_run if worst_run >= 3 else 3
+        tool = _run_tool_at(graph, run_start)
+        tool_part = f" ({tool})" if tool else ""
         return _build(
             graph,
             LAYER_LIFECYCLE,
-            f"model repeated an identical tool call {count}x (stuck cycle)",
+            f"model repeated an identical tool call {count}x{tool_part} (stuck cycle)",
             first_index=stuck_guard_idx if stuck_guard_idx is not None else run_start,
+        )
+
+    # 2b. Interrupted run (decision #052): no loop_end — the loop ALWAYS
+    #     writes one via finally, so a missing one is a crash/kill/connection
+    #     loss, not a normal end.  Stub traces (1-2 events) are filtered by
+    #     the corpus before they reach diagnosis.
+    if not graph.has_loop_end():
+        return _build(
+            graph,
+            LAYER_LIFECYCLE,
+            "run interrupted: no loop_end event (crash / killed / provider loss)",
+            first_index=len(graph.steps) - 1,
         )
 
     # 3. Any guard fired -> lifecycle (deadline / stuck / no-mutation / budget).
@@ -122,6 +162,23 @@ def diagnose_graph(graph: TraceGraph) -> Diagnosis:
         "loop did not complete; no signature matched (fallback)",
         first_index=0,
     )
+
+
+def _first_mutation_index(graph: TraceGraph) -> int | None:
+    """Index of the first tool_result step that reported affected files."""
+    for s in graph.steps:
+        files = s.payload.get("affected_files")
+        if isinstance(files, list) and files:
+            return s.index
+    return None
+
+
+def _run_tool_at(graph: TraceGraph, index: int) -> str:
+    """Tool name of the nearest tool_call step at/after *index*, if any."""
+    for s in graph.steps:
+        if s.index >= index and s.kind == "tool_call":
+            return str(s.payload.get("tool", ""))
+    return ""
 
 
 def _max_consecutive_identical_run(graph: TraceGraph) -> tuple[int, int]:

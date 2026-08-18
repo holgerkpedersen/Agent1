@@ -67,6 +67,26 @@ class TraceGraph(BaseModel):
                 return s
         return None
 
+    def has_loop_end(self) -> bool:
+        """True when the run recorded its loop_end event (always written by
+        the loop's finally block, so a missing one means the run was
+        interrupted — crash, kill, power loss, LM Studio death)."""
+        return any(s.kind == "loop_end" for s in self.steps)
+
+    def affected_files(self) -> list[str]:
+        """Files the run actually touched (decision #049 field), in first-
+        touched order, deduplicated.  Empty for traces recorded before the
+        field existed."""
+        seen: list[str] = []
+        for s in self.steps:
+            files = s.payload.get("affected_files")
+            if not isinstance(files, list):
+                continue
+            for f in files:
+                if f and f not in seen:
+                    seen.append(str(f))
+        return seen
+
 
 def compile_trace(path: Path | str) -> TraceGraph:
     """Compile a validated trace JSONL file into a TraceGraph.

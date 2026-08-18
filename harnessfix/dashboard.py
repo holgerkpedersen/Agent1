@@ -17,6 +17,7 @@ from .tracing import TRACE_DIR
 
 #: Payload fields worth showing in the per-event timeline, by event kind.
 _EVENT_FIELDS: dict[str, tuple[str, ...]] = {
+    "task_begin": ("model", "profile"),
     "step_start": ("iteration", "budget_remaining"),
     "llm_response": ("iteration", "tool_calls_requested"),
     "tool_call": ("iteration", "tool", "args_hash"),
@@ -45,6 +46,20 @@ def _summarize_trace(path: Path) -> dict[str, Any]:
     failed = sum(1 for e in events if e.get("kind") in ("tool_error",) or (e.get("kind") == "loop_end" and e.get("outcome") not in ("completed",)))
     # Count guard triggers for quick health signal
     guards = sum(1 for e in events if e.get("kind") == "guard_triggered")
+    # Task identity (decision #050): prompt + model from the task_begin event.
+    begin = next((e for e in events if e.get("kind") == "task_begin"), {})
+    prompt = str(begin.get("user_input", ""))[:140]
+    model = str(begin.get("model", "") or "")
+    profile = str(begin.get("profile", "") or "")
+    # Files the task actually touched (decision #049): aggregated from the
+    # affected_files of every tool_result event.
+    affected: list[str] = []
+    for e in events:
+        files = e.get("affected_files")
+        if isinstance(files, list):
+            for f in files:
+                if f and f not in affected:
+                    affected.append(str(f))
     return {
         "task_id": task_id,
         "path": str(path),
@@ -52,6 +67,10 @@ def _summarize_trace(path: Path) -> dict[str, Any]:
         "outcome": outcome,
         "failed_signals": failed,
         "guards": guards,
+        "prompt": prompt,
+        "model": model,
+        "profile": profile,
+        "affected_files": affected[:10],
     }
 
 
@@ -94,7 +113,7 @@ def _event_line(index: int, ev: dict[str, Any]) -> str:
         value = ev.get(field)
         if value is not None:
             bits.append(f"{field}={value}")
-    for field, cap in (("message", 90), ("text", 90)):
+    for field, cap in (("message", 90), ("text", 90), ("user_input", 90)):
         value = ev.get(field)
         if isinstance(value, str) and value.strip():
             bits.append(f"{field}={value[:cap]!r}")
@@ -137,6 +156,9 @@ def _explain_task(events: list[dict[str, Any]], summary: dict[str, Any], diag: d
         lines.append(f"Lifecycle guard(s) fired: {names}.")
     if dupes:
         lines.append(f"The model repeated an already-executed tool call {dupes} time(s) (duplicate flag).")
+    affected = summary.get("affected_files") or []
+    if affected:
+        lines.append(f"Files touched: {', '.join(affected[:8])}{' …' if len(affected) > 8 else ''}.")
 
     if diag and diag.get("layer"):
         lines.append(
@@ -187,6 +209,13 @@ def _show_task(traces_dir: Path, diag_dir: Path, task_id: str, as_json: bool) ->
     print(f"  events     : {summary['events']}")
     print(f"  failed     : {summary['failed_signals']} failed signal(s)")
     print(f"  guards     : {summary['guards']} guard trigger(s)")
+    if summary.get("model"):
+        print(f"  model      : {summary['model']}{f' ({summary['profile']})' if summary.get('profile') else ''}")
+    if summary.get("prompt"):
+        print(f"  prompt     : {summary['prompt']}")
+    affected = summary.get("affected_files") or []
+    if affected:
+        print(f"  affected   : {len(affected)} file(s) — {', '.join(affected[:6])}")
     if diag and diag.get("layer"):
         print(f"  diagnosis  : {diag['layer']} — {diag.get('mechanism', '?')}  (confidence {diag.get('confidence', 'n/a')})")
         evidence = diag.get("evidence") or []
@@ -229,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
 
     files = sorted(args.traces.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)[: args.limit]
     rows = []
-    layer_counter = Counter()
+    layer_counter: Counter[str] = Counter()
     for p in files:
         s = _summarize_trace(p)
         diag = _load_diagnosis(args.diagnoses, s["task_id"])
@@ -257,9 +286,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # Header
     print(f"HarnessFix dashboard — {len(rows)} recent traces from {args.traces}")
-    print("-" * 110)
-    print(f"{'task_id':<36} {'outcome':<12} {'events':>6} {'failed':>6} {'guards':>6} {'layer':<18} mechanism")
-    print("-" * 110)
+    print("-" * 130)
+    print(f"{'task_id':<36} {'outcome':<14} {'events':>6} {'failed':>6} {'guards':>6} {'aff':>4} {'model':<16} {'layer':<18} mechanism")
+    print("-" * 130)
     for r in rows:
         s = r
         diag = s.get("diagnosis")
@@ -268,9 +297,11 @@ def main(argv: list[str] | None = None) -> int:
         events = s.get("events", 0)
         failed = s.get("failed_signals", 0)
         guards = s.get("guards", 0)
+        aff = len(s.get("affected_files") or [])
+        model = (s.get("model") or "")[:14]
         layer = diag.get("layer") if diag else ""
         mech = (diag.get("mechanism") or "")[:60] if diag else ""
-        print(f"{tid:<36} {outcome:<12} {events:>6} {failed:>6} {guards:>6} {layer:<18} {mech}")
+        print(f"{tid:<36} {outcome:<14} {events:>6} {failed:>6} {guards:>6} {aff:>4} {model:<16} {layer:<18} {mech}")
 
     if layer_counter:
         print("\nLayer distribution (diagnosed failures):")

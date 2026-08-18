@@ -1,5 +1,5 @@
 {
-  "model": "laguna-s-2.1",
+  "model": "qwen/qwen3.8-27b",
   "profile": "deep-analysis",
   "provider": "lmstudio"
 }

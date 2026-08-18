@@ -16,6 +16,15 @@ from pathlib import Path
 #: Tests dir scanned by the guard (monkeypatchable for hermetic tests).
 DEFAULT_TESTS_DIR = Path("tests")
 
+#: Test files that are themselves the guard's fixtures — they contain the
+#: runtime fragments as LITERALS (e.g. test_harnessfix_collisions.py asserts
+#: on find_test_collisions("Tool error: ")), so scanning them makes every
+#: repair a self-block.  These fixture files are updated alongside the
+#: repair, so they never pin the OLD runtime string (decision #051).
+GUARD_TEST_FILENAMES: frozenset[str] = frozenset(
+    {"test_harnessfix_collisions.py", "test_harnessfix_loop.py"}
+)
+
 
 @dataclass(frozen=True)
 class StringCollision:
@@ -38,17 +47,25 @@ class StringCollision:
 def find_test_collisions(
     fragments: tuple[str, ...],
     tests_dir: Path = DEFAULT_TESTS_DIR,
+    exclude_files: frozenset[str] = GUARD_TEST_FILENAMES,
 ) -> list[StringCollision]:
     """Return every test file line containing any *fragments* fragment.
 
     Fragments are RUNTIME strings a repair alters (e.g. "Tool error: "), not
     source lines — assertions pin runtime output.  An empty result means the
     repair is safe to apply without touching the test contract.
+
+    ``exclude_files`` skips the guard's OWN fixture tests (see
+    GUARD_TEST_FILENAMES, decision #051): those files exercise the guard and
+    contain the fragments as literals, so scanning them would make every
+    repair self-block.  Real pinning tests are never excluded.
     """
     if not fragments or not tests_dir.is_dir():
         return []
     hits: list[StringCollision] = []
     for path in sorted(tests_dir.rglob("*.py")):
+        if exclude_files and path.name in exclude_files:
+            continue
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
