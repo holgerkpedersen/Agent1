@@ -1201,19 +1201,27 @@ class WorkflowCommand(Command):
                     combined += entry
                     lines_used += entry_lines
                 analyze_system = (
-                    "You are an expert software architect. Evaluate this codebase across 5 dimensions. "
-                    "For each dimension, limit to 3 bullet points max 50 words each. Be concise."
-                    "\n\n1. CODE QUALITY — bugs, edge cases, type safety, error handling gaps"
-                    "\n2. COMPLETENESS — missing tests, missing docs, missing features"
-                    "\n3. ARCHITECTURE — DRY violations, coupling, SRP breaks"
-                    "\n4. INNOVATION — new capabilities that would make this system more useful"
-                    "\n5. PRODUCTION — logging, monitoring, config, security gaps"
-                    + ("\n6. BRAINSTORMING — bold creative features (3 bullets max)"
-                       if brainstorm else "")
+                    "You are an expert software architect. Evaluate this codebase.\n"
+                    "Output ONLY the numbered sections below, exactly in this order.\n\n"
+                    "## 1. CODE QUALITY — bugs, edge cases, type safety, error handling gaps\n"
+                    "## 2. COMPLETENESS — missing tests, missing docs, missing features\n"
+                    "## 3. ARCHITECTURE — DRY violations, coupling, SRP breaks\n"
+                    "## 4. INNOVATION — new capabilities that would make this system more useful\n"
+                    "## 5. PRODUCTION — logging, monitoring, config, security gaps\n"
+                    + ("## 6. BRAINSTORMING — bold creative features\n" if brainstorm else "")
+                    + "RULES:\n"
+                    "- Max 3 bullet points per section, max 50 words per bullet\n"
+                    "- Cite file paths from the code when identifying issues\n"
+                    "- Total output under 800 words — no intro, no conclusion, no repetition of the code\n"
+                )
+                analyze_user = (
+                    "Evaluate this codebase. Follow the numbered-section FORMAT from the "
+                    "system prompt exactly.\n\n"
+                    f"## Codebase:\n{combined}"
                 )
                 r = await agent.llm.chat([
                     {"role": "system", "content": analyze_system},
-                    {"role": "user", "content": combined}
+                    {"role": "user", "content": analyze_user},
                 ])
                 if not step_ok(r):
                     print(f"[analyze] FAILED: {r[:200]}")
