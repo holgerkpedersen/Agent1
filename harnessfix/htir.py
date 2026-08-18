@@ -73,6 +73,12 @@ class TraceGraph(BaseModel):
         interrupted — crash, kill, power loss, LM Studio death)."""
         return any(s.kind == "loop_end" for s in self.steps)
 
+    def has_metadata(self) -> bool:
+        """True when the trace carries the #050 meta stamp (model/profile on
+        every record).  Pre-#050 traces cannot be human-judged (no prompt,
+        no model context) and are excluded from the review ledger."""
+        return any(s.payload.get("model") for s in self.steps)
+
     def affected_files(self) -> list[str]:
         """Files the run actually touched (decision #049 field), in first-
         touched order, deduplicated.  Empty for traces recorded before the

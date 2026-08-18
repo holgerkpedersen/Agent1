@@ -80,7 +80,9 @@ def build_reviews(
     """Rebuild the ledger from the trace corpus + persisted diagnoses.
 
     Only FAILED traces (tool errors / guards / interrupted runs) are
-    reviewed; completed successes are not defects to review.
+    reviewed; completed successes are not defects to review.  Pre-#050
+    traces (no model/profile metadata, no prompt) are excluded: they cannot
+    be human-judged, and the ledger must only contain reviewable work.
     """
     from .corpus import collect_traces
 
@@ -89,6 +91,8 @@ def build_reviews(
         try:
             graph = compile_trace(path)
         except TraceValidationError:
+            continue
+        if not graph.has_metadata():
             continue
         if not _is_failed_trace(graph):
             continue

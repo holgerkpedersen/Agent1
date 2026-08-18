@@ -18,10 +18,13 @@ from harnessfix.review import (
 from harnessfix.tracing import TraceWriter
 
 
-def _failed_trace(writer: TraceWriter) -> None:
-    writer.emit({"kind": "task_begin", "layer": "context",
-                 "user_input": "fix the flaky gate",
-                 "model": "qwen3.8-27b", "profile": "deep-analysis"})
+def _failed_trace(writer: TraceWriter, *, meta: bool = True) -> None:
+    begin = {"kind": "task_begin", "layer": "context",
+             "user_input": "fix the flaky gate"}
+    if meta:
+        begin["model"] = "qwen3.8-27b"
+        begin["profile"] = "deep-analysis"
+    writer.emit(begin)
     writer.emit({"kind": "tool_call", "layer": "tool_interface",
                  "tool": "write", "args_hash": "w"})
     writer.emit({"kind": "tool_result", "layer": "tool_interface",
@@ -31,7 +34,7 @@ def _failed_trace(writer: TraceWriter) -> None:
     writer.emit({"kind": "loop_end", "layer": "lifecycle", "outcome": "error"})
 
 
-def test_build_reviews_covers_only_failed_traces(tmp_path):
+def test_build_reviews_covers_only_failed_metadata_traces(tmp_path):
     traces = tmp_path / "traces"
     traces.mkdir()
 
@@ -40,9 +43,14 @@ def test_build_reviews_covers_only_failed_traces(tmp_path):
     failed.close()
 
     ok = TraceWriter(task_id="tok", directory=traces)
-    ok.emit({"kind": "task_begin", "layer": "context", "user_input": "hi"})
+    ok.emit({"kind": "task_begin", "layer": "context", "user_input": "hi",
+             "model": "m", "profile": "p"})
     ok.emit({"kind": "loop_end", "layer": "lifecycle", "outcome": "completed"})
     ok.close()
+
+    old = TraceWriter(task_id="told", directory=traces)
+    _failed_trace(old, meta=False)
+    old.close()
 
     reviews = build_reviews(traces)
     assert set(reviews) == {"tfail"}
@@ -54,6 +62,17 @@ def test_build_reviews_covers_only_failed_traces(tmp_path):
     assert rec.outcome == "error"
     assert rec.root_layer == "execution_environment"
     assert rec.disposition == "unreviewed"
+
+
+def test_pre050_traces_excluded_from_ledger(tmp_path):
+    """Pre-#050 traces carry no model/profile meta and no prompt — they
+    cannot be human-judged, so the review ledger must not contain them."""
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    old = TraceWriter(task_id="told", directory=traces)
+    _failed_trace(old, meta=False)
+    old.close()
+    assert build_reviews(traces) == {}
 
 
 def test_label_and_persist_roundtrip(tmp_path):
