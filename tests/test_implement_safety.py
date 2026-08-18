@@ -15,6 +15,7 @@ from agent_core.commands.implement_cmd import (
     _check_planned_duplicates,
     _filter_duplicate_planned,
     _suggest_consumers,
+    _ensure_package_inits,
 )
 
 
@@ -111,6 +112,36 @@ class TestPlannedDuplicates:
             taskplan,
         )
         assert any("TF-IDF" in r for r in reasons), reasons
+
+    def test_planned_test_file_never_flagged(self, tmp_path):
+        """A planned test file mirrors its target by design — the duplicate
+        gate must not flag it, even when it names the covered module
+        (observed: test_agent_chat_nlp.py vs agent.py)."""
+        (tmp_path / "agent.py").write_text(
+            '"""Agent — chat loop."""\ndef chat_nlp():\n    return 1\n',
+            encoding="utf-8",
+        )
+        reasons = _check_planned_duplicates(
+            ["tests/unit/test_agent_chat_nlp.py"],
+            str(tmp_path),
+            "1. `tests/unit/test_agent_chat_nlp.py` — cover chat_nlp loop\n",
+        )
+        assert reasons == []
+
+    def test_mixed_planned_only_production_flagged(self, tmp_path):
+        (tmp_path / "agent_core" / "security").mkdir(parents=True)
+        (tmp_path / "agent_core" / "security" / "allowlist.py").write_text(
+            '"""Command allow-list."""\nSAFE = set()\n', encoding="utf-8",
+        )
+        reasons = _check_planned_duplicates(
+            [
+                "tests/unit/test_allowlist.py",
+                "agent_core/security/shell_allowlist.py",
+            ],
+            str(tmp_path),
+        )
+        assert any("shell_allowlist.py" in r for r in reasons)
+        assert not any("test_allowlist.py" in r for r in reasons)
 
 
 class TestUnwiredClosure:
@@ -270,7 +301,7 @@ class TestModifyMode:
     wholesale (--force)."""
 
     @staticmethod
-    def _run(tmp_path, stub_content, extra_args=(), auto="y"):
+    def _run(tmp_path, stub_content, extra_args=(), auto="y", modify=True):
         import asyncio
         from types import SimpleNamespace
         from unittest.mock import patch
@@ -290,10 +321,11 @@ class TestModifyMode:
 
         agent = SimpleNamespace(workspace=str(tmp_path), llm=SimpleNamespace(chat=chat))
         with patch("agent_core.commands.implement_cmd.auto_choice", return_value=auto):
+            args = [str(tmp_path / "tasks.md"), *extra_args]
+            if modify:
+                args.insert(1, "--modify")
             ok = asyncio.run(
-                ImplementCommand().execute(
-                    [str(tmp_path / "tasks.md"), "--modify", *extra_args], agent
-                )
+                ImplementCommand().execute(args, agent)
             )
         return ok, target
 
@@ -329,6 +361,21 @@ class TestModifyMode:
         assert ok is True
         assert target.read_text(encoding="utf-8").startswith("def totally_different_interface")
 
+    def test_keep_mode_still_applies_modify_diff(self, tmp_path):
+        """--keep + --modify must NOT short-circuit: existing compile-OK
+        modules are modify targets, not skips (observed: keep-mode run
+        reported "already exists, compile OK" and did nothing)."""
+        ok, target = self._run(tmp_path, "def foo():\n    return 2\n", extra_args=["--keep"])
+        assert ok is True
+        assert target.read_text(encoding="utf-8") == "def foo():\n    return 2\n"
+
+    def test_keep_without_modify_still_skips(self, tmp_path):
+        ok, target = self._run(
+            tmp_path, "def foo():\n    return 2\n", extra_args=["--keep"], modify=False,
+        )
+        assert ok is True
+        assert target.read_text(encoding="utf-8") == "def foo():\n    return 1\n"
+
 
 class TestFindSafeSubpackage:
     def setup_method(self):
@@ -355,3 +402,175 @@ class TestFindSafeSubpackage:
         (self.ws / "src" / "agent1").mkdir()
         result = _find_safe_subpackage(self.ws)
         assert result == "src/agent1"
+
+
+class TestEnsurePackageInits:
+    """Package-init touch loop must NOT packageify tests/ or src/ trees
+    (observed: the run created tests/__init__.py + tests/unit/__init__.py,
+    which break pytest implicit-sibling imports, and src/__init__.py +
+    src/agent1/__init__.py noise)."""
+
+    def test_creates_inits_for_normal_packages(self, tmp_path):
+        (tmp_path / "pkg" / "sub").mkdir(parents=True)
+        _ensure_package_inits(tmp_path / "pkg" / "sub", tmp_path)
+        assert (tmp_path / "pkg" / "sub" / "__init__.py").exists()
+        assert (tmp_path / "pkg" / "__init__.py").exists()
+
+    def test_skips_tests_tree(self, tmp_path):
+        (tmp_path / "tests" / "unit").mkdir(parents=True)
+        _ensure_package_inits(tmp_path / "tests" / "unit", tmp_path)
+        assert not (tmp_path / "tests" / "__init__.py").exists()
+        assert not (tmp_path / "tests" / "unit" / "__init__.py").exists()
+
+    def test_skips_src_tree(self, tmp_path):
+        (tmp_path / "src" / "agent1" / "core").mkdir(parents=True)
+        _ensure_package_inits(tmp_path / "src" / "agent1" / "core", tmp_path)
+        assert not (tmp_path / "src" / "__init__.py").exists()
+        assert not (tmp_path / "src" / "agent1" / "__init__.py").exists()
+        assert not (tmp_path / "src" / "agent1" / "core" / "__init__.py").exists()
+
+    def test_mixed_tree_only_normal_part_touched(self, tmp_path):
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "app").mkdir()
+        _ensure_package_inits(tmp_path / "app", tmp_path)
+        _ensure_package_inits(tmp_path / "tests", tmp_path)
+        assert (tmp_path / "app" / "__init__.py").exists()
+        assert not (tmp_path / "tests" / "__init__.py").exists()
+
+    def test_preserves_nonempty_init(self, tmp_path):
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "__init__.py").write_text("X = 1\n", encoding="utf-8")
+        _ensure_package_inits(tmp_path / "pkg", tmp_path)
+        assert (tmp_path / "pkg" / "__init__.py").read_text(encoding="utf-8") == "X = 1\n"
+
+
+class TestDependencyCascadeSafety:
+    """The post-loop dependency cleanup must NEVER delete a pre-existing file
+    this run did not write (observed: an untouched agent.py was unlinked
+    because it imported a wholesale-rewrite-rejected tool_loop.py)."""
+
+    @staticmethod
+    def _setup_workspace(tmp_path):
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "sibling.py").write_text(
+            "def sibling_impl():\n    return 1\n", encoding="utf-8"
+        )
+        (pkg / "mod_me.py").write_text(
+            "from pkg.sibling import sibling_impl\n\n"
+            "def foo():\n    return sibling_impl()\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tasks.md").write_text(
+            "1. `pkg/mod_me.py` — extend foo\n"
+            "2. `pkg/sibling.py` — extend sibling_impl\n",
+            encoding="utf-8",
+        )
+
+    def test_rejected_modify_targets_never_deleted(self, tmp_path):
+        """Regression: mod_me.py imports sibling.py; both generated contents
+        are wholesale rewrites and get rejected.  Neither original may be
+        touched, and a backup of both must exist under backups/."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from agent_core.commands.implement_cmd import ImplementCommand
+
+        self._setup_workspace(tmp_path)
+        original_mod = (tmp_path / "pkg" / "mod_me.py").read_text(encoding="utf-8")
+        original_sib = (tmp_path / "pkg" / "sibling.py").read_text(encoding="utf-8")
+
+        async def chat(messages, **kwargs):
+            last_user = messages[-1]["content"] if messages else ""
+            if "pkg/sibling.py" in last_user:
+                return "[FILE: pkg/sibling.py]\n```python\ndef sibling_v2():\n    return 2\n```\n"
+            return "[FILE: pkg/mod_me.py]\n```python\ndef mod_v2():\n    return 3\n```\n"
+
+        agent = SimpleNamespace(workspace=str(tmp_path), llm=SimpleNamespace(chat=chat))
+        with patch("agent_core.commands.implement_cmd.auto_choice", return_value="n"):
+            ok = asyncio.run(
+                ImplementCommand().execute(
+                    [str(tmp_path / "tasks.md"), "--modify"], agent
+                )
+            )
+
+        assert ok is True
+        # The two untouched originals must survive the dependency cascade.
+        assert (tmp_path / "pkg" / "mod_me.py").read_text(encoding="utf-8") == original_mod
+        assert (tmp_path / "pkg" / "sibling.py").read_text(encoding="utf-8") == original_sib
+        # Pre-run backups of the existing targets exist.
+        backups = list((tmp_path / "backups").glob("*.py"))
+        assert len(backups) >= 2
+        assert any("sibling_impl" in b.read_text(encoding="utf-8") for b in backups)
+
+    def test_keep_mode_existing_file_importing_rejected_kept(self, tmp_path, capsys):
+        """Without --modify, an existing compile-OK file is skipped; a NEW
+        planned file that gets rejected must not cause the existing one to be
+        deleted just because it imports the new module."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from agent_core.commands.implement_cmd import ImplementCommand
+
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "existing.py").write_text(
+            "from pkg.new_helper import helper\n\n"
+            "def foo():\n    return helper()\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tasks.md").write_text(
+            "1. `pkg/existing.py` — keep existing\n"
+            "2. `pkg/new_helper.py` — add helper module\n",
+            encoding="utf-8",
+        )
+
+        async def chat(messages, **kwargs):
+            # Oversized content → rejected by the 50KB guard.
+            blob = "x = 1\n" * 12000
+            return f"[FILE: pkg/new_helper.py]\n```python\n{blob}```\n"
+
+        agent = SimpleNamespace(workspace=str(tmp_path), llm=SimpleNamespace(chat=chat))
+        with patch("agent_core.commands.implement_cmd.auto_choice", return_value="n"):
+            ok = asyncio.run(
+                ImplementCommand().execute(
+                    [str(tmp_path / "tasks.md"), "--keep"], agent
+                )
+            )
+
+        assert ok is True
+        # new_helper was rejected (>50KB); the existing importer survives the
+        # dependency cascade because it was never written this run.
+        assert (tmp_path / "pkg" / "existing.py").exists()
+        assert not (tmp_path / "pkg" / "new_helper.py").exists()
+        assert "KEPT: pkg/existing.py imports rejected module pkg/new_helper.py" in capsys.readouterr().out
+
+    def test_batch_filename_mismatch_ignored(self, tmp_path, capsys):
+        """A [FILE:] name outside the planned batch must be ignored, not
+        accepted (observed: the secrets.py batch returned a sanitizer.py
+        block, silently dropping the planned file)."""
+        import asyncio
+        from types import SimpleNamespace
+        from agent_core.commands.implement_cmd import ImplementCommand
+
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "tasks.md").write_text(
+            "1. `pkg/newmod.py` — add module\n",
+            encoding="utf-8",
+        )
+
+        async def chat(messages, **kwargs):
+            return "[FILE: pkg/wrong_name.py]\n```python\ndef w():\n    return 1\n```\n"
+
+        agent = SimpleNamespace(workspace=str(tmp_path), llm=SimpleNamespace(chat=chat))
+        ok = asyncio.run(
+            ImplementCommand().execute([str(tmp_path / "tasks.md")], agent)
+        )
+
+        assert ok is True
+        assert not (tmp_path / "pkg" / "newmod.py").exists()
+        assert not (tmp_path / "pkg" / "wrong_name.py").exists()
+        out = capsys.readouterr().out
+        assert "WARNING: [FILE: pkg/wrong_name.py] is not in the planned batch" in out

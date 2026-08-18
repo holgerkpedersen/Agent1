@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -703,6 +704,50 @@ async def _wire_in_modules(agent: "Agent", files: list[str], suggestions: dict[s
             print(f"    Could not wire {fname} automatically — left for manual integration.")
 
 
+def _is_planned_test_file(fname: str) -> bool:
+    """A planned TEST file is never a near-duplicate by design: it
+    intentionally mirrors the module it covers (e.g. ``test_agent_chat_nlp.py``
+    vs ``agent.py``), so the semantic gate must not flag or drop it."""
+    f = fname.replace("\\", "/")
+    base = f.rsplit("/", 1)[-1]
+    return (
+        base.startswith("test_")
+        or base.startswith("conftest.")
+        or f.startswith("tests/")
+        or "/tests/" in "/" + f
+    )
+
+
+def _ensure_package_inits(start: Path, ws_root: Path) -> None:
+    """Ensure ``__init__.py`` exists in every package directory of *start*
+    up to *ws_root* so ``from src.agent1.xxx import`` works regardless of
+    import style.  Never overwrites an existing ``__init__.py`` that has
+    content.
+
+    Directories under a ``tests/`` tree and under ``src/`` are skipped:
+    packageifying ``tests/`` breaks implicit-sibling test imports (pytest
+    collection failure), and ``src`` is intentionally a PEP 420 namespace
+    root (no committed ``src/__init__.py``) — touching it would turn
+    namespace-only ``src.*`` imports into regular-package artifacts.
+    """
+    curr = start
+    while curr != ws_root and curr != curr.parent:
+        try:
+            rel = curr.relative_to(ws_root).as_posix()
+        except ValueError:
+            break
+        if not (
+            rel == "tests"
+            or rel.startswith("tests/")
+            or rel == "src"
+            or rel.startswith("src/")
+        ):
+            init = curr / "__init__.py"
+            if not init.exists() or init.stat().st_size == 0:
+                init.touch()
+        curr = curr.parent
+
+
 def _check_planned_duplicates(planned_new: list[str], ws: str, taskplan_content: str = "") -> list[str]:
     """Return human-readable reasons why *planned_new* modules duplicate
     existing project modules.
@@ -710,10 +755,13 @@ def _check_planned_duplicates(planned_new: list[str], ws: str, taskplan_content:
     Combines the deterministic name gates (:func:`detect_module_collisions`)
     with the precision-first semantic layer (:class:`ModuleSimilarity`): TF-IDF
     cosine over docstrings + task descriptions, and an optional embeddings
-    backend.  Each reason carries the evidence that fired.
+    backend.  Each reason carries the evidence that fired.  Planned test files
+    are exempt (:func:`_is_planned_test_file`).
     """
     from agent_core.patterns import detect_module_collisions
     from agent_core.utils.module_similarity import ModuleSimilarity, PlannedModule
+
+    planned_new = [f for f in planned_new if not _is_planned_test_file(f)]
 
     existing: list[str] = []
     for root, dirs, files in os.walk(ws):
@@ -798,7 +846,24 @@ class ImplementCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "implement <taskplan.md> [--keep|--force|--modify|--fix|--retry|--review] - Implement files from task plan"
+        return (
+            "implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--workspace <path>] "
+            "- Implement files from a task plan\n"
+            "  Flags:\n"
+            "    --modify         BROWNFIELD MODE: existing .py files get a reviewed diff-apply\n"
+            "                     instead of being skipped as \"already exists\".\n"
+            "    --force          Overwrite existing files wholesale (DANGEROUS on brownfield).\n"
+            "    --allow-rewrite  With --modify: permit a diff that is a wholesale rewrite\n"
+            "                     (similarity < 0.5) instead of rejecting it.\n"
+            "    --fix            Auto-fix loop: repair syntax/mypy failures and retry.\n"
+            "    --review         Deep LLM review pass of the generated code (slow).\n"
+            "    --retry          Retry failed generation batches.\n"
+            "    --keep           Resume from a matching implement cache (true resume).\n"
+            "    --refresh        Rebuild the cached file list before running.\n"
+            "  Brownfield tip: for an existing repo use --modify so [MODIFY] tasks are applied\n"
+            "  as reviewed diffs; without it existing files are skipped. Add --fix for the\n"
+            "  auto-fix loop, and --allow-rewrite only when a rewrite is truly wanted."
+        )
 
     def _apply_modify_diff(self, filename: str, filepath: Path, content: str, allow_rewrite: bool) -> tuple[bool, str]:
         """--modify: merge *content* into the existing *filepath* as a reviewed
@@ -1153,10 +1218,17 @@ class ImplementCommand(Command):
                         )
                         file_outcomes[fname] = f"shadows stdlib '{shadow_name}'"
                     else:
-                        files_to_skip.append(f"{fname}: already exists, compile OK")
-                        file_outcomes[fname] = "already exists and compiles OK"
-                        if fname not in implemented:
-                            implemented.append(fname)
+                        if modify_mode and fname.endswith(".py"):
+                            # BROWNFIELD: with --modify an existing compile-OK
+                            # file is a diff-apply target, NOT a skip — leave it
+                            # out of `implemented` so it flows into
+                            # files_to_generate and reaches the modify branch.
+                            files_to_skip.append(f"{fname}: modify target (diff-apply)")
+                        else:
+                            files_to_skip.append(f"{fname}: already exists, compile OK")
+                            file_outcomes[fname] = "already exists and compiles OK"
+                            if fname not in implemented:
+                                implemented.append(fname)
 
             print(f"\nFiles to skip (already exist and compile): {len(files_to_skip)}")
             for fs in files_to_skip:
@@ -1412,6 +1484,15 @@ class ImplementCommand(Command):
 
             for filename, content in matches:
                 content = content.strip()
+                if filename not in batch:
+                    # The LLM emitted a [FILE:] block for a name outside the
+                    # planned batch.  Accepting it silently drops the planned
+                    # file and can overwrite content of an unrelated file
+                    # (observed: the secrets.py batch returned a
+                    # [FILE: agent_core/security/sanitizer.py] block).  Treat
+                    # it as a parse failure for the planned file instead.
+                    print(f"  WARNING: [FILE: {filename}] is not in the planned batch {batch} — ignored")
+                    continue
                 generated_content[filename] = content
                 print(f"  Generated: {filename} ({len(content)} bytes)")
 
@@ -1475,6 +1556,29 @@ class ImplementCommand(Command):
         else:
             print("No content generated.")
 
+        # Safety net: back up every existing target BEFORE any write happens,
+        # so a rejected or rolled-back generation can never destroy original
+        # work (observed: the post-loop dependency cleanup deleted an
+        # untouched existing agent.py that merely imported a rejected module).
+        backup_ws = Path(to_windows_path(target_workspace))
+        backup_dir = backup_ws / "backups"
+        backup_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_map: dict[str, Path] = {}
+        for bfile in list(generated_content):
+            bfp = backup_ws / bfile
+            if bfp.is_file():
+                try:
+                    backup_dir.mkdir(parents=True, exist_ok=True)
+                    bname = bfile.replace("/", "_").replace("\\", "_")
+                    bcopy = backup_dir / f"{bname}_{backup_ts}.py"
+                    shutil.copy2(bfp, bcopy)
+                    backup_map[bfile] = bcopy
+                except OSError as exc:
+                    print(f"  WARNING: could not back up existing {bfile}: {exc}")
+        if backup_map:
+            print(f"  Backed up {len(backup_map)} existing target file(s) to backups/ ({backup_ts})")
+        written_files: set[str] = set()
+
         _RE_3 = re.compile(r'_\d+$|_v\d+$|_clean$|_final$')
         for filename, content in generated_content.items():
             raw_workspace = workspace_path(target_workspace)
@@ -1486,13 +1590,8 @@ class ImplementCommand(Command):
             # Ensure __init__.py exists in every package directory so
             # `from src.agent1.xxx import` works regardless of import style.
             # Never overwrite an existing __init__.py that has content.
-            _curr = filepath.parent
-            _ws_root = workspace.resolve()
-            while _curr != _ws_root and _curr != _curr.parent:
-                _init = _curr / "__init__.py"
-                if not _init.exists() or _init.stat().st_size == 0:
-                    _init.touch()
-                _curr = _curr.parent
+            # tests/ and src/ trees are skipped (see _ensure_package_inits).
+            _ensure_package_inits(filepath.parent, workspace.resolve())
 
             skip_reason = None
             is_analyzed_file = analyzed_file and filename == analyzed_file
@@ -1520,7 +1619,7 @@ class ImplementCommand(Command):
             # skipped instead of generated; the existing module is the right
             # place for the change.
             if skip_reason is None and not force_mode and not is_analyzed_file:
-                if filename.endswith(".py") and not filepath.exists():
+                if filename.endswith(".py") and not filepath.exists() and not _is_planned_test_file(filename):
                     dup_reasons = _check_planned_duplicates(
                         [filename], str(target_workspace),
                         taskplan_content if taskplan_content else "",
@@ -1534,8 +1633,6 @@ class ImplementCommand(Command):
             if skip_reason:
                 print(f"  Skipping {filename}: {skip_reason}")
                 file_outcomes.setdefault(filename, skip_reason)
-                if filename not in implemented:
-                    implemented.append(filename)
                 continue
 
             if modify_target:
@@ -1544,7 +1641,12 @@ class ImplementCommand(Command):
                 )
                 print(f"  {filename}: {note}")
                 file_outcomes[filename] = note
-                if filename not in implemented:
+                # Only a diff that was actually applied counts as implemented.
+                # Appending rejected/skipped files here lets the post-loop
+                # dependency cleanup delete untouched originals (observed:
+                # a rejected modify target was unlinked because its imports
+                # referenced another rejected file).
+                if ok_modify:
                     implemented.append(filename)
                 continue
 
@@ -1685,6 +1787,7 @@ class ImplementCommand(Command):
                                     with open(filepath, "w", encoding="utf-8") as f:
                                         f.write(new_content)
                                     content = new_content
+                                    written_files.add(filename)
                                     print(f"  Re-written: {filename} ({len(content)} bytes)")
                                     filepath_str = os.path.realpath(filepath)
                                     r = subprocess.run(
@@ -1725,9 +1828,11 @@ class ImplementCommand(Command):
                                     file_outcomes[filename] = "rejected — wholesale rewrite of existing file"
                                     continue
                         os.replace(tmp_path, filepath)
+                        written_files.add(filename)
                         print(f"  Compiled OK: {filename}")
                 else:
                     os.replace(tmp_path, filepath)
+                    written_files.add(filename)
                     print(f"  Compiled OK: {filename}")
 
             # Post-write: reject files that create class-name conflicts in same directory
@@ -1769,6 +1874,13 @@ class ImplementCommand(Command):
         # Only cascade-reject for compilation errors, not name collisions.
         # A name collision means the class already exists elsewhere — importing
         # files are not broken.
+        #
+        # SAFETY: only files this run actually wrote may be touched.  A
+        # pre-existing file that merely imports a rejected module is NEVER
+        # deleted (observed: an untouched agent.py was unlinked because it
+        # imported a wholesale-rewrite-rejected tool_loop.py).  Written files
+        # that had a pre-run original are restored from backups/ instead of
+        # being deleted outright.
         rejected_files = {k for k, v in file_outcomes.items()
                           if "rejected" in v and "class-name conflict" not in v}
         if rejected_files:
@@ -1787,10 +1899,25 @@ class ImplementCommand(Command):
                     for rf in rejected_files:
                         rf_no_ext = rf.replace(".py", "").replace("/", ".")
                         if mod_file == rf or module == rf_no_ext or module.endswith("." + rf_no_ext.rsplit("/", 1)[-1]):
+                            if fname not in written_files:
+                                # Pre-existing file this run did NOT write:
+                                # never delete it, report instead.
+                                print(
+                                    f"  KEPT: {fname} imports rejected module {rf} — "
+                                    "existing file left untouched (only files written "
+                                    "this run are removed)"
+                                )
+                                file_outcomes[fname] = f"kept — imports rejected {rf}; existing file preserved"
+                                break
                             p = Path(ws) / fname
+                            backup = backup_map.get(fname)
                             if p.exists():
-                                p.unlink()
-                            print(f"  REJECTED: {fname} depends on rejected file {rf}")
+                                if backup is not None and backup.exists():
+                                    shutil.copy2(backup, p)
+                                    print(f"  REJECTED: {fname} depends on rejected file {rf} — original restored from backups/")
+                                else:
+                                    p.unlink()
+                                    print(f"  REJECTED: {fname} depends on rejected file {rf}")
                             file_outcomes[fname] = f"rejected — depends on rejected {rf}"
                             if fname in implemented:
                                 implemented.remove(fname)
@@ -1861,6 +1988,13 @@ class ImplementCommand(Command):
             print(f"\n  Files no longer present: {len(removed_files)}")
             for fs in sorted(removed_files):
                 print(f"    - {fs}")
+
+        if not implemented and all_files:
+            print(
+                f"\n  WARNING: 0 of {len(all_files)} planned file(s) were changed — existing "
+                "targets were rejected by the wholesale-rewrite guard.  Rerun with "
+                "--allow-rewrite or --force to deliberately replace existing files."
+            )
 
         if fix_mode and implemented:
             print(f"\n{'='*50}")
@@ -2068,8 +2202,11 @@ class ImplementCommand(Command):
                                         print(f"  {output}")
                                 continue
 
-                            init_match = re.search(rf'class\s+{cn}.*?\n(\s+)def\s+__init__\s*\((.*?)\)\s*:', source[cn_match.start():], re.DOTALL)
-                            params = init_match.group(2) if init_match else ""
+                            init_match = re.search(
+                                rf'class\s+{re.escape(cn)}\b(?s:.*?)def\s+__init__\s*\((.*?)\)\s*(?:->[^:]+)?:',
+                                source[cn_match.start():cn_match.start() + 2000],
+                            )
+                            params = init_match.group(1) if init_match else ""
 
                             required = []
                             dc_m = re.search(r'@dataclass\b[^\n]*\n\s*class\s+' + re.escape(cn) + r'\b', source[:cn_match.end()])
