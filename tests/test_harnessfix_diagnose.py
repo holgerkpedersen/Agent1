@@ -250,3 +250,54 @@ def test_corpus_flags_interrupted_traces_but_not_stubs(tmp_path):
     diags = diagnose_corpus([p for p in real.glob("*.jsonl")], tmp_path / "diags")
     ids = {d.task_id for d in diags}
     assert ids == {"interrupted"}
+
+
+def test_tool_result_file_content_does_not_trigger_signatures():
+    """Regression: a read result whose FILE CONTENT merely mentions
+    "truncat..." produced a bogus context-layer diagnosis (task
+    a669a26e...).  Signatures must only match system-diagnostic kinds."""
+    g = _graph(
+        [
+            (KIND_TOOL_RESULT, LAYER_TOOL_INTERFACE,
+             {"tool": "read", "text": "the file mentions truncation handling here"}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "x", "duplicate": True}),
+            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "x", "duplicate": True}),
+            ("guard_triggered", LAYER_LIFECYCLE, {"guard": "stuck", "note": "stop"}),
+            _loop_end("stuck"),
+        ]
+    )
+    d = diagnose_graph(g)
+    assert d.root_layer != "context"
+    assert "truncation" not in d.mechanism
+
+
+def test_guard_terminated_run_with_final_answer_is_delivered(tmp_path):
+    """A stuck-guard run that still produced a substantive final answer
+    delivered the task — it must NOT be diagnosed/failed."""
+    from harnessfix.corpus import diagnose_corpus
+    from harnessfix.tracing import TraceWriter
+
+    real = tmp_path / "traces"
+    real.mkdir()
+
+    delivered = TraceWriter(task_id="delivered", directory=real)
+    delivered.emit({"kind": "tool_call", "layer": "tool_interface",
+                    "tool": "run", "args_hash": "h", "duplicate": True})
+    delivered.emit({"kind": "guard_triggered", "layer": "lifecycle",
+                    "guard": "stuck", "note": "stop now"})
+    delivered.emit({"kind": "llm_response", "layer": "observability",
+                    "text": "## Final Answer\n\nHere is the complete analysis of why the two "
+                            "workflow runs differ, with all findings and a recommendation."})
+    delivered.emit({"kind": "loop_end", "layer": "lifecycle", "outcome": "stuck"})
+    delivered.close()
+
+    empty = TraceWriter(task_id="empty", directory=real)
+    empty.emit({"kind": "tool_call", "layer": "tool_interface",
+                "tool": "run", "args_hash": "h", "duplicate": True})
+    empty.emit({"kind": "guard_triggered", "layer": "lifecycle",
+                "guard": "stuck", "note": "stop now"})
+    empty.emit({"kind": "loop_end", "layer": "lifecycle", "outcome": "stuck"})
+    empty.close()
+
+    diags = diagnose_corpus([p for p in real.glob("*.jsonl")], tmp_path / "diags")
+    assert {d.task_id for d in diags} == {"empty"}

@@ -87,6 +87,18 @@ class TraceGraph(BaseModel):
                     seen.append(str(f))
         return seen
 
+    def has_final_answer(self) -> bool:
+        """True when the run's last LLM response carries a substantive
+        answer.  Guard-terminated runs (stuck/cap/no_progress) that still
+        delivered their final answer DID the task — the loop injects a
+        "give your final answer now" note and the synthesis response is the
+        last llm_response before loop_end."""
+        answer = ""
+        for s in self.steps:
+            if s.kind == "llm_response":
+                answer = str(s.payload.get("text", "")).strip()
+        return len(answer) >= 80
+
 
 def compile_trace(path: Path | str) -> TraceGraph:
     """Compile a validated trace JSONL file into a TraceGraph.

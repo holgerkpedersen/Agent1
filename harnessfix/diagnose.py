@@ -38,6 +38,15 @@ _SIGNATURES: list[tuple[str, str, str, str, bool]] = [
     (LAYER_CONTEXT, "history truncation / token limit pressure", "text", "truncat", True),
 ]
 
+#: Event kinds whose payloads may carry SYSTEM diagnostics worth signature
+#: matching.  tool_call/step_start payloads are excluded entirely (tool args
+#: and loop bookkeeping).  tool_result is eligible EXCEPT its "text" field:
+#: that field carries FILE CONTENTS — a read of a file that merely mentions
+#: "truncation" once produced a bogus context-layer diagnosis (task
+#: a669a26e...).  Structured result/message/exception fields of tool_result
+#: are system diagnostics and stay eligible.
+_SIGNATURE_KINDS = frozenset({"tool_error", "guard_triggered", "llm_response", "loop_end", "tool_result"})
+
 
 class Diagnosis(BaseModel):
     """Result of diagnosing one failed trace."""
@@ -50,9 +59,13 @@ class Diagnosis(BaseModel):
     repair_proposal: str
 
 
-def _find_signature(payload: dict[str, Any]) -> tuple[str, str] | None:
+def _find_signature(kind: str, payload: dict[str, Any]) -> tuple[str, str] | None:
     """First matching signature for a single event payload, if any."""
+    if kind not in _SIGNATURE_KINDS:
+        return None
     for layer, mechanism, field, needle, casefold in _SIGNATURES:
+        if kind == "tool_result" and field == "text":
+            continue
         value = str(payload.get(field, ""))
         if casefold:
             value, needle = value.lower(), needle.lower()
@@ -78,7 +91,7 @@ def diagnose_graph(graph: TraceGraph) -> Diagnosis:
 
     # 1. Explicit signatures (tool errors, verification, context pressure).
     for step in graph.steps:
-        hit = _find_signature(step.payload)
+        hit = _find_signature(step.kind, step.payload)
         if hit is not None:
             layer, mechanism = hit
             return _build(graph, layer, mechanism, step.index)

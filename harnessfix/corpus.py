@@ -20,9 +20,22 @@ MIN_ACTIVITY_EVENTS = 3
 
 
 def _is_failed_trace(graph: TraceGraph) -> bool:
-    if any(s.is_failed() for s in graph.steps):
+    """Failed = tool error, interrupted run (no loop_end, >=3 events), or a
+    guard-terminated run (outcome != completed) that did NOT deliver a
+    substantive final answer.  A run ending stuck/cap/no_progress but with a
+    full answer delivered the task — the guards stop the LOOP, not the
+    answer (decision #052 refinement, task a669a26e...)."""
+    if any(s.kind == "tool_error" for s in graph.steps):
         return True
-    return not graph.has_loop_end() and len(graph.steps) >= MIN_ACTIVITY_EVENTS
+    outcome = ""
+    for s in graph.steps:
+        if s.kind == "loop_end":
+            outcome = str(s.payload.get("outcome", "completed"))
+    if not outcome:
+        return len(graph.steps) >= MIN_ACTIVITY_EVENTS
+    if outcome == "completed":
+        return False
+    return not graph.has_final_answer()
 
 
 def collect_traces(trace_dir: Path) -> list[Path]:

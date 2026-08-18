@@ -105,6 +105,11 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`.
   - #052 — interrupted runs (no `loop_end`, >=3 events) count as failed;
     abandonment diagnosis uses `affected_files` ("task ended non-completed
     after mutating N file(s)"); stuck mechanism names the repeating tool.
+    Refined: guard-terminated runs (stuck/cap/no_progress) that still
+    delivered a substantive final answer count as DELIVERED, not failed
+    (`TraceGraph.has_final_answer`); diagnosis signatures never match inside
+    `tool_result` text (file contents — a read mentioning "truncation"
+    caused a bogus context diagnosis on task a669a26e...).
   - #053 — **human verification gate**: `harnessfix/review.py` + REPL `review`
     command (`refresh/list/show/label/export`); ledger
     `reports/harnessfix/review.json` (gitignored); dispositions
