@@ -187,6 +187,7 @@ class ToolLoopRunner:
         force_after_no_mutation: int = 50,
         display_mode: DisplayMode | str | None = None,
         trace: TraceSink | None = None,
+        effects_fn: Callable[[str, dict[str, Any]], list[str]] | None = None,
     ):
         self.max_iterations = max_iterations
         #: Number of final iterations where the model is warned (and
@@ -211,6 +212,10 @@ class ToolLoopRunner:
         #: Optional trace sink (harnessfix.tracing.TraceWriter).  When None the
         #: loop emits nothing and behaves byte-identically to before tracing.
         self._trace = trace
+        #: Optional callback returning the files a tool call affected
+        #: (self-improvement: files-affected recording).  Only consulted when
+        #: a trace sink is attached — invisible unless tracing (decision #048).
+        self._effects_fn = effects_fn
         #: How this run ended: "answer" (model answered in text), "cap"
         #: (iteration cap hit), "stuck" (repeated identical calls), or
         #: "no_progress" (too many calls without modifying any file).
@@ -233,6 +238,7 @@ class ToolLoopRunner:
         tools: list[dict[str, Any]] | None = None,
         seen_calls: dict[tuple[str, str], int] | None = None,
         trace: TraceSink | None = None,
+        effects_fn: Callable[[str, dict[str, Any]], list[str]] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run conversation with automatic tool calling loop.
 
@@ -247,6 +253,10 @@ class ToolLoopRunner:
                         fresh run's duplicate counter.
             trace: Optional trace sink (harnessfix.tracing.TraceWriter) that
                         receives one JSON event per loop step.  None = untraced.
+            effects_fn: Optional callback ``(tool_name, args) -> [paths]`` listing
+                        the files a tool call affected, attached to the
+                        tool_result/tool_error events.  Only invoked when a
+                        trace sink is attached.
 
         Returns:
             Tuple of (final_text, updated_messages)
@@ -257,6 +267,7 @@ class ToolLoopRunner:
         forces the model to synthesize the answer from the gathered results.
         """
         self._trace = self._trace if trace is None else trace
+        self._effects_fn = self._effects_fn if effects_fn is None else effects_fn
         try:
             return await self._run_traced(
                 messages, llm_chat_fn, execute_tool_fn, tools, seen_calls
@@ -270,6 +281,22 @@ class ToolLoopRunner:
         """Emit one trace event when a sink is attached; never raises."""
         if self._trace is not None:
             self._trace.emit({"kind": kind, "layer": layer, **fields})
+
+    def _collect_effects(
+        self, tool_name: str, args: dict[str, Any]
+    ) -> list[str]:
+        """Ask the caller which files this tool call affected.
+
+        Only invoked when a trace sink is attached and an ``effects_fn`` was
+        supplied (decision #048: instrumentation invisible unless tracing).
+        Failures degrade to an empty list — never raise into the loop.
+        """
+        if self._trace is None or self._effects_fn is None:
+            return []
+        try:
+            return [str(p) for p in (self._effects_fn(tool_name, args) or [])]
+        except Exception:
+            return []
 
     def _emit_loop_end(self) -> None:
         if self._trace is None:
@@ -526,9 +553,11 @@ class ToolLoopRunner:
                     duplicate=False,
                 )
                 t_call = time.monotonic()
+                affected: list[str] = []
                 try:
                     result_str = await execute_tool_fn(tool_name, args)
                 except Exception as exc:
+                    affected = self._collect_effects(tool_name, args)
                     self._emit(
                         KIND_TOOL_ERROR,
                         LAYER_TOOL_INTERFACE,
@@ -537,8 +566,11 @@ class ToolLoopRunner:
                         args_hash=args_hash,
                         exception=type(exc).__name__,
                         message=str(exc)[:500],
+                        affected_files=affected,
                     )
                     result_str = f"Tool error: {exc}"
+                else:
+                    affected = self._collect_effects(tool_name, args)
 
                 #: Path-existence recovery (decision #035): when a read/edit/write
                 #: reports the path does not exist, augment the result with a parent-
@@ -568,6 +600,7 @@ class ToolLoopRunner:
                     duplicate=False,
                     duration_s=time.monotonic() - t_call,
                     result=truncate(result_str, RESULT_CAP),
+                    affected_files=affected,
                 )
                 if self.display_mode != DisplayMode.QUIET:
                     if self.display_mode == DisplayMode.CLEAN:

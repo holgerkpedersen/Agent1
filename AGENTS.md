@@ -87,6 +87,11 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`.
 
 - #047 — sanitize shell commands and file contents before trace persistence.
 - #048 — instrumentation invisible unless tracing enabled (`AGENT_NO_TRACE=1`).
-- Files-affected recording per tool/nlp/command in `agent.py` (the original
-  self-improvement goal — analysis exists, implementation still pending).
+- ✅ **#049 — files-affected recording per tool/nlp (DONE)**: `ToolLoopRunner`
+  gains `effects_fn` (`(tool_name, args) -> [paths]`); `tool_result`/`tool_error`
+  events carry `affected_files`; only invoked when a trace sink exists. `Agent`
+  arms `_pending_effects` only while a `TraceWriter` exists, notes
+  read/write/edit/fix targets. REPL registry **commands** still uninstrumented
+  (next increment); trace consumers (`harnessfix/reader`) not yet reading
+  `affected_files`.
 - Taskplan-time phantom-module gate (plan-time existence check for planned files).

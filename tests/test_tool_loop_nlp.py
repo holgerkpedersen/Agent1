@@ -293,14 +293,109 @@ class TestToolLoopExecution:
         assert notes == []
 
 
-def _loop_runner_sync(runner, fake_llm, execute_tool):
+def _loop_runner_sync(runner, fake_llm, execute_tool, **kwargs):
     import asyncio
     return asyncio.run(runner.run(
         messages=[{"role": "user", "content": "do the thing"}],
         llm_chat_fn=_make_llm_chat_fn(fake_llm),
         execute_tool_fn=execute_tool,
         tools=list(NLP_TOOL_SCHEMAS),
+        **kwargs,
     ))
+
+
+class TestTraceFileEffects:
+    """Self-improvement files-affected recording: tool_result/tool_error
+    trace events must carry the file paths a tool call affected — and the
+    effects callback must never fire when no trace sink is attached
+    (decision #048: instrumentation invisible unless tracing)."""
+
+    class _Sink:
+        def __init__(self):
+            self.events = []
+
+        def emit(self, record):
+            self.events.append(record)
+
+    def test_tool_result_event_carries_affected_files(self):
+        fake = _ScriptedLLM([
+            ("write", {"path": "a.py", "content": "x = 1\n"}),
+            "Done.",
+        ])
+        sink = self._Sink()
+
+        async def execute_tool(name, args):
+            return "written"
+
+        runner = ToolLoopRunner(max_iterations=5, trace=sink)
+        _loop_runner_sync(runner, fake, execute_tool,
+                          effects_fn=lambda name, args: ["a.py"] if name == "write" else [])
+
+        results = [e for e in sink.events if e["kind"] == "tool_result"]
+        assert len(results) == 1
+        assert results[0]["tool"] == "write"
+        assert results[0]["affected_files"] == ["a.py"]
+
+    def test_tool_error_event_carries_affected_files(self):
+        fake = _ScriptedLLM([
+            ("edit", {"path": "b.py", "old_text": "x", "new_text": "y"}),
+            "It failed.",
+        ])
+        sink = self._Sink()
+
+        async def execute_tool(name, args):
+            raise RuntimeError("boom")
+
+        runner = ToolLoopRunner(max_iterations=5, trace=sink)
+        _loop_runner_sync(runner, fake, execute_tool,
+                          effects_fn=lambda name, args: ["b.py"])
+
+        errors = [e for e in sink.events if e["kind"] == "tool_error"]
+        assert len(errors) == 1
+        assert errors[0]["affected_files"] == ["b.py"]
+
+    def test_effects_fn_never_invoked_without_trace(self):
+        fake = _ScriptedLLM([
+            ("read", {"path": "agent.py"}),
+            "Done.",
+        ])
+        invoked = []
+
+        async def execute_tool(name, args):
+            return "content"
+
+        def effects_fn(name, args):
+            invoked.append(name)
+            return ["agent.py"]
+
+        runner = ToolLoopRunner(max_iterations=5)
+        final_text, _ = _loop_runner_sync(runner, fake, execute_tool,
+                                          effects_fn=effects_fn)
+
+        assert final_text == "Done."
+        # Untraced runs behave byte-identically: the callback is never called.
+        assert invoked == []
+
+    def test_effects_fn_raising_never_breaks_loop(self):
+        fake = _ScriptedLLM([
+            ("read", {"path": "agent.py"}),
+            "Done.",
+        ])
+        sink = self._Sink()
+
+        async def execute_tool(name, args):
+            return "content"
+
+        def effects_fn(name, args):
+            raise RuntimeError("effects bug")
+
+        runner = ToolLoopRunner(max_iterations=5, trace=sink)
+        final_text, _ = _loop_runner_sync(runner, fake, execute_tool,
+                                          effects_fn=effects_fn)
+
+        assert final_text == "Done."
+        result = [e for e in sink.events if e["kind"] == "tool_result"][0]
+        assert result["affected_files"] == []
 
 
 class TestNlpToolSchemas:
@@ -437,6 +532,145 @@ class TestAgentExecuteToolCall:
 
         result = asyncio.run(run())
         assert "Git error" not in result
+
+
+class TestEffectsRecordingInAgent:
+    """Files-affected recording on Agent._execute_tool_call: read/write/edit
+    must be reported as effects when armed — and remain a no-op when not
+    (decision #048: untraced runs behave byte-identically)."""
+
+    def test_read_is_recorded_as_effect_when_armed(self, tmp_path):
+        import asyncio
+        from agent import Agent
+        target = tmp_path / "a.py"
+        target.write_text("x = 1\n", encoding="utf-8")
+        agent = Agent(workspace=str(tmp_path))
+        agent._pending_effects = []
+
+        async def run():
+            await agent._execute_tool_call("read", {"path": str(target)})
+            return agent._take_trace_effects("read", {})
+
+        assert asyncio.run(run()) == [str(target)]
+        # Buffer is drained: a second take returns nothing new.
+        assert agent._take_trace_effects("read", {}) == []
+
+    def test_write_and_edit_are_recorded_as_effects(self, tmp_path):
+        import asyncio
+        from agent import Agent
+        target = tmp_path / "b.py"
+        agent = Agent(workspace=str(tmp_path))
+        agent._pending_effects = []
+
+        async def write_run():
+            await agent._execute_tool_call("write", {
+                "path": str(target), "content": "y = 2\n",
+            })
+            return agent._take_trace_effects("write", {})
+
+        assert asyncio.run(write_run()) == [str(target)]
+
+        agent._pending_effects = []
+        async def edit_run():
+            await agent._execute_tool_call("edit", {
+                "path": str(target), "old_text": "y = 2", "new_text": "y = 3",
+            })
+            return agent._take_trace_effects("edit", {})
+
+        assert asyncio.run(edit_run()) == [str(target)]
+
+    def test_effects_list_deduplicates_paths(self, tmp_path):
+        import asyncio
+        from agent import Agent
+        target = tmp_path / "c.py"
+        target.write_text("z = 1\n", encoding="utf-8")
+        agent = Agent(workspace=str(tmp_path))
+        agent._pending_effects = []
+
+        async def run():
+            await agent._execute_tool_call("read", {"path": str(target)})
+            await agent._execute_tool_call("read", {"path": str(target)})
+            return agent._take_trace_effects("read", {})
+
+        assert asyncio.run(run()) == [str(target)]
+
+    def test_unarmed_agent_records_nothing(self, tmp_path):
+        """Default state (no trace sink) must never record — untraced runs
+        keep old behaviour, including not accumulating state."""
+        import asyncio
+        from agent import Agent
+        agent = Agent(workspace=str(tmp_path))
+        assert agent._pending_effects is None
+
+        async def run():
+            await agent._execute_tool_call("write", {
+                "path": str(tmp_path / "d.py"), "content": "w = 1\n",
+            })
+            return agent._take_trace_effects("write", {})
+
+        assert asyncio.run(run()) == []
+        assert agent._pending_effects is None
+
+
+class TestTraceFileEffectsChatNlp:
+    """End-to-end: a traced chat_nlp run must emit tool_result events whose
+    affected_files match the files the agent actually read/wrote."""
+
+    def test_chat_nlp_trace_events_carry_affected_files(self, tmp_path):
+        import asyncio
+        from unittest.mock import patch
+        from agent import Agent
+        target = tmp_path / "hello.py"
+        target.write_text("def hi():\n    pass\n", encoding="utf-8")
+
+        class FakeLLM:
+            def __init__(self):
+                self.steps = 0
+
+            async def chat(self, messages, tools=None, **kwargs):
+                self.steps += 1
+                if self.steps == 1:
+                    return json.dumps({
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "read",
+                                "arguments": json.dumps({"path": str(target)}),
+                            },
+                        }],
+                    })
+                return "Found it."
+
+        class FakeTraceWriter:
+            def __init__(self):
+                self.events = []
+
+            def emit(self, record):
+                self.events.append(dict(record))
+
+            def close(self):
+                pass
+
+        writer = FakeTraceWriter()
+        with patch("agent.TraceWriter", lambda: writer), \
+             patch("agent.trace_enabled", lambda: True):
+            agent = Agent(workspace=str(tmp_path))
+            agent.llm = FakeLLM()
+
+            async def run():
+                await agent.chat_nlp("read hello.py")
+
+            asyncio.run(run())
+
+        read_results = [
+            e for e in writer.events
+            if e["kind"] == "tool_result" and e.get("tool") == "read"
+        ]
+        assert read_results, "expected at least one read tool_result event"
+        assert read_results[0]["affected_files"] == [str(target)]
 
 
 class TestNoShellInjection:

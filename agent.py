@@ -153,6 +153,11 @@ class Agent:
         self._semantic_index: dict[str, set[int]] = defaultdict(set)
         self._files_read: set[str] = set()
         self._file_mtimes: dict[str, float] = {}
+        #: Per-tool-call file effects accumulated while a trace sink is active
+        #: (self-improvement files-affected recording; decision #048 — this is
+        #: None except during a traced chat_nlp loop, so untraced runs are
+        #: byte-identical to before).
+        self._pending_effects: list[str] | None = None
         self._knowledge_graph: dict[str, Any] = {}
         self._working_memory: list[Any] = []
         self._history: list[Any] = []
@@ -216,6 +221,30 @@ class Agent:
             return "[verify] py_compile ✓"
         return f"[verify] py_compile ✗: {r.stderr.strip()[:300]}"
 
+    def _note_effect(self, path: str) -> None:
+        """Record one file affected by the current tool call.
+
+        Only active while ``_pending_effects`` is armed (i.e. inside a traced
+        chat_nlp run, decision #048) — otherwise this is a no-op cost-free
+        guard, so untraced agent behaviour is unchanged.
+        """
+        if self._pending_effects is None:
+            return
+        abs_path = os.path.abspath(to_windows_path(str(path)))
+        if abs_path not in self._pending_effects:
+            self._pending_effects.append(abs_path)
+
+    def _take_trace_effects(self, name: str, args: dict[str, Any]) -> list[str]:
+        """``effects_fn`` for ToolLoopRunner: drain this tool call's effects.
+
+        Returns the files affected by the just-executed tool call and resets
+        the buffer for the next one.  Never raises (guarded by the loop too).
+        """
+        effects = list(self._pending_effects or [])
+        if self._pending_effects is not None:
+            self._pending_effects.clear()
+        return effects
+
     async def _execute_tool_call(self, name: str, args: dict[str, Any]) -> str:
         """Execute a native tool call from the NLP conversation.
 
@@ -255,6 +284,7 @@ class Agent:
                 content = await self.read_file(path, track_read=False)
                 if content.startswith("File not found") or content.startswith("Error"):
                     return content
+                self._note_effect(path)
                 lines = content.splitlines()
                 if offset > len(lines):
                     return f"Offset {offset} is beyond the end of {path} ({len(lines)} lines)."
@@ -292,6 +322,8 @@ class Agent:
             with contextlib.redirect_stdout(buf):
                 await FixCommand().execute(resolved_args, self)
             output = buf.getvalue()
+            if resolved_args and not resolved_args[0].startswith("--"):
+                self._note_effect(resolved_args[0])
             return output or "Fix executed. Check the file for changes."
 
         if name == "write":
@@ -300,6 +332,7 @@ class Agent:
             try:
                 if save_file_py(path, content, auto_yes=True):
                     verify = await self._verify_file(path) if path.endswith(".py") else ""
+                    self._note_effect(path)
                     return f"Written {path} ({len(content)} bytes)\n{verify}".strip()
                 return f"Skipped {path} (no changes)"
             except Exception as e:
@@ -436,6 +469,7 @@ class Agent:
                     if ctx is not None:
                         ctx.mark_modified(path)
                     verify = await self._verify_file(path) if path.endswith(".py") else ""
+                    self._note_effect(path)
                     return f"Edited {path}\n{verify}".strip()
                 return f"Skipped {path} (no changes)"
             except Exception as e:
@@ -788,6 +822,11 @@ class Agent:
             #: Per-run trace writer (one JSONL file per run() invocation,
             #: decision #029).  AGENT_NO_TRACE=1 disables trace capture.
             trace_writer = TraceWriter() if (trace_enabled() and TraceWriter is not None) else None
+            #: File-effects recording (self-improvement): armed only while a
+            #: trace sink exists — untraced runs stay byte-identical (decision
+            #: #048).  The buffer is drained by _take_trace_effects after each
+            #: tool call and discarded when the run ends.
+            self._pending_effects = [] if trace_writer is not None else None
             loop = ToolLoopRunner(
                 max_iterations=150, display_mode=display_mode, trace=trace_writer
             )
@@ -797,7 +836,9 @@ class Agent:
                 execute_tool_fn=self._execute_tool_call,
                 tools=list(NLP_TOOL_SCHEMAS),
                 seen_calls=seen_calls,
+                effects_fn=self._take_trace_effects,
             )
+            self._pending_effects = None
             if trace_writer is not None:
                 trace_writer.close()
             reason = loop.termination_reason

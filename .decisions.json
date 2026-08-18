@@ -907,5 +907,26 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "049",
+    "date": "2026-08-18T10:31:15+00:00",
+    "title": "Record files affected by each traced tool call in tool_result/tool_error trace events",
+    "context": "The original self-improvement goal (files-affected recording per tool/nlp) had analysis but no implementation. ToolLoopRunner already emits trace events and supports decision #048 invisibility, but events carried no file-level effects, so trace consumers could not audit what the agent touched.",
+    "decision": "Add effects_fn (tool_name, args) -> [paths] to ToolLoopRunner (init + run); the loop attaches affected_files to tool_result and tool_error events, invoking the callback only when a trace sink exists and never raising. Agent wires _take_trace_effects into chat_nlp per run, arming a _pending_effects buffer only while a TraceWriter exists (decision #048) and recording read/write/edit/fix targets in _execute_tool_call via _note_effect (abspath-normalized, deduplicated).",
+    "rationale": "Loop-level attachment keeps the trace schema uniform and works for any runner embedding; the None-when-untraced buffer keeps untraced runs byte-identical (verified by tests and full suite). REPL registry commands are not yet instrumented - separate increment.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/llm/tool_loop.py",
+      "tests/test_tool_loop_nlp.py"
+    ],
+    "tags": [
+      "self-improvement",
+      "files-affected",
+      "tracing",
+      "instrumentation-visibility"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]
