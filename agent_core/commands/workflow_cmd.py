@@ -269,8 +269,9 @@ def _tailored_implement_parts(
                 hints.append("--keep: matching implement cache found (true resume).")
             else:
                 hints.append(
-                    "Stale implement cache detected — add --refresh to rebuild the "
-                    "file list (no --keep was added)."
+                    "Stale implement cache detected — it will be ignored and rebuilt "
+                    "on the next run (no --keep was added); add --keep --refresh to "
+                    "rebuild the file list and resume."
                 )
         except Exception:
             pass
@@ -689,10 +690,13 @@ class WorkflowCommand(Command):
         print(f"Workspace: {ws_path}")
 
         # Probe LM Studio before spending time on the pipeline
+        # (disable_thinking: a reasoning model spends the 8-token probe budget
+        # on reasoning_content and returns empty content — the probe must get
+        # a real answer, not a truncated reasoning fragment)
         probe = await agent.llm.chat([
             {"role": "system", "content": "Respond with exactly one word: ready"},
             {"role": "user", "content": "ready"}
-        ], max_tokens=8)
+        ], max_tokens=8, disable_thinking=True)
         if probe.startswith("[Error") or probe.startswith("[LM Studio"):
             self.error(f"LM Studio is not reachable: {probe[:200]}")
             self.error("Start LM Studio and ensure a model is loaded, then retry.")

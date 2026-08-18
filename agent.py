@@ -10,6 +10,7 @@ import os
 import re
 import sys
 from collections import defaultdict
+from datetime import datetime
 from agent_core import to_windows_path
 from agent_core.colors import cyan, green, yellow, blue, magenta, gray, red
 from agent_core.constants import (
@@ -1414,7 +1415,7 @@ async def run_interactive() -> None:
     while True:
         try:
             # Get user input
-            user_input = input("\n> ").strip()
+            user_input = input(f"\n[{datetime.now():%Y-%m-%d %H:%M}] > ").strip()
             
             if not user_input:
                 continue
