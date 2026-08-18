@@ -41,7 +41,7 @@ _ABSENCE_PHRASES = (
     "unused", "unreferenced", "never referenced",
 )
 
-_ATTR_RE = re.compile(r"self\.([A-Za-z_][A-Za-z0-9_]*)\s*=")
+_ATTR_RE = re.compile(r"self\.([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[^=]+)?\s*=")
 _DEF_RE = re.compile(r"^\s*(?:async\s+)?(?:class|def)\s+([A-Za-z_][A-Za-z0-9_]*)")
 _IMPORT_FROM_RE = re.compile(r"^\s*from\s+[\w.]+\s+import\s+([\w,\s]+)")
 _IMPORT_RE = re.compile(r"^\s*import\s+([\w.]+)")
@@ -322,6 +322,7 @@ def _verify_symbol(
     file: str | None,
     defs_by_file: dict[str, dict[str, int]],
     attrs_by_file: dict[str, set[str]],
+    scope_files: list[str] | None = None,
 ) -> tuple[str, str]:
     if name in _STDLIB_NAMES or name in _EXTRA_MODULES:
         return _STATUS_OK, "standard-library or third-party name"
@@ -331,6 +332,17 @@ def _verify_symbol(
             return _STATUS_OK, f"defined at {file}:{defs[name]}"
         if name in attrs_by_file.get(file, set()):
             return _STATUS_OK, f"attribute on self in {file}"
+        # A claim spanning several .py files on the same segment (e.g. "agent.py
+        # and tool_router.py duplicate path helpers — «_normalize_path», ...")
+        # is verified when the symbol exists in ANY .py file the segment names:
+        # the prose scope is the whole segment, not just the nearest file mention.
+        for sf in scope_files or ():
+            if sf == file:
+                continue
+            if name in defs_by_file.get(sf, {}):
+                return _STATUS_OK, f"defined at {sf}:{defs_by_file[sf][name]} (mentioned in claim segment)"
+            if name in attrs_by_file.get(sf, set()):
+                return _STATUS_OK, f"attribute on self in {sf} (mentioned in claim segment)"
         # Scoped-file miss: the LLM often cites the wrong file for a symbol that
         # exists elsewhere (e.g. "conftest.py defines Agent" when Agent is in agent.py).
         # A global hit means the claim is real — just mis-scoped, not fabricated.
@@ -429,6 +441,15 @@ def _verify_snippet(
         return _STATUS_SKIP, "shell metacharacters or prose fragment"
     content = contents.get(file, "")
     if not content:
+        # The claim may cite a short path ("tool_executor.py") while the index
+        # key carries the full prefix ("agent_core/tool_executor.py") — resolve
+        # like _verify_existence's partial matching before giving up.
+        if file is not None:
+            for rel in contents:
+                if rel == file or rel.endswith("/" + file) or os.path.basename(rel) == os.path.basename(file):
+                    content = contents[rel]
+                    break
+    if not content:
         # File may exist but be empty/unreadable — check raw filesystem.
         ws_file = Path(file) if file else None
         if ws_file is not None and ws_file.is_file():
@@ -465,10 +486,21 @@ def _verify_snippet(
                     if part in attrs:
                         found_in = f
                         break
-            # Module path components (e.g. "agent_core", "logging_config") may be
-            # directory/file names rather than definitions — check existence too.
-            if not found_in and any(part.endswith(".py") or os.path.basename(rel) == part for rel in rel_files):
-                found_in = next((rel for rel in rel_files if os.path.basename(rel) == part), None)
+            # Module path components (e.g. "agent_core", "security") may be
+            # directory/file names rather than definitions — a package directory
+            # (part appears as a path component of some file) or a module file
+            # (basename 'part.py') both count as the component existing.
+            if not found_in and any(
+                part in rel.split("/") for rel in rel_files
+            ):
+                found_in = f"{part}/"
+            if not found_in and any(
+                os.path.basename(rel).rsplit(".", 1)[0] == part for rel in rel_files
+            ):
+                found_in = next(
+                    rel for rel in rel_files
+                    if os.path.basename(rel).rsplit(".", 1)[0] == part
+                )
             resolved.append(found_in or "")
         if all(r for r in resolved):
             return _STATUS_OK, f"all components of dotted reference resolve ({snippet})"
@@ -569,7 +601,13 @@ async def verify_analysis_claims(analysis: str, ws_path: Path) -> VerificationRe
                 )
             else:
                 _attach_context(c, claims)
-                status, reason = _verify_symbol(c.text, c.file, defs_by_file, attrs_by_file)
+                scope_files = [
+                    fc.file for fc in claims
+                    if fc.kind == "file" and fc.file and fc.file.endswith(".py")
+                ]
+                status, reason = _verify_symbol(
+                    c.text, c.file, defs_by_file, attrs_by_file, scope_files
+                )
                 if c.check_absence:
                     if status == _STATUS_FLAGGED:
                         status, reason = _STATUS_OK, "confirmed absent (no definition found)"

@@ -48,6 +48,17 @@ class TestVerifyAnalysisClaims:
         (tmp_path / "agent.py").write_text(_AGENT_PY, encoding="utf-8")
         (tmp_path / "tools").mkdir()
         (tmp_path / "tools" / "util.py").write_text("def util_fn():\n    pass\n", encoding="utf-8")
+        security = tmp_path / "agent_core" / "security"
+        security.mkdir(parents=True)
+        (security / "path_utils.py").write_text(
+            "def normalize_path(workspace_root, target_path):\n    return target_path\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "agent_core" / "tool_executor.py").write_text(
+            "from agent_core.security.path_utils import normalize_path\n\n"
+            "def execute(cmd):\n    return normalize_path('.', cmd)\n",
+            encoding="utf-8",
+        )
         return tmp_path
 
     def test_no_claims_leaves_text_unchanged(self, tmp_path: Path) -> None:
@@ -177,6 +188,70 @@ class TestVerifyAnalysisClaims:
     def test_symbol_without_file_context_uses_workspace(self, tmp_path: Path) -> None:
         ws = self._build_ws(tmp_path)
         result = asyncio.run(self._verify(ws, "`util_fn` is reused across the codebase."))
+        assert result.flagged == 0
+
+    def test_annotated_self_attribute_recognized(self, tmp_path: Path) -> None:
+        """`self._knowledge_graph: dict[str, Any] = {}` — typed attributes were
+        missed by the self-attribute regex (observed: `_knowledge_graph` flagged
+        as "symbol not found anywhere" although agent.py initializes it)."""
+        ws = self._build_ws(tmp_path)
+        (ws / "agent.py").write_text(
+            "from typing import Any\n\nclass Agent:\n"
+            "    def __init__(self):\n"
+            "        self._knowledge_graph: dict[str, Any] = {}\n",
+            encoding="utf-8",
+        )
+        result = asyncio.run(self._verify(ws, "`_knowledge_graph` holds cross-session state."))
+        assert result.flagged == 0
+
+    def test_multi_file_segment_symbol_ok(self, tmp_path: Path) -> None:
+        """A claim whose segment names several files verifies when the symbol
+        lives in ANY of them (observed: `_normalize_path`/`_safe_path`/
+        `_resolve_nlp_path` defined in agent.py flagged because the segment
+        also names tool_router.py)."""
+        ws = self._build_ws(tmp_path)
+        (ws / "agent.py").write_text(
+            "class Agent:\n"
+            "    def _resolve_nlp_path(self, path):\n        return path\n"
+            "    def _normalize_path(self, path):\n        return path\n"
+            "    def _safe_path(self, path):\n        return path\n"
+            "class FileSystem:\n"
+            "    def normalize_path(self, path):\n        return path\n",
+            encoding="utf-8",
+        )
+        (ws / "tool_router.py").write_text("class ShellCommandHandler:\n    pass\n", encoding="utf-8")
+        analysis = (
+            "**DRY violation**: `_normalize_path`, `FileSystem.normalize_path`, `_safe_path`, "
+            "`_resolve_nlp_path` all reimplement path resolution; `tool_router.py` ShellCommandHandler "
+            "duplicates logic from `agent.py`."
+        )
+        result = asyncio.run(self._verify(ws, analysis))
+        assert result.flagged == 0
+
+    def test_single_file_segment_mis_scope_still_flagged(self, tmp_path: Path) -> None:
+        """When the segment names ONLY the wrong file, the mis-scoped symbol is
+        still flagged (the leniency is segment-scoped, not global)."""
+        ws = self._build_ws(tmp_path)
+        (ws / "agent.py").write_text(
+            "class Agent:\n"
+            "    def _normalize_path(self, path):\n        return path\n",
+            encoding="utf-8",
+        )
+        (ws / "tool_router.py").write_text("x = 1\n", encoding="utf-8")
+        result = asyncio.run(self._verify(ws, "`tool_router.py` reuses `_normalize_path`."))
+        assert result.flagged >= 1
+        assert "but not in claimed file tool_router.py" in result.text
+
+    def test_package_module_dotted_ref_resolves(self, tmp_path: Path) -> None:
+        """`agent_core.security.path_utils.normalize_path` must verify: package
+        dirs and module files count as dotted-reference components (observed:
+        this real symbol was flagged because 'agent_core' resolved nowhere)."""
+        ws = self._build_ws(tmp_path)
+        analysis = (
+            "`agent_core.security.path_utils.normalize_path` is used by `tool_executor.py` "
+            "for sandboxing."
+        )
+        result = asyncio.run(self._verify(ws, analysis))
         assert result.flagged == 0
 
 
