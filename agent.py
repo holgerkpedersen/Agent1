@@ -1432,8 +1432,10 @@ async def run_interactive() -> None:
                 parts = user_input.split(maxsplit=20)
             command = parts[0].lower()
 
-            # Try commands from registry
-            if command in ["read", "write", "search", "clear", "model", "analyze", "plan", "entities", "taskplan", "cleanup", "implement", "fix", "workflow", "optimize", "perf", "paste", "display", "decide", "run", "self_heal"]:
+            # Try commands from registry (driven by the registry itself so
+            # newly registered commands are dispatched without touching the
+            # whitelist here — "review" fell through to chat_nlp once).
+            if command in registry.names():
                 import time as _time
                 _start = _time.perf_counter()
                 print(f"  [cmd] {cyan(command)} running...")

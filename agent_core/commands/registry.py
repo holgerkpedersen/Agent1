@@ -24,6 +24,10 @@ class CommandRegistry:
     def get(self, name: str) -> Command | None:
         """Get command by name."""
         return self._commands.get(name)
+
+    def names(self) -> set[str]:
+        """Names of every registered command (drives REPL dispatch)."""
+        return set(self._commands)
     
     async def execute(self, name: str, args: list[str], agent: 'Agent') -> bool:
         """Execute a command by name.
