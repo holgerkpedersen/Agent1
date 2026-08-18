@@ -10,6 +10,7 @@ from agent_core.commands.workflow_cmd import (
     _scan_workspace_context,
     _analysis_flag_gate,
     _extract_decisions_if_any,
+    _repair_analysis,
     _specs_match,
 )
 
@@ -102,6 +103,28 @@ class TestScanWorkspaceContext:
             assert used is True
             assert "# ---- b.py ----" not in combined
             assert len(combined.splitlines()) <= 6000
+
+
+class TestRepairAnalysis:
+    """The repair round must run with thinking disabled — a reasoning model
+    otherwise burns the whole 8000-token budget on reasoning_content and
+    emits nothing (observed 2026-08-18: finish_reason=length, content="")."""
+
+    def test_repair_round_disables_thinking(self, tmp_path: Path) -> None:
+        (tmp_path / "mod.py").write_text("x = 1\n", encoding="utf-8")
+        agent = AsyncMock()
+        agent.llm.chat = AsyncMock(return_value="Plain text, no backticked claims.")
+        repaired, checked, flagged = asyncio.run(
+            _repair_analysis(
+                agent,
+                "## 1. SCOPE\n\nPlain text, no claims.",
+                "## Verification Report\n- [UNVERIFIED] `run` — not found",
+                str(tmp_path),
+            )
+        )
+        assert agent.llm.chat.call_args.kwargs.get("disable_thinking") is True
+        assert repaired is not None
+        assert flagged == 0
 
 
 class TestExtractDecisionsGate:

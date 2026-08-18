@@ -443,7 +443,7 @@ async def _repair_analysis(
         repaired = await agent.llm.chat([
             {"role": "system", "content": repair_system},
             {"role": "user", "content": repair_user},
-        ], max_tokens=8000)
+        ], max_tokens=8000, disable_thinking=True)
     except Exception as exc:  # pragma: no cover - defensive, never raises
         print(f"  [analyze] Repair round failed (non-blocking): {exc}")
         return None, 0, 0
