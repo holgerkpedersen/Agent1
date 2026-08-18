@@ -1,8 +1,7 @@
 """File system operations for agent."""
 import os
-from pathlib import Path
 
-from agent_core import to_windows_path
+from agent_core.path_utils import resolve_path, safe_path
 
 
 class FileSystem:
@@ -16,21 +15,11 @@ class FileSystem:
     
     def normalize_path(self, path: str) -> str:
         """Normalize and validate paths with security checks."""
-        normalized = to_windows_path(path)
-
-        try:
-            abs_path = Path(normalized).resolve()
-            return str(abs_path)
-        except (OSError, RuntimeError):
-            if normalized.startswith(("C:\\", "D:\\", "/")):
-                return normalized
-            raise ValueError(f"Invalid path: {path}")
+        return resolve_path(path)
 
     def safe_path(self, path: str) -> str:
         """Validate and normalize path in one step."""
-        if path.startswith(("./", ".\\")):
-            path = path[2:]
-        return self.normalize_path(path)
+        return safe_path(path)
 
     async def read(self, path: str) -> str:
         """Read file contents."""

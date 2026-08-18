@@ -34,6 +34,33 @@ def to_windows_path(path: str) -> str:
     return path
 
 
+def resolve_path(path: str) -> str:
+    """Resolve *path* to an absolute string for direct filesystem use.
+
+    Single shared implementation for ``Agent._normalize_path``,
+    ``FileSystem.normalize_path`` and ``FileSearcher._safe_path`` so all three
+    stop reimplementing the same to_windows_path + ``Path.resolve`` logic.
+    Does not enforce a workspace boundary (see :func:`normalize_path` for the
+    sandboxed variant).
+
+    Raises ``ValueError`` when a relative path cannot be resolved.
+    """
+    normalized = to_windows_path(path)
+    try:
+        return str(Path(normalized).resolve())
+    except (OSError, RuntimeError):
+        if normalized.startswith(("C:\\", "D:\\", "/")):
+            return str(normalized)
+        raise ValueError(f"Invalid path: {path}")
+
+
+def safe_path(path: str) -> str:
+    """Strip a leading ``./`` then resolve the remaining path in one step."""
+    if path.startswith(("./", ".\\")):
+        path = path[2:]
+    return resolve_path(path)
+
+
 def workspace_path(path: str) -> str:
     """Normalize a workspace path for reliable cross-platform use.
 

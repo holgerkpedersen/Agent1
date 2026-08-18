@@ -12,6 +12,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime
 from agent_core import to_windows_path
+from agent_core.path_utils import resolve_path, safe_path
 from agent_core.colors import cyan, green, yellow, blue, magenta, gray, red
 from agent_core.constants import (
     resolve_model,
@@ -587,21 +588,11 @@ class Agent:
 
     def _normalize_path(self, path: str) -> str:
         """Normalize and validate paths with security checks."""
-        normalized = to_windows_path(path)
-
-        try:
-            abs_path = Path(normalized).resolve()
-            return str(abs_path)
-        except (OSError, RuntimeError):
-            if normalized.startswith(("C:\\", "D:\\", "/")):
-                return str(normalized)
-            raise ValueError(f"Invalid path: {path}")
+        return resolve_path(path)
 
     def _safe_path(self, path: str) -> str:
         """Validate and normalize path in one step."""
-        if path.startswith(("./", ".\\")):
-            path = path[2:]
-        return self._normalize_path(path)
+        return safe_path(path)
 
     async def read_file(self, path: str, track_read: bool = True) -> str:
         local_path = self._safe_path(path)

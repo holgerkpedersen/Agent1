@@ -6,7 +6,7 @@ matches as ``path:lineno: content`` lines so the LLM can act on them.
 """
 import os
 
-from agent_core import to_windows_path
+from agent_core.path_utils import safe_path
 
 #: Directories never searched (mirrors .gitignore for session state/caches).
 _IGNORED_DIRS = {
@@ -75,9 +75,7 @@ class FileSearcher:
 
     def _safe_path(self, path: str) -> str:
         """Normalize path for search."""
-        if path.startswith(("./", ".\\")):
-            path = path[2:]
-        return to_windows_path(path)
+        return safe_path(path)
 
     def _walk_search(self, query: str, local_path: str) -> list[tuple[str, int, str]]:
         """Pure-Python search honoring ignore rules; returns (path, line, text)."""

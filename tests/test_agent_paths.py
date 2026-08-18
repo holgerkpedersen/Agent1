@@ -53,3 +53,35 @@ def test_reject_non_string(workspace: Path) -> None:
     from agent_core.entities import FileOperationError
     with pytest.raises(FileOperationError):
         normalize_path(None, workspace)  # type: ignore[arg-type]
+
+
+class TestConsolidatedPathHelpers:
+    """agent.py, FileSystem and FileSearcher must all delegate to the shared
+    agent_core.path_utils.safe_path/resolve_path (candidate 8) — a single
+    implementation, identical absolute result for the same input."""
+
+    def test_all_callers_share_one_resolution(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_core.file_searcher import FileSearcher
+        from agent_core.file_system import FileSystem
+        from agent_core.path_utils import resolve_path, safe_path
+
+        (tmp_path / "mod.py").write_text("x = 1\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        abs_mod = str((tmp_path / "mod.py").resolve())
+
+        assert resolve_path("mod.py") == abs_mod
+        assert safe_path("./mod.py") == abs_mod
+        assert FileSystem(str(tmp_path)).normalize_path("mod.py") == abs_mod
+        assert FileSystem(str(tmp_path)).safe_path("./mod.py") == abs_mod
+        assert FileSearcher()._safe_path("./mod.py") == abs_mod
+
+    def test_relative_search_path_now_resolves(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FileSearcher._safe_path previously returned the raw relative string
+        (to_windows_path only) — regression: it must resolve like the others."""
+        from agent_core.file_searcher import FileSearcher
+
+        (tmp_path / "mod.py").write_text("x = 1\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        resolved = FileSearcher()._safe_path("mod.py")
+        assert os.path.isabs(resolved)
+        assert Path(resolved) == (tmp_path / "mod.py").resolve()
