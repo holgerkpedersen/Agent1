@@ -82,8 +82,10 @@ def build_reviews(
 
     Only FAILED traces (tool errors / guards / interrupted runs) are
     reviewed; completed successes are not defects to review.  Pre-#050
-    traces (no model/profile metadata, no prompt) are excluded: they cannot
-    be human-judged, and the ledger must only contain reviewable work.
+    traces (no model/profile metadata, no prompt) are excluded from the
+    DEFAULT population: they cannot be human-judged.  They remain
+    auto-reviewable on demand (`review label <task> auto`) and such records
+    are preserved across refresh via merge_existing_reviews.
     """
     from .corpus import collect_traces
 
@@ -97,46 +99,86 @@ def build_reviews(
             continue
         if not _is_failed_trace(graph):
             continue
-        task_id = path.stem
-        diagnosis: Diagnosis | None = None
-        if diagnoses_dir is not None:
-            diag_path = diagnoses_dir / f"{task_id}.json"
-            if diag_path.is_file():
-                try:
-                    diagnosis = Diagnosis.model_validate_json(
-                        diag_path.read_text(encoding="utf-8")
-                    )
-                except Exception:
-                    diagnosis = None
-        if diagnosis is None:
-            diagnosis = diagnose_graph(graph)
-
-        prompt, model, profile = _trace_context(graph)
-        guards = [
-            str(s.payload["guard"])
-            for s in graph.steps
-            if s.kind == "guard_triggered" and s.payload.get("guard")
-        ]
-        outcome = next(
-            (
-                str(s.payload.get("outcome", ""))
-                for s in reversed(graph.steps)
-                if s.kind == "loop_end"
-            ),
-            "",
-        )
-        reviews[task_id] = ReviewRecord(
-            task_id=task_id,
-            prompt=prompt,
-            model=model,
-            profile=profile,
-            outcome=outcome,
-            guards=guards,
-            affected_files=graph.affected_files(),
-            root_layer=diagnosis.root_layer,
-            mechanism=diagnosis.mechanism,
-        )
+        record = _record_from_graph(graph, path.stem, diagnoses_dir)
+        if record is not None:
+            reviews[path.stem] = record
     return reviews
+
+
+def build_record_for(
+    trace_path: Path, diagnoses_dir: Path | None = None
+) -> ReviewRecord | None:
+    """Build a single review record from a trace file, for on-demand review
+    of traces outside the default ledger population (e.g. pre-#050 tasks the
+    agent auto-reviews).  Returns None for non-failed or invalid traces."""
+    try:
+        graph = compile_trace(trace_path)
+    except TraceValidationError:
+        return None
+    if not _is_failed_trace(graph):
+        return None
+    return _record_from_graph(graph, trace_path.stem, diagnoses_dir)
+
+
+def _record_from_graph(
+    graph: TraceGraph, task_id: str, diagnoses_dir: Path | None = None
+) -> ReviewRecord | None:
+    """Shared per-trace record builder used by build_reviews and
+    build_record_for."""
+    diagnosis: Diagnosis | None = None
+    if diagnoses_dir is not None:
+        diag_path = diagnoses_dir / f"{task_id}.json"
+        if diag_path.is_file():
+            try:
+                diagnosis = Diagnosis.model_validate_json(
+                    diag_path.read_text(encoding="utf-8")
+                )
+            except Exception:
+                diagnosis = None
+    if diagnosis is None:
+        diagnosis = diagnose_graph(graph)
+
+    prompt, model, profile = _trace_context(graph)
+    guards = [
+        str(s.payload["guard"])
+        for s in graph.steps
+        if s.kind == "guard_triggered" and s.payload.get("guard")
+    ]
+    outcome = next(
+        (
+            str(s.payload.get("outcome", ""))
+            for s in reversed(graph.steps)
+            if s.kind == "loop_end"
+        ),
+        "",
+    )
+    return ReviewRecord(
+        task_id=task_id,
+        prompt=prompt,
+        model=model,
+        profile=profile,
+        outcome=outcome,
+        guards=guards,
+        affected_files=graph.affected_files(),
+        root_layer=diagnosis.root_layer,
+        mechanism=diagnosis.mechanism,
+    )
+
+
+def merge_existing_reviews(
+    reviews: dict[str, ReviewRecord],
+    existing: dict[str, ReviewRecord],
+    trace_dir: Path,
+) -> dict[str, ReviewRecord]:
+    """Refresh-time preservation: a labeled record whose trace still exists
+    must never be destroyed by a rebuild (its task left the default
+    population — pre-#050 — or the corpus scan changed).  Records whose
+    trace vanished are dropped."""
+    merged = dict(reviews)
+    for task_id, rec in existing.items():
+        if rec.is_labeled() and (trace_dir / f"{task_id}.jsonl").is_file():
+            merged[task_id] = rec
+    return merged
 
 
 def _trace_context(graph: TraceGraph) -> tuple[str, str, str]:

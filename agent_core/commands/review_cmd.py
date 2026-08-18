@@ -26,10 +26,12 @@ from harnessfix.review import (
     EXPORT_DIR,
     REVIEWS_RELPATH,
     ReviewRecord,
+    build_record_for,
     build_reviews,
     export_regression_test,
     label_review,
     load_reviews,
+    merge_existing_reviews,
     review_table,
     save_reviews,
 )
@@ -107,6 +109,9 @@ class ReviewCommand(Command):
                 rec.note = prev.note
                 rec.review_date = prev.review_date
                 rec.source = prev.source
+        # a label must survive refresh even when its task left the default
+        # population (e.g. pre-#050 traces auto-reviewed on demand)
+        reviews = merge_existing_reviews(reviews, existing, trace_dir)
         save_reviews(reviews, self._reviews_path(agent))
         labeled = sum(1 for r in reviews.values() if r.is_labeled())
         print(f"Reviewed {len(reviews)} failed task(s) "
@@ -133,7 +138,8 @@ class ReviewCommand(Command):
         reviews = load_reviews(self._reviews_path(agent))
         rec = reviews.get(args[0])
         if rec is None:
-            print(f"No review record for task {args[0]} (run `review refresh`).")
+            print(f"No review record for task {args[0]}. Run `review refresh`, "
+                  f"or `review label {args[0]} auto` to have the agent review it.")
             return True
         for key in ("task_id", "prompt", "model", "profile", "outcome",
                     "guards", "affected_files", "root_layer", "mechanism",
@@ -188,13 +194,20 @@ class ReviewCommand(Command):
         self, task_id: str, note: str, reviews: dict[str, ReviewRecord],
         agent: "Agent",
     ) -> bool:
-        if task_id not in reviews:
-            self.error(
-                f"No review record for task {task_id} (run `review refresh`; "
-                f"pre-#050 traces are excluded from the ledger)."
-            )
-            return True
         trace = Path(agent.workspace) / "reports" / "traces" / f"{task_id}.jsonl"
+        if task_id not in reviews:
+            if trace.is_file():
+                rec = build_record_for(
+                    trace, Path(agent.workspace) / "reports/harnessfix/diagnoses"
+                )
+                if rec is not None:
+                    reviews[task_id] = rec
+            if task_id not in reviews:
+                self.error(
+                    f"No review record for task {task_id} (trace missing or "
+                    f"not a failed run)."
+                )
+                return True
         if not trace.is_file():
             self.error(f"Trace file not found: {trace}")
             return True

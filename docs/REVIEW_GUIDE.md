@@ -50,12 +50,13 @@ drop out. Labels you already assigned are preserved across refreshes.
 | `root_layer` / `mechanism` | The diagnosis: which facet failed and why. **Treat as a hypothesis, not a verdict** — verify it against the trace (see traps). |
 | `disposition` | Your label. |
 
-> **Pre-#050 traces are not reviewable.** Traces recorded before the metadata
-> stamping (decision #050) carry no prompt and no model/profile — they cannot
-> be human-judged, so the ledger excludes them entirely (`review refresh`
-> drops them). Their historical assessment is documented in
-> `docs/PRE050_TRACE_LABELS.md`. Everything `review` shows you is therefore
-> reviewable.
+> **Pre-#050 traces are not human-reviewable.** Traces recorded before the
+> metadata stamping (decision #050) carry no prompt and no model/profile — a
+> human cannot judge them, so `review refresh` never adds them to the ledger.
+> They remain **agent-reviewable on demand** (`review label <task> auto` —
+> the agent's structural evidence needs no prompt), and once labeled, that
+> record survives every refresh. Their bulk historical assessment is
+> documented in `docs/PRE050_TRACE_LABELS.md`.
 
 ## 4. Gathering evidence — three levels
 
@@ -145,6 +146,7 @@ minutes of waiting. What you get:
 | No self-certification | The agent can never assign `ok` or `regression` |
 | Human wins | An agent verdict never overwrites a human label; your `review label` always overrides it |
 | Harsh on ambiguity | When signals conflict, the agent defaults to `bug` — its own failures should be harder, not easier |
+| Label durability | `review refresh` never destroys a labeled record whose trace still exists — even pre-#050 tasks auto-reviewed on demand survive |
 
 The full rules are the decision table of section 5 encoded in priority order
 (`harnessfix/autoreview.py`). The one rule to know: **mid-work narration is

@@ -8,10 +8,12 @@ import pytest
 from harnessfix.review import (
     DISPOSITIONS,
     ReviewRecord,
+    build_record_for,
     build_reviews,
     export_regression_test,
     label_review,
     load_reviews,
+    merge_existing_reviews,
     review_table,
     save_reviews,
 )
@@ -73,6 +75,56 @@ def test_pre050_traces_excluded_from_ledger(tmp_path):
     _failed_trace(old, meta=False)
     old.close()
     assert build_reviews(traces) == {}
+
+
+def test_build_record_for_on_demand_auto_review(tmp_path):
+    """`review label <task> auto` must work for pre-#050 traces on demand:
+    build_record_for creates the record even though build_reviews excludes
+    them (the agent's structural review needs no prompt/model)."""
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    old = TraceWriter(task_id="told", directory=traces)
+    _failed_trace(old, meta=False)
+    old.close()
+    assert build_reviews(traces) == {}
+    rec = build_record_for(traces / "told.jsonl")
+    assert rec is not None
+    assert rec.task_id == "told"
+    assert rec.outcome == "error"
+    assert rec.root_layer == "execution_environment"
+
+
+def test_build_record_for_rejects_success_trace(tmp_path):
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    ok = TraceWriter(task_id="tok", directory=traces)
+    ok.emit({"kind": "task_begin", "layer": "context", "user_input": "hi"})
+    ok.emit({"kind": "loop_end", "layer": "lifecycle", "outcome": "completed"})
+    ok.close()
+    assert build_record_for(traces / "tok.jsonl") is None
+
+
+def test_merge_existing_reviews_preserves_labels(tmp_path):
+    """Refresh must never destroy a labeled record whose trace still exists —
+    even when the task is outside the default population (pre-#050)."""
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    old = TraceWriter(task_id="told", directory=traces)
+    _failed_trace(old, meta=False)
+    old.close()
+    other = TraceWriter(task_id="tvanish", directory=traces)
+    _failed_trace(other, meta=False)
+    other.close()
+    (traces / "tvanish.jsonl").unlink()
+
+    existing = {
+        "told": ReviewRecord(task_id="told", disposition="bug", source="agent"),
+        "tvanish": ReviewRecord(task_id="tvanish", disposition="noise", source="human"),
+        "tunlabeled": ReviewRecord(task_id="tunlabeled", disposition="unreviewed"),
+    }
+    merged = merge_existing_reviews({}, existing, traces)
+    assert set(merged) == {"told"}
+    assert merged["told"].source == "agent"
 
 
 def test_label_and_persist_roundtrip(tmp_path):
