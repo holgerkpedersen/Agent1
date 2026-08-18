@@ -1379,6 +1379,8 @@ async def run_interactive() -> None:
         ("paste [--workspace <path>]", "Paste multiline text for AI analysis (Ctrl+Z / Ctrl+D to finish)"),
         ("run <command>", "Execute a shell command directly, no LLM"),
         ("self_heal [path] [--rounds N] [--yes]", "Patch failing tests and re-run until green"),
+        ("decide ...", "Track design decisions (add/list/show/check/resolve/link/extract/review)"),
+        ("review <refresh|list|show|label|export>", "Human gate over failed task traces"),
         ("quit", "Exit"),
     ]
     for name, desc in _CMD_LIST:
