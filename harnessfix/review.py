@@ -178,8 +178,9 @@ def review_table(reviews: dict[str, ReviewRecord]) -> str:
     lines = [header, "-" * len(header)]
     for rec in sorted(reviews.values(), key=lambda r: r.task_id):
         lines.append(
-            f"{rec.task_id:<36} {rec.disposition:<11} {rec.model:<20} "
-            f"{rec.root_layer:<24} {rec.outcome}"
+            f"{rec.task_id:<36} {(rec.disposition or '-'):<11} "
+            f"{(rec.model or '-'):<20} {(rec.root_layer or '-'):<24} "
+            f"{rec.outcome or '-'}"
         )
     return "\n".join(lines)
 

@@ -95,6 +95,15 @@ def test_review_table_renders(tmp_path):
     assert "t1" in table and "bug" in table and "lifecycle" in table
 
 
+def test_review_table_renders_dash_for_missing_fields(tmp_path):
+    """Old traces (pre-#050) lack model/root_layer/outcome — the table must
+    show '-' instead of blank columns."""
+    reviews = {"t1": ReviewRecord(task_id="t1")}
+    table = review_table(reviews)
+    assert " - " in table.replace("t1", "  ")
+    assert "unreviewed" in table
+
+
 def test_export_regression_test_pins_diagnosis(tmp_path):
     from harnessfix.htir import compile_trace
 

@@ -50,6 +50,11 @@ drop out. Labels you already assigned are preserved across refreshes.
 | `root_layer` / `mechanism` | The diagnosis: which facet failed and why. **Treat as a hypothesis, not a verdict** — verify it against the trace (see traps). |
 | `disposition` | Your label. |
 
+> Traces recorded before the metadata stamping (decision #050) carry no
+> prompt/model/profile — `review show` renders those fields as `-`. The rest
+> of the record is still fully readable; `affected_files` is the field that
+> matters most regardless of trace age.
+
 ## 4. Gathering evidence — three levels
 
 **Level 1 — the record.** `review show <task>`. Fast triage: if `affected_files`

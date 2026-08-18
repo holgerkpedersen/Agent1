@@ -120,9 +120,8 @@ class ReviewCommand(Command):
                     "disposition", "note", "review_date"):
             val = getattr(rec, key)
             if isinstance(val, list):
-                val = ", ".join(val) or "-"
-            if val:
-                print(f"  {key}: {val}")
+                val = ", ".join(val)
+            print(f"  {key}: {val if val else '-'}")
         return True
 
     # ── label ───────────────────────────────────────────────────────────
