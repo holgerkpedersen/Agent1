@@ -667,7 +667,7 @@ async def run_category(
             response = str(e)
             latency_ms = 0.0
             tokens = None
-            correct = False
+            correct = None
             score = 0.0
 
         cat_result.results.append(
@@ -737,9 +737,9 @@ async def run_benchmark(
                         prompt=reps[0].prompt if reps else "",
                         response=(reps[0].response[:500] if reps else ""),
                         correct=(
-                            all(r.correct is True for r in reps)
-                            if any(r.correct is not None for r in reps)
-                            else None
+                            all(r.correct is True for r in reps if r.correct is not None)
+                            if any(r.correct is True for r in reps)
+                            else (False if any(r.correct is not None for r in reps) else None)
                         ),
                         score=round(statistics.mean(r.score for r in reps), 2) if reps else 0.0,
                         latency_ms=statistics.mean(r.latency_ms for r in reps) if reps else 0.0,

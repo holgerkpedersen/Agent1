@@ -2,14 +2,18 @@
 exact/word-bounded matching instead of lenient substring/keyword overlap,
 plus the optional LLM-judge fallback."""
 import asyncio
+from unittest.mock import AsyncMock, patch
 
 from benchmark import (
+    ModelAPIError,
     accuracy_delta,
     answers_match,
     judge_answer,
     load_models_json,
     load_report_snapshots,
     model_accuracy_history,
+    run_benchmark,
+    run_category,
     score_instruction_following,
     score_question,
     trend_summary,
@@ -18,6 +22,78 @@ from benchmark import (
 
 def _snap(model: str, acc: float | None) -> dict:
     return {"model": model, "overall_accuracy": acc}
+
+
+class TestModelApiFailure:
+    """API failures are unavailable, not wrong: they must not count against
+    accuracy or flip correct repetitions to incorrect (regression)."""
+
+    def test_single_failure_is_unscored_not_incorrect(self) -> None:
+        async def _run() -> None:
+            with patch(
+                "benchmark.query_model",
+                new=AsyncMock(side_effect=ModelAPIError("api down")),
+            ):
+                cat = await run_category("m1", "coding", [("What is 2+2?", "4")])
+            r = cat.results[0]
+            assert r.correct is None
+            assert r.score == 0.0
+            assert "api down" in r.response
+            assert cat.scoreable_count == 0
+            assert cat.accuracy is None
+
+        asyncio.run(_run())
+
+    def test_failure_does_not_distort_mixed_run(self) -> None:
+        async def _run() -> None:
+            with patch(
+                "benchmark.query_model",
+                new=AsyncMock(
+                    side_effect=[("4", 10.0, 5), ModelAPIError("down")]
+                ),
+            ):
+                cat = await run_category(
+                    "m1",
+                    "coding",
+                    [("What is 2+2?", "4"), ("What is the capital of France?", "Paris")],
+                )
+            assert cat.results[0].correct is True
+            assert cat.results[1].correct is None
+            assert cat.accuracy == 100.0
+
+        asyncio.run(_run())
+
+    def test_repetition_merge_true_with_failure_stays_correct(self) -> None:
+        async def _run() -> None:
+            with patch(
+                "benchmark.query_model",
+                new=AsyncMock(side_effect=[("4", 10.0, 5), ModelAPIError("down")]),
+            ):
+                res = await run_benchmark(
+                    ["m1"], {"coding": [("What is 2+2?", "4")]}, repetitions=2
+                )
+            r = res[0].categories["coding"].results[0]
+            assert r.correct is True
+            assert res[0].overall_accuracy == 100.0
+
+        asyncio.run(_run())
+
+    def test_repetition_merge_all_failures_unscored(self) -> None:
+        async def _run() -> None:
+            with patch(
+                "benchmark.query_model",
+                new=AsyncMock(
+                    side_effect=[ModelAPIError("down"), ModelAPIError("down")]
+                ),
+            ):
+                res = await run_benchmark(
+                    ["m1"], {"coding": [("What is 2+2?", "4")]}, repetitions=2
+                )
+            r = res[0].categories["coding"].results[0]
+            assert r.correct is None
+            assert res[0].overall_accuracy is None
+
+        asyncio.run(_run())
 
 
 class TestTrendHelpers:
