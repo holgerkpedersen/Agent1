@@ -309,16 +309,15 @@ class LMStudioProvider:
     ) -> dict[str, Any]:
         """Build request payload for LM Studio API.
 
-        When thinking is disabled, sends several knobs that each LM Studio API
-        flavor honors: the OpenAI-style ``thinking`` field, the per-model
-        ``disable_thinking_kwargs`` (e.g.
-        ``chat_template_kwargs: {"enable_thinking": False}`` for Qwen/Laguna
-        jinja templates that gate reasoning on that variable), plus
-        ``enableThinking`` and ``preserve_thinking`` (recognized on the
-        OpenAI-compat endpoint — see bug #1990 where chat_template_kwargs
-        alone is ignored on some runtimes), and ``reasoning: "off"`` (the
-        validated field on the native /api/v1/chat endpoint).  Sending all of
-        them keeps the disable working across server versions.
+        When thinking is disabled, sends ``reasoning: "off"`` (safe on every
+        probed model) plus any per-model ``disable_thinking_kwargs`` declared
+        in KNOWN_MODELS (e.g. ``chat_template_kwargs: {"enable_thinking":
+        False}`` for Qwen/Laguna jinja templates).  Models without an explicit
+        entry get only the minimal safe fallback — see the probes on
+        qwen/qwen3.8-27b (2026-08-18) where the aggressive switches
+        (``thinking.disabled`` / ``enableThinking`` / ``preserve_thinking``)
+        made the model burn its whole output budget on reasoning_content with
+        zero content (finish_reason=length).
         """
         model_info = KNOWN_MODELS.get(self.model_name, {})
         max_tok = override_max_tokens or self.max_tokens
@@ -333,26 +332,22 @@ class LMStudioProvider:
         if stream:
             payload["stream"] = True
         if disable_thinking or model_info.get("thinking") is False:
-            payload["thinking"] = {"type": "disabled"}
+            # reasoning:"off" is the universal, safe knob — every probed model
+            # answers normally with it and none burn their budget on it.
+            payload["reasoning"] = "off"
             extra = model_info.get("disable_thinking_kwargs")
             if isinstance(extra, dict):
+                # Explicit per-model knob set (laguna-s-2.1, qwen3.* entries)
+                # — declared only when that model needs the extra switches.
                 payload.update(cast(dict[str, Any], extra))
-            # Generic top-level knobs that some LM Studio API versions read.
-            payload.setdefault("reasoning", "off")
-            payload.setdefault("enableThinking", False)
-            payload.setdefault("preserve_thinking", False)
-            # Universal fallback — inject chat_template_kwargs so the Jinja
-            # template also blocks thinking.  This is the most reliable
-            # mechanism across models: the template sees `enable_thinking: False`
-            # and skips reasoning regardless of which API-level fields the
-            # specific model/engine respects.
-            ctk = payload.setdefault(
-                "chat_template_kwargs",
-                {"enable_thinking": False, "preserve_thinking": False},
-            )
-            assert isinstance(ctk, dict)
-            ctk.setdefault("enable_thinking", False)
-            ctk.setdefault("preserve_thinking", False)
+            else:
+                # Minimal fallback for models without an explicit entry.  The
+                # aggressive switches below are deliberately NOT sent: on
+                # qwen/qwen3.8-27b they caused the model to spend all output
+                # tokens on reasoning_content and emit nothing.
+                ctk = payload.setdefault("chat_template_kwargs", {})
+                assert isinstance(ctk, dict)
+                ctk.setdefault("enable_thinking", False)
         return payload
     
     def _make_request(self, payload: dict[str, Any], timeout: int = 3600) -> dict[str, Any]:

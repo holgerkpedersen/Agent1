@@ -22,6 +22,13 @@ KNOWN_MODELS = {
         "thinking": True,
         "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False, "preserve_thinking": False}},
     },
+    "qwen/qwen3.8-27b": {
+        "desc": "Qwen 3.8 27B — chat, codegen, reasoning (2026-08-18: no explicit disable_kwargs; uses the safe minimal fallback — aggressive switches cause a full-budget reasoning burn)",
+        "max_tokens": 100000,
+        "size_gb": 16.0,
+        "params": "27B",
+        "thinking": True,
+    },
     "google/gemma-4-12b": {
         "desc": "Gemma 4 12B — chat, reasoning, fast token gen",
         "max_tokens": 100000,

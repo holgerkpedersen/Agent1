@@ -16,13 +16,19 @@ def test_build_payload_default_has_no_thinking_field() -> None:
     assert "chat_template_kwargs" not in payload
 
 
-def test_build_payload_disable_thinking_sets_standard_field() -> None:
+def test_build_payload_disable_thinking_sets_reasoning_off_and_template() -> None:
     payload = _provider("kwaipilot_kat-coder-v2.5-dev")._build_payload(
         [{"role": "user", "content": "hi"}], disable_thinking=True
     )
-    assert payload["thinking"] == {"type": "disabled"}
-    # Universal fallback: all thinking models now get chat_template_kwargs
-    assert payload["chat_template_kwargs"] == {"enable_thinking": False, "preserve_thinking": False}
+    assert payload["reasoning"] == "off"
+    # Safe minimal fallback: the aggressive switches (thinking.disabled /
+    # enableThinking / preserve_thinking) caused a full-budget reasoning burn
+    # on qwen/qwen3.8-27b (2026-08-18) and are only sent when a model declares
+    # them explicitly in KNOWN_MODELS.
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "enableThinking" not in payload
+    assert "preserve_thinking" not in payload
+    assert "thinking" not in payload
 
 
 def test_build_payload_laguna_adds_chat_template_kwargs() -> None:
@@ -44,11 +50,23 @@ def test_build_payload_qwen_adds_chat_template_kwargs() -> None:
     payload = _provider("qwen3.6-27b-mtp")._build_payload(
         [{"role": "user", "content": "hi"}], disable_thinking=True
     )
-    assert payload["thinking"] == {"type": "disabled"}
     assert payload["chat_template_kwargs"] == {"enable_thinking": False, "preserve_thinking": False}
-    assert payload["enableThinking"] is False
-    assert payload["preserve_thinking"] is False
     assert payload["reasoning"] == "off"
+
+
+def test_build_payload_unknown_qwen_model_uses_safe_minimal_knobs() -> None:
+    """Regression (2026-08-18): qwen/qwen3.8-27b burned its whole 12k output
+    budget on reasoning_content with zero content (finish_reason=length) when
+    the aggressive disable set was sent; reasoning off + template
+    enable_thinking lets it answer normally."""
+    payload = _provider("qwen/qwen3.8-27b")._build_payload(
+        [{"role": "user", "content": "hi"}], disable_thinking=True
+    )
+    assert payload["reasoning"] == "off"
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "enableThinking" not in payload
+    assert "preserve_thinking" not in payload
+    assert "thinking" not in payload
 
 
 def test_build_payload_merges_tools_and_stream() -> None:
@@ -82,8 +100,13 @@ def test_build_payload_disable_thinking_always_adds_reasoning_off() -> None:
             [{"role": "user", "content": "hi"}], disable_thinking=True
         )
         assert payload["reasoning"] == "off", name
-        assert payload["enableThinking"] is False, name
-        assert payload["preserve_thinking"] is False, name
+    # The aggressive top-level switches are opt-in per model (explicit
+    # disable_thinking_kwargs) — never injected universally.
+    payload = _provider("kwaipilot_kat-coder-v2.5-dev")._build_payload(
+        [{"role": "user", "content": "hi"}], disable_thinking=True
+    )
+    assert "enableThinking" not in payload
+    assert "preserve_thinking" not in payload
 
 
 def test_load_model_default_eval_batch_size_is_4096() -> None:
