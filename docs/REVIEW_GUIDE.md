@@ -121,7 +121,41 @@ line). Look at four things:
 3. **Don't label before checking the final answer.** The last `llm_response` is
    the ground truth of delivery. Check it first, always.
 
-## 6. Worked examples (real corpus)
+## 6. Delegating to the agent — when you can't decide
+
+Some traces are genuinely hard to label: the guard message contradicts the
+event stream, the tool sequence is long, the failure mode is unfamiliar.
+**You don't have to guess — the agent can review it for you** with the same
+evidence methodology this guide documents (validated to reproduce the 12
+hand-labeled pre-#050 verdicts exactly):
+
+```
+review label <task> auto     # one trace you can't determine
+review auto                  # every unreviewed trace in the ledger
+```
+
+The agent's verdict is deterministic and evidence-based — no LLM call, no
+minutes of waiting. What you get:
+
+| Guarantee | Meaning |
+|---|---|
+| `source: agent` | The record is visibly marked as agent-reviewed, not human |
+| Evidence note | `note` is auto-filled: "agent auto-review: stuck guard — repeated identical call \| …" |
+| Confidence | `high` / `medium` / `low` printed with the verdict |
+| No self-certification | The agent can never assign `ok` or `regression` |
+| Human wins | An agent verdict never overwrites a human label; your `review label` always overrides it |
+| Harsh on ambiguity | When signals conflict, the agent defaults to `bug` — its own failures should be harder, not easier |
+
+The full rules are the decision table of section 5 encoded in priority order
+(`harnessfix/autoreview.py`). The one rule to know: **mid-work narration is
+not a final answer** — only an answer delivered after the last guard stop
+counts, so a run that died mid-verification is never mistaken for a success.
+
+Delegation is a fallback, not a replacement: if you can label it, do. The
+agent exists for the traces where you can't — and its label is a suggestion
+you can change any time.
+
+## 7. Worked examples (real corpus)
 
 **Example A — `a669a26e…` (→ `noise`)**
 108 iterations fixing `analysis_verifier.py`, zero tool errors, `stuck` guard
@@ -140,7 +174,7 @@ termination reason is an LLM/API failure (provider-side), it's `noise`; if the
 model itself requested termination, it's `bug`. The note field is where you
 record which one it was.
 
-## 7. After labeling
+## 8. After labeling
 
 - **`review export <task>`** writes a regression pin that re-diagnoses the
   trace and asserts the same layer+mechanism — future diagnosis changes for
@@ -152,7 +186,7 @@ record which one it was.
   cluster of `stuck`+no-answer `bug`s says the loop needs a better stuck
   response; a cluster of `noise` delivered-runs says the guard is too eager.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Problem | Fix |
 |---|---|

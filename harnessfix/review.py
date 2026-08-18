@@ -43,6 +43,7 @@ class ReviewRecord:
     disposition: str = "unreviewed"
     note: str = ""
     review_date: str = ""
+    source: str = "human"  # human | agent (auto-review — see harnessfix/autoreview.py)
 
     def is_labeled(self) -> bool:
         return self.disposition in DISPOSITIONS
@@ -160,15 +161,30 @@ def label_review(
     task_id: str,
     disposition: str,
     note: str = "",
+    source: str = "human",
 ) -> ReviewRecord:
     if disposition not in DISPOSITIONS:
         raise ValueError(f"disposition must be one of {DISPOSITIONS}")
     record = reviews.get(task_id)
     if record is None:
         raise KeyError(f"no review record for task {task_id}")
+    if source == "agent":
+        from .autoreview import AGENT_FORBIDDEN
+
+        if disposition in AGENT_FORBIDDEN:
+            raise ValueError(
+                f"agent auto-review may not assign {disposition!r} "
+                f"(no self-certification)"
+            )
+        if record.is_labeled():
+            raise ValueError(
+                f"task {task_id} already labeled {record.disposition} "
+                f"(source={record.source}) — human labels win"
+            )
     record.disposition = disposition
     record.note = note
     record.review_date = datetime.now().isoformat(timespec="seconds")
+    record.source = source
     return record
 
 
@@ -181,8 +197,11 @@ def review_table(reviews: dict[str, ReviewRecord]) -> str:
     )
     lines = [header, "-" * len(header)]
     for rec in sorted(reviews.values(), key=lambda r: r.task_id):
+        disp = rec.disposition or "-"
+        if rec.source == "agent" and rec.disposition:
+            disp += " (agent)"
         lines.append(
-            f"{rec.task_id:<36} {(rec.disposition or '-'):<11} "
+            f"{rec.task_id:<36} {disp:<16} "
             f"{(rec.model or '-'):<20} {(rec.root_layer or '-'):<24} "
             f"{rec.outcome or '-'}"
         )
