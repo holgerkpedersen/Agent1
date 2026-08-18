@@ -54,7 +54,7 @@ from .base import (
 from .doc_paths import latest_run_dir, new_run_dir
 from .reasoning_strip import strip_reasoning
 from agent_core import to_windows_path
-from agent_core.decisions import add_decision, extract_from_analysis
+from agent_core.decisions import add_decision, annotate_candidates, extract_from_analysis
 
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
@@ -213,7 +213,11 @@ def _tailored_implement_parts(
     - positionals in implement's expected order (tasks, analysis, plan, entities)
     - duplicate pre-check via the existing gate → warning, and NO ``--force``
       so the Layer-1 gate can offer the MODIFY filter
-    - ``--keep`` only when a matching implement cache exists (true resume)
+    - ``--modify`` when any planned file already exists (brownfield): without
+      it implement skips existing compile-OK files, so [MODIFY] tasks silently
+      do nothing
+    - ``--keep`` only when a matching implement cache exists (true resume);
+      a stale cache is called out so the user can add ``--refresh``
     """
     from .implement_cmd import _check_planned_duplicates
 
@@ -234,6 +238,20 @@ def _tailored_implement_parts(
                 f"(e.g. {example}) — implement will offer to drop them; no --force is used."
             )
 
+        # Brownfield: planned files that already exist would be skipped by
+        # default ("Already exists and compiles OK") — --modify turns them
+        # into reviewed diff-applications instead.
+        existing_planned = [
+            f for f in planned if (Path(ws) / f).is_file()
+        ]
+        if existing_planned:
+            parts += ["--modify"]
+            hints.append(
+                f"{len(existing_planned)} planned file(s) already exist — "
+                "--modify applies them as reviewed diffs (else they are skipped). "
+                "Add --allow-rewrite only if a wholesale rewrite is truly wanted."
+            )
+
     cache_file = os.path.join(
         os.path.dirname(os.path.realpath(tasks_md)), ".implement_cache.json"
     )
@@ -249,6 +267,11 @@ def _tailored_implement_parts(
             if cache.get("taskplan") == tasks_md and cached_hash == current_hash:
                 parts += ["--keep"]
                 hints.append("--keep: matching implement cache found (true resume).")
+            else:
+                hints.append(
+                    "Stale implement cache detected — add --refresh to rebuild the "
+                    "file list (no --keep was added)."
+                )
         except Exception:
             pass
 
@@ -257,7 +280,7 @@ def _tailored_implement_parts(
         if hints
         else "  No known conflicts — the plan matches the current codebase."
     )
-    hint += "\n  Optional verification: append --review --fix."
+    hint += "\n  Optional verification: --fix (auto-fix loop on syntax/mypy failures) or --review (deep LLM pass)."
     return parts, hint
 
 
@@ -462,19 +485,39 @@ async def _verify_or_repair_gate(
 
 
 async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: str | Path) -> None:
-    """Read analysis, extract decision candidates, prompt to record. Non-blocking."""
+    """Read analysis, extract decision candidates, prompt to record. Non-blocking.
+
+    Candidates are fact-checked against the workspace before the record prompt
+    (negative-coverage claims, nonexistent affected files, and repeated
+    unverified-claim tokens become warnings); recording any warned candidate
+    requires an explicit ``y`` and is auto-denied in autonomous mode. The
+    analysis' own Verification Report (remaining unverifiable claims) is echoed
+    into the extraction prompt so candidates are not based on it.
+    """
     try:
         with open(analysis_md, "r", encoding="utf-8") as f:
             analysis = f.read()
-        candidates = await extract_from_analysis(agent, analysis)
+        ws_str = str(ws_path)
+        report = ""
+        if "## Verification Report" in analysis:
+            report = analysis.split("## Verification Report", 1)[-1].strip()
+        candidates = await extract_from_analysis(
+            agent,
+            analysis,
+            inventory=_module_inventory(ws_str),
+            verification_report=report,
+        )
         if not candidates:
             return
+        candidates = annotate_candidates(candidates, ws_path, verification_report=report)
         print(f"\n[decide] Extracted {len(candidates)} decision candidates:")
         for i, c in enumerate(candidates, 1):
             print(f"  {i}. {c.get('title', 'Untitled')}")
             ctx = c.get('context', '')
             if ctx:
                 print(f"     {ctx}")
+            for w in c.get("warnings", []):
+                print(f"     ⚠ {w}")
         if not sys.stdin.isatty():
             return
         print("\n  Record? (1,2/all/N, press Enter to skip): ", end="")
@@ -482,7 +525,6 @@ async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: s
         if stop_requested():
             return
         if choice and choice != "n":
-            ws_str = str(ws_path)
             selected: list[int] = []
             if choice == "all":
                 selected = list(range(len(candidates)))
@@ -492,6 +534,18 @@ async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: s
                         selected.append(int(part) - 1)
                     except ValueError:
                         pass
+            warned = [
+                i for i in selected
+                if 0 <= i < len(candidates) and candidates[i].get("warnings")
+            ]
+            if warned and not auto_choice(
+                f"  {len(warned)} candidate(s) carry unverified claims — "
+                "record them anyway? (y/N): ",
+                default="n", auto_default="n",
+            ).strip().lower().startswith("y"):
+                for i in warned:
+                    print(f"  Skipped: {candidates[i].get('title', 'Untitled')} (unverified claims)")
+                selected = [i for i in selected if i not in warned]
             for idx in selected:
                 if 0 <= idx < len(candidates):
                     c = candidates[idx]
@@ -503,6 +557,7 @@ async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: s
                         rationale=c.get("rationale", ""),
                         affected_files=c.get("affected_files", []),
                         tags=c.get("tags", []),
+                        warnings=c.get("warnings"),
                     )
                     print(f"  Recorded #{record['id']}: {record['title']}")
     except Exception:
@@ -712,7 +767,12 @@ class WorkflowCommand(Command):
 
         async def _run_next(parts_next: list[str]) -> None:
             """Run the tailored 'implement' command inline — exactly the same
-            command the REPL would execute, with the same flow-stop wrapping."""
+            command the REPL would execute, with the same flow-stop wrapping.
+
+            ``parts_next[0]`` is the command name ("implement"); it must be
+            stripped before execute() — otherwise it lands in the taskplan
+            positional slot and resolve to "<workspace>/implement" → missing.
+            """
             from .implement_cmd import ImplementCommand
 
             print(f"\n[workflow] Running next step: implement {parts_next[1] if len(parts_next) > 1 else ''} ...")
@@ -723,7 +783,7 @@ class WorkflowCommand(Command):
                 _llm.chat = chat_stoppable(_chat)
             try:
                 try:
-                    await ImplementCommand().execute(parts_next, agent)
+                    await ImplementCommand().execute(parts_next[1:], agent)
                 except FlowStopped:
                     print("  Flow stopped by user.")
             finally:

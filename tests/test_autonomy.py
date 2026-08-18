@@ -118,6 +118,60 @@ class TestTailoredImplementParts:
         )
         assert "--keep" not in parts
 
+    def test_brownfield_planned_existing_adds_modify(self, tmp_path):
+        (tmp_path / "agent.py").write_text("X = 1\n", encoding="utf-8")
+        tasks = self._taskplan(
+            tmp_path,
+            ["1. [MODIFY] `agent.py` — Extend the agent loop"],
+        )
+        parts, hint = _tailored_implement_parts(
+            str(tasks), str(tmp_path / "project_plan.md"),
+            str(tmp_path / "project_entities.md"), None,
+            str(tmp_path), tasks.read_text(encoding="utf-8"),
+        )
+        assert "--modify" in parts
+        assert "--force" not in parts
+        assert "--modify applies them as reviewed diffs" in hint
+
+    def test_brownfield_keeps_modify_and_keep_together(self, tmp_path):
+        (tmp_path / "agent.py").write_text("X = 1\n", encoding="utf-8")
+        tasks = self._taskplan(
+            tmp_path,
+            ["1. [MODIFY] `agent.py` — Extend the agent loop"],
+        )
+        content = tasks.read_text(encoding="utf-8")
+        import hashlib
+        cache = {
+            "taskplan": str(tasks),
+            "files": ["agent.py"],
+            "taskplan_hash": hashlib.md5(content.encode()).hexdigest()[:8],
+        }
+        (tmp_path / ".implement_cache.json").write_text(json.dumps(cache), encoding="utf-8")
+        parts, hint = _tailored_implement_parts(
+            str(tasks), str(tmp_path / "project_plan.md"),
+            str(tmp_path / "project_entities.md"), None,
+            str(tmp_path), content,
+        )
+        assert "--modify" in parts
+        assert "--keep" in parts
+
+    def test_stale_cache_hints_refresh(self, tmp_path):
+        tasks = self._taskplan(tmp_path, ["1. `agent.py` — old task"])
+        content = tasks.read_text(encoding="utf-8")
+        stale = {
+            "taskplan": str(tasks),
+            "files": ["agent.py"],
+            "taskplan_hash": "00000000",
+        }
+        (tmp_path / ".implement_cache.json").write_text(json.dumps(stale), encoding="utf-8")
+        parts, hint = _tailored_implement_parts(
+            str(tasks), str(tmp_path / "project_plan.md"),
+            str(tmp_path / "project_entities.md"), None,
+            str(tmp_path), content,
+        )
+        assert "--keep" not in parts
+        assert "--refresh" in hint
+
 
 class TestPlannedFiles:
     def test_extracts_backticked_py(self):

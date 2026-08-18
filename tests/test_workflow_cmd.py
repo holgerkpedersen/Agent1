@@ -1,12 +1,15 @@
 import os
+import sys
+import asyncio
 import tempfile
 import textwrap
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from agent_core.commands.workflow_cmd import (
     _scan_workspace_context,
     _analysis_flag_gate,
+    _extract_decisions_if_any,
     _specs_match,
 )
 
@@ -99,3 +102,48 @@ class TestScanWorkspaceContext:
             assert used is True
             assert "# ---- b.py ----" not in combined
             assert len(combined.splitlines()) <= 6000
+
+
+class TestExtractDecisionsGate:
+    """Warned candidates are skipped unless the user explicitly confirms."""
+
+    _WARNED = [{
+        "title": "Refactor missing_module",
+        "context": "Improve it.",
+        "decision": "Refactor.",
+        "affected_files": ["missing_module.py"],
+        "warnings": ["Affected file does not exist in workspace: missing_module.py"],
+    }]
+    _CLEAN = [{
+        "title": "Clean decision",
+        "context": "Do it.",
+        "decision": "Do it.",
+        "affected_files": [],
+    }]
+
+    def _run(self, tmp_path: Path, candidates: list, inputs: list[str]) -> None:
+        analysis_md = tmp_path / "project_analysis.md"
+        analysis_md.write_text("Some analysis.\n", encoding="utf-8")
+        agent = AsyncMock()
+        with patch(
+            "agent_core.commands.workflow_cmd.extract_from_analysis",
+            new=AsyncMock(return_value=candidates),
+        ), patch(
+            "agent_core.commands.workflow_cmd.annotate_candidates",
+            side_effect=lambda c, ws, verification_report="": c,
+        ), patch.object(sys.stdin, "isatty", return_value=True), patch(
+            "builtins.input", side_effect=list(inputs)
+        ):
+            asyncio.run(_extract_decisions_if_any(agent, str(analysis_md), tmp_path))
+
+    def test_warned_candidate_skipped_without_confirm(self, tmp_path: Path) -> None:
+        self._run(tmp_path, self._WARNED, ["1", "n"])
+        assert not (tmp_path / ".decisions.json").exists()
+
+    def test_warned_candidate_recorded_with_explicit_yes(self, tmp_path: Path) -> None:
+        self._run(tmp_path, self._WARNED, ["1", "y"])
+        assert (tmp_path / ".decisions.json").exists()
+
+    def test_clean_candidate_records_without_confirm(self, tmp_path: Path) -> None:
+        self._run(tmp_path, self._CLEAN, ["1"])
+        assert (tmp_path / ".decisions.json").exists()

@@ -10,6 +10,7 @@ Integration points:
 
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DECISIONS_FILE = ".decisions.json"
+
+#: Negative-existence phrasings ("no test coverage for X", "untested", ...) —
+#: used by :func:`annotate_candidates` to mechanically check coverage claims.
+_NEGATIVE_CLAIM_RE = re.compile(
+    r"(?i)no\s+(?:real\s+|actual\s+|unit\s+)?(?:tests?|coverage|test\s+coverage)"
+    r"|(?:untested|lacks?\s+(?:tests?|coverage|test\s+coverage)|missing\s+(?:tests?|coverage))"
+)
+_MODULE_REF_RE = re.compile(r"(?<![\w/])([\w./-]+\.py)(?![A-Za-z0-9_])")
+_SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", "backups"}
 
 
 # ── Storage ────────────────────────────────────────────────────────────────
@@ -121,6 +131,7 @@ def add_decision(
     rationale: str = "",
     affected_files: list[str] | None = None,
     tags: list[str] | None = None,
+    warnings: list[str] | None = None,
 ) -> dict[str, Any]:
     decisions = load_decisions(workspace)
     record = {
@@ -135,6 +146,8 @@ def add_decision(
         "contradictions": [],
         "resolved_by": None,
     }
+    if warnings:
+        record["meta_warnings"] = warnings
     decisions.append(record)
     save_decisions(workspace, decisions)
     return record
@@ -304,9 +317,110 @@ def _parse_json_array(response: str) -> list[dict[str, Any]]:
     return []
 
 
+# ── Candidate warning annotation ───────────────────────────────────────────
+
+
+def _test_files_for(workspace: str | Path, module_path: str) -> list[str]:
+    """Test files anywhere under *workspace* whose name mentions *module_path*.
+
+    Root-located ``test_x.py`` files count as tests even outside a ``tests/``
+    directory (some repos keep them at the root).
+    """
+    base = Path(module_path).stem.lower()
+    if not base:
+        return []
+    hits: list[str] = []
+    ws = Path(workspace)
+    for root, dirs, files in os.walk(ws):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+        for fn in files:
+            if not fn.endswith(".py"):
+                continue
+            low = fn.lower()
+            if "test" not in low:
+                continue
+            if base not in low:
+                continue
+            rel = os.path.relpath(os.path.join(root, fn), ws).replace("\\", "/")
+            hits.append(rel)
+    return hits
+
+
+def annotate_candidates(
+    candidates: list[dict[str, Any]],
+    workspace: str | Path,
+    verification_report: str = "",
+) -> list[dict[str, Any]]:
+    """Mechanical fact-check of extracted candidates, in place.
+
+    Adds a ``warnings`` key to any candidate whose claims are contradicted or
+    unverifiable against the workspace:
+
+    - negative coverage claims ("no tests for X.py") that a matching test file
+      contradicts (probed under the workspace)
+    - negative existence claims without a file reference (cannot be checked)
+    - ``affected_files`` entries that do not exist under the workspace
+    - backticked symbols/paths repeated from a verification report of
+      unverifiable claims
+
+    Callers should refuse (or require explicit confirmation) to record warned
+    candidates: a recorded decision is injected into every future LLM call.
+    """
+    ws = Path(workspace)
+    flagged_tokens: set[str] = set()
+    if verification_report:
+        for tok in re.findall(r"`([^`]+)`", verification_report):
+            tok = tok.strip()
+            if len(tok) >= 4 and " " not in tok:
+                flagged_tokens.add(tok)
+
+    for c in candidates:
+        text = " ".join(filter(None, (
+            c.get("title", ""), c.get("context", ""), c.get("decision", ""),
+        )))
+        warnings: list[str] = []
+
+        if _NEGATIVE_CLAIM_RE.search(text):
+            refs = _MODULE_REF_RE.findall(text)
+            if not refs:
+                warnings.append(
+                    "Negative existence claim without a file reference — "
+                    "cannot be verified against the workspace."
+                )
+            for ref in refs:
+                hits = _test_files_for(ws, ref)
+                if hits:
+                    warnings.append(
+                        f"Contradicted by workspace: tests found for {ref} — "
+                        f"{', '.join(hits[:3])}"
+                    )
+
+        for f in c.get("affected_files", []):
+            if not (ws / f).exists():
+                warnings.append(f"Affected file does not exist in workspace: {f}")
+
+        for tok in sorted(flagged_tokens):
+            if tok in text:
+                warnings.append(f"Repeats unverified claim reference: {tok}")
+
+        if warnings:
+            seen: set[str] = set()
+            deduped: list[str] = []
+            for w in warnings:
+                if w not in seen:
+                    seen.add(w)
+                    deduped.append(w)
+            c["warnings"] = deduped
+
+    return candidates
+
+
 async def extract_from_analysis(
     agent: "Agent",
     analysis_text: str,
+    *,
+    inventory: str = "",
+    verification_report: str = "",
 ) -> list[dict[str, Any]]:
     sys_msg = (
         "Extract design decisions from the project analysis.\n"
@@ -317,11 +431,31 @@ async def extract_from_analysis(
         '  "rationale": why this is the right choice\n'
         '  "affected_files": list of file paths mentioned\n'
         '  "tags": list of keywords (e.g. "security", "import", "architecture")\n\n'
+        "Accuracy rules — the analysis may contain UNVERIFIED claims:\n"
+        "- Only repeat facts that are consistent with the workspace listing.\n"
+        "  Cite file paths/symbols exactly as they appear in the listing.\n"
+        "- NEVER state that something does not exist (no tests, no coverage,\n"
+        "  no docs, missing module, etc.) unless the workspace listing shows\n"
+        "  no such file. Absence in the listing is insufficient for an\n"
+        "  existence claim — phrase it as a question instead.\n"
+        "- Do NOT base candidates on claims listed in the verification report.\n"
         "Output ONLY valid JSON array, no other text."
     )
+    user_msg = f"Extract decisions from:\n\n{analysis_text}"
+    if inventory:
+        user_msg += (
+            "\n\n## Workspace listing (ground truth — only these modules exist):\n"
+            f"{inventory}\n"
+        )
+    if verification_report:
+        user_msg += (
+            "\n\n## Verification report (claims in this report may be fabricated — "
+            "do NOT trust or repeat them):\n"
+            f"{verification_report}\n"
+        )
     response = await agent.llm.chat([
         {"role": "system", "content": sys_msg},
-        {"role": "user", "content": f"Extract decisions from:\n\n{analysis_text}"},
+        {"role": "user", "content": user_msg},
     ], disable_thinking=True)
     return _parse_json_array(response)
 
@@ -384,11 +518,20 @@ def decisions_as_system_prompt(workspace: str | Path, files: list[str]) -> str:
         ""
     ]
     for d in decisions:
-        lines.append(
-            f"  Decision #{d['id']} ({d['title']}):\n"
-            f"    Chose: {d.get('decision', '')}\n"
-            f"    Why: {d.get('rationale', '')}\n"
-        )
+        warnings = d.get("meta_warnings")
+        if warnings:
+            lines.append(
+                f"  Decision #{d['id']} ({d['title']}) — ⚠ RECORDED WITH UNVERIFIED "
+                f"CLAIMS ({'; '.join(warnings)}):\n"
+                f"    Chose: {d.get('decision', '')}\n"
+                f"    Why: {d.get('rationale', '')}\n"
+            )
+        else:
+            lines.append(
+                f"  Decision #{d['id']} ({d['title']}):\n"
+                f"    Chose: {d.get('decision', '')}\n"
+                f"    Why: {d.get('rationale', '')}\n"
+            )
     return "\n".join(lines)
 
 

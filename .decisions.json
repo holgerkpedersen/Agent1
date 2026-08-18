@@ -808,5 +808,104 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "044",
+    "date": "2026-08-17T18:23:30+00:00",
+    "title": "Replace broad except Exception with specific exception types",
+    "context": "Error handling in agent_core/agent.py had generic catch-all blocks at lines 86, 506, 570, 933. Alternatives: keep broad catches for simplicity, or use specific exceptions (ValueError, IOError, RuntimeError) with proper propagation.",
+    "decision": "Adopted specific exception types and structured error propagation instead of blanket Exception catching.",
+    "rationale": "Specific exceptions enable precise failure diagnosis, prevent masking unrelated bugs, allow callers to handle distinct error categories appropriately, and improve maintainability by making expected failure modes explicit.",
+    "affected_files": [
+      "agent_core/agent.py"
+    ],
+    "tags": [
+      "error-handling",
+      "exception-types",
+      "propagation",
+      "specificity"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "045",
+    "date": "2026-08-17T18:38:07+00:00",
+    "title": "Eliminate path resolution duplication in _execute_tool_call",
+    "context": "_execute_tool_call duplicates path resolution logic (_resolve_nlp_path + to_windows_path + isdir check) already present in FileSystem.safe_path; run/git/diff tools reimplement subprocess patterns.",
+    "decision": "Reuse agent_core/file_system.py safe_path and agent_core/subprocess_utils.py for all tool call path resolution and subprocess execution.",
+    "rationale": "DRY compliance reduces maintenance burden and ensures consistent sandboxing across file ops, shell commands, git, and diff tools.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/file_system.py",
+      "agent_core/subprocess_utils.py"
+    ],
+    "tags": [
+      "dry",
+      "path-handling"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "046",
+    "date": "2026-08-17T20:06:45+00:00",
+    "title": "Unify path normalization across modules",
+    "context": "agent.py uses to_windows_path() while agent_core/security/path_utils.py exposes an independent normalize_path() consumed by agent_core/tool_executor.py, agent_core/tools/file_ops.py, and agent_core/file_context_retriever.py; file_system.py and file_searcher.py carry their own normalize_path/_safe_path implementations - divergent behavior.",
+    "decision": "Consolidate all path normalization into a single canonical implementation (agent_core/security/path_utils.py) and have agent.py, tool_router.py, file_system.py, and file_searcher.py delegate to it instead of maintaining separate implementations.",
+    "rationale": "A single source of truth for workspace sandboxing prevents inconsistent security enforcement and reduces DRY violations across the current implementations.",
+    "affected_files": [
+      "agent.py",
+      "tool_router.py",
+      "agent_core/file_system.py",
+      "agent_core/file_searcher.py",
+      "agent_core/security/path_utils.py"
+    ],
+    "tags": [
+      "security",
+      "architecture",
+      "dry"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "047",
+    "date": "2026-08-18T09:03:55+00:00",
+    "title": "Sanitize shell commands and file contents before trace persistence to prevent secret leakage",
+    "context": "The risks section flagged over-collection/PII: shell commands and full file contents may leak secrets into traces. The analysis cited `agent_core/security/sanitizer.py` and a phantom `agent_core/security/secrets.py` masker.",
+    "decision": "Route all trace-bound shell strings and file content through the verified `agent_core/security/sanitizer.py`, with secret masking via the real `agent_core/security/secrets.py` (confirmed present in workspace listing), before persistence via `harnessfix.tracing.TraceWriter`.",
+    "rationale": "Sanitization must reference modules that actually exist; both sanitizer and secrets modules are in the ground-truth listing.",
+    "affected_files": [
+      "agent_core/security/sanitizer.py",
+      "agent_core/security/secrets.py"
+    ],
+    "tags": [
+      "security",
+      "sanitization",
+      "PII"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "048",
+    "date": "2026-08-18T09:03:55+00:00",
+    "title": "Make instrumentation invisible unless tracing is enabled (opt-out via AGENT_NO_TRACE=1)",
+    "context": "The dependencies section noted `benchmarks/security_benchmarks.py` and existing tests assert on stdout/history, not traces; instrumentation must be invisible unless tracing enabled. Traces are opt-out per `conftest.py`.",
+    "decision": "Gate all file-affected recording behind the verified trace infrastructure (`harnessfix.tracing.TraceWriter`, imported in agent.py) with opt-out via `AGENT_NO_TRACE=1` so benchmarks and tests asserting on stdout/history remain unaffected.",
+    "rationale": "Invisible instrumentation preserves existing test contracts; the trace infra is confirmed present in both `agent.py` imports and `harnessfix/tracing.py`.",
+    "affected_files": [
+      "agent.py",
+      "conftest.py",
+      "benchmarks/security_benchmarks.py"
+    ],
+    "tags": [
+      "instrumentation-visibility",
+      "tests",
+      "opt-out"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]

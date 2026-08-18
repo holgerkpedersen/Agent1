@@ -13,10 +13,12 @@ Usage:
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .base import Command, read_input, stop_requested
+from .base import Command, auto_choice, read_input, stop_requested
 from .doc_paths import find_input
+from .workflow_cmd import _module_inventory
 from agent_core.decisions import (
     add_decision,
+    annotate_candidates,
     check_contradictions,
     extract_from_analysis,
     find_decisions,
@@ -260,10 +262,20 @@ class DecideCommand(Command):
             return True
 
         print(f"Extracting decisions from {source}...")
-        candidates = await extract_from_analysis(agent, analysis)
+        ws = str(Path(agent.workspace).resolve())
+        report = ""
+        if "## Verification Report" in analysis:
+            report = analysis.split("## Verification Report", 1)[-1].strip()
+        candidates = await extract_from_analysis(
+            agent,
+            analysis,
+            inventory=_module_inventory(ws),
+            verification_report=report,
+        )
         if not candidates:
             print("No decision candidates found.")
             return True
+        candidates = annotate_candidates(candidates, ws, verification_report=report)
 
         for i, c in enumerate(candidates, 1):
             print(f"\n  {i}. {c.get('title', 'Untitled')}")
@@ -271,13 +283,14 @@ class DecideCommand(Command):
             print(f"     Decision: {c.get('decision', '-')}")
             print(f"     Tags: {', '.join(c.get('tags', []))}")
             print(f"     Files: {', '.join(c.get('affected_files', []))}")
+            for w in c.get("warnings", []):
+                print(f"     ⚠ {w}")
 
         print("\nRecord these decisions? (1,2/all/N): ", end="")
         choice = read_input().strip().lower()
         if stop_requested():
             return True
 
-        ws = str(Path(agent.workspace).resolve())
         if choice == "all":
             selected = list(range(len(candidates)))
         elif choice == "n" or choice == "":
@@ -295,6 +308,19 @@ class DecideCommand(Command):
                     except ValueError:
                         pass
 
+        warned = [
+            i for i in selected
+            if 0 <= i < len(candidates) and candidates[i].get("warnings")
+        ]
+        if warned and not auto_choice(
+            f"  {len(warned)} candidate(s) carry unverified claims — "
+            "record them anyway? (y/N): ",
+            default="n", auto_default="n",
+        ).strip().lower().startswith("y"):
+            for i in warned:
+                print(f"  Skipped: {candidates[i].get('title', 'Untitled')} (unverified claims)")
+            selected = [i for i in selected if i not in warned]
+
         for idx in selected:
             if 0 <= idx < len(candidates):
                 c = candidates[idx]
@@ -307,6 +333,7 @@ class DecideCommand(Command):
                     rationale=rationale or c.get("rationale", ""),
                     affected_files=c.get("affected_files", []),
                     tags=c.get("tags", []),
+                    warnings=c.get("warnings"),
                 )
                 print(f"  Recorded #{record['id']}")
 
