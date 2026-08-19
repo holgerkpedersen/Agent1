@@ -1245,6 +1245,19 @@ class FixCommand(Command):
             if len(sig_map) > 20:
                 context += f"  ... and {len(sig_map) - 20} more files.\n"
 
+            # Past executions for the candidate files (see _fix_traceback).
+            try:
+                from harnessfix.history import format_batch_history, history_root
+
+                hroot = history_root(ws_dir)
+                if hroot:
+                    cand = [os.path.relpath(fp, hroot).replace("\\", "/") for fp, _, _ in top_files]
+                    history_block = format_batch_history(cand, hroot, per_file=1, line_cap=8)
+                    if history_block:
+                        context += history_block
+            except Exception:
+                pass
+
             print(f"  On-demand: {len(top_files)} full files + {len(rest_files)} candidate sigs + {len(sig_map)} other sigs ({len(context)} bytes)")
             print(f"  Full source: {', '.join(os.path.basename(fp) for fp, _, _ in top_files)}")
             if rest_files:
@@ -1377,6 +1390,23 @@ class FixCommand(Command):
                     cl.write(entry)
 
             print(f"\nFixed {fixed_count}/{len(fixes)} files.")
+
+            if fixed_count:
+                try:
+                    from harnessfix.history import append_execution, history_root
+
+                    hroot = history_root(ws_dir)
+                    if hroot:
+                        hist_files = [
+                            {"path": os.path.relpath(fp, hroot).replace("\\", "/"), "status": "fixed"}
+                            for fp, _content in valid_fixes
+                        ]
+                        append_execution(
+                            hroot, "fix", hist_files, outcome="ok", note=desc_text[:120]
+                        )
+                except Exception:
+                    pass
+
             return True
 
         if "--mypy" in parts:
@@ -2443,6 +2473,21 @@ class FixCommand(Command):
                 fix_system += constraints
         except Exception:
             pass
+
+        # Inject past executions that touched this file (2026-08-19: fix
+        # consulted decisions but never past tool results/errors for the
+        # file being repaired — the trace corpus holds exactly that).
+        try:
+            from harnessfix.history import format_file_history, history_root
+
+            root = history_root(fpath) if fpath else None
+            if root:
+                rel = os.path.relpath(fpath, root).replace("\\", "/")
+                history_block = format_file_history(rel, root)
+                if history_block:
+                    fix_system += history_block
+        except Exception:
+            pass
         fix_msgs = [
             {"role": "system", "content": fix_system},
             {"role": "user", "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n" + "\n".join([f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}" for m, n, s, a in all_broken]) + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}
@@ -2548,5 +2593,18 @@ class FixCommand(Command):
                                 print(f"  Recorded #{record['id']}: {record['title']}")
             except Exception:
                 pass
+
+        # Structured history record for future runs (read-only consumers).
+        try:
+            from harnessfix.history import append_execution, history_root
+
+            root = history_root(fpath) if fpath else None
+            if root:
+                files = [
+                    {"path": os.path.relpath(fpath, root).replace("\\", "/"), "status": "fixed"}
+                ]
+                append_execution(root, "fix", files, outcome="ok", note=error_msg[:120] if error_msg else "")
+        except Exception:
+            pass
 
         return True

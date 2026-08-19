@@ -963,7 +963,7 @@ class ImplementCommand(Command):
         parts = args
 
         if len(parts) < 1:
-            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--modify] [--fix] [--retry] [--review] [--allow-rewrite] [--workspace <path>]")
+            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--modify] [--fix] [--retry] [--review] [--allow-rewrite] [--no-history] [--workspace <path>]")
             return True
 
         keep_mode = "--keep" in parts
@@ -974,6 +974,7 @@ class ImplementCommand(Command):
         retry_mode = "--retry" in parts
         review_mode = "--review" in parts
         allow_rewrite = "--allow-rewrite" in parts
+        history_mode = "--no-history" not in parts
 
         target_workspace = agent.workspace
         if "--workspace" in parts:
@@ -981,7 +982,7 @@ class ImplementCommand(Command):
             if ws_idx + 1 < len(parts):
                 target_workspace = parts[ws_idx + 1].strip('"')
 
-        skip_tokens = ["--keep", "--refresh", "--force", "--modify", "--fix", "--retry", "--review", "--workspace", "--allow-rewrite", target_workspace]
+        skip_tokens = ["--keep", "--refresh", "--force", "--modify", "--fix", "--retry", "--review", "--workspace", "--allow-rewrite", "--no-history", target_workspace]
         filtered_parts = [p for p in parts if p not in skip_tokens]
 
         taskplan_file = filtered_parts[0] if filtered_parts else ""
@@ -1412,6 +1413,21 @@ class ImplementCommand(Command):
                     user_context += constraints
             except Exception:
                 pass
+
+            # Inject past executions that touched this batch (2026-08-19:
+            # implement consulted decisions but never past tool results/
+            # errors, even though the trace corpus and execution ledger hold
+            # them).  Purely additive prompt context — cannot affect the
+            # write/cascade invariants.
+            if history_mode:
+                try:
+                    from harnessfix.history import format_batch_history
+
+                    history_block = format_batch_history(batch, workspace_path(target_workspace))
+                    if history_block:
+                        user_context += history_block
+                except Exception:
+                    pass
 
             impl_messages = [
                 {"role": "system", "content": "You are an expert Python developer. Implement the specified files concisely.\n\nRULES:\n0. NEVER use <tool_call>, <function_call>, or XML tags. Respond in plain text with [FILE:] blocks only.\n1. All code MUST pass mypy strict type checking and py_compile.\n2. You receive an export map listing every class/function/constant that already exists and which file defines it. IMPORT those names — NEVER redefine a name that already exists in the export map. If 'Grid' is listed under grid.py, write 'from grid import Grid', do NOT write 'class Grid' again.\n3. Each file has ONE clear responsibility. Define ONLY the classes/functions assigned to that file. All other needed names come from imports.\n4. NEW files: small and focused — max 150 lines.\n5. MODIFYING existing files: add only the minimal change. DO NOT rewrite the entire file.\n6. NEVER create duplicate functions or classes — check the export map before defining anything.\n7. Prefer composition over inheritance. Inject dependencies via __init__.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
@@ -2676,6 +2692,26 @@ class ImplementCommand(Command):
                                     tags=c.get("tags", []),
                                 )
                                 print(f"  Recorded #{record['id']}: {record['title']}")
+            except Exception:
+                pass
+
+        # Structured history record so FUTURE runs can reuse this execution
+        # (read-only consumers; harmless when reports/ is unwritable).
+        if target_workspace and all_files:
+            try:
+                from harnessfix.history import append_execution
+
+                file_records = [
+                    {"path": fname, "status": "written" if fname in implemented else "skipped"}
+                    for fname in all_files
+                ]
+                append_execution(
+                    workspace_path(target_workspace),
+                    "implement",
+                    file_records,
+                    outcome="ok" if implemented else "noop",
+                    note=f"implemented {len(implemented)}/{len(all_files)} files",
+                )
             except Exception:
                 pass
 

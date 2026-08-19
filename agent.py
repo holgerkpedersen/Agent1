@@ -271,6 +271,7 @@ class Agent:
                 results = await self.searcher.search(query, search_path)
                 if not results or results == "No matches found":
                     return "No files found matching that query."
+                self._note_effect(search_path)
                 lines = results.splitlines()
                 return "\n".join(f"  {line}" for line in lines[:30])
             except Exception as e:
@@ -308,6 +309,7 @@ class Agent:
                 abs_path = path if _os.path.isabs(path) else _os.path.abspath(path)
                 if _os.path.isdir(abs_path):
                     entries = _os.listdir(abs_path)[:50]
+                    self._note_effect(path)
                     lines = []
                     for entry in sorted(entries):
                         full = _os.path.join(abs_path, entry)
@@ -512,6 +514,7 @@ class Agent:
             analyze_args: list[str] = []
             if args.get("path"):
                 analyze_args = [self._resolve_nlp_path(str(args["path"]))]
+                self._note_effect(analyze_args[0])
             try:
                 from agent_core.commands.analyze_cmd import AnalyzeCommand
                 buf = io.StringIO()

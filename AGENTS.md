@@ -23,7 +23,9 @@ design decision and is being extended to audit its own file effects (self-improv
 - `agent_core/security/` — sanitizers; `agent_core/file_system.py`, `path_utils.py` —
   real path utilities (`to_windows_path`, `normalize_path`); **do NOT invent new ones**.
 - `harnessfix/` — self-improvement consumers: `tracing.py` (opt-in `TraceWriter`),
-  `reader`, `diagnose`, `gates`, `loop`, `htir`, `links`, `corpus`.
+  `reader`, `diagnose`, `gates`, `loop`, `htir`, `links`, `corpus`, `history.py`
+  (trace-index + execution-ledger queries and PAST EXECUTION NOTES formatters that
+  implement/fix inject into prompts).
 - `tests/` — pytest, **1128 passed, 2 skipped** (~3.5 min full run; `testpaths=["tests"]`).
 - `agent_core/tests/` — entry-point/component test package (31 tests, runs only when
   targeted: `python -m pytest agent_core/tests -q --no-cov`); reconstructed 2026-08-19
@@ -132,6 +134,18 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`.
   - #056 — `scripts/audit_invariants.py` (git-dirty, paired memory files,
     phantom modules from latest `.docs/`, trace health, backups/; `--strict`
     escalates git-dirty to ERROR).
+- ✅ **#060 — history-assisted implement/fix (DONE, 2026-08-19)**: new
+  `harnessfix/history.py` builds a process-cached index over `reports/traces/`
+  plus a structured execution ledger `reports/history/executions.jsonl`
+  (gitignored) and renders compact PAST EXECUTION NOTES blocks. `implement`
+  injects them per batch (next to the decisions block; `--no-history` opt-out)
+  and appends a structured summary per run; `fix` injects per-file history in
+  both `_fix_traceback` and `--desc` modes and appends run summaries.
+  Recording got richer too: `search`/`list_files`/`analyze` now record
+  `affected_files` in traces (read/write/edit/fix already did). Matching
+  handles old-format traces via args-path suffix (abs→rel) and new-format
+  `affected_files`; directory args only match direct children to avoid
+  workspace-wide noise. 20 tests in `tests/test_harnessfix_history.py`.
   - **Manual next steps for the user**: `review refresh` to build the ledger
     over the ~64 real traces; label the first batch; the benchmark gate now
     works with the qwen3.8-27b baseline in `reports/benchmark_harnessfix.json`.

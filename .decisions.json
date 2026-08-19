@@ -1129,5 +1129,31 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "060",
+    "date": "2026-08-19T10:10:07+00:00",
+    "title": "History-assisted implement/fix from past executions",
+    "context": "implement and fix injected past decisions into prompts but never past tool results/errors, even though the trace corpus (69 traces, ~6000 events) and review ledger existed. A 2026-08-19 paste-session fix silently never took effect in the running REPL (stale in-memory modules), showing history is only useful if both recorded richly and consumed.",
+    "decision": "Added harnessfix/history.py: a process-cached index over reports/traces/ plus a structured execution ledger reports/history/executions.jsonl (gitignored), with PAST EXECUTION NOTES formatters. implement injects per-batch history next to the decisions block (--no-history opt-out) and appends a structured run summary; fix injects per-file history in _fix_traceback and --desc modes and appends run summaries. search/list_files/analyze now record affected_files in traces (read/write/edit/fix already did).",
+    "rationale": "Prompt-level history is purely additive read-only context and cannot affect implement write/cascade invariants (dependency cascade safety, wholesale-rewrite guard, batch-name checks). Matching handles old-format traces via args-path suffix (abs to rel) and new-format affected_files; directory args match only direct children to avoid workspace-wide noise. Recording affected_files for read-only tools plus structured run summaries makes future history precise.",
+    "affected_files": [
+      "harnessfix/history.py",
+      "agent_core/commands/implement_cmd.py",
+      "agent_core/commands/fix_cmd.py",
+      "agent.py",
+      ".gitignore",
+      "AGENTS.md",
+      "tests/test_harnessfix_history.py"
+    ],
+    "tags": [
+      "history-assisted",
+      "self-improvement",
+      "implement",
+      "fix",
+      "traces"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]
