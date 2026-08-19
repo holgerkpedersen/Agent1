@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  @@HEAD@@
+  <style>
+    [hidden] { display: none !important; }
+    .metric-card .icon-wrap { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success-main, #10b981); display: inline-block; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .table thead th { white-space: nowrap; }
+    .table tbody td { vertical-align: middle; }
+    #connStatus { font-size: 12px; }
+  </style>
+</head>
+<body>
+  @@SIDEBAR@@
+
+  <main class="dashboard-main">
+    @@HEADER@@
+
+    <div class="dashboard-main-body">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-16 mb-24">
+        <div>
+          <h6 class="fw-semibold mb-0" id="pageTitle">Dashboard</h6>
+          <p class="text-sm text-secondary-light mb-0 mt-24">
+            Live Agent1 performance metrics
+            <span class="live-dot ms-2"></span>
+            <span id="connStatus" class="text-secondary-light ms-1">connecting...</span>
+          </p>
+        </div>
+        <ul class="d-flex align-items-center gap-2">
+          <li class="fw-medium">
+            <a href="index.html" class="d-flex align-items-center gap-1 hover-text-primary">
+              <iconify-icon icon="solar:home-smile-angle-outline" class="icon text-lg"></iconify-icon>
+              Dashboard
+            </a>
+          </li>
+          <li>-</li>
+          <li class="fw-medium">Overview</li>
+        </ul>
+      </div>
+
+      <!-- Stat cards -->
+      <div class="row row-cols-xxxl-4 row-cols-lg-2 row-cols-sm-2 row-cols-1 gy-4 mb-24" data-view-panel="dashboard">
+        <div class="col">
+          <div class="card shadow-none border h-100">
+            <div class="card-body p-20">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-16">
+                <div>
+                  <p class="fw-medium text-primary-light mb-1">Commands Executed</p>
+                  <h6 class="mb-0" id="stat-commands">-</h6>
+                </div>
+                <div class="metric-card">
+                  <div class="icon-wrap bg-primary-subtle text-primary-600">
+                    <iconify-icon icon="solar:command-outline" class="text-2xl"></iconify-icon>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card shadow-none border h-100">
+            <div class="card-body p-20">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-16">
+                <div>
+                  <p class="fw-medium text-primary-light mb-1">Snapshot Time</p>
+                  <h6 class="mb-0" id="stat-time">-</h6>
+                </div>
+                <div class="metric-card">
+                  <div class="icon-wrap bg-warning-subtle text-warning-main">
+                    <iconify-icon icon="solar:clock-circle-outline" class="text-2xl"></iconify-icon>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card shadow-none border h-100">
+            <div class="card-body p-20">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-16">
+                <div>
+                  <p class="fw-medium text-primary-light mb-1">Active Alerts</p>
+                  <h6 class="mb-0" id="stat-alerts">-</h6>
+                </div>
+                <div class="metric-card">
+                  <div class="icon-wrap bg-danger-subtle text-danger-main">
+                    <iconify-icon icon="solar:bell-outline" class="text-2xl"></iconify-icon>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card shadow-none border h-100">
+            <div class="card-body p-20">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-16">
+                <div>
+                  <p class="fw-medium text-primary-light mb-1">Histogram Metrics</p>
+                  <h6 class="mb-0" id="stat-histogram">-</h6>
+                </div>
+                <div class="metric-card">
+                  <div class="icon-wrap bg-info-subtle text-info-main">
+                    <iconify-icon icon="solar:chart-2-outline" class="text-2xl"></iconify-icon>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main panels -->
+      <div class="row gy-4" data-view-panel="dashboard">
+        <div class="col-xxl-7">
+          <div class="card shadow-none border h-100">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Command Summary</h6>
+              <span class="badge bg-success-focus text-success-main rounded-pill" id="badge-command-count">-</span>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table mb-0">
+                  <thead>
+                    <tr>
+                      <th>Command</th>
+                      <th>Calls</th>
+                      <th>Total</th>
+                      <th>Avg</th>
+                      <th>Max</th>
+                      <th>Last</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbl-commands">
+                    <tr><td colspan="6" class="text-center text-secondary-light">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-xxl-5">
+          <div class="card shadow-none border h-100">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Counters</h6>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table mb-0">
+                  <thead>
+                    <tr>
+                      <th>Metric</th>
+                      <th class="text-end">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbl-counters">
+                    <tr><td colspan="2" class="text-center text-secondary-light">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row gy-4 mt-2" data-view-panel="dashboard">
+        <div class="col-xxl-7">
+          <div class="card shadow-none border h-100">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Execution Log (last 100)</h6>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table mb-0">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Command</th>
+                      <th>Elapsed</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbl-log">
+                    <tr><td colspan="3" class="text-center text-secondary-light">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-xxl-5">
+          <div class="card shadow-none border h-100">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Active Alerts</h6>
+              <span class="badge bg-danger-focus text-danger-main rounded-pill" id="badge-alert-count">-</span>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table mb-0">
+                  <thead>
+                    <tr>
+                      <th>Rule</th>
+                      <th>Severity</th>
+                      <th class="text-end">Value / Threshold</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbl-alerts">
+                    <tr><td colspan="3" class="text-center text-secondary-light">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      <!-- Dedicated views (shown via sidebar tabs) -->
+      <div class="row gy-4" data-view-panel="commands" hidden>
+        <div class="col-12">
+          <div class="card shadow-none border">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Command Summary</h6>
+              <span class="badge bg-success-focus text-success-main rounded-pill" id="badge-command-count-view">-</span>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table mb-0">
+                  <thead>
+                    <tr>
+                      <th>Command</th>
+                      <th>Calls</th>
+                      <th>Total</th>
+                      <th>Avg</th>
+                      <th>Max</th>
+                      <th>Last</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbl-commands-view">
+                    <tr><td colspan="6" class="text-center text-secondary-light">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row gy-4" data-view-panel="log" hidden>
+        <div class="col-12">
+          <div class="card shadow-none border">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Execution Log (last 100)</h6>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table mb-0">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Name</th>
+                      <th>Type</th>
+                      <th class="text-end">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbl-log-view">
+                    <tr><td colspan="4" class="text-center text-secondary-light">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row gy-4" data-view-panel="alerts" hidden>
+        <div class="col-12">
+          <div class="card shadow-none border">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Active Alerts</h6>
+              <span class="badge bg-danger-focus text-danger-main rounded-pill" id="badge-alert-count-view">-</span>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table mb-0">
+                  <thead>
+                    <tr>
+                      <th>Rule</th>
+                      <th>Severity</th>
+                      <th class="text-end">Value / Threshold</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbl-alerts-view">
+                    <tr><td colspan="3" class="text-center text-secondary-light">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row gy-4" data-view-panel="gauges" hidden>
+        <div class="col-12">
+          <div class="card shadow-none border">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Gauges</h6>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table mb-0">
+                  <thead>
+                    <tr>
+                      <th>Gauge</th>
+                      <th class="text-end">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbl-gauges">
+                    <tr><td colspan="2" class="text-center text-secondary-light">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row gy-4" data-view-panel="histogram" hidden>
+        <div class="col-12">
+          <div class="card shadow-none border">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Histogram</h6>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table mb-0">
+                  <thead>
+                    <tr>
+                      <th>Metric</th>
+                      <th class="text-end">Samples</th>
+                      <th class="text-end">Min</th>
+                      <th class="text-end">Mean</th>
+                      <th class="text-end">Max</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbl-histogram">
+                    <tr><td colspan="5" class="text-center text-secondary-light">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+    @@FOOTER@@
+  </main>
+
+  <script src="static/ttheme/js/lib/jquery-3.7.1.min.js"></script>
+  <script src="static/ttheme/js/lib/bootstrap.bundle.min.js"></script>
+  <script src="static/ttheme/js/lib/iconify-icon.min.js"></script>
+  <script src="static/ttheme/js/app.js"></script>
+  <script>
+    const API = {
+      snapshot: 'api/snapshot',
+      counters: 'api/counters',
+      gauges: 'api/gauges',
+      alerts: 'api/alerts',
+    };
+
+    async function fetchJSON(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(url + ' -> ' + res.status);
+      return res.json();
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return '-';
+      const d = new Date(iso);
+      return isNaN(d) ? iso : d.toLocaleString();
+    }
+
+    function setStatus(ok, msg) {
+      const el = document.getElementById('connStatus');
+      el.textContent = msg;
+      el.className = 'ms-1 ' + (ok ? 'text-success-main' : 'text-danger-main');
+    }
+
+    async function loadSnapshot() {
+      try {
+        const s = await fetchJSON(API.snapshot);
+        const counters = s.counters || {};
+        const gauges = s.gauges || {};
+        let total = 0;
+        for (const k in counters) total += Number(counters[k] || 0);
+        document.getElementById('stat-commands').textContent = total || '-';
+        document.getElementById('stat-time').textContent = s.timestamp ? fmtTime(s.timestamp) : '-';
+        setStatus(true, 'live');
+      } catch (e) {
+        setStatus(false, 'offline: ' + e.message);
+      }
+    }
+
+    async function loadCounters() {
+      try {
+        const d = await fetchJSON(API.counters);
+        const c = d.counters || {};
+        const tbody = document.getElementById('tbl-counters');
+        const keys = Object.keys(c);
+        if (!keys.length) {
+          tbody.innerHTML = '<tr><td colspan="2" class="text-center text-secondary-light">No counters</td></tr>';
+          return;
+        }
+        tbody.innerHTML = keys.map(k =>
+          '<tr><td>' + k + '</td><td class="text-end fw-semibold">' + c[k] + '</td></tr>'
+        ).join('');
+      } catch (e) {
+        document.getElementById('tbl-counters').innerHTML =
+          '<tr><td colspan="2" class="text-center text-danger-main">' + e.message + '</td></tr>';
+      }
+    }
+
+    async function loadAlerts() {
+      try {
+        const d = await fetchJSON(API.alerts);
+        const alerts = d.alerts || [];
+        document.getElementById('stat-alerts').textContent = d.count ?? alerts.length;
+        document.getElementById('badge-alert-count').textContent = alerts.length;
+        const tbody = document.getElementById('tbl-alerts');
+        if (!alerts.length) {
+          tbody.innerHTML = '<tr><td colspan="3" class="text-center text-secondary-light">No active alerts</td></tr>';
+          return;
+        }
+        tbody.innerHTML = alerts.map(a =>
+          '<tr><td>' + (a.rule_name || '-') + '</td>' +
+          '<td><span class="badge bg-danger-focus text-danger-main rounded-pill">' + (a.severity || '-') + '</span></td>' +
+          '<td class="text-end">' + (a.current_value ?? '-') + ' / ' + (a.threshold ?? '-') + '</td></tr>'
+        ).join('');
+        const viewBody = document.getElementById('tbl-alerts-view');
+        document.getElementById('badge-alert-count-view').textContent = alerts.length;
+        if (viewBody) viewBody.innerHTML = tbody.innerHTML;
+      } catch (e) {
+        document.getElementById('tbl-alerts').innerHTML =
+          '<tr><td colspan="3" class="text-center text-danger-main">' + e.message + '</td></tr>';
+      }
+    }
+
+    async function loadCommands() {
+      // Command summary is derived from the metrics collector snapshot counters
+      try {
+        const s = await fetchJSON(API.snapshot);
+        const counters = s.counters || {};
+        const keys = Object.keys(counters).filter(k => /command|exec|tool|agent|fix|analyze|plan|implement/i.test(k));
+        const tbody = document.getElementById('tbl-commands');
+        document.getElementById('badge-command-count').textContent = keys.length;
+        if (!keys.length) {
+          tbody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary-light">No command data collected yet</td></tr>';
+          return;
+        }
+        tbody.innerHTML = keys.map(k =>
+          '<tr><td><span class="fw-semibold">' + k + '</span></td>' +
+          '<td>' + counters[k] + '</td>' +
+          '<td>-</td><td>-</td><td>-</td><td>-</td></tr>'
+        ).join('');
+        const viewBody = document.getElementById('tbl-commands-view');
+        document.getElementById('badge-command-count-view').textContent = keys.length;
+        if (viewBody) viewBody.innerHTML = tbody.innerHTML;
+      } catch (e) {
+        document.getElementById('tbl-commands').innerHTML =
+          '<tr><td colspan="6" class="text-center text-danger-main">' + e.message + '</td></tr>';
+      }
+    }
+
+    async function loadHistogram() {
+      try {
+        const s = await fetchJSON(API.snapshot);
+        const samples = s.histogram_samples || {};
+        const keys = Object.keys(samples);
+        document.getElementById('stat-histogram').textContent = keys.length || '-';
+        const tbody = document.getElementById('tbl-histogram');
+        if (!keys.length) {
+          tbody.innerHTML = '<tr><td colspan="5" class="text-center text-secondary-light">No histogram data collected yet</td></tr>';
+          return;
+        }
+        tbody.innerHTML = keys.map(k => {
+          const arr = samples[k] || [];
+          const vals = arr.map(Number).filter(function (n) { return !isNaN(n); });
+          const min = vals.length ? Math.min.apply(null, vals) : 0;
+          const max = vals.length ? Math.max.apply(null, vals) : 0;
+          const mean = vals.length ? (vals.reduce(function (a, b) { return a + b; }, 0) / vals.length).toFixed(2) : 0;
+          return '<tr><td><span class="fw-semibold">' + k + '</span></td>' +
+            '<td class="text-end">' + vals.length + '</td>' +
+            '<td class="text-end">' + min + '</td>' +
+            '<td class="text-end">' + mean + '</td>' +
+            '<td class="text-end">' + max + '</td></tr>';
+        }).join('');
+      } catch (e) {
+        document.getElementById('tbl-histogram').innerHTML =
+          '<tr><td colspan="5" class="text-center text-danger-main">' + e.message + '</td></tr>';
+        document.getElementById('stat-histogram').textContent = '-';
+      }
+    }
+
+    async function refresh() {
+      await Promise.all([loadSnapshot(), loadCounters(), loadAlerts(), loadCommands(), loadHistogram(), loadLog()]);
+    }
+
+    function openView(name) {
+      const panels = document.querySelectorAll('[data-view-panel]');
+      panels.forEach(function (p) {
+        p.hidden = p.getAttribute('data-view-panel') !== name;
+      });
+      const items = document.querySelectorAll('#sidebar-menu li[data-view]');
+      items.forEach(function (li) {
+        li.classList.toggle('active', li.getAttribute('data-view') === name);
+      });
+      if (name === 'gauges') loadGauges();
+      if (name === 'histogram') loadHistogram();
+      if (name === 'commands') loadCommands();
+      if (name === 'log') loadLog();
+      if (name === 'alerts') loadAlerts();
+      const title = document.getElementById('pageTitle');
+      if (title) {
+        const labels = { dashboard: 'Dashboard', commands: 'Command Summary', log: 'Execution Log', alerts: 'Active Alerts', gauges: 'Gauges', histogram: 'Histogram' };
+        title.textContent = labels[name] || 'Dashboard';
+      }
+    }
+
+    async function loadGauges() {
+      try {
+        const d = await fetchJSON(API.gauges);
+        const g = d.gauges || {};
+        const tbody = document.getElementById('tbl-gauges');
+        const keys = Object.keys(g);
+        if (!keys.length) {
+          tbody.innerHTML = '<tr><td colspan="2" class="text-center text-secondary-light">No gauges</td></tr>';
+          return;
+        }
+        tbody.innerHTML = keys.map(k =>
+          '<tr><td><span class="fw-semibold">' + k + '</span></td>' +
+          '<td class="text-end fw-semibold">' + g[k] + '</td></tr>'
+        ).join('');
+      } catch (e) {
+        document.getElementById('tbl-gauges').innerHTML =
+          '<tr><td colspan="2" class="text-center text-danger-main">' + e.message + '</td></tr>';
+      }
+    }
+
+    async function loadLog() {
+      try {
+        const d = await fetchJSON('api/log');
+        const records = d.records || [];
+        const tbody = document.getElementById('tbl-log-view');
+        if (!records.length) {
+          tbody.innerHTML = '<tr><td colspan="4" class="text-center text-secondary-light">No activity recorded yet</td></tr>';
+          return;
+        }
+        tbody.innerHTML = records.map(r =>
+          '<tr><td>' + fmtTime(r.timestamp) + '</td>' +
+          '<td><span class="fw-semibold">' + (r.name || '-') + '</span></td>' +
+          '<td>' + (r.type || '-') + '</td>' +
+          '<td class="text-end">' + (r.value ?? '-') + '</td></tr>'
+        ).join('');
+      } catch (e) {
+        document.getElementById('tbl-log-view').innerHTML =
+          '<tr><td colspan="4" class="text-center text-danger-main">' + e.message + '</td></tr>';
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 3000);
+
+    function toggleMonochrome() {
+      const on = localStorage.getItem('agent1_monochrome') === 'true';
+      const next = !on;
+      localStorage.setItem('agent1_monochrome', String(next));
+      if (next) document.body.classList.add('monochrome-mode');
+      else document.body.classList.remove('monochrome-mode');
+      const btn = document.querySelector('.mono-toggle');
+      if (btn) btn.classList.toggle('active', next);
+    }
+
+    (function initMonochrome() {
+      if (localStorage.getItem('agent1_monochrome') === 'true') {
+        document.body.classList.add('monochrome-mode');
+        const btn = document.querySelector('.mono-toggle');
+        if (btn) btn.classList.add('active');
+      }
+    })();
+  </script>
+</body>
+</html>

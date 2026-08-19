@@ -138,7 +138,7 @@ class PerfCommand(Command):
     <div class="header">
         <div style="display:flex;align-items:center;gap:8px;">
             <img src="static/favicon.png" alt="Agent1 Logo" style="width:32px;height:32px;">
-            <h1>AGENT1</h1>
+            <h6 class="fw-semibold mb-0" style="display:inline-block;background:linear-gradient(135deg,var(--gradient-start),var(--gradient-end));-webkit-background-clip:text;background-clip:text;color:transparent;font-size:24px;">AGENT1</h6>
             <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">Performance Dashboard</span>
             <button type="button" class="theme-toggle"
                 onclick="toggleTheme()" id="themeToggle"
@@ -148,7 +148,7 @@ class PerfCommand(Command):
 
     <div class="panel" style="position:static;margin:0 0 12px 0;min-width:0;">
         <div class="panel-header">
-            <h3>Command Summary</h3>
+            <h6 class="fw-semibold mb-0">Command Summary</h6>
         </div>
         <div class="panel-content">
             <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;">
@@ -177,7 +177,7 @@ class PerfCommand(Command):
 
     <div class="panel" style="position:static;margin:0 0 12px 0;min-width:0;">
         <div class="panel-header">
-            <h3>Execution Log (last 100)</h3>
+            <h6 class="fw-semibold mb-0">Execution Log (last 100)</h6>
         </div>
         <div class="panel-content">
             <table class="issues-table">
