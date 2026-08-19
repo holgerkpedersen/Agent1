@@ -123,18 +123,98 @@ class PerfCommand(Command):
             f"<tr><td>{r['timestamp']}</td><td>{r['command']}</td><td>{r['elapsed_s']}s</td></tr>"
             for r in detail[:100]
         )
+        total_calls = sum(s["calls"] for s in summary)
+        total_time = sum(float(s["total"].rstrip("s")) for s in summary)
         return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Agent Performance</title>
-<style>
-body {{font-family:monospace;background:#1a1a2e;color:#e0e0e0;padding:20px}}
-h2 {{color:#00d4aa}} th,td {{padding:6px 14px;text-align:right}}
-th {{background:#16213e;color:#00d4aa}} td {{background:#0f3460}}
-tr:hover td {{background:#1a508b}}
-</style></head><body>
-<h2>Command Summary</h2>
-<table><tr><th>Command</th><th>Calls</th><th>Total</th><th>Avg</th><th>Max</th><th>Last</th></tr>
-{rows}</table>
-<h2>Execution Log (last 100)</h2>
-<table><tr><th>Time</th><th>Command</th><th>Elapsed</th></tr>
-{detail_rows}</table>
-</body></html>"""
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Agent1 Performance Dashboard</title>
+<link rel="icon" type="image/x-icon" href="static/favicon.png">
+<link rel="stylesheet" href="static/theme.css">
+</head>
+<body>
+<div class="app-container">
+    <div class="header">
+        <div style="display:flex;align-items:center;gap:8px;">
+            <img src="static/favicon.png" alt="Agent1 Logo" style="width:32px;height:32px;">
+            <h1>AGENT1</h1>
+            <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">Performance Dashboard</span>
+            <button type="button" class="theme-toggle"
+                onclick="toggleTheme()" id="themeToggle"
+                aria-label="Toggle Light/Dark Theme"></button>
+        </div>
+    </div>
+
+    <div class="panel" style="position:static;margin:0 0 12px 0;min-width:0;">
+        <div class="panel-header">
+            <h3>Command Summary</h3>
+        </div>
+        <div class="panel-content">
+            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;">
+                <div style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;padding:14px;border:1px solid var(--border);text-align:center;">
+                    <div style="font-size:28px;color:var(--accent);line-height:1;margin-bottom:6px;" class="icon-cpu"></div>
+                    <div style="font-size:22px;font-weight:700;">{total_calls}</div>
+                    <div style="font-size:11px;color:var(--text-muted);">Commands</div>
+                </div>
+                <div style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;padding:14px;border:1px solid var(--border);text-align:center;">
+                    <div style="font-size:28px;color:var(--warning);line-height:1;margin-bottom:6px;" class="icon-clock"></div>
+                    <div style="font-size:22px;font-weight:700;">{total_time:.1f}s</div>
+                    <div style="font-size:11px;color:var(--text-muted);">Runtime</div>
+                </div>
+                <div style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;padding:14px;border:1px solid var(--border);text-align:center;">
+                    <div style="font-size:28px;color:var(--success);line-height:1;margin-bottom:6px;" class="icon-chart"></div>
+                    <div style="font-size:22px;font-weight:700;">{len(summary)}</div>
+                    <div style="font-size:11px;color:var(--text-muted);">Command Types</div>
+                </div>
+            </div>
+            <table class="issues-table">
+                <thead><tr><th>Command</th><th>Calls</th><th>Total</th><th>Avg</th><th>Max</th><th>Last</th></tr></thead>
+                <tbody>{rows}</tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="panel" style="position:static;margin:0 0 12px 0;min-width:0;">
+        <div class="panel-header">
+            <h3>Execution Log (last 100)</h3>
+        </div>
+        <div class="panel-content">
+            <table class="issues-table">
+                <thead><tr><th>Time</th><th>Command</th><th>Elapsed</th></tr></thead>
+                <tbody>{detail_rows}</tbody>
+            </table>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <div>
+                <span>Developed by Holger K. Pedersen</span>
+                <a href="https://github.com/holgerkpedersen/Agent1" target="_blank" rel="noopener"
+                    title="Holger K. Pedersen - Agent1" class="ms-1"><span id="ghIcon"></span></a>
+            </div>
+            <div>
+                <span>UI/UX reshaped with care by <a href="https://2tinteractive.com" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">2tinteractive.com - The Spatial Digital Agency</a> (<a href="https://github.com/LebToki" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">Tarek Tarabichi</a>)</span>
+            </div>
+        </div>
+    </footer>
+</div>
+<script src="static/assets/agent1-icons.js"></script>
+<script>
+let currentTheme = localStorage.getItem('agent1_theme') || 'dark';
+document.documentElement.setAttribute('data-theme', currentTheme);
+document.getElementById('themeToggle').innerHTML = iconify(currentTheme === 'dark' ? 'solar:moon-bold' : 'solar:sun-bold', 18);
+document.querySelector('.icon-cpu').innerHTML = iconify('tabler:cpu', 28);
+document.querySelector('.icon-clock').innerHTML = iconify('solar:clock-circle-bold', 28);
+document.querySelector('.icon-chart').innerHTML = iconify('solar:chart-2-bold', 28);
+document.getElementById('ghIcon').innerHTML = iconify('mdi:github', 18);
+function toggleTheme() {{
+    currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', currentTheme);
+    localStorage.setItem('agent1_theme', currentTheme);
+    document.getElementById('themeToggle').innerHTML = iconify(currentTheme === 'dark' ? 'solar:moon-bold' : 'solar:sun-bold', 18);
+}}
+</script>
+</body>
+</html>"""
