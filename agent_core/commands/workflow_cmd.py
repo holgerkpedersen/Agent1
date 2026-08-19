@@ -52,7 +52,7 @@ from .base import (
     stop_requested,
 )
 from .doc_paths import latest_run_dir, new_run_dir
-from .reasoning_strip import strip_reasoning
+from .reasoning_strip import dedupe_repeated_sections, extract_section, strip_reasoning
 from agent_core import to_windows_path
 from agent_core.decisions import add_decision, annotate_candidates, extract_from_analysis
 
@@ -910,28 +910,18 @@ class WorkflowCommand(Command):
                     blocked_match = re.search(r"\*\*BLOCKED:\*\*\s*(yes|no)", r, re.IGNORECASE)
                     if blocked_match and blocked_match.group(1).lower() == "yes" and not force:
                         print("\n[analyze] BLOCKED — spec requires clarification before proceeding.")
-                        # Extract and print the blocker / questions sections
+                        # Extract and print the blocker / questions sections.
+                        # Dedupe first: models repeat a section header and its
+                        # body (seen with "## 6."/"## 7." since 2026-08-15), and
+                        # the old per-marker slicing re-printed section 7 via the
+                        # section-6 slice (it extended to "## 8." and swallowed
+                        # everything in between).
+                        deduped = dedupe_repeated_sections(r)
                         for section_marker in ["## 6. MISSING INFORMATION", "## 7. CLARIFYING QUESTIONS"]:
-                            idx = r.find(section_marker)
-                            if idx == -1:
+                            section_text = extract_section(deduped, section_marker)
+                            if not section_text:
                                 continue
-                            next_section = len(r)
-                            for later in ["## 8.", "## Refinement"]:
-                                later_idx = r.find(later, idx + 1)
-                                if later_idx != -1 and later_idx < next_section:
-                                    next_section = later_idx
-                            section_text = r[idx:next_section].strip()
-                            # Models occasionally repeat a section header (observed
-                            # with the "## 7." heading); show each section once.
-                            seen: list[str] = []
-                            parts = section_text.splitlines()
-                            for line in parts:
-                                stripped = line.strip()
-                                if stripped == section_marker and section_marker in seen:
-                                    continue
-                                if stripped == section_marker:
-                                    seen.append(section_marker)
-                                print(line)
+                            print(section_text)
                             print("")
                         print("\nNext steps:")
                         print("  1. Answer the questions above, then run again with --desc \"<answers>\"")

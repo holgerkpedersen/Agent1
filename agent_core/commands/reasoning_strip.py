@@ -356,5 +356,64 @@ def strip_reasoning(text: str, mode: str = "analysis") -> str:
         # sections without destroying legitimate content
         out = _strip_taskplan_reasoning(out)
 
+    if mode == "analysis":
+        out = dedupe_repeated_sections(out)
+
     out = _re_multi_blank.sub('\n\n', out)
     return out.strip() + '\n'
+
+
+def dedupe_repeated_sections(text: str) -> str:
+    """Keep only the first copy of each numbered section (``## N. ...``).
+
+    Models occasionally emit the same section header and body twice —
+    observed with ``## 6. MISSING INFORMATION (BLOCKERS)`` and
+    ``## 7. CLARIFYING QUESTIONS`` since 2026-08-15 (the console gate
+    re-printed sections, and ``project_analysis.md`` kept the model's
+    duplicates). Header keys ignore a trailing ``(SUFFIX)`` so
+    ``## 6. MISSING INFORMATION (BLOCKERS)`` and ``## 6. MISSING
+    INFORMATION`` count as the same section. A repeated copy is drained
+    (skipped) until the next section header.
+    """
+    if not text:
+        return text
+    out: list[str] = []
+    seen_keys: set[str] = set()
+    draining = False
+    for line in text.split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('## '):
+            key = re.sub(r'\s*\(.*?\)\s*$', '', stripped)
+            if key in seen_keys:
+                draining = True
+                continue
+            seen_keys.add(key)
+            draining = False
+            out.append(line)
+            continue
+        if draining:
+            if re.match(r'^\*\*BLOCKED:', stripped):
+                # Structural end marker — keep it and stop draining.
+                draining = False
+                out.append(line)
+            elif not stripped:
+                out.append(line)
+            continue
+        out.append(line)
+    return '\n'.join(out)
+
+
+def extract_section(text: str, marker: str) -> str:
+    """Return the first section whose header starts with ``marker``.
+
+    The section ends at the next ``## `` header line (or end of text), so
+    a section-6 extract never swallows the section-7 content that follows.
+    Returns ``""`` when the marker is absent.
+    """
+    idx = text.find(marker)
+    if idx == -1:
+        return ""
+    end = text.find('\n## ', idx + 1)
+    if end == -1:
+        end = len(text)
+    return text[idx:end].strip()
