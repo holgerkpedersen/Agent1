@@ -1072,5 +1072,44 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "057",
+    "date": "2026-08-18T17:51:12+00:00",
+    "title": "Replace ad hoc print-based diagnostics with structured logging",
+    "context": "Analysis suggests agent.py uses print-based diagnostics and hardcoded warnings instead of structured logs, making incident diagnosis and correlation harder.",
+    "decision": "Decide whether to route agent.py diagnostics through structured logging with correlation identifiers.",
+    "rationale": "Enables production diagnosis and correlation.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "logging",
+      "production",
+      "observability"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "058",
+    "date": "2026-08-19T05:34:30+00:00",
+    "title": "Reconstruct deleted uncommitted agent_core/tests from pyc skeletons",
+    "context": "The 2026-08-18 23:18 implement run wrote 5 files (agent_core/tests/__init__.py + 4 entry-point test modules) and compiled them, but they were never committed and were deleted before the next session. Git had no copies (never entered the object store); only __pycache__/*.pyc survived. Marshalled code objects (names, docstrings, constants) were extracted to recover the full test skeleton, then the tests were rewritten against the current codebase APIs.",
+    "decision": "Keep the reconstructed tests as current-behavior pins (31 tests green). Where the planned API did not exist (LLMClient.complete, tool_router typed timeout), tests were adapted to the real APIs (LLMClient.chat, pydantic arg validation). The __pycache__ residue was kept as the only surviving artifact.",
+    "rationale": "Uncommitted work is unrecoverable (invariant #4); this incident is the second data loss after the deleted agent.py. pyc extraction is the only recovery path when a file was compiled but never committed.",
+    "affected_files": [
+      "agent_core/tests/test_agent_entrypoint.py",
+      "agent_core/tests/test_benchmark_entrypoint.py",
+      "agent_core/tests/test_tool_router_entrypoint.py",
+      "agent_core/tests/test_agent_core_components.py"
+    ],
+    "tags": [
+      "data-loss",
+      "recovery",
+      "testing"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]

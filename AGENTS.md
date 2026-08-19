@@ -24,8 +24,11 @@ design decision and is being extended to audit its own file effects (self-improv
   real path utilities (`to_windows_path`, `normalize_path`); **do NOT invent new ones**.
 - `harnessfix/` — self-improvement consumers: `tracing.py` (opt-in `TraceWriter`),
   `reader`, `diagnose`, `gates`, `loop`, `htir`, `links`, `corpus`.
-- `tests/` — pytest, **1066 collected / 1064 passed, 2 skipped** (~3.5 min full run).
-- `.decisions.json` — decision ledger (47 records, gaps ok; latest #047/#048).
+- `tests/` — pytest, **1128 passed, 2 skipped** (~3.5 min full run; `testpaths=["tests"]`).
+- `agent_core/tests/` — entry-point/component test package (31 tests, runs only when
+  targeted: `python -m pytest agent_core/tests -q --no-cov`); reconstructed 2026-08-19
+  after the source was deleted uncommitted (decision #058).
+- `.decisions.json` — decision ledger (57 records, gaps ok; latest #057/#058).
 - `.docs/<timestamp>/` — one folder per workflow run (spec/analysis/plan/entities/tasks).
 - `backups/` — implement's pre-run copies of existing targets (timestamped).
 
@@ -47,8 +50,12 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`.
    (or `--force`). Only files actually applied count as implemented.
 3. **`[FILE:]` names must match the planned batch**; foreign names are ignored with a
    warning (a `secrets.py` batch once returned a `sanitizer.py` block).
-4. **Commit after every session.** Uncommitted work is unrecoverable — the deleted
-   `agent.py`'s uncommitted changes existed nowhere (not even git objects).
+ 4. **Commit after every session.** Uncommitted work is unrecoverable — the deleted
+    `agent.py`'s uncommitted changes existed nowhere (not even git objects).
+    History (2026-08-19): the 5 `agent_core/tests/*` files written by the 2026-08-18
+    23:18 implement run were deleted before commit; only the `__pycache__/*.pyc`
+    survived, and the tests were reconstructed from the marshalled code objects
+    (names/docstrings/constants) — decision #058.
 5. **Extend existing modules, don't regenerate them.** Planned new modules are checked
    against workspace reality (`_check_planned_duplicates`). Phantom modules exist in
    the wild: `agent_core/security/secrets.py` was planned but does not exist.
