@@ -1,1 +1,1 @@
-"""Tests for agent_core entry points and components."""
+"""Test package for agent_core entry-point tests."""

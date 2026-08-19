@@ -1,5 +1,5 @@
 {
-  "model": "qwen/qwen3.8-27b",
+  "model": "opencode-go/deepseek-v4-flash",
   "profile": "deep-analysis",
-  "provider": "lmstudio"
+  "provider": "opencode"
 }

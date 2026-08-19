@@ -1111,5 +1111,23 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "059",
+    "date": "2026-08-19T07:58:05+00:00",
+    "title": "Test package initialization marker",
+    "context": "Adding an __init__.py to the agent_core/tests directory to mark it as a Python package for test discovery and collection.",
+    "decision": "Created an empty __init__.py file in the tests directory.",
+    "rationale": "Enables pytest to properly discover and import test modules when running tests from the project root, ensuring consistent test collection behavior.",
+    "affected_files": [
+      "agent_core/tests/__init__.py"
+    ],
+    "tags": [
+      "test-structure",
+      "python-packaging",
+      "pytest"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]
