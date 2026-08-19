@@ -758,6 +758,13 @@ class Agent:
                     "log before claiming them.\n"
                     "- If a search finds nothing in source files, state that the symbol does "
                     "not exist in the current code — never repeat the same search.\n"
+                    "- A failing test is a real signal: fix the implementation — never weaken "
+                    "or delete an assertion just to make it pass. Only change a test if the "
+                    "test itself is demonstrably wrong, and say why.\n"
+                    "- Every bug fix ships a permanent regression test in tests/ (pytest). "
+                    "Delete scratch scripts (_tmp_*.py) before finishing.\n"
+                    "- Verify fixes against the REAL code path (import the actual function), "
+                    "not a copied simulation of it.\n"
                     "- Be concise. Answer in the user's language."
                 ),
             })
@@ -1403,6 +1410,18 @@ async def run_interactive() -> None:
     registry.register(RunCommand())
     registry.register(SelfHealCommand())
 
+    # Watch for code edited on disk while the REPL runs: the process keeps
+    # imported modules in memory, so on-disk fixes (e.g. from a paste
+    # session) silently never take effect unless the user restarts
+    # (2026-08-19 incident: workflow_cmd.py was fixed on disk at 10:13:57
+    # but the 10:15:40 run still executed the old in-memory module).
+    from agent_core.commands.freshness import (
+        diff_snapshots,
+        format_stale_warning,
+        loaded_module_mtimes,
+    )
+    _code_snapshot = loaded_module_mtimes(__file__)
+
     while True:
         try:
             # Get user input
@@ -1416,6 +1435,12 @@ async def run_interactive() -> None:
                 agent._save_memory()
                 print(green("Goodbye!"))
                 break
+
+            # Warn once per change wave when loaded code changed on disk.
+            _stale_files = diff_snapshots(_code_snapshot)
+            if _stale_files:
+                print(yellow(format_stale_warning(_stale_files)))
+                _code_snapshot = loaded_module_mtimes(__file__)
             
             # Parse and execute commands
             try:
