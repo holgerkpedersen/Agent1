@@ -17,8 +17,9 @@ Python AI agent framework with LLM integration, tool execution, workspace manage
 - Tool loop runner for multi-step LLM interactions
 - Streaming chat with real-time token output
 - Multi-model support: Laguna S 2.1, Qwen, Gemma, etc.
+- **Multi-provider**: local LM Studio (OpenAI-compatible API) and the hosted opencode-go API (native tool calling, key from `OPENCODE_API_KEY` or opencode's auth.json); the persisted provider in `model.json` wins, model switches rebuild the provider
 - **Enhanced executor** with parallel tool execution and error handling (fixcommand/core/executor/llm_executor.py)
-- **Robust thinking-disable** across LM Studio API versions: sends `enable_thinking`, `enableThinking`, `preserve_thinking`, and `reasoning` fields simultaneously so the disable works regardless of the loaded model's template or server runtime
+- **Safe thinking-disable**: sends `reasoning: "off"` plus only the per-model `chat_template_kwargs` declared in `KNOWN_MODELS` (e.g. `enable_thinking: false` for Qwen/Laguna jinja templates). The aggressive knob set (`thinking.disabled` / `enableThinking` / `preserve_thinking`) was removed after probes on qwen/qwen3.8-27b showed it makes the model burn its whole output budget on `reasoning_content` and emit zero content
 
 ### Commands (`agent_core/commands/`)
 ```
@@ -39,6 +40,8 @@ implement <taskplan> [opts]      Implement files from task plan
                                    --retry            Re-generate only missing files (cache auto-invalidates on taskplan change)
                                    --review           Review new files + offer to delete dangerous/unwired files
                                   --allow-rewrite    Opt in to wholesale rewrite of existing file under --modify
+                                  --refresh          With --keep: rebuild the cached file list from the taskplan
+                                  --no-history       Skip injecting PAST EXECUTION NOTES from past runs
                                   --workspace <path> Target workspace
 fix <traceback>                  Paste traceback to auto-fix root cause
     <file> --desc "text"        On-demand — top-5 files by keyword match, LLM requests more with [READ:]
@@ -51,9 +54,11 @@ workflow <target> [opts]         Full pipeline: analyze → plan → entities �
                                  --desc "text"     Greenfield from description
                                  --features spec   Brownfield extension
                                  --brainstorm      Add 6th dimension: creative features
+                                 --auto            Autonomous: skip confirmations, run implement inline
+                                 --continue        Resume the newest .docs/<ts>/ run
                                  --force           Skip existing file checks
                                  --workspace <p>   Target workspace
-model [list|load|unload|reload|profile|name]  Manage models via LM Studio API
+model [list|load|unload|reload|profile|name]  Manage models and providers (LM Studio + opencode-go)
 optimize <file|dir> [--apply] [--stdin] [--yes] Find and apply performance/memory optimizations
                                    Shows side-by-side diff with line numbers before applying
                                    --yes: skip the y/N prompt and apply automatically
@@ -70,6 +75,15 @@ decide show <id>                 Show full decision record
 decide check --text "idea"       LLM checks if idea contradicts past decisions
 decide resolve <id1> <id2>       LLM resolves contradiction between two decisions
 decide extract [--from a.md]     Auto-extract decisions from project analysis
+review <refresh|list|show|label|auto|export>  Human gate over failed task traces
+     label <task> <bug|regression|noise|ok>   Label a trace disposition
+     label <task> auto | auto [<task>]        Agent reviews it (evidence rules)
+     export <task>                            Write a diagnosis-pinning pytest file
+reconstruct [--start <file>] [--end <file>]   Rebuild files from JSONL trace logs
+    [--workspace <path>] [--search <query>]   (replays write/edit ops in timestamp order)
+    [--dry-run] [--force]
+paste_image [path] [--desc "text" | --prompt "text"]  Paste an image (clipboard or file)
+                                                     for vision-capable LLMs
 ```
 
 Any text not matching a command is sent to the LLM as **natural language**. The agent uses **native OpenAI-format tool calling** — the model is given schemas for `search`, `read`, `list_files`, `write`, `edit`, `run`, `git`, `diff`, `tests`, `fix`, and `analyze`, and must either emit a structured tool call or answer in text:
@@ -190,6 +204,7 @@ Agent1/
 │   ├── tool_dispatcher.py        # Registry-based tool dispatch
 │   ├── llm/
 │   │   ├── lmstudio.py           # LM Studio provider
+│   │   ├── opencode_provider.py  # Hosted opencode-go provider (direct API + serve)
 │   │   ├── provider.py           # LLMProvider protocol
 │   │   ├── retry.py              # RetryPolicy
 │   │   └── tool_loop.py          # ToolLoopRunner (native tool_calls loop)
@@ -212,7 +227,13 @@ Agent1/
 │       ├── workflow_cmd.py       # Full pipeline
 │       ├── reasoning_strip.py    # LLM reasoning token removal
 │       ├── decide_cmd.py         # Decision tracking command
-│       └── analysis_verifier.py  # Code-claim verification
+│       ├── analysis_verifier.py  # Code-claim verification
+│       ├── review_cmd.py         # Human verification gate over failed traces
+│       ├── reconstruct_cmd.py    # Rebuild files from JSONL trace logs
+│       ├── paste_image_cmd.py    # Paste an image for vision-capable LLMs
+│       ├── run_cmd.py            # LLM-free shell command execution
+│       └── freshness.py          # Stale-module guard (REPL warning)
+├── harnessfix/                   # Self-improvement: traces, HTIR, diagnose, review, history
 ├── src/agent1/                   # Generated multi-agent framework
 │   ├── core/                     # Agent, message bus, context manager
 │   ├── memory/                   # Storage, vector DB, semantic search
@@ -233,11 +254,14 @@ Agent1/
 
 ## Configuration
 
-Set environment variables or use `.env`:
+Set environment variables or use `.env` (see `.env.example` for the full list):
 ```env
 AGENT_MODEL=laguna-s-2.1
 LMSTUDIO_URL=http://localhost:1234/v1
 OPENAI_API_KEY=your-key
+AGENT_LLM_PROVIDER=lmstudio    # or opencode (an "opencode-go/..." model prefix wins)
+OPENCODE_API_KEY=sk-...        # hosted opencode-go API (direct mode; also read from opencode's auth.json)
+OPENCODE_TIMEOUT=600           # API request timeout in seconds
 ```
 
 ## Models
@@ -246,14 +270,18 @@ OPENAI_API_KEY=your-key
 |---|---|
 | `laguna-s-2.1` | Laguna S 2.1 MoE A8B — fast agentic coding |
 | `qwen3.6-27b-mtp` | Qwen 3.6 27B — chat, codegen, large context |
+| `qwen/qwen3.8-27b` | Qwen 3.8 27B — chat, codegen, reasoning (safe minimal thinking-disable) |
 | `google/gemma-4-31b` | Gemma 4 31B — chat, reasoning, fast generation |
+| `opencode-go/deepseek-v4-flash` | Hosted opencode-go default (opencode.ai/zen/go, native tools) |
 
 ## Testing
 
 ```bash
 pytest tests/ -v
 ```
-567 tests, all passing.
+1210 tests (1210 passed, 2 skipped; ~3.5 min full run — use `--no-cov` for speed).
+Plus a targeted entry-point package `agent_core/tests/` (31 tests:
+`python -m pytest agent_core/tests -q --no-cov`).
 
 ### Recent Additions
 - **Stdlib shadowing protection**: three-layer defense across workflow prompts, analysis verification, and implement file generation. Detects directory names that shadow stdlib modules (`logging/`, `json/`, `types/`, `config/`), warns the LLM to avoid them, flags violations in verification reports, and auto-redirects shadowed paths to safe alternatives.

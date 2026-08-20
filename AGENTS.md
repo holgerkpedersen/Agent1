@@ -5,10 +5,11 @@ that cost a deleted `agent.py` to learn.
 
 ## What this is
 
-A Python agent system (REPL + workflow pipeline) that uses LM Studio models
-(currently `laguna-s-2.1` under `deep-analysis` or `fast-codegen` profile) to analyze,
-plan, implement, and test code changes in its own workspace. It records every
-design decision and is being extended to audit its own file effects (self-improvement).
+A Python agent system (REPL + workflow pipeline) that uses local LM Studio models
+or the hosted opencode-go API (persisted model/provider choice in `model.json`;
+currently `qwen/qwen3.8-27b` under `deep-analysis`) to analyze, plan, implement,
+and test code changes in its own workspace. It records every design decision and
+is being extended to audit its own file effects (self-improvement).
 
 ## Architecture map
 
@@ -18,27 +19,34 @@ design decision and is being extended to audit its own file effects (self-improv
   `chat_history.json` + `agent_memory.json` (repo root, gitignored).
 - `agent_core/commands/*_cmd.py` — registry commands (REPL): `read, write, search,
   analyze, plan, entities, taskplan, implement, fix, workflow, decide, clear, model,
-  run, self_heal, optimize, perf, paste, display, cleanup`.
+  run, self_heal, optimize, perf, paste, paste_image, display, cleanup, review,
+  reconstruct`.
 - `agent_core/llm/tool_loop.py` — `ToolLoopRunner`: NLP tool-call execution loop.
-- `agent_core/security/` — sanitizers; `agent_core/file_system.py`, `path_utils.py` —
-  real path utilities (`to_windows_path`, `normalize_path`); **do NOT invent new ones**.
+- `agent_core/security/` — sanitizers, command allowlist, secrets store (OS keyring
+  + encrypted-file fallback); `agent_core/file_system.py`, `path_utils.py` — real
+  path utilities (`to_windows_path`, `normalize_path`, `safe_path`, `resolve_path`);
+  `agent_core/commands/freshness.py` — REPL stale-module guard (warns when loaded
+  `agent_core`/`harnessfix` files change on disk mid-session); **do NOT invent new ones**.
 - `harnessfix/` — self-improvement consumers: `tracing.py` (opt-in `TraceWriter`),
-  `reader`, `diagnose`, `gates`, `loop`, `htir`, `links`, `corpus`, `history.py`
-  (trace-index + execution-ledger queries and PAST EXECUTION NOTES formatters that
-  implement/fix inject into prompts).
-- `tests/` — pytest, **1128 passed, 2 skipped** (~3.5 min full run; `testpaths=["tests"]`).
+  `reader`, `diagnose`, `gates`, `loop`, `htir`, `links`, `corpus`, `review.py`
+  (human verification ledger + diagnosis-pinning regression export), `autoreview.py`
+  (evidence-rule auto-labeling behind `review auto`), `history.py` (trace-index +
+  execution-ledger queries and PAST EXECUTION NOTES formatters that implement/fix
+  inject into prompts).
+- `tests/` — pytest, **1210 passed, 2 skipped** (~3.5 min full run; `testpaths=["tests"]`).
 - `agent_core/tests/` — entry-point/component test package (31 tests, runs only when
   targeted: `python -m pytest agent_core/tests -q --no-cov`); reconstructed 2026-08-19
   after the source was deleted uncommitted (decision #058).
-- `.decisions.json` — decision ledger (57 records, gaps ok; latest #057/#058).
+- `.decisions.json` — decision ledger (60 records, gaps ok; latest #059/#060).
 - `.docs/<timestamp>/` — one folder per workflow run (spec/analysis/plan/entities/tasks).
 - `backups/` — implement's pre-run copies of existing targets (timestamped).
 
 ## Workflow pipeline
 
-`workflow <target> [--brainstorm] [--desc "..."] [--force]` →
+`workflow <target> [--brainstorm] [--desc "..."] [--auto] [--continue] [--force]` →
 `.docs/<ts>/project_{spec,analysis,plan,entities,tasks}.md` → prompts to continue
-into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`.
+into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
+(`--auto` runs the tailored implement inline; `--continue` resumes the newest run).
 
 ## CRITICAL INVARIANTS (do not regress)
 
@@ -60,7 +68,9 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`.
     (names/docstrings/constants) — decision #058.
 5. **Extend existing modules, don't regenerate them.** Planned new modules are checked
    against workspace reality (`_check_planned_duplicates`). Phantom modules exist in
-   the wild: `agent_core/security/secrets.py` was planned but does not exist.
+   the wild — planned files that were never written (the original `secrets.py`
+   phantom was later implemented as the 2026-08-17 secret manager; the check still
+   guards against new phantoms).
 6. **`_ensure_package_inits` must skip `tests/` and `src/` trees** (PEP 420 namespace
    packages; `tests/__init__.py` breaks pytest sibling imports).
 7. **Memory persistence**: `agent_memory.json` holds files-read/semantic-index/
@@ -73,8 +83,9 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`.
 
 - Full suite: `python -m pytest -q --no-cov` (~3.5 min; use `--no-cov` for speed).
 - Targeted: `python -m pytest tests/test_implement_safety.py tests/test_tool_loop_nlp.py -q --no-cov`.
-- mypy: `python -m mypy <file>`. **Known baseline: 34 pre-existing errors in 5 files**
-  (`agent.py:88-90,500-501`; `implement_cmd.py:2273,2307...`; `model_cmd.py:168,525-527`).
+- mypy: `python -m mypy <file>`. **Known baseline: 36 pre-existing errors in 6 files**
+  (agent.py 5; implement_cmd.py 21; model_cmd.py 4; reconstruct_cmd.py 2;
+  self_heal_cmd.py 2; security/secrets.py 2).
   Do not silently "fix" them; do NOT introduce new errors.
 - No ruff config; pyproject.toml configures mypy, pytest, coverage only.
 - Implement auto-runs `py_compile` on every written file.
@@ -149,4 +160,11 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`.
   - **Manual next steps for the user**: `review refresh` to build the ledger
     over the ~64 real traces; label the first batch; the benchmark gate now
     works with the qwen3.8-27b baseline in `reports/benchmark_harnessfix.json`.
+- ✅ **Trace-based file recovery (DONE, 2026-08-20)**: `reconstruct
+  [--start <file>] [--end <file>] [--search <query>] [--dry-run] [--force]`
+  scans `reports/traces/*.jsonl` for write/edit tool ops, groups them by target
+  path, and replays them in timestamp order to rebuild the final state of each
+  file — the recovery path for the #058 incident (pyc reconstruction was the
+  fallback when it happened). Edits whose `old_text` no longer matches are
+  skipped with a warning.
 - Taskplan-time phantom-module gate (plan-time existence check for planned files).

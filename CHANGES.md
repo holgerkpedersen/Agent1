@@ -1,4 +1,10 @@
-﻿## 2026-08-16 - fix: model jumps away from opencode + 400 root cause (orphan tool messages)
+﻿## 2026-08-16 - feat: paste an image into the agent for vision-capable LLMs
+
+**Change**: agent_core/commands/paste_image_cmd.py (new), agent.py (chat_nlp images arg + multimodal user message + _strip_image_blocks + _save/_load_chat_history stripping), tests/test_paste_image.py (8 new)
+
+**Reason**: There was no way to feed an image to a multimodal model (screenshots, diagrams, photos, UI errors). New `paste_image` REPL command reads an image from the clipboard (Pillow `ImageGrab.grabclipboard()`) or a file path, base64-encodes it as a data URL, and sends it to `chat_nlp` alongside an optional `--prompt`. `chat_nlp` now builds an OpenAI-format content array (`text` + one `image_url` block per image) so vision models can see the image. Image blocks are stripped from `chat_history.json` on save/load (decision: never persist multi-MB base64 blobs) — a pure-image turn is dropped from the persisted window while a mixed text+image turn keeps its text. Verified: provider `sanitize_message_roles` preserves the multimodal content array; 8 new tests green; existing 67 tool_loop_nlp + 3 registry tests still green.
+
+## 2026-08-16 - fix: model jumps away from opencode + 400 root cause (orphan tool messages)
 
 **Change**: agent_core/commands/model_cmd.py, agent.py, agent_core/llm/lmstudio.py, agent_core/llm/opencode_provider.py, tests (model_helpers, lmstudio_payload, opencode_provider, tool_loop_nlp)
 
@@ -26,13 +32,16 @@
 
 **Change**: agent.py (run-tool branch + _kill_process_tree), agent_core/commands/run_cmd.py, tests/test_run_cmd.py, tests/test_run_timeout.py (ny)
 
-**Reason**: un python -m harnessfix.loop --traces ... timed out after 120s but kept working: subprocess.run on Windows kills only cmd.exe on timeout, leaving the harnessfix.loop child orphaned and holding the captured pipes — the REPL then waited until the orphan finished (165s) while the message said 'timed out'. Fixes: (1) the run tool now starts the shell in its own process group (CREATE_NEW_PROCESS_GROUP) and kills the WHOLE tree on timeout via taskkill /T /F (verified live: returns at 8s, grandchild gone from tasklist); (2) the run REPL command now defaults to 600s and accepts --timeout <sec>; (3) the timeout message says the tree was killed. 845 tests green (6 new). agent.py also carries the graceful harnessfix tracing wiring (try/except degrades to no-op when harnessfix/ is absent).
+**Reason**: 
+un python -m harnessfix.loop --traces ... timed out after 120s but kept working: subprocess.run on Windows kills only cmd.exe on timeout, leaving the harnessfix.loop child orphaned and holding the captured pipes — the REPL then waited until the orphan finished (165s) while the message said 'timed out'. Fixes: (1) the run tool now starts the shell in its own process group (CREATE_NEW_PROCESS_GROUP) and kills the WHOLE tree on timeout via taskkill /T /F (verified live: returns at 8s, grandchild gone from tasklist); (2) the run REPL command now defaults to 600s and accepts --timeout <sec>; (3) the timeout message says the tree was killed. 845 tests green (6 new). agent.py also carries the graceful harnessfix tracing wiring (try/except degrades to no-op when harnessfix/ is absent).
 
-## 2026-08-16 - feat: LLM-free un REPL command + LM Studio 400 diagnostics
+## 2026-08-16 - feat: LLM-free 
+un REPL command + LM Studio 400 diagnostics
 
 **Change**: agent_core/commands/run_cmd.py (ny), agent.py (REPL-wiring, ucommitted pga. harnessfix-afhaengighed), agent_core/llm/lmstudio.py, tests/test_run_cmd.py (ny), tests/test_lmstudio_http.py (ny)
 
-**Reason**: (1) un <shell command> in the REPL executes shell commands DIRECTLY without the LLM - deterministic byte-exact output (harnessfix dashboard dumps), zero tokens, works when the provider is down. Reuses the guarded run-tool path (blocked-command allowlist + truncation); verified live (python -c print works, rm -rf / blocked). (2) The 400 the user hit surfaced as a useless 'HTTP Error 400: Bad Request' - LM Studio's response body (e.g. 'model is not loaded, load it first') was swallowed, and the 'after 3 retries' wording was misleading because HTTPError is not in RetryPolicy.retryable_errors so it fails on the first attempt. Fix: _make_request now surfaces the response body, auto-loads the model once when a 400 says it is not in VRAM, and the error message is reworded honestly. 839 tests green (9 new).
+**Reason**: (1) 
+un <shell command> in the REPL executes shell commands DIRECTLY without the LLM - deterministic byte-exact output (harnessfix dashboard dumps), zero tokens, works when the provider is down. Reuses the guarded run-tool path (blocked-command allowlist + truncation); verified live (python -c print works, rm -rf / blocked). (2) The 400 the user hit surfaced as a useless 'HTTP Error 400: Bad Request' - LM Studio's response body (e.g. 'model is not loaded, load it first') was swallowed, and the 'after 3 retries' wording was misleading because HTTPError is not in RetryPolicy.retryable_errors so it fails on the first attempt. Fix: _make_request now surfaces the response body, auto-loads the model once when a 400 says it is not in VRAM, and the error message is reworded honestly. 839 tests green (9 new).
 
 ## 2026-08-16 - fix: LM Studio models routed to opencode API (401)
 
