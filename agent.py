@@ -57,6 +57,7 @@ from agent_core.commands.decide_cmd import DecideCommand
 from agent_core.commands.review_cmd import ReviewCommand
 from agent_core.commands.run_cmd import RunCommand
 from agent_core.commands.self_heal_cmd import SelfHealCommand
+from agent_core.commands.reconstruct_cmd import ReconstructCommand
 from pathlib import Path
 import subprocess
 import shlex
@@ -1421,26 +1422,28 @@ async def run_interactive() -> None:
     print(cyan("Commands:"))
     _CMD_LIST = [
         ("read <path>", "Read a file"),
-        ("write <path> <content>", "Write content to file"),
+        ("write <path> <content> [--yes]", "Write content to file (per-hunk diff review for existing files)"),
         ("search <query>", "Search for string in files"),
         ("analyze <file> [--desc \"q\"] [--stdin] [--deep]", "AI analysis via LM Studio"),
         ("plan <analysis.md> <plan.md>", "Generate coding plan from analysis"),
         ("entities <analysis.md> <plan.md> [entities.md]", "Generate shared entities"),
         ("taskplan <analysis.md> <plan.md> [tasks.md]", "Generate implementation tasks"),
-        ("implement <taskplan.md> ... [--keep] [--force] [--fix] [--retry] [--review] [--workspace <path>]", "Implement files"),
+        ("implement <taskplan.md> ... [--modify] [--force] [--allow-rewrite] [--fix] [--retry] [--review] [--keep] [--refresh] [--workspace <path>]", "Implement files from a task plan"),
         ('fix "<traceback>"', "Paste a traceback to auto-fix the error"),
         ('fix <file> --desc "text" [--full]', "Describe an issue, LLM analyzes full codebase and fixes it"),
         ("fix --mypy [path...] [--limit N] [--rounds N] [--yes]", "Batch-fix mypy errors via LLM"),
         ("cleanup", "Show unreferenced files and reference graph"),
-        ("workflow <target> ... [--from spec.md] [--stdin] [--brainstorm] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>]", "Full pipeline"),
-        ("model [list|load|unload|reload|name|profile]", "Manage models via LM Studio API"),
-        ("optimize <file|dir> [--apply] [--yes] [--stdin]", "Find and apply optimizations"),
+        ("workflow <target> ... [--from spec.md] [--stdin] [--brainstorm] [--auto] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>]", "Full pipeline"),
+        ("model [list|load|unload|reload|provider|profile|name]", "Manage models and providers via LM Studio API"),
+        ("optimize <file|dir> [--apply] [--yes] [--stdin] [--list] [--verbose] [--force]", "Find and apply optimizations (batched)"),
         ("perf [--detail|--reset|--html]", "Command performance dashboard"),
-        ("clear", "Clear agent memory"),
+        ("clear [stats|--force]", "Show/clear agent memory"),
         ("display [verbose|clean|quiet]", "Show/set NLP output verbosity"),
         ("paste [--workspace <path>]", "Paste multiline text for AI analysis (Ctrl+Z / Ctrl+D to finish)"),
-        ("run <command>", "Execute a shell command directly, no LLM"),
+        ("paste_image [path] [--prompt \"text\"]", "Paste an image (clipboard or file) for vision-capable LLMs"),
+        ("run <command> [--timeout <sec>]", "Execute a shell command directly, no LLM"),
         ("self_heal [path] [--rounds N] [--yes]", "Patch failing tests and re-run until green"),
+        ("reconstruct [--start <file>] [--end <file>] [--workspace <path>] [--search <query>] [--dry-run] [--force]", "Reconstruct files from JSONL trace logs"),
         ("decide ...", "Track design decisions (add/list/show/check/resolve/link/extract/review)"),
         ("review <refresh|list|show|label|auto|export>", "Human gate over failed task traces (label <task> auto = agent reviews)"),
         ("quit", "Exit"),
@@ -1473,6 +1476,7 @@ async def run_interactive() -> None:
     registry.register(ReviewCommand())
     registry.register(RunCommand())
     registry.register(SelfHealCommand())
+    registry.register(ReconstructCommand())
 
     # Watch for code edited on disk while the REPL runs: the process keeps
     # imported modules in memory, so on-disk fixes (e.g. from a paste
