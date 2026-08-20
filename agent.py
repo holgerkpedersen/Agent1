@@ -50,6 +50,7 @@ from agent_core.commands.fix_cmd import FixCommand
 from agent_core.commands.workflow_cmd import WorkflowCommand
 from agent_core.commands.optimize_cmd import OptimizeCommand
 from agent_core.commands.paste_cmd import PasteCommand
+from agent_core.commands.paste_image_cmd import PasteImageCommand
 from agent_core.commands.perf_cmd import PerfCommand, PerfTracker
 from agent_core.commands.display_cmd import DisplayCommand
 from agent_core.commands.decide_cmd import DecideCommand
@@ -708,7 +709,7 @@ class Agent:
             return "No matches found"
         return results
 
-    async def chat_nlp(self, user_input: str) -> None:
+    async def chat_nlp(self, user_input: str, images: list[str] | None = None) -> None:
         """Process natural language input through a structured tool-calling loop.
 
         The LLM receives native OpenAI-format tool schemas (``NLP_TOOL_SCHEMAS``)
@@ -717,6 +718,14 @@ class Agent:
         taking it.  Every tool call is executed, its result is fed back, and the
         loop continues until the model answers in text or the iteration cap is
         reached.
+
+        *images* is an optional list of base64 data URLs (``data:<mime>;base64,…``)
+        sent as multimodal ``image_url`` content blocks alongside *user_input* —
+        used by the ``paste_image`` command to let vision-capable models see an
+        image (e.g. a screenshot, diagram, or photo).  Image blocks are never
+        persisted to ``chat_history.json`` (they are stripped before saving, see
+        :func:`_strip_image_blocks`), so a vision turn is resumable without
+        bloating the on-disk history with multi-megabyte blobs.
 
         The loop auto-continues: if a run ends on the iteration cap, on repeated
         calls, or with an answer that signals unfinished work, a fresh run starts
@@ -772,7 +781,18 @@ class Agent:
                 ),
             })
 
-        self._chat_history.append({"role": "user", "content": user_input})
+        #: A user turn may carry images (multimodal).  When *images* is given,
+        #: build an OpenAI-format content array with the text plus one
+        #: image_url block per image so vision-capable models can see them.
+        if images:
+            content: Any = [
+                {"type": "text", "text": user_input or "(see the attached image)"},
+            ]
+            for img in images:
+                content.append({"type": "image_url", "image_url": {"url": img}})
+            self._chat_history.append({"role": "user", "content": content})
+        else:
+            self._chat_history.append({"role": "user", "content": user_input})
 
         #: Provider-level failures (reasoning-budget exhaustion, HTTP errors,
         #: unreachable server, ...) are DETECTED here.  They must never be
@@ -1036,15 +1056,22 @@ class Agent:
                 m for m in data
                 if isinstance(m, dict) and m.get("role") in ("system", "user", "assistant", "tool")
             ]
-            return _project_chat_history(messages)
+            return _project_chat_history(_strip_image_blocks(messages))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return []
 
     def _save_chat_history(self) -> None:
-        """Persist the NLP conversation so the next session can continue it."""
+        """Persist the NLP conversation so the next session can continue it.
+
+        Image blocks are stripped first (see :func:`_strip_image_blocks`) so a
+        vision turn does not bloat the on-disk history with base64 blobs.
+        """
         try:
             with open(CHAT_HISTORY_JSON_PATH, "w", encoding="utf-8") as f:
-                json.dump(_project_chat_history(self._chat_history), f, ensure_ascii=False, indent=2)
+                json.dump(
+                    _project_chat_history(_strip_image_blocks(self._chat_history)),
+                    f, ensure_ascii=False, indent=2,
+                )
         except OSError:
             print("Warning: silenced exception in agent.py:933")
 
@@ -1299,6 +1326,39 @@ def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return _drop_orphan_tool_messages(head + list(messages[-(_MAX_CHAT_MESSAGES - 1):]))
 
 
+def _strip_image_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return *messages* with any multimodal image content stripped out.
+
+    Vision turns carry base64 data URLs that can be several megabytes each;
+    persisting them to ``chat_history.json`` would bloat the file and waste
+    context on reload.  A user message that was purely an image (no text block)
+    is dropped entirely; a mixed text+image message keeps its text and loses
+    the image blocks so the conversation stays coherent without the payload.
+    """
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            text_blocks = [
+                b for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            ]
+            image_blocks = [
+                b for b in content
+                if isinstance(b, dict) and b.get("type") == "image_url"
+            ]
+            if not image_blocks:
+                out.append(m)
+                continue
+            if not text_blocks:
+                # Purely an image message — drop it (nothing to continue on).
+                continue
+            out.append({**m, "content": text_blocks})
+            continue
+        out.append(m)
+    return out
+
+
 def _project_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Project a conversation down to what the NEXT session should see.
 
@@ -1407,6 +1467,7 @@ async def run_interactive() -> None:
     registry.register(OptimizeCommand())
     registry.register(PerfCommand())
     registry.register(PasteCommand())
+    registry.register(PasteImageCommand())
     registry.register(DisplayCommand())
     registry.register(DecideCommand())
     registry.register(ReviewCommand())
