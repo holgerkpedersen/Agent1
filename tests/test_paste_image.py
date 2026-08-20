@@ -175,3 +175,91 @@ def test_paste_image_command_reports_empty_clipboard():
         ok = asyncio.run(PasteImageCommand().execute([], agent))
     assert ok is True
     assert dispatched["called"] is False
+
+
+def test_paste_image_desc_flag_no_path_uses_clipboard():
+    """`paste_image --desc "..."` (no path) extracts the prompt, uses the clipboard.
+
+    Regression: --desc used to be unrecognised and misread as a file path, so
+    the command failed with "Image file not found at absolute path: ...--desc".
+    """
+    agent = Agent(workspace=".")
+    sent: dict = {}
+
+    async def fake_chat_nlp(user_input, images=None):
+        sent["user_input"] = user_input
+        sent["images"] = images
+
+    fake_url = "data:image/png;base64,CLIP"
+    with patch.object(agent, "chat_nlp", side_effect=fake_chat_nlp), patch(
+        "agent_core.commands.paste_image_cmd.encode_clipboard_image",
+        return_value=(fake_url, "image/png"),
+    ):
+        import asyncio
+
+        ok = asyncio.run(
+            PasteImageCommand().execute(["--desc", "what is in this image?"], agent)
+        )
+    assert ok is True
+    assert sent["user_input"] == "what is in this image?"
+    assert sent["images"] == [fake_url]
+
+
+def test_paste_image_desc_flag_with_path():
+    """`paste_image <path> --desc "..."` extracts both the path and the prompt."""
+    agent = Agent(workspace=".")
+    img_path = _make_png(Path("tests"))
+    sent: dict = {}
+
+    async def fake_chat_nlp(user_input, images=None):
+        sent["user_input"] = user_input
+        sent["images"] = images
+
+    with patch.object(agent, "chat_nlp", side_effect=fake_chat_nlp):
+        import asyncio
+
+        ok = asyncio.run(
+            PasteImageCommand().execute([str(img_path), "--desc", "describe it"], agent)
+        )
+    assert ok is True
+    assert sent["user_input"] == "describe it"
+    assert sent["images"] and sent["images"][0].startswith("data:image/png;base64,")
+    img_path.unlink(missing_ok=True)
+
+
+def test_paste_image_prompt_flag_still_works():
+    """--prompt remains a working alias for the text flag (back-compat)."""
+    agent = Agent(workspace=".")
+    sent: dict = {}
+
+    async def fake_chat_nlp(user_input, images=None):
+        sent["user_input"] = user_input
+        sent["images"] = images
+
+    fake_url = "data:image/png;base64,CLIP"
+    with patch.object(agent, "chat_nlp", side_effect=fake_chat_nlp), patch(
+        "agent_core.commands.paste_image_cmd.encode_clipboard_image",
+        return_value=(fake_url, "image/png"),
+    ):
+        import asyncio
+
+        ok = asyncio.run(PasteImageCommand().execute(["--prompt", "hi"], agent))
+    assert ok is True
+    assert sent["user_input"] == "hi"
+    assert sent["images"] == [fake_url]
+
+
+def test_paste_image_desc_flag_requires_value():
+    """`paste_image --desc` with no value → clear error, no dispatch."""
+    agent = Agent(workspace=".")
+    dispatched = {"called": False}
+
+    async def fake_chat_nlp(user_input, images=None):
+        dispatched["called"] = True
+
+    with patch.object(agent, "chat_nlp", side_effect=fake_chat_nlp):
+        import asyncio
+
+        ok = asyncio.run(PasteImageCommand().execute(["--desc"], agent))
+    assert ok is True
+    assert dispatched["called"] is False

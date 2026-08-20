@@ -1440,7 +1440,7 @@ async def run_interactive() -> None:
         ("clear [stats|--force]", "Show/clear agent memory"),
         ("display [verbose|clean|quiet]", "Show/set NLP output verbosity"),
         ("paste [--workspace <path>]", "Paste multiline text for AI analysis (Ctrl+Z / Ctrl+D to finish)"),
-        ("paste_image [path] [--prompt \"text\"]", "Paste an image (clipboard or file) for vision-capable LLMs"),
+        ("paste_image [path] [--desc \"text\" | --prompt \"text\"]", "Paste an image (clipboard or file) for vision-capable LLMs"),
         ("run <command> [--timeout <sec>]", "Execute a shell command directly, no LLM"),
         ("self_heal [path] [--rounds N] [--yes]", "Patch failing tests and re-run until green"),
         ("reconstruct [--start <file>] [--end <file>] [--workspace <path>] [--search <query>] [--dry-run] [--force]", "Reconstruct files from JSONL trace logs"),

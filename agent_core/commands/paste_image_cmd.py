@@ -75,20 +75,25 @@ class PasteImageCommand(Command):
     @property
     def help_text(self) -> str:
         return (
-            "paste_image [path] [--prompt \"text\"] - Paste an image (clipboard "
-            "or file) into the chat for vision-capable LLMs"
+            "paste_image [path] [--desc \"text\" | --prompt \"text\"] - Paste an "
+            "image (clipboard or file) into the chat for vision-capable LLMs"
         )
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         parsed = list(args)
         prompt: str | None = None
-        if "--prompt" in parsed:
-            idx = parsed.index("--prompt")
+        # Text flag: --desc (matches analyze/fix/workflow) or --prompt (alias).
+        # Accepting both means `paste_image --desc "..."` works with no path —
+        # the image is then taken from the clipboard instead of misreading the
+        # flag as a file path.
+        text_flag = next((f for f in ("--desc", "--prompt") if f in parsed), None)
+        if text_flag is not None:
+            idx = parsed.index(text_flag)
             if idx + 1 < len(parsed):
                 prompt = parsed[idx + 1]
                 del parsed[idx:idx + 2]
             else:
-                self.error("--prompt requires a quoted text argument")
+                self.error(f"{text_flag} requires a quoted text argument")
                 return True
         path = parsed[0] if parsed else None
         if path:
@@ -116,7 +121,7 @@ class PasteImageCommand(Command):
             if grabbed is None:
                 self.error(
                     "No image on the clipboard. Copy an image first, or pass a "
-                    "file path: paste_image <path> [--prompt \"...\"]"
+                    "file path: paste_image [path] [--desc \"...\"]"
                 )
                 return True
             data_url, mime = grabbed
