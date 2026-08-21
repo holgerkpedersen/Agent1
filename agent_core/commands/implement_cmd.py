@@ -789,7 +789,7 @@ def _check_planned_duplicates(planned_new: list[str], ws: str, taskplan_content:
         sim = ModuleSimilarity(ws)
         for finding in sim.find_duplicates(planned):
             reasons.append(
-                f"{finding.file} — {finding.evidence} → {finding.existing}"
+                f"{finding.file} — {finding.evidence} -> {finding.existing}"
             )
     return reasons
 

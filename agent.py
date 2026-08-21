@@ -3,11 +3,13 @@ from typing import Any, cast
 """Agent implementation with workspace management and tool execution."""
 
 import asyncio
+import concurrent.futures
 import contextlib
 import io
 import json
 import os
 import re
+import signal
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -36,6 +38,16 @@ except Exception:  # pragma: no cover - tracing degrades gracefully if unavailab
 from agent_core.commands.base import save_file_py, chat_stoppable, clear_stop, FlowStopped
 from agent_core.commands.registry import CommandRegistry
 from agent_core.commands.read_cmd import ReadCommand
+
+# Windows console default codec is cp1252, which cannot encode many Unicode
+# glyphs the UI prints (box-drawing chars, arrows). Reconfigure stdout/stderr
+# to UTF-8 at startup so no print() crashes on non-cp1252 characters.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None:
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (ValueError, OSError, AttributeError):
+            pass
 from agent_core.commands.write_cmd import WriteCommand
 from agent_core.commands.search_cmd import SearchCommand
 from agent_core.commands.clear_cmd import ClearCommand
@@ -62,6 +74,51 @@ from pathlib import Path
 import subprocess
 import shlex
 from typing import Any
+
+# ── Interruptible input (so background processes can be killed) ──────────
+# On Windows, input() is a C-level blocking call that can't be interrupted by
+# signals.  A daemon thread reads stdin while the main thread polls with a
+# timeout, allowing SIGBREAK / shutdown flags to be checked periodically.
+_SHUTDOWN_FLAG = False
+_input_executor: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _signal_break(sig, frame):
+    """SIGBREAK handler — set flag so the REPL loop can exit."""
+    global _SHUTDOWN_FLAG
+    _SHUTDOWN_FLAG = True
+    # Force-exit if the REPL is stuck in input() — the flag alone isn't enough
+    # because input() won't return until the next keypress on Windows.
+    os._exit(1)
+
+
+def _install_signal_handlers():
+    """Register SIGBREAK (Windows Ctrl+Break / taskkill) for clean shutdown."""
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, _signal_break)
+
+
+def _interruptible_input(prompt: str) -> str | None:
+    """Read a line from stdin using a background thread.
+
+    Returns the stripped input string, or ``None`` when stdin is exhausted or
+    shutdown was requested.  On interactive terminals this behaves identically
+    to ``input()``; for piped / background processes it allows the main thread
+    to break out when a signal arrives.
+    """
+    global _input_executor
+    if _input_executor is None:
+        _input_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
+    future = _input_executor.submit(input, prompt)
+    while not _SHUTDOWN_FLAG:
+        try:
+            return future.result(timeout=0.5).strip()
+        except concurrent.futures.TimeoutError:
+            continue
+        except (EOFError, KeyboardInterrupt):
+            return None
+    return None
 
 
 class LLMClient:
@@ -1422,13 +1479,13 @@ async def run_interactive() -> None:
     print(cyan("Commands:"))
     _CMD_LIST = [
         ("read <path>", "Read a file"),
-        ("write <path> <content> [--yes]", "Write content to file (per-hunk diff review for existing files)"),
+        ("write <path> <content> [--yes]", "Write content to file"),
         ("search <query>", "Search for string in files"),
         ("analyze <file> [--desc \"q\"] [--stdin] [--deep]", "AI analysis via LM Studio"),
         ("plan <analysis.md> <plan.md>", "Generate coding plan from analysis"),
         ("entities <analysis.md> <plan.md> [entities.md]", "Generate shared entities"),
         ("taskplan <analysis.md> <plan.md> [tasks.md]", "Generate implementation tasks"),
-        ("implement <taskplan.md> ... [--modify] [--force] [--allow-rewrite] [--fix] [--retry] [--review] [--keep] [--refresh] [--workspace <path>]", "Implement files from a task plan"),
+        ("implement <taskplan.md> ... [--modify] [--force] [--allow-rewrite] [--fix] [--retry] [--review] [--keep] [--refresh] [--workspace <path>]", "Implement files"),
         ('fix "<traceback>"', "Paste a traceback to auto-fix the error"),
         ('fix <file> --desc "text" [--full]', "Describe an issue, LLM analyzes full codebase and fixes it"),
         ("fix --mypy [path...] [--limit N] [--rounds N] [--yes]", "Batch-fix mypy errors via LLM"),
@@ -1440,7 +1497,7 @@ async def run_interactive() -> None:
         ("clear [stats|--force]", "Show/clear agent memory"),
         ("display [verbose|clean|quiet]", "Show/set NLP output verbosity"),
         ("paste [--workspace <path>]", "Paste multiline text for AI analysis (Ctrl+Z / Ctrl+D to finish)"),
-        ("paste_image [path] [--desc \"text\" | --prompt \"text\"]", "Paste an image (clipboard or file) for vision-capable LLMs"),
+        ("paste_image [path] [--prompt \"text\"]", "Paste an image (clipboard or file) for vision-capable LLMs"),
         ("run <command> [--timeout <sec>]", "Execute a shell command directly, no LLM"),
         ("self_heal [path] [--rounds N] [--yes]", "Patch failing tests and re-run until green"),
         ("reconstruct [--start <file>] [--end <file>] [--workspace <path>] [--search <query>] [--dry-run] [--force]", "Reconstruct files from JSONL trace logs"),
@@ -1489,12 +1546,17 @@ async def run_interactive() -> None:
         loaded_module_mtimes,
     )
     _code_snapshot = loaded_module_mtimes(__file__)
+    _install_signal_handlers()
 
     while True:
         try:
-            # Get user input
-            user_input = input(f"\n[{datetime.now():%Y-%m-%d %H:%M}] > ").strip()
-            
+            # Get user input — _interruptible_input uses a background thread
+            # so the process can be killed via SIGBREAK on Windows.
+            user_input = _interruptible_input(f"\n[{datetime.now():%Y-%m-%d %H:%M}] > ")
+            if user_input is None:
+                # Shutdown requested or stdin exhausted
+                agent._save_memory()
+                break
             if not user_input:
                 continue
             
@@ -1547,6 +1609,8 @@ async def run_interactive() -> None:
         except KeyboardInterrupt:
             print(yellow("\nInterrupted — the current run was stopped. Use 'quit' to exit."))
         except EOFError:
+            if not sys.stdin.isatty():
+                print(yellow("\n[stdin] Input stream ended — shutting down."))
             agent._save_memory()
             break
 

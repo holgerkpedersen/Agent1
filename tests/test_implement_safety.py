@@ -143,6 +143,30 @@ class TestPlannedDuplicates:
         assert any("shell_allowlist.py" in r for r in reasons)
         assert not any("test_allowlist.py" in r for r in reasons)
 
+    def test_reasons_are_console_encodable(self, tmp_path):
+        """Regression: reason strings must print on the default Windows
+        console codec (cp1252). A non-ASCII arrow (U+2192) previously crashed
+        ``print()`` in the duplicate gate (UnicodeEncodeError)."""
+        (tmp_path / "agent_core" / "security").mkdir(parents=True)
+        (tmp_path / "agent_core" / "security" / "sanitizer.py").write_text(
+            '"""Input sanitizer stripping shell-injection payloads before re-injection."""\nX = 1\n',
+            encoding="utf-8",
+        )
+        taskplan = (
+            "1. `agent_core/nlp/safe_text.py` — Sanitize text with the input sanitizer "
+            "before re-injection into the model\n"
+        )
+        reasons = _check_planned_duplicates(
+            ["agent_core/nlp/safe_text.py"],
+            str(tmp_path),
+            taskplan,
+        )
+        assert reasons, "expected at least one duplicate reason"
+        for reason in reasons:
+            # cp1252 is what the Windows console uses; encode must not raise.
+            reason.encode("cp1252")
+            assert "→" not in reason, "non-ASCII arrow must not appear in reasons"
+
 
 class TestUnwiredClosure:
     """'y' on the review delete prompt must remove the whole orphaned
