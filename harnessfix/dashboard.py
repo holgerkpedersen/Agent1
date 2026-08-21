@@ -8,10 +8,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .evolution_metrics import (
+    DEFAULT_THRESHOLD,
+    DEFAULT_WINDOW_SIZE,
+    EvolutionMetricsScorer,
+    score_run,
+)
 from .reader import read_trace, TraceValidationError
 from .tracing import TRACE_DIR
 
@@ -235,7 +242,66 @@ def _show_task(traces_dir: Path, diag_dir: Path, task_id: str, as_json: bool) ->
     return 0
 
 
+def _quality_report(
+    traces_dir: Path,
+    window_size: int = DEFAULT_WINDOW_SIZE,
+    threshold: float = DEFAULT_THRESHOLD,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Compute a read-only sliding-window quality summary over recent traces.
+
+    Returns a dict with the windowed average score, the evolution threshold,
+    whether evolution should trigger, and per-run scores for the inspected
+    traces (most recent first).  Unreadable traces are skipped.
+    """
+    files = sorted(traces_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if limit is not None:
+        files = files[:limit]
+    scorer = EvolutionMetricsScorer(window_size=window_size, threshold=threshold)
+    per_run: list[dict[str, Any]] = []
+    for p in files:
+        try:
+            events = read_trace(p)
+        except TraceValidationError:
+            continue
+        if not events:
+            continue
+        task_id = str(events[0].get("task_id", p.stem))
+        per_run.append({
+            "task_id": task_id,
+            "score": scorer.record_trace(events),
+            "outcome": next(
+                (str(e.get("outcome", "completed")) for e in reversed(events)
+                 if e.get("kind") == "loop_end"),
+                "incomplete",
+            ),
+        })
+    return {
+        "traces_dir": str(traces_dir),
+        "inspected": len(per_run),
+        "window_size": window_size,
+        "threshold": threshold,
+        "windowed_average": scorer.windowed_average(),
+        # No data -> cannot conclude degradation; only flag evolution when we
+        # actually inspected runs (an empty window would otherwise report True
+        # because average_score() floors at 0.0).
+        "should_evolve": scorer.should_evolve() if per_run else False,
+        "runs": per_run,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
+    # Windows console default codec (cp1252) cannot encode many Unicode chars
+    # (e.g. U+2014 em dash) used in this dashboard's output. Reconfigure to
+    # UTF-8 so print() never raises UnicodeEncodeError (mirrors agent.py).
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8")
+    except (ValueError, OSError):
+        pass
+
     parser = argparse.ArgumentParser(prog="harnessfix.dashboard", description="Print a short dashboard of recent traces/diagnoses")
     parser.add_argument("--traces", type=Path, default=TRACE_DIR, help="trace directory")
     parser.add_argument("--diagnoses", type=Path, default=Path("reports/harnessfix/diagnoses"), help="diagnoses directory")
@@ -247,11 +313,52 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="zoom into a single task: full trace timeline, diagnosis and explanation",
     )
+    parser.add_argument(
+        "--quality",
+        action="store_true",
+        help="print a read-only sliding-window quality summary (windowed average + should_evolve)",
+    )
+    parser.add_argument(
+        "--window-size",
+        type=int,
+        default=DEFAULT_WINDOW_SIZE,
+        help="sliding-window size for --quality (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_THRESHOLD,
+        help="quality threshold for --quality; below this, should_evolve is True (default: %(default)s)",
+    )
     args = parser.parse_args(argv)
 
     if not args.traces.is_dir():
         print(f"No trace directory: {args.traces}")
         return 1
+
+    if args.quality:
+        report = _quality_report(
+            args.traces,
+            window_size=args.window_size,
+            threshold=args.threshold,
+            limit=args.limit,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2, default=str))
+            return 0
+        avg = report["windowed_average"]
+        flag = "YES" if report["should_evolve"] else "no"
+        print(f"HarnessFix quality — {report['inspected']} traces from {args.traces}")
+        print("-" * 100)
+        print(f"  window size      : {report['window_size']}")
+        print(f"  threshold        : {report['threshold']}")
+        print(f"  windowed average : {avg:.4f}")
+        print(f"  should evolve    : {flag}")
+        print("-" * 100)
+        print(f"{'task_id':<36} {'score':>8}  outcome")
+        for r in report["runs"]:
+            print(f"{r['task_id']:<36} {r['score']:>8.4f}  {r['outcome']}")
+        return 0
 
     if args.task is not None:
         return _show_task(args.traces, args.diagnoses, args.task, as_json=args.json)
