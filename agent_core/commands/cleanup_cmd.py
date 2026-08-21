@@ -3,8 +3,9 @@ import json
 
 from pathlib import Path
 
-from .base import Command
+from .base import Command, auto_choice
 from agent_core import to_windows_path
+from agent_core.file_protection import is_protected
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -20,7 +21,7 @@ class CleanupCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "cleanup             - Show unreferenced files and reference graph"
+        return "cleanup [--delete]  - Show unreferenced files; --delete removes them (protected files are skipped)"
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         ws = agent.workspace
@@ -83,9 +84,40 @@ class CleanupCommand(Command):
             print("\n  Unreferenced files:")
             for f in sorted(unreferenced):
                 tag = " [generated]" if f in generated_files else ""
-                print(f"    {f} ({all_files[f]['size']} bytes){tag}")
+                prot = " [PROTECTED — skipped on delete]" if is_protected(f, ws_path) else ""
+                print(f"    {f} ({all_files[f]['size']} bytes){tag}{prot}")
 
+            protected_count = sum(1 for f in unreferenced if is_protected(f, ws_path))
             print("\n  Use --delete to remove them, or add to .protected to keep.")
+            if protected_count:
+                print(f"  Note: {protected_count} file(s) are PROTECTED (.env / reports/*) and will be skipped on delete.")
+
+            if "--delete" in args:
+                # Autonomous runs never auto-approve destructive actions; the
+                # safe default is to decline unless explicitly confirmed.
+                confirm = auto_choice(
+                    f"  Delete {len(unreferenced)} unreferenced file(s) "
+                    f"(skipping {protected_count} protected)? [y/N] ",
+                    default="n",
+                    auto_default="n",
+                )
+                if confirm.strip().lower() not in ("y", "yes"):
+                    print("  Delete cancelled — no files removed.")
+                    return True
+
+                deleted = skipped_protected = failed = 0
+                for f in sorted(unreferenced):
+                    target = ws_path / f
+                    if is_protected(f, ws_path):
+                        skipped_protected += 1
+                        continue
+                    try:
+                        os.remove(target)
+                        deleted += 1
+                    except OSError as exc:
+                        failed += 1
+                        print(f"    could not delete {f}: {exc}")
+                print(f"\n  Deleted: {deleted}, skipped protected: {skipped_protected}, failed: {failed}.")
         else:
             print("  No unreferenced files found.")
 
