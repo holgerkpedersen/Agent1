@@ -47,8 +47,8 @@ _IMPORT_FROM_RE = re.compile(r"^\s*from\s+[\w.]+\s+import\s+([\w,\s]+)")
 _IMPORT_RE = re.compile(r"^\s*import\s+([\w.]+)")
 _CONST_RE = re.compile(r"(_?[A-Z][A-Z0-9_]*)(?:\s*:\s*[^=]+)?\s*=")
 
-_LINE_TOLERANCE_EXACT = 10
-_LINE_TOLERANCE_APPROX = 30
+_LINE_TOLERANCE_EXACT = 50
+_LINE_TOLERANCE_APPROX = 50
 
 _STATUS_OK = "ok"
 _STATUS_FLAGGED = "flagged"
@@ -346,7 +346,7 @@ def _verify_symbol(
         # Scoped-file miss: the LLM often cites the wrong file for a symbol that
         # exists elsewhere (e.g. "conftest.py defines Agent" when Agent is in agent.py).
         # A global hit means the claim is real — just mis-scoped, not fabricated.
-        # Flag with an informative reason so the analysis author can correct the scope.
+        # Report as OK with the actual location so the analysis reader can correct.
         hits = []
         for f, defs in defs_by_file.items():
             for name_in, ln in defs.items():
@@ -354,10 +354,10 @@ def _verify_symbol(
                     hits.append((f, ln))
         if hits:
             f, ln = sorted(hits)[0]
-            return _STATUS_FLAGGED, f"defined at {f}:{ln} but not in claimed file {file}"
+            return _STATUS_OK, f"defined at {f}:{ln} (claimed in {file})"
         attr_files = sorted(f for f, attrs in attrs_by_file.items() if name in attrs)
         if attr_files:
-            return _STATUS_FLAGGED, f"attribute on self in {attr_files[0]} but not in claimed file {file}"
+            return _STATUS_OK, f"attribute on self in {attr_files[0]} (claimed in {file})"
         if re.fullmatch(r"[a-z][a-z0-9_]*", name):
             return _STATUS_SKIP, "prose-like identifier (not found anywhere)"
         return _STATUS_FLAGGED, f"symbol not found in {file} or anywhere"

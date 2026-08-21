@@ -1,5 +1,5 @@
 {
-  "model": "opencode-go/deepseek-v4-flash",
+  "model": "laguna-s-2.1",
   "profile": "deep-analysis",
-  "provider": "opencode"
+  "provider": "lmstudio"
 }

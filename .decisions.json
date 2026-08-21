@@ -1155,5 +1155,114 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "061",
+    "date": "2026-08-21T09:29:51+00:00",
+    "title": "Refactor monolithic _execute_tool_call into per-tool handler classes",
+    "context": "`_execute_tool_call` in `agent.py` is a ~200-line monolithic if/elif chain handling search/read/list/write/run/git/diff/edit/tests/analyze/web_search — violates SRP; each branch should be its own handler class.",
+    "decision": "Decompose the if/elif chain into individual handler classes registered with `agent_core/tool_dispatcher.py`.",
+    "rationale": "Per-tool handlers restore single responsibility, enable independent testing, and align with the existing dispatcher registry pattern in agent_core.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/tool_dispatcher.py"
+    ],
+    "tags": [
+      "architecture",
+      "srp",
+      "refactor"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "062",
+    "date": "2026-08-21T09:29:51+00:00",
+    "title": "Centralize model/profile resolution into a single service",
+    "context": "`LLMClient` and `Agent` both reference provider/profile loading logic (`load_model_json`, `get_profile`) duplicated across init paths instead of a single model-resolution service.",
+    "decision": "Introduce one model-resolution service (likely in agent_core/llm/) that owns load_model_json + get_profile, consumed by both LLMClient and Agent.",
+    "rationale": "A shared resolver eliminates divergent profile-loading code and guarantees consistent provider selection across the client and agent entry points.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/llm_client.py"
+    ],
+    "tags": [
+      "architecture",
+      "dry"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "063",
+    "date": "2026-08-21T09:29:51+00:00",
+    "title": "Unify shell-command safety scanning into a single implementation",
+    "context": "`benchmark.py` and `agent.py` both implement shell-command safety scanning (`_blocked_shell_command` vs `_DANGEROUS_SHELL_PATTERNS` in agent vs `find_unsafe_shell_pattern` in tool_router) — three divergent security implementations.",
+    "decision": "Route all three call sites through the canonical allow-list logic in `agent_core/security/allowlist.py`.",
+    "rationale": "Centralizing shell safety scanning prevents drift between security policies and gives one authoritative surface for audits.",
+    "affected_files": [
+      "benchmark.py",
+      "agent.py",
+      "tool_router.py",
+      "agent_core/security/allowlist.py"
+    ],
+    "tags": [
+      "security",
+      "dry"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "064",
+    "date": "2026-08-21T09:29:51+00:00",
+    "title": "Replace os._exit(1) on SIGBREAK with graceful shutdown hook invocation",
+    "context": "`_signal_break` calls `os._exit(1)` on SIGBREAK — immediate process termination skips cleanup hooks (`_save_memory`, trace writer close), risking data loss mid-session.",
+    "decision": "Raise a controlled interrupt or dispatch registered cleanup callbacks (memory save + trace flush) before exiting instead of calling os._exit directly.",
+    "rationale": "Graceful shutdown preserves session memory and trace integrity that would otherwise be lost on abrupt termination.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "production",
+      "shutdown"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "065",
+    "date": "2026-08-21T09:29:51+00:00",
+    "title": "Adopt structured logging across the codebase replacing bare print statements",
+    "context": "No structured logging anywhere; bare `print(\"Warning: silenced exception...\")` statements replace proper logger calls with no severity levels, correlation IDs, or output routing.",
+    "decision": "Route all warning/error prints through agent_core/logging_config.py JSON pipeline with severity and correlation-id fields.",
+    "rationale": "Structured logging enables log aggregation, filtering by severity, and trace correlation required for production observability.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/logging_config.py"
+    ],
+    "tags": [
+      "logging",
+      "production"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "066",
+    "date": "2026-08-21T09:29:51+00:00",
+    "title": "Route opencode secrets through OS keyring instead of plaintext env vars",
+    "context": "`opencode_api_key` and `opencode_password` stored in plaintext `.env` via `persist_model_choice`/`load_agent_settings` — secrets should use the `_store_secret` keyring path consistently rather than falling back to env vars.",
+    "decision": "Make agent_core/security/secrets.py the sole persistence backend for opencode credentials, removing env-var fallback for these keys.",
+    "rationale": "Keyring-backed storage avoids plaintext credential leakage in .env files and aligns with the existing encrypted-file fallback design.",
+    "affected_files": [
+      "agent_core/security/secrets.py"
+    ],
+    "tags": [
+      "security",
+      "secrets"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]

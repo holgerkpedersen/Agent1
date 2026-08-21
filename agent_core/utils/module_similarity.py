@@ -16,7 +16,15 @@ import urllib.request
 from dataclasses import dataclass
 from typing import cast
 
-import numpy as np
+_np = None
+
+
+def _numpy():
+    global _np
+    if _np is None:
+        import numpy as _n
+        _np = _n
+    return _np
 
 from agent_core.patterns import _GENERIC_NAME_TOKENS
 
@@ -154,9 +162,11 @@ class _Corpus:
         self.terms: list[str] = sorted(vocab)
         self.term_to_idx = {t: i for i, t in enumerate(self.terms)}
         self.idf = self._build_idf()
+        np = _numpy()
         self.matrix = np.vstack([self._tfidf(t) for t in self.tokenized]) if self.terms else np.zeros((0, 0))
 
-    def _build_idf(self) -> np.ndarray:
+    def _build_idf(self) -> "np.ndarray":
+        np = _numpy()
         n = len(self.tokenized)
         df = np.zeros(len(self.terms))
         for toks in self.tokenized:
@@ -165,7 +175,8 @@ class _Corpus:
                     df[self.term_to_idx[t]] += 1
         return np.log(1 + n / (1 + df))
 
-    def _tfidf(self, tokens: list[str]) -> np.ndarray:
+    def _tfidf(self, tokens: list[str]) -> "np.ndarray":
+        np = _numpy()
         vec = np.zeros(len(self.terms))
         counts: dict[str, int] = {}
         for t in tokens:
@@ -178,14 +189,16 @@ class _Corpus:
         norm = np.linalg.norm(vec)
         return vec / norm if norm > 0 else vec
 
-    def cosine(self, tokens: list[str]) -> np.ndarray:
+    def cosine(self, tokens: list[str]) -> "np.ndarray":
         """Cosine similarity of *tokens* against every corpus module."""
+        np = _numpy()
         q = self._tfidf(tokens)
         if self.matrix.size == 0 or not q.any():
             return np.zeros(len(self.paths))
-        return cast(np.ndarray, self.matrix @ q)
+        return cast("np.ndarray", self.matrix @ q)
 
     def top(self, tokens: list[str], k: int = 3) -> list[tuple[str, float]]:
+        np = _numpy()
         scores = self.cosine(tokens)
         order = np.argsort(scores)[::-1][:k]
         return [(self.paths[i], float(scores[i])) for i in order if scores[i] > 0]
@@ -219,7 +232,8 @@ class _EmbeddingBackend:
             return self._probe()
         return self._available
 
-    def embed(self, texts: list[str]) -> np.ndarray:
+    def embed(self, texts: list[str]) -> "np.ndarray":
+        np = _numpy()
         if not self.available:
             raise RuntimeError("embedding backend unavailable")
         payload = json.dumps({"model": self.model, "input": texts}).encode("utf-8")
@@ -295,6 +309,7 @@ class ModuleSimilarity:
         except Exception:
             return []
         query = vecs[0]
+        np = _numpy()
         query = query / (np.linalg.norm(query) + 1e-8)
         rest = vecs[1:]
         norms = np.linalg.norm(rest, axis=1) + 1e-8

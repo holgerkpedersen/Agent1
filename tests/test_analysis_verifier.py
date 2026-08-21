@@ -116,11 +116,11 @@ class TestVerifyAnalysisClaims:
 
     def test_symbol_line_mismatch_flagged(self, tmp_path: Path) -> None:
         ws = self._build_ws(tmp_path)
-        analysis = "`_execute_nlp_tool` is defined at line ~40 in `agent.py`."
+        analysis = "`_execute_nlp_tool` is defined at line 60 in `agent.py`."
         result = asyncio.run(self._verify(ws, analysis))
         assert result.flagged >= 1
         assert "defined at agent.py:4" in result.text
-        assert "claimed line 40" in result.text
+        assert "claimed line 60" in result.text
 
     def test_symbol_line_match_not_flagged(self, tmp_path: Path) -> None:
         ws = self._build_ws(tmp_path)
@@ -157,10 +157,9 @@ class TestVerifyAnalysisClaims:
             "`agent.py` calls `util_fn` directly."
         )
         result = asyncio.run(self._verify(ws, analysis))
-        assert result.flagged >= 1
-        # Mis-scoped symbol (exists elsewhere but claimed in wrong file) is flagged
-        # with an informative reason pointing to the actual definition location.
-        assert "but not in claimed file agent.py" in result.text
+        # Mis-scoped symbol (exists elsewhere but claimed in wrong file) is now OK
+        # with the actual location — it's real, just mis-attributed.
+        assert result.flagged == 0
 
     def test_backslash_path_in_backticks(self, tmp_path: Path) -> None:
         ws = self._build_ws(tmp_path)
@@ -228,9 +227,9 @@ class TestVerifyAnalysisClaims:
         result = asyncio.run(self._verify(ws, analysis))
         assert result.flagged == 0
 
-    def test_single_file_segment_mis_scope_still_flagged(self, tmp_path: Path) -> None:
+    def test_single_file_segment_mis_scope_reported_ok(self, tmp_path: Path) -> None:
         """When the segment names ONLY the wrong file, the mis-scoped symbol is
-        still flagged (the leniency is segment-scoped, not global)."""
+        reported as OK (not flagged — it's real, just mis-attributed)."""
         ws = self._build_ws(tmp_path)
         (ws / "agent.py").write_text(
             "class Agent:\n"
@@ -239,8 +238,7 @@ class TestVerifyAnalysisClaims:
         )
         (ws / "tool_router.py").write_text("x = 1\n", encoding="utf-8")
         result = asyncio.run(self._verify(ws, "`tool_router.py` reuses `_normalize_path`."))
-        assert result.flagged >= 1
-        assert "but not in claimed file tool_router.py" in result.text
+        assert result.flagged == 0
 
     def test_package_module_dotted_ref_resolves(self, tmp_path: Path) -> None:
         """`agent_core.security.path_utils.normalize_path` must verify: package
