@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
@@ -16,12 +17,15 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
     _collector: Optional[MetricsCollector] = None
     _alert_rules: List[AlertRule] = []
     _evaluate_alerts: Optional[Callable[[List[AlertRule]], List[AlertEvent]]] = None
+    _base_dir: str = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
     def do_GET(self) -> None:
         parsed_path = urlparse(self.path)
         path = parsed_path.path
         params = parse_qs(parsed_path.query)
-        if path == "/api/snapshot":
+        if path in ("/", "/index.html"):
+            self._send_html_page()
+        elif path == "/api/snapshot":
             self._send_json(self._snapshot())
         elif path == "/api/counters":
             self._send_json(self._counters())
@@ -31,8 +35,12 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             self._send_json(self._histogram(params))
         elif path == "/api/alerts":
             self._send_json(self._alerts())
+        elif path == "/api/log":
+            self._send_json(self._log())
+        elif path.startswith("/static/"):
+            self._send_static(path)
         else:
-            self.send_error(404, "Endpoint not found")
+            self.send_error(404, "Not found")
 
     def _send_json(self, data: Dict[str, Any]) -> None:
         body = json.dumps(data).encode("utf-8")
@@ -41,6 +49,78 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_static(self, path: str) -> None:
+        """Serve files from the repository static/ directory."""
+        rel = path.lstrip("/")
+        if ".." in rel:
+            self.send_error(403, "Forbidden")
+            return
+        full = os.path.join(self._base_dir, rel)
+        if not os.path.isfile(full):
+            self.send_error(404, "Not found")
+            return
+        with open(full, "rb") as f:
+            body = f.read()
+        ctype = self._content_type(full)
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_html_page(self) -> None:
+        """Assemble partials into the TTTHEME dashboard page and serve it."""
+        index_path = os.path.join(self._base_dir, "static", "index.html")
+        if not os.path.isfile(index_path):
+            self.send_error(404, "index.html not found")
+            return
+        with open(index_path, "r", encoding="utf-8") as f:
+            page = f.read()
+        partials = {
+            "@@HEAD@@": self._read_partial("_head.html"),
+            "@@SIDEBAR@@": self._read_partial("_sidebar.html"),
+            "@@HEADER@@": self._read_partial("_header.html"),
+            "@@FOOTER@@": self._read_partial("_footer.html"),
+        }
+        for marker, content in partials.items():
+            page = page.replace(marker, content)
+        body = page.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    @staticmethod
+    def _read_partial(name: str) -> str:
+        base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        path = os.path.join(base, "partials", name)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _content_type(path: str) -> str:
+        mapping = {
+            ".html": "text/html; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8",
+            ".json": "application/json",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".svg": "image/svg+xml",
+            ".ico": "image/x-icon",
+            ".woff": "font/woff",
+            ".woff2": "font/woff2",
+            ".ttf": "font/ttf",
+            ".eot": "application/vnd.ms-fontobject",
+        }
+        ext = os.path.splitext(path)[1].lower()
+        return mapping.get(ext, "application/octet-stream")
 
     def _snapshot(self) -> Dict[str, Any]:
         if self._collector is None:
@@ -118,6 +198,22 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             "rules": rules,
         }
         return response
+
+    def _log(self) -> Dict[str, Any]:
+        if self._collector is None:
+            return {"error": "metrics collector unavailable"}
+        metrics = self._collector.get_metrics()
+        records = [
+            {
+                "timestamp": m.timestamp,
+                "name": m.name,
+                "type": m.metric_type.value,
+                "value": m.value,
+            }
+            for m in metrics[-100:]
+        ]
+        records.reverse()
+        return {"records": records}
 
 
 class DashboardAPIServer:

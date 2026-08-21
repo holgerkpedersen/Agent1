@@ -1671,8 +1671,22 @@ async def run_interactive() -> None:
 
 
 async def main() -> None:
-    """Main entry point - runs interactive mode."""
-    await run_interactive()
+    """Main entry point - runs interactive mode or the web dashboard."""
+    if "--serve" in sys.argv:
+        return await run_dashboard_server()
+
+
+def run_dashboard_server() -> None:
+    """Launch the TTTHEME web dashboard on localhost:8080."""
+    from src.agent1.monitoring import DashboardAPIServer, MetricsCollector
+
+    collector = MetricsCollector()
+    server = DashboardAPIServer(collector, port=8080)
+    print("Agent1 dashboard: http://localhost:8080  (Ctrl+C to stop)")
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":
