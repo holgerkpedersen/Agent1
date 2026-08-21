@@ -2,6 +2,8 @@ from typing import Any, cast
 #!/usr/bin/env python3
 """Agent implementation with workspace management and tool execution."""
 
+import os as _os
+_os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 import asyncio
 import concurrent.futures
 import contextlib
@@ -70,10 +72,12 @@ from agent_core.commands.review_cmd import ReviewCommand
 from agent_core.commands.run_cmd import RunCommand
 from agent_core.commands.self_heal_cmd import SelfHealCommand
 from agent_core.commands.reconstruct_cmd import ReconstructCommand
-from pathlib import Path
 import subprocess
 import shlex
-from typing import Any
+import logging
+import traceback
+
+logger = logging.getLogger(__name__)
 
 # ── Interruptible input (so background processes can be killed) ──────────
 # On Windows, input() is a C-level blocking call that can't be interrupted by
@@ -92,10 +96,53 @@ def _signal_break(sig, frame):
     os._exit(1)
 
 
-def _install_signal_handlers():
-    """Register SIGBREAK (Windows Ctrl+Break / taskkill) for clean shutdown."""
+# Shutdown-cleanup callbacks — set by _install_signal_handlers when an Agent
+# instance is available, so the SIGBREAK handler can persist memory and flush
+# traces before exiting (decision #049 / workflow 2026-08-21).
+_shutdown_save_memory = None
+_shutdown_trace_close = None
+
+
+def _signal_break_with_cleanup(sig, frame):
+    """SIGBREAK handler that performs best-effort cleanup before exit.
+
+    Saves agent memory (cross-session state) and flushes/closes the active
+    trace writer so in-flight tool-call effects are not lost from
+    ``reports/traces/*.jsonl``.  Each step is guarded — a failing hook logs
+    and continues rather than masking the shutdown itself.
+    """
+    global _SHUTDOWN_FLAG
+    _SHUTDOWN_FLAG = True
+    from agent_core.security.shutdown import safe_signal_break_handler
+    safe_signal_break_handler(
+        memory_path=str(AGENT_MEMORY_JSON_PATH),
+        trace_writer_close=_shutdown_trace_close,
+        save_memory_fn=_shutdown_save_memory,
+    )
+
+
+def _install_signal_handlers(agent=None):
+    """Register SIGBREAK (Windows Ctrl+Break / taskkill) for clean shutdown.
+
+    When an *agent* instance is provided, the handler performs cleanup
+    (memory save + trace flush) before exiting — replacing the bare
+    ``os._exit(1)`` that previously skipped these hooks.
+    """
+    global _shutdown_save_memory, _shutdown_trace_close
+    if agent is not None:
+        _shutdown_save_memory = agent._save_memory
+        # trace_writer_close is set dynamically per-run in chat_nlp;
+        # we use a closure that closes whichever writer is active.
+        def _close_active_trace():
+            tw = getattr(agent, "_active_trace_writer", None)
+            if tw is not None:
+                tw.close()
+        _shutdown_trace_close = _close_active_trace
+        handler = _signal_break_with_cleanup
+    else:
+        handler = _signal_break
     if hasattr(signal, "SIGBREAK"):
-        signal.signal(signal.SIGBREAK, _signal_break)
+        signal.signal(signal.SIGBREAK, handler)
 
 
 def _interruptible_input(prompt: str) -> str | None:
@@ -151,8 +198,12 @@ class LLMClient:
                 self._provider._profile_name = prof_name
                 self._provider.temperature = profile.temperature
                 self._provider.max_tokens = profile.max_tokens
-        except Exception:
-            print("Warning: silenced exception in agent.py:86")
+        except Exception as _prof_err:
+            logger.warning(
+                "Failed to restore active profile from model.json:\n%s",
+                traceback.format_exc(),
+            )
+            self._profile_name = None
     
     @property
     def model_name(self) -> str:
@@ -921,6 +972,9 @@ class Agent:
                 )
                 if trace_writer is not None:
                     trace_writer.emit_task_begin(user_input)
+                #: Expose active trace writer to the shutdown handler so
+                #: SIGBREAK can flush/close it before exit (decision #049).
+                self._active_trace_writer = trace_writer
                 #: File-effects recording (self-improvement): armed only while a
                 #: trace sink exists — untraced runs stay byte-identical (decision
                 #: #048).  The buffer is drained by _take_trace_effects after each
@@ -938,6 +992,7 @@ class Agent:
                     effects_fn=self._take_trace_effects,
                 )
                 self._pending_effects = None
+                self._active_trace_writer = None
                 if trace_writer is not None:
                     trace_writer.close()
                 reason = loop.termination_reason
@@ -1187,7 +1242,7 @@ class Agent:
             with open(AGENT_MEMORY_JSON_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except OSError:
-            print("Warning: silenced exception in agent.py:1009")
+            logger.warning("Failed to save agent memory:\n%s", traceback.format_exc())
 
 
 _MAX_CHAT_MESSAGES = 60
@@ -1546,7 +1601,7 @@ async def run_interactive() -> None:
         loaded_module_mtimes,
     )
     _code_snapshot = loaded_module_mtimes(__file__)
-    _install_signal_handlers()
+    _install_signal_handlers(agent)
 
     while True:
         try:

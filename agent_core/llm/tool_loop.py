@@ -111,6 +111,20 @@ _PATH_RECOVERY_NOTE = (
     "same non-existent path."
 )
 
+#: Tool-level consecutive-failure guard: when the same tool returns empty or
+#: error results N times in a row (even with different arguments), the model
+#: is stuck in a variant-repeat loop (e.g. grep with slightly different
+#: patterns that all fail).  This note breaks the cycle by forcing a
+#: strategy change.  Decision #061 — laguna-s-2.1 repeated grep variants.
+_TOOL_CONSECUTIVE_FAILURE_LIMIT = 4
+_TOOL_CONSECUTIVE_FAILURE_NOTE = (
+    "You have now called {tool} {count} times in a row with no useful results "
+    "(all returned empty or errors). The current approach is not working. "
+    "STOP calling {tool} — try a fundamentally different strategy: use a "
+    "different tool (read, bash, list_files), change the search scope, or "
+    "give your final answer with what you already know."
+)
+
 
 #: Console display cap for [result] lines. The model ALWAYS receives the full
 #: result; this only bounds what the human observer sees in the REPL (was 200,
@@ -356,6 +370,11 @@ class ToolLoopRunner:
         #: then force synthesis.
         calls_without_progress = 0
         nudge_injected = False
+        #: Tool-level consecutive-failure counter: tracks how many times each
+        #: tool has returned empty/error results in a row (even with different
+        #: arguments).  Breaks variant-repeat loops like grep with slightly
+        #: different patterns that all fail (decision #061).
+        _tool_consec_failures: dict[str, int] = {}
 
         for iteration in range(self.max_iterations):
             self._emit(
@@ -617,6 +636,37 @@ class ToolLoopRunner:
                 prev_result = result_str
                 if seen_calls is not None:
                     seen_calls[call_key] = seen_calls.get(call_key, 0) + 1
+                # Tool-level consecutive-failure guard (decision #061):
+                # detect variant-repeat loops where the same tool is called
+                # with slightly different args that all produce empty/error
+                # results (e.g. grep with regex variations).
+                _result_stripped = result_str.strip()
+                _is_empty_or_error = (
+                    not _result_stripped
+                    or _result_stripped.startswith("No files found")
+                    or _result_stripped.startswith("Tool error:")
+                    or _result_stripped.startswith("Error")
+                    or "returned no output" in _result_stripped.lower()
+                )
+                if _is_empty_or_error:
+                    _tool_consec_failures[tool_name] = _tool_consec_failures.get(tool_name, 0) + 1
+                else:
+                    _tool_consec_failures[tool_name] = 0
+                if _tool_consec_failures.get(tool_name, 0) >= _TOOL_CONSECUTIVE_FAILURE_LIMIT:
+                    note = _TOOL_CONSECUTIVE_FAILURE_NOTE.format(
+                        tool=tool_name, count=_tool_consec_failures[tool_name],
+                    )
+                    current_messages.append({"role": "user", "content": note})
+                    injected_notes.append(note)
+                    _tool_consec_failures[tool_name] = 0
+                    self._emit(
+                        KIND_GUARD_TRIGGERED,
+                        LAYER_LIFECYCLE,
+                        guard=GUARD_STUCK,
+                        iteration=iteration,
+                        tool=tool_name,
+                        note=note,
+                    )
                 current_messages.append({
                     "role": "tool",
                     "tool_call_id": tc_id,
