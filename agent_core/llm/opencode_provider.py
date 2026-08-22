@@ -236,11 +236,17 @@ class OpencodeProvider:
         (observed live). Permanent client errors (4xx other than 429)
         propagate immediately. Raises the last error after retries are
         exhausted so callers can format it as an ``[Error ...]`` string.
+
+        The factory performs a BLOCKING urllib call — it is dispatched to a
+        worker thread so it never stalls the event loop.  Without this,
+        asyncio.gather in run_parallel() serializes every model: the first
+        coroutine's sync HTTP round-trip blocks the loop and the next
+        model's chat() cannot even start until it finishes.
         """
         last_error: BaseException | None = None
         for attempt in range(self._max_retries + 1):
             try:
-                return factory()
+                return await asyncio.to_thread(factory)
             except urllib.error.HTTPError as exc:
                 if exc.code not in _TRANSIENT_HTTP_STATUSES:
                     raise
@@ -332,7 +338,8 @@ class OpencodeProvider:
         if self._session_id is not None:
             return self._session_id
         try:
-            session = self._request(
+            session = await asyncio.to_thread(
+                self._request,
                 "POST", f"{self.server_url}/session", {"title": "agent1"},
                 timeout=self._server_timeout,
             )

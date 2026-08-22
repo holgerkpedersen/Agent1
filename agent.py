@@ -72,6 +72,7 @@ from agent_core.commands.review_cmd import ReviewCommand
 from agent_core.commands.run_cmd import RunCommand
 from agent_core.commands.self_heal_cmd import SelfHealCommand
 from agent_core.commands.reconstruct_cmd import ReconstructCommand
+from agent_core.commands.multillm_cmd import MultiLlmCommand
 import subprocess
 import shlex
 import logging
@@ -1558,6 +1559,7 @@ async def run_interactive() -> None:
         ("reconstruct [--start <file>] [--end <file>] [--workspace <path>] [--search <query>] [--dry-run] [--force]", "Reconstruct files from JSONL trace logs"),
         ("decide ...", "Track design decisions (add/list/show/check/resolve/link/extract/review)"),
         ("review <refresh|list|show|label|auto|export>", "Human gate over failed task traces (label <task> auto = agent reviews)"),
+        ('multillm "question" [--models m1,m2] [--max-tokens N] [--thinking] [--concurrency N]', "Ask multiple LLMs the same question in parallel"),
         ("quit", "Exit"),
     ]
     for name, desc in _CMD_LIST:
@@ -1589,6 +1591,7 @@ async def run_interactive() -> None:
     registry.register(RunCommand())
     registry.register(SelfHealCommand())
     registry.register(ReconstructCommand())
+    registry.register(MultiLlmCommand())
 
     # Watch for code edited on disk while the REPL runs: the process keeps
     # imported modules in memory, so on-disk fixes (e.g. from a paste

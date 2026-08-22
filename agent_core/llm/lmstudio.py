@@ -1,4 +1,5 @@
 """LM Studio provider implementation."""
+import asyncio
 import json
 import time as _time
 from typing import Any, cast
@@ -435,7 +436,12 @@ class LMStudioProvider:
         
         async def _do_request() -> Any:
             start_time = _time.monotonic()
-            result = self._make_request(payload)
+            # _make_request is a BLOCKING urllib call — run it in a worker
+            # thread so it never stalls the event loop.  Without this,
+            # asyncio.gather in run_parallel() serializes every model: the
+            # first coroutine's sync HTTP round-trip blocks the loop and the
+            # second model's chat() cannot even start until it finishes.
+            result = await asyncio.to_thread(self._make_request, payload)
             elapsed_ms = (_time.monotonic() - start_time) * 1000.0
 
             if 'choices' in result and len(result['choices']) > 0:

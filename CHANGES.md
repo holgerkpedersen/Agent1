@@ -1,4 +1,40 @@
-﻿## 2026-08-16 - feat: paste an image into the agent for vision-capable LLMs
+﻿## 2026-08-21 - feat: multillm simultaneous-call regression test
+
+**Change**: tests/test_parallel_llm.py (new `TestMultiLlmCommandRoles.test_simultaneous_review_command_end_to_end`)
+
+**Reason**: prove the EXACT command ``multillm "review agent.py, and synthesize the two models' responses" --models laguna-s-2.1,opencode-go/deepseek-v4-flash --role "laguna-s-2.1:You are a security auditor..." --role "opencode-go/deepseek-v4-flash:You are a performance engineer..."`` fires SIMULTANEOUSLY end-to-end. The test drives the real REPL path (`shlex.split(posix=False)` → `MultiLlmCommand.execute`) with two 0.2s-latency fake providers and asserts wall time < 0.35s (parallel) — verified it FAILS (0.469s) against a temporarily serialized `run_parallel`, then passes. Also asserts each model got its own role system prompt and the shared quoted question survived intact. Full suite 1280 passed.
+
+## 2026-08-21 - fix: multillm parallel calls were actually serial (blocking HTTP)
+
+**Change**: agent_core/llm/lmstudio.py (`_do_request` → `asyncio.to_thread(self._make_request, payload)`), agent_core/llm/opencode_provider.py (`_with_retry` → `await asyncio.to_thread(factory)`; `_ensure_session` → `await asyncio.to_thread(self._request, ...)`), tests/test_parallel_llm.py (new `test_blocking_providers_do_not_serialize`)
+
+**Reason**: multillm fired both models via `asyncio.gather`, but BOTH providers made their HTTP round-trip with SYNCHRONOUS blocking `urllib.request.urlopen` inside `async def chat()`. The first coroutine's sync call stalled the event loop, so the second model's `chat()` could not even start until the first finished — the two "parallel" calls were sequential. The fix dispatches every blocking HTTP call to a worker thread (`asyncio.to_thread`), so the event loop stays free and `gather` gets real concurrency. Verified: the new test mocks `urllib.request.urlopen` to block 0.2s per call and asserts two calls finish in <0.35s (was ~0.42s serialized — confirmed by temporarily reverting the fix); live smoke test of both real providers: 0.203s for two 0.2s blocking calls; full suite 1279 passed.
+
+## 2026-08-21 - feat: tools available to multillm models
+
+**Change**: agent_core/llm/parallel.py (tools/execute_tool_fn/max_tool_iterations params + tool loop), agent_core/commands/multillm_cmd.py (passes NLP_TOOL_SCHEMAS + agent._execute_tool_call), tests/test_parallel_llm.py (3 new TestParallelTools)
+
+**Reason**: multillm fired the same prompt at multiple LLMs, but the models had NO tools — they could only answer from the prompt. The 2026-08-21 session showed both laguna-s-2.1 and opencode-go/deepseek-v4-flash asking "please paste the file content" instead of reading it. Now each model runs through the SAME ToolLoopRunner the agent uses: it can read/search/list files, run tests, etc. Each model gets its OWN loop instance (no cross-model tool-state contamination), all running concurrently via asyncio.gather. The command passes the agent's real `_execute_tool_call` executor + `NLP_TOOL_SCHEMAS`, degrading gracefully (no tools) when the host doesn't expose the executor. Verified: 3 new tests (tool call → execute → answer with result; tools-without-executor rejected; no-tools keeps single chat); live smoke test of the full tool loop; mypy-clean on both files; 76 related tests green.
+
+## 2026-08-16 - feat: quoted inline --role values in multillm
+
+**Change**: agent_core/commands/multillm_cmd.py (strip quotes from --role value), tests/test_parallel_llm.py (3 new TestMultiLlmCommandRoles)
+
+**Reason**: the REPL splits input with `shlex.split(posix=False)`, which KEEPS the literal quotes on a quoted `--role "model:multi-word prompt"` value — so inline roles with multi-word prompts were broken (the model name would include a leading quote). The command now strips the quotes (repo convention: analyze_cmd/fix_cmd/implement_cmd all use `.strip('"')`). Inline `--role` is the primary way to set roles; `--role-file` remains for reusable setups. Verified: live smoke test through the real REPL shlex path; 3 new command-level tests (quoted multi-word, unquoted single-word, malformed rejected); 19 parallel tests green.
+
+## 2026-08-16 - feat: per-model roles in multillm
+
+**Change**: agent_core/llm/parallel.py (roles param), agent_core/commands/multillm_cmd.py (--role / --role-file flags), tests/test_parallel_llm.py (3 new TestRoles)
+
+**Reason**: `multillm` fired the same prompt at multiple LLMs — but all models got the identical question, so they could only differ by their own weights, never by assigned expertise. Now each model can play a DIFFERENT expert role: `run_parallel(..., roles={model: system_prompt})` prepends that model's own `system` message to the shared question (both providers already handle a leading system block — LM Studio preserves it, opencode splits it into the system prompt). The command gains `--role model:prompt` (repeatable) and `--role-file path.json` (`{"model": "system prompt"}`) and prints the assigned role under each model's header. Roles are keyed by exact model name and never leak across models; unknown-model roles are ignored. Verified: 3 new tests (role prepended only to its model, no-role unchanged, unknown-model ignored); live smoke test of both flags + malformed-role rejection; mypy-clean on both files; 70 related tests green.
+
+## 2026-08-16 - feat: parallel multi-LLM dispatch (multillm command)
+
+**Change**: agent_core/llm/parallel.py (new), agent_core/commands/multillm_cmd.py (new), agent.py (register MultiLlmCommand + help entry), tests/test_parallel_llm.py (13 new)
+
+**Reason**: The agent could route per-model to different providers (LM Studio local vs hosted opencode-go via `build_provider`) but only SEQUENTIALLY — nothing fired simultaneous calls to different LLMs. New `agent_core/llm/parallel.py::run_parallel` builds one provider instance per model and fires all `chat` calls concurrently with `asyncio.gather` (one provider per model = separate opencode sessions, no shared state). `return_exceptions=True` + provider error strings isolate a dead server so one failure never aborts the other models' answers. Each result carries provider metrics and the dormant `ConsensusVoter`/`RefinementVoter` machinery finally gets a real producer: every model's verdict is recorded under a template id and the quorum gate is exposed via `ParallelRun.quorum_reached()` (approval-ratio semantics matching `ConsensusVoter.tally_votes` — the pre-existing `RefinementVoter.decide()` path never fed its own consensus ledger and always returned False, so the quorum is computed directly from the vote ledger). New `multillm` REPL command: `multillm "question" --models laguna-s-2.1,opencode-go/deepseek-v4-flash` prints each model's answer with a consensus summary; defaults to the current agent model + configured opencode model. Verified: 13 new tests prove wall-clock parallelism (two 0.2s fake providers finish in ~0.2s, concurrency=1 serializes to ~0.4s), per-model build_provider routing (LMStudioProvider vs OpencodeProvider), error isolation, and consensus; mypy-clean on both new files; full suite 1269 passed / 2 skipped.
+
+## 2026-08-16 - feat: paste an image into the agent for vision-capable LLMs
 
 **Change**: agent_core/commands/paste_image_cmd.py (new), agent.py (chat_nlp images arg + multimodal user message + _strip_image_blocks + _save/_load_chat_history stripping), tests/test_paste_image.py (8 new)
 
