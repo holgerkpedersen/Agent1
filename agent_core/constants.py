@@ -97,10 +97,17 @@ def resolve_model(explicit: str | None = None) -> str:
 
     1. Explicit argument (caller override) — its prefix selects the provider
     2. Configured opencode model when the active provider is opencode
-    3. What is actually loaded in LM Studio right now (via API) — lmstudio only
-    4. Persisted model.json (set by ``model`` command, provider-aware)
-    5. ``AGENT_MODEL`` environment variable
+    3. Persisted model.json (set by ``model`` command, provider-aware)
+    4. ``AGENT_MODEL`` environment variable
+    5. What is actually loaded in LM Studio right now (via API) — lmstudio only
     6. Hardcoded fallback (``laguna-s-2.1``)
+
+    The persisted choice outranks the live LM Studio poll (multi-shell
+    safety): a second ``agent.py`` shell that loads a different model must
+    not silently re-target this session at startup — the session keeps its
+    own chosen model and LMStudioProvider reloads it on demand when a
+    request finds it missing from VRAM.  The live poll remains as a
+    first-run fallback when nothing is persisted yet.
     """
     if explicit:
         return explicit
@@ -125,7 +132,12 @@ def resolve_model(explicit: str | None = None) -> str:
     if provider == "opencode":
         return persisted_model if persisted_model.startswith("opencode") else opencode_model
 
-    # LM Studio path — what model is actually in VRAM?
+    # Persisted choice wins over what another shell may have loaded since.
+    if persisted_model in KNOWN_MODELS:
+        return persisted_model
+
+    # First-run fallback: nothing usable persisted — adopt whatever LM
+    # Studio currently has loaded (if anything).
     try:
         from agent_core.llm.lmstudio import get_models_status
         models = get_models_status()
@@ -135,8 +147,7 @@ def resolve_model(explicit: str | None = None) -> str:
     except Exception as exc:
         logger.warning("Could not determine the active LM Studio model: %s", exc)
 
-    # Persisted choice from model.json
-    if persisted_model in KNOWN_MODELS:
+    if persisted_model:
         return persisted_model
 
     return DEFAULT_MODEL

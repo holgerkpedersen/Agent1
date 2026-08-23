@@ -1,4 +1,10 @@
-﻿## 2026-08-21 - feat: multillm simultaneous-call regression test
+﻿## 2026-08-23 - fix: concurrent agent.py shells hijacked each other's model
+
+**Change**: agent_core/commands/model_cmd.py (`_list_models` auto-sync → read-only advisory), agent_core/constants.py (`resolve_model` priority: persisted model.json now outranks the live LM Studio poll; live poll demoted to first-run fallback), tests/test_multi_shell_model_isolation.py (new, 7 tests)
+
+**Reason**: With two `python agent.py` shells open, switching the model in shell 2 broke shell 1 through three leak paths: (1) `model list` in shell 1 SILENTLY switched the session to whatever shell 2 had loaded and persisted it to model.json/.env; (2) `resolve_model()` ranked the live LM Studio poll ABOVE the persisted choice, so any new Agent/LLMClient adopted the other shell's VRAM contents instead of its own persisted model; (3) nothing pinned a running session to its chosen model at all. Fix contract: a session keeps ITS model — listing is read-only (prints an advisory with an explicit `model <name>` / `model reload` adoption hint), the persisted choice wins over the live poll, and `LMStudioProvider._make_request`'s on-demand auto-reload (unchanged) recovers the pinned model when a request finds it missing from VRAM. Verified: 7 new regression tests cover all three paths end-to-end through the real LLMClient constructor (hermetic — no real server/model.json); 71 model-related + 103 tool-loop/parallel/component tests green; mypy back to baseline for both touched files (4 pre-existing errors each).
+
+## 2026-08-21 - feat: multillm simultaneous-call regression test
 
 **Change**: tests/test_parallel_llm.py (new `TestMultiLlmCommandRoles.test_simultaneous_review_command_end_to_end`)
 

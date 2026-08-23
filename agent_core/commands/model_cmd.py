@@ -94,7 +94,17 @@ class ModelCommand(Command):
     # ------------------------------------------------------------------
 
     def _list_models(self, agent: "Agent", interactive: bool = False) -> None:
-        """Show available models per LLM provider (LM Studio + opencode)."""
+        """Show available models per LLM provider (LM Studio + opencode).
+
+        READ-ONLY by design (multi-shell safety): listing must never switch
+        the session's model or persist a new choice — another ``agent.py``
+        shell (or the LM Studio GUI) may have loaded something else, and
+        silently adopting it hijacked the running session.  This session
+        keeps its pinned model; ``LMStudioProvider`` auto-reloads it on
+        demand when a request finds it missing from VRAM.  Adoption of what
+        LM Studio currently has loaded is explicit: ``model reload`` or
+        ``model <name>``.
+        """
         current = agent.llm.model_name
         from agent_core.llm.provider import provider_for
         from agent_core.config import load_agent_settings
@@ -169,19 +179,31 @@ class ModelCommand(Command):
         print(f"\n  Current model: {current}{profile_info}  ({kinfo.get('desc', '')})")
         print(f"  {len(models)} models available from LM Studio API")
 
-        # Auto-sync: only when the ACTIVE provider is lmstudio.  An opencode
-        # model (opencode-go/...) never needs LM Studio loading, so the list
-        # command must not silently switch the user's chosen model to the
-        # LM Studio-loaded one (observed: opencode-go/deepseek-v4-flash was
-        # replaced by qwen and provider=lmstudio persisted).
+        # Advisory only — never switch or persist here (multi-shell safety).
+        # A concurrent agent.py shell may have loaded another model; stealing
+        # it (and overwriting model.json) broke the running session.  The
+        # pinned model auto-reloads on demand at request time; adopting what
+        # LM Studio has loaded is an explicit `model reload` / `model <name>`.
         if active_provider == "lmstudio":
             loaded_keys = [m["key"] for m in models if m["loaded"]]
             if loaded_keys and current not in loaded_keys:
-                print(f"\n  ⚠ {current} not loaded, switching to {loaded_keys[0]}")
-                self._rebuild_provider(agent, loaded_keys[0])
-                self._persist_model(loaded_keys[0])
+                print(
+                    f"\n  ⚠ {current} is not in VRAM right now "
+                    f"(loaded: {', '.join(loaded_keys)})."
+                )
+                print(
+                    f"  This session keeps {current} — it will be reloaded "
+                    "automatically on the next request."
+                )
+                print(
+                    f"  To adopt a loaded model instead, run: "
+                    f"model {loaded_keys[0]}   (or: model reload)"
+                )
             elif not loaded_keys and current:
-                print(f"\n  ⚠ No models loaded in LM Studio. Agent is set to: {current}")
+                print(
+                    f"\n  ⚠ No models loaded in LM Studio. This session stays "
+                    f"pinned to: {current} (auto-reloads on next request)."
+                )
         elif current:
             print(f"\n  [{active_provider}] {current} — no LM Studio sync needed.")
 
