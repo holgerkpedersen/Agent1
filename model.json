@@ -1,5 +1,5 @@
 {
-  "model": "laguna-s-2.1",
+  "model": "opencode-go/ox-alpha-free",
   "profile": "deep-analysis",
-  "provider": "lmstudio"
+  "provider": "opencode"
 }

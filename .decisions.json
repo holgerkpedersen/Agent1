@@ -1264,5 +1264,187 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "067",
+    "date": "2026-08-21T15:06:11+00:00",
+    "title": "Triage the ten blockers into decidable vs genuinely blocking",
+    "context": "Section 6 lists ten blockers, but the refinement argues at least four are answerable from the inventory: the v1 metric list, missing-feature detection, a read-only default with gated exceptions, and a proposed refresh cadence. Blocking on all ten converts answerable engineering questions into schedule risk.",
+    "decision": "Proceed immediately with inventory-derived answers for metrics, feature detection, read-only default, and cadence proposal; escalate only visualization medium/stack, network binding, and legal/compliance as true blockers.",
+    "rationale": "Separating answerable questions from true unknowns reduces rework probability and lets telemetry-layer work start in parallel.",
+    "affected_files": [],
+    "tags": [
+      "planning",
+      "scope",
+      "blockers"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "068",
+    "date": "2026-08-21T15:06:11+00:00",
+    "title": "Choose the visualization medium and frontend stack",
+    "context": "Blocker 1 leaves the medium undefined (extend performance_dashboard/ FastAPI+charts, new web UI, TUI, or desktop app), and clarifying question 1 asks whether to extend performance_dashboard/ or build new. The refinement classifies this as genuinely blocking.",
+    "decision": "Explicitly choose between extending performance_dashboard/ (main.py, api/endpoints.py, visualization/charts.py) and building a new component, including the frontend stack, before implementation begins.",
+    "rationale": "The medium determines the attack surface (web implies CSRF/DNS-rebinding and XSS defenses), the refresh architecture, and accessibility options; deciding late guarantees rework.",
+    "affected_files": [
+      "performance_dashboard/main.py",
+      "performance_dashboard/api/endpoints.py",
+      "performance_dashboard/visualization/charts.py",
+      "performance_dashboard/config.py",
+      "harnessfix/dashboard.py"
+    ],
+    "tags": [
+      "architecture",
+      "ui",
+      "blocking"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "069",
+    "date": "2026-08-21T15:06:11+00:00",
+    "title": "Fix the v1 mandatory metric list from verified telemetry surfaces",
+    "context": "Blocker 2 requires an explicit list of parameters/resources to visualize; the spec never defines them and truth is fragmented across modules.",
+    "decision": "Pin v1 metrics to inventoried sources: loaded models and VRAM via get_models_status/get_vram_info in agent_core/llm/lmstudio.py, success/failure counters from MetricsTracker in agent_core/llm/metrics_tracker.py, trace outcomes from harnessfix/tracing.py JSONL, command timings from PerfTracker in agent_core/commands/perf_cmd.py, and tool-loop usage/termination via ToolLoopRunner.tools_used/termination_reason; verify whether any additional agent-level stats accessor exists before depending on it.",
+    "rationale": "Enumerating from confirmed surfaces keeps every displayed value reconcilable with ground truth and avoids panels backed by unreliable sources.",
+    "affected_files": [
+      "agent_core/llm/lmstudio.py",
+      "agent_core/llm/metrics_tracker.py",
+      "harnessfix/tracing.py",
+      "agent_core/commands/perf_cmd.py",
+      "agent_core/llm/tool_loop.py"
+    ],
+    "tags": [
+      "metrics",
+      "telemetry",
+      "scope"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "070",
+    "date": "2026-08-21T15:06:11+00:00",
+    "title": "Correct MetricsTracker double-counting before publishing success rates",
+    "context": "record_success and record_turn each increment _success_counts in agent_core/llm/metrics_tracker.py, so callers using both inflate success rates and silently fail the accuracy metric.",
+    "decision": "Audit callers and remove the double increment (or normalize at read time) before any success-rate panel ships.",
+    "rationale": "Visualization amplifies upstream data defects; fix the counter rather than compensating in the display layer.",
+    "affected_files": [
+      "agent_core/llm/metrics_tracker.py"
+    ],
+    "tags": [
+      "metrics",
+      "bug",
+      "accuracy"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "071",
+    "date": "2026-08-21T15:06:11+00:00",
+    "title": "Bound polling overhead and define refresh, retention, and trend parameters",
+    "context": "Frequent LM Studio polling distorts the very latency/token metrics being displayed, and blocker 8 asks for refresh cadence, data-volume bounds, and whether historical trends are required — none currently bounded.",
+    "decision": "Set an explicit overhead budget (e.g., a p99 added-latency target), prefer passive collectors (performance_dashboard/collectors/command_collector.py, harnessfix/tracing.py sinks) over live polls, and define refresh interval, retention window, and trend horizon.",
+    "rationale": "An unbounded observer effect would corrupt the metrics the visualization exists to show.",
+    "affected_files": [
+      "agent_core/llm/lmstudio.py",
+      "performance_dashboard/collectors/command_collector.py",
+      "harnessfix/tracing.py",
+      "performance_dashboard/storage/database.py"
+    ],
+    "tags": [
+      "performance",
+      "telemetry",
+      "observer-effect"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "072",
+    "date": "2026-08-21T15:06:11+00:00",
+    "title": "Reconcile stale vs live state with per-panel freshness indicators",
+    "context": "Truth lives in scattered JSON files (model.json, chat_history.json, agent_memory.json per agent_core/constants.py), in-memory counters, and live LM Studio polls with no unified event bus; stale-vs-live reconciliation is identified as the core problem.",
+    "decision": "Classify each metric as live-polled, persisted-snapshot, or trace-derived; display a freshness/staleness indicator per panel with a defined reconciliation tolerance; evaluate a single snapshot service to unify sources.",
+    "rationale": "Without staleness signaling the target user cannot distinguish 'can do now' from 'could do earlier'.",
+    "affected_files": [
+      "agent_core/constants.py",
+      "agent_core/commands/freshness.py",
+      "harnessfix/tracing.py",
+      "performance_dashboard/storage/database.py"
+    ],
+    "tags": [
+      "telemetry",
+      "freshness",
+      "architecture"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "073",
+    "date": "2026-08-21T15:06:11+00:00",
+    "title": "Default to read-only presentation with gated interactive actions",
+    "context": "Blocker 4 leaves the read-only mandate unconfirmed; widening performance_dashboard/api/endpoints.py creates new attack surface, and success criteria require any interactive action to sit behind explicit human approval.",
+    "decision": "Make the view strictly read-only by default; expose mutating actions (model load/unload via model_cmd, memory clear via clear_cmd) only behind an explicit operator/parent approval gate, targeting zero ungated child-reachable mutating endpoints.",
+    "rationale": "Limits new attack surface, satisfies the oversight criterion, and accounts for the child acting as adversary.",
+    "affected_files": [
+      "performance_dashboard/api/endpoints.py",
+      "agent_core/commands/model_cmd.py",
+      "agent_core/commands/clear_cmd.py",
+      "agent_core/commands/review_cmd.py",
+      "harnessfix/review.py"
+    ],
+    "tags": [
+      "security",
+      "read-only",
+      "gating"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "074",
+    "date": "2026-08-21T15:06:11+00:00",
+    "title": "Decide the compliance and data-egress posture (COPPA/GDPR-K)",
+    "context": "The age-12 audience raises child-data questions the analysis deferred; build_provider can route full conversations, including /file-retrieved workspace contents, to https://opencode.ai/zen/go/v1; and the >=80% comprehension acceptance test involves minors, triggering guardian-consent obligations that contradict the deferred scoping assumption.",
+    "decision": "Decide the legal posture before launch: default to local-only data flow, require disclosure/consent before any opencode egress, and redesign acceptance testing (proxy evaluators or a documented consent process).",
+    "rationale": "Third-party egress of child-adjacent conversation and source-code data is the sharpest compliance edge, and the current test plan violates its own scoping assumption.",
+    "affected_files": [
+      "agent_core/llm/opencode_provider.py",
+      "agent_core/llm/provider.py",
+      "agent_core/config.py",
+      "agent_core/security/secrets.py"
+    ],
+    "tags": [
+      "compliance",
+      "privacy",
+      "blocking"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "075",
+    "date": "2026-08-21T15:06:11+00:00",
+    "title": "Define language, reading level, and accessibility standards before UI build",
+    "context": "Blockers 7 and 9 ask for language(s)/localization, an age-12 reading-level style guide, color-blind-safe palettes, and screen-reader support; the >=80% comprehension success metric depends on these choices.",
+    "decision": "Define target language(s), an age-12 style guide, and accessibility requirements (palette, screen-reader support) before implementation, reflecting them in chart and console styling.",
+    "rationale": "Comprehension is a stated success metric and accessibility retrofits are costly.",
+    "affected_files": [
+      "agent_core/colors.py",
+      "performance_dashboard/visualization/charts.py"
+    ],
+    "tags": [
+      "ux",
+      "accessibility",
+      "i18n"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]
