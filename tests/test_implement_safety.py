@@ -707,3 +707,127 @@ class TestHoistedRegexes:
         lines = ["def f(x):", "    return x"]
         out = _trace_variable_source('y.py:1: Argument 1 to "f" has type "int"', lines, 1)
         assert isinstance(out, str)
+
+
+class TestConsumeFixBlocks:
+    """Consolidated fix-block application (root-cause + downstream share it)."""
+
+    def _write(self, tmp_path, name="mod.py", text="a = 1\nb = 2\n"):
+        p = tmp_path / name
+        p.write_text(text, encoding="utf-8")
+        return str(p)
+
+    def test_try_patch_block_applies_hunk(self, tmp_path) -> None:
+        from agent_core.commands.implement_cmd import _try_patch_block
+
+        fpath = self._write(tmp_path)
+        patch = "@@ -1,2 +1,2 @@\n-a = 1\n+a = 10\n b = 2"
+        ok, note = _try_patch_block(patch, fpath, "a = 1\nb = 2\n")
+        assert ok, note
+        assert (tmp_path / "mod.py").read_text(encoding="utf-8").startswith("a = 10")
+
+    def test_consume_file_block_success(self, tmp_path) -> None:
+        from agent_core.commands.implement_cmd import _consume_fix_blocks
+
+        fpath = self._write(tmp_path)
+        resp = "[FILE: mod.py]\n```python\nimport os\n\na = 5\n```\n"
+        ok, note = _consume_fix_blocks(resp, "mod.py", fpath, "a = 1\nb = 2\n", file_first=True)
+        assert ok, note
+        assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "import os\n\na = 5"
+
+    def test_consume_rolls_back_invalid_python(self, tmp_path) -> None:
+        from agent_core.commands.implement_cmd import _consume_fix_blocks
+
+        original = "a = 1\nb = 2\n"
+        fpath = self._write(tmp_path, text=original)
+        resp = "[FILE: mod.py]\n```python\ndef broken(:\n```\n"
+        ok, note = _consume_fix_blocks(resp, "mod.py", fpath, original, file_first=True)
+        assert not ok
+        assert "rolled back" in note or "compile error" in note
+        assert (tmp_path / "mod.py").read_text(encoding="utf-8") == original
+
+    def test_consume_falls_back_to_patch_when_file_fails(self, tmp_path) -> None:
+        from agent_core.commands.implement_cmd import _consume_fix_blocks
+
+        fpath = self._write(tmp_path)
+        resp = (
+            "[FILE: mod.py]\n```python\ndef broken(:\n```\n"
+            "\n[PATCH: mod.py]\n@@ -2,1 +2,1 @@\n-b = 2\n+b = 20\n"
+        )
+        ok, note = _consume_fix_blocks(resp, "mod.py", fpath, "a = 1\nb = 2\n", file_first=False)
+        assert ok, note
+        body = (tmp_path / "mod.py").read_text(encoding="utf-8")
+        assert "b = 20" in body
+
+    def test_consume_reports_missing_blocks(self, tmp_path) -> None:
+        from agent_core.commands.implement_cmd import _consume_fix_blocks
+
+        fpath = self._write(tmp_path)
+        ok, note = _consume_fix_blocks("I cannot fix this.", "mod.py", fpath, "", file_first=True)
+        assert not ok
+        assert "no [PATCH:] or [FILE:]" in note
+
+    def test_consume_guards_foreign_filenames(self, tmp_path) -> None:
+        from agent_core.commands.implement_cmd import _consume_fix_blocks
+
+        fpath = self._write(tmp_path)
+        (tmp_path / "other.py").write_text("x = 0\n", encoding="utf-8")
+        resp = "[FILE: other.py]\n```python\nimport os\nx = 1\n```\n"
+        ok, note = _consume_fix_blocks(resp, "mod.py", fpath, "a = 1\n", file_first=True)
+        assert not ok
+        assert (tmp_path / "other.py").read_text(encoding="utf-8") == "x = 0\n"
+
+
+class TestChatFixTextRetries:
+    """Single implementation of LLM round-trips shared by both fix paths."""
+
+    def _agent(self, replies):
+        from types import SimpleNamespace
+
+        class FakeLLM:
+            def __init__(self):
+                self.replies = list(replies)
+                self.prompts = []
+
+            async def chat(self, msgs, **kw):
+                self.prompts.append(msgs)
+                return self.replies.pop(0)
+
+        return SimpleNamespace(llm=FakeLLM())
+
+    def test_tool_call_response_triggers_retry(self) -> None:
+        import asyncio
+
+        from agent_core.commands.implement_cmd import _chat_fix_text
+
+        agent = self._agent([
+            "<tool_call>\n{\"name\": \"edit\"}\n</tool_call>",
+            "[PATCH: mod.py]\n@@ -1,1 +1,1 @@\n-a\n+b",
+        ])
+        out = asyncio.run(_chat_fix_text(agent, [{"role": "user", "content": "fix"}], "mod.py", "err"))
+        assert "[PATCH:" in out
+        assert len(agent.llm.prompts) == 2
+
+    def test_blockless_response_gets_one_reminder(self) -> None:
+        import asyncio
+
+        from agent_core.commands.implement_cmd import _chat_fix_text
+
+        agent = self._agent([
+            "Let me explain the issue in prose.",
+            "[FILE: mod.py]\n```python\nimport os\nx = 1\n```",
+        ])
+        out = asyncio.run(_chat_fix_text(agent, [{"role": "user", "content": "fix"}], "mod.py", "err"))
+        assert "[FILE:" in out
+        assert len(agent.llm.prompts) == 2
+
+    def test_error_passthrough_skips_retries(self) -> None:
+        import asyncio
+
+        from agent_core.commands.implement_cmd import _chat_fix_text
+
+        agent = self._agent(["[Error: gateway down]"])
+        out = asyncio.run(_chat_fix_text(agent, [{"role": "user", "content": "fix"}], "mod.py", "err"))
+        assert out.startswith("[Error")
+        assert len(agent.llm.prompts) == 1
+

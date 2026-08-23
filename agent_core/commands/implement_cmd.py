@@ -13,7 +13,7 @@ from .doc_paths import find_input
 from agent_core import to_windows_path, workspace_path
 from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -433,16 +433,13 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
         else:
             result.append(("", var_errs))
 
-    # Name-not-defined groups: root cause = module that should define the name
+    # Name-not-defined groups stay consumer-side: the name exists somewhere
+    # (that is how mypy resolved it), so the minimal fix is an IMPORT in the
+    # file reporting the error — not an edit to the defining module. Editing
+    # the definer sent the LLM to "fix" a file that was never broken
+    # (observed 2026-08-23: MetricsCollector group rewrote metrics_collector.py).
     for name_name, name_errs in name_errors.items():
-        defn = _find_class_definition_file(name_name, ws_dir)
-        if defn:
-            defn_path, _ = defn
-            root_err = (os.path.basename(defn_path), defn_path,
-                        f"ROOT_CAUSE: {name_name} should be defined or exported here")
-            result.append((defn_path, [root_err] + name_errs))
-        else:
-            result.append(("", name_errs))
+        result.append(("", name_errs))
 
     # Ungrouped errors (no root cause detected)
     if other_errors:
@@ -706,6 +703,112 @@ def _block_target_matches(captured_name: str, fname: str) -> bool:
     if cap == tgt:
         return True
     return os.path.basename(cap) == os.path.basename(tgt)
+
+
+_FENCE_TAIL_RE = re.compile(r'```\s*$')
+_CODE_HINT_RE = re.compile(r'\b(import|def |class )\b')
+
+
+def _announce(text: str) -> None:
+    print(f"  [llm] {text}", flush=True)
+
+
+def _tool_call_retry_msgs(fname: str, err: str) -> list[dict[str, str]]:
+    """Strict retry prompt when the model answered with tool-call XML."""
+    return [
+        {"role": "system", "content": "You are fixing a Python type error. Output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No tool calls, no prose."},
+        {"role": "user", "content": f"Fix: {err[:300]}\n\nOutput:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added"},
+    ]
+
+
+def _format_reminder_msgs(fname: str, err: str) -> list[dict[str, str]]:
+    """Strict retry prompt when the answer contained no code block."""
+    return [
+        {"role": "system", "content": "You must output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No prose, no explanations."},
+        {"role": "user", "content": f"Fix the error in {fname}.\n\nError: {err[:300]}\n\nOutput format:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added\n\nOR:\n[FILE: {fname}]\n```python\n# complete corrected file\n```"},
+    ]
+
+
+async def _chat_fix_text(agent: Any, msgs: list[dict[str, str]], fname: str, err: str) -> str:
+    """One fix request incl. retries: tool-call rejection and one format
+    reminder when no code block is present. ``[Error ...]`` strings pass through.
+    """
+    fixed = str(await agent.llm.chat(msgs, disable_thinking=True))
+    if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
+        return fixed
+    if "<tool_call" in fixed:
+        _announce("retrying (tool-call response rejected)")
+        fixed = str(await agent.llm.chat(_tool_call_retry_msgs(fname, err), disable_thinking=True))
+        if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
+            return fixed
+    if "[PATCH:" not in fixed and "[FILE:" not in fixed:
+        print(f"  [debug] no code block in LLM response (first 500 chars):\n{fixed[:500]}\n  ---")
+        _announce("retrying with format reminder")
+        fixed = str(await agent.llm.chat(_format_reminder_msgs(fname, err), disable_thinking=True))
+    return fixed
+
+
+def _apply_file_block(raw_code: str, fpath: str, backup: str) -> tuple[bool, str]:
+    """Write an [FILE:] body to *fpath*, py_compile it; roll back on failure."""
+    new_code = _FENCE_TAIL_RE.sub('', raw_code.strip()).strip()
+    if not _CODE_HINT_RE.search(new_code):
+        return False, "content is not valid Python code"
+    with open(fpath, "w", encoding="utf-8") as f:
+        f.write(new_code)
+    r = subprocess.run(["python", "-m", "py_compile", fpath], capture_output=True, text=True)
+    if r.returncode == 0:
+        return True, f"{len(new_code)} bytes"
+    tail = r.stderr.strip().splitlines()[-1][:150] if r.stderr.strip() else ""
+    truncated = "truncated" in tail.lower() or "EOF" in tail
+    with open(fpath, "w", encoding="utf-8") as f:
+        f.write(backup)
+    label = "compile error (truncated output)" if truncated else "compile error"
+    return False, f"{label}, rolled back: {tail}"
+
+
+def _try_patch_block(patch_text: str, fpath: str, backup: str) -> tuple[bool, str]:
+    """Apply a [PATCH:] hunk with diff preview; write only on success."""
+    from agent_core.patch_utils import split_source_lines
+
+    ok, new_text = _apply_patch(patch_text, fpath, split_source_lines(backup))
+    if not ok:
+        return False, new_text[:200]
+    show_file_diff(fpath, backup, new_text)
+    with open(fpath, "w", encoding="utf-8") as f:
+        f.write(new_text)
+    return True, "patch applied"
+
+
+def _consume_fix_blocks(
+    fixed: str, fname: str, fpath: str, current_code: str, file_first: bool
+) -> tuple[bool, str]:
+    """Parse, guard (invariant #3) and apply code blocks from an LLM response.
+
+    Tries both formats in *file_first* order, falling back to the other when
+    the preferred one is absent or fails. Returns (applied, note).
+    """
+    blocks = [("FILE", _find_file_block(fixed)), ("PATCH", _find_patch_block(fixed))]
+    if not file_first:
+        blocks.reverse()
+    saw_block = False
+    note = ""
+    for kind, m in blocks:
+        if m is None:
+            continue
+        saw_block = True
+        if not _block_target_matches(m.group(1), fname):
+            print(f"  WARNING: ignoring [{kind}: {m.group(1)}] — targets another file (invariant #3)")
+            continue
+        if kind == "FILE":
+            ok, note = _apply_file_block(m.group(2), fpath, current_code)
+        else:
+            ok, note = _try_patch_block(m.group(2), fpath, current_code)
+        if ok:
+            return True, note
+        print(f"  [{kind}] failed: {note}")
+    if not saw_block:
+        return False, "no [PATCH:] or [FILE:] found in LLM response"
+    return False, note or "all code blocks failed to apply"
 
 
 def _apply_patch(patch_text: str, fpath: str, original_lines: list[str]) -> tuple[bool, str]:
@@ -2389,8 +2492,6 @@ class ImplementCommand(Command):
                 print("[fix] Cross-file attributes all verified!")
 
             _RE_4 = re.compile(r'^class\s+(\w+)', re.MULTILINE)
-            _RE_7 = re.compile(r'```\s*$')
-            _RE_8 = re.compile(r'\b(import|def |class )\b')
             for fix_attempt in range(3):
                 errors_found = []
                 current_error_sigs: dict[str, str] = {}
@@ -2669,92 +2770,20 @@ class ImplementCommand(Command):
                             downstream_errs,
                             prefer_file=(fname in patch_failed)
                         )
-                        fixed = await agent.llm.chat(fix_msgs, disable_thinking=True)
+                        print(f"  [llm] requesting root-cause fix for {fname} ({_rc_class or 'class'}) ...", flush=True)
+                        fixed = await _chat_fix_text(agent, fix_msgs, fname, err)
                         if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
                             print(f"  LLM error: {fixed}")
                             continue
-                        if "[PATCH:" not in fixed and "[FILE:" not in fixed:
-                            print(f"  [debug] LLM response (first 500 chars):\n{fixed[:500]}\n  ---")
-
-                        # Detect tool calls and retry with explicit format instruction
-                        if "<tool_call" in fixed or "<tool_call>" in fixed:
-                            print(f"  Detected tool calls in fix response, retrying with format instruction...")
-                            fix_msgs_tc = [
-                                {"role": "system", "content": "You are fixing a Python type error. Output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No tool calls, no prose."},
-                                {"role": "user", "content": f"Fix: {err[:300]}\n\nOutput:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added"}
-                            ]
-                            fixed = await agent.llm.chat(fix_msgs_tc, disable_thinking=True)
-                            if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
-                                print(f"  LLM error on retry: {fixed}")
-                                continue
-
-                        # Retry with format enforcement if no valid blocks found
-                        fix_retries = 0
-                        while fix_retries < 2:
-                            # Try [FILE:] format for root cause (usually needs full class rewrite)
-                            file_match = _find_file_block(fixed)
-                            if file_match and not _block_target_matches(file_match.group(1), fname):
-                                print(f"  WARNING: ignoring [FILE: {file_match.group(1)}] — targets another file (invariant #3)")
-                                file_match = None
-                            if file_match:
-                                new_code = file_match.group(2).strip()
-                                new_code = re.sub(r'```\s*$', '', new_code).strip()
-                                if not re.search(r'\b(import|def |class )\b', new_code):
-                                    print(f"  WARNING: Fix for {fname} is not valid Python code, skipping")
-                                    break
-                                with open(fpath, "w", encoding="utf-8") as f:
-                                    f.write(new_code)
-                                r = subprocess.run(["python", "-m", "py_compile", fpath], capture_output=True, text=True)
-                                if r.returncode == 0:
-                                    print(f"  Fixed root cause: {fname} ({len(new_code)} bytes)")
-                                    file_error_sigs[fname] = ""
-                                    fixed_files_this_round.add(fname)
-                                    break
-                                else:
-                                    print(f"  Fix introduced compile error: {r.stderr[:150]}")
-                                    with open(fpath, "w", encoding="utf-8") as f:
-                                        f.write(current_code)
-                                    file_error_sigs[fname] = cur_sig
-                                    patch_failed.add(fname)
-                                    break
-
-                            # Try patch format
-                            patch_match = _find_patch_block(fixed)
-                            if patch_match and not _block_target_matches(patch_match.group(1), fname):
-                                print(f"  WARNING: ignoring [PATCH: {patch_match.group(1)}] — targets another file (invariant #3)")
-                                patch_match = None
-                            if patch_match:
-                                patch_text = patch_match.group(2).strip()
-                                ok, new_text = _apply_patch(patch_text, fpath, split_source_lines(current_code))
-                                if ok:
-                                    show_file_diff(fpath, current_code, new_text)
-                                    with open(fpath, "w", encoding="utf-8") as f:
-                                        f.write(new_text)
-                                    print(f"  Fixed root cause: {fname} (patch applied)")
-                                    file_error_sigs[fname] = ""
-                                    fixed_files_this_round.add(fname)
-                                    break
-                                else:
-                                    print(f"  Patch failed: {new_text[:200]}")
-                                    patch_failed.add(fname)
-                                    file_error_sigs[fname] = cur_sig
-                                    break
-
-                            # No valid blocks — retry with format reminder
-                            fix_retries += 1
-                            if fix_retries < 2:
-                                print(f"  No [PATCH:] or [FILE:] found — retrying with format reminder...")
-                                fix_msgs_retry = [
-                                    {"role": "system", "content": "You must output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No prose, no explanations."},
-                                    {"role": "user", "content": f"Fix the error in {fname}.\n\nError: {err[:300]}\n\nOutput format:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added\n\nOR:\n[FILE: {fname}]\n```python\n# complete corrected file\n```"}
-                                ]
-                                fixed = await agent.llm.chat(fix_msgs_retry, disable_thinking=True)
-                                if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
-                                    print(f"  LLM error on retry: {fixed}")
-                                    break
-                            else:
-                                print("  No [PATCH:] or [FILE:] found in LLM response (after retry)")
-                                file_error_sigs[fname] = cur_sig
+                        applied, note = _consume_fix_blocks(fixed, fname, fpath, current_code, file_first=True)
+                        if applied:
+                            print(f"  Fixed root cause: {fname} ({note})")
+                            file_error_sigs[fname] = ""
+                            fixed_files_this_round.add(fname)
+                        else:
+                            print(f"  Root-cause fix failed for {fname}: {note}")
+                            patch_failed.add(fname)
+                            file_error_sigs[fname] = cur_sig
 
                     # Fix downstream errors (if root cause was fixed or no root cause)
                     root_fname = root_err[0] if root_err else None
@@ -2783,93 +2812,20 @@ class ImplementCommand(Command):
                             current_code = f.read()
 
                         fix_msgs = _build_fix_prompt(err, current_code, fname, prefer_file=(fname in patch_failed))
-                        fixed = await agent.llm.chat(fix_msgs, disable_thinking=True)
+                        print(f"  [llm] requesting fix for {fname} ({err.split(':')[0].strip()[:60]}) ...", flush=True)
+                        fixed = await _chat_fix_text(agent, fix_msgs, fname, err)
                         if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
                             print(f"  LLM error: {fixed}")
                             continue
-                        if "[PATCH:" not in fixed and "[FILE:" not in fixed:
-                            print(f"  [debug] LLM response (first 500 chars):\n{fixed[:500]}\n  ---")
-
-                        # Detect tool calls and retry with explicit format instruction
-                        if "<tool_call" in fixed or "<tool_call>" in fixed:
-                            print(f"  Detected tool calls in fix response, retrying with format instruction...")
-                            fix_msgs_tc = [
-                                {"role": "system", "content": "You are fixing a Python type error. Output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No tool calls, no prose."},
-                                {"role": "user", "content": f"Fix: {err[:300]}\n\nOutput:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added"}
-                            ]
-                            fixed = await agent.llm.chat(fix_msgs_tc, disable_thinking=True)
-                            if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
-                                print(f"  LLM error on retry: {fixed}")
-                                continue
-
-                        # Retry with format enforcement if no valid blocks found
-                        fix_retries = 0
-                        while fix_retries < 2:
-                            # Try [PATCH:] format first (preferred — minimal change)
-                            patch_match = _find_patch_block(fixed)
-                            if patch_match and not _block_target_matches(patch_match.group(1), fname):
-                                print(f"  WARNING: ignoring [PATCH: {patch_match.group(1)}] — targets another file (invariant #3)")
-                                patch_match = None
-                            if patch_match:
-                                patch_text = patch_match.group(2).strip()
-                                ok, new_text = _apply_patch(patch_text, fpath, split_source_lines(current_code))
-                                if ok:
-                                    show_file_diff(fpath, current_code, new_text)
-                                    with open(fpath, "w", encoding="utf-8") as f:
-                                        f.write(new_text)
-                                    print(f"  Fixed: {fname} (patch applied)")
-                                    file_error_sigs[fname] = ""
-                                    fixed_files_this_round.add(fname)
-                                    break
-                                else:
-                                    print(f"  Patch failed: {new_text[:200]}")
-                                    print(f"  Debug — LLM response patch area: {patch_text[:300]}")
-                                    patch_failed.add(fname)
-                                    file_error_sigs[fname] = cur_sig
-                                    break
-
-                            # Try [FILE:] format
-                            file_match = _find_file_block(fixed)
-                            if file_match and not _block_target_matches(file_match.group(1), fname):
-                                print(f"  WARNING: ignoring [FILE: {file_match.group(1)}] — targets another file (invariant #3)")
-                                file_match = None
-                            if file_match:
-                                new_code = file_match.group(2).strip()
-                                new_code = _RE_7.sub('', new_code).strip()
-                                if not _RE_8.search(new_code):
-                                    print(f"  WARNING: Fix for {fname} is not valid Python code, skipping")
-                                    break
-                                with open(fpath, "w", encoding="utf-8") as f:
-                                    f.write(new_code)
-                                r = subprocess.run(["python", "-m", "py_compile", fpath], capture_output=True, text=True)
-                                if r.returncode == 0:
-                                    print(f"  Fixed: {fname} ({len(new_code)} bytes)")
-                                    file_error_sigs[fname] = ""
-                                    fixed_files_this_round.add(fname)
-                                    break
-                                else:
-                                    truncated = "truncated" in str(r.stderr).lower() or "unexpected EOF" in str(r.stderr) or "EOF" in str(r.stderr)
-                                    print(f"  Fix introduced compile error{'' if not truncated else ' (truncated output)'}, rolling back: {str(r.stderr).strip()[:150]}")
-                                    with open(fpath, "w", encoding="utf-8") as f:
-                                        f.write(current_code)
-                                    file_error_sigs[fname] = cur_sig
-                                    break
-
-                            # No valid blocks — retry with format reminder
-                            fix_retries += 1
-                            if fix_retries < 2:
-                                print(f"  No [PATCH:] or [FILE:] found — retrying with format reminder...")
-                                fix_msgs_retry = [
-                                    {"role": "system", "content": "You must output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No prose, no explanations."},
-                                    {"role": "user", "content": f"Fix the error in {fname}.\n\nError: {err[:300]}\n\nOutput format:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added\n\nOR:\n[FILE: {fname}]\n```python\n# complete corrected file\n```"}
-                                ]
-                                fixed = await agent.llm.chat(fix_msgs_retry, disable_thinking=True)
-                                if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
-                                    print(f"  LLM error on retry: {fixed}")
-                                    break
-                            else:
-                                print("  No [PATCH:] or [FILE:] found in LLM response (after retry)")
-                                file_error_sigs[fname] = cur_sig
+                        applied, note = _consume_fix_blocks(fixed, fname, fpath, current_code, file_first=False)
+                        if applied:
+                            print(f"  Fixed: {fname} ({note})")
+                            file_error_sigs[fname] = ""
+                            fixed_files_this_round.add(fname)
+                        else:
+                            print(f"  Fix failed for {fname}: {note}")
+                            patch_failed.add(fname)
+                            file_error_sigs[fname] = cur_sig
 
             print("\n[fix] Complete")
 
