@@ -10,6 +10,22 @@
     .table thead th { white-space: nowrap; }
     .table tbody td { vertical-align: middle; }
     #connStatus { font-size: 12px; }
+    /* Navbar round buttons: keep glyphs dead-centre.
+       style.css draws the theme glyph via [data-theme-toggle]::after with
+       position:absolute but no offsets -> without explicit centering it sits
+       off-centre inside the 40px circle. */
+    [data-theme-toggle]::after {
+      inset-block-start: 50%;
+      inset-inline-start: 50%;
+      transform: translate(-50%, -50%);
+      line-height: 1;
+    }
+    /* Monochrome toggle: never let the icon element collapse/mis-align. */
+    .mono-toggle iconify-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
   </style>
 </head>
 <body>
@@ -359,6 +375,7 @@
   <script src="static/ttheme/js/lib/jquery-3.7.1.min.js"></script>
   <script src="static/ttheme/js/lib/bootstrap.bundle.min.js"></script>
   <script src="static/ttheme/js/lib/iconify-icon.min.js"></script>
+  <script src="static/assets/agent1-icon-bundle.js"></script>
   <script src="static/ttheme/js/app.js"></script>
   <script>
     const API = {

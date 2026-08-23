@@ -63,11 +63,14 @@ function calculateSettingAsThemeString({ localStorageTheme }) {
 
 /**
 * Utility function to update the button text and aria-label.
+*
+* NOTE: deliberately does NOT set innerText. The visible glyph comes from
+* CSS ([data-theme-toggle]::after, remixicon). Writing text into the button
+* pushes the glyph off-centre inside the round navbar button.
 */
 function updateButton({ buttonEl, isDark }) {
   const newCta = isDark ? "dark" : "light";
   buttonEl.setAttribute("aria-label", newCta);
-  buttonEl.innerText = newCta;
 }
 
 /**

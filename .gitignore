@@ -15,6 +15,11 @@ eggs/
 .eggs/
 lib/
 lib64/
+# ...except vendored frontend libraries required by the TTTHEME dashboard
+# (jquery/bootstrap/iconify-icon). Without these the navbar buttons lose
+# Bootstrap layout classes and every <iconify-icon> stays empty.
+!static/ttheme/js/lib/
+!static/ttheme/css/lib/
 parts/
 sdist/
 var/
