@@ -1,15 +1,98 @@
 <!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Agent Performance</title>
-<style>
-body {font-family:monospace;background:#1a1a2e;color:#e0e0e0;padding:20px}
-h2 {color:#00d4aa} th,td {padding:6px 14px;text-align:right}
-th {background:#16213e;color:#00d4aa} td {background:#0f3460}
-tr:hover td {background:#1a508b}
-</style></head><body>
-<h2>Command Summary</h2>
-<table><tr><th>Command</th><th>Calls</th><th>Total</th><th>Avg</th><th>Max</th><th>Last</th></tr>
-<tr><td>perf</td><td>1</td><td>0.0s</td><td>0.0s</td><td>0.0s</td><td>0.0s</td></tr></table>
-<h2>Execution Log (last 100)</h2>
-<table><tr><th>Time</th><th>Command</th><th>Elapsed</th></tr>
-<tr><td>2026-07-31T15:14:50</td><td>perf</td><td>0.0s</td></tr></table>
-</body></html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Agent1 Performance Dashboard</title>
+<link rel="icon" type="image/x-icon" href="static/favicon.png">
+<link rel="stylesheet" href="static/theme.css">
+</head>
+<body>
+<div class="app-container">
+    <div class="header">
+        <div style="display:flex;align-items:center;gap:8px;">
+            <img src="static/favicon.png" alt="Agent1 Logo" style="width:32px;height:32px;">
+            <h6 class="fw-semibold mb-0" style="display:inline-block;background:linear-gradient(135deg,var(--gradient-start),var(--gradient-end));-webkit-background-clip:text;background-clip:text;color:transparent;font-size:24px;">AGENT1</h6>
+            <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">Performance Dashboard</span>
+            <button type="button" class="theme-toggle"
+                onclick="toggleTheme()" id="themeToggle"
+                aria-label="Toggle Light/Dark Theme"></button>
+        </div>
+    </div>
+
+    <div class="panel" style="position:static;margin:0 0 12px 0;min-width:0;">
+        <div class="panel-header">
+            <h6 class="fw-semibold mb-0">Command Summary</h6>
+        </div>
+        <div class="panel-content">
+            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;">
+                <div style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;padding:14px;border:1px solid var(--border);text-align:center;">
+                    <div style="font-size:28px;color:var(--accent);line-height:1;margin-bottom:6px;" class="icon-cpu"></div>
+                    <div style="font-size:22px;font-weight:700;">28</div>
+                    <div style="font-size:11px;color:var(--text-muted);">Commands</div>
+                </div>
+                <div style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;padding:14px;border:1px solid var(--border);text-align:center;">
+                    <div style="font-size:28px;color:var(--warning);line-height:1;margin-bottom:6px;" class="icon-clock"></div>
+                    <div style="font-size:22px;font-weight:700;">3.8s</div>
+                    <div style="font-size:11px;color:var(--text-muted);">Runtime</div>
+                </div>
+                <div style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;padding:14px;border:1px solid var(--border);text-align:center;">
+                    <div style="font-size:28px;color:var(--success);line-height:1;margin-bottom:6px;" class="icon-chart"></div>
+                    <div style="font-size:22px;font-weight:700;">4</div>
+                    <div style="font-size:11px;color:var(--text-muted);">Command Types</div>
+                </div>
+            </div>
+            <table class="issues-table">
+                <thead><tr><th>Command</th><th>Calls</th><th>Total</th><th>Avg</th><th>Max</th><th>Last</th></tr></thead>
+                <tbody><tr><td>serve</td><td>3</td><td>2.5s</td><td>0.8s</td><td>1.6s</td><td>0.9s</td></tr>
+<tr><td>perf</td><td>5</td><td>0.2s</td><td>0.0s</td><td>0.1s</td><td>0.0s</td></tr>
+<tr><td>help</td><td>12</td><td>0.2s</td><td>0.0s</td><td>0.1s</td><td>0.0s</td></tr>
+<tr><td>status</td><td>8</td><td>0.9s</td><td>0.1s</td><td>0.3s</td><td>0.1s</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="panel" style="position:static;margin:0 0 12px 0;min-width:0;">
+        <div class="panel-header">
+            <h6 class="fw-semibold mb-0">Execution Log (last 100)</h6>
+        </div>
+        <div class="panel-content">
+            <table class="issues-table">
+                <thead><tr><th>Time</th><th>Command</th><th>Elapsed</th></tr></thead>
+                <tbody><tr><td>2026-08-19T18:00:01</td><td>serve</td><td>0.9s</td></tr>
+<tr><td>2026-08-19T18:01:23</td><td>status</td><td>0.15s</td></tr>
+<tr><td>2026-08-19T18:02:45</td><td>help</td><td>0.02s</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <div>
+                <span>Developed by Holger K. Pedersen</span>
+                <a href="https://github.com/holgerkpedersen/Agent1" target="_blank" rel="noopener"
+                    title="Holger K. Pedersen - Agent1" class="ms-1"><span id="ghIcon"></span></a>
+            </div>
+            <div>
+                <span>UI/UX reshaped with care by <a href="https://2tinteractive.com" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">2tinteractive.com - The Spatial Digital Agency</a> (<a href="https://github.com/LebToki" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">Tarek Tarabichi</a>)</span>
+            </div>
+        </div>
+    </footer>
+</div>
+<script src="static/assets/agent1-icons.js"></script>
+<script>
+let currentTheme = localStorage.getItem('agent1_theme') || 'dark';
+document.documentElement.setAttribute('data-theme', currentTheme);
+document.getElementById('themeToggle').innerHTML = iconify(currentTheme === 'dark' ? 'solar:moon-bold' : 'solar:sun-bold', 18);
+document.querySelector('.icon-cpu').innerHTML = iconify('tabler:cpu', 28);
+document.querySelector('.icon-clock').innerHTML = iconify('solar:clock-circle-bold', 28);
+document.querySelector('.icon-chart').innerHTML = iconify('solar:chart-2-bold', 28);
+document.getElementById('ghIcon').innerHTML = iconify('mdi:github', 18);
+function toggleTheme() {
+    currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', currentTheme);
+    localStorage.setItem('agent1_theme', currentTheme);
+    document.getElementById('themeToggle').innerHTML = iconify(currentTheme === 'dark' ? 'solar:moon-bold' : 'solar:sun-bold', 18);
+}
+</script>
+</body>
+</html>
