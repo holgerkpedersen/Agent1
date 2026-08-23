@@ -1,0 +1,60 @@
+<aside class="sidebar">
+  <button type="button" class="sidebar-close-btn">
+    <iconify-icon icon="radix-icons:cross-2"></iconify-icon>
+  </button>
+  <div>
+    <a href="index.html" class="sidebar-logo" style="display:flex;align-items:center;gap:10px;padding:0 16px;">
+      <img src="static/ttheme/images/logo.png" alt="Agent1 Logo" style="width:34px;height:34px;flex-shrink:0;">
+      <strong class="mb-0" style="font-size:20px;font-weight:700;font-family:'Poppins',sans-serif;color:inherit;line-height:1;">AGENT1</strong>
+    </a>
+  </div>
+  <div class="sidebar-menu-area">
+    <ul class="sidebar-menu" id="sidebar-menu">
+      <li class="sidebar-menu-group-title">Agent1</li>
+      <li class="active" data-view="dashboard">
+        <a href="index.html">
+          <iconify-icon icon="solar:home-smile-angle-outline" class="menu-icon"></iconify-icon>
+          <span>Dashboard</span>
+        </a>
+      </li>
+      <li data-view="commands">
+        <a href="#view-commands" onclick="openView('commands')">
+          <iconify-icon icon="solar:chart-2-outline" class="menu-icon"></iconify-icon>
+          <span>Command Summary</span>
+        </a>
+      </li>
+      <li data-view="log">
+        <a href="#view-log" onclick="openView('log')">
+          <iconify-icon icon="solar:clipboard-list-outline" class="menu-icon"></iconify-icon>
+          <span>Execution Log</span>
+        </a>
+      </li>
+      <li data-view="alerts">
+        <a href="#view-alerts" onclick="openView('alerts')">
+          <iconify-icon icon="solar:bell-outline" class="menu-icon"></iconify-icon>
+          <span>Alerts</span>
+        </a>
+      </li>
+      <li data-view="gauges">
+        <a href="#view-gauges" onclick="openView('gauges')">
+          <iconify-icon icon="line-md:gauge" class="menu-icon"></iconify-icon>
+          <span>Gauges</span>
+        </a>
+      </li>
+      <li class="sidebar-menu-group-title">Application</li>
+      <li data-view="histogram">
+        <a href="#view-histogram" onclick="openView('histogram')">
+          <iconify-icon icon="ep:histogram" class="menu-icon"></iconify-icon>
+          <span>Histogram</span>
+        </a>
+      </li>
+      <li class="sidebar-menu-group-title">Resources</li>
+      <li>
+        <a href="https://github.com/holgerkpedersen/Agent1" target="_blank" rel="noopener">
+          <iconify-icon icon="mdi:github" class="menu-icon"></iconify-icon>
+          <span>Source</span>
+        </a>
+      </li>
+    </ul>
+  </div>
+</aside>
