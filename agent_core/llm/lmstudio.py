@@ -351,6 +351,28 @@ class LMStudioProvider:
                 ctk.setdefault("enable_thinking", False)
         return payload
     
+    def _open_chat(self, req: urllib.request.Request, timeout: int) -> Any:
+        """Open *req* against LM Studio, auto-loading the pinned model on a
+        "not loaded" 400 (multi-shell recovery).
+
+        When another ``agent.py`` shell (or the LM Studio GUI) evicted this
+        session's model from VRAM, LM Studio answers HTTP 400 ("model is not
+        loaded").  Instead of failing, load OUR model back and retry once —
+        this is what keeps a running session pinned to its own choice.
+        Shared by :meth:`_make_request` and :meth:`chat_stream`.
+        """
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode('utf-8', 'replace').strip()
+            detail = body or str(exc.reason)
+            if exc.code == 400 and _model_load_hint(detail):
+                ok, msg = load_model(self.model_name)
+                if ok:
+                    return urllib.request.urlopen(req, timeout=timeout)
+                detail = f"{detail} (auto-load failed: {msg})"
+            raise RuntimeError(f"HTTP Error {exc.code}: {detail}") from exc
+
     def _make_request(self, payload: dict[str, Any], timeout: int = 3600) -> dict[str, Any]:
         """Make synchronous HTTP request to LM Studio.
 
@@ -369,18 +391,8 @@ class LMStudioProvider:
             method='POST'
         )
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with self._open_chat(req, timeout) as response:
                 return cast(dict[str, Any], json.loads(response.read().decode()))
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode('utf-8', 'replace').strip()
-            detail = body or str(exc.reason)
-            if exc.code == 400 and _model_load_hint(detail):
-                ok, msg = load_model(self.model_name)
-                if ok:
-                    with urllib.request.urlopen(req, timeout=timeout) as response:
-                        return cast(dict[str, Any], json.loads(response.read().decode()))
-                detail = f"{detail} (auto-load failed: {msg})"
-            raise RuntimeError(f"HTTP Error {exc.code}: {detail}")
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"LM Studio returned non-JSON response: {exc}") from exc
     
@@ -504,7 +516,10 @@ class LMStudioProvider:
             reasoning_content = ""
             finish_reason = None
             
-            with urllib.request.urlopen(req, timeout=3600) as response:
+            # _open_chat (not raw urlopen): a 400 "model is not loaded" here
+            # means another shell evicted our pinned model — reload + retry
+            # once, same recovery as the non-streaming path.
+            with self._open_chat(req, timeout=3600) as response:
                 for line_bytes in response:
                     line = line_bytes.decode('utf-8').strip()
                     if not line.startswith('data: '):

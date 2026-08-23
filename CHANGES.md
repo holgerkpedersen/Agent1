@@ -1,4 +1,10 @@
-﻿## 2026-08-23 - fix: concurrent agent.py shells hijacked each other's model
+﻿## 2026-08-23 - fix: streaming chat died when another shell evicted the pinned model
+
+**Change**: agent_core/llm/lmstudio.py (new `LMStudioProvider._open_chat` shared opener — auto-reload of the pinned model on LM Studio's 400 "model is not loaded" now covers BOTH paths; `chat_stream` switched from raw `urllib.request.urlopen` to `_open_chat`), tests/test_lmstudio_stream_recovery.py (new, 5 tests)
+
+**Reason**: The multi-shell fix taught sessions to keep their own model, and `_make_request` recovered by reloading it on demand — but only the NON-streaming path. `chat_stream` used raw `urlopen`: after shell 2 loaded a different model, shell 1's next streamed chat got an opaque `[LM Studio stream error: HTTP Error 400: Bad Request]` with no recovery. Both paths now share `_open_chat`, which on that specific 400 reloads OUR pinned model (`self.model_name` — never whatever the other shell put in VRAM) and retries once; genuine HTTP errors still surface their body. Verified: 5 new hermetic tests (stream 400 → load_model called once with the PINNED model + retry succeeds; auto-load failure reports both errors; non-load 400 triggers no load; non-streaming recovery unchanged through the shared opener; non-load errors re-raised); confirmed the new tests FAIL against a temporarily reverted `chat_stream`; mypy baseline unchanged for lmstudio.py (2 pre-existing unused-ignore in secrets.py); full suite 1146 passed + 2 skipped.
+
+## 2026-08-23 - fix: concurrent agent.py shells hijacked each other's model
 
 **Change**: agent_core/commands/model_cmd.py (`_list_models` auto-sync → read-only advisory), agent_core/constants.py (`resolve_model` priority: persisted model.json now outranks the live LM Studio poll; live poll demoted to first-run fallback), tests/test_multi_shell_model_isolation.py (new, 7 tests)
 
