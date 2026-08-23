@@ -598,3 +598,112 @@ class TestDependencyCascadeSafety:
         assert not (tmp_path / "pkg" / "wrong_name.py").exists()
         out = capsys.readouterr().out
         assert "WARNING: [FILE: pkg/wrong_name.py] is not in the planned batch" in out
+
+
+class TestFixBlockParsing:
+    """Regression tests for fix-loop [PATCH:]/[FILE:] extraction.
+
+    The 2026-08-23 incident: ``_RE_5.search(fixed, re.DOTALL)`` passed flags
+    as the compiled pattern's *pos* argument (re.DOTALL == 16), so parsing
+    skipped the first 16 characters -- every single-block response starting
+    with "[PATCH: file.py]" was silently discarded and reported as
+    "No [PATCH:] or [FILE:] found" even though the LLM returned valid code.
+    """
+
+    def test_patch_block_at_start_matches(self) -> None:
+        from agent_core.commands.implement_cmd import _find_patch_block
+
+        resp = "[PATCH: tool_router.py]\n@@ -316,7 +316,7 @@\n-                prev = range(len(s2) + 1)\n+                prev = list(range(len(s2) + 1))\n"
+        m = _find_patch_block(resp)
+        assert m is not None, "patch at position 0 must be found (pos=16 bug)"
+        assert m.group(1).strip() == "tool_router.py"
+        assert "prev = list(range" in m.group(2)
+
+    def test_file_block_at_start_matches(self) -> None:
+        from agent_core.commands.implement_cmd import _find_file_block
+
+        resp = "[FILE: agent.py]\n```python\nimport os\n\ndef f():\n    return 1\n```\n"
+        m = _find_file_block(resp)
+        assert m is not None, "file block at position 0 must be found (pos=16 bug)"
+        assert "def f():" in m.group(2)
+
+    def test_patch_block_after_prose_matches(self) -> None:
+        from agent_core.commands.implement_cmd import _find_patch_block
+
+        resp = "Here is the minimal fix:\n[PATCH: x.py]\n@@ -1,1 +1,1 @@\n-old\n+new\n"
+        m = _find_patch_block(resp)
+        assert m is not None
+        assert "+new" in m.group(2)
+
+    def test_short_response_without_blocks_returns_none(self) -> None:
+        from agent_core.commands.implement_cmd import _find_patch_block, _find_file_block
+
+        assert _find_patch_block("no code here") is None
+        assert _find_file_block("no code here") is None
+
+    def test_file_block_without_closing_fence_captures_to_end(self) -> None:
+        from agent_core.commands.implement_cmd import _find_file_block
+
+        resp = "[FILE: a.py]\n```python\ndef g():\n    return 2\n"
+        m = _find_file_block(resp)
+        assert m is not None
+        assert "return 2" in m.group(2)
+
+
+class TestBlockTargetMatches:
+    """Invariant #3 in the fix loop: foreign block names must be rejected."""
+
+    def test_exact_match(self) -> None:
+        from agent_core.commands.implement_cmd import _block_target_matches
+
+        assert _block_target_matches("agent.py", "agent.py")
+
+    def test_backslash_normalization(self) -> None:
+        from agent_core.commands.implement_cmd import _block_target_matches
+
+        assert _block_target_matches("agent_core\\llm\\provider.py", "agent_core/llm/provider.py")
+
+    def test_basename_fallback(self) -> None:
+        from agent_core.commands.implement_cmd import _block_target_matches
+
+        assert _block_target_matches("provider.py", "agent_core/llm/provider.py")
+
+    def test_foreign_name_rejected(self) -> None:
+        from agent_core.commands.implement_cmd import _block_target_matches
+
+        assert not _block_target_matches("sanitizer.py", "secrets.py")
+
+    def test_empty_capture_accepted(self) -> None:
+        from agent_core.commands.implement_cmd import _block_target_matches
+
+        assert _block_target_matches("", "agent.py")
+
+
+class TestHoistedRegexes:
+    """_CLASS_DEF_RE/_DEF_PARAMS_RE previously lost their flags to the pos
+    argument (^class only matched at offset 0; def scan started at char 16)."""
+
+    def test_class_def_found_mid_file(self) -> None:
+        from agent_core.commands.implement_cmd import _CLASS_DEF_RE
+
+        src = '"""Docstring."""\n\nimport os\n\nclass Widget:\n    pass\n'
+        assert _CLASS_DEF_RE.findall(src) == ["Widget"]
+
+    def test_class_def_at_file_start(self) -> None:
+        from agent_core.commands.implement_cmd import _CLASS_DEF_RE
+
+        assert _CLASS_DEF_RE.findall("class A:\n    pass\n") == ["A"]
+
+    def test_def_params_on_short_line(self) -> None:
+        from agent_core.commands.implement_cmd import _DEF_PARAMS_RE
+
+        m = _DEF_PARAMS_RE.search("def f(a):")
+        assert m is not None
+        assert m.group(1) == "a"
+
+    def test_trace_variable_source_survives_short_def(self) -> None:
+        from agent_core.commands.implement_cmd import _trace_variable_source
+
+        lines = ["def f(x):", "    return x"]
+        out = _trace_variable_source('y.py:1: Argument 1 to "f" has type "int"', lines, 1)
+        assert isinstance(out, str)

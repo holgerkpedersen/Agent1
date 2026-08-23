@@ -256,10 +256,9 @@ def _trace_variable_source(err: str, lines: list[str], error_line: int) -> str:
 
     # Find the function definition and extract parameter name
     param_name = ""
-    _RE_1 = re.compile(r'def\s+\w+\s*\((.*?)\)')
     for i, line in enumerate(lines):
         if f"def {func_name}(" in line:
-            params_match = _RE_1.search(line, re.DOTALL)
+            params_match = _DEF_PARAMS_RE.search(line)
             if params_match:
                 params = [p.strip().split(':')[0].strip().split('=')[0].strip()
                           for p in params_match.group(1).split(',')]
@@ -315,7 +314,12 @@ def _trace_variable_source(err: str, lines: list[str], error_line: int) -> str:
 
 
 def _find_class_definition_file(class_name: str, ws_dir: str, exclude_file: str = "") -> tuple[str, str] | None:
-    """Find the file that defines a class. Returns (file_path, source_content) or None."""
+    """Find the file that defines a class. Returns (file_path, source_content) or None.
+
+    When multiple files define the same class, returns the one with the most
+    attributes (most-derived / most complete definition).
+    """
+    matches: list[tuple[str, str, int]] = []
     for root, dirs, files in os.walk(ws_dir):
         if ".git" in root or "__pycache__" in root:
             continue
@@ -329,84 +333,208 @@ def _find_class_definition_file(class_name: str, ws_dir: str, exclude_file: str 
                 with open(fp, "r", encoding="utf-8", errors="replace") as sf:
                     src = sf.read()
                 if re.search(rf'^class\s+{re.escape(class_name)}\b', src, re.MULTILINE):
-                    return (fp, src)
+                    # Count attributes to prefer the most-complete definition
+                    attr_count = len(re.findall(r'^\s+\w+\s*[:=]', src, re.MULTILINE))
+                    matches.append((fp, src, attr_count))
             except Exception:
                 print("WARNING: failed to read file during signature extraction:", f)  # silent_except fix
 
-    return None
+    if not matches:
+        return None
+    # Return the most-complete definition (most attributes)
+    best = max(matches, key=lambda m: m[2])
+    return (best[0], best[1])
+
+
 _ATTR_NO_ATTR_RE = re.compile(r'"(\w+)" has no attribute "(\w+)"')
 _FOR_NAME_RE = re.compile(r'for "(\w+)"')
 _IMPORT_FROM_RE = re.compile(r"cannot import name '(\w+)' from '(\w+)'")
+_ASSIGN_TYPE_RE = re.compile(r'Incompatible types in assignment.*variable has type "([^"]+)"')
+_NAME_NOT_DEF_RE = re.compile(r'Name "(\w+)" is not defined')
 
 
 def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> list[tuple[str, list[tuple[str, str, str]]]]:
-    """Group errors by root cause class. Returns [(root_cause_file, [errors])].
-    
-    For attr-defined/call-arg/import errors, finds the class definition file.
-    Groups all errors that trace to the same class definition.
+    """Group errors by root cause. Returns [(root_cause_file, [errors])].
+
+    Phase 1: Categorize errors into class/import/assignment/name/other buckets.
+    Phase 2: Find definition files and create root-cause entries.
+    Phase 3: Sort groups by file dependency (topological order).
     """
-    # Extract class names from errors
     class_errors: dict[str, list[tuple[str, str, str]]] = {}
-    import_errors: dict[str, list[tuple[str, str, str]]] = {}
+    import_errors: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
+    assign_errors: dict[str, list[tuple[str, str, str]]] = {}
+    name_errors: dict[str, list[tuple[str, str, str]]] = {}
     other_errors: list[tuple[str, str, str]] = []
-    
+
     for fname, fpath, err in errors:
-        # Extract class name from attr-defined errors
         # Pattern: "MouseEventData" has no attribute "button"
         cls_match = _ATTR_NO_ATTR_RE.search(err)
         if cls_match:
-            cls_name = cls_match.group(1)
-            class_errors.setdefault(cls_name, []).append((fname, fpath, err))
+            class_errors.setdefault(cls_match.group(1), []).append((fname, fpath, err))
             continue
         # Pattern: Unexpected keyword argument "timestamp" for "MouseEventData"
         cls_match = _FOR_NAME_RE.search(err)
         if cls_match and "keyword argument" in err:
-            cls_name = cls_match.group(1)
-            class_errors.setdefault(cls_name, []).append((fname, fpath, err))
+            class_errors.setdefault(cls_match.group(1), []).append((fname, fpath, err))
             continue
-        # Pattern: ImportError: cannot import name 'MouseEvent' from 'mouse_event_handler'
+        # Pattern: cannot import name 'X' from 'Y'
         import_match = _IMPORT_FROM_RE.search(err)
         if import_match:
-            missing_name = import_match.group(1)
-            # source_module assigned at line 327 but never used after. Remove the dead assignment.
-            import_errors.setdefault(missing_name, []).append((fname, fpath, err))
+            key = (import_match.group(2), import_match.group(1))  # (source_module, missing_name)
+            import_errors.setdefault(key, []).append((fname, fpath, err))
+            continue
+        # Pattern: Incompatible types in assignment
+        assign_match = _ASSIGN_TYPE_RE.search(err)
+        if assign_match:
+            # Extract the variable name from the error (e.g. "agent.py:683: error: Incompatible types ...")
+            var_match = re.search(r'Incompatible types in assignment.*"(\w+)"', err)
+            if var_match:
+                assign_errors.setdefault(var_match.group(1), []).append((fname, fpath, err))
+                continue
+        # Pattern: Name "X" is not defined
+        name_match = _NAME_NOT_DEF_RE.search(err)
+        if name_match:
+            name_errors.setdefault(name_match.group(1), []).append((fname, fpath, err))
             continue
         other_errors.append((fname, fpath, err))
-    
+
     result: list[tuple[str, list[tuple[str, str, str]]]] = []
-    
+
+    # Class-definition groups: root cause = file defining the class
     for cls_name, cls_errs in class_errors.items():
-        # Find the class definition file
         defn = _find_class_definition_file(cls_name, ws_dir)
         if defn:
-            defn_path, defn_src = defn
-            # Add the class definition file as the root cause
+            defn_path, _ = defn
             root_err = (os.path.basename(defn_path), defn_path,
                         f"ROOT_CAUSE: {cls_name} is defined here but missing attributes needed by downstream files")
             result.append((defn_path, [root_err] + cls_errs))
         else:
-            # Can't find definition — just group the errors together
             result.append(("", cls_errs))
-    
-    # Group import errors by the missing symbol
-    for missing_name, imp_errs in import_errors.items():
-        # Try to find where this symbol should be defined
+
+    # Import-error groups: root cause = source module
+    for (source_module, missing_name), imp_errs in import_errors.items():
         defn = _find_class_definition_file(missing_name, ws_dir)
         if defn:
-            defn_path, defn_src = defn
+            defn_path, _ = defn
             root_err = (os.path.basename(defn_path), defn_path,
                         f"ROOT_CAUSE: {missing_name} should be exported from this module")
             result.append((defn_path, [root_err] + imp_errs))
         else:
-            # Check if the symbol exists somewhere but isn't exported
-            # Group by source module — all errors importing from same module
             result.append(("", imp_errs))
-    
-    # Add ungrouped errors
+
+    # Assignment-type groups: root cause = file where variable is initialized
+    for var_name, var_errs in assign_errors.items():
+        # Try to find where the variable is defined/initialized
+        defn_path = _find_variable_definition(var_name, var_errs, ws_dir)
+        if defn_path:
+            root_err = (os.path.basename(defn_path), defn_path,
+                        f"ROOT_CAUSE: {var_name} has wrong type at definition site")
+            result.append((defn_path, [root_err] + var_errs))
+        else:
+            result.append(("", var_errs))
+
+    # Name-not-defined groups: root cause = module that should define the name
+    for name_name, name_errs in name_errors.items():
+        defn = _find_class_definition_file(name_name, ws_dir)
+        if defn:
+            defn_path, _ = defn
+            root_err = (os.path.basename(defn_path), defn_path,
+                        f"ROOT_CAUSE: {name_name} should be defined or exported here")
+            result.append((defn_path, [root_err] + name_errs))
+        else:
+            result.append(("", name_errs))
+
+    # Ungrouped errors (no root cause detected)
     if other_errors:
         result.append(("", other_errors))
-    
+
     return result
+
+
+def _find_variable_definition(var_name: str, errors: list[tuple[str, str, str]], ws_dir: str) -> str | None:
+    """Find where a variable is defined/initialized based on error context.
+
+    Searches the files containing errors for assignment patterns like
+    ``var = Something(...)`` or ``var: SomeType = ...``.
+    """
+    # Collect unique files from the errors
+    error_files = {fpath for _, fpath, _ in errors if fpath}
+    for fpath in error_files:
+        if not fpath or not os.path.isfile(fpath):
+            continue
+        try:
+            with open(fpath, "r", encoding="utf-8", errors="replace") as sf:
+                src = sf.read()
+        except Exception:
+            continue
+        # Look for initialization patterns
+        patterns = [
+            rf'^\s*{re.escape(var_name)}\s*=\s*\w+',
+            rf'^\s*{re.escape(var_name)}\s*:\s*\w+.*=',
+        ]
+        for pat in patterns:
+            if re.search(pat, src, re.MULTILINE):
+                return fpath
+    return None
+
+
+def _topological_sort_groups(groups: list[tuple[str, list[tuple[str, str, str]]]], ws_dir: str) -> list[tuple[str, list[tuple[str, str, str]]]]:
+    """Sort error groups by file dependency order.
+
+    If root-cause file A imports from root-cause file B, then B is fixed
+    first (its exports need to exist before A can reference them).
+
+    Groups with empty root-cause paths (unknown root) are placed at the end
+    since they cannot participate in the dependency graph.
+    """
+    if len(groups) <= 1:
+        return groups
+
+    # Build dependency graph: for each root-cause file, find its imports
+    # from other root-cause files in this batch
+    root_files = {}  # path -> index in groups
+    for i, (group_path, _) in enumerate(groups):
+        if group_path:
+            root_files[group_path] = i
+
+    # Parse imports in each root-cause file
+    deps: dict[int, set[int]] = {i: set() for i in range(len(groups))}
+    for group_path, idx in root_files.items():
+        if not os.path.isfile(group_path):
+            continue
+        try:
+            with open(group_path, "r", encoding="utf-8", errors="replace") as sf:
+                src = sf.read()
+        except Exception:
+            continue
+        # Find imports from project modules
+        for m in re.finditer(r'from\s+([\w.]+)\s+import', src):
+            mod = m.group(1)
+            imported_file = os.path.normpath(os.path.join(ws_dir, mod.replace('.', '/') + '.py'))
+            if imported_file in root_files and imported_file != group_path:
+                deps[idx].add(root_files[imported_file])
+
+    # DFS topological sort (Kahn's algorithm variant)
+    visited = set()
+    order: list[int] = []
+
+    def dfs(node: int) -> None:
+        if node in visited:
+            return
+        visited.add(node)
+        for dep in deps.get(node, set()):
+            dfs(dep)
+        order.append(node)
+
+    # Start with groups that have no dependencies on other groups
+    for i in range(len(groups)):
+        dfs(i)
+
+    # Reorder: groups with empty path go to the end
+    has_path = [(i, groups[i]) for i in order if groups[i][0]]
+    no_path = [(i, groups[i]) for i in order if not groups[i][0]]
+
+    return [g for _, g in has_path + no_path]
 
 
 def _build_fix_prompt(err: str, current_code: str, fname: str, prefer_file: bool = False) -> list[dict[str, str]]:
@@ -435,11 +563,15 @@ def _build_fix_prompt(err: str, current_code: str, fname: str, prefer_file: bool
     sys_msg = f"Fix this specific issue. {instruction}"
     if prefer_file:
         sys_msg += " Patches failed before. Use [FILE:] format — output the complete corrected file."
+        # Include the FULL file so the LLM can generate a valid [FILE:] block
+        full_code_lines = [f"{i:>4}    {line.rstrip()}" for i, line in enumerate(lines[:300], start=1)]
+        if len(lines) > 300:
+            full_code_lines.append(f"  ... ({len(lines) - 300} more lines)")
+        full_code = "\n".join(full_code_lines)
         user_msg = (
             f"Error in {fname}, line {error_line}:\n{err}\n\n"
             f"{root_section}"
-            f"{header}"
-            f"Relevant code:\n```python\n{window}\n```\n\n"
+            f"Full file (first 300 lines):\n```python\n{full_code}\n```\n\n"
             f"[FILE: {fname}]\n"
             "```python\n# complete corrected file\n```\n\n"
             "Output the complete corrected file using [FILE:] format. Do NOT use [PATCH:]."
@@ -499,26 +631,81 @@ def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors:
     
     # Build downstream error summary
     error_summary: list[str] = []
+    for fname, fpath, err in downstream_errors:
+        error_summary.append(f"- {fname}: {err[:200]}")
     
     downstream_section = ""
     if error_summary:
         downstream_section = "## Downstream errors that this fix will resolve\n" + "\n".join(error_summary) + "\n\n"
     
-    sys_msg = f"Fix the {class_name} class definition. Add all missing fields/attributes."
-    user_msg = (
-        f"The class `{class_name}` is missing attributes needed by downstream files.\n\n"
-        f"{downstream_section}"
-        f"## Current class definition\n```python\n{class_window}\n```\n\n"
-        "Add the missing fields to this class. For @dataclass, add new fields with types. "
-        "For regular classes, add them in __init__. Use [FILE:] format to output the corrected file."
-    )
+    sys_msg = f"Fix the {class_name} definition. Add all missing fields/attributes."
     if prefer_file:
-        user_msg += " Patches failed before. Use [FILE:] format — output the complete corrected file."
-    
+        sys_msg += " Patches failed before. Use [FILE:] format — output the complete corrected file."
+        user_msg = (
+            f"The class `{class_name}` is missing attributes needed by downstream files.\n\n"
+            f"{downstream_section}"
+            f"## Current class definition\n```python\n{class_window}\n```\n\n"
+            "Add the missing fields to this class. For @dataclass, add new fields with types. "
+            "For regular classes, add them in __init__.\n\n"
+            f"Output the complete corrected file:\n[FILE: ...]\n```python\n# complete corrected file\n```"
+        )
+    else:
+        user_msg = (
+            f"The class `{class_name}` is missing attributes needed by downstream files.\n\n"
+            f"{downstream_section}"
+            f"## Current class definition\n```python\n{class_window}\n```\n\n"
+            "Add the missing fields to this class. For @dataclass, add new fields with types. "
+            "For regular classes, add them in __init__.\n\n"
+            "Output the fix using ONE of these formats:\n\n"
+            "Option A — [PATCH:] for small changes near the class definition:\n"
+            "[PATCH: filename.py]\n"
+            "@@ -line,count +line,count @@\n"
+            " unchanged context line\n"
+            "-removed line\n"
+            "+added line\n"
+            " unchanged context line\n\n"
+            "Option B — [FILE:] when the change is large or spans multiple sections:\n"
+            "[FILE: filename.py]\n"
+            "```python\n# complete corrected file\n```\n\n"
+            "Choose the format that makes the fix clearest. Do NOT output anything else."
+        )
+
     return [
         {"role": "system", "content": sys_msg},
         {"role": "user", "content": user_msg},
     ]
+
+
+_FIX_PATCH_RE = re.compile(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', re.DOTALL)
+_FIX_FILE_RE = re.compile(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?:\n```|$)', re.DOTALL)
+_CLASS_DEF_RE = re.compile(r'^class\s+(\w+)', re.MULTILINE)
+_DEF_PARAMS_RE = re.compile(r'def\s+\w+\s*\((.*?)\)', re.DOTALL)
+
+
+def _find_patch_block(response: str) -> re.Match[str] | None:
+    """Extract the first ``[PATCH:]`` block from an LLM response."""
+    return _FIX_PATCH_RE.search(response)
+
+
+def _find_file_block(response: str) -> re.Match[str] | None:
+    """Extract the first ``[FILE:]`` block from an LLM response."""
+    return _FIX_FILE_RE.search(response)
+
+
+def _block_target_matches(captured_name: str, fname: str) -> bool:
+    """True when an LLM-emitted block name refers to *fname* (invariant #3).
+
+    Normalizes separators and case; an exact relative-path match or a
+    basename match is accepted (LLMs often emit just ``file.py``). An empty
+    capture is treated as matching.
+    """
+    cap = captured_name.strip().replace("\\", "/").strip("./").lower()
+    tgt = fname.strip().replace("\\", "/").strip("./").lower()
+    if not cap:
+        return True
+    if cap == tgt:
+        return True
+    return os.path.basename(cap) == os.path.basename(tgt)
 
 
 def _apply_patch(patch_text: str, fpath: str, original_lines: list[str]) -> tuple[bool, str]:
@@ -1342,6 +1529,20 @@ class ImplementCommand(Command):
             batch = all_files[i:i+batch_size]
             print(f"\nGenerating batch {i//batch_size + 1}/{(len(all_files) + batch_size - 1)//batch_size}: {batch}")
 
+            # In --modify mode, classify each batch file as existing (needs
+            # [PATCH:]) or new (needs [FILE:]) so the LLM generates the
+            # right format — the wholesale-rewrite guard rejects [FILE:]
+            # rewrites of existing files with similarity < 0.5.
+            existing_files: set[str] = set()
+            new_files: set[str] = set()
+            if modify_mode:
+                ws_path = Path(workspace_path(target_workspace))
+                for bf in batch:
+                    if (ws_path / bf).exists():
+                        existing_files.add(bf)
+                    else:
+                        new_files.add(bf)
+
             batch_files_md = "\n".join([f"- {f}" for f in batch])
             target_file = batch[0]
 
@@ -1429,8 +1630,58 @@ class ImplementCommand(Command):
                 except Exception:
                     pass
 
+            if modify_mode and existing_files:
+                # Modify mode: existing files get [PATCH:] (minimal diff),
+                # new files get [FILE:] (complete implementation).  This
+                # aligns the generate phase with the wholesale-rewrite
+                # guard that rejects [FILE:] rewrites of existing files.
+                existing_list = ", ".join(sorted(existing_files))
+                new_list = ", ".join(sorted(new_files)) if new_files else "(none)"
+                system_prompt = (
+                    "You are an expert Python developer. Implement the specified files concisely.\n\n"
+                    "RULES:\n"
+                    "0. NEVER use <tool_call>, <function_call>, or XML tags. Respond in plain text only.\n"
+                    "1. All code MUST pass mypy strict type checking and py_compile.\n"
+                    "2. You receive an export map listing every class/function/constant that already exists.\n"
+                    "3. NEVER redefine a name that already exists in the export map — IMPORT it instead.\n"
+                    "4. NEVER create duplicate functions or classes — check the export map first.\n\n"
+                    "OUTPUT FORMAT:\n"
+                    f"EXISTING files (modify with minimal diff): {existing_list}\n"
+                    "  Use [PATCH: filename.py] with unified diff hunks:\n"
+                    "  [PATCH: filename.py]\n"
+                    "  @@ -line,count +line,count @@\n"
+                    "   unchanged context line\n"
+                    "  -removed line\n"
+                    "  +added line\n"
+                    "   unchanged context line\n\n"
+                    f"NEW files (complete implementation): {new_list}\n"
+                    "  Use [FILE: filename.py] with the complete code:\n"
+                    "  [FILE: filename.py]\n"
+                    "  ```python\n"
+                    "  # complete code\n"
+                    "  ```\n\n"
+                    "Only change lines that need modification. Do NOT rewrite entire existing files."
+                )
+            else:
+                system_prompt = (
+                    "You are an expert Python developer. Implement the specified files concisely.\n\n"
+                    "RULES:\n"
+                    "0. NEVER use <tool_call>, <function_call>, or XML tags. Respond in plain text with [FILE:] blocks only.\n"
+                    "1. All code MUST pass mypy strict type checking and py_compile.\n"
+                    "2. You receive an export map listing every class/function/constant that already exists and which file defines it. IMPORT those names — NEVER redefine a name that already exists in the export map. If 'Grid' is listed under grid.py, write 'from grid import Grid', do NOT write 'class Grid' again.\n"
+                    "3. Each file has ONE clear responsibility. Define ONLY the classes/functions assigned to that file. All other needed names come from imports.\n"
+                    "4. NEW files: small and focused — max 150 lines.\n"
+                    "5. MODIFYING existing files: add only the minimal change. DO NOT rewrite the entire file.\n"
+                    "6. NEVER create duplicate functions or classes — check the export map before defining anything.\n"
+                    "7. Prefer composition over inheritance. Inject dependencies via __init__.\n\n"
+                    "Format each file as:\n"
+                    "[FILE: filename.py]\n"
+                    "```python\n"
+                    "# code\n"
+                    "```"
+                )
             impl_messages = [
-                {"role": "system", "content": "You are an expert Python developer. Implement the specified files concisely.\n\nRULES:\n0. NEVER use <tool_call>, <function_call>, or XML tags. Respond in plain text with [FILE:] blocks only.\n1. All code MUST pass mypy strict type checking and py_compile.\n2. You receive an export map listing every class/function/constant that already exists and which file defines it. IMPORT those names — NEVER redefine a name that already exists in the export map. If 'Grid' is listed under grid.py, write 'from grid import Grid', do NOT write 'class Grid' again.\n3. Each file has ONE clear responsibility. Define ONLY the classes/functions assigned to that file. All other needed names come from imports.\n4. NEW files: small and focused — max 150 lines.\n5. MODIFYING existing files: add only the minimal change. DO NOT rewrite the entire file.\n6. NEVER create duplicate functions or classes — check the export map before defining anything.\n7. Prefer composition over inheritance. Inject dependencies via __init__.\n\nFormat each file as:\n[FILE: filename.py]\n```python\n# code\n```"},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_context}
             ]
 
@@ -1454,51 +1705,74 @@ class ImplementCommand(Command):
                 print("  Failed after 3 attempts, skipping batch")
                 continue
 
-            patterns = [
+            file_patterns = [
                 r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```\s*$',
                 r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```',
-                r'\[FILE:\s*([^\]]+)\]\s*\n+(.*?)(?=\[FILE:|$)',
+                r'\[FILE:\s*([^\]]+)\]\s*\n+(.*?)(?=\[FILE:|\[PATCH:|$)',
+            ]
+            patch_patterns = [
+                r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|$)',
             ]
 
+            # Try [FILE:] blocks first, then [PATCH:] blocks
             matches = []
-            for pattern in patterns:
+            for pattern in file_patterns:
                 matches = list(re.findall(pattern, impl_response, re.DOTALL))
                 if matches:
                     break
 
-            if not matches and ("<tool_call" in impl_response or "<tool_call>" in impl_response):
+            # In modify mode, also try [PATCH:] blocks for existing files
+            patch_matches = []
+            if modify_mode and not matches:
+                for pattern in patch_patterns:
+                    patch_matches = list(re.findall(pattern, impl_response, re.DOTALL))
+                    if patch_matches:
+                        break
+
+            if not matches and not patch_matches and ("<tool_call" in impl_response or "<tool_call>" in impl_response):
                 print("  Detected tool calls, retrying with plain text instruction...")
-                impl_messages.append({"role": "user", "content": "Respond ONLY in [FILE: filename.py] format. No <tool_call> tags."})
+                impl_messages.append({"role": "user", "content": "Respond ONLY in [FILE: filename.py] or [PATCH: filename.py] format. No <tool_call> tags."})
                 impl_response = await agent.llm.chat(impl_messages, disable_thinking=True)
-                for pattern in patterns:
+                for pattern in file_patterns:
                     matches = list(re.findall(pattern, impl_response, re.DOTALL))
                     if matches:
                         break
+                if modify_mode and not matches:
+                    for pattern in patch_patterns:
+                        patch_matches = list(re.findall(pattern, impl_response, re.DOTALL))
+                        if patch_matches:
+                            break
 
             # Transient/empty LLM responses: re-ask for the batch instead of
             # silently dropping the file. Give up only after extra retries.
             parse_retries = 0
-            while not matches and parse_retries < 2:
-                print(f"  No [FILE:] blocks parsed — retry {parse_retries + 1}/2...")
+            while not matches and not patch_matches and parse_retries < 2:
+                print(f"  No [FILE:] or [PATCH:] blocks parsed — retry {parse_retries + 1}/2...")
                 impl_messages.append(
-                    {"role": "user", "content": f"Output exactly one [FILE: {batch[0]}] block with the complete implementation. No preamble, no prose, no tool calls."}
+                    {"role": "user", "content": f"Output exactly one block for {batch[0]}: [PATCH: {batch[0]}] with diff hunks (for existing files) or [FILE: {batch[0]}] with complete code (for new files). No preamble, no prose, no tool calls."}
                 )
                 try:
                     impl_response = await agent.llm.chat(impl_messages, max_tokens=12000, disable_thinking=True)
                 except Exception as e:
                     print(f"  Retry error: {e}")
                     impl_response = None
-                for pattern in patterns:
+                for pattern in file_patterns:
                     matches = list(re.findall(pattern, impl_response or "", re.DOTALL))
                     if matches:
                         break
+                if modify_mode and not matches:
+                    for pattern in patch_patterns:
+                        patch_matches = list(re.findall(pattern, impl_response or "", re.DOTALL))
+                        if patch_matches:
+                            break
                 parse_retries += 1
 
-            if not matches:
+            if not matches and not patch_matches:
                 print("  Warning: Could not parse files from batch response")
                 print(f"  Raw response: {str(impl_response)[:500]}")
                 continue
 
+            # Process [FILE:] blocks (new files or full rewrites)
             for filename, content in matches:
                 content = content.strip()
                 if filename not in batch:
@@ -1516,6 +1790,40 @@ class ImplementCommand(Command):
                 sigs = extract_signatures(content)
                 if sigs:
                     export_map[filename] = sigs
+
+            # Process [PATCH:] blocks (modify mode — apply diff to existing file)
+            for filename, patch_text in patch_matches:
+                filename = filename.strip()
+                patch_text = patch_text.strip()
+                if filename not in batch:
+                    print(f"  WARNING: [PATCH: {filename}] is not in the planned batch {batch} — ignored")
+                    continue
+                ws_path = Path(workspace_path(target_workspace))
+                filepath = ws_path / filename
+                if not filepath.exists():
+                    print(f"  WARNING: [PATCH: {filename}] — file does not exist, skipping patch")
+                    continue
+                try:
+                    existing_text = filepath.read_text(encoding="utf-8")
+                except OSError as exc:
+                    print(f"  WARNING: [PATCH: {filename}] — cannot read file: {exc}")
+                    continue
+                from agent_core.patch_utils import apply_patch, split_source_lines
+                ok, patched = apply_patch(patch_text, split_source_lines(existing_text))
+                if not ok:
+                    print(f"  WARNING: [PATCH: {filename}] — patch did not apply: {str(patched)[:200]}")
+                    continue
+                patched_text = str(patched)
+                if patched_text == existing_text:
+                    print(f"  [PATCH: {filename}] — patch produced no change")
+                    continue
+                try:
+                    compile(patched_text, filename, "exec")
+                except SyntaxError as exc:
+                    print(f"  WARNING: [PATCH: {filename}] — patched file does not compile: {exc}")
+                    continue
+                generated_content[filename] = patched_text
+                print(f"  Generated (patch): {filename} ({len(patched_text)} bytes)")
 
         if generated_content:
             for fname in all_files:
@@ -2080,9 +2388,7 @@ class ImplementCommand(Command):
             else:
                 print("[fix] Cross-file attributes all verified!")
 
-            _RE_4 = re.compile(r'^class\s+(\w+)')
-            _RE_5 = re.compile(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)')
-            _RE_6 = re.compile(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?:\n```|$)')
+            _RE_4 = re.compile(r'^class\s+(\w+)', re.MULTILINE)
             _RE_7 = re.compile(r'```\s*$')
             _RE_8 = re.compile(r'\b(import|def |class )\b')
             for fix_attempt in range(3):
@@ -2153,11 +2459,12 @@ class ImplementCommand(Command):
                                 preexisting_sigs.add(fe)
                             print(f"  (pre-existing, skipped) {fname}: {len(foreign_errors)} error(s) in other files: {foreign_errors[0]}")
                         if type_errors:
-                            errors_found.append((fname, fpath_str, f"TYPE: {'; '.join(type_errors[:5])}"))
+                            for te in type_errors[:5]:
+                                errors_found.append((fname, fpath_str, f"TYPE: {te}"))
 
                     with open(fpath_str, "r", encoding="utf-8") as f:
                         source = f.read()
-                    class_names = _RE_4.findall(source, re.MULTILINE)
+                    class_names = _RE_4.findall(source)
                     for cn in class_names:
                         r = _run_python_snippet(ws, [str(fp.parent.resolve())], [
                             f"import {mod_name}",
@@ -2295,6 +2602,10 @@ class ImplementCommand(Command):
                 # Group errors by root cause class
                 error_groups = _group_related_errors(errors_found, ws)
 
+                # Sort groups by dependency order so root causes that other
+                # root causes depend on are fixed first
+                error_groups = _topological_sort_groups(error_groups, ws)
+
                 print(f"\n[fix] Attempt {fix_attempt + 1}: {len(errors_found)} errors in {len(error_groups)} groups")
                 for fname, fpath, err in errors_found:
                     print(f"  - {fname}:")
@@ -2362,31 +2673,56 @@ class ImplementCommand(Command):
                         if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
                             print(f"  LLM error: {fixed}")
                             continue
+                        if "[PATCH:" not in fixed and "[FILE:" not in fixed:
+                            print(f"  [debug] LLM response (first 500 chars):\n{fixed[:500]}\n  ---")
 
-                        # Try [FILE:] format for root cause (usually needs full class rewrite)
-                        file_match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?:\n```|$)', fixed, re.DOTALL)
-                        if file_match:
-                            new_code = file_match.group(2).strip()
-                            new_code = re.sub(r'```\s*$', '', new_code).strip()
-                            if not re.search(r'\b(import|def |class )\b', new_code):
-                                print(f"  WARNING: Fix for {fname} is not valid Python code, skipping")
+                        # Detect tool calls and retry with explicit format instruction
+                        if "<tool_call" in fixed or "<tool_call>" in fixed:
+                            print(f"  Detected tool calls in fix response, retrying with format instruction...")
+                            fix_msgs_tc = [
+                                {"role": "system", "content": "You are fixing a Python type error. Output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No tool calls, no prose."},
+                                {"role": "user", "content": f"Fix: {err[:300]}\n\nOutput:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added"}
+                            ]
+                            fixed = await agent.llm.chat(fix_msgs_tc, disable_thinking=True)
+                            if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
+                                print(f"  LLM error on retry: {fixed}")
                                 continue
-                            with open(fpath, "w", encoding="utf-8") as f:
-                                f.write(new_code)
-                            r = subprocess.run(["python", "-m", "py_compile", fpath], capture_output=True, text=True)
-                            if r.returncode == 0:
-                                print(f"  Fixed root cause: {fname} ({len(new_code)} bytes)")
-                                file_error_sigs[fname] = ""
-                                fixed_files_this_round.add(fname)
-                            else:
-                                print(f"  Fix introduced compile error: {r.stderr[:150]}")
+
+                        # Retry with format enforcement if no valid blocks found
+                        fix_retries = 0
+                        while fix_retries < 2:
+                            # Try [FILE:] format for root cause (usually needs full class rewrite)
+                            file_match = _find_file_block(fixed)
+                            if file_match and not _block_target_matches(file_match.group(1), fname):
+                                print(f"  WARNING: ignoring [FILE: {file_match.group(1)}] — targets another file (invariant #3)")
+                                file_match = None
+                            if file_match:
+                                new_code = file_match.group(2).strip()
+                                new_code = re.sub(r'```\s*$', '', new_code).strip()
+                                if not re.search(r'\b(import|def |class )\b', new_code):
+                                    print(f"  WARNING: Fix for {fname} is not valid Python code, skipping")
+                                    break
                                 with open(fpath, "w", encoding="utf-8") as f:
-                                    f.write(current_code)
-                                file_error_sigs[fname] = cur_sig
-                                patch_failed.add(fname)
-                        else:
+                                    f.write(new_code)
+                                r = subprocess.run(["python", "-m", "py_compile", fpath], capture_output=True, text=True)
+                                if r.returncode == 0:
+                                    print(f"  Fixed root cause: {fname} ({len(new_code)} bytes)")
+                                    file_error_sigs[fname] = ""
+                                    fixed_files_this_round.add(fname)
+                                    break
+                                else:
+                                    print(f"  Fix introduced compile error: {r.stderr[:150]}")
+                                    with open(fpath, "w", encoding="utf-8") as f:
+                                        f.write(current_code)
+                                    file_error_sigs[fname] = cur_sig
+                                    patch_failed.add(fname)
+                                    break
+
                             # Try patch format
-                            patch_match = re.search(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', fixed, re.DOTALL)
+                            patch_match = _find_patch_block(fixed)
+                            if patch_match and not _block_target_matches(patch_match.group(1), fname):
+                                print(f"  WARNING: ignoring [PATCH: {patch_match.group(1)}] — targets another file (invariant #3)")
+                                patch_match = None
                             if patch_match:
                                 patch_text = patch_match.group(2).strip()
                                 ok, new_text = _apply_patch(patch_text, fpath, split_source_lines(current_code))
@@ -2397,15 +2733,39 @@ class ImplementCommand(Command):
                                     print(f"  Fixed root cause: {fname} (patch applied)")
                                     file_error_sigs[fname] = ""
                                     fixed_files_this_round.add(fname)
+                                    break
                                 else:
                                     print(f"  Patch failed: {new_text[:200]}")
                                     patch_failed.add(fname)
                                     file_error_sigs[fname] = cur_sig
+                                    break
+
+                            # No valid blocks — retry with format reminder
+                            fix_retries += 1
+                            if fix_retries < 2:
+                                print(f"  No [PATCH:] or [FILE:] found — retrying with format reminder...")
+                                fix_msgs_retry = [
+                                    {"role": "system", "content": "You must output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No prose, no explanations."},
+                                    {"role": "user", "content": f"Fix the error in {fname}.\n\nError: {err[:300]}\n\nOutput format:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added\n\nOR:\n[FILE: {fname}]\n```python\n# complete corrected file\n```"}
+                                ]
+                                fixed = await agent.llm.chat(fix_msgs_retry, disable_thinking=True)
+                                if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
+                                    print(f"  LLM error on retry: {fixed}")
+                                    break
                             else:
-                                print("  No [PATCH:] or [FILE:] found in LLM response")
+                                print("  No [PATCH:] or [FILE:] found in LLM response (after retry)")
                                 file_error_sigs[fname] = cur_sig
 
                     # Fix downstream errors (if root cause was fixed or no root cause)
+                    root_fname = root_err[0] if root_err else None
+                    root_fixed = root_fname and root_fname in fixed_files_this_round
+                    if root_err and not root_fixed:
+                        # Root cause fix failed — skip downstream to avoid
+                        # wasting LLM calls on errors that won't resolve
+                        print(f"\n  Skipping {len(downstream_errs)} downstream errors — root cause fix failed")
+                        for fname, fpath, err in downstream_errs:
+                            file_error_sigs[fname] = f"{err[:200]}"
+                        continue
                     for fname, fpath, err in downstream_errs:
                         if fname in fixed_files_this_round:
                             continue
@@ -2427,32 +2787,58 @@ class ImplementCommand(Command):
                         if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
                             print(f"  LLM error: {fixed}")
                             continue
+                        if "[PATCH:" not in fixed and "[FILE:" not in fixed:
+                            print(f"  [debug] LLM response (first 500 chars):\n{fixed[:500]}\n  ---")
 
-                        # Try [PATCH:] format first (preferred — minimal change)
-                        patch_match = _RE_5.search(fixed, re.DOTALL)
-                        if patch_match:
-                            patch_text = patch_match.group(2).strip()
-                            ok, new_text = _apply_patch(patch_text, fpath, split_source_lines(current_code))
-                            if ok:
-                                show_file_diff(fpath, current_code, new_text)
-                                with open(fpath, "w", encoding="utf-8") as f:
-                                    f.write(new_text)
-                                print(f"  Fixed: {fname} (patch applied)")
-                                file_error_sigs[fname] = ""
-                                fixed_files_this_round.add(fname)
-                            else:
-                                print(f"  Patch failed: {new_text[:200]}")
-                                print(f"  Debug — LLM response patch area: {patch_text[:300]}")
-                                patch_failed.add(fname)
-                                file_error_sigs[fname] = cur_sig
-                        elif "PATCH" in fixed.upper() or "FILE" in fixed.upper():
-                            file_match = _RE_6.search(fixed, re.DOTALL)
+                        # Detect tool calls and retry with explicit format instruction
+                        if "<tool_call" in fixed or "<tool_call>" in fixed:
+                            print(f"  Detected tool calls in fix response, retrying with format instruction...")
+                            fix_msgs_tc = [
+                                {"role": "system", "content": "You are fixing a Python type error. Output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No tool calls, no prose."},
+                                {"role": "user", "content": f"Fix: {err[:300]}\n\nOutput:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added"}
+                            ]
+                            fixed = await agent.llm.chat(fix_msgs_tc, disable_thinking=True)
+                            if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
+                                print(f"  LLM error on retry: {fixed}")
+                                continue
+
+                        # Retry with format enforcement if no valid blocks found
+                        fix_retries = 0
+                        while fix_retries < 2:
+                            # Try [PATCH:] format first (preferred — minimal change)
+                            patch_match = _find_patch_block(fixed)
+                            if patch_match and not _block_target_matches(patch_match.group(1), fname):
+                                print(f"  WARNING: ignoring [PATCH: {patch_match.group(1)}] — targets another file (invariant #3)")
+                                patch_match = None
+                            if patch_match:
+                                patch_text = patch_match.group(2).strip()
+                                ok, new_text = _apply_patch(patch_text, fpath, split_source_lines(current_code))
+                                if ok:
+                                    show_file_diff(fpath, current_code, new_text)
+                                    with open(fpath, "w", encoding="utf-8") as f:
+                                        f.write(new_text)
+                                    print(f"  Fixed: {fname} (patch applied)")
+                                    file_error_sigs[fname] = ""
+                                    fixed_files_this_round.add(fname)
+                                    break
+                                else:
+                                    print(f"  Patch failed: {new_text[:200]}")
+                                    print(f"  Debug — LLM response patch area: {patch_text[:300]}")
+                                    patch_failed.add(fname)
+                                    file_error_sigs[fname] = cur_sig
+                                    break
+
+                            # Try [FILE:] format
+                            file_match = _find_file_block(fixed)
+                            if file_match and not _block_target_matches(file_match.group(1), fname):
+                                print(f"  WARNING: ignoring [FILE: {file_match.group(1)}] — targets another file (invariant #3)")
+                                file_match = None
                             if file_match:
                                 new_code = file_match.group(2).strip()
                                 new_code = _RE_7.sub('', new_code).strip()
                                 if not _RE_8.search(new_code):
                                     print(f"  WARNING: Fix for {fname} is not valid Python code, skipping")
-                                    continue
+                                    break
                                 with open(fpath, "w", encoding="utf-8") as f:
                                     f.write(new_code)
                                 r = subprocess.run(["python", "-m", "py_compile", fpath], capture_output=True, text=True)
@@ -2460,17 +2846,29 @@ class ImplementCommand(Command):
                                     print(f"  Fixed: {fname} ({len(new_code)} bytes)")
                                     file_error_sigs[fname] = ""
                                     fixed_files_this_round.add(fname)
-                                elif "truncated" in str(r.stderr).lower() or "unexpected EOF" in str(r.stderr):
-                                    print(f"  Fixed: {fname} ({len(new_code)} bytes, truncated but applied)")
-                                    file_error_sigs[fname] = ""
-                                    fixed_files_this_round.add(fname)
+                                    break
                                 else:
-                                    print("  Fix introduced compile error, rolling back")
+                                    truncated = "truncated" in str(r.stderr).lower() or "unexpected EOF" in str(r.stderr) or "EOF" in str(r.stderr)
+                                    print(f"  Fix introduced compile error{'' if not truncated else ' (truncated output)'}, rolling back: {str(r.stderr).strip()[:150]}")
                                     with open(fpath, "w", encoding="utf-8") as f:
                                         f.write(current_code)
                                     file_error_sigs[fname] = cur_sig
+                                    break
+
+                            # No valid blocks — retry with format reminder
+                            fix_retries += 1
+                            if fix_retries < 2:
+                                print(f"  No [PATCH:] or [FILE:] found — retrying with format reminder...")
+                                fix_msgs_retry = [
+                                    {"role": "system", "content": "You must output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No prose, no explanations."},
+                                    {"role": "user", "content": f"Fix the error in {fname}.\n\nError: {err[:300]}\n\nOutput format:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added\n\nOR:\n[FILE: {fname}]\n```python\n# complete corrected file\n```"}
+                                ]
+                                fixed = await agent.llm.chat(fix_msgs_retry, disable_thinking=True)
+                                if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
+                                    print(f"  LLM error on retry: {fixed}")
+                                    break
                             else:
-                                print("  No [PATCH:] or [FILE:] found in LLM response")
+                                print("  No [PATCH:] or [FILE:] found in LLM response (after retry)")
                                 file_error_sigs[fname] = cur_sig
 
             print("\n[fix] Complete")

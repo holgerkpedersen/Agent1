@@ -98,7 +98,10 @@ class LLMProvider(Protocol):
     """
     
     model_name: str
-    
+    _profile_name: str
+    temperature: float
+    max_tokens: int
+
     async def chat(
         self, 
         messages: list[dict[str, str]], 
