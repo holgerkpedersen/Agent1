@@ -73,6 +73,50 @@ def _is_trackable_file(p: str) -> bool:
     return True
 
 
+def _decision_constraints_for(fpath: str | None) -> str:
+    """Constraints block from past decisions relevant to *fpath*.
+
+    The decision ledger lives at the WORKSPACE root (``.decisions.json``),
+    not in the target file's own directory.  Passing ``Path(fpath).parent``
+    as the workspace made ``load_decisions`` silently return ``[]`` for
+    every nested file, so fixes ran without their design constraints.  This
+    helper walks up to the nearest ancestor holding the ledger and passes
+    the ABSOLUTE file path so ``find_decisions`` can canonicalize it to the
+    stored workspace-relative form (a bare basename never matches records
+    like ``agent_core/commands/fix_cmd.py``).
+    """
+    if not fpath:
+        return ""
+    try:
+        resolved = Path(fpath).resolve()
+        for candidate in (resolved.parent, *resolved.parent.parents):
+            if (candidate / ".decisions.json").is_file():
+                return decisions_as_system_prompt(str(candidate), [str(resolved)])
+        return ""
+    except Exception:
+        return ""
+
+
+def _decision_workspace_for(fpath: str | None) -> str:
+    """Nearest ancestor of *fpath* holding ``.decisions.json``, else its parent.
+
+    Recording a decision against ``Path(fpath).parent`` created a SECOND,
+    fragmented ledger inside the file's own directory — invisible to every
+    consumer that reads the workspace-root ledger.  New records must land in
+    the same ledger the enforcement paths read.
+    """
+    if not fpath:
+        return ""
+    try:
+        resolved = Path(fpath).resolve()
+        for candidate in (resolved.parent, *resolved.parent.parents):
+            if (candidate / ".decisions.json").is_file():
+                return str(candidate)
+        return str(resolved.parent)
+    except Exception:
+        return ""
+
+
 def _max_identical_run(text: str) -> int:
     """Longest run of IDENTICAL consecutive non-blank lines in *text*.
 
@@ -1569,6 +1613,9 @@ class FixCommand(Command):
                 )
                 if type_hint:
                     system_prompt += "\n\n" + type_hint
+                constraints = _decision_constraints_for(full)
+                if constraints:
+                    system_prompt += constraints
                 msgs = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": "\n".join(user_sections) + f"\n\nOutput format:\n[PATCH: {rel_file}]\n@@ -line,count +line,count @@\n unchanged line\n-removed line\n+added line\n\nOR if a larger rewrite is needed:\n[FILE: {rel_file}]\n```python\n# complete corrected file\n```"},
@@ -2462,17 +2509,12 @@ class FixCommand(Command):
 
         print("\nSending to LLM for fix...")
         fix_system = "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged. No duplicate functions. No _v1/_v2 variants.\n\nWhen fixing type errors (arg-type, incompatible type), search the ENTIRE file for where the variable is defined/initialized, not just where the error occurs. Fix the initialization to use the correct type. Do NOT change function signatures.\n\nOutput the fix using ONE of these formats:\n[PATCH: filename.py] — for small fixes near the error line\n[FILE: filename.py] — when the fix is far from the error or needs full context\n\n[PATCH:] example:\n[PATCH: filename.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n\n[FILE:] example:\n[FILE: filename.py]\n```python\n# complete corrected file\n```"
-        # Inject past decisions as constraints
-        try:
-            basename = os.path.basename(fpath) if fpath else ""
-            constraints = decisions_as_system_prompt(
-                str(Path(fpath).parent.resolve()) if fpath else "",
-                [basename] if basename else []
-            )
-            if constraints:
-                fix_system += constraints
-        except Exception:
-            pass
+        # Inject past decisions as constraints (ledger is at the workspace
+        # root; _decision_constraints_for walks up to find it and passes the
+        # absolute path so canonical affected_files matching works).
+        constraints = _decision_constraints_for(fpath)
+        if constraints:
+            fix_system += constraints
 
         # Inject past executions that touched this file (2026-08-19: fix
         # consulted decisions but never past tool results/errors for the
@@ -2568,7 +2610,7 @@ class FixCommand(Command):
                     except (EOFError, KeyboardInterrupt):
                         choice = ""
                     if choice and choice != "n":
-                        ws_str = str(Path(fpath).parent.resolve())
+                        ws_str = _decision_workspace_for(fpath)
                         selected: list[int] = []
                         if choice == "all":
                             selected = list(range(len(candidates)))
