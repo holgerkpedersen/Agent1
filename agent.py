@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 #!/usr/bin/env python3
 """Agent implementation with workspace management and tool execution."""
 
@@ -13,6 +13,7 @@ import os
 import re
 import signal
 import sys
+import threading
 from collections import defaultdict
 from datetime import datetime
 from agent_core import to_windows_path
@@ -39,6 +40,9 @@ except Exception:  # pragma: no cover - tracing degrades gracefully if unavailab
         return False
 from agent_core.commands.base import save_file_py, chat_stoppable, clear_stop, FlowStopped
 from agent_core.commands.registry import CommandRegistry
+
+if TYPE_CHECKING:
+    from http.server import ThreadingHTTPServer
 from agent_core.commands.read_cmd import ReadCommand
 
 # Windows console default codec is cp1252, which cannot encode many Unicode
@@ -1511,6 +1515,59 @@ def _is_similar(content1: str, content2: str, threshold: float = 0.8) -> bool:
     return similarity >= threshold
 
 
+# ---------------------------------------------------------------------------
+# Shared metrics plumbing
+#
+# The TTTHEME dashboard (upstream @LebToki) reads everything from a
+# MetricsCollector instance, but run_dashboard_server() used to build its own
+# EMPTY collector — so the web UI stayed blank even after a full REPL session.
+# This module-level bridge lets the REPL loop feed the SAME collector the
+# dashboard serves, and optionally boots the dashboard in-process.
+# ---------------------------------------------------------------------------
+_shared_metrics_collector: Optional["MetricsCollector"] = None
+
+
+def get_metrics_collector() -> "MetricsCollector":
+    """Return the process-wide collector shared by REPL and dashboard."""
+    global _shared_metrics_collector
+    if _shared_metrics_collector is None:
+        from src.agent1.monitoring import MetricsCollector
+        _shared_metrics_collector = MetricsCollector()
+    return _shared_metrics_collector
+
+
+def record_command_metrics(command: str, elapsed_s: float) -> None:
+    """Mirror one command execution into the shared metrics collector.
+
+    Names follow the conventions the TTTHEME UI filters on
+    (see loadCommands() regex in static/index.html). Only ONE counter per
+    command is kept: the UI's stat card naively sums every counter, so an
+    extra aggregate counter would double the "Commands Executed" figure.
+    """
+    collector = get_metrics_collector()
+    collector.increment_counter(f"command.{command}.count")
+    collector.record_histogram("command.elapsed.seconds", elapsed_s)
+    collector.set_gauge("last.command.seconds", elapsed_s)
+
+
+def start_dashboard_thread(port: int = 8080) -> Optional["ThreadingHTTPServer"]:
+    """Serve the TTTHEME dashboard on a daemon thread from this process."""
+    from src.agent1.monitoring import DashboardAPIServer
+
+    server_holder = DashboardAPIServer(get_metrics_collector(), port=port)
+    httpd = server_holder.start()
+
+    def _serve() -> None:
+        try:
+            httpd.serve_forever()
+        except Exception:
+            pass
+
+    threading.Thread(target=_serve, name="agent1-dashboard", daemon=True).start()
+    print(f"  Dashboard: http://localhost:{port}  (Ctrl+C to stop)")
+    return httpd
+
+
 async def run_interactive() -> None:
     """Interactive mode - allows user to input commands."""
     
@@ -1660,6 +1717,7 @@ async def run_interactive() -> None:
                 elapsed = _time.perf_counter() - _start
                 print(f"  [cmd] {cyan(command)} done in {green(f'{elapsed:.2f}s')}")
                 PerfTracker.record(command, elapsed, user_input)
+                record_command_metrics(command, elapsed)
                 continue
 
             else:
@@ -1680,19 +1738,41 @@ async def main() -> None:
         # awaiting it raised "object NoneType can't be used in 'await' expression".
         run_dashboard_server()
         return
+    if "--dashboard" in sys.argv:
+        # Interactive REPL + live web dashboard in the same process: the REPL
+        # feeds get_metrics_collector(), the daemon thread serves it.
+        start_dashboard_thread(_dashboard_port())
     # No --serve flag: fall back to the classic interactive CLI.
     await run_interactive()
 
 
+def _dashboard_port() -> int:
+    """Resolve the dashboard port: --port N / --port=N, else 8080."""
+    argv = sys.argv[1:]
+    for i, arg in enumerate(argv):
+        if arg == "--port" and i + 1 < len(argv):
+            try:
+                return int(argv[i + 1])
+            except ValueError:
+                break
+        if arg.startswith("--port="):
+            try:
+                return int(arg.split("=", 1)[1])
+            except ValueError:
+                break
+    return 8080
+
+
 def run_dashboard_server() -> None:
     """Launch the TTTHEME web dashboard on localhost:8080."""
-    from src.agent1.monitoring import DashboardAPIServer, MetricsCollector
+    from src.agent1.monitoring import DashboardAPIServer
 
-    collector = MetricsCollector()
-    server = DashboardAPIServer(collector, port=8080)
-    print("Agent1 dashboard: http://localhost:8080  (Ctrl+C to stop)")
+    # Reuse the process-wide collector so anything recorded before/while
+    # serving (REPL commands, chat turns) is visible in the UI.
+    server_holder = DashboardAPIServer(get_metrics_collector(), port=_dashboard_port())
+    print(f"Agent1 dashboard: http://localhost:{_dashboard_port()}  (Ctrl+C to stop)")
     try:
-        server.run()
+        server_holder.run()
     except KeyboardInterrupt:
         pass
 

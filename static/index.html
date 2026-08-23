@@ -376,8 +376,16 @@
 
     function fmtTime(iso) {
       if (!iso) return '-';
-      const d = new Date(iso);
-      return isNaN(d) ? iso : d.toLocaleString();
+      let d;
+      if (typeof iso === 'number') {
+        // Backend sends epoch SECONDS (time.time()); Date() wants milliseconds.
+        d = new Date(iso * 1000);
+      } else {
+        d = new Date(iso);
+        // Guard: ISO-less epoch numbers arriving as strings
+        if (!isNaN(d) && d.getTime() < 100000000000 && /^\d+$/.test(iso)) d = new Date(Number(iso) * 1000);
+      }
+      return isNaN(d) ? String(iso) : d.toLocaleString();
     }
 
     function setStatus(ok, msg) {
@@ -550,20 +558,34 @@
       try {
         const d = await fetchJSON('api/log');
         const records = d.records || [];
-        const tbody = document.getElementById('tbl-log-view');
-        if (!records.length) {
-          tbody.innerHTML = '<tr><td colspan="4" class="text-center text-secondary-light">No activity recorded yet</td></tr>';
-          return;
+        const rows = records.length
+          ? records.map(r =>
+              '<tr><td>' + fmtTime(r.timestamp) + '</td>' +
+              '<td><span class="fw-semibold">' + (r.name || '-') + '</span></td>' +
+              '<td>' + (r.type || '-') + '</td>' +
+              '<td class="text-end">' + (r.value ?? '-') + '</td></tr>'
+            ).join('')
+          : '<tr><td colspan="4" class="text-center text-secondary-light">No activity recorded yet</td></tr>';
+        // The visible "Execution Log (last 100)" card on the Dashboard view uses
+        // tbl-log (3 columns); the Execution Log view table uses tbl-log-view (4).
+        const logView = document.getElementById('tbl-log-view');
+        if (logView) logView.innerHTML = rows;
+        const logCard = document.getElementById('tbl-log');
+        if (logCard) {
+          logCard.innerHTML = records.length
+            ? records.map(r =>
+                '<tr><td>' + fmtTime(r.timestamp) + '</td>' +
+                '<td><span class="fw-semibold">' + (r.name || '-') + '</span></td>' +
+                '<td class="text-end">' + (r.value ?? '-') + '</td></tr>'
+              ).join('')
+            : '<tr><td colspan="3" class="text-center text-secondary-light">No activity recorded yet</td></tr>';
         }
-        tbody.innerHTML = records.map(r =>
-          '<tr><td>' + fmtTime(r.timestamp) + '</td>' +
-          '<td><span class="fw-semibold">' + (r.name || '-') + '</span></td>' +
-          '<td>' + (r.type || '-') + '</td>' +
-          '<td class="text-end">' + (r.value ?? '-') + '</td></tr>'
-        ).join('');
       } catch (e) {
-        document.getElementById('tbl-log-view').innerHTML =
-          '<tr><td colspan="4" class="text-center text-danger-main">' + e.message + '</td></tr>';
+        const err = '<tr><td colspan="4" class="text-center text-danger-main">' + e.message + '</td></tr>';
+        const lv = document.getElementById('tbl-log-view');
+        if (lv) lv.innerHTML = err;
+        const lc = document.getElementById('tbl-log');
+        if (lc) lc.innerHTML = '<tr><td colspan="3" class="text-center text-danger-main">' + e.message + '</td></tr>';
       }
     }
 
