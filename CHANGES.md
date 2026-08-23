@@ -1,4 +1,10 @@
-﻿## 2026-08-23 - fix: streaming chat died when another shell evicted the pinned model
+﻿## 2026-08-23 - improve: implement command — line-anchor parsing, retry sentinels, --status
+
+**Change**: agent_core/commands/implement_cmd.py (structured `_parse_line_number` + module regexes `_PATH_LINE_RE`/`_FILE_LINE_RE`/`_WORD_LINE_RE`; generation retry loop treats `[LM Studio ...]` as failure and records per-file outcomes; new read-only `--status` mode via `ImplementCommand._status_report`; help/usage), tests/test_implement_improvements.py (new, 14 tests)
+
+**Reason**: (1) `_parse_line_number` scanned the FIRST digit in the error string, so `agent_core/llm/v2/client.py:88:` yielded 2 (from "v2") and Windows paths yielded 1 (from "C:") — the LLM fix window was centred on wrong lines. Now anchors on mypy's `path.py:LINE:`, tracebacks' `File "...", line N`, then plain `line N`. (2) The generation retry loop only re-tried `[Error:` responses, so an `[LM Studio stream error]` sentinel broke out as if valid and the batch was silently dropped by the block parser; both sentinels now retry, and exhausted batches record `generation failed` per file instead of vanishing. (3) No way to inspect plan progress without burning LLM calls — `implement <taskplan> --status` prints ready / needs-generation / stdlib-shadowing per file (shadow check first, since a not-yet-existing shadowing directory is precisely the dangerous case) and exits before any LLM call. Verified: 14 new hermetic tests, incl. regression proof that the old digit-scan returns 2/1 on real error strings; 85/85 implement-related tests green; mypy delta vs stash baseline = zero new errors (15 identical errors, shifted line numbers); full suite run interrupted by ANOTHER session's concurrent uncommitted edits to agent.py/tool_router.py/benchmark.py (`import agent` currently broken by their missing `agent_core.metrics` module — 54 failures all traced to that, none to this change).
+
+## 2026-08-23 - fix: streaming chat died when another shell evicted the pinned model
 
 **Change**: agent_core/llm/lmstudio.py (new `LMStudioProvider._open_chat` shared opener — auto-reload of the pinned model on LM Studio's 400 "model is not loaded" now covers BOTH paths; `chat_stream` switched from raw `urllib.request.urlopen` to `_open_chat`), tests/test_lmstudio_stream_recovery.py (new, 5 tests)
 

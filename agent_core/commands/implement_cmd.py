@@ -159,12 +159,34 @@ def _extract_task_line(taskplan: str, filename: str) -> str:
     return ""
 
 
+_PATH_LINE_RE = re.compile(r'(?:[A-Za-z]:)?[\\/]?[\w./\\+-]*\.py:(\d+):')
+_FILE_LINE_RE = re.compile(r'File "([^"]+)", line (\d+)')
+_WORD_LINE_RE = re.compile(r'\bline (\d+)\b', re.IGNORECASE)
+
+
 def _parse_line_number(err: str) -> int:
-    """Extract the first line number from an error string."""
-    # "file.py:162:" or "line 130" patterns
-    for m in re.finditer(r'(\d+)', err):
+    """Extract the target line number from an error string.
+
+    Anchors on structured locations — mypy's ``path.py:LINE:`` prefix,
+    tracebacks' ``File "...", line N``, plain ``line N`` — instead of
+    scanning for the first digit.  Bare digit scanning grabbed version
+    fragments and centred the fix window on the wrong lines (observed:
+    ``agent_core/llm/v2/client.py:88:`` yielded 2 from ``v2``).
+    """
+    m = _PATH_LINE_RE.search(err)
+    if m:
         n = int(m.group(1))
-        if n > 0 and n < 10000:
+        if 0 < n <= 1_000_000:
+            return n
+    m = _FILE_LINE_RE.search(err)
+    if m:
+        n = int(m.group(2))
+        if 0 < n <= 1_000_000:
+            return n
+    m = _WORD_LINE_RE.search(err)
+    if m:
+        n = int(m.group(1))
+        if 0 < n <= 1_000_000:
             return n
     if "CROSS:" in err:
         return 1
@@ -1151,6 +1173,8 @@ class ImplementCommand(Command):
             "    --keep           Resume from a matching implement cache (true resume).\n"
             "    --refresh        With --keep: ignore the cached file list and rebuild it\n"
             "                     from the taskplan before resuming.\n"
+            "    --status         Read-only plan progress report (exists / compiles /\n"
+            "                     stdlib-shadow state per file). Makes NO LLM calls.\n"
             "  Brownfield tip: for an existing repo use --modify so [MODIFY] tasks are applied\n"
             "  as reviewed diffs; without it existing files are skipped. Add --fix for the\n"
             "  auto-fix loop, and --allow-rewrite only when a rewrite is truly wanted."
@@ -1217,6 +1241,65 @@ class ImplementCommand(Command):
         return True, f"modified ({diff_text.count(chr(10)) + 1} diff lines)"
 
     @staticmethod
+    def _status_report(all_files: list[str], target_workspace: str) -> None:
+        """``implement --status``: read-only plan progress, zero LLM calls.
+
+        For every file in the cached/planned list it reports exists/compiles/
+        shadow state, so a resumed run can be sanity-checked before spending
+        generation budget.  Mirrors the exact predicates the real run uses
+        (:func:`file_needs_generation` + ``_shadowing_stdlib_dir``).
+        """
+        from agent_core.commands.implement_cmd import _shadowing_stdlib_dir
+
+        ws_path = Path(workspace_path(target_workspace))
+        ready: list[str] = []
+        needs_gen: list[tuple[str, str]] = []
+        shadowed: list[str] = []
+        for fname in all_files:
+            fpath = ws_path / fname
+            # Shadow check FIRST: a planned file under a NOT-yet-existing
+            # stdlib-shadowing directory (e.g. `logging/formatter.py` when no
+            # logging/ package exists) must be flagged even though it does
+            # not exist yet — that is precisely the dangerous case.
+            shadow = _shadowing_stdlib_dir(fname, ws_path)
+            if shadow:
+                shadowed.append(f"{fname} (dir '{shadow}' shadows stdlib)")
+                continue
+            if not fpath.exists():
+                needs_gen.append((fname, "not found"))
+                continue
+            if fpath.stat().st_size == 0:
+                needs_gen.append((fname, "empty file"))
+                continue
+            if fname.endswith(".py"):
+                result = subprocess.run(
+                    ["python", "-m", "py_compile", os.path.realpath(fpath)],
+                    capture_output=True, text=True,
+                )
+                if result.returncode != 0:
+                    tail = result.stderr.strip().splitlines()[-1][:120] if result.stderr.strip() else ""
+                    needs_gen.append((fname, f"compile failed: {tail}"))
+                    continue
+            ready.append(fname)
+
+        print(f"\n  [status] {len(ready)} ready / {len(needs_gen)} need work / "
+              f"{len(shadowed)} stdlib-shadowing  —  {len(all_files)} planned")
+        print("  Plan state is read from disk only; no LLM calls are made.\n")
+        if ready:
+            print(f"  Ready ({len(ready)}):")
+            for fname in ready:
+                print(f"    ✓ {fname}")
+        if needs_gen:
+            print(f"\n  Needs generation ({len(needs_gen)}):")
+            for fname, why in needs_gen:
+                print(f"    ✗ {fname} — {why}")
+        if shadowed:
+            print(f"\n  Stdlib-shadowing paths ({len(shadowed)}) — will be redirected:")
+            for entry in shadowed:
+                print(f"    ! {entry}")
+        print()
+
+    @staticmethod
     def _auto_review(py_new: list[str], ws: str) -> None:
         """Run fast static checks on new files (no LLM). Safe to call always."""
         print(f"\n{'─'*40}")
@@ -1253,7 +1336,7 @@ class ImplementCommand(Command):
         parts = args
 
         if len(parts) < 1:
-            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--modify] [--fix] [--retry] [--review] [--allow-rewrite] [--no-history] [--workspace <path>]")
+            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--modify] [--fix] [--retry] [--review] [--allow-rewrite] [--no-history] [--status] [--workspace <path>]")
             return True
 
         keep_mode = "--keep" in parts
@@ -1265,6 +1348,7 @@ class ImplementCommand(Command):
         review_mode = "--review" in parts
         allow_rewrite = "--allow-rewrite" in parts
         history_mode = "--no-history" not in parts
+        status_mode = "--status" in parts
 
         target_workspace = agent.workspace
         if "--workspace" in parts:
@@ -1272,7 +1356,7 @@ class ImplementCommand(Command):
             if ws_idx + 1 < len(parts):
                 target_workspace = parts[ws_idx + 1].strip('"')
 
-        skip_tokens = ["--keep", "--refresh", "--force", "--modify", "--fix", "--retry", "--review", "--workspace", "--allow-rewrite", "--no-history", target_workspace]
+        skip_tokens = ["--keep", "--refresh", "--force", "--modify", "--fix", "--retry", "--review", "--workspace", "--allow-rewrite", "--no-history", "--status", target_workspace]
         filtered_parts = [p for p in parts if p not in skip_tokens]
 
         taskplan_file = filtered_parts[0] if filtered_parts else ""
@@ -1385,6 +1469,11 @@ class ImplementCommand(Command):
                 print("Warning: failed to save cache")
 
         print(f"Found {len(all_files)} files to implement: {', '.join(all_files)}")
+
+        # ---- Read-only status report: exit before any LLM call ----
+        if status_mode:
+            self._status_report(all_files, target_workspace)
+            return True
 
         # ---- Layer 1: planned-new-file gate (before any generation) ----
         # A plan that proposes modules duplicating existing ones (e.g.
@@ -1792,7 +1881,12 @@ class ImplementCommand(Command):
             for attempt in range(3):
                 try:
                     impl_response = await agent.llm.chat(impl_messages, max_tokens=12000, disable_thinking=True)
-                    if impl_response and not impl_response.startswith("[Error:"):
+                    # "[Error: ...]" and "[LM Studio ...]" are transport/model
+                    # failure sentinels, not content — retrying them is the
+                    # whole point of this loop (observed: an "[LM Studio
+                    # stream error]" broke out as if valid and the batch was
+                    # silently dropped by the block parser).
+                    if impl_response and not impl_response.startswith(("[Error:", "[LM Studio")):
                         break
                     print(f"  Attempt {attempt + 1} failed, retrying...")
                     if "reasoning" in str(impl_response).lower():
@@ -1804,8 +1898,10 @@ class ImplementCommand(Command):
                     if attempt == 2:
                         impl_response = None
 
-            if not impl_response or impl_response.startswith("[Error:"):
+            if not impl_response or impl_response.startswith(("[Error:", "[LM Studio")):
                 print("  Failed after 3 attempts, skipping batch")
+                for bf in batch:
+                    file_outcomes[bf] = f"generation failed — {str(impl_response)[:120] or 'no response'}"
                 continue
 
             file_patterns = [
