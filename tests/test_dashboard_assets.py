@@ -109,6 +109,16 @@ def test_icon_bundle_registers_all_dashboard_icons_offline() -> None:
                  "solar:home-smile-angle-outline", "line-md:gauge"):
         assert name in icons, f"offline icon bundle lacks {name}"
     assert len(icons) >= 14
+    # Regression guard (cropped-icons bug): every record MUST carry explicit
+    # width/height. addIcon() without dimensions falls back to a bogus
+    # 16x16 viewBox and crops any icon drawn on a larger grid (24/1024/...).
+    for name, rec in icons.items():
+        assert isinstance(rec.get("width"), (int, float)) and \
+            rec["width"] > 0, f"{name}: missing width -> icon renders cropped"
+        assert isinstance(rec.get("height"), (int, float)) and \
+            rec["height"] > 0, f"{name}: missing height -> icon renders cropped"
+        assert "<svg" not in str(rec.get("body", "")), \
+            f"{name}: body must be inner SVG content only"
 
 
 def test_theme_button_script_does_not_write_text_into_button(base_url: str) -> None:
