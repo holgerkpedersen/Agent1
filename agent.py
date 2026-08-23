@@ -1676,7 +1676,12 @@ async def run_interactive() -> None:
 async def main() -> None:
     """Main entry point - runs interactive mode or the web dashboard."""
     if "--serve" in sys.argv:
-        return await run_dashboard_server()
+        # run_dashboard_server() is synchronous (ThreadingHTTPServer.serve_forever);
+        # awaiting it raised "object NoneType can't be used in 'await' expression".
+        run_dashboard_server()
+        return
+    # No --serve flag: fall back to the classic interactive CLI.
+    await run_interactive()
 
 
 def run_dashboard_server() -> None:
