@@ -77,6 +77,7 @@ from agent_core.commands.run_cmd import RunCommand
 from agent_core.commands.self_heal_cmd import SelfHealCommand
 from agent_core.commands.reconstruct_cmd import ReconstructCommand
 from agent_core.commands.multillm_cmd import MultiLlmCommand
+from agent_core.commands.demo_data_cmd import DemoDataCommand
 import subprocess
 import shlex
 import logging
@@ -311,6 +312,32 @@ class Agent:
         self.dispatcher.register("delete_file", lambda args: self._tool_delete_file(**args))
         self.dispatcher.register("analyze_file", lambda args: self._tool_analyze_file(**args))
         self.dispatcher.register("llm_analyze", lambda args: self._tool_llm_analyze(**args))
+
+    # ── Dashboard data feed (shared MetricsCollector bridge) ────────────
+    def record_demo_activity(
+        self, activity: str = "analyze", latency_ms: float = 120.0
+    ) -> dict[str, float]:
+        """Record one synthetic activity into the shared metrics collector.
+
+        Mirrors exactly what ``record_command_metrics()`` writes for a real
+        REPL command, so the dashboard treats demo data identically:
+        ``command.<name>.count`` counter + elapsed-seconds histogram sample
+        + ``last.command.seconds`` gauge. Returns the written values.
+        """
+        elapsed_s = max(0.001, latency_ms / 1000.0)
+        collector = self.get_metrics_collector()
+        collector.increment_counter(f"command.{activity}.count")
+        collector.record_histogram("command.elapsed.seconds", elapsed_s)
+        collector.set_gauge("last.command.seconds", round(elapsed_s, 4))
+        return {
+            "events": 3,
+            "counter": collector.get_counter_value(f"command.{activity}.count"),
+            "elapsed_s": elapsed_s,
+        }
+
+    def get_metrics_collector(self) -> "MetricsCollector":
+        """Instance delegate for the process-wide collector (test seam)."""
+        return get_metrics_collector()
 
     def _resolve_nlp_path(self, path: str) -> str:
         """Resolve a path for NLP tool use, honouring _nlp_workspace if set.
@@ -1552,10 +1579,17 @@ def record_command_metrics(command: str, elapsed_s: float) -> None:
 
 def start_dashboard_thread(port: int = 8080) -> Optional["ThreadingHTTPServer"]:
     """Serve the TTTHEME dashboard on a daemon thread from this process."""
-    from src.agent1.monitoring import DashboardAPIServer
+    from src.agent1.monitoring import AlertSystem, DashboardAPIServer
 
-    server_holder = DashboardAPIServer(get_metrics_collector(), port=port)
-    httpd = server_holder.start()
+    collector = get_metrics_collector()
+    alert_system = AlertSystem(collector)
+    for rule in _default_alert_rules():
+        alert_system.add_rule(rule)
+    server_holder = DashboardAPIServer(collector, port=port)
+    httpd = server_holder.start(
+        alert_rules=alert_system.list_rules(),
+        evaluate_alerts=alert_system.evaluate,
+    )
 
     def _serve() -> None:
         try:
@@ -1617,6 +1651,7 @@ async def run_interactive() -> None:
         ("decide ...", "Track design decisions (add/list/show/check/resolve/link/extract/review)"),
         ("review <refresh|list|show|label|auto|export>", "Human gate over failed task traces (label <task> auto = agent reviews)"),
         ('multillm "question" [--models m1,m2] [--max-tokens N] [--thinking] [--concurrency N]', "Ask multiple LLMs the same question in parallel"),
+        ("demo_data [--activity <name>] [--count N] [--latency-ms MS] [--loop N] [--clear]", "Feed synthetic data into the web dashboard"),
         ("quit", "Exit"),
     ]
     for name, desc in _CMD_LIST:
@@ -1649,6 +1684,7 @@ async def run_interactive() -> None:
     registry.register(SelfHealCommand())
     registry.register(ReconstructCommand())
     registry.register(MultiLlmCommand())
+    registry.register(DemoDataCommand())
 
     # Watch for code edited on disk while the REPL runs: the process keeps
     # imported modules in memory, so on-disk fixes (e.g. from a paste
@@ -1763,16 +1799,55 @@ def _dashboard_port() -> int:
     return 8080
 
 
+def _default_alert_rules() -> "list[AlertRule]":
+    """Dashboard alert rules evaluated live against the shared collector."""
+    from src.agent1.core import AlertRule
+
+    return [
+        AlertRule(
+            name="slow_command",
+            metric_name="last.command.seconds",
+            threshold=2.0,
+            comparison_operator="greater_than",
+            severity="warning",
+            cooldown_seconds=30,
+        ),
+        AlertRule(
+            name="command_volume_high",
+            metric_name="command.analyze.count",
+            threshold=50,
+            comparison_operator="greater_than",
+            severity="info",
+            cooldown_seconds=300,
+        ),
+        AlertRule(
+            name="fix_runs_elevated",
+            metric_name="command.fix.count",
+            threshold=20,
+            comparison_operator="greater_than",
+            severity="critical",
+            cooldown_seconds=300,
+        ),
+    ]
+
+
 def run_dashboard_server() -> None:
     """Launch the TTTHEME web dashboard on localhost:8080."""
-    from src.agent1.monitoring import DashboardAPIServer
+    from src.agent1.monitoring import AlertSystem, DashboardAPIServer
 
     # Reuse the process-wide collector so anything recorded before/while
     # serving (REPL commands, chat turns) is visible in the UI.
-    server_holder = DashboardAPIServer(get_metrics_collector(), port=_dashboard_port())
+    collector = get_metrics_collector()
+    alert_system = AlertSystem(collector)
+    for rule in _default_alert_rules():
+        alert_system.add_rule(rule)
+    server_holder = DashboardAPIServer(collector, port=_dashboard_port())
     print(f"Agent1 dashboard: http://localhost:{_dashboard_port()}  (Ctrl+C to stop)")
     try:
-        server_holder.run()
+        server_holder.run(
+            alert_rules=alert_system.list_rules(),
+            evaluate_alerts=alert_system.evaluate,
+        )
     except KeyboardInterrupt:
         pass
 

@@ -23,6 +23,8 @@ Python AI agent framework with LLM integration, tool execution, workspace manage
 
 ### Commands (`agent_core/commands/`)
 ```
+demo_data [--activity <name>] [--count N] [--latency-ms MS]      Feed synthetic data into the web dashboard
+          [--loop N] [--clear]                                   (no LLM; fills every dashboard view instantly)
 read <path>                      Read a file
 write <path> <content>           Write content to file
 search <query>                   Search files for string
@@ -102,6 +104,27 @@ collisions, and unwired modules (see agent_core/commands/implement_cmd.py).
 - **Tool errors feed back**: a failed tool returns its error to the model, which can retry with a different approach.
 - **Tool schemas are declared once** in `agent_core/tool_schemas.py` — the schema set sent to the LLM is exactly the set the dispatcher can execute (`NLP_TOOL_NAMES`).
 - Conversation history is maintained so follow-up questions build on previous answers.
+
+### Web Dashboard (`http://localhost:8080`)
+
+Run the REPL and the live TTTHEME dashboard in the same process (or serve only the web UI):
+
+```
+python agent.py --dashboard          # REPL + dashboard in one process
+python agent.py --serve              # dashboard only
+python agent.py --serve --port 9000  # custom port
+```
+
+The UI polls every 3 s and renders whatever the process-wide metrics collector holds, so data appears as soon as commands run. Fresh session with no activity? Seed every view deterministically from the REPL (LLM-free):
+
+```
+demo_data                            # 5 mixed activities -> all views populated
+demo_data --count 20 --latency-ms 300
+demo_data --activity analyze         # only one activity type
+demo_data --clear                    # wipe the collector again
+```
+
+Alert rules (`slow_command`, `command_volume_high`, `fix_runs_elevated`) are evaluated live against the same collector and shown under **Active Alerts**.
 
 ### Workflow Pipeline
 
