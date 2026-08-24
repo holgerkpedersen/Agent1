@@ -65,7 +65,7 @@ class TaskCollector:
         aggregated: TaskMetric = self._compute_aggregate(task_id)
         logger.debug(
             "Aggregated %d subtasks for '%s': duration=%.3fs, success_rate=%.2f%%",
-            len(self._subtask_metrics[task_id]), task_id, aggregated.duration_seconds, aggregated.success_rate * 100.0,
+            len(self._subtask_metrics[task_id]), task_id, aggregated["duration_seconds"], aggregated["success_rate"] * 100.0,
         )
         return aggregated
 
@@ -77,12 +77,13 @@ class TaskCollector:
                 duration_seconds=0.0, success_rate=1.0, resource_consumption_units=0.0, task_id=task_id, status="pending",
             )
 
-        total_duration: float = sum(m.duration_seconds for m in subtask_list)
-        avg_success_rate: float = sum(m.success_rate for m in subtask_list) / len(subtask_list)
-        max_resource_consumption: float = max(m.resource_consumption_units for m in subtask_list)
+        total_duration: float = sum(m["duration_seconds"] for m in subtask_list)
+        avg_success_rate: float = sum(m["success_rate"] for m in subtask_list) / len(subtask_list)
+        max_resource_consumption: float = max(m["resource_consumption_units"] for m in subtask_list)
 
-        # Determine overall status using pattern matching on Union type branch resolution
-        statuses: list[str | None] = [m.status for m in subtask_list if m.status is not None]
+        # Determine overall status from per-subtask statuses.
+        statuses: list[str | None] = [m.get("status") for m in subtask_list
+                                      if m.get("status") is not None]
         overall_status: str | None = self._resolve_overall_status(statuses)
 
         return TaskMetric(
@@ -90,28 +91,25 @@ class TaskCollector:
         )
 
     def _resolve_overall_status(self, statuses: list[str]) -> str | None:
-        """Resolve the overall task status from individual subtask statuses using pattern matching."""
+        """Resolve the overall task status from individual subtask statuses."""
         if not statuses:
             return "pending"
 
-        # Pattern-matching style resolution to eliminate mypy ambiguity complaints
-        match statuses[-1]:  # noqa: E704 - intentional single-line for clarity
-            case s if s == "failed":
-                return "failed"
-            case s if s == "running":
-                return "running"
-            case s if s == "completed":
-                return "completed"
-            case _:
-                # Fallback: check all statuses for failure presence
-                has_failure: bool = any(s == "failed" for s in statuses)
-                has_running: bool = any(s == "running" for s in statuses)
-                if has_failure:
-                    return "failed"
-                elif has_running:
-                    return "running"
-                else:
-                    return "completed"
+        # Priority: latest status wins, then any failure, then any running.
+        last = statuses[-1]
+        if last == "failed":
+            return "failed"
+        if last == "running":
+            return "running"
+        if last == "completed":
+            return "completed"
+        has_failure = any(s == "failed" for s in statuses)
+        has_running = any(s == "running" for s in statuses)
+        if has_failure:
+            return "failed"
+        if has_running:
+            return "running"
+        return "completed"
 
     def correlate_dependency_performance(
         self, task_id: str, dependency_task_ids: list[str], bottleneck_threshold_ms: float = 500.0,
@@ -131,29 +129,25 @@ class TaskCollector:
             self._dependency_graph[task_id].add(dep_id)
             subtask_metrics: list[TaskMetric] = self._subtask_metrics.get(dep_id, [])
 
-            # Pattern matching to resolve Union type without mypy ambiguity complaints
-            match subtask_metrics:
-                case [] | None:  # noqa: E704 - intentional single-line for clarity
+            if not subtask_metrics:
+                results[dep_id] = False
+                logger.debug("No metrics recorded for dependency '%s'", dep_id)
+                continue
+
+            longest_duration_ms: float = subtask_metrics[0]["duration_seconds"] * 1000.0
+            is_bottleneck: bool = longest_duration_ms > bottleneck_threshold_ms
+            if is_bottleneck:
+                results[dep_id] = True
+                logger.warning(
+                    "Dependency '%s' identified as bottleneck (>%.1fms)",
+                    dep_id, bottleneck_threshold_ms,
+                )
+            else:
+                aggregate_metric: TaskMetric | None = self._compute_aggregate(dep_id)
+                if aggregate_metric is not None:
+                    results[dep_id] = aggregate_metric
+                else:
                     results[dep_id] = False
-                    logger.debug("No metrics recorded for dependency '%s'", dep_id)
-                case [m, *_]:  # noqa: E704 - intentional single-line for clarity
-                    longest_duration_ms: float = m.duration_seconds * 1000.0
-                    is_bottleneck: bool = longest_duration_ms > bottleneck_threshold_ms
-
-                    # Resolve Union branch via pattern matching on boolean outcome
-                    match is_bottleneck:
-                        case True:  # noqa: E704 - intentional single-line for clarity
-                            results[dep_id] = True
-                            logger.warning("Dependency '%s' identified as bottleneck (>%.1fms)", dep_id, bottleneck_threshold_ms)
-                        case False:  # noqa: E704 - intentional single-line for clarity
-                            aggregate_metric: TaskMetric | None = self._compute_aggregate(dep_id)
-
-                            # Further pattern matching on Union type branch resolution
-                            match aggregate_metric:
-                                case metric if isinstance(metric, TaskMetric):  # noqa: E704 - intentional single-line for clarity
-                                    results[dep_id] = metric
-                                case None:  # noqa: E704 - intentional single-line for clarity
-                                    results[dep_id] = False
 
         logger.info("Correlated %d dependencies for task '%s'", len(dependency_task_ids), task_id)
         return results

@@ -1,5 +1,6 @@
 """Cleanup command for agent interactive mode."""
 import json
+import os
 
 from pathlib import Path
 

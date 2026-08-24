@@ -1,6 +1,6 @@
 
-from src.agent1.orchestration.dependency_graph import DependencyGraph
-from src.agent1.orchestration.task_scheduler import TaskScheduler
+from agent_core.orchestration.dependency_graph import DependencyGraph
+from agent_core.orchestration.task_scheduler import TaskScheduler
 
 
 def test_dependency_graph_init():

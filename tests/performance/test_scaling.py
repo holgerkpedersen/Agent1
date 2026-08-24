@@ -1,6 +1,6 @@
 
-from src.agent1.core import VectorDatabase
-from src.agent1.monitoring.metrics_collector import MetricsCollector
+from agent_core.memory import VectorDatabase
+from agent_core.monitoring.metrics_collector import MetricsCollector
 
 
 def test_metrics_collector_basic():

@@ -4,8 +4,8 @@ import time
 
 import pytest
 
-from agent1.evolution.metrics import EvolutionMetrics, ExecutionMetric
-from agent1.swarm.orchestrator import Orchestrator
+from agent_core.evolution_metrics import EvolutionMetrics, ExecutionMetric
+from agent_core.swarm_orchestrator import Orchestrator
 
 
 class TestOrchestrator:

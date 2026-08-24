@@ -217,7 +217,9 @@ def _show_task(traces_dir: Path, diag_dir: Path, task_id: str, as_json: bool) ->
     print(f"  failed     : {summary['failed_signals']} failed signal(s)")
     print(f"  guards     : {summary['guards']} guard trigger(s)")
     if summary.get("model"):
-        print(f"  model      : {summary['model']}{f' ({summary['profile']})' if summary.get('profile') else ''}")
+        profile = summary.get("profile")
+        model_line = f"{summary['model']} ({profile})" if profile else summary["model"]
+        print(f"  model      : {model_line}")
     if summary.get("prompt"):
         print(f"  prompt     : {summary['prompt']}")
     affected = summary.get("affected_files") or []

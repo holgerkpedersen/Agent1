@@ -57,10 +57,8 @@ from agent_core.symbol_intel import collect_definitions, collect_references
 if TYPE_CHECKING:
     from http.server import ThreadingHTTPServer
 
-    # src/ is a namespace layout; mypy runs with namespace_packages=false so
-    # these resolve only at runtime — typed as Any on purpose.
-    from src.agent1.core import AlertRule  # type: ignore[import-not-found]
-    from src.agent1.monitoring import MetricsCollector  # type: ignore[import-not-found]
+    from agent_core.monitoring import MetricsCollector
+    from agent_core.monitoring.types import AlertRule
 from agent_core.commands.read_cmd import ReadCommand
 
 # Windows console default codec is cp1252, which cannot encode many Unicode
@@ -2107,7 +2105,7 @@ def get_metrics_collector() -> "MetricsCollector":
     """Return the process-wide collector shared by REPL and dashboard."""
     global _shared_metrics_collector
     if _shared_metrics_collector is None:
-        from src.agent1.monitoring import MetricsCollector as _MC
+        from agent_core.monitoring import MetricsCollector as _MC
         _shared_metrics_collector = _MC()
     return cast("MetricsCollector", _shared_metrics_collector)
 
@@ -2139,7 +2137,7 @@ def _build_dashboard(collector: "MetricsCollector", port: int) -> tuple[Any, Any
     and :func:`run_dashboard_server` (`--serve`) so both surfaces always get
     identical rules and evaluator wiring.
     """
-    from src.agent1.monitoring import AlertSystem, DashboardAPIServer
+    from agent_core.monitoring import AlertSystem, DashboardAPIServer
 
     alert_system = AlertSystem(collector)
     for rule in _default_alert_rules():
@@ -2390,7 +2388,7 @@ def _dashboard_port() -> int:
 
 def _default_alert_rules() -> "list[AlertRule]":
     """Dashboard alert rules evaluated live against the shared collector."""
-    from src.agent1.core import AlertRule
+    from agent_core.monitoring.types import AlertRule
 
     return [
         AlertRule(

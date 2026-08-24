@@ -4,7 +4,7 @@ import os
 import signal
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, TypeVar
 
 T = TypeVar("T")
 

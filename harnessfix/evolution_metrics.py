@@ -2,7 +2,7 @@
 
 This module computes a per-run quality score from the JSONL traces produced by
 ``harnessfix/tracing.py`` and indexed by ``harnessfix/history.py``.  It reuses
-the sliding-window design from ``agent1/evolution/metrics.py`` but binds it to
+the sliding-window design from ``agent_core/evolution_metrics.py`` but binds it to
 real trace data instead of caller-supplied metrics.
 
 VERIFIED TRACE SCHEMA (do not assume fields that do not exist):
@@ -24,7 +24,7 @@ import os
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from agent1.evolution.metrics import EvolutionMetrics, ExecutionMetric
+from agent_core.evolution_metrics import EvolutionMetrics, ExecutionMetric
 
 from .corpus import collect_traces
 from .reader import TraceValidationError, read_trace

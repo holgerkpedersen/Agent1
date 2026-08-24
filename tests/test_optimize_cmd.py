@@ -1796,11 +1796,13 @@ class TestPerFindingPatches:
                 idx = next(i for i, (num, text) in enumerate(numbered)
                            if text.strip().startswith("return open"))
                 num = numbered[idx][0]
+                fixed_line = numbered[idx][1].replace(
+                    "open(fname)", 'open(fname, mode="r")')
                 return (
                     "[PATCH: big.py]\n"
                     f"@@ -{num},1 +{num},1 @@\n"
                     f"-{numbered[idx][1]}\n"
-                    f"+{numbered[idx][1].replace('open(fname)', 'open(fname, mode=\"r\")')}\n"
+                    f"+{fixed_line}\n"
                 )
             return self._except_fix_hunk("big.py", numbered)
 

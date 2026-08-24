@@ -136,11 +136,24 @@ reports/harnessfix/
 reports/history/
 reports/benchmark_harnessfix.json
 
-.github/workflows/
 nul
 .poolside/
+.opencode/
 agent_memory.db
 agent_memory.json
 backups/
 model
 reports/models.json
+
+# Runtime state written by the agent during normal use — never source.
+checkpoints/
+pytest_out.txt
+performance_dashboard.html
+model.json
+reports/benchmark_*.json
+
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+

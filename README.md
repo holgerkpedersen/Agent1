@@ -202,14 +202,14 @@ The `clear` command shows what's stored before clearing:
 
 Use `clear stats` to view without clearing, `clear --force` to skip confirmation.
 
-### Src Agent1 — Multi-Agent Framework (`src/agent1/`)
+### Multi-Agent Framework (`agent_core/` subpackages)
 | Module | Purpose |
 |---|---|
-| `core` | AgentMessage, MessageType, MessageBus (`core.message_bus`), SharedContext (`core.context_manager`), SQLiteStorage, VectorDatabase, PluginInterface |
-| `memory` | MemoryStore with caching, SemanticSearchEngine, VectorDatabase integration |
-| `orchestration` | DependencyGraph, TaskScheduler, WorkflowEngine |
+| `orchestration` | AgentMessage, TaskNode, DependencyGraph, dependency-aware TaskScheduler |
+| `memory` | MemoryStore with caching, SQLiteStorage backend, EmbeddingService + VectorDatabase |
 | `plugins` | BasePlugin, PluginRegistry, PluginManager with lifecycle management |
-| `monitoring` | MetricsCollector, DashboardAPIServer, AlertSystem |
+| `monitoring` | MetricsCollector, DashboardAPIServer (live web dashboard), AlertSystem |
+| `swarm_orchestrator`, `evolution_metrics`, `llm/async_provider` | Swarm coordination, execution scoring, async LLM access |
 
 ## Quick Start
 

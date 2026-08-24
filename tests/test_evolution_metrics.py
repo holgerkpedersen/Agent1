@@ -1,10 +1,10 @@
-"""Tests for agent1.evolution.metrics — ExecutionMetric and EvolutionMetrics."""
+"""Tests for agent_core.evolution_metrics — ExecutionMetric and EvolutionMetrics."""
 
 from __future__ import annotations
 
 import pytest
 
-from agent1.evolution.metrics import ExecutionMetric, EvolutionMetrics
+from agent_core.evolution_metrics import ExecutionMetric, EvolutionMetrics
 
 
 # ---------------------------------------------------------------------------

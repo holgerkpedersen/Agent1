@@ -4,8 +4,8 @@ When ``stop`` is invoked while tasks are still in flight, every tracked task mus
 eventually reach a terminal state (COMPLETED or FAILED) and no inflight asyncio
 tasks should be left dangling behind (``_inflight == set()``).
 
-Uses the real orchestration stack: ``src.agent1.core.TaskNode`` /
-``TaskStatus`` plus ``src.agent1.orchestration.task_scheduler.TaskScheduler``.
+Uses the real orchestration stack: ``agent_core.orchestration.types.TaskNode`` /
+``TaskStatus`` plus ``agent_core.orchestration.task_scheduler.TaskScheduler``.
 """
 
 import asyncio
@@ -13,8 +13,8 @@ from typing import Any, Awaitable, Dict
 
 import pytest
 
-from src.agent1.core import TaskNode, TaskStatus
-from src.agent1.orchestration.task_scheduler import TaskExecutor, TaskScheduler
+from agent_core.orchestration import TaskNode, TaskStatus
+from agent_core.orchestration.task_scheduler import TaskExecutor, TaskScheduler
 
 
 async def _slow_executor(_input: Dict[str, Any]) -> Dict[str, Any]:  # noqa: ANN401 - test stub

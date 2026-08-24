@@ -22,13 +22,13 @@ Agent1 is a Python AI agent framework with LLM integration via LM Studio (local)
 │   └─────────────┘  └──────────────┘  └─────────────────┘         │
 │                                                                  │
 │  ┌───────────────────────────────────────────────────────────┐   │
-│  │              src/agent1  (Multi-Agent Framework)          │   │
+│  │      agent_core/ subpackages  (Multi-Agent Framework)     │   │
 │  │                                                           │   │
 │  │  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌──────────┐│   │
-│  │  │   Core    │  │  Memory   │  │Orchestrat │  │Monitor   ││   │
-│  │  │ Agent     │  │ Store     │  │Scheduler  │  │Metrics   ││   │
-│  │  │ Messages  │  │ Vector DB │  │Workflow   │  │Dashboard ││   │
-│  │  │ Context   │  │ Semantic  │  │DepGraph   │  │Alerts    ││   │
+│  │  │ Orchestral│  │  Memory   │  │  Plugins  │  │Monitor   ││   │
+│  │  │ Scheduler │  │ Store     │  │ Registry  │  │Metrics   ││   │
+│  │  │ DepGraph  │  │ Vector DB │  │ Manager   │  │Dashboard ││   │
+│  │  │ Messages  │  │ SQLite    │  │ Lifecycle │  │Alerts    ││   │
 │  │  └───────────┘  └───────────┘  └───────────┘  └──────────┘│   │
 │  └───────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────┘
@@ -251,46 +251,37 @@ class LLMClient:
     async def analyze_code(self, code):              # -> self._provider.analyze_code()
 ```
 
-## 6. Multi-Agent Framework (`src/agent1/`)
+## 6. Multi-Agent Framework (`agent_core/` subpackages)
 
-Generated via the `workflow → implement` pipeline. A composable framework for building multi-agent systems.
+Originally generated via the `workflow → implement` pipeline under `src/agent1/`
+and a root-level `agent1/` swarm layer; both were merged into `agent_core/`
+and the old trees deleted.  A composable framework for building multi-agent systems.
 
 ```
-src/agent1/
-├── core/
-│   ├── __init__.py           # Shared types: AgentMessage, TaskNode, StorageBackend,
-│   │                         #   VectorDatabase, EmbeddingService, PluginInterface, MetricType
-│   ├── agent.py              # Agent class with message bus, memory, plugins
-│   ├── message_bus.py        # Publish/subscribe inter-agent messaging
-│   └── context_manager.py    # Shared context with locking
-├── memory/
-│   ├── __init__.py           # Re-exports core + MemoryStore, SemanticSearchEngine
-│   ├── memory_store.py       # Persistent storage with cache + optional semantic search
-│   ├── vector_db.py          # VectorDatabase + EmbeddingService facade
-│   └── semantic_search.py    # Combine embedding + vector DB for semantic queries
+agent_core/
 ├── orchestration/
-│   ├── __init__.py           # Re-exports TaskScheduler, WorkflowEngine, DependencyGraph
-│   ├── task_scheduler.py     # Schedule tasks with executors, timing, handlers
-│   ├── workflow_engine.py    # Execute concurrent ready tasks via executor map
-│   └── dependency_graph.py   # Directed graph with topological sort, cycle detection
+│   ├── __init__.py           # Re-exports AgentMessage, TaskNode, TaskScheduler, DependencyGraph
+│   ├── types.py              # Shared dataclasses: AgentMessage, MessageType, TaskNode, TaskStatus
+│   ├── task_scheduler.py     # Dependency-aware scheduler: executors, timing, handlers
+│   └── dependency_graph.py   # Directed graph (networkx + typed fallback): topo sort, cycles
+├── memory/
+│   ├── __init__.py           # Re-exports MemoryStore + storage/vector types
+│   ├── memory_store.py       # Persistent storage with cache + optional semantic search
+│   └── types.py              # SQLiteStorage backend, EmbeddingService, VectorDatabase
 ├── plugins/
 │   ├── __init__.py           # BasePlugin, PluginRegistry, PluginManager
 │   ├── base_plugin.py        # Lifecycle: initialize → execute → cleanup
 │   ├── plugin_manager.py     # Load/unload/execute lifecycle management
-│   └── registry.py           # Plugin class registration + metadata
-└── monitoring/
-    ├── __init__.py           # Re-exports MetricsCollector, DashboardAPIServer, AlertSystem
-    ├── metrics_collector.py  # Counters, gauges, histograms, timers (thread-safe)
-    ├── dashboard_api.py      # HTTP API on port 8080 for querying metrics
-    └── alert_system.py       # Alert rules with threshold checking + cooldown
-```
-
-### Key Design Decisions
-
-- **Centralized types**: `core/__init__.py` defines all shared types (dataclasses, protocols, enums) to avoid circular imports.
-- **Protocol-based interfaces**: `StorageBackend`, `PluginInterface`, `VectorEmbeddingModel` are Protocols for mypy-strict compliance.
-- **Composition over inheritance**: Components like `MemoryStore` compose `SQLiteStorage`, `EmbeddingService`, `VectorDatabase` rather than inheriting.
-- **Lifecycle management**: Plugins follow `initialize → execute → cleanup`, managed by `PluginManager`.
+│   ├── registry.py           # Plugin class registration + metadata
+│   └── types.py              # PluginInterface protocol, PluginMetadata
+├── monitoring/
+│   ├── __init__.py           # Re-exports MetricsCollector, DashboardAPIServer, AlertSystem
+│   ├── metrics_collector.py  # Counters, gauges, histograms, timers (thread-safe)
+│   ├── dashboard_api.py      # TTTHEME web dashboard served by agent.py --serve / --dashboard
+│   ├── alert_system.py       # Alert rules with threshold checking + cooldown
+│   └── types.py              # MetricType, MetricData, AlertRule, AlertEvent
+├── swarm_orchestrator.py     # Thread-pool swarm coordinator (up to 20 workers)
+└── evolution_metrics.py      # Sliding-window execution scoring + evolution decisions
 
 ### Safety Architecture
 
@@ -336,15 +327,16 @@ tests/
     └── test_scaling.py        # Metrics throughput, vector DB search latency
 ```
 
-86 tests, all passing.
+1,500+ tests across unit, integration, and performance tiers, all passing
+(`pytest -q` for the authoritative count).
 
 ## Summary
 
-| Layer                                               | Responsibility                        | Pattern                                   |
+| Layer | Responsibility | Pattern |
 | --------------------------------------------------- | ------------------------------------- | ----------------------------------------- |
-| **LLM** (`llm/`)                                    | Model communication, retry, streaming | Provider protocol + DIP                   |
-| **Agent Core** (`agent.py`)                         | State, tool dispatch, memory          | Composition + SRP                         |
-| **Commands** (`commands/`)                          | User-facing REPL commands             | Command pattern + Registry                |
-| **File Ops** (`file_system.py`, `file_searcher.py`) | Read/write/search with path safety    | Extracted utility classes                 |
-| **Src Agent1** (`src/agent1/`)                      | Multi-agent framework                 | Centralized types, protocols, composition |
-| **Tests** (`tests/`)                                | Unit, integration, performance        | pytest with anyio                         |
+| **LLM** (`llm/`) | Model communication, retry, streaming | Provider protocol + DIP |
+| **Agent Core** (`agent.py`) | State, tool dispatch, memory | Composition + SRP |
+| **Commands** (`commands/`) | User-facing REPL commands | Command pattern + Registry |
+| **File Ops** (`file_system.py`, `file_searcher.py`) | Read/write/search with path safety | Extracted utility classes |
+| **Multi-Agent** (`orchestration/`, `memory/`, `plugins/`, `monitoring/`) | Multi-agent framework + live dashboard | Centralized types, protocols, composition |
+| **Tests** (`tests/`) | Unit, integration, performance | pytest with anyio |

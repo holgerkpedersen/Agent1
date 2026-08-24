@@ -54,7 +54,7 @@ def test_demo_data_command_feeds_dashboard_end_to_end(
 ) -> None:
     """The exact user-facing flow: run the command, then read the API."""
     from agent_core.commands.demo_data_cmd import DemoDataCommand
-    from src.agent1.monitoring import DashboardAPIServer
+    from agent_core.monitoring import DashboardAPIServer
 
     bot = _make_agent()
     cmd = DemoDataCommand()
@@ -128,7 +128,7 @@ def test_serve_mode_wires_alert_evaluator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """/api/alerts must return rules + evaluated events, not an error."""
-    from src.agent1.monitoring import DashboardAPIServer
+    from agent_core.monitoring import DashboardAPIServer
 
     captured: dict[str, object] = {}
 
@@ -155,7 +155,7 @@ def test_serve_mode_wires_alert_evaluator(
 
 def test_serve_mode_api_alerts_endpoint_returns_rules() -> None:
     """Full HTTP check of the alerts surface after the wiring fix."""
-    from src.agent1.monitoring import AlertSystem, DashboardAPIServer
+    from agent_core.monitoring import AlertSystem, DashboardAPIServer
 
     bot = _make_agent()
     # 2.5s > the slow_command threshold -> should trigger one alert event.

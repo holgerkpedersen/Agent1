@@ -1,6 +1,6 @@
 import pytest
 
-from src.agent1.plugins import BasePlugin, PluginRegistry, PluginManager
+from agent_core.plugins import BasePlugin, PluginRegistry, PluginManager
 
 
 class SamplePlugin(BasePlugin):

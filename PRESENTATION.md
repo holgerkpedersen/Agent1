@@ -262,23 +262,19 @@ Located in `agent_core/security/`:
 
 ## Multi-Agent Framework & Swarm Orchestration
 
-Beyond the single REPL agent, two additional frameworks ship in the repo:
+Beyond the single REPL agent, the multi-agent framework now lives inside
+`agent_core/` (the retired `src/agent1/` and root `agent1/` packages were
+merged in and deleted):
 
-**`src/agent1/` — modular multi-agent library**
-
-| Module          | Contents                                                                                |
-| --------------- | --------------------------------------------------------------------------------------- |
-| `core`          | AgentMessage, MessageBus, SharedContext, SQLiteStorage, VectorDatabase, PluginInterface |
-| `memory`        | MemoryStore with caching, SemanticSearchEngine, vector DB integration                   |
-| `orchestration` | DependencyGraph, TaskScheduler, WorkflowEngine                                          |
-| `plugins`       | BasePlugin, PluginRegistry, PluginManager with lifecycle management                     |
-| `monitoring`    | MetricsCollector, DashboardAPIServer, AlertSystem                                       |
-
-**`agent1/` — swarm layer**
-
-- `swarm/orchestrator.py` — thread-pool swarm coordinator (up to 20 workers) dispatching tasks across agents with future tracking
-- `evolution/metrics.py` — sliding-window execution scoring with threshold-triggered evolution decisions
-- `providers/async_llm.py` — async LLM access for swarm workers
+| Module                     | Contents                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------- |
+| `orchestration`            | AgentMessage, TaskNode, DependencyGraph (networkx + fallback), dependency-aware TaskScheduler |
+| `memory`                   | MemoryStore with caching, SQLiteStorage backend, EmbeddingService + VectorDatabase      |
+| `plugins`                  | BasePlugin, PluginRegistry, PluginManager with lifecycle management                     |
+| `monitoring`               | MetricsCollector, DashboardAPIServer (live web dashboard), AlertSystem                  |
+| `swarm_orchestrator`       | thread-pool swarm coordinator (up to 20 workers) dispatching tasks across agents        |
+| `evolution_metrics`        | sliding-window execution scoring with threshold-triggered evolution decisions           |
+| `llm/async_provider`       | async LLM provider ABC with rate limiting and exponential-backoff retries               |
 
 Integration tests cover multi-agent memory isolation, broadcast, and message routing; performance tests cover scaling.
 
@@ -292,6 +288,9 @@ cd Agent1
 pip install -r requirements.txt
 python agent.py
 ```
+
+> `requirements.txt` mirrors the runtime dependencies declared in
+> `pyproject.toml`; for development use `pip install -e .[dev]` instead.
 
 ```
 > Summarize this repository and list its five most complex modules

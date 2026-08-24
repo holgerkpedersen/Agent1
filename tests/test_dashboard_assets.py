@@ -36,7 +36,7 @@ LIBS = [
 
 @pytest.fixture(scope="module")
 def base_url() -> typing.Iterator[str]:
-    from src.agent1.monitoring import DashboardAPIServer
+    from agent_core.monitoring import DashboardAPIServer
 
     holder = DashboardAPIServer(None, port=0)  # port 0 -> OS-assigned
     httpd = holder.start()

@@ -19,7 +19,9 @@ class AggregationEngine:
         self._records: List[PerformanceRecord] = []
 
     def ingest(self, record: PerformanceRecord) -> bool:
-        if not isinstance(record, PerformanceRecord):
+        # PerformanceRecord is a TypedDict (plain dict at runtime): verify
+        # shape instead of isinstance(), which raises TypeError here.
+        if not isinstance(record, dict) or "record_type" not in record or "timestamp" not in record:
             return False
         self._records.append(record)
         return True
@@ -44,9 +46,10 @@ class HierarchicalAggregator(AggregationEngine):
     ) -> Dict[str, StatisticalSummary]:
         groups: Dict[str, List[float]] = {}
         for record in self._records:
-            if not isinstance(record.record_type, CommandMetric):
+            rt = record["record_type"]
+            if "execution_time_ms" not in rt:
                 continue
-            cmd_name = record.record_type.command_name
+            cmd_name = str(rt["command_name"])
             scalar = _extract_metric_scalar(record)
             if scalar is None:
                 continue
@@ -64,9 +67,10 @@ class HierarchicalAggregator(AggregationEngine):
     ) -> Dict[str, StatisticalSummary]:
         groups: Dict[str, List[float]] = {}
         for record in self._records:
-            if not isinstance(record.record_type, TaskMetric):
+            rt = record["record_type"]
+            if "duration_seconds" not in rt:
                 continue
-            task_id = record.record_type.task_id
+            task_id = str(rt["task_id"])
             scalar = _extract_metric_scalar(record)
             if scalar is None:
                 continue
@@ -109,7 +113,8 @@ class TrendDetector:
         self._points: List[TimeSeriesPoint] = []
 
     def add_point(self, point: TimeSeriesPoint) -> bool:
-        if not isinstance(point, TimeSeriesPoint):
+        # TimeSeriesPoint is a TypedDict: shape check, not isinstance().
+        if not isinstance(point, dict) or "value" not in point or "timestamp" not in point:
             return False
         self._points.append(point)
         return True
@@ -117,18 +122,19 @@ class TrendDetector:
     def detect_trends(
         self, window_seconds: int = 600
     ) -> Optional[TrendAnalysisResult]:
-        filtered = [p for p in self._points if isinstance(p.value, (int, float))]
+        filtered = [p for p in self._points
+                    if isinstance(p.get("value"), (int, float))]
         if not filtered:
             return None
         result = analyze_time_series_trends(filtered)
         if result is None:
             return None
         adjusted = TrendAnalysisResult(
-            trend_direction=result.trend_direction,
-            slope_coefficient=result.slope_coefficient,
-            confidence_score=result.confidence_score,
+            trend_direction=result["trend_direction"],
+            slope_coefficient=result["slope_coefficient"],
+            confidence_score=result["confidence_score"],
             time_window_seconds=float(window_seconds),
-            anomaly_detected=result.anomaly_detected,
+            anomaly_detected=result["anomaly_detected"],
         )
         return adjusted
 
@@ -148,11 +154,11 @@ class CorrelationMapper:
                 scalar = _extract_metric_scalar(r)
                 if scalar is None:
                     continue
-                rt = r.record_type
-                if isinstance(rt, CommandMetric):
-                    self._command_data.setdefault(rt.command_name, []).append(scalar)
-                elif isinstance(rt, TaskMetric):
-                    self._task_data.setdefault(rt.task_id, []).append(scalar)
+                rt = r["record_type"]
+                if "execution_time_ms" in rt:
+                    self._command_data.setdefault(str(rt["command_name"]), []).append(scalar)
+                elif "duration_seconds" in rt:
+                    self._task_data.setdefault(str(rt["task_id"]), []).append(scalar)
 
         correlations: Dict[str, float] = {}
         for cmd_key, cmd_vals in self._command_data.items():
@@ -177,11 +183,11 @@ class CorrelationMapper:
 
 def _extract_metric_scalar(record: PerformanceRecord) -> Optional[float]:
     """Extract a representative scalar value from a performance record."""
-    rt = record.record_type
-    if isinstance(rt, CommandMetric):
-        return float(rt.execution_time_ms)
-    elif isinstance(rt, TaskMetric):
-        return float(rt.duration_seconds)
+    rt = record["record_type"]
+    if "execution_time_ms" in rt:
+        return float(rt["execution_time_ms"])
+    if "duration_seconds" in rt:
+        return float(rt["duration_seconds"])
     return None
 
 

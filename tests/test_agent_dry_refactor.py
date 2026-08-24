@@ -172,7 +172,7 @@ def test_both_dashboard_entrypoints_share_build_dashboard(monkeypatch) -> None:
 
 
 def test_build_dashboard_applies_default_rules() -> None:
-    from src.agent1.monitoring import DashboardAPIServer
+    from agent_core.monitoring import DashboardAPIServer
 
     collector = agent.get_metrics_collector()
     holder, alert_system = agent._build_dashboard(collector, port=0)

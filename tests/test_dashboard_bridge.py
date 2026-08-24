@@ -65,7 +65,7 @@ def test_log_timestamps_are_epoch_seconds() -> None:
 
 def test_dashboard_serves_repl_collected_data_end_to_end() -> None:
     """The exact user-facing bug: REPL data must appear over HTTP."""
-    from src.agent1.monitoring import DashboardAPIServer
+    from agent_core.monitoring import DashboardAPIServer
 
     agent.record_command_metrics("analyze", 2.5)
     holder = DashboardAPIServer(agent.get_metrics_collector(), port=0)  # ephemeral

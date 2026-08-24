@@ -1,9 +1,13 @@
 """Collectors that capture command execution statistics as CommandMetric records."""
 
 import re
-import resource
 import subprocess
 import time
+
+try:  # Unix-only; Windows provides no `resource` module
+    import resource
+except ImportError:  # pragma: no cover - platform dependent
+    resource = None  # type: ignore[assignment]
 
 from performance_dashboard.models import CommandMetric, PerformanceRecord
 from performance_dashboard.utils.time_utils import align_to_bucket, get_current_timestamp
@@ -124,9 +128,14 @@ def collect_command_metrics(
     )
 
     elapsed_ms = (time.perf_counter() - start_perf) * 1000.0
-    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    memory_mb = float(usage.ru_maxrss) / 1024.0
-    cpu_seconds = float(usage.ru_utime + usage.ru_stime)
+    if resource is not None:
+        usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+        memory_mb = float(usage.ru_maxrss) / 1024.0
+        cpu_seconds = float(usage.ru_utime + usage.ru_stime)
+    else:
+        # Windows: no per-child rusage; report 0 rather than crash.
+        memory_mb = 0.0
+        cpu_seconds = 0.0
     wall_seconds = elapsed_ms / 1000.0
     cpu_percent = (cpu_seconds / wall_seconds * 100.0) if wall_seconds > 0 else 0.0
 

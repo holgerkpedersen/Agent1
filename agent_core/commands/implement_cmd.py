@@ -1,4 +1,5 @@
 """Implement command for agent interactive mode."""
+import difflib
 import hashlib
 import json
 import os
@@ -1190,7 +1191,6 @@ class ImplementCommand(Command):
         shown with ``show_file_diff``, and applied only after approval (safe
         auto-default: decline in autonomous mode).
         """
-        import difflib as _difflib
         try:
             prev = filepath.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
@@ -1200,7 +1200,7 @@ class ImplementCommand(Command):
         if prev.strip() == content.strip():
             return False, "unchanged — generated content matches the file"
 
-        similarity = _difflib.SequenceMatcher(None, prev, content).ratio()
+        similarity = difflib.SequenceMatcher(None, prev, content).ratio()
         if similarity < 0.5 and not allow_rewrite:
             return False, (
                 f"rejected — wholesale rewrite of existing file "
@@ -1208,7 +1208,7 @@ class ImplementCommand(Command):
             )
 
         diff_text = "\n".join(
-            _difflib.unified_diff(prev.splitlines(), content.splitlines(), lineterm="")
+            difflib.unified_diff(prev.splitlines(), content.splitlines(), lineterm="")
         )
         if not diff_text.strip():
             return False, "unchanged — no diff"
@@ -2298,7 +2298,7 @@ class ImplementCommand(Command):
                                         and not allow_rewrite
                                     ):
                                         existing_text = filepath.read_text(encoding="utf-8")
-                                        similarity = _difflib.SequenceMatcher(
+                                        similarity = difflib.SequenceMatcher(
                                             None, existing_text, new_content
                                         ).ratio()
                                         if existing_text.strip() and similarity < 0.5:
@@ -2338,8 +2338,7 @@ class ImplementCommand(Command):
                             except OSError:
                                 existing_text = ""
                             if existing_text.strip():
-                                import difflib as _difflib
-                                similarity = _difflib.SequenceMatcher(
+                                similarity = difflib.SequenceMatcher(
                                     None, existing_text, content
                                 ).ratio()
                                 if similarity < 0.5:

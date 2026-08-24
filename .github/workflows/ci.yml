@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.9", "3.12"]
+        exclude:
+          # Keep the matrix at four jobs: newest Python on both OSes plus a
+          # 3.9 compatibility canary on Linux.
+          - os: windows-latest
+            python-version: "3.9"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and dev tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Ruff (parse errors + undefined names must be clean)
+        run: >
+          ruff check agent_core harnessfix fixcommand tests
+          performance_dashboard --select F821
+
+      - name: Ruff (full lint, advisory)
+        run: >
+          ruff check agent_core harnessfix fixcommand tests
+          performance_dashboard
+        continue-on-error: true
+
+      - name: Run test suite
+        env:
+          AGENT_NO_TRACE: "1"
+        run: pytest -q --no-cov

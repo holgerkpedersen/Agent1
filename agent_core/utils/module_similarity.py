@@ -14,17 +14,21 @@ import os
 import re
 import urllib.request
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    import numpy as np
 
 _np = None
 
 
-def _numpy():
+def _numpy() -> np.ndarray:
     global _np
     if _np is None:
         import numpy as _n
+
         _np = _n
-    return _np
+    return _np  # type: ignore[no-any-return]
 
 from agent_core.patterns import _GENERIC_NAME_TOKENS
 
@@ -165,7 +169,7 @@ class _Corpus:
         np = _numpy()
         self.matrix = np.vstack([self._tfidf(t) for t in self.tokenized]) if self.terms else np.zeros((0, 0))
 
-    def _build_idf(self) -> "np.ndarray":
+    def _build_idf(self) -> np.ndarray:
         np = _numpy()
         n = len(self.tokenized)
         df = np.zeros(len(self.terms))
@@ -175,7 +179,7 @@ class _Corpus:
                     df[self.term_to_idx[t]] += 1
         return np.log(1 + n / (1 + df))
 
-    def _tfidf(self, tokens: list[str]) -> "np.ndarray":
+    def _tfidf(self, tokens: list[str]) -> np.ndarray:
         np = _numpy()
         vec = np.zeros(len(self.terms))
         counts: dict[str, int] = {}
@@ -189,13 +193,13 @@ class _Corpus:
         norm = np.linalg.norm(vec)
         return vec / norm if norm > 0 else vec
 
-    def cosine(self, tokens: list[str]) -> "np.ndarray":
+    def cosine(self, tokens: list[str]) -> np.ndarray:
         """Cosine similarity of *tokens* against every corpus module."""
         np = _numpy()
         q = self._tfidf(tokens)
         if self.matrix.size == 0 or not q.any():
             return np.zeros(len(self.paths))
-        return cast("np.ndarray", self.matrix @ q)
+        return cast(np.ndarray, self.matrix @ q)
 
     def top(self, tokens: list[str], k: int = 3) -> list[tuple[str, float]]:
         np = _numpy()
@@ -232,7 +236,7 @@ class _EmbeddingBackend:
             return self._probe()
         return self._available
 
-    def embed(self, texts: list[str]) -> "np.ndarray":
+    def embed(self, texts: list[str]) -> np.ndarray:
         np = _numpy()
         if not self.available:
             raise RuntimeError("embedding backend unavailable")
