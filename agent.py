@@ -79,6 +79,7 @@ from agent_core.commands.plan_cmd import PlanCommand
 from agent_core.commands.entities_cmd import EntitiesCommand
 from agent_core.commands.taskplan_cmd import TaskplanCommand
 from agent_core.commands.cleanup_cmd import CleanupCommand
+from agent_core.commands.git_cmd import GitCommand
 from agent_core.commands.implement_cmd import ImplementCommand
 from agent_core.commands.fix_cmd import FixCommand
 from agent_core.commands.workflow_cmd import WorkflowCommand
@@ -328,7 +329,7 @@ class Agent:
         # Initialize extracted components
         self.fs = FileSystem(self.workspace)
         self.searcher = FileSearcher(self.workspace)
-        self.dispatcher = ToolDispatcher()
+        self.dispatcher = ToolDispatcher(on_tool=_emit_tool_metrics)
         self._register_tool_handlers()
 
     def _register_tool_handlers(self) -> None:
@@ -2130,6 +2131,22 @@ def record_command_metrics(command: str, elapsed_s: float) -> None:
     _emit_command_metrics(command, elapsed_s)
 
 
+def _emit_tool_metrics(tool_name: str, elapsed_s: float, ok: bool) -> None:
+    """Write the dashboard metrics for one TOOL execution (LLM tool loop).
+
+    Companion to :func:`_emit_command_metrics`: same shape, ``tool.`` prefix
+    instead of ``command.`` so the TTTHEME command view can show both real
+    REPL commands and model-driven tool calls (git, read_file, ...) — its
+    loadCommands() regex already matches ``tool``.  One counter per tool name
+    keeps the stat-card sum honest (no aggregate counters).
+    """
+    collector = get_metrics_collector()
+    collector.increment_counter(f"tool.{tool_name}.count")
+    collector.record_histogram("tool.elapsed.seconds", elapsed_s)
+    if ok:
+        collector.set_gauge("last.tool.seconds", elapsed_s)
+
+
 def _build_dashboard(collector: "MetricsCollector", port: int) -> tuple[Any, Any]:
     """Wire collector + default alert rules into a DashboardAPIServer.
 
@@ -2181,6 +2198,7 @@ def _register_commands(registry: CommandRegistry) -> None:
     registry.register(EntitiesCommand())
     registry.register(TaskplanCommand())
     registry.register(CleanupCommand())
+    registry.register(GitCommand())
     registry.register(ImplementCommand())
     registry.register(FixCommand())
     registry.register(WorkflowCommand())

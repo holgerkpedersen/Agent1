@@ -1,4 +1,5 @@
 """Tool dispatcher with registry pattern for agent."""
+import time
 from typing import Callable, Awaitable, Any
 
 
@@ -8,10 +9,15 @@ class ToolDispatcher:
     Replaces the if/elif chain in Agent.execute_tool with a registry pattern.
     Follows Open/Closed Principle - new tools can be added without modifying
     existing code.
+
+    An optional ``on_tool`` callback is invoked after every execution of a
+    *registered* handler (name, elapsed seconds, success flag) so callers can
+    feed observability metrics without the dispatcher knowing about them.
     """
     
-    def __init__(self) -> None:
+    def __init__(self, on_tool: "Callable[[str, float, bool], None] | None" = None) -> None:
         self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
+        self._on_tool = on_tool
     
     def register(self, name: str, handler: Callable[..., Awaitable[str]]) -> None:
         """Register a tool handler.
@@ -33,9 +39,21 @@ class ToolDispatcher:
             Tool execution result as string
         """
         handler = self._handlers.get(tool_name)
-        if handler:
+        if not handler:
+            return f"Unknown tool: {tool_name}"
+        start = time.perf_counter()
+        ok = True
+        try:
             return await handler(args)
-        return f"Unknown tool: {tool_name}"
+        except Exception:
+            ok = False
+            raise
+        finally:
+            if self._on_tool is not None:
+                try:
+                    self._on_tool(tool_name, time.perf_counter() - start, ok)
+                except Exception:
+                    pass  # metrics must never break tool execution
     
     @property
     def available_tools(self) -> list[str]:
