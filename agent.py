@@ -303,6 +303,13 @@ class Agent:
         #: NLP conversation context — persisted to chat_history.json so a new
         #: session continues where the previous one left off.
         self._chat_history: list[dict[str, Any]] = self._load_chat_history()
+        #: Index in ``_chat_history`` where the current turn's messages begin
+        #: (reset at the top of every :meth:`chat_nlp` call, before the user
+        #: message is appended).  A restored session's history contains tool
+        #: results from PREVIOUS sessions; per-turn scans such as
+        #: :meth:`_mutating_files_this_turn` must never treat those as files
+        #: changed by the live turn.
+        self._turn_start_index: int = len(self._chat_history)
         self._nlp_workspace: str | None = None  # workspace override for NLP tools (set by paste --workspace)
         #: Session mode ("build" | "plan", see :mod:`agent_core.modes`).
         #: Plan mode restricts the NLP tool loop to read-only tools so no
@@ -1006,8 +1013,7 @@ class Agent:
                 "content": _SYSTEM_PROMPT + (
                     plan_mode_system_suffix() if self.is_plan_mode() else ""
                 ),
-            })
-        # Refresh the leading system message every turn: the design-decision
+            })        # Refresh the leading system message every turn: the design-decision
         # constraints block depends on which files were read so far, and a
         # long-lived session must see the CURRENT ledger, not the snapshot
         # from the first turn.  The stored BASE prompt (position 0 minus the
@@ -1036,6 +1042,11 @@ class Agent:
                 "Switch back with 'mode build' to apply changes."
             ))
             user_input = f"{plan_mode_turn_note()}\n\n{user_input}"
+        #: Everything appended after this line belongs to THIS turn (the user
+        #: message plus its tool results) — the boundary per-turn scans such
+        #: as ``_mutating_files_this_turn`` use, so tool results restored from
+        #: a previous session's chat_history.json are never rescanned.
+        self._turn_start_index = len(self._chat_history)
         if images:
             content: Any = [
                 {"type": "text", "text": user_input or "(see the attached image)"},
@@ -1255,10 +1266,19 @@ class Agent:
         The NLP write/edit handlers append a ``[verify] py_compile ✓`` line to
         their result — that line is the per-file mutation marker.  Scanning it
         keeps this zero-cost while the loop runs; no extra bookkeeping.
+
+        Only messages from the CURRENT turn (at or after ``_turn_start_index``,
+        set at the top of :meth:`chat_nlp`) are scanned.  A session restored
+        from chat_history.json contains tool results from previous sessions;
+        without this boundary the self-review note would list stale files
+        after every restart.
         """
         marker = "[verify] py_compile"
         files: list[str] = []
-        for m in self._chat_history:
+        history = self._chat_history
+        start = max(0, min(self._turn_start_index, len(history)))
+        for idx in range(start, len(history)):
+            m = history[idx]
             if m.get("role") != "tool":
                 continue
             content = str(m.get("content") or "")

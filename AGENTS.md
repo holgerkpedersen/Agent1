@@ -109,19 +109,26 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
 - Analysis claims are verified against real files/symbols (`analysis_verifier`):
   typed annotated attrs (`self._x: T = ...`), segment-scoped symbol resolution,
   dotted-module references all count as verified.
+- **No emojis or pictographs in repo text files** (decision #079). Plain-text
+  status markers instead (`[DONE]`, `[Q]` quick win, `[S]` strategic). Monochrome
+  CLI glyphs are exempt (check/cross/warning marks, box drawing — they are
+  load-bearing terminal output asserted by tests). Enforced as audit check 6:
+  `python scripts/audit_invariants.py` fails on findings (`agent_core/text_policy.py`).
+- Runtime state files (`chat_history.json`, `agent_memory.json`) and the
+  `.docs/`, `backups/`, `reports/` trees are exempt from content scans.
 
 ## Roadmap (recorded, in .decisions.json / .docs/2026-08-18_10-45-11/)
 
 - #047 — sanitize shell commands and file contents before trace persistence.
 - #048 — instrumentation invisible unless tracing enabled (`AGENT_NO_TRACE=1`).
-- ✅ **#049 — files-affected recording per tool/nlp (DONE)**: `ToolLoopRunner`
+- **#049 — files-affected recording per tool/nlp (DONE)**: `ToolLoopRunner`
   gains `effects_fn` (`(tool_name, args) -> [paths]`); `tool_result`/`tool_error`
   events carry `affected_files`; only invoked when a trace sink exists. `Agent`
   arms `_pending_effects` only while a `TraceWriter` exists, notes
   read/write/edit/fix targets. REPL registry **commands** still uninstrumented
   (next increment); trace consumers (`harnessfix/reader`) not yet reading
   `affected_files`.
-- ✅ **#050-#056 — verification gate increment (DONE, 2026-08-18)**:
+- **#050-#056 — verification gate increment (DONE, 2026-08-18)**:
   - #050 — traces self-describing: `TraceWriter(meta={model, profile})` stamps
     every record; `task_begin` event carries the user prompt (`PROMPT_CAP=500`);
     `chat_nlp` wraps the loop in `CorrelationIdContext`; dashboard shows
@@ -152,7 +159,7 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   - #056 — `scripts/audit_invariants.py` (git-dirty, paired memory files,
     phantom modules from latest `.docs/`, trace health, backups/; `--strict`
     escalates git-dirty to ERROR).
-- ✅ **#060 — history-assisted implement/fix (DONE, 2026-08-19)**: new
+- **#060 — history-assisted implement/fix (DONE, 2026-08-19)**: new
   `harnessfix/history.py` builds a process-cached index over `reports/traces/`
   plus a structured execution ledger `reports/history/executions.jsonl`
   (gitignored) and renders compact PAST EXECUTION NOTES blocks. `implement`
@@ -167,14 +174,14 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   - **Manual next steps for the user**: `review refresh` to build the ledger
     over the ~64 real traces; label the first batch; the benchmark gate now
     works with the qwen3.8-27b baseline in `reports/benchmark_harnessfix.json`.
-- ✅ **Trace-based file recovery (DONE, 2026-08-20)**: `reconstruct
+- **Trace-based file recovery (DONE, 2026-08-20)**: `reconstruct
   [--start <file>] [--end <file>] [--search <query>] [--dry-run] [--force]`
   scans `reports/traces/*.jsonl` for write/edit tool ops, groups them by target
   path, and replays them in timestamp order to rebuild the final state of each
   file — the recovery path for the #058 incident (pyc reconstruction was the
   fallback when it happened). Edits whose `old_text` no longer matches are
   skipped with a warning.
-- ✅ **#077 — Plan mode (opencode-style session modes, DONE, 2026-08-24)**:
+- **#077 — Plan mode (opencode-style session modes, DONE, 2026-08-24)**:
   `agent_core/modes.py` defines `build` (default) and `plan` (read-only
   research) session modes; the `mode` REPL command switches them. In plan
   mode the NLP tool loop only offers the verified read-only tools
@@ -183,7 +190,7 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   (the choke point shared by `chat_nlp` and `multillm`), so no file changes.
   A system-prompt suffix + per-turn note steer the model to end with a plan
   as text. Tests: `tests/test_plan_mode.py`.
-- ✅ **#076 — Regression gate for generated plan docs (DONE, 2026-08-24)**:  `agent_core/commands/plan_verifier.py` runs deterministic checks over
+- **#076 — Regression gate for generated plan docs (DONE, 2026-08-24)**:  `agent_core/commands/plan_verifier.py` runs deterministic checks over
   freshly generated `plan`/`entities`/`taskplan` docs (zero LLM tokens):
   backticked paths must exist or be marked new (`[NEW]` tag / create-add
   wording), `[MODIFY]` targets must already exist, entities python fences must
@@ -194,7 +201,7 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   mode auto-DECLINES (safe default). Wired into all workflow inline write
   sites via `_plan_doc_gate()` and into the standalone plan/entities/taskplan
   commands. Tests: `tests/test_plan_verifier.py`.
-- ✅ **agent.py DRY refactor (2026-08-24)**: monolithic `_execute_tool_call`
+- **agent.py DRY refactor (2026-08-24)**: monolithic `_execute_tool_call`
   if-chain replaced by `_nlp_tool_handlers()` dispatch table — one small
   `_nlp_*` method per tool; shared helpers `_truncate_output`,
   `_run_subprocess_captured`, `_shape_run_stderr`, `_save_verify_note`,
@@ -205,7 +212,7 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   tool call returns an error string instead of killing the turn). Tests:
   `tests/test_agent_improvements.py`, `tests/test_agent_dry_refactor.py`.
 - Taskplan-time phantom-module gate (plan-time existence check for planned files).
-- ✅ **Agentic quick-win batch 2 (DONE, 2026-08-25)**: #6 post-mutation
+- **Agentic quick-win batch 2 (DONE, 2026-08-25)**: #6 post-mutation
   self-review note (`chat_nlp` prints `[self-review] <files>` after turns
   whose write/edit results carry py_compile verification lines; extraction
   via `_mutating_files_this_turn`, display via `_print_self_review_note`)
@@ -214,7 +221,7 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   `git status --porcelain` is non-empty; silent on clean repos / outside
   git). Tests: `tests/test_quickwins_batch2.py` (12). Full suite:
   1482 passed / 2 skipped.
-- ✅ **#8 symbol-level tools (DONE, 2026-08-25)**: new `agent_core/symbol_intel.py`
+- **#8 symbol-level tools (DONE, 2026-08-25)**: new `agent_core/symbol_intel.py`
   + two NLP tools: `definitions(path)` (every class/function with compact
   signature and line span via pure AST) and `references(symbol, max_results)`
   (capped file:line list of uses across workspace .py files; whole-word,
@@ -222,7 +229,7 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   files skipped). Both read-only → in `PLAN_MODE_TOOLS`. System prompt
   steers the model to prefer them over grep+read paging. Tests:
   `tests/test_symbol_intel.py` (17). Full suite: 1501 passed / 2 skipped.
-- ✅ **Agentic quick-win batch (DONE, 2026-08-25)**: improvement plan in
+- **Agentic quick-win batch (DONE, 2026-08-25)**: improvement plan in
   `docs/AGENTIC_IMPROVEMENT_PLAN.md` (19 audited items, progress log there).
   Landed: #1 decisions block injected into the chat_nlp system message
   (`_decision_constraints_block`, rebuilt per turn via
@@ -236,3 +243,12 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   `llm/config.ProfileType` unified onto `llm_types`. Tests:
   `tests/test_llm_retry_policy.py`, `tests/test_quickwins_2026_08_25.py`.
   Full suite: 1470 passed / 2 skipped.
+- **No-emoji policy + audit gate (decision #079, DONE, 2026-08-25)**: new
+  `agent_core/text_policy.py` (stdlib-only emoji/pictograph detector with an explicit
+  monochrome-glyph allowlist; `scan_tree` skips runtime-state files) wired into
+  `scripts/audit_invariants.py` as check 6 (findings are ERRORS). Cleaned AGENTS.md
+  ([DONE] markers), the improvement plan ([Q]/[S] tags) and repaired a mojibake
+  byte in CHANGES.md. Regression found by the new tests: `_mutating_files_this_turn`
+  scanned restored history from previous sessions — fixed with a per-turn boundary
+  (`Agent._turn_start_index`). Tests: `tests/test_text_policy.py` (26),
+  `tests/test_quickwins_batch2.py::TestTurnBoundaryAfterRestart` (3).

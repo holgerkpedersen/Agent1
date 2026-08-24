@@ -13,6 +13,7 @@ silent on a clean repo, and never raises outside a git repo.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -145,6 +146,90 @@ class TestSelfReviewNote:
         out = capsys.readouterr().out
         assert "[self-review]" in out
         assert "qw6_e2e.py" in out
+
+
+class TestTurnBoundaryAfterRestart:
+    """Regression: _mutating_files_this_turn scanned the WHOLE restored
+    history, so after a session restart the self-review note listed files
+    written by PREVIOUS sessions (observed 2026-08-25: a fresh Agent in the
+    real repo reported 7 stale tmp_* writes from an earlier session).  The
+    turn boundary (_turn_start_index, set at the top of chat_nlp) must fence
+    per-turn scans off from restored tool results."""
+
+    def test_restored_history_tool_results_are_ignored(self) -> None:
+        bot = Agent(workspace=".")
+        # Simulate a session that RESTORED previous turns' tool results.
+        bot._chat_history.extend([
+            {"role": "user", "content": "old task"},
+            _tool_msg("Written old_session.py (5 bytes)\n[verify] py_compile ✓"),
+        ])
+        bot._turn_start_index = len(bot._chat_history)
+        assert bot._mutating_files_this_turn() == []
+
+    def test_current_turn_writes_still_detected_after_restart(self) -> None:
+        bot = Agent(workspace=".")
+        bot._chat_history.append(
+            _tool_msg("Written old_session.py (5 bytes)\n[verify] py_compile ✓")
+        )
+        bot._turn_start_index = len(bot._chat_history)
+        bot._chat_history.append(_tool_msg("user asks something new"))
+        bot._chat_history.append(
+            _tool_msg("Written this_turn.py (7 bytes)\n[verify] py_compile ✓")
+        )
+        files = bot._mutating_files_this_turn()
+        assert len(files) == 1
+        assert files[0].endswith("this_turn.py")
+
+    def test_end_to_end_restart_then_write_prints_only_new_file(
+        self, tmp_path: Path, monkeypatch, capsys,
+    ) -> None:
+        """Full path: persisted history with an old write -> restart ->
+        one new write -> note lists ONLY the new file."""
+        hist_file = tmp_path / "chat_history.json"
+        mem_file = tmp_path / "agent_memory.json"
+        stale = (
+            "Written C:\\somewhere\\else\\stale.py (5 bytes)\n"
+            "[verify] py_compile ✓"
+        )
+        hist_file.write_text(
+            json.dumps([
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "previous session prompt"},
+                {"role": "tool", "tool_call_id": "x", "content": stale},
+            ]),
+            encoding="utf-8",
+        )
+        mem_file.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(agent, "CHAT_HISTORY_JSON_PATH", str(hist_file))
+        monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem_file))
+        restarted = Agent(workspace=str(tmp_path))
+
+        async def fake_loop_run(self_loop, **kwargs):
+            target = Path(restarted.workspace) / "new_turn.py"
+            result = await restarted._execute_tool_call(
+                "write", {"path": str(target), "content": "z = 1\n"},
+            )
+            kwargs["messages"].append({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_new",
+                    "type": "function",
+                    "function": {"name": "write", "arguments": "{}"},
+                }],
+            })
+            kwargs["messages"].append({
+                "role": "tool",
+                "tool_call_id": "call_new",
+                "content": result,
+            })
+            return f"Wrote {target.name}.", kwargs["messages"]
+
+        monkeypatch.setattr(agent.ToolLoopRunner, "run", fake_loop_run)
+        asyncio.run(restarted.chat_nlp("write again"))
+        out = capsys.readouterr().out
+        assert "new_turn.py" in out
+        assert "stale.py" not in out
 
 
 # ---------------------------------------------------------------------------

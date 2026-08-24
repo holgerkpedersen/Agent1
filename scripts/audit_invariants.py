@@ -15,6 +15,8 @@ Checks:
   4. Trace health: report/harnessfix summary + trace corpus counts and
      interrupted-run ratio (decision #052).
   5. backups/ exists (implement's pre-run safety copies).
+  6. Emoji policy (decision #079): no emojis/pictographs in repo text files
+     (`agent_core/text_policy.py`); monochrome CLI glyphs are allowed.
 
 Exit code 0 = all good; 1 = errors found (warnings never fail the audit).
 """
@@ -30,6 +32,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from agent_core.text_policy import scan_tree, summarize_findings  # noqa: E402
+
 _DECISION_FILE = ROOT / ".decisions.json"
 _MEMORY_FILES = ("agent_memory.json", "chat_history.json")
 
@@ -141,8 +146,10 @@ def main() -> int:
 
     phantoms = _phantom_modules()
     if phantoms:
+        docs_dir = _latest_docs_dir()
+        docs_name = docs_dir.name if docs_dir is not None else "<no .docs dir>"
         warnings.append(
-            f"phantom module(s) named in {_latest_docs_dir().name} but not on disk "
+            f"phantom module(s) named in {docs_name} but not on disk "
             f"(invariant 5): {', '.join(phantoms[:5])}"
         )
 
@@ -154,6 +161,14 @@ def main() -> int:
 
     if not (ROOT / "backups").is_dir():
         warnings.append("backups/ does not exist (implement pre-run copies)")
+
+    emoji_findings = scan_tree(ROOT)
+    if emoji_findings:
+        errors.append(
+            f"emoji/pictograph symbols in {len(emoji_findings)} repo file(s) "
+            f"(decision #079 — no emojis in files): "
+            f"{summarize_findings(emoji_findings)}"
+        )
 
     for w in warnings:
         print(f"WARN: {w}")

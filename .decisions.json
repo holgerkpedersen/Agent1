@@ -1518,5 +1518,29 @@
       "077",
       "035"
     ]
+  },
+  {
+    "id": "079",
+    "date": "2026-08-24T11:15:38+00:00",
+    "title": "No emojis or pictographic symbols in repository text files",
+    "context": "User directive (2026-08-25): avoid emojis in files. A repo-wide scan found true emojis in 3 authored files (AGENTS.md status markers, the improvement plan's quick-win/strategic tags) plus one U+FFFD mojibake byte in CHANGES.md that git history shows was committed already corrupted — emoji survive neither terminal codepages nor copy/paste, and corrupted bytes are unrecoverable. Separately, the repo's CLI output and ASCII diagrams deliberately use monochrome glyphs (check/cross/warning marks, box drawing) that existing tests assert on; those are load-bearing output, not decoration.",
+    "decision": "Repository text files (.py/.md/.json/.txt/.toml/.cfg/.ini/.yml/.yaml, excluding runtime state chat_history.json/agent_memory.json and the .docs/backups/reports trees) must not contain emojis or pictographic symbols: Unicode So/Sk categories plus dedicated emoji ranges (U+2600-27BF, U+2B00-BFFF, U+1F000-1FAFF, U+FE0F). Allowed exceptions (ALLOWED_MONO_CHARS): monochrome status marks (check/cross/warning/times), box drawing, flow arrows, bullets. Typography (em dash, <=, accents, CJK) is never flagged. Enforcement: agent_core/text_policy.py scan_tree() wired into scripts/audit_invariants.py as check 6; findings are audit ERRORS. Plain-text markers replace emoji semantics: [DONE] instead of a check-mark-in-a-box badge; [Q]/[S] instead of lightning/building tags.",
+    "rationale": "Emoji render inconsistently across Windows codepages, CI logs, and terminals, and can be silently mangled into U+FFFD (observed in CHANGES.md L835 since its original commit) — losing information permanently. Plain-text markers survive any encoding. Keeping the repo's monochrome glyph vocabulary exempt preserves tested CLI output while still banning color-emoji decoration.",
+    "affected_files": [
+      "agent_core/text_policy.py",
+      "scripts/audit_invariants.py",
+      "tests/test_text_policy.py",
+      "AGENTS.md",
+      "CHANGES.md",
+      "docs/AGENTIC_IMPROVEMENT_PLAN.md"
+    ],
+    "tags": [
+      "conventions",
+      "policy",
+      "encoding",
+      "audit"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]
