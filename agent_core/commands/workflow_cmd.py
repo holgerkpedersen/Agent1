@@ -40,6 +40,7 @@ import sys
 from pathlib import Path
 
 from .analysis_verifier import verify_analysis_claims
+from .plan_verifier import apply_report, check_doc, summarize
 from .base import (
     Command,
     FlowStopped,
@@ -455,6 +456,40 @@ async def _repair_analysis(
         f"({result.flagged if result.flagged else 'clean'})"
     )
     return (repaired if result.flagged == 0 else None), result.checked, result.flagged
+
+
+def _plan_doc_gate(
+    doc_kind: str, content: str, ws_path: Path | str, force: bool,
+) -> "str | None":
+    """Regression-check a generated plan/entities/taskplan doc (decision #037).
+
+    Deterministic checks only — paths must exist or be marked new, entity
+    blocks must parse, no duplicate definitions.  On flagged findings the run
+    pauses for confirmation unless ``--force``; autonomous mode auto-DECLINES
+    (safe default).  Returns the content to write (with an appended
+    Verification Report when flagged), or ``None`` when halted.
+    """
+    result = check_doc(doc_kind, content, ws_path)
+    summarize(result, doc_kind)
+    if result.clean:
+        return content
+    if not force:
+        prompts = {
+            "plan": "Plan references unverifiable paths — write anyway? (y/N): ",
+            "entities": ("Entities have unparsable/duplicated definitions — "
+                         "write anyway? (y/N): "),
+            "taskplan": ("Taskplan has unverifiable/colliding claims — "
+                         "write anyway? (y/N): "),
+        }
+        answer = auto_choice(f"  {prompts[doc_kind]}", default="n", auto_default="n")
+        if answer.strip().lower() not in ("y", "yes"):
+            print(f"[{doc_kind}] Halted at the regression gate — regenerate "
+                  "(or re-run with --force).")
+            return None
+    else:
+        print(f"  [{doc_kind}] WARNING: {result.flagged} unverified claim(s) — "
+              "continuing (--force).")
+    return apply_report(content, result)
 
 
 async def _verify_or_repair_gate(
@@ -987,8 +1022,11 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
+                gated = _plan_doc_gate("plan", strip_reasoning(r, mode="light"), ws_path, force)
+                if gated is None:
+                    return True
                 with open(plan_md, "w", encoding="utf-8") as f:
-                    f.write(strip_reasoning(r, mode="light"))
+                    f.write(gated)
                 print("[plan] Written")
 
             if not force and _reuse("project_entities.md", "entities"):
@@ -1005,8 +1043,11 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
+                gated = _plan_doc_gate("entities", strip_reasoning(r, mode="light"), ws_path, force)
+                if gated is None:
+                    return True
                 with open(entities_md, "w", encoding="utf-8") as f:
-                    f.write(strip_reasoning(r, mode="light"))
+                    f.write(gated)
                 print("[entities] Written")
 
             if not force and _reuse("project_tasks.md", "taskplan"):
@@ -1037,8 +1078,11 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
+                gated = _plan_doc_gate("taskplan", strip_reasoning(r, mode="light"), ws_path, force)
+                if gated is None:
+                    return True
                 with open(tasks_md, "w", encoding="utf-8") as f:
-                    f.write(strip_reasoning(r, mode="light"))
+                    f.write(gated)
                 print("[taskplan] Written")
 
             await _offer_next(tasks_md, plan_md, entities_md, analysis_md, str(target_workspace))
@@ -1101,8 +1145,11 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
+                gated = _plan_doc_gate("plan", strip_reasoning(r, mode="light"), ws_path, force)
+                if gated is None:
+                    return True
                 with open(plan_md, "a", encoding="utf-8") as f:
-                    f.write(f"\n\n---\n\n{strip_reasoning(r, mode="light")}")
+                    f.write(f"\n\n---\n\n{gated}")
                 print(f"[plan] Appended to {plan_md}")
 
             if not force and _reuse("project_entities.md", "entities"):
@@ -1121,8 +1168,11 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
+                gated = _plan_doc_gate("entities", strip_reasoning(r, mode="light"), ws_path, force)
+                if gated is None:
+                    return True
                 with open(entities_md, "a", encoding="utf-8") as f:
-                    f.write(f"\n\n---\n\n{strip_reasoning(r, mode="light")}")
+                    f.write(f"\n\n---\n\n{gated}")
                 print("[entities] Appended")
 
             if not force and _reuse("project_tasks.md", "taskplan"):
@@ -1152,8 +1202,11 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
+                gated = _plan_doc_gate("taskplan", strip_reasoning(r, mode="light"), ws_path, force)
+                if gated is None:
+                    return True
                 with open(tasks_md, "a", encoding="utf-8") as f:
-                    f.write(f"\n\n---\n\n{strip_reasoning(r, mode="light")}")
+                    f.write(f"\n\n---\n\n{gated}")
                 print("[taskplan] Appended")
 
             await _offer_next(tasks_md, plan_md, entities_md, analysis_md, str(target_workspace))
@@ -1241,8 +1294,11 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
+                gated = _plan_doc_gate("plan", strip_reasoning(r, mode="light"), ws_path, force)
+                if gated is None:
+                    return True
                 with open(plan_md, "w", encoding="utf-8") as f:
-                    f.write(strip_reasoning(r, mode="light"))
+                    f.write(gated)
                 print("[plan] Written")
 
             if not force and _reuse("project_entities.md", "entities"):
@@ -1259,8 +1315,11 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
+                gated = _plan_doc_gate("entities", strip_reasoning(r, mode="light"), ws_path, force)
+                if gated is None:
+                    return True
                 with open(entities_md, "w", encoding="utf-8") as f:
-                    f.write(strip_reasoning(r, mode="light"))
+                    f.write(gated)
                 print("[entities] Written")
 
             if not force and _reuse("project_tasks.md", "taskplan"):
@@ -1289,8 +1348,11 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
+                gated = _plan_doc_gate("taskplan", strip_reasoning(r, mode="light"), ws_path, force)
+                if gated is None:
+                    return True
                 with open(tasks_md, "w", encoding="utf-8") as f:
-                    f.write(strip_reasoning(r, mode="light"))
+                    f.write(gated)
                 print("[taskplan] Written")
 
             await _offer_next(tasks_md, plan_md, entities_md, analysis_md, str(target_workspace))

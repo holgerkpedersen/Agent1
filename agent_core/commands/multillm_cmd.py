@@ -82,6 +82,7 @@ class MultiLlmCommand(Command):
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         from agent_core.config import load_agent_settings
         from agent_core.llm.parallel import run_parallel, summarize
+        from agent_core.modes import MODE_BUILD, filter_tool_schemas
         from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
 
         parts = list(args)
@@ -210,7 +211,15 @@ class MultiLlmCommand(Command):
             # from the prompt alone (2026-08-21: models asked for the file
             # content instead of reading it).  Degrades gracefully when the
             # agent does not expose the tool executor (tests / minimal hosts).
-            tools=list(NLP_TOOL_SCHEMAS) if getattr(agent, "_execute_tool_call", None) else None,
+            # Plan mode filters this list to the read-only subset so the
+            # models are never offered a mutating tool; the executor gate on
+            # _execute_tool_call still rejects anything that slips through.
+            tools=(
+                filter_tool_schemas(
+                    NLP_TOOL_SCHEMAS, getattr(agent, "mode", MODE_BUILD),
+                )
+                if getattr(agent, "_execute_tool_call", None) else None
+            ),
             execute_tool_fn=getattr(agent, "_execute_tool_call", None),
         )
 

@@ -32,8 +32,12 @@ analyze <file> [--desc "q"]      AI analysis — follows imports, answers specif
          --stdin [--desc "q"]   Paste multi-line text for analysis (--- to finish)
          --deep                  Follow imports with deep analysis
 plan <analysis> <plan>           Generate coding plan
+                                 Output is regression-checked (paths exist or are marked new);
+                                 flagged claims pause unless --force
 entities <analysis> <plan>       Generate shared entities
+                                 Output is regression-checked (python blocks parse, names unique)
 taskplan <analysis> <plan>       Generate implementation tasks
+                                 Output is regression-checked (paths, duplicate definitions)
 implement <taskplan> [opts]      Implement files from task plan
                                   --force            Overwrite existing files (wholesale)
                                   --keep             Skip files that compile OK
@@ -60,7 +64,16 @@ workflow <target> [opts]         Full pipeline: analyze → plan → entities �
                                  --continue        Resume the newest .docs/<ts>/ run
                                  --force           Skip existing file checks
                                  --workspace <p>   Target workspace
-model [list|load|unload|reload|profile|name]  Manage models and providers (LM Studio + opencode-go)
+model [list|load|unload|reload|provider|profile]  Manage models and providers (LM Studio + opencode-go)
+mode [build|plan]                Show/set session mode; plan is read-only research
+                                 (mutating NLP tools blocked, plan returned as text)
+mode [build|plan]                Show or set the session mode (opencode-style)
+                                 plan  read-only research mode — the NLP tool loop only offers
+                                       search/read/list_files/diff/web_search; write/edit/run/git/
+                                       tests/fix/analyze calls are rejected, so no file changes.
+                                       The model is steered to end with a plan as its text answer.
+                                 build default mode — full toolset (writes allowed)
+                                 Mode is per-session state; a restart returns to build.
 optimize <file|dir> [--apply] [--stdin] [--yes] Find and apply performance/memory optimizations
                                    Shows side-by-side diff with line numbers before applying
                                    --yes: skip the y/N prompt and apply automatically
@@ -88,7 +101,7 @@ paste_image [path] [--desc "text" | --prompt "text"]  Paste an image (clipboard 
                                                      for vision-capable LLMs
 ```
 
-Any text not matching a command is sent to the LLM as **natural language**. The agent uses **native OpenAI-format tool calling** — the model is given schemas for `search`, `read`, `list_files`, `write`, `edit`, `run`, `git`, `diff`, `tests`, `fix`, and `analyze`, and must either emit a structured tool call or answer in text:
+Any text not matching a command is sent to the LLM as **natural language**. The agent uses **native OpenAI-format tool calling** — the model is given schemas for `search`, `read`, `list_files`, `write`, `edit`, `run`, `git`, `diff`, `tests`, `fix`, `analyze`, and `web_search`, and must either emit a structured tool call or answer in text:
 
 ```
 > What safety guards does the implement command use?
@@ -192,7 +205,7 @@ Use `clear stats` to view without clearing, `clear --force` to skip confirmation
 ### Src Agent1 — Multi-Agent Framework (`src/agent1/`)
 | Module | Purpose |
 |---|---|
-| `core` | AgentMessage, MessageBus, SharedContext, SQLiteStorage, VectorDatabase, PluginInterface |
+| `core` | AgentMessage, MessageType, MessageBus (`core.message_bus`), SharedContext (`core.context_manager`), SQLiteStorage, VectorDatabase, PluginInterface |
 | `memory` | MemoryStore with caching, SemanticSearchEngine, VectorDatabase integration |
 | `orchestration` | DependencyGraph, TaskScheduler, WorkflowEngine |
 | `plugins` | BasePlugin, PluginRegistry, PluginManager with lifecycle management |
@@ -265,10 +278,9 @@ Agent1/
 │   └── monitoring/               # Metrics, dashboard, alerts
 ├── tests/
 │   ├── test_agent_paths.py
-│   ├── test_llm_client.py
 │   ├── test_path_utils.py
-│   ├── test_subprocess_utils.py
 │   ├── test_tool_router.py
+│   ├── ... (~58 top-level suites: LLM providers, commands, tool loop, harnessfix, dashboard)
 │   ├── unit/                     # Generated module unit tests
 │   ├── integration/              # Multi-agent integration tests
 │   └── performance/              # Scaling tests
@@ -279,22 +291,25 @@ Agent1/
 
 Set environment variables or use `.env` (see `.env.example` for the full list):
 ```env
-AGENT_MODEL=laguna-s-2.1
-LMSTUDIO_URL=http://localhost:1234/v1
-OPENAI_API_KEY=your-key
 AGENT_LLM_PROVIDER=lmstudio    # or opencode (an "opencode-go/..." model prefix wins)
 OPENCODE_API_KEY=sk-...        # hosted opencode-go API (direct mode; also read from opencode's auth.json)
 OPENCODE_TIMEOUT=600           # API request timeout in seconds
 ```
 
+`AGENT_MODEL`, `LMSTUDIO_URL` and `OPENAI_API_KEY` are read by `agent_core/constants.py` / the LM Studio provider but are **not** in `.env.example`; defaults live in code (`laguna-s-2.1`, `http://localhost:1234/v1`).
+
 ## Models
 
 | Model | Description |
 |---|---|
-| `laguna-s-2.1` | Laguna S 2.1 MoE A8B — fast agentic coding |
+| `laguna-s-2.1` | Laguna S 2.1 MoE A8B — fast agentic coding (default) |
 | `qwen3.6-27b-mtp` | Qwen 3.6 27B — chat, codegen, large context |
+| `qwen3.5-9b-mtp` | Qwen 3.5 9B MTP — coding, thinking |
 | `qwen/qwen3.8-27b` | Qwen 3.8 27B — chat, codegen, reasoning (safe minimal thinking-disable) |
+| `google/gemma-4-12b` | Gemma 4 12B — chat, reasoning, fast generation |
 | `google/gemma-4-31b` | Gemma 4 31B — chat, reasoning, fast generation |
+| `kwaipilot_kat-coder-v2.5-dev` | Kat-Coder 2.5 dev — coding, thinking |
+| `qwen3-coder-30b-a3b-instruct` | Qwen3 Coder 30B A3B MoE — coding, thinking |
 | `opencode-go/deepseek-v4-flash` | Hosted opencode-go default (opencode.ai/zen/go, native tools) |
 
 ## Testing
@@ -302,7 +317,7 @@ OPENCODE_TIMEOUT=600           # API request timeout in seconds
 ```bash
 pytest tests/ -v
 ```
-1210 tests (1210 passed, 2 skipped; ~3.5 min full run — use `--no-cov` for speed).
+1448 tests collected (all pass; ~2 min with `--no-cov` — coverage adds ~1 min).
 Plus a targeted entry-point package `agent_core/tests/` (31 tests:
 `python -m pytest agent_core/tests -q --no-cov`).
 
@@ -315,3 +330,7 @@ Plus a targeted entry-point package `agent_core/tests/` (31 tests:
 - Patch application tests for strict, anchored, deletion-only, and `N |`-prefix stripping
 - LM Studio thinking-disable payload tests across models and server versions
 - **`implement --modify`** mode: diff-apply merge of generated content into existing compile-OK modules as a reviewed unified diff (middle ground between `--keep` skip and `--force` overwrite), with wholesale-rewrite rejection unless similarity ≥ 0.5 (`--allow-rewrite`)
+- **NLP `web_search` tool**: DuckDuckGo results (URL + snippet) fed back into the tool loop; treat returned content as untrusted external input
+- **Plan-doc regression gate**: `plan`/`entities`/`taskplan` output is deterministically checked before writing (backticked paths exist or are marked new, `[MODIFY]` targets exist, entity python fences parse with unique names, no duplicate top-level definitions in referenced modules). Flagged docs pause for confirmation unless `--force`; findings are appended as a `## Verification Report`.
+- **Plan mode** (opencode-style session modes): `mode plan` restricts the NLP tool loop to read-only tools (`search`, `read`, `list_files`, `diff`, `web_search`) — mutating schemas are filtered out of the LLM's toolset AND rejected at the executor choke point shared by every agentic loop, so no file changes while researching; a system-prompt suffix and per-turn note steer the model to end with a concrete implementation plan. `mode build` restores the full toolset.
+- **REPL commands not shown above**: `display [verbose|clean|quiet]`, `paste [--workspace <path>]`, `self_heal [<path>] [--rounds N] [--yes]`, `multillm "question" [--models ...]`, `perf [--detail|--reset|--html]` — run `help` in the REPL for the full list

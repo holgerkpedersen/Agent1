@@ -1446,5 +1446,50 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "076",
+    "date": "2026-08-24T06:50:32+00:00",
+    "title": "Regression gate for generated plan docs",
+    "context": "The workflow verified analyze output claim-by-claim (analysis_verifier, decision #036), but plan/entities/taskplan docs were written straight from LLM text. A plan citing files that do not exist, or a taskplan whose referenced modules define colliding symbols, silently poisoned every downstream implement run.",
+    "decision": "Add agent_core/commands/plan_verifier.py with deterministic checks: backticked paths must exist or be marked new ([NEW] tag or create/add wording), [MODIFY] targets must already exist, entities python fences must parse (ast.parse) with unique top-level names, taskplan-referenced existing modules must not duplicate top-level definitions in the same directory. Findings are appended as a '## Verification Report' (analysis_verifier style); the gate pauses for confirmation unless --force; autonomous mode auto-DECLINES (safe default). Wired into all 9 workflow inline write sites via _plan_doc_gate() and into the standalone plan/entities/taskplan commands (--force flag added).",
+    "rationale": "Deterministic checks cost zero LLM tokens and catch exactly the failure mode that poisons implement: fabricated paths and colliding names. Reports keep the doc auditable instead of silently rewriting model text.",
+    "affected_files": [
+      "agent_core/commands/plan_verifier.py",
+      "agent_core/commands/plan_cmd.py",
+      "agent_core/commands/entities_cmd.py",
+      "agent_core/commands/taskplan_cmd.py",
+      "agent_core/commands/workflow_cmd.py",
+      "tests/test_plan_verifier.py"
+    ],
+    "tags": [
+      "workflow",
+      "verification",
+      "regression-gate"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "077",
+    "date": "2026-08-24T07:27:04+00:00",
+    "title": "Plan mode: opencode-style read-only session mode",
+    "context": "User requested opencode-style Plan mode: research without any file changing, with a command to switch modes.",
+    "decision": "Session modes build|plan on Agent (agent.mode) via new agent_core/modes.py + `mode` REPL command. Plan mode filters NLP_TOOL_SCHEMAS to the verified read-only set (search, read, list_files, diff, web_search) before the LLM call AND rejects mutating calls at _execute_tool_call — the choke point shared by chat_nlp and multillm. analyze/tests are excluded because both write (analysis reports into .docs/, pytest caches). A system-prompt suffix plus per-turn user note steer the model to end with a plan as text. Mode is session state; restart returns to build.",
+    "rationale": "Two-layer enforcement mirrors opencode (schema filtering so well-behaved models never see writes, executor gate as defense-in-depth for hallucinated/crafted calls). Verified at handler level that only the five allowed tools cannot touch the filesystem.",
+    "affected_files": [
+      "agent_core/modes.py",
+      "agent_core/commands/mode_cmd.py",
+      "agent.py",
+      "agent_core/commands/multillm_cmd.py",
+      "tests/test_plan_mode.py"
+    ],
+    "tags": [
+      "plan-mode",
+      "safety",
+      "tool-loop"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]

@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, cast
 #!/usr/bin/env python3
 """Agent implementation with workspace management and tool execution."""
 
@@ -29,6 +29,14 @@ from agent_core.file_system import FileSystem
 from agent_core.file_searcher import FileSearcher
 from agent_core.tool_dispatcher import ToolDispatcher
 from agent_core.tool_schemas import NLP_TOOL_SCHEMAS, NLP_TOOL_NAMES
+from agent_core.modes import (
+    MODE_BUILD,
+    check_tool_allowed,
+    filter_tool_schemas,
+    is_plan_mode,
+    plan_mode_system_suffix,
+    plan_mode_turn_note,
+)
 from agent_core.llm.tool_loop import ToolLoopRunner
 from agent_core.context_management import CorrelationIdContext
 try:
@@ -38,11 +46,16 @@ except Exception:  # pragma: no cover - tracing degrades gracefully if unavailab
 
     def trace_enabled() -> bool:
         return False
-from agent_core.commands.base import save_file_py, chat_stoppable, clear_stop, FlowStopped
+from agent_core.commands.base import Command, FlowStopped, chat_stoppable, clear_stop, save_file_py
 from agent_core.commands.registry import CommandRegistry
 
 if TYPE_CHECKING:
     from http.server import ThreadingHTTPServer
+
+    # src/ is a namespace layout; mypy runs with namespace_packages=false so
+    # these resolve only at runtime — typed as Any on purpose.
+    from src.agent1.core import AlertRule  # type: ignore[import-not-found]
+    from src.agent1.monitoring import MetricsCollector  # type: ignore[import-not-found]
 from agent_core.commands.read_cmd import ReadCommand
 
 # Windows console default codec is cp1252, which cannot encode many Unicode
@@ -85,6 +98,10 @@ import traceback
 
 logger = logging.getLogger(__name__)
 
+#: Handler signature for the NLP tool dispatch table: each handler receives the
+#: parsed JSON arguments and returns a string result for the model.
+NlpToolHandler = Callable[[dict[str, Any]], Awaitable[str]]
+
 # ── Interruptible input (so background processes can be killed) ──────────
 # On Windows, input() is a C-level blocking call that can't be interrupted by
 # signals.  A daemon thread reads stdin while the main thread polls with a
@@ -93,7 +110,7 @@ _SHUTDOWN_FLAG = False
 _input_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
 
-def _signal_break(sig, frame):
+def _signal_break(sig: int, frame: Any) -> None:
     """SIGBREAK handler — set flag so the REPL loop can exit."""
     global _SHUTDOWN_FLAG
     _SHUTDOWN_FLAG = True
@@ -109,7 +126,7 @@ _shutdown_save_memory = None
 _shutdown_trace_close = None
 
 
-def _signal_break_with_cleanup(sig, frame):
+def _signal_break_with_cleanup(sig: int, frame: Any) -> None:
     """SIGBREAK handler that performs best-effort cleanup before exit.
 
     Saves agent memory (cross-session state) and flushes/closes the active
@@ -127,7 +144,7 @@ def _signal_break_with_cleanup(sig, frame):
     )
 
 
-def _install_signal_handlers(agent=None):
+def _install_signal_handlers(agent: Optional["Agent"] = None) -> None:
     """Register SIGBREAK (Windows Ctrl+Break / taskkill) for clean shutdown.
 
     When an *agent* instance is provided, the handler performs cleanup
@@ -139,7 +156,7 @@ def _install_signal_handlers(agent=None):
         _shutdown_save_memory = agent._save_memory
         # trace_writer_close is set dynamically per-run in chat_nlp;
         # we use a closure that closes whichever writer is active.
-        def _close_active_trace():
+        def _close_active_trace() -> None:
             tw = getattr(agent, "_active_trace_writer", None)
             if tw is not None:
                 tw.close()
@@ -285,6 +302,10 @@ class Agent:
         #: session continues where the previous one left off.
         self._chat_history: list[dict[str, Any]] = self._load_chat_history()
         self._nlp_workspace: str | None = None  # workspace override for NLP tools (set by paste --workspace)
+        #: Session mode ("build" | "plan", see :mod:`agent_core.modes`).
+        #: Plan mode restricts the NLP tool loop to read-only tools so no
+        #: file changes while researching; switched via the ``mode`` command.
+        self.mode: str = MODE_BUILD
 
         #: Cross-session memory (files read, semantic index, knowledge graph,
         #: working memory) — restored from agent_memory.json so work done in a
@@ -325,10 +346,10 @@ class Agent:
         + ``last.command.seconds`` gauge. Returns the written values.
         """
         elapsed_s = max(0.001, latency_ms / 1000.0)
+        # Same three writes as a real command (record_command_metrics) so the
+        # dashboard cannot tell demo data from live data.
+        _emit_command_metrics(activity, elapsed_s)
         collector = self.get_metrics_collector()
-        collector.increment_counter(f"command.{activity}.count")
-        collector.record_histogram("command.elapsed.seconds", elapsed_s)
-        collector.set_gauge("last.command.seconds", round(elapsed_s, 4))
         return {
             "events": 3,
             "counter": collector.get_counter_value(f"command.{activity}.count"),
@@ -350,6 +371,20 @@ class Agent:
         if not _os.path.isabs(path):
             return _os.path.normpath(_os.path.join(base, path))
         return path
+
+    async def _save_verify_note(self, path: str, content: str, ok_msg: str) -> str:
+        """Persist *content*, py_compile-verify .py files, note the effect.
+
+        Shared tail of the NLP ``write`` and ``edit`` tool handlers so both
+        produce byte-identical success output (message + verification line)
+        and identical trace-effect bookkeeping.  Returns the "Skipped …
+        (no changes)" message when ``save_file_py`` finds nothing to do.
+        """
+        if not save_file_py(path, content, auto_yes=True):
+            return f"Skipped {path} (no changes)"
+        verify = await self._verify_file(path) if path.endswith(".py") else ""
+        self._note_effect(path)
+        return f"{ok_msg}\n{verify}".strip()
 
     async def _verify_file(self, path: str) -> str:
         """Run py_compile on *path* and return a short verification summary."""
@@ -391,303 +426,361 @@ class Agent:
             self._pending_effects.clear()
         return effects
 
+    def set_mode(self, mode: str) -> None:
+        """Switch the session mode (``build`` | ``plan``).
+
+        Unknown tags raise ``ValueError`` — the ``mode`` command validates
+        before calling, so this is a programming-error guard, not a silent
+        fallback to a mode the user did not ask for.
+        """
+        if mode not in (MODE_BUILD, "plan"):
+            raise ValueError(f"unknown mode: {mode!r}")
+        self.mode = mode
+
+    def is_plan_mode(self) -> bool:
+        """True while plan mode (read-only toolset) is active."""
+        return is_plan_mode(self.mode)
+
     async def _execute_tool_call(self, name: str, args: dict[str, Any]) -> str:
         """Execute a native tool call from the NLP conversation.
 
         *name* must be one of :data:`NLP_TOOL_NAMES`; *args* is the parsed JSON
         arguments dict.  Writing tools (write/edit) append a py_compile
         verification summary so the model can report verified results.
+
+        Plan mode is enforced HERE — the single choke point every agentic
+        loop goes through (``chat_nlp`` and ``multillm`` both pass
+        ``self._execute_tool_call`` as ``execute_tool_fn``) — so a mutating
+        call is rejected even when its schema was still advertised.
+
+        Dispatch goes through ``self._nlp_tool_handlers`` — one small handler
+        per tool instead of one monolithic if-chain.  Unknown tools return an
+        error string naming the available set; handler exceptions are caught
+        here (the tool loop treats them as tool errors) so a single bad call
+        cannot take down the whole turn.
         """
-        ws_dir = self._nlp_workspace or self.workspace
-        # subprocess cwd must be an existing directory; a bad override (e.g.
-        # a Git-Bash /c/... path from paste --workspace) must not break tools.
-        ws_dir = os.path.abspath(to_windows_path(ws_dir))
+        name = name.lower()
+        rejection = check_tool_allowed(name, self.mode)
+        if rejection:
+            return rejection
+        handler = self._nlp_tool_handlers().get(name)
+        if handler is None:
+            return (
+                f"Unknown tool: {name}. "
+                f"Available: {', '.join(sorted(NLP_TOOL_NAMES))}"
+            )
+        try:
+            return await handler(args)
+        except Exception as e:
+            logger.exception("NLP tool %r failed", name)
+            return f"{name} error: {e}"
+
+    async def _run_command_quietly(
+        self, command: Command, args: list[str], done_msg: str,
+    ) -> str:
+        """Run a registered command with stdout captured and return its output.
+
+        Shared by the NLP ``fix`` and ``analyze`` tool handlers so the
+        "capture → execute → fall back when empty" pattern lives in one place.
+        """
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            await command.execute(args, self)
+        return buf.getvalue() or done_msg
+
+    def _effective_ws_dir(self) -> str:
+        """Resolve the subprocess cwd for NLP tools.
+
+        The workspace override (``paste --workspace``) wins when it exists;
+        a bad override (e.g. a Git-Bash /c/... path) falls back to the real
+        workspace because subprocess cwd must be an existing directory.
+        """
+        ws_dir = os.path.abspath(
+            to_windows_path(self._nlp_workspace or self.workspace)
+        )
         if not os.path.isdir(ws_dir):
             ws_dir = self.workspace
-        name = name.lower()
+        return ws_dir
 
-        if name == "search":
-            query = str(args.get("query", ""))
-            search_path = self._resolve_nlp_path(str(args.get("path") or "."))
-            try:
-                results = await self.searcher.search(query, search_path)
-                if not results or results == "No matches found":
-                    return "No files found matching that query."
-                self._note_effect(search_path)
-                lines = results.splitlines()
-                return "\n".join(f"  {line}" for line in lines[:30])
-            except Exception as e:
-                return f"Search error: {e}"
+    def _nlp_tool_handlers(self) -> dict[str, NlpToolHandler]:
+        """Name → handler map for every entry in :data:`NLP_TOOL_NAMES`.
 
-        if name == "read":
-            path = self._resolve_nlp_path(str(args.get("path", "")).strip('"').strip("'"))
-            try:
-                # Paging is LINE-BASED (1-indexed): models and callers pass the
-                # starting line number and a line count, not character offsets —
-                # char offsets kept landing every read in the same short
-                # docstring, causing repeated-read loops.
-                offset = max(1, int(args.get("offset") or 1))
-                limit = max(1, int(args.get("limit") or 100))
-                content = await self.read_file(path, track_read=False)
-                if content.startswith("File not found") or content.startswith("Error"):
-                    return content
-                self._note_effect(path)
-                lines = content.splitlines()
-                if offset > len(lines):
-                    return f"Offset {offset} is beyond the end of {path} ({len(lines)} lines)."
-                chunk_lines = lines[offset - 1: offset - 1 + limit]
-                chunk = "\n".join(chunk_lines)
-                if offset - 1 + limit < len(lines):
-                    return f"{chunk}\n[truncated — use read with offset={offset + limit} to continue]"
-                return chunk
-            except Exception as e:
-                return f"Read error: {e}"
+        Built per call from bound methods (cheap; keeps handlers testable and
+        avoids stale-closure bugs after ``_nlp_workspace`` changes).
+        """
+        return {
+            "analyze": self._nlp_analyze,
+            "diff": self._nlp_diff,
+            "edit": self._nlp_edit,
+            "fix": self._nlp_fix,
+            "git": self._nlp_git,
+            "list_files": self._nlp_list_files,
+            "read": self._nlp_read,
+            "run": self._nlp_run,
+            "search": self._nlp_search,
+            "tests": self._nlp_tests,
+            "web_search": self._nlp_web_search,
+            "write": self._nlp_write,
+        }
 
-        if name == "list_files":
-            raw_path = str(args.get("path") or ".").strip('"').strip("'")
-            path = self._resolve_nlp_path(raw_path)
-            try:
-                import os as _os
-                abs_path = path if _os.path.isabs(path) else _os.path.abspath(path)
-                if _os.path.isdir(abs_path):
-                    entries = _os.listdir(abs_path)[:50]
-                    self._note_effect(path)
-                    lines = []
-                    for entry in sorted(entries):
-                        full = _os.path.join(abs_path, entry)
-                        suffix = "/" if _os.path.isdir(full) else ""
-                        lines.append(f"  {entry}{suffix}")
-                    return "\n".join(lines)
-                return f"Not a directory: {path}"
-            except Exception as e:
-                return f"List error: {e}"
+    async def _nlp_search(self, args: dict[str, Any]) -> str:
+        """Search workspace files for text (first 30 matches)."""
+        query = str(args.get("query", ""))
+        search_path = self._resolve_nlp_path(str(args.get("path") or "."))
+        try:
+            found = await self.searcher.search(query, search_path)
+        except Exception as e:
+            return f"Search error: {e}"
+        if not found or found == "No matches found":
+            return "No files found matching that query."
+        self._note_effect(search_path)
+        lines = found.splitlines()
+        return "\n".join(f"  {line}" for line in lines[:30])
 
-        if name == "fix":
-            resolved_args = [str(a) for a in args.get("args", [])]
-            if resolved_args and not resolved_args[0].startswith("--"):
-                resolved_args[0] = self._resolve_nlp_path(resolved_args[0])
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                await FixCommand().execute(resolved_args, self)
-            output = buf.getvalue()
-            if resolved_args and not resolved_args[0].startswith("--"):
-                self._note_effect(resolved_args[0])
-            return output or "Fix executed. Check the file for changes."
+    async def _nlp_read(self, args: dict[str, Any]) -> str:
+        """Read *limit* lines of a file starting at 1-based *offset*."""
+        path = self._resolve_nlp_path(str(args.get("path", "")).strip('"').strip("'"))
+        try:
+            # Paging is LINE-BASED (1-indexed): models and callers pass the
+            # starting line number and a line count, not character offsets —
+            # char offsets kept landing every read in the same short
+            # docstring, causing repeated-read loops.
+            offset = max(1, int(args.get("offset") or 1))
+            limit = max(1, int(args.get("limit") or 100))
+        except (TypeError, ValueError):
+            return "Read error: offset/limit must be integers."
+        content = await self.read_file(path, track_read=False)
+        if content.startswith("File not found") or content.startswith("Error"):
+            return content
+        self._note_effect(path)
+        lines = content.splitlines()
+        if offset > len(lines):
+            return f"Offset {offset} is beyond the end of {path} ({len(lines)} lines)."
+        chunk_lines = lines[offset - 1: offset - 1 + limit]
+        chunk = "\n".join(chunk_lines)
+        if offset - 1 + limit < len(lines):
+            return f"{chunk}\n[truncated — use read with offset={offset + limit} to continue]"
+        return chunk
 
-        if name == "write":
-            path = self._resolve_nlp_path(str(args.get("path", "")))
-            content = str(args.get("content", ""))
-            try:
-                if save_file_py(path, content, auto_yes=True):
-                    verify = await self._verify_file(path) if path.endswith(".py") else ""
-                    self._note_effect(path)
-                    return f"Written {path} ({len(content)} bytes)\n{verify}".strip()
-                return f"Skipped {path} (no changes)"
-            except Exception as e:
-                return f"Write error: {e}"
+    async def _nlp_list_files(self, args: dict[str, Any]) -> str:
+        """List up to 50 directory entries, directories marked with ``/``."""
+        raw_path = str(args.get("path") or ".").strip('"').strip("'")
+        path = self._resolve_nlp_path(raw_path)
+        abs_path = path if os.path.isabs(path) else os.path.abspath(path)
+        try:
+            entries = sorted(os.listdir(abs_path))[:50]
+        except NotADirectoryError:
+            return f"Not a directory: {path}"
+        except FileNotFoundError:
+            return f"Directory not found: {path}"
+        except OSError as e:
+            return f"List error: {e}"
+        self._note_effect(path)
+        lines = []
+        for entry in entries:
+            full = os.path.join(abs_path, entry)
+            suffix = "/" if os.path.isdir(full) else ""
+            lines.append(f"  {entry}{suffix}")
+        return "\n".join(lines)
 
-        if name == "run":
-            cmd_to_run = str(args.get("command", "")).strip()
-            timeout = int(args.get("timeout") or 120)
-            if not cmd_to_run:
-                return "Error: run requires a command."
-            blocked = _blocked_shell_command(cmd_to_run)
-            if blocked:
-                return f"Error: Dangerous command blocked ({blocked}): {cmd_to_run}"
-            # Windows: start the shell in its own process group so a timeout
-            # can kill the WHOLE tree. Killing only cmd.exe leaves orphaned
-            # children (e.g. a harnessfix.loop python process) running and
-            # holding the captured pipes open — the caller then waits far
-            # beyond the timeout while the "killed" command keeps working.
-            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-            try:
-                proc = subprocess.Popen(
-                    cmd_to_run,
-                    shell=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    cwd=ws_dir,
-                    creationflags=creationflags,
-                )
-                try:
-                    output, err = proc.communicate(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    _kill_process_tree(proc)
-                    output, err = proc.communicate()
-                    return (
-                        f"Command timed out after {timeout}s — process tree killed. "
-                        "For long-running jobs, pass a larger timeout."
-                    )
-            except Exception as e:
-                return f"Error: {e}"
-            if err:
-                output += f"\n[STDERR]\n{err}"
-                if re.search(r"is not recognized|not found", err, re.I):
-                    output += _unix_command_hint()
-            elif os.name == "nt" and proc.returncode == 255 and not output:
-                # cmd.exe silently fails whole pipelines (rc 255, no output)
-                # when a pipe element or command does not exist.
-                output += _unix_command_hint()
-            if len(output) > 5000:
-                output = output[:2500] + "\n... [truncated] ...\n" + output[-2500:]
-            return output if output else "(no output)"
+    async def _nlp_fix(self, args: dict[str, Any]) -> str:
+        """Run the ``fix`` REPL command on a resolved target file."""
+        resolved_args = [str(a) for a in args.get("args", [])]
+        target = (
+            resolved_args[0] if resolved_args and not resolved_args[0].startswith("--")
+            else None
+        )
+        if target:
+            resolved_args[0] = self._resolve_nlp_path(target)
+        output = await self._run_command_quietly(
+            FixCommand(), resolved_args, "Fix executed. Check the file for changes.",
+        )
+        if resolved_args and not resolved_args[0].startswith("--"):
+            self._note_effect(resolved_args[0])
+        return output
 
-        if name == "git":
-            subcmd = str(args.get("subcommand") or "status").lower()
-            git_args = str(args.get("args") or "")
-            git_cmds = {
-                "status": ["status"],
-                "diff": ["diff", "--no-color"],
-                "log": ["log", "--oneline", "-15"],
-                "add": ["add"],
-                "commit": ["commit"],
-                "push": ["push"],
-                "pull": ["pull"],
-                "branch": ["branch"],
-                "checkout": ["checkout"],
-                "stash": ["stash"],
-                "show": ["show"],
-                "blame": ["blame"],
-                "remote": ["remote", "-v"],
-                "branches": ["branch", "-a"],
-            }
-            base = git_cmds.get(subcmd)
-            if not base:
-                return f"Unknown git command: {subcmd}. Available: {', '.join(git_cmds.keys())}"
-            try:
-                extra = shlex.split(git_args)
-            except ValueError as e:
-                return f"Git error: invalid arguments: {e}"
-            try:
-                # Arg-list execution (no shell): shell metacharacters in
-                # model-supplied args become literal git arguments.
-                r = subprocess.run(
-                    ["git"] + base + extra,
-                    capture_output=True,
-                    text=True,
-                    cwd=ws_dir,
-                    timeout=30,
-                )
-                output = r.stdout
-                if r.stderr:
-                    output += f"\n[STDERR]\n{r.stderr}"
-                if len(output) > 5000:
-                    output = output[:2500] + "\n... [truncated] ...\n" + output[-2500:]
-                return output if output else "(no output)"
-            except Exception as e:
-                return f"Git error: {e}"
+    async def _nlp_write(self, args: dict[str, Any]) -> str:
+        """Write *content* to *path*; py_compile-verify Python files."""
+        path = self._resolve_nlp_path(str(args.get("path", "")))
+        content = str(args.get("content", ""))
+        try:
+            return await self._save_verify_note(
+                path, content, f"Written {path} ({len(content)} bytes)",
+            )
+        except Exception as e:
+            return f"Write error: {e}"
 
-        if name == "diff":
-            file1 = self._resolve_nlp_path(str(args.get("file1", "")))
-            file2 = args.get("file2")
-            if not file1:
-                return "Error: diff requires at least one file."
-            cmd = ["git", "diff", "--no-color", "--"]
-            if file2:
-                cmd += [file1, self._resolve_nlp_path(str(file2))]
-            else:
-                cmd += [file1]
+    async def _nlp_run(self, args: dict[str, Any]) -> str:
+        """Execute one shell command with destructive-pattern blocking,
+        whole-tree timeout kill, and Unix-ism hints."""
+        cmd_to_run = str(args.get("command", "")).strip()
+        timeout = int(args.get("timeout") or 120)
+        if not cmd_to_run:
+            return "Error: run requires a command."
+        blocked = _blocked_shell_command(cmd_to_run)
+        if blocked:
+            return f"Error: Dangerous command blocked ({blocked}): {cmd_to_run}"
+        # Windows: start the shell in its own process group so a timeout
+        # can kill the WHOLE tree. Killing only cmd.exe leaves orphaned
+        # children (e.g. a harnessfix.loop python process) running and
+        # holding the captured pipes open — the caller then waits far
+        # beyond the timeout while the "killed" command keeps working.
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        try:
+            proc = subprocess.Popen(
+                cmd_to_run,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=self._effective_ws_dir(),
+                creationflags=creationflags,
+            )
             try:
-                r = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    cwd=ws_dir,
-                    timeout=30,
-                )
-                output = r.stdout
-                if len(output) > 5000:
-                    output = output[:2500] + "\n... [truncated] ...\n" + output[-2500:]
-                return output if output else "(no differences found)"
-            except Exception as e:
-                return f"Diff error: {e}"
-
-        if name == "edit":
-            path = self._resolve_nlp_path(str(args.get("path", "")))
-            old_text = str(args.get("old_text", ""))
-            new_text = str(args.get("new_text", ""))
-            try:
-                content = open(path, "r", encoding="utf-8", errors="replace").read()
-                if old_text not in content:
-                    return f"Text not found in {path}. Make sure old text matches exactly (including whitespace)."
-                new_content = content.replace(old_text, new_text, 1)
-                ctx = getattr(self, "context", None)
-                if save_file_py(path, new_content, auto_yes=True):
-                    if ctx is not None:
-                        ctx.mark_modified(path)
-                    verify = await self._verify_file(path) if path.endswith(".py") else ""
-                    self._note_effect(path)
-                    return f"Edited {path}\n{verify}".strip()
-                return f"Skipped {path} (no changes)"
-            except Exception as e:
-                return f"Edit error: {e}"
-
-        if name == "tests":
-            test_path = self._resolve_nlp_path(str(args.get("path") or "."))
-            framework = str(args.get("framework") or "pytest")
-            #: The full suite takes ~2.5 minutes, so 120s is too short and made
-            #: the agent split runs into subsets. 300s covers whole-suite runs.
-            timeout = 300
-            try:
-                if framework == "pytest":
-                    cmd = [sys.executable, "-m", "pytest", test_path, "-v"]
-                else:
-                    cmd = [sys.executable, "-m", "unittest", test_path, "-v"]
-                r = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    cwd=ws_dir,
-                    timeout=timeout,
-                )
-                output = r.stdout
-                if r.stderr:
-                    output += f"\n[STDERR]\n{r.stderr}"
-                if len(output) > 5000:
-                    output = output[:2500] + "\n... [truncated] ...\n" + output[-2500:]
-                return output if output else "(no output)"
+                output, err = proc.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
-                return f"Tests timed out after {timeout}s"
-            except Exception as e:
-                return f"Error: {e}"
-
-        if name == "analyze":
-            analyze_args: list[str] = []
-            if args.get("path"):
-                analyze_args = [self._resolve_nlp_path(str(args["path"]))]
-                self._note_effect(analyze_args[0])
-            try:
-                from agent_core.commands.analyze_cmd import AnalyzeCommand
-                buf = io.StringIO()
-                with contextlib.redirect_stdout(buf):
-                    await AnalyzeCommand().execute(analyze_args, self)
-                output = buf.getvalue()
-                return output or "Analysis complete."
-            except Exception as e:
-                return f"Analyze error: {e}"
-
-        if name == "web_search":
-            query = str(args.get("query", "")).strip()
-            if not query:
-                return "Error: web_search requires a query."
-            try:
-                from agent_core.tools.web_search import (
-                    MAX_RESULTS_LIMIT,
-                    format_results,
-                    sanitize_query,
-                    search_ddg,
+                _kill_process_tree(proc)
+                output, err = proc.communicate()
+                return (
+                    f"Command timed out after {timeout}s — process tree killed. "
+                    "For long-running jobs, pass a larger timeout."
                 )
-                max_results = max(1, min(int(args.get("max_results") or 5), MAX_RESULTS_LIMIT))
-                clean_query = sanitize_query(query)
-                results = search_ddg(clean_query, max_results=max_results)
-                output = format_results(clean_query, results)
-                return output if len(output) <= 5000 else output[:5000]
-            except Exception as e:
-                return f"Web search error: {e}"
+        except Exception as e:
+            return f"Error: {e}"
+        return _truncate_output(_shape_run_stderr(err, output, proc.returncode))
 
-        return f"Unknown tool: {name}. Available: {', '.join(sorted(NLP_TOOL_NAMES))}"
+    async def _nlp_git(self, args: dict[str, Any]) -> str:
+        """Run a whitelisted git subcommand via arg-list execution (no shell)."""
+        subcmd = str(args.get("subcommand") or "status").lower()
+        git_args = str(args.get("args") or "")
+        git_cmds = {
+            "status": ["status"],
+            "diff": ["diff", "--no-color"],
+            "log": ["log", "--oneline", "-15"],
+            "add": ["add"],
+            "commit": ["commit"],
+            "push": ["push"],
+            "pull": ["pull"],
+            "branch": ["branch"],
+            "checkout": ["checkout"],
+            "stash": ["stash"],
+            "show": ["show"],
+            "blame": ["blame"],
+            "remote": ["remote", "-v"],
+            "branches": ["branch", "-a"],
+        }
+        base = git_cmds.get(subcmd)
+        if not base:
+            return (
+                f"Unknown git command: {subcmd}. "
+                f"Available: {', '.join(git_cmds.keys())}"
+            )
+        try:
+            extra = shlex.split(git_args)
+        except ValueError as e:
+            return f"Git error: invalid arguments: {e}"
+        # Arg-list execution (no shell): shell metacharacters in
+        # model-supplied args become literal git arguments.
+        output, error = _run_subprocess_captured(
+            ["git"] + base + extra, self._effective_ws_dir(), 30, "Git",
+        )
+        return error or output
 
+    async def _nlp_diff(self, args: dict[str, Any]) -> str:
+        """Show ``git diff --no-color`` for one file (optionally against another)."""
+        file1 = self._resolve_nlp_path(str(args.get("file1", "")))
+        file2 = args.get("file2")
+        if not file1:
+            return "Error: diff requires at least one file."
+        cmd = ["git", "diff", "--no-color", "--"]
+        if file2:
+            cmd += [file1, self._resolve_nlp_path(str(file2))]
+        else:
+            cmd += [file1]
+        output, error = _run_subprocess_captured(
+            cmd, self._effective_ws_dir(), 30, "Diff",
+        )
+        if error:
+            return error
+        return output if output != "(no output)" else "(no differences found)"
+
+    async def _nlp_edit(self, args: dict[str, Any]) -> str:
+        """Replace the first exact occurrence of *old_text* in a file."""
+        path = self._resolve_nlp_path(str(args.get("path", "")))
+        old_text = str(args.get("old_text", ""))
+        new_text = str(args.get("new_text", ""))
+        try:
+            # Context manager guarantees the handle closes even if
+            # save_file_py raises below.
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except FileNotFoundError:
+            return f"File not found: {path}"
+        except OSError as e:
+            return f"Edit error: {e}"
+        if old_text not in content:
+            return (
+                f"Text not found in {path}. Make sure old text matches "
+                "exactly (including whitespace)."
+            )
+        new_content = content.replace(old_text, new_text, 1)
+        try:
+            return await self._save_verify_note(
+                path, new_content, f"Edited {path}",
+            )
+        except Exception as e:
+            return f"Edit error: {e}"
+
+    async def _nlp_tests(self, args: dict[str, Any]) -> str:
+        """Run pytest/unittest on *path* (300s cap covers the full suite)."""
+        test_path = self._resolve_nlp_path(str(args.get("path") or "."))
+        framework = str(args.get("framework") or "pytest")
+        #: The full suite takes ~2.5 minutes, so 120s is too short and made
+        #: the agent split runs into subsets. 300s covers whole-suite runs.
+        timeout = 300
+        if framework == "pytest":
+            cmd = [sys.executable, "-m", "pytest", test_path, "-v"]
+        else:
+            cmd = [sys.executable, "-m", "unittest", test_path, "-v"]
+        # The full suite takes ~2.5 minutes; 300s covers whole-suite runs.
+        output, error = _run_subprocess_captured(
+            cmd, self._effective_ws_dir(), timeout, "Tests",
+        )
+        return error or output
+
+    async def _nlp_analyze(self, args: dict[str, Any]) -> str:
+        """Run the ``analyze`` REPL command (AI analysis) on an optional path."""
+        analyze_args: list[str] = []
+        if args.get("path"):
+            analyze_args = [self._resolve_nlp_path(str(args["path"]))]
+            self._note_effect(analyze_args[0])
+        try:
+            from agent_core.commands.analyze_cmd import AnalyzeCommand
+            return await self._run_command_quietly(
+                AnalyzeCommand(), analyze_args, "Analysis complete."
+            )
+        except Exception as e:
+            return f"Analyze error: {e}"
+
+    async def _nlp_web_search(self, args: dict[str, Any]) -> str:
+        """DuckDuckGo search; results are UNTRUSTED (marked by format_results)."""
+        query = str(args.get("query", "")).strip()
+        if not query:
+            return "Error: web_search requires a query."
+        try:
+            from agent_core.tools.web_search import (
+                MAX_RESULTS_LIMIT,
+                format_results,
+                sanitize_query,
+                search_ddg,
+            )
+            max_results = max(1, min(int(args.get("max_results") or 5), MAX_RESULTS_LIMIT))
+            clean_query = sanitize_query(query)
+            hits = search_ddg(clean_query, max_results=max_results)
+            output = format_results(clean_query, hits)
+            return output[:5000]
+        except Exception as e:
+            return f"Web search error: {e}"
 
     async def _tool_read_file(self, path: str, **kwargs: Any) -> str:
         result = await self.fs.read(path)
@@ -696,8 +789,8 @@ class Agent:
             self._files_read.add(safe)
             try:
                 self._file_mtimes[safe] = os.path.getmtime(safe)
-            except OSError:
-                print("Warning: silenced exception in agent.py:506")
+            except OSError as e:
+                logger.warning("Could not stat %s: %s", safe, e)
         return result
 
     async def _tool_write_file(self, path: str, content: str, **kwargs: Any) -> str:
@@ -750,8 +843,8 @@ class Agent:
                 self._files_read.add(local_path)
                 try:
                     self._file_mtimes[local_path] = os.path.getmtime(local_path)
-                except OSError:
-                    print("Warning: silenced exception in agent.py:570")
+                except OSError as e:
+                    logger.warning("Could not stat %s: %s", local_path, e)
 
             return content
 
@@ -850,7 +943,8 @@ class Agent:
             return "No matches found"
         return results
 
-    async def chat_nlp(self, user_input: str, images: list[str] | None = None) -> None:
+    async def chat_nlp(self, user_input: str,
+                       images: list[str] | None = None) -> None:
         """Process natural language input through a structured tool-calling loop.
 
         The LLM receives native OpenAI-format tool schemas (``NLP_TOOL_SCHEMAS``)
@@ -876,55 +970,24 @@ class Agent:
         if not self._chat_history:
             self._chat_history.append({
                 "role": "system",
-                "content": (
-                    "You are a senior coding assistant working inside this project workspace.\n"
-                    "The user speaks natural language; you have tools to search, read, write, "
-                    "edit, run, and test the code.\n\n"
-                    "WORKING METHOD:\n"
-                    "1. Understand the request.\n"
-                    "2. Take concrete action with the tools — never just describe what you "
-                    "would do. If you intend to read, search, edit or run something, call the tool.\n"
-                    "3. After a write/edit, a py_compile verification summary is returned "
-                    "automatically — report it.\n"
-                    "4. Finish with a short report: what you changed, where, and the "
-                    "verification/test evidence.\n\n"
-                    "RULES:\n"
-                    f"- The shell for the run tool is: {_detect_shell()}. On Windows there "
-                    "is NO tail/grep/ls/find. Never pipe with '2>&1 | tail -40' — use Python "
-                    "one-liners (python -c \"...\") or the built-in tools; run output is "
-                    "truncated to 5000 chars automatically.\n"
-                    "- You have an effectively unlimited tool budget: do not rush, do not "
-                    "stop early, and do not plan around a budget. Take as many tool calls "
-                    "as the task needs — but make steady progress: when exploration is "
-                    "done, actually edit/write/fix instead of only reading.\n"
-                    "- read returns up to 5000 chars per call by default — never request "
-                    "tiny slices (limit < 1000). Read big chunks and continue with the "
-                    "offset hint; avoid many small read calls.\n"
-                    "- Prefer targeted edits over rewriting whole files.\n"
-                    "- If a tool fails, read the error and try a different approach.\n"
-                    "- When the request is ambiguous, make a reasonable assumption and state it, "
-                    "or ask one clarifying question before acting.\n"
-                    "- Never assert facts about this repo that you have not verified with a "
-                    "tool. project_plan.md / project_tasks.md are HISTORICAL phase docs and "
-                    "may be outdated — verify claims against the actual code.\n"
-                    "- Verify numbers (e.g. how many tests exist) with the tests tool or git "
-                    "log before claiming them.\n"
-                    "- If a search finds nothing in source files, state that the symbol does "
-                    "not exist in the current code — never repeat the same search.\n"
-                    "- A failing test is a real signal: fix the implementation — never weaken "
-                    "or delete an assertion just to make it pass. Only change a test if the "
-                    "test itself is demonstrably wrong, and say why.\n"
-                    "- Every bug fix ships a permanent regression test in tests/ (pytest). "
-                    "Delete scratch scripts (_tmp_*.py) before finishing.\n"
-                    "- Verify fixes against the REAL code path (import the actual function), "
-                    "not a copied simulation of it.\n"
-                    "- Be concise. Answer in the user's language."
+                "content": _SYSTEM_PROMPT + (
+                    plan_mode_system_suffix() if self.is_plan_mode() else ""
                 ),
             })
 
         #: A user turn may carry images (multimodal).  When *images* is given,
         #: build an OpenAI-format content array with the text plus one
         #: image_url block per image so vision-capable models can see them.
+        #: Plan mode (read-only) prepends a steering note to the user text:
+        #: the model is told to research and end with a plan instead of
+        #: promising changes it is not allowed to make (mutating tools are
+        #: additionally blocked in the executor — see ``_execute_tool_call``).
+        if self.is_plan_mode() and not images:
+            print(yellow(
+                "  [plan mode] Read-only research — mutating tools blocked. "
+                "Switch back with 'mode build' to apply changes."
+            ))
+            user_input = f"{plan_mode_turn_note()}\n\n{user_input}"
         if images:
             content: Any = [
                 {"type": "text", "text": user_input or "(see the attached image)"},
@@ -1019,7 +1082,7 @@ class Agent:
                     messages=final_messages,
                     llm_chat_fn=llm_chat_fn,
                     execute_tool_fn=self._execute_tool_call,
-                    tools=list(NLP_TOOL_SCHEMAS),
+                    tools=filter_tool_schemas(NLP_TOOL_SCHEMAS, self.mode),
                     seen_calls=seen_calls,
                     effects_fn=self._take_trace_effects,
                 )
@@ -1139,8 +1202,8 @@ class Agent:
                     stale.append(path)
             except FileNotFoundError:
                 stale.append(path)
-            except OSError:
-                print("Warning: silenced exception in agent.py:863")
+            except OSError as e:
+                logger.warning("Could not stat %s: %s", path, e)
         return stale
 
     def invalidate_stale(self) -> int:
@@ -1178,8 +1241,8 @@ class Agent:
         try:
             os.remove(CHAT_HISTORY_JSON_PATH)
             os.remove(AGENT_MEMORY_JSON_PATH)
-        except OSError:
-            print("Warning: silenced exception in agent.py:901")
+        except OSError as e:
+            logger.warning("Could not remove persisted state files: %s", e)
 
     # ------------------------------------------------------------------
     #  Persistent NLP chat history (chat_history.json)
@@ -1217,8 +1280,8 @@ class Agent:
                     _project_chat_history(_strip_image_blocks(self._chat_history)),
                     f, ensure_ascii=False, indent=2,
                 )
-        except OSError:
-            print("Warning: silenced exception in agent.py:933")
+        except OSError as e:
+            logger.warning("Failed to save chat history: %s", e)
 
     # ------------------------------------------------------------------
     #  Persistent agent memory (agent_memory.json)
@@ -1411,7 +1474,9 @@ def _kill_process_tree(proc: "subprocess.Popen[Any]") -> None:
         else:
             proc.kill()
     except Exception:
-        print("Warning: silenced exception in agent.py:1055")
+        logger.warning(
+            "Failed to kill process tree for PID %s", getattr(proc, "pid", "?")
+        )
 
 
 def _detect_shell() -> str:
@@ -1426,6 +1491,111 @@ def _detect_shell() -> str:
     if comspec.endswith(("powershell.exe", "pwsh.exe")):
         return "PowerShell"
     return "cmd.exe (Windows Command Prompt)"
+
+
+#: System prompt for the NLP tool loop, built once at import time (the only
+#: dynamic piece is the detected shell name).  Kept as a module constant so
+#: chat_nlp stays focused on the loop itself and the prompt lives in one
+#: greppable place.
+_SYSTEM_PROMPT = (
+    "You are a senior coding assistant working inside this project workspace.\n"
+    "The user speaks natural language; you have tools to search, read, write, "
+    "edit, run, and test the code.\n\n"
+    "WORKING METHOD:\n"
+    "1. Understand the request.\n"
+    "2. Take concrete action with the tools — never just describe what you "
+    "would do. If you intend to read, search, edit or run something, call the tool.\n"
+    "3. After a write/edit, a py_compile verification summary is returned "
+    "automatically — report it.\n"
+    "4. Finish with a short report: what you changed, where, and the "
+    "verification/test evidence.\n\n"
+    "RULES:\n"
+    f"- The shell for the run tool is: {_detect_shell()}. On Windows there "
+    "is NO tail/grep/ls/find. Never pipe with '2>&1 | tail -40' — use Python "
+    "one-liners (python -c \"...\") or the built-in tools; run output is "
+    "truncated to 5000 chars automatically.\n"
+    "- You have an effectively unlimited tool budget: do not rush, do not "
+    "stop early, and do not plan around a budget. Take as many tool calls "
+    "as the task needs — but make steady progress: when exploration is "
+    "done, actually edit/write/fix instead of only reading.\n"
+    "- read returns up to 5000 chars per call by default — never request "
+    "tiny slices (limit < 1000). Read big chunks and continue with the "
+    "offset hint; avoid many small read calls.\n"
+    "- Prefer targeted edits over rewriting whole files.\n"
+    "- If a tool fails, read the error and try a different approach.\n"
+    "- When the request is ambiguous, make a reasonable assumption and state it, "
+    "or ask one clarifying question before acting.\n"
+    "- Never assert facts about this repo that you have not verified with a "
+    "tool. project_plan.md / project_tasks.md are HISTORICAL phase docs and "
+    "may be outdated — verify claims against the actual code.\n"
+    "- Verify numbers (e.g. how many tests exist) with the tests tool or git "
+    "log before claiming them.\n"
+    "- If a search finds nothing in source files, state that the symbol does "
+    "not exist in the current code — never repeat the same search.\n"
+    "- A failing test is a real signal: fix the implementation — never weaken "
+    "or delete an assertion just to make it pass. Only change a test if the "
+    "test itself is demonstrably wrong, and say why.\n"
+    "- Every bug fix ships a permanent regression test in tests/ (pytest). "
+    "Delete scratch scripts (_tmp_*.py) before finishing.\n"
+    "- Verify fixes against the REAL code path (import the actual function), "
+    "not a copied simulation of it.\n"
+    "- Be concise. Answer in the user's language."
+)
+
+
+def _truncate_output(output: str, limit: int = 5000) -> str:
+    """Cap shell output for the model's context: head + tail around a marker.
+
+    Shared by the ``run``, ``git``, ``diff`` and ``tests`` NLP tools so every
+    subprocess result is bounded identically (the system prompt promises
+    "run output is truncated to 5000 chars automatically").
+    """
+    if len(output) > limit:
+        half = limit // 2
+        return output[:half] + "\n... [truncated] ...\n" + output[-half:]
+    return output if output else "(no output)"
+
+
+def _run_subprocess_captured(
+    cmd: list[str], cwd: str, timeout: float, label: str,
+) -> tuple[str, str | None]:
+    """Run *cmd* (arg-list, no shell), capture stdout+stderr, bound the result.
+
+    Shared by the ``git``/``diff``/``tests`` NLP tools: identical timeout,
+    stderr tagging ("[STDERR]\n…") and 5000-char truncation everywhere.
+    Returns ``(output, error)`` — *error* is ``"<label> error: …"`` when the
+    process could not be launched or timed out, else None.
+    """
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return f"{label} timed out after {int(timeout)}s", None
+    except Exception as e:
+        return "", f"{label} error: {e}"
+    output = r.stdout
+    if r.stderr:
+        output += f"\n[STDERR]\n{r.stderr}"
+    return _truncate_output(output), None
+
+
+def _shape_run_stderr(err: str, output: str, returncode: int | None) -> str:
+    """Append stderr (plus Unix-ism hints) to ``run``-tool output.
+
+    Shared by the ``run`` NLP tool so its stderr handling lives in one
+    testable place instead of being inlined in the handler.
+    """
+    if not err:
+        # cmd.exe silently fails whole pipelines (rc 255, no output)
+        # when a pipe element or command does not exist.
+        if os.name == "nt" and returncode == 255 and not output:
+            return output + _unix_command_hint()
+        return output
+    output += f"\n[STDERR]\n{err}"
+    if re.search(r"is not recognized|not found", err, re.I):
+        output += _unix_command_hint()
+    return output
 
 
 def _blocked_shell_command(command: str) -> str | None:
@@ -1528,20 +1698,6 @@ def _project_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]
     return _trim_chat_history(head + cleaned)
 
 
-def _is_similar(content1: str, content2: str, threshold: float = 0.8) -> bool:
-    """Check if two pieces of content are similar enough (based on line structure)."""
-    if not content1 or not content2:
-        return False
-    lines1 = set(content1.splitlines())
-    lines2 = set(content2.splitlines())
-    if not lines1 or not lines2:
-        return False
-    intersection = len(lines1 & lines2)
-    union = len(lines1 | lines2)
-    similarity = intersection / union if union > 0 else 0
-    return similarity >= threshold
-
-
 # ---------------------------------------------------------------------------
 # Shared metrics plumbing
 #
@@ -1558,18 +1714,19 @@ def get_metrics_collector() -> "MetricsCollector":
     """Return the process-wide collector shared by REPL and dashboard."""
     global _shared_metrics_collector
     if _shared_metrics_collector is None:
-        from src.agent1.monitoring import MetricsCollector
-        _shared_metrics_collector = MetricsCollector()
-    return _shared_metrics_collector
+        from src.agent1.monitoring import MetricsCollector as _MC
+        _shared_metrics_collector = _MC()
+    return cast("MetricsCollector", _shared_metrics_collector)
 
 
-def record_command_metrics(command: str, elapsed_s: float) -> None:
-    """Mirror one command execution into the shared metrics collector.
+def _emit_command_metrics(command: str, elapsed_s: float) -> None:
+    """Write the three dashboard metrics for one command execution.
 
-    Names follow the conventions the TTTHEME UI filters on
-    (see loadCommands() regex in static/index.html). Only ONE counter per
-    command is kept: the UI's stat card naively sums every counter, so an
-    extra aggregate counter would double the "Commands Executed" figure.
+    Single source of truth for the metric NAMES the TTTHEME UI filters on
+    (see loadCommands() regex in static/index.html): exactly ONE
+    ``command.<name>.count`` counter (the UI's stat card naively sums every
+    counter, so an aggregate counter would double the figure), an
+    elapsed-seconds histogram sample, and the ``last.command.seconds`` gauge.
     """
     collector = get_metrics_collector()
     collector.increment_counter(f"command.{command}.count")
@@ -1577,18 +1734,36 @@ def record_command_metrics(command: str, elapsed_s: float) -> None:
     collector.set_gauge("last.command.seconds", elapsed_s)
 
 
-def start_dashboard_thread(port: int = 8080) -> Optional["ThreadingHTTPServer"]:
-    """Serve the TTTHEME dashboard on a daemon thread from this process."""
+def record_command_metrics(command: str, elapsed_s: float) -> None:
+    """Mirror one real REPL command execution into the shared collector."""
+    _emit_command_metrics(command, elapsed_s)
+
+
+def _build_dashboard(collector: "MetricsCollector", port: int) -> tuple[Any, Any]:
+    """Wire collector + default alert rules into a DashboardAPIServer.
+
+    Shared by :func:`start_dashboard_thread` (REPL + dashboard in-process)
+    and :func:`run_dashboard_server` (`--serve`) so both surfaces always get
+    identical rules and evaluator wiring.
+    """
     from src.agent1.monitoring import AlertSystem, DashboardAPIServer
 
-    collector = get_metrics_collector()
     alert_system = AlertSystem(collector)
     for rule in _default_alert_rules():
         alert_system.add_rule(rule)
     server_holder = DashboardAPIServer(collector, port=port)
-    httpd = server_holder.start(
-        alert_rules=alert_system.list_rules(),
-        evaluate_alerts=alert_system.evaluate,
+    return server_holder, alert_system
+
+
+def start_dashboard_thread(port: int = 8080) -> Optional["ThreadingHTTPServer"]:
+    """Serve the TTTHEME dashboard on a daemon thread from this process."""
+    server_holder, alert_system = _build_dashboard(get_metrics_collector(), port)
+    httpd = cast(
+        "ThreadingHTTPServer",
+        server_holder.start(
+            alert_rules=alert_system.list_rules(),
+            evaluate_alerts=alert_system.evaluate,
+        ),
     )
 
     def _serve() -> None:
@@ -1602,64 +1777,9 @@ def start_dashboard_thread(port: int = 8080) -> Optional["ThreadingHTTPServer"]:
     return httpd
 
 
-async def run_interactive() -> None:
-    """Interactive mode - allows user to input commands."""
-    
-    # Create agent instance (resolves persisted model choice from model.json)
-    agent = Agent(workspace=Agent.DEFAULT_WORKSPACE)
-
-    banner = blue("=" * 50)
-    print(banner)
-    print(blue("Agent Interactive Mode with LM Studio"))
-    print(f"Workspace: {cyan(Agent.DEFAULT_WORKSPACE)}")
-    model_label = agent.llm.model_name
-    profile_part = (f"  |  Profile: {agent.llm._profile_name}" if agent.llm._profile_name else "")
-    print(f"Model: {cyan(model_label)}{gray(profile_part)}")
-    try:
-        from agent_core.llm.lmstudio import get_models_status
-        models = get_models_status()
-        loaded = [m for m in models if m.get("loaded")]
-        status = f"LM Studio: online ({len(loaded)}/{len(models)} models loaded)" if models else "LM Studio: online"
-        print(green(status) if models else yellow(status))
-    except Exception:
-        print(yellow("LM Studio: offline"))
-    print(cyan("Commands:"))
-    _CMD_LIST = [
-        ("read <path>", "Read a file"),
-        ("write <path> <content> [--yes]", "Write content to file"),
-        ("search <query>", "Search for string in files"),
-        ("analyze <file> [--desc \"q\"] [--stdin] [--deep]", "AI analysis via LM Studio"),
-        ("plan <analysis.md> <plan.md>", "Generate coding plan from analysis"),
-        ("entities <analysis.md> <plan.md> [entities.md]", "Generate shared entities"),
-        ("taskplan <analysis.md> <plan.md> [tasks.md]", "Generate implementation tasks"),
-        ("implement <taskplan.md> ... [--modify] [--force] [--allow-rewrite] [--fix] [--retry] [--review] [--keep] [--refresh] [--workspace <path>]", "Implement files"),
-        ('fix "<traceback>"', "Paste a traceback to auto-fix the error"),
-        ('fix <file> --desc "text" [--full]', "Describe an issue, LLM analyzes full codebase and fixes it"),
-        ("fix --mypy [path...] [--limit N] [--rounds N] [--yes]", "Batch-fix mypy errors via LLM"),
-        ("cleanup", "Show unreferenced files and reference graph"),
-        ("workflow <target> ... [--from spec.md] [--stdin] [--brainstorm] [--auto] [--desc \"text\"] [--features spec.md] [--force] [--workspace <path>]", "Full pipeline"),
-        ("model [list|load|unload|reload|provider|profile|name]", "Manage models and providers via LM Studio API"),
-        ("optimize <file|dir> [--apply] [--yes] [--stdin] [--list] [--verbose] [--force]", "Find and apply optimizations (batched)"),
-        ("perf [--detail|--reset|--html]", "Command performance dashboard"),
-        ("clear [stats|--force]", "Show/clear agent memory"),
-        ("display [verbose|clean|quiet]", "Show/set NLP output verbosity"),
-        ("paste [--workspace <path>]", "Paste multiline text for AI analysis (Ctrl+Z / Ctrl+D to finish)"),
-        ("paste_image [path] [--prompt \"text\"]", "Paste an image (clipboard or file) for vision-capable LLMs"),
-        ("run <command> [--timeout <sec>]", "Execute a shell command directly, no LLM"),
-        ("self_heal [path] [--rounds N] [--yes]", "Patch failing tests and re-run until green"),
-        ("reconstruct [--start <file>] [--end <file>] [--workspace <path>] [--search <query>] [--dry-run] [--force]", "Reconstruct files from JSONL trace logs"),
-        ("decide ...", "Track design decisions (add/list/show/check/resolve/link/extract/review)"),
-        ("review <refresh|list|show|label|auto|export>", "Human gate over failed task traces (label <task> auto = agent reviews)"),
-        ('multillm "question" [--models m1,m2] [--max-tokens N] [--thinking] [--concurrency N]', "Ask multiple LLMs the same question in parallel"),
-        ("demo_data [--activity <name>] [--count N] [--latency-ms MS] [--loop N] [--clear]", "Feed synthetic data into the web dashboard"),
-        ("quit", "Exit"),
-    ]
-    for name, desc in _CMD_LIST:
-        print(f"  {cyan(name)} - {gray(desc)}")
-    print(blue("=" * 50))
-    
-    # Set up command registry with simple commands
-    registry = CommandRegistry()
+def _register_commands(registry: CommandRegistry) -> None:
+    """Instantiate every REPL command into *registry* (single registration
+    point — the banner listing and dispatch both read from it)."""
     registry.register(ReadCommand())
     registry.register(WriteCommand())
     registry.register(SearchCommand())
@@ -1685,7 +1805,52 @@ async def run_interactive() -> None:
     registry.register(ReconstructCommand())
     registry.register(MultiLlmCommand())
     registry.register(DemoDataCommand())
+    from agent_core.commands.mode_cmd import ModeCommand
+    registry.register(ModeCommand())
 
+
+def _build_registry() -> CommandRegistry:
+    """Return a fresh CommandRegistry with every command registered."""
+    registry = CommandRegistry()
+    _register_commands(registry)
+    return registry
+
+
+async def run_interactive() -> None:
+    """Interactive mode - allows user to input commands."""
+
+    # Create agent instance (resolves persisted model choice from model.json)
+    agent = Agent(workspace=Agent.DEFAULT_WORKSPACE)
+
+    banner = blue("=" * 50)
+    print(banner)
+    print(blue("Agent Interactive Mode with LM Studio"))
+    print(f"Workspace: {cyan(Agent.DEFAULT_WORKSPACE)}")
+    model_label = agent.llm.model_name
+    profile_part = (f"  |  Profile: {agent.llm._profile_name}" if agent.llm._profile_name else "")
+    print(f"Model: {cyan(model_label)}{gray(profile_part)}")
+    try:
+        from agent_core.llm.lmstudio import get_models_status
+        models = get_models_status()
+        loaded = [m for m in models if m.get("loaded")]
+        status = f"LM Studio: online ({len(loaded)}/{len(models)} models loaded)" if models else "LM Studio: online"
+        print(green(status) if models else yellow(status))
+    except Exception:
+        print(yellow("LM Studio: offline"))
+    print(blue("=" * 50))
+    # Single source of truth: the banner derives its command list from the
+    # registry itself (each command's help_text synopsis), so a new or
+    # changed command can never drift from what the banner shows.
+    registry = _build_registry()
+    for name in sorted(registry.names()):
+        cmd = registry.get(name)
+        synopsis = cmd.help_text.splitlines()[0].strip() if cmd else name
+        print(f"  {cyan(synopsis)}")
+    print(f"  {cyan('quit')} - {gray('Exit')}")
+    print(blue("=" * 50))
+    _register_commands(registry)
+
+    # Set up command registry with simple commands
     # Watch for code edited on disk while the REPL runs: the process keeps
     # imported modules in memory, so on-disk fixes (e.g. from a paste
     # session) silently never take effect unless the user restarts
@@ -1833,16 +1998,11 @@ def _default_alert_rules() -> "list[AlertRule]":
 
 def run_dashboard_server() -> None:
     """Launch the TTTHEME web dashboard on localhost:8080."""
-    from src.agent1.monitoring import AlertSystem, DashboardAPIServer
-
+    port = _dashboard_port()
     # Reuse the process-wide collector so anything recorded before/while
     # serving (REPL commands, chat turns) is visible in the UI.
-    collector = get_metrics_collector()
-    alert_system = AlertSystem(collector)
-    for rule in _default_alert_rules():
-        alert_system.add_rule(rule)
-    server_holder = DashboardAPIServer(collector, port=_dashboard_port())
-    print(f"Agent1 dashboard: http://localhost:{_dashboard_port()}  (Ctrl+C to stop)")
+    server_holder, alert_system = _build_dashboard(get_metrics_collector(), port)
+    print(f"Agent1 dashboard: http://localhost:{port}  (Ctrl+C to stop)")
     try:
         server_holder.run(
             alert_rules=alert_system.list_rules(),

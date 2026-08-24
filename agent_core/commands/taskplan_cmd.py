@@ -2,8 +2,9 @@
 import os
 import re
 
-from .base import Command
+from .base import Command, auto_choice
 from .doc_paths import find_input, resolve_output
+from .plan_verifier import check_doc, apply_report, summarize
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -61,19 +62,27 @@ class TaskplanCommand(Command):
     
     @property
     def help_text(self) -> str:
-        return "taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks"
-    
+        return ("taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks\n"
+                "  Output is regression-checked (paths, duplicate definitions);\n"
+                "  flagged claims pause for confirmation unless --force.")
+
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         if len(args) < 2:
             self.error("Usage: taskplan <analysis.md> <plan.md> [tasks.md]")
             return True
-        
+
+        force = "--force" in args
+        clean_args = [a for a in args if a != "--force"]
+        if not clean_args:
+            self.error("Usage: taskplan <analysis.md> <plan.md> [tasks.md]")
+            return True
+
         ws = agent.workspace
-        analysis_file = find_input(ws, args[0])
-        plan_file = find_input(ws, args[1])
+        analysis_file = find_input(ws, clean_args[0])
+        plan_file = find_input(ws, clean_args[1])
         # Bare output filenames go to .docs/<timestamp>/ (the input's run
         # folder when it has one) — explicit paths are kept.
-        tasks_file = resolve_output(ws, args[2] if len(args) > 2 else "tasks.md",
+        tasks_file = resolve_output(ws, clean_args[2] if len(clean_args) > 2 else "tasks.md",
                                     sibling_of=analysis_file)
         
         try:
@@ -113,10 +122,23 @@ class TaskplanCommand(Command):
             {"role": "user", "content": f"Create a task implementation plan from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\n## Existing entities.py:\n{entities_content if entities_content else 'No entities.py found'}\n\nGenerate a tasks.md file with specific implementation tasks, organized by file, with clear steps for new and existing files. Ensure tasks respect the entity definitions in entities.py.{collision_warning}{path_rule}"}
         ]
         tasks = await agent.llm.chat(messages)
-        
+
+        content = f"# Implementation Tasks\n\n{tasks}"
+        result = check_doc("taskplan", content, ws)
+        summarize(result, "taskplan")
+        if not result.clean and not force:
+            answer = auto_choice(
+                "  Taskplan has unverifiable/colliding claims — write anyway? (y/N): ",
+                default="n", auto_default="n",
+            )
+            if answer.strip().lower() not in ("y", "yes"):
+                print("[taskplan] Halted — regenerate with corrected paths "
+                      "(or rerun with --force).")
+                return True
+        content = apply_report(content, result)
+
         with open(tasks_file, "w", encoding="utf-8") as f:
-            f.write("# Implementation Tasks\n\n")
-            f.write(tasks)
+            f.write(content)
         print(f"Tasks written to {tasks_file}")
-        
+
         return True

@@ -20,7 +20,10 @@ is being extended to audit its own file effects (self-improvement).
 - `agent_core/commands/*_cmd.py` — registry commands (REPL): `read, write, search,
   analyze, plan, entities, taskplan, implement, fix, workflow, decide, clear, model,
   run, self_heal, optimize, perf, paste, paste_image, display, cleanup, review,
-  reconstruct`.
+  reconstruct, mode`; `agent_core/commands/plan_verifier.py` — deterministic
+  regression gate over generated plan/entities/taskplan docs (decision #076).
+- `agent_core/modes.py` — session modes (`build` default, `plan` read-only);
+  enforced at schema level AND in `_execute_tool_call` (decision #077).
 - `agent_core/llm/tool_loop.py` — `ToolLoopRunner`: NLP tool-call execution loop.
 - `agent_core/security/` — sanitizers, command allowlist, secrets store (OS keyring
   + encrypted-file fallback); `agent_core/file_system.py`, `path_utils.py` — real
@@ -33,11 +36,12 @@ is being extended to audit its own file effects (self-improvement).
   (evidence-rule auto-labeling behind `review auto`), `history.py` (trace-index +
   execution-ledger queries and PAST EXECUTION NOTES formatters that implement/fix
   inject into prompts).
-- `tests/` — pytest, **1210 passed, 2 skipped** (~3.5 min full run; `testpaths=["tests"]`).
+- `tests/` — pytest, **1448 collected** (~2 min full run with `--no-cov`;
+  `testpaths=["tests"]`).
 - `agent_core/tests/` — entry-point/component test package (31 tests, runs only when
   targeted: `python -m pytest agent_core/tests -q --no-cov`); reconstructed 2026-08-19
   after the source was deleted uncommitted (decision #058).
-- `.decisions.json` — decision ledger (60 records, gaps ok; latest #059/#060).
+- `.decisions.json` — decision ledger (76 records, gaps ok; latest #077).
 - `.docs/<timestamp>/` — one folder per workflow run (spec/analysis/plan/entities/tasks).
 - `backups/` — implement's pre-run copies of existing targets (timestamped).
 
@@ -167,4 +171,35 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   file — the recovery path for the #058 incident (pyc reconstruction was the
   fallback when it happened). Edits whose `old_text` no longer matches are
   skipped with a warning.
+- ✅ **#077 — Plan mode (opencode-style session modes, DONE, 2026-08-24)**:
+  `agent_core/modes.py` defines `build` (default) and `plan` (read-only
+  research) session modes; the `mode` REPL command switches them. In plan
+  mode the NLP tool loop only offers the verified read-only tools
+  (`search`, `read`, `list_files`, `diff`, `web_search`) — mutating schemas
+  are filtered out of the LLM toolset AND rejected at `_execute_tool_call`
+  (the choke point shared by `chat_nlp` and `multillm`), so no file changes.
+  A system-prompt suffix + per-turn note steer the model to end with a plan
+  as text. Tests: `tests/test_plan_mode.py`.
+- ✅ **#076 — Regression gate for generated plan docs (DONE, 2026-08-24)**:
+  `agent_core/commands/plan_verifier.py` runs deterministic checks over
+  freshly generated `plan`/`entities`/`taskplan` docs (zero LLM tokens):
+  backticked paths must exist or be marked new (`[NEW]` tag / create-add
+  wording), `[MODIFY]` targets must already exist, entities python fences must
+  parse (`ast.parse`) with unique top-level names, taskplan-referenced existing
+  modules must not duplicate top-level definitions in the same directory.
+  Findings are appended as a `## Verification Report` (analysis_verifier
+  style); flagged docs pause for confirmation unless `--force`, and autonomous
+  mode auto-DECLINES (safe default). Wired into all workflow inline write
+  sites via `_plan_doc_gate()` and into the standalone plan/entities/taskplan
+  commands. Tests: `tests/test_plan_verifier.py`.
+- ✅ **agent.py DRY refactor (2026-08-24)**: monolithic `_execute_tool_call`
+  if-chain replaced by `_nlp_tool_handlers()` dispatch table — one small
+  `_nlp_*` method per tool; shared helpers `_truncate_output`,
+  `_run_subprocess_captured`, `_shape_run_stderr`, `_save_verify_note`,
+  `_run_command_quietly`, `_effective_ws_dir`; `_SYSTEM_PROMPT` hoisted to a
+  module constant; REPL banner derives its command list from the registry
+  itself (`_build_registry`) so it cannot drift; both dashboard entrypoints
+  share `_build_dashboard`. Handler exceptions are contained per call (a bad
+  tool call returns an error string instead of killing the turn). Tests:
+  `tests/test_agent_improvements.py`, `tests/test_agent_dry_refactor.py`.
 - Taskplan-time phantom-module gate (plan-time existence check for planned files).
