@@ -18,7 +18,7 @@ mechanism** — NOT broad prompt tweaks. The paper uses four cooperating LLM age
 | Layer | Files | Example mechanism to repair |
 |---|---|---|
 | Execution environment | `agent_core/file_system.py`, `subprocess_utils.py` | sandbox rules, path handling |
-| Tool interfaces | `tool_router.py`, `tool_dispatcher.py`, `tool_executor.py` | schemas, error messages, retry-on-validation |
+| Tool interfaces | `tool_router.py`, `tool_dispatcher.py`, `tool_schemas.py` | schemas, error messages, retry-on-validation |
 | Context | `agent_core/context_management.py`, chat history | truncation, compaction, injection order |
 | Lifecycle orchestration | `agent_core/llm/tool_loop.py` (`ToolLoopRunner`) | budget guards, stuck detection, deadline notes |
 | Observability | `logging_config.py` (JSON + correlation IDs — already good) | trace emission (Phase 0) |

@@ -23,7 +23,7 @@ This repo already contains most harness layers (HarnessFix taxonomy):
 - **Lifecycle orchestration**: `agent_core/llm/tool_loop.py` — `ToolLoopRunner`
   (budget caps, deadline window, stuck detection, no-mutation guards).
 - **Tool interfaces**: `tool_router.py`, `agent_core/tool_dispatcher.py`,
-  `agent_core/tool_executor.py`, `agent_core/tool_schemas.py`.
+  `agent_core/tool_schemas.py`.
 - **Context**: `agent_core/context_management.py`, `chat_history.json`.
 - **Governance/security**: `agent_core/security/` (allowlist, sanitizer, path_utils).
 - **Verification**: `benchmark.py` (~125-question bank), `benchmarks/security_benchmarks.py`,

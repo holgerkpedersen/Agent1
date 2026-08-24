@@ -1,3 +1,51 @@
+## 2026-08-25 - feat: real binned distribution chart in the Histogram view
+
+**Change**: agent_core/monitoring/metrics_collector.py (`MetricsCollector.all_histogram_samples()` returns defensive copies of every metric's raw samples under lock), agent_core/monitoring/dashboard_api.py (`GET /api/histograms` now also returns `"samples": {metric: [values]}` alongside the legacy summary; without `?name=` the summary is computed for an empty name and is all zeros - documented contract), static/index.html (Histogram view upgraded from a numeric table to a real binned distribution chart: metric picker, CSS bar chart with 4-24 bins via the square-root rule, hover tooltips per bin (range + sample count), samples/mean/p50/p95/min/max stat chips; bars styled from ttheme variables so dark/light/monochrome themes follow automatically; pure DOM/CSS, no new vendored libraries).
+
+**Reason**: The Histogram view showed numbers where a shape was needed - p50/p95/mean/max hide whether latency is tight or long-tailed, which is exactly what a distribution shows. Verification caught two real bugs before they shipped: bars collapsed to 0 height because percentage heights inside `align-items:flex-end` flex columns have no definite parent (fixed with `align-items:stretch` + explicit column height; a regression test now pins the stretch rule), and an initially wrong test expectation about p95 interpolation (n=10 -> position 8.55, linear interpolation between 0.31 and 1.40 gives 0.91s - the code was right, the expectation was not).
+
+**Files**: agent_core/monitoring/dashboard_api.py, agent_core/monitoring/metrics_collector.py, static/index.html, tests/test_dashboard_histogram_chart.py (new, 4 tests: API contract incl. ?name= behavior, copy-safety of returned samples, chart scaffolding + align-items:stretch guard, percentile() extracted from the page and executed under node against reference values).
+
+## 2026-08-25 - fix: Command Summary view rendered blank - view panels were nested inside a dashboard row
+
+**Change**: static/index.html (moved the command-summary view panel out of a dashboard row so all view panels are siblings; one-line structural fix).
+
+**Reason**: A panel nested inside another layout container broke the show/hide contract: opening the view toggled a class on panels expected to be siblings, leaving Command Summary invisible. Regression tests pin the structure: every view has exactly one panel, panels are siblings (not nested), and no panel is a descendant of another panel.
+
+**Files**: static/index.html, tests/test_dashboard_view_panels.py (new, 3 tests).
+
+## 2026-08-25 - feat: 3D rotating sidebar logo (pure CSS cube, mascot faces + amber sides)
+
+**Change**: partials/_head.html (stylesheet include), partials/_sidebar.html (cube markup replacing the flat logo img), static/assets/logo3d.css (pure-CSS rotating cube: six faces built from transforms, mascot face images on front/back, amber side panels; animation pauses on hover).
+
+**Reason**: Visual identity upgrade for the dashboard sidebar with zero JavaScript - the whole effect is CSS transforms and keyframes, so it works offline and adds no runtime logic to maintain.
+
+**Files**: partials/_head.html, partials/_sidebar.html, static/assets/logo3d.css (new).
+
+## 2026-08-25 - feat: shared metrics event file so --serve dashboard shows cross-process activity
+
+**Change**: agent_core/monitoring/metrics_file.py (new: JSONL event file as the cross-process metrics bus - append-only records, reader folds them into a MetricsCollector snapshot), agent.py (REPL emits metric events for its activity), agent_core/monitoring/dashboard_api.py (snapshot endpoints merge in-file events so a --serve dashboard reflects REPL sessions running in other processes), .gitignore (runtime event file excluded).
+
+**Reason**: The dashboard previously only saw metrics from its own process, so running it via --serve while working in a separate REPL shell showed an idle agent. The shared event file decouples producers (any number of REPL processes) from the consumer (dashboard server) without adding a network protocol.
+
+**Files**: agent_core/monitoring/metrics_file.py (new), agent.py, agent_core/monitoring/dashboard_api.py, .gitignore, tests/test_demo_data.py (extended).
+
+## 2026-08-25 - feat: feed tool executions + top-level git command into dashboard metrics
+
+**Change**: agent_core/tool_dispatcher.py (tool executions now emit counter/histogram metric events), agent_core/commands/git_cmd.py (top-level git command records elapsed-time histograms and outcome counters), agent.py (wiring for NLP-path tool calls).
+
+**Reason**: The dashboard's tool/git widgets had no data source on the live path - only demo data produced numbers. Instrumenting the dispatcher covers every tool call in one place; git gets its own instrumentation because users invoke it as a top-level command outside the generic dispatcher path.
+
+**Files**: agent.py, agent_core/commands/git_cmd.py, agent_core/tool_dispatcher.py.
+
+## 2026-08-25 - feat: second repair catalog entry + diagnosis FP fix; archive dead modules
+
+**Change**: harnessfix/repairs/stuck_repeat.py (new repair `stuck-repeat-tool-hints`, lifecycle layer: the SECOND consecutive identical tool call now carries concrete alternatives - `_REPEAT_HINTS` for read/search/list_files/run plus a default - appended after the pinned prefix "NOTE: This exact call has now been executed"; `apply()` inserts the hint table above `_PATH_MISS_PREFIXES` and routes the old second-strike suffix through `_REPEAT_HINTS.get(tool_name, _REPEAT_HINT_DEFAULT)`, `revert()` restores byte-identical source, a distinctive sentinel line turns half-applied trees into loud errors instead of silent no-ops), harnessfix/repairs/__init__.py (CATALOG now holds two repairs across two layers; lifecycle facet exported), harnessfix/diagnose.py (`_find_signature` now excludes `llm_response` free-text for ALL signatures - same root cause as the existing `tool_result.text` exclusion - and the context-layer truncation signature matches system fields (`guard_triggered.note`) instead of `llm_response.text`), agent_core/tool_executor.py + agent_core/secure_file_retriever.py deleted (zero references anywhere; the secure retriever was superseded by the live `agent_core/file_context_retriever.py` that agent.py imports; `tools/file_ops.py` + `tools/shell_ops.py` stay - they ARE consumed by benchmarks/security_benchmarks.py and tests/test_security_hardening.py), docs/AGENTIC_IMPROVEMENT_PLAN.md (#10 marked in progress, #17 partially done, sequencing + progress log updated), tests/test_harnessfix_diagnose.py (`test_truncation_warning_maps_to_context` replaced: it pinned exactly the false-positive behavior; new pair of tests pins the corrected contract).
+
+**Reason**: Improvement-plan #10 ("grow the repair catalog"), chosen from evidence rather than guesswork: diagnosing the full trace corpus (254 traces -> 27 failed) exposed that ALL five "history truncation / token limit pressure" diagnoses were false positives - the signature matched `llm_response.text`, i.e. the model QUOTING the tracer's storage marker "...[truncated N chars]" (`tracing.truncate`) inside its own chat output, never a real context event. Fixing the FP re-classification surfaced 2 additional real stuck-cycles (2 -> 4), so 4 of the 27 remaining failures map directly to the new repair. Design choice: prevention beats decoration - at strike TWO the model still has budget, so concrete alternatives can avoid the fatal third strike entirely, while the third-strike stop guarantee stays intact (verified through the real ToolLoopRunner: forced synthesis still fires on the third repeat with only 4 LLM calls under a cap of 10). #17 scope correction recorded: the plan item wrongly listed tools/file_ops.py as dead.
+
+**Files**: harnessfix/repairs/stuck_repeat.py (new), harnessfix/repairs/__init__.py, harnessfix/diagnose.py, agent_core/tool_executor.py (deleted), agent_core/secure_file_retriever.py (deleted), docs/AGENTIC_IMPROVEMENT_PLAN.md, tests/test_repairs_stuck_repeat.py (new, 12 tests: apply/revert roundtrip is byte-identical, double-apply no-op, anchor-missing raises, collision-guard surface clean, runtime prevention AND third-strike guarantee verified in a fresh interpreter against the applied source, closed-loop e2e proposes/accepts the new repair), tests/test_harnessfix_diagnose.py (17 tests).
+
 ## 2026-08-25 - refactor: simplify for comprehension (chat_nlp decomposed into 4 phases, stale backup copies purged)
 
 **Change**: agent.py (Agent.chat_nlp reduced from a 285-line monolith to a ~30-line delegation over four single-purpose helpers: _refresh_system_message rebuilds history[0] from _SYSTEM_PROMPT + dynamic blocks; _append_user_turn handles multimodal input, plan-mode steering note and the _turn_start_index boundary; _run_chained_tool_loop owns llm_chat_fn, tracing, ToolLoopRunner execution, auto-continue chaining, repeated-answer detection and tagged-note stripping - returning (final_text, final_messages, llm_error, loop); _finish_turn trims/persists history and prints the outcome. Behaviour is unchanged - every guard, message string and decision-id comment moved with its code), tests/test_agent_dry_refactor.py (test_chat_nlp_uses_system_prompt_constant now asserts the constant is used by _refresh_system_message AND that chat_nlp delegates to it - same invariant, new code path), scripts/audit_invariants.py (invariant 5 message clarified: backups/ must exist but stay EMPTY between runs), backups/ (38 stale .py copies of live files deleted - implement_cmd writes fresh pre-run copies anyway and git history preserves old versions; the directory itself is kept because the auditor requires it).
