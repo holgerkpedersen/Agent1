@@ -22,6 +22,9 @@ is being extended to audit its own file effects (self-improvement).
   run, self_heal, optimize, perf, paste, paste_image, display, cleanup, review,
   reconstruct, mode`; `agent_core/commands/plan_verifier.py` — deterministic
   regression gate over generated plan/entities/taskplan docs (decision #076).
+- `agent_core/symbol_intel.py` — pure-AST code intelligence backing the NLP
+  `definitions`/`references` tools (signatures + line spans; capped whole-word
+  reference search); both are read-only and allowed in plan mode.
 - `agent_core/modes.py` — session modes (`build` default, `plan` read-only);
   enforced at schema level AND in `_execute_tool_call` (decision #077).
 - `agent_core/llm/tool_loop.py` — `ToolLoopRunner`: NLP tool-call execution loop.
@@ -36,7 +39,7 @@ is being extended to audit its own file effects (self-improvement).
   (evidence-rule auto-labeling behind `review auto`), `history.py` (trace-index +
   execution-ledger queries and PAST EXECUTION NOTES formatters that implement/fix
   inject into prompts).
-- `tests/` — pytest, **1448 collected** (~2 min full run with `--no-cov`;
+- `tests/` — pytest, **1503 collected** (~2 min full run with `--no-cov`;
   `testpaths=["tests"]`).
 - `agent_core/tests/` — entry-point/component test package (31 tests, runs only when
   targeted: `python -m pytest agent_core/tests -q --no-cov`); reconstructed 2026-08-19
@@ -211,6 +214,14 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   `git status --porcelain` is non-empty; silent on clean repos / outside
   git). Tests: `tests/test_quickwins_batch2.py` (12). Full suite:
   1482 passed / 2 skipped.
+- ✅ **#8 symbol-level tools (DONE, 2026-08-25)**: new `agent_core/symbol_intel.py`
+  + two NLP tools: `definitions(path)` (every class/function with compact
+  signature and line span via pure AST) and `references(symbol, max_results)`
+  (capped file:line list of uses across workspace .py files; whole-word,
+  attribute-aware matching so `run` never hits `run_interactive`; oversized
+  files skipped). Both read-only → in `PLAN_MODE_TOOLS`. System prompt
+  steers the model to prefer them over grep+read paging. Tests:
+  `tests/test_symbol_intel.py` (17). Full suite: 1501 passed / 2 skipped.
 - ✅ **Agentic quick-win batch (DONE, 2026-08-25)**: improvement plan in
   `docs/AGENTIC_IMPROVEMENT_PLAN.md` (19 audited items, progress log there).
   Landed: #1 decisions block injected into the chat_nlp system message

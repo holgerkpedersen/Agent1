@@ -44,10 +44,15 @@ against the current tree). Grouped by theme; ⚡ = quick win (hours),
    surfaced as `[Error: ...]` with zero retries. Added
    `TransientHTTPError` raised from `_open_chat` for 429/500/502/503/504 and
    widened the provider's retryable set (incl. `OSError`).
-8. 🏗 **Symbol-level tools** — the NLP toolset is text-grep + line-paged
-   read. Add pure-`ast` tools: `definitions(file)` → classes/functions with
-   signatures; `references(symbol)` → file:line list (pattern exists in
-   `analyze_handler.py`).
+8. 🏗 **Symbol-level tools** — STATUS: **DONE 2026-08-25**.
+   New `agent_core/symbol_intel.py` + two NLP tools:
+   `definitions(path)` — every class/function with compact signature and
+   line span via pure AST (orient in a big file, then read only the needed
+   window); `references(symbol, max_results)` — capped file:line list of
+   uses across workspace `.py` files, whole-word/attribute-aware matching
+   (`run` does not hit `run_interactive`), oversized files skipped.
+   Both read-only → added to `PLAN_MODE_TOOLS`; system prompt steers the
+   model to prefer them over grep+read paging.
 9. **Stream final answers** — `chat_stream` exists (with model-eviction
    recovery) but `chat_nlp` blocks silently through long turns.
 
@@ -102,6 +107,11 @@ Remaining quick wins: none — remaining items are 🏗-scale.
 
 ## Progress log
 
+- 2026-08-25 — **#8 DONE**: symbol-level tools. `agent_core/symbol_intel.py`
+  (pure-AST, stdlib-only) + `definitions`/`references` NLP tools wired into
+  the schema set, dispatch table and plan-mode read-only set; system prompt
+  steers toward them for "where is X used" / large-file orientation.
+  Tests: `tests/test_symbol_intel.py` (17).
 - 2026-08-25 — **#6 DONE**: post-mutation self-review note. After a turn
   whose write/edit results carry py_compile verification lines,
   `chat_nlp` prints one `[self-review]` nudge listing the changed files

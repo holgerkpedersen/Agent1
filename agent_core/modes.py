@@ -32,14 +32,17 @@ MODE_PLAN = "plan"
 
 #: Tools permitted in plan mode — verified read-only at handler level:
 #: ``search``/``read``/``list_files`` only inspect the filesystem, ``diff``
-#: shells out to read-only ``git diff``, and ``web_search`` queries
-#: DuckDuckGo.  Everything else can create or modify files — ``write``,
-#: ``edit``, ``fix`` obviously, but also ``run`` (arbitrary shell),
-#: ``git`` (add/commit/checkout …), ``tests`` (pytest writes
+#: shells out to read-only ``git diff``, ``web_search`` queries DuckDuckGo,
+#: and ``definitions``/``references`` are pure-AST readers (they never
+#: write; ``definitions`` opens one file read-only, ``references`` walks the
+#: workspace read-only).  Everything else can create or modify files —
+#: ``write``, ``edit``, ``fix`` obviously, but also ``run`` (arbitrary
+#: shell), ``git`` (add/commit/checkout …), ``tests`` (pytest writes
 #: ``__pycache__``/``.pytest_cache``) and ``analyze`` (writes its report
 #: into ``.docs/<ts>/``) — so plan mode excludes them wholesale.
 PLAN_MODE_TOOLS: frozenset[str] = frozenset({
     "search", "read", "list_files", "diff", "web_search",
+    "definitions", "references",
 })
 
 #: Runtime rejection returned by the executor for a blocked tool call.

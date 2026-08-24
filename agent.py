@@ -49,6 +49,7 @@ except Exception:  # pragma: no cover - tracing degrades gracefully if unavailab
 from agent_core.commands.base import Command, FlowStopped, chat_stoppable, clear_stop, save_file_py
 from agent_core.commands.registry import CommandRegistry
 from agent_core.decisions import decisions_as_system_prompt
+from agent_core.symbol_intel import collect_definitions, collect_references
 
 if TYPE_CHECKING:
     from http.server import ThreadingHTTPServer
@@ -511,18 +512,49 @@ class Agent:
         """
         return {
             "analyze": self._nlp_analyze,
+            "definitions": self._nlp_definitions,
             "diff": self._nlp_diff,
             "edit": self._nlp_edit,
             "fix": self._nlp_fix,
             "git": self._nlp_git,
             "list_files": self._nlp_list_files,
             "read": self._nlp_read,
+            "references": self._nlp_references,
             "run": self._nlp_run,
             "search": self._nlp_search,
             "tests": self._nlp_tests,
             "web_search": self._nlp_web_search,
             "write": self._nlp_write,
         }
+
+    async def _nlp_definitions(self, args: dict[str, Any]) -> str:
+        """Index a Python file's classes/functions via AST (plan item B-#8)."""
+        path = self._resolve_nlp_path(str(args.get("path", "")).strip('"').strip("'"))
+        if not path.endswith(".py"):
+            return f"Error: definitions needs a .py file, got: {path}"
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                source = f.read()
+        except FileNotFoundError:
+            return f"File not found: {path}"
+        except OSError as e:
+            return f"Definitions error: {e}"
+        self._note_effect(path)
+        return collect_definitions(source, filename=path)
+
+    async def _nlp_references(self, args: dict[str, Any]) -> str:
+        """Locate a symbol across workspace .py files (plan item B-#8)."""
+        symbol = str(args.get("symbol", "")).strip().strip('"').strip("'")
+        if not symbol:
+            return "Error: references requires a symbol name."
+        try:
+            max_results = max(1, min(int(args.get("max_results") or 60), 200))
+        except (TypeError, ValueError):
+            max_results = 60
+        self._note_effect(self.workspace)
+        return await asyncio.to_thread(
+            collect_references, symbol, self._effective_ws_dir(), max_results,
+        )
 
     async def _nlp_search(self, args: dict[str, Any]) -> str:
         """Search workspace files for text (first 30 matches)."""
@@ -1671,6 +1703,9 @@ _SYSTEM_PROMPT = (
     "- read returns up to 5000 chars per call by default — never request "
     "tiny slices (limit < 1000). Read big chunks and continue with the "
     "offset hint; avoid many small read calls.\n"
+    "- For 'where is X used/defined?' use references (one call) instead of "
+    "search + reads. To orient inside a large file, call definitions first, "
+    "then read only the line window you need — do not page blindly.\n"
     "- Prefer targeted edits over rewriting whole files.\n"
     "- If a tool fails, read the error and try a different approach.\n"
     "- When the request is ambiguous, make a reasonable assumption and state it, "

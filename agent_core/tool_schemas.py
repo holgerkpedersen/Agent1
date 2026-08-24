@@ -196,6 +196,46 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "definitions",
+            "description": (
+                "List every class and function in a Python file with compact "
+                "signatures and line spans (pure AST — no LLM). Use this to "
+                "orient inside a large file BEFORE paging through it with "
+                "read: pick the definition you need, then read only its "
+                "line window."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Python file to index"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "references",
+            "description": (
+                "Find where a symbol is defined or used across workspace .py "
+                "files: capped file:line list with the matching line text. "
+                "Whole-word match (run does not hit run_interactive). One call "
+                "replaces grep + several reads for 'where is X used?' questions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Symbol name to locate"},
+                    "max_results": {"type": "integer", "description": "Cap on hits returned (default 60)"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "analyze",
             "description": "Analyze a file or the whole workspace with the LLM and return a summary.",
             "parameters": {
