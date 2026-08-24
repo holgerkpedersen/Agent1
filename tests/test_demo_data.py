@@ -132,9 +132,15 @@ def test_serve_mode_wires_alert_evaluator(
 
     captured: dict[str, object] = {}
 
-    def fake_run(self: DashboardAPIServer, alert_rules=None, evaluate_alerts=None):
+    def fake_run(
+        self: DashboardAPIServer,
+        alert_rules: typing.Any = None,
+        evaluate_alerts: typing.Any = None,
+        refresh: typing.Any = None,
+    ) -> None:
         captured["rules"] = list(alert_rules or [])
         captured["evaluate"] = evaluate_alerts
+        captured["refresh"] = refresh
         raise KeyboardInterrupt()  # exit run() immediately
 
     monkeypatch.setattr(agent, "_shared_metrics_collector", None)
@@ -145,12 +151,24 @@ def test_serve_mode_wires_alert_evaluator(
     # fake_run executed and captured the wiring.
     agent.run_dashboard_server()
 
-    rules = typing.cast(list, captured["rules"])
-    evaluate = typing.cast(object, captured["evaluate"])
-    assert len(rules) >= 3
+    rules = captured["rules"]
+    evaluate = captured["evaluate"]
+    assert isinstance(rules, list) and len(rules) >= 3
     # Evaluator is AlertSystem.evaluate; feed it the rules and expect a list.
-    events = evaluate(rules)  # type: ignore[operator]
+    assert callable(evaluate)
+    events = evaluate(rules)
     assert isinstance(events, list)
+    # Cross-process metrics tailer must be wired into serve mode too
+    # (callable taking the collector), so other sessions' activity shows up.
+    refresh = captured["refresh"]
+    assert callable(refresh)
+    from agent_core.monitoring import MetricsCollector as _MC
+
+    probe = _MC()
+    try:
+        refresh(probe)
+    except Exception as exc:  # must be safe to call with a collector
+        raise AssertionError("refresh hook not collector-callable") from exc
 
 
 def test_serve_mode_api_alerts_endpoint_returns_rules() -> None:

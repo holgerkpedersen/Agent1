@@ -2124,6 +2124,13 @@ def _emit_command_metrics(command: str, elapsed_s: float) -> None:
     collector.increment_counter(f"command.{command}.count")
     collector.record_histogram("command.elapsed.seconds", elapsed_s)
     collector.set_gauge("last.command.seconds", elapsed_s)
+    # Mirror into the shared event file so a standalone --serve dashboard can
+    # show activity recorded by other sessions (metrics_file replay).
+    from agent_core.monitoring.metrics_file import append_event as _append_event
+
+    _append_event("counter", f"command.{command}.count", 1.0)
+    _append_event("histogram", "command.elapsed.seconds", elapsed_s)
+    _append_event("gauge", "last.command.seconds", elapsed_s)
 
 
 def record_command_metrics(command: str, elapsed_s: float) -> None:
@@ -2145,6 +2152,13 @@ def _emit_tool_metrics(tool_name: str, elapsed_s: float, ok: bool) -> None:
     collector.record_histogram("tool.elapsed.seconds", elapsed_s)
     if ok:
         collector.set_gauge("last.tool.seconds", elapsed_s)
+    # Mirror into the shared event file (see _emit_command_metrics).
+    from agent_core.monitoring.metrics_file import append_event as _append_event
+
+    _append_event("counter", f"tool.{tool_name}.count", 1.0)
+    _append_event("histogram", "tool.elapsed.seconds", elapsed_s)
+    if ok:
+        _append_event("gauge", "last.tool.seconds", elapsed_s)
 
 
 def _build_dashboard(collector: "MetricsCollector", port: int) -> tuple[Any, Any]:
@@ -2155,11 +2169,16 @@ def _build_dashboard(collector: "MetricsCollector", port: int) -> tuple[Any, Any
     identical rules and evaluator wiring.
     """
     from agent_core.monitoring import AlertSystem, DashboardAPIServer
+    from agent_core.monitoring.metrics_file import make_event_tailer
 
     alert_system = AlertSystem(collector)
     for rule in _default_alert_rules():
         alert_system.add_rule(rule)
     server_holder = DashboardAPIServer(collector, port=port)
+    # Tail the shared event file on every request so cross-process activity
+    # (REPL sessions running beside a --serve dashboard) shows up.  Own-pid
+    # events are skipped inside the tailer, so combined mode can't double-count.
+    server_holder.set_refresh(make_event_tailer())
     return server_holder, alert_system
 
 
@@ -2171,6 +2190,7 @@ def start_dashboard_thread(port: int = 8080) -> Optional["ThreadingHTTPServer"]:
         server_holder.start(
             alert_rules=alert_system.list_rules(),
             evaluate_alerts=alert_system.evaluate,
+            refresh=server_holder.get_refresh(),
         ),
     )
 
@@ -2447,6 +2467,7 @@ def run_dashboard_server() -> None:
         server_holder.run(
             alert_rules=alert_system.list_rules(),
             evaluate_alerts=alert_system.evaluate,
+            refresh=server_holder.get_refresh(),
         )
     except KeyboardInterrupt:
         pass

@@ -17,9 +17,13 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
     _collector: Optional[MetricsCollector] = None
     _alert_rules: List[AlertRule] = []
     _evaluate_alerts: Optional[Callable[[List[AlertRule]], List[AlertEvent]]] = None
+    #: Optional pre-request hook (e.g. tailing a shared metrics event file so
+    #: cross-process activity shows up). Called before every API dispatch.
+    _refresh: Optional[Callable[[MetricsCollector], None]] = None
     _base_dir: str = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     def do_GET(self) -> None:
+        self._maybe_refresh()
         parsed_path = urlparse(self.path)
         path = parsed_path.path
         params = parse_qs(parsed_path.query)
@@ -122,6 +126,19 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         ext = os.path.splitext(path)[1].lower()
         return mapping.get(ext, "application/octet-stream")
 
+    def _maybe_refresh(self) -> None:
+        """Run the optional refresh hook before serving an API request."""
+        # Read via the CLASS: a plain-function class attribute accessed through
+        # the instance would bind as a method (descriptor protocol) and then be
+        # called with a stray ``self`` — silently breaking the hook.
+        fn = type(self)._refresh
+        if fn is None or self._collector is None:
+            return
+        try:
+            fn(self._collector)
+        except Exception:
+            pass  # metrics must never break request handling
+
     def _snapshot(self) -> Dict[str, Any]:
         if self._collector is None:
             return {"error": "metrics collector unavailable"}
@@ -223,22 +240,38 @@ class DashboardAPIServer:
         self._collector: MetricsCollector = collector
         self._port: int = port
         self._server: Optional[ThreadingHTTPServer] = None
+        #: Instance-level pre-request hook; used when ``start()``/``run()`` are
+        #: called without an explicit ``refresh=`` argument.
+        self._refresh: Optional[Callable[[MetricsCollector], None]] = None
+
+    def set_refresh(self, refresh: Optional[Callable[[MetricsCollector], None]]) -> None:
+        """Register a pre-request hook (e.g. a shared metrics-file tailer)."""
+        self._refresh = refresh
+
+    def get_refresh(self) -> Optional[Callable[[MetricsCollector], None]]:
+        """Return the registered pre-request hook (if any)."""
+        return self._refresh
 
     def configure(
         self,
         alert_rules: List[AlertRule],
         evaluate_alerts: Optional[Callable[[List[AlertRule]], List[AlertEvent]]] = None,
+        refresh: Optional[Callable[[MetricsCollector], None]] = None,
     ) -> None:
         DashboardAPIHandler._collector = self._collector
         DashboardAPIHandler._alert_rules = list(alert_rules)
         DashboardAPIHandler._evaluate_alerts = evaluate_alerts
+        DashboardAPIHandler._refresh = refresh if refresh is not None else self._refresh
 
     def start(
         self,
         alert_rules: Optional[List[AlertRule]] = None,
         evaluate_alerts: Optional[Callable[[List[AlertRule]], List[AlertEvent]]] = None,
+        refresh: Optional[Callable[[MetricsCollector], None]] = None,
     ) -> ThreadingHTTPServer:
-        self.configure(alert_rules or [], evaluate_alerts)
+        if refresh is not None:
+            self.set_refresh(refresh)
+        self.configure(alert_rules or [], evaluate_alerts, self._refresh)
         server = ThreadingHTTPServer(("localhost", self._port), DashboardAPIHandler)
         self._server = server
         return server
@@ -247,8 +280,9 @@ class DashboardAPIServer:
         self,
         alert_rules: Optional[List[AlertRule]] = None,
         evaluate_alerts: Optional[Callable[[List[AlertRule]], List[AlertEvent]]] = None,
+        refresh: Optional[Callable[[MetricsCollector], None]] = None,
     ) -> None:
-        server = self.start(alert_rules or [], evaluate_alerts)
+        server = self.start(alert_rules or [], evaluate_alerts, refresh)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

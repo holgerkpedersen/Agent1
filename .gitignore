@@ -123,6 +123,7 @@ Desktop.ini
 .generated_manifest.json
 .project_memory.json
 chat_history.json
+.metrics_events.jsonl
 
 # Workflow command docs (spec -> analysis -> plan -> tasks -> entities),
 # one timestamped folder per run.  Legacy root artifacts remain ignored too.
