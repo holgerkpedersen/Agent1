@@ -26,6 +26,80 @@
       align-items: center;
       justify-content: center;
     }
+    /* ---- Histogram distribution chart (pure CSS, no external libs) ---- */
+    .hgram-select {
+      min-width: 220px;
+      font-size: var(--font-sm, 0.875rem);
+    }
+    .hgram-chart {
+      display: flex;
+      align-items: stretch;
+      gap: 6px;
+      height: 240px;
+      padding: 12px 8px 0 8px;
+      border-bottom: 1px solid var(--border-color, #d1d5db80);
+    }
+    .hgram-col {
+      flex: 1 1 0;
+      min-width: 0;
+      height: 100%;
+      display: flex;
+      align-items: flex-end;
+      position: relative;
+    }
+    .hgram-bar {
+      width: 100%;
+      position: relative;
+      border-radius: 4px 4px 0 0;
+      background: linear-gradient(180deg, var(--primary-300, #6BB1FF), var(--primary-500, #458EFF));
+      box-shadow: 0 0 0 1px var(--primary-light-white, rgba(72,127,255,.25)) inset;
+      transition: filter .15s ease;
+    }
+    .hgram-col:hover .hgram-bar { filter: brightness(1.25); }
+    .hgram-bar:hover::after {
+      content: attr(data-tip);
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--dark-2, #1F2A3D);
+      color: #fff;
+      font-size: var(--font-xs, 0.75rem);
+      line-height: 1.35;
+      white-space: nowrap;
+      padding: 6px 10px;
+      border-radius: 8px;
+      z-index: 30;
+      pointer-events: none;
+      box-shadow: var(--shadow-2, 0 4px 60px rgba(4,6,15,.5));
+    }
+    .hgram-tick {
+      display: flex;
+      justify-content: space-between;
+      font-size: var(--font-xs, 0.75rem);
+      color: var(--text-secondary-light, #94a3b8);
+      padding: 6px 8px 0 8px;
+    }
+    .hgram-stats { row-gap: 8px; }
+    .hgram-stats > div {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 64px;
+    }
+    .hgram-stat-label {
+      font-size: var(--font-xs, 0.75rem);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--text-secondary-light, #94a3b8);
+    }
+    .hgram-stat-value {
+      font-weight: 600;
+      font-size: var(--font-md, 1rem);
+    }
+    [data-theme="light"] .hgram-bar:hover::after {
+      background: var(--neutral-900, #111827);
+    }
   </style>
 </head>
 <body>
@@ -345,6 +419,28 @@
           <div class="card shadow-none border">
             <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
               <h6 class="fw-semibold mb-0">Histogram</h6>
+              <select id="hgram-select" class="form-select w-auto hgram-select"
+                      aria-label="Metric to display"></select>
+            </div>
+            <div class="card-body p-24">
+              <p class="text-sm text-secondary-light mb-8" id="hgram-caption">-</p>
+              <div id="hgram-chart" class="hgram-chart" role="img"
+                   aria-label="Distribution of recorded durations"></div>
+              <div class="d-flex flex-wrap gap-24 mt-16 hgram-stats">
+                <div><span class="hgram-stat-label">samples</span><span class="hgram-stat-value" id="hstat-count">-</span></div>
+                <div><span class="hgram-stat-label">mean</span><span class="hgram-stat-value" id="hstat-mean">-</span></div>
+                <div><span class="hgram-stat-label">p50</span><span class="hgram-stat-value" id="hstat-p50">-</span></div>
+                <div><span class="hgram-stat-label">p95</span><span class="hgram-stat-value" id="hstat-p95">-</span></div>
+                <div><span class="hgram-stat-label">min</span><span class="hgram-stat-value" id="hstat-min">-</span></div>
+                <div><span class="hgram-stat-label">max</span><span class="hgram-stat-value" id="hstat-max">-</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-12">
+          <div class="card shadow-none border">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">All metrics</h6>
             </div>
             <div class="card-body p-0">
               <div class="table-responsive">
@@ -384,6 +480,7 @@
       counters: 'api/counters',
       gauges: 'api/gauges',
       alerts: 'api/alerts',
+      histograms: 'api/histograms',
     };
 
     async function fetchJSON(url) {
@@ -499,13 +596,15 @@
 
     async function loadHistogram() {
       try {
-        const s = await fetchJSON(API.snapshot);
-        const samples = s.histogram_samples || {};
+        const d = await fetchJSON(API.histograms);
+        const samples = d.samples || {};
         const keys = Object.keys(samples);
+        // -- stat card + "All metrics" table --------------------------------
         document.getElementById('stat-histogram').textContent = keys.length || '-';
         const tbody = document.getElementById('tbl-histogram');
         if (!keys.length) {
           tbody.innerHTML = '<tr><td colspan="5" class="text-center text-secondary-light">No histogram data collected yet</td></tr>';
+          renderChart([]);
           return;
         }
         tbody.innerHTML = keys.map(k => {
@@ -520,11 +619,89 @@
             '<td class="text-end">' + mean + '</td>' +
             '<td class="text-end">' + max + '</td></tr>';
         }).join('');
+        // -- metric picker ---------------------------------------------------
+        const sel = document.getElementById('hgram-select');
+        const prev = sel.value;
+        sel.innerHTML = keys.map(function (k) {
+          const n = (samples[k] || []).length;
+          return '<option value="' + k + '">' + k + ' (' + n + ')</option>';
+        }).join('');
+        if (keys.indexOf(prev) !== -1) sel.value = prev;
+        // -- the distribution chart -------------------------------------------
+        renderChart((samples[sel.value] || []).map(Number).filter(function (n) { return !isNaN(n); }));
       } catch (e) {
         document.getElementById('tbl-histogram').innerHTML =
           '<tr><td colspan="5" class="text-center text-danger-main">' + e.message + '</td></tr>';
         document.getElementById('stat-histogram').textContent = '-';
+        renderChart([]);
       }
+    }
+
+    // Bins raw samples into up to 24 bars, renders them as CSS columns and
+    // fills the p50/p95 stat chips. Pure DOM/CSS - no chart library needed.
+    function renderChart(vals) {
+      const chart = document.getElementById('hgram-chart');
+      const caption = document.getElementById('hgram-caption');
+      const setStat = function (id, txt) {
+        document.getElementById(id).textContent = txt;
+      };
+      vals = (vals || []).filter(function (n) { return isFinite(n); });
+      if (!vals.length) {
+        chart.innerHTML = '<div class="w-100 text-center text-secondary-light align-self-center">No histogram data collected yet</div>';
+        chart.style.borderBottomColor = '';
+        caption.textContent = 'Distribution of recorded durations';
+        ['hstat-count', 'hstat-mean', 'hstat-p50', 'hstat-p95', 'hstat-min', 'hstat-max']
+          .forEach(function (id) { setStat(id, '-'); });
+        return;
+      }
+      const sorted = vals.slice().sort(function (a, b) { return a - b; });
+      const min = sorted[0];
+      const max = sorted[sorted.length - 1];
+      const mean = vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
+      const p50 = percentile(sorted, 0.50);
+      const p95 = percentile(sorted, 0.95);
+      const unit = /seconds$/.test(String(document.getElementById('hgram-select').value || '')) ? 's' : '';
+      const fmt = function (v) {
+        if (!unit) return String(Math.round(v * 100) / 100);
+        return v >= 10 ? v.toFixed(1) + unit : v.toFixed(2) + unit;
+      };
+      const BINS = Math.max(4, Math.min(24, Math.round(Math.sqrt(vals.length) * 2)));
+      const span = (max - min) || 1; // single-value -> one full bar
+      const counts = new Array(BINS).fill(0);
+      vals.forEach(function (v) {
+        let idx = Math.floor((v - min) / span * BINS);
+        if (idx >= BINS) idx = BINS - 1;
+        counts[idx] += 1;
+      });
+      const peak = Math.max.apply(null, counts) || 1;
+      chart.innerHTML = counts.map(function (c, i) {
+        const lo = min + span * i / BINS;
+        const hi = min + span * (i + 1) / BINS;
+        const hPct = c ? Math.max(3, Math.round(c / peak * 100)) : 0;
+        const tip = c
+          ? fmt(lo) + ' \u2013 ' + fmt(hi) + ' \u00b7 ' + c + ' sample' + (c === 1 ? '' : 's')
+          : '';
+        return '<div class="hgram-col">' +
+                 '<div class="hgram-bar" data-tip="' + tip + '" style="height:' + hPct + '%"></div>' +
+               '</div>';
+      }).join('');
+      caption.textContent = 'Distribution of ' + (document.getElementById('hgram-select').value || 'samples') +
+        ' across ' + BINS + ' bins (' + fmt(min) + ' \u2013 ' + fmt(max) + ')';
+      setStat('hstat-count', String(vals.length));
+      setStat('hstat-mean', fmt(mean));
+      setStat('hstat-p50', fmt(p50));
+      setStat('hstat-p95', fmt(p95));
+      setStat('hstat-min', fmt(min));
+      setStat('hstat-max', fmt(max));
+    }
+
+    function percentile(sortedAsc, q) {
+      if (!sortedAsc.length) return 0;
+      const pos = (sortedAsc.length - 1) * q;
+      const lo = Math.floor(pos);
+      const hi = Math.ceil(pos);
+      if (lo === hi) return sortedAsc[lo];
+      return sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * (pos - lo);
     }
 
     async function refresh() {
@@ -551,6 +728,16 @@
         title.textContent = labels[name] || 'Dashboard';
       }
     }
+
+    // Re-render the chart when the user picks another metric.
+    document.getElementById('hgram-select').addEventListener('change', async function () {
+      try {
+        const d = await fetchJSON(API.histograms);
+        renderChart((d.samples || {})[this.value] || []);
+      } catch (e) {
+        renderChart([]);
+      }
+    });
 
     async function loadGauges() {
       try {

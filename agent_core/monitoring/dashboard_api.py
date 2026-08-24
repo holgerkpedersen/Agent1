@@ -179,6 +179,9 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         response: Dict[str, Any] = {
             "histogram": summary,
             "metric_name": metric_name,
+            #: Raw sample lists per metric (most recent last) so the UI can
+            #: bin them into a distribution chart. Copies, safe to serialize.
+            "samples": self._collector.all_histogram_samples(),
         }
         return response
 

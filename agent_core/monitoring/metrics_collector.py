@@ -112,6 +112,16 @@ class MetricsCollector:
                 "mean": sum(samples) / count,
             }
 
+    def all_histogram_samples(self) -> Dict[str, List[float]]:
+        """Raw sample lists per histogram name (most recent last).
+
+        Used by ``GET /api/histograms`` so the dashboard can draw a real
+        binned distribution chart instead of only min/mean/max numbers.
+        Returns copies - callers cannot mutate collector state.
+        """
+        with self._lock:
+            return {k: list(v) for k, v in self._histograms.items()}
+
     def reset(self) -> None:
         with self._lock:
             self._metrics_store.clear()
