@@ -202,6 +202,15 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   tool call returns an error string instead of killing the turn). Tests:
   `tests/test_agent_improvements.py`, `tests/test_agent_dry_refactor.py`.
 - Taskplan-time phantom-module gate (plan-time existence check for planned files).
+- ✅ **Agentic quick-win batch 2 (DONE, 2026-08-25)**: #6 post-mutation
+  self-review note (`chat_nlp` prints `[self-review] <files>` after turns
+  whose write/edit results carry py_compile verification lines; extraction
+  via `_mutating_files_this_turn`, display via `_print_self_review_note`)
+  and #19 uncommitted-changes reminder at every REPL shutdown path
+  (`_warn_uncommitted`: invariant-#4 nudge listing up to 5 paths when
+  `git status --porcelain` is non-empty; silent on clean repos / outside
+  git). Tests: `tests/test_quickwins_batch2.py` (12). Full suite:
+  1482 passed / 2 skipped.
 - ✅ **Agentic quick-win batch (DONE, 2026-08-25)**: improvement plan in
   `docs/AGENTIC_IMPROVEMENT_PLAN.md` (19 audited items, progress log there).
   Landed: #1 decisions block injected into the chat_nlp system message

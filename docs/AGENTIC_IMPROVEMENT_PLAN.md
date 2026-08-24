@@ -32,9 +32,11 @@ against the current tree). Grouped by theme; ⚡ = quick win (hours),
    *messages* regardless of size; a few big reads can blow the context while
    staying under the count cap. Add char/token accounting and replace
    dropped middle turns with a rolling summary message.
-6. ⚡ **Self-review turn after mutations** — only py_compile verifies writes
-   today; inject one forced review call (re-read own `git diff` vs the
-   request) after mutating turns.
+6. ⚡ **Self-review turn after mutations** — STATUS: **DONE 2026-08-25**.
+   After a turn that wrote/edited files, `chat_nlp` prints a `[self-review]`
+   nudge listing the changed files (relative paths) with an explicit
+   "py_compile verified syntax only" pointer to `tests`/`git diff`
+   (`_mutating_files_this_turn` + `_print_self_review_note`).
 7. ⚡ **Retry-taxonomy asymmetry** — STATUS: **DONE 2026-08-25**.
    `opencode_provider._with_retry` retried HTTP 429/5xx;
    `LMStudioProvider`'s `RetryPolicy` covered only Timeout /
@@ -86,17 +88,29 @@ against the current tree). Grouped by theme; ⚡ = quick win (hours),
 18. ⚡ **Fix duplicated imports / enum drift** — `db_io.py` has
     `from typing import Any` seven times; `llm_types.ProfileType`
     ("fast_codegen") vs `config.ProfileType` ("fast-codegen") enums diverge.
-19. **Doc-commanding conventions** — AGENTS.md says commit every session;
-    add a `git status --porcelain` reminder to REPL shutdown
-    (`security/shutdown.py::shutdown_for_exit` is the natural home).
+19. **Doc-commanding conventions** — STATUS: **DONE 2026-08-25**.
+    `_warn_uncommitted` runs on every REPL shutdown path (quit / stdin end /
+    EOF): lists up to 5 uncommitted paths with the invariant-#4 reminder;
+    silent on clean repos and outside git; never blocks exit.
 
 ## Sequencing
 
-Weekend of quick wins: ~~#1~~ → #14 → #6 → ~~#7~~ (remaining: #14, #6).
+Weekend of quick wins: ~~#1~~ → ~~#14~~ → ~~#6~~ → ~~#7~~ — **all quick
+wins from the original sequencing are DONE** (plus #5, #15, #18).
 Next substantive feature: #8 or #10. Strategic horizon: #12 / #13 / #2.
+Remaining quick wins: none — remaining items are 🏗-scale.
 
 ## Progress log
 
+- 2026-08-25 — **#6 DONE**: post-mutation self-review note. After a turn
+  whose write/edit results carry py_compile verification lines,
+  `chat_nlp` prints one `[self-review]` nudge listing the changed files
+  (`_mutating_files_this_turn` + `_print_self_review_note`) — py_compile
+  proves syntax only, so the user is pointed at `tests`/`git diff`.
+- 2026-08-25 — **#19 DONE**: `_warn_uncommitted` runs on every REPL
+  shutdown path (quit / stdin end / EOF): lists up to 5 uncommitted paths
+  with an invariant-#4 reminder when `git status --porcelain` is non-empty;
+  silent on clean repos and outside git; never blocks exit.
 - 2026-08-25 — **#1 DONE**: decisions block injected into the chat_nlp
   system message (`Agent._decision_constraints_block`, rebuilt per turn).
 - 2026-08-25 — **#7 DONE**: `TransientHTTPError` + widened `RetryPolicy`

@@ -1058,6 +1058,9 @@ class Agent:
         final_messages = self._chat_history
         continuations = 0
         display_mode = _resolve_display_mode()
+        #: Files this turn mutated (write/edit tool results carry a py_compile
+        #: verification line) — feeds the post-turn self-review note (#B-6).
+        mutated_files: list[str] = []
         #: Cross-run call registry: how many times each exact call has been
         #: executed across ALL chained runs of this turn, so repeated probes
         #: cannot hide behind a fresh run's duplicate counter.
@@ -1169,6 +1172,7 @@ class Agent:
         # Keep the conversation bounded and persist it so the next session
         # (or a follow-up prompt) can continue the dialogue.
         self._chat_history = _trim_chat_history(self._chat_history)
+        mutated_files = self._mutating_files_this_turn()
         self._save_chat_history()
         self._save_memory()
 
@@ -1209,7 +1213,58 @@ class Agent:
             print(yellow(_final_answer_fallback(loop)))
         if self.is_plan_mode() and clean.strip():
             self._persist_plan_answer(clean)
+        if mutated_files and clean.strip():
+            self._print_self_review_note(mutated_files)
         self._nlp_workspace = None
+
+    def _mutating_files_this_turn(self) -> list[str]:
+        """Files written/edited by this turn (plan item B-#6).
+
+        The NLP write/edit handlers append a ``[verify] py_compile ✓`` line to
+        their result — that line is the per-file mutation marker.  Scanning it
+        keeps this zero-cost while the loop runs; no extra bookkeeping.
+        """
+        marker = "[verify] py_compile"
+        files: list[str] = []
+        for m in self._chat_history:
+            if m.get("role") != "tool":
+                continue
+            content = str(m.get("content") or "")
+            if marker not in content:
+                continue
+            first_line = content.splitlines()[0] if content else ""
+            # Success lines start "Written <path> (N bytes)" / "Edited <path>";
+            # take everything after the verb up to the trailing parenthetical.
+            for prefix in ("Written ", "Edited ", "Skipped "):
+                if first_line.startswith(prefix):
+                    path = first_line[len(prefix):]
+                    if path.endswith(")"):
+                        path = path.rsplit("(", 1)[0].strip()
+                    if path and path not in files:
+                        files.append(path)
+                    break
+        return files
+
+    def _print_self_review_note(self, mutated_files: list[str]) -> None:
+        """Post-mutation self-review reminder (plan item B-#6).
+
+        py_compile proves a file PARSES — not that it does what was asked.
+        This prints one short nudge listing the changed files so the user
+        knows exactly what to double-check (or ask the agent to re-verify).
+        """
+        def _short(f: str) -> str:
+            try:
+                return os.path.relpath(f, self.workspace).replace("\\", "/")
+            except ValueError:
+                return f
+
+        shown = ", ".join(_short(f) for f in mutated_files[:6])
+        more = f" (+{len(mutated_files) - 6} more)" if len(mutated_files) > 6 else ""
+        print(magenta(
+            f"\n  [self-review] This turn changed {len(mutated_files)} file(s): "
+            f"{shown}{more}. py_compile verified syntax only — run 'tests' or "
+            "'git diff' to confirm behaviour."
+        ))
 
     def _persist_plan_answer(self, plan_text: str) -> None:
         """Save a plan-mode final answer to ``.docs/<ts>/plan_proposed.md``.
@@ -1970,6 +2025,38 @@ def _build_registry() -> CommandRegistry:
     return registry
 
 
+def _warn_uncommitted(agent: "Agent") -> None:
+    """Print a reminder when the session leaves uncommitted changes.
+
+    AGENTS.md invariant #4: "Commit after every session. Uncommitted work is
+    unrecoverable" — the deleted-agent.py incident (decision #058) lost
+    written files because they were never committed.  This runs on every
+    REPL shutdown path (quit / stdin end / EOF) as a last-line reminder.
+    Best-effort and silent outside a git repo; never blocks exit.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, cwd=agent.workspace, timeout=10,
+        )
+        if r.returncode != 0:
+            return  # not a git repo (or git missing) — nothing to say
+        lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+        if not lines:
+            return
+        print(yellow(
+            f"\n  [git] {len(lines)} uncommitted change(s) in the workspace — "
+            "commit them now (AGENTS.md invariant #4: uncommitted work is "
+            "unrecoverable). Top offenders:"
+        ))
+        for ln in lines[:5]:
+            print(f"    {ln}")
+        if len(lines) > 5:
+            print(gray(f"    ... and {len(lines) - 5} more"))
+    except Exception as e:
+        logger.debug("Uncommitted-changes check skipped: %s", e)
+
+
 async def run_interactive() -> None:
     """Interactive mode - allows user to input commands."""
 
@@ -2005,11 +2092,7 @@ async def run_interactive() -> None:
     _register_commands(registry)
 
     # Set up command registry with simple commands
-    # Watch for code edited on disk while the REPL runs: the process keeps
-    # imported modules in memory, so on-disk fixes (e.g. from a paste
-    # session) silently never take effect unless the user restarts
-    # (2026-08-19 incident: workflow_cmd.py was fixed on disk at 10:13:57
-    # but the 10:15:40 run still executed the old in-memory module).
+    # Warn once per change wave when loaded code changed on disk.
     from agent_core.commands.freshness import (
         diff_snapshots,
         format_stale_warning,
@@ -2026,13 +2109,15 @@ async def run_interactive() -> None:
             if user_input is None:
                 # Shutdown requested or stdin exhausted
                 agent._save_memory()
+                _warn_uncommitted(agent)
                 break
             if not user_input:
                 continue
-            
+
             # Check for quit command
             if user_input.lower() in ["quit", "exit", "q"]:
                 agent._save_memory()
+                _warn_uncommitted(agent)
                 print(green("Goodbye!"))
                 break
 
@@ -2083,6 +2168,7 @@ async def run_interactive() -> None:
             if not sys.stdin.isatty():
                 print(yellow("\n[stdin] Input stream ended — shutting down."))
             agent._save_memory()
+            _warn_uncommitted(agent)
             break
 
 

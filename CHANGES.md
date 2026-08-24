@@ -4,6 +4,12 @@
 
 **Reason**: Improvement-plan quick wins #1/#5/#7/#14/#15/#18 from a full code audit. The chat loop never saw .decisions.json (implement/fix did) so it could contradict recorded decisions mid-conversation; plan-mode answers evaporated as terminal text; a few huge read/write messages could blow the context window while staying under the message-count cap; LM Studio surfaced rate-limit/gateway errors as [Error: ...] without retrying. Tests: tests/test_llm_retry_policy.py (10 - retry tests go through prov.chat(), the real execute_with_retry path), tests/test_quickwins_2026_08_25.py (14). Full suite: 1470 passed, 2 skipped.
 
+## 2026-08-25 - feat: agentic quick-win batch 2 - self-review note after mutations, uncommitted-changes reminder at shutdown
+
+**Change**: agent.py (Agent._mutating_files_this_turn extracts written/edited paths from tool results carrying the [verify] py_compile marker; Agent._print_self_review_note prints a relative-path [self-review] nudge after mutating chat turns; module-level _warn_uncommitted wired into all three REPL shutdown paths - quit, stdin-end, EOF), tests/test_quickwins_batch2.py (new, 12 tests), docs/AGENTIC_IMPROVEMENT_PLAN.md + AGENTS.md (status updates).
+
+**Reason**: Improvement-plan quick wins #6 and #19. py_compile proves a file PARSES, not that the change does what was asked - a turn that mutated files now ends with an explicit pointer to tests/git diff. Invariant #4 (commit after every session; uncommitted work is unrecoverable - decision #058) existed only as documentation; now the REPL itself reminds at exit. Verified: extraction driven through the REAL write/edit handlers; warn paths covered for dirty repo (lists up to 5 + overflow), clean repo (silent), non-repo (silent, never raises); e2e test mirrors the real loop message shape (assistant tool_calls + matching tool result) so orphan-dropping is not bypassed. Full suite: 1482 passed, 2 skipped.
+
 ## 2026-08-23 - improve: implement command — line-anchor parsing, retry sentinels, --status
 
 **Change**: agent_core/commands/implement_cmd.py (structured `_parse_line_number` + module regexes `_PATH_LINE_RE`/`_FILE_LINE_RE`/`_WORD_LINE_RE`; generation retry loop treats `[LM Studio ...]` as failure and records per-file outcomes; new read-only `--status` mode via `ImplementCommand._status_report`; help/usage), tests/test_implement_improvements.py (new, 14 tests)
