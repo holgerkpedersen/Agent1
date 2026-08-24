@@ -1491,5 +1491,32 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "078",
+    "title": "Symbol-level NLP tools: definitions/references via pure AST",
+    "context": "Improvement-plan item #8 (docs/AGENTIC_IMPROVEMENT_PLAN.md). The NLP toolset was text-grep + line-paged read only: 'where is X used?' cost a grep plus several reads, and orienting inside a large file meant paging blindly through 5000-char windows.",
+    "decision": "Add agent_core/symbol_intel.py (pure AST, stdlib-only) with two new NLP tools: definitions(path) renders every class/function with a compact unparse'd signature and [lines a-b] span; references(symbol, max_results) returns a capped file:line list of uses across workspace .py files using whole-word attribute-aware matching (run never matches run_interactive), skipping cache/backup dirs and files >1.5MB. Both are read-only, so both are in PLAN_MODE_TOOLS; the system prompt steers the model to prefer them over search+read paging.",
+    "rationale": "AST indexing gives the model structure without burning context on file dumps; one references call replaces grep + N reads. Keeping the implementation stdlib-only avoids new dependencies, and read-only classification keeps plan mode's no-write guarantee intact.",
+    "affected_files": [
+      "agent_core/symbol_intel.py",
+      "agent_core/tool_schemas.py",
+      "agent_core/modes.py",
+      "agent.py",
+      "tests/test_symbol_intel.py"
+    ],
+    "tags": [
+      "tools",
+      "ast",
+      "code-intelligence",
+      "plan-mode",
+      "context"
+    ],
+    "status": "accepted",
+    "created_at": "2026-08-24T10:43:00.306892+00:00",
+    "related_decisions": [
+      "077",
+      "035"
+    ]
   }
 ]
