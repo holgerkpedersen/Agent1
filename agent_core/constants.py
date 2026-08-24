@@ -86,6 +86,18 @@ CHAT_HISTORY_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "chat_history.json")
 #: Cross-session memory (files read, semantic index, knowledge graph, working
 #: memory) — reloaded on the next session so work done is not forgotten.
 AGENT_MEMORY_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "agent_memory.json")
+#: Atomic-write sidecars: persistence writes go to "<path>.tmp" first and are
+#: then os.replace()d into place, so a crash mid-write can never leave a
+#: half-written JSON behind (a corrupt file used to mean the whole
+#: conversation was silently dropped on next load).
+CHAT_HISTORY_TMP_PATH = CHAT_HISTORY_JSON_PATH + ".tmp"
+AGENT_MEMORY_TMP_PATH = AGENT_MEMORY_JSON_PATH + ".tmp"
+
+#: Message key marking loop-INJECTED user notes (the auto-continue note).
+#: Tagged messages are stripped from history when a turn ends and MUST be
+#: stripped again at the LLM payload boundary (sanitize_message_roles) so
+#: the internal marker never reaches a provider as an unknown field.
+LOOP_NOTE_TAG_KEY = "_loop_note"
 
 
 # ---------------------------------------------------------------------------

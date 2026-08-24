@@ -12,7 +12,11 @@ import httpx
 
 from .provider import ResponseMetrics
 from .retry import RetryPolicy, TRANSIENT_HTTP_STATUSES, TransientHTTPError
-from agent_core.constants import KNOWN_MODELS, resolve_model
+from agent_core.constants import (
+    KNOWN_MODELS,
+    resolve_model,
+    LOOP_NOTE_TAG_KEY,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,21 +33,29 @@ def sanitize_message_roles(messages: list[dict[str, Any]]) -> list[dict[str, Any
     Also drops ORPHAN ``tool`` messages (tool_call_id without a matching
     assistant tool_calls message): strict gateways (opencode Console Go)
     reject those with HTTP 400.
+
+    Also strips loop-internal tags (``LOOP_NOTE_TAG_KEY``): they mark
+    agent-injected notes for the history manager and must never reach a
+    provider as an unknown message field.
     """
     seen_non_system = False
     out: list[dict[str, Any]] = []
     for message in messages:
         if message.get("role") == "system" and seen_non_system:
             content = str(message.get("content") or "")
-            out.append({
+            converted = {
                 **message,
                 "role": "user",
                 "content": f"[System note] {content}" if content else "",
-            })
+            }
+            converted.pop(LOOP_NOTE_TAG_KEY, None)
+            out.append(converted)
         else:
             if message.get("role") != "system":
                 seen_non_system = True
-            out.append(dict(message))
+            plain = dict(message)
+            plain.pop(LOOP_NOTE_TAG_KEY, None)
+            out.append(plain)
     valid_ids: set[str] = set()
     for message in out:
         if message.get("role") == "assistant":
@@ -299,6 +311,18 @@ class LMStudioProvider:
         #: Last printed status label — printed once per session and only
         #: re-printed when it changes (model/profile/temperature/tokens).
         self._last_label: str | None = None
+
+    def apply_profile(
+        self, name: str, temperature: float, max_tokens: int,
+    ) -> None:
+        """Activate *name* with its sampling parameters in one step.
+
+        The single sanctioned way for callers to switch profiles on a provider
+        (see ``LLMProvider.apply_profile``) — no direct attribute pokes.
+        """
+        self._profile_name = name
+        self.temperature = temperature
+        self.max_tokens = max_tokens
     
     def _build_payload(
         self, 

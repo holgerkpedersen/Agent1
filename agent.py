@@ -22,7 +22,10 @@ from agent_core.colors import cyan, green, yellow, blue, magenta, gray, red
 from agent_core.constants import (
     resolve_model,
     CHAT_HISTORY_JSON_PATH,
+    CHAT_HISTORY_TMP_PATH,
     AGENT_MEMORY_JSON_PATH,
+    AGENT_MEMORY_TMP_PATH,
+    LOOP_NOTE_TAG_KEY,
 )
 from agent_core.config import load_agent_settings, AgentDisplayMode
 from agent_core.file_system import FileSystem
@@ -220,9 +223,9 @@ class LLMClient:
                 from agent_core.llm.model_profiles import get_profile
                 profile = get_profile(prof_name)
                 self._profile_name = prof_name
-                self._provider._profile_name = prof_name
-                self._provider.temperature = profile.temperature
-                self._provider.max_tokens = profile.max_tokens
+                self._provider.apply_profile(
+                    prof_name, profile.temperature, profile.max_tokens,
+                )
         except Exception as _prof_err:
             logger.warning(
                 "Failed to restore active profile from model.json:\n%s",
@@ -584,9 +587,11 @@ class Agent:
             # Paging is LINE-BASED (1-indexed): models and callers pass the
             # starting line number and a line count, not character offsets —
             # char offsets kept landing every read in the same short
-            # docstring, causing repeated-read loops.
+            # docstring, causing repeated-read loops.  *limit* is capped so a
+            # single call cannot pull an entire large file into context (the
+            # history trimmer would have to clean up after it next turn).
             offset = max(1, int(args.get("offset") or 1))
-            limit = max(1, int(args.get("limit") or 100))
+            limit = max(1, min(int(args.get("limit") or 100), _MAX_READ_LINES))
         except (TypeError, ValueError):
             return "Read error: offset/limit must be integers."
         content = await self.read_file(path, track_read=False)
@@ -654,7 +659,9 @@ class Agent:
         """Execute one shell command with destructive-pattern blocking,
         whole-tree timeout kill, and Unix-ism hints."""
         cmd_to_run = str(args.get("command", "")).strip()
-        timeout = int(args.get("timeout") or 120)
+        # Upper bound: an unbounded model-supplied timeout could stall a turn
+        # for hours; 10 min is the hard ceiling (longer jobs should be split).
+        timeout = max(1, min(int(args.get("timeout") or 120), _MAX_RUN_TIMEOUT_S))
         if not cmd_to_run:
             return "Error: run requires a command."
         blocked = _blocked_shell_command(cmd_to_run)
@@ -1037,10 +1044,14 @@ class Agent:
         #: promising changes it is not allowed to make (mutating tools are
         #: additionally blocked in the executor — see ``_execute_tool_call``).
         if self.is_plan_mode() and not images:
-            print(yellow(
-                "  [plan mode] Read-only research — mutating tools blocked. "
-                "Switch back with 'mode build' to apply changes."
-            ))
+            # Same visibility contract as every other status print in this
+            # method: suppressed in QUIET mode, which promises to show only
+            # the final answer.
+            if _resolve_display_mode() != AgentDisplayMode.QUIET:
+                print(yellow(
+                    "  [plan mode] Read-only research — mutating tools blocked. "
+                    "Switch back with 'mode build' to apply changes."
+                ))
             user_input = f"{plan_mode_turn_note()}\n\n{user_input}"
         #: Everything appended after this line belongs to THIS turn (the user
         #: message plus its tool results) — the boundary per-turn scans such
@@ -1192,8 +1203,11 @@ class Agent:
                         )
                     final_messages = list(final_messages) + [
                         # User role: strict chat templates (qwen Jinja) reject
-                        # system messages mid-conversation.
-                        {"role": "user", "content": _CONTINUE_NOTE},
+                        # system messages mid-conversation.  The tag marks this
+                        # as loop-injected so the strip below cannot confuse it
+                        # with a real user prompt.
+                        {"role": "user", "content": _CONTINUE_NOTE,
+                         _CONTINUE_NOTE_TAG_KEY: _CONTINUE_NOTE_TAG},
                     ]
                     continue
                 if reason in ("stuck", "no_progress") and display_mode != AgentDisplayMode.QUIET:
@@ -1205,11 +1219,13 @@ class Agent:
                 break
 
         # The continuation note is only meant for the run it precedes — strip
-        # it (and any earlier ones) before the history is persisted, so a
-        # finished task is not resumed by a future session.
+        # every TAGGED loop note before the history is persisted, so a
+        # finished task is not resumed by a future session.  (Tag-based, not
+        # content-based: a user message that merely resembles the note text
+        # must survive.)
         final_messages = [
             m for m in final_messages
-            if not (m.get("content") == _CONTINUE_NOTE)
+            if m.get(_CONTINUE_NOTE_TAG_KEY) != _CONTINUE_NOTE_TAG
         ]
         self._chat_history = final_messages
         # Keep the conversation bounded and persist it so the next session
@@ -1423,33 +1439,41 @@ class Agent:
 
         The persisted history holds a bounded multi-exchange window (see
         ``_project_chat_history``), so a fresh session continues the dialogue
-        instead of forgetting it.
+        instead of forgetting it.  A corrupt file is quarantined (see
+        :func:`_read_json_quarantining`) instead of being silently dropped.
         """
-        try:
-            with open(CHAT_HISTORY_JSON_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if not isinstance(data, list):
-                return []
-            messages = [
-                m for m in data
-                if isinstance(m, dict) and m.get("role") in ("system", "user", "assistant", "tool")
-            ]
-            return _project_chat_history(_strip_image_blocks(messages))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
+        data = _read_json_quarantining(
+            CHAT_HISTORY_JSON_PATH, "chat history",
+        )
+        if not isinstance(data, list):
             return []
+        messages = [
+            m for m in data
+            if isinstance(m, dict) and m.get("role") in ("system", "user", "assistant", "tool")
+            # Loop-internal tags never belong in a restored conversation.
+            and _CONTINUE_NOTE_TAG_KEY not in m
+        ]
+        return _project_chat_history(_strip_image_blocks(messages))
 
     def _save_chat_history(self) -> None:
         """Persist the NLP conversation so the next session can continue it.
 
         Image blocks are stripped first (see :func:`_strip_image_blocks`) so a
         vision turn does not bloat the on-disk history with base64 blobs.
+
+        The write is atomic: content goes to ``chat_history.json.tmp`` first
+        and is then ``os.replace()``d into place, so a crash mid-write can
+        never leave a half-written JSON that would be silently dropped on the
+        next load.
         """
+        payload = json.dumps(
+            _project_chat_history(_strip_image_blocks(self._chat_history)),
+            ensure_ascii=False, indent=2,
+        )
         try:
-            with open(CHAT_HISTORY_JSON_PATH, "w", encoding="utf-8") as f:
-                json.dump(
-                    _project_chat_history(_strip_image_blocks(self._chat_history)),
-                    f, ensure_ascii=False, indent=2,
-                )
+            with open(CHAT_HISTORY_TMP_PATH, "w", encoding="utf-8") as f:
+                f.write(payload)
+            os.replace(CHAT_HISTORY_TMP_PATH, CHAT_HISTORY_JSON_PATH)
         except OSError as e:
             logger.warning("Failed to save chat history: %s", e)
 
@@ -1462,52 +1486,81 @@ class Agent:
 
         Restores files read, the semantic index, the knowledge graph, and
         working memory so a fresh session resumes with accumulated context
-        instead of starting from zero.  Missing or corrupt files fall back to
-        the empty defaults.  File mtimes are intentionally NOT persisted —
-        staleness detection is scoped to the current session.
+        instead of starting from zero.  A corrupt file is quarantined as
+        ``agent_memory.json.bad-<timestamp>`` before falling back to the
+        empty defaults, so the bytes stay inspectable instead of being
+        clobbered by the next save.
         """
-        try:
-            with open(AGENT_MEMORY_JSON_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if not isinstance(data, dict):
-                return
-            files = data.get("files_read")
-            if isinstance(files, list):
-                self._files_read = {str(p) for p in files}
-            index = data.get("semantic_index")
-            if isinstance(index, dict):
-                self._semantic_index = defaultdict(
-                    set,
-                    {k: set(v) for k, v in index.items() if isinstance(v, list)},
-                )
-            kg = data.get("knowledge_graph")
-            if isinstance(kg, dict):
-                self._knowledge_graph = kg
-            wm = data.get("working_memory")
-            if isinstance(wm, list):
-                self._working_memory = wm
-            hist = data.get("history")
-            if isinstance(hist, list):
-                self._history = hist
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            pass
+        data = _read_json_quarantining(AGENT_MEMORY_JSON_PATH, "agent memory")
+        if not isinstance(data, dict):
+            return
+        files = data.get("files_read")
+        if isinstance(files, list):
+            self._files_read = {str(p) for p in files}
+        index = data.get("semantic_index")
+        if isinstance(index, dict):
+            self._semantic_index = defaultdict(
+                set,
+                {k: set(v) for k, v in index.items() if isinstance(v, list)},
+            )
+        kg = data.get("knowledge_graph")
+        if isinstance(kg, dict):
+            self._knowledge_graph = kg
+        wm = data.get("working_memory")
+        if isinstance(wm, list):
+            self._working_memory = wm
+        hist = data.get("history")
+        if isinstance(hist, list):
+            self._history = hist
 
     def _save_memory(self) -> None:
-        """Persist cross-session memory so the next session resumes with it."""
+        """Persist cross-session memory so the next session resumes with it.
+
+        Atomic like :meth:`_save_chat_history` (tmp file + ``os.replace``).
+        """
+        data = {
+            "files_read": sorted(self._files_read),
+            "semantic_index": {
+                k: sorted(v) for k, v in self._semantic_index.items()
+            },
+            "knowledge_graph": self._knowledge_graph,
+            "working_memory": self._working_memory,
+            "history": self._history,
+        }
         try:
-            data = {
-                "files_read": sorted(self._files_read),
-                "semantic_index": {
-                    k: sorted(v) for k, v in self._semantic_index.items()
-                },
-                "knowledge_graph": self._knowledge_graph,
-                "working_memory": self._working_memory,
-                "history": self._history,
-            }
-            with open(AGENT_MEMORY_JSON_PATH, "w", encoding="utf-8") as f:
+            with open(AGENT_MEMORY_TMP_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(AGENT_MEMORY_TMP_PATH, AGENT_MEMORY_JSON_PATH)
         except OSError:
             logger.warning("Failed to save agent memory:\n%s", traceback.format_exc())
+
+
+def _read_json_quarantining(path: str, label: str) -> Any:
+    """Read JSON from *path*, quarantining corrupt bytes instead of dropping.
+
+    Returns the parsed object, or ``None`` when the file is missing.  When
+    the file exists but is unreadable/corrupt (truncated by an old non-atomic
+    writer, encoding damage, ...), it is renamed to ``<path>.bad-<timestamp>``
+    so the bytes stay inspectable, and ``None`` is returned.  Without this,
+    the next save would silently clobber the only evidence of what was lost.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        quarantine = f"{path}.bad-{stamp}"
+        try:
+            os.replace(path, quarantine)
+        except OSError:
+            logger.warning("Failed to quarantine corrupt %s at %s", label, path)
+        else:
+            logger.warning(
+                "Corrupt %s file moved to %s", label, quarantine,
+            )
+        return None
 
 
 _MAX_CHAT_MESSAGES = 60
@@ -1530,6 +1583,23 @@ _HISTORY_TRIM_NOTE = (
 #: chained run has its own guards (no-progress, stuck, deadline), so a high
 #: cap cannot turn into an infinite loop — it only bounds total work.
 _MAX_CHAINED_RUNS = 6
+
+#: Metadata key marking a loop-INJECTED user note (currently the continuation
+#: note).  Tagged messages are removed from the history when the turn ends.
+#: This replaces fragile content matching, which had a real failure mode: a
+#: user whose prompt is byte-identical to the note text got their message
+#: silently dropped from the conversation.
+_CONTINUE_NOTE_TAG = "continue"
+
+#: Hard ceiling for the NLP ``run`` tool's model-supplied timeout (seconds).
+_MAX_RUN_TIMEOUT_S = 600
+
+#: Hard ceiling for the NLP ``read`` tool's per-call line limit.
+_MAX_READ_LINES = 500
+
+#: Message key marking loop-injected notes (see LOOP_NOTE_TAG_KEY in
+#: agent_core.constants — re-exported here for the chat_nlp loop).
+_CONTINUE_NOTE_TAG_KEY = LOOP_NOTE_TAG_KEY
 
 _CONTINUE_NOTE = (
     "The previous tool session ended before you finished. A fresh tool budget "

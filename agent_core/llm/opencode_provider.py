@@ -167,7 +167,6 @@ class OpencodeProvider:
         self.temperature: float = 0.7
         self.max_tokens: int = 50000
         self._profile_name: str | None = profile_name
-        #: Per-turn token/latency/cost of the last API chat call (plan ARCH 17).
         self.last_response_metrics: ResponseMetrics | None = None
         self._session_id: str | None = None
         self._last_label: str | None = None
@@ -183,6 +182,18 @@ class OpencodeProvider:
             else max(0, int(max_retries))
         )
         self._retry_base_delay = max(0.0, float(retry_base_delay))
+
+    def apply_profile(
+        self, name: str, temperature: float, max_tokens: int,
+    ) -> None:
+        """Activate *name* with its sampling parameters in one step.
+
+        The single sanctioned way for callers to switch profiles on a provider
+        (see ``LLMProvider.apply_profile``) — no direct attribute pokes.
+        """
+        self._profile_name = name
+        self.temperature = temperature
+        self.max_tokens = max_tokens
 
     # ------------------------------------------------------------------
     # Labeling (once per session, like LM Studio)

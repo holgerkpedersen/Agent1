@@ -86,7 +86,7 @@ def build_provider(settings: Any, model_name: str) -> "LLMProvider":
 
 class LLMProvider(Protocol):
     """Abstract interface for LLM providers.
-    
+
     This protocol defines the contract that all LLM providers must implement.
     It enables dependency inversion - Agent depends on this abstraction,
     not on concrete LMStudio implementation.
@@ -95,12 +95,22 @@ class LLMProvider(Protocol):
     ``last_response_metrics: ResponseMetrics | None`` after each ``chat``
     (see :func:`get_last_metrics`) — the return type itself stays ``str`` so
     every existing caller keeps working.
+
+    Profile contract: callers never assign provider attributes directly —
+    they call :meth:`apply_profile` (implemented by both concrete providers),
+    which updates the profile name plus temperature/max-tokens atomically.
     """
-    
+
     model_name: str
-    _profile_name: str
+    _profile_name: str | None
     temperature: float
     max_tokens: int
+
+    def apply_profile(
+        self, name: str, temperature: float, max_tokens: int,
+    ) -> None:
+        """Activate *name* with its sampling parameters (see class docstring)."""
+        ...
 
     async def chat(
         self, 

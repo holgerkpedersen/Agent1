@@ -90,9 +90,9 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
 
 - Full suite: `python -m pytest -q --no-cov` (~3.5 min; use `--no-cov` for speed).
 - Targeted: `python -m pytest tests/test_implement_safety.py tests/test_tool_loop_nlp.py -q --no-cov`.
-- mypy: `python -m mypy <file>`. **Known baseline: 36 pre-existing errors in 6 files**
-  (agent.py 5; implement_cmd.py 21; model_cmd.py 4; reconstruct_cmd.py 2;
-  self_heal_cmd.py 2; security/secrets.py 2).
+- mypy: `python -m mypy <file>`. **Known baseline: 22 pre-existing errors in 6 files**
+  (implement_cmd.py 14; reconstruct_cmd.py 2; self_heal_cmd.py 2;
+  security/secrets.py 2; cleanup_cmd.py 1; demo_data_cmd.py 1).
   Do not silently "fix" them; do NOT introduce new errors.
 - No ruff config; pyproject.toml configures mypy, pytest, coverage only.
 - Implement auto-runs `py_compile` on every written file.
