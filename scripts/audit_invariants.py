@@ -160,7 +160,11 @@ def main() -> int:
     )
 
     if not (ROOT / "backups").is_dir():
-        warnings.append("backups/ does not exist (implement pre-run copies)")
+        warnings.append(
+            "backups/ does not exist (implement pre-run copies; the dir is "
+            "expected to exist but stay EMPTY between runs — stale .py copies "
+            "are removed, git history preserves old versions)"
+        )
 
     emoji_findings = scan_tree(ROOT)
     if emoji_findings:

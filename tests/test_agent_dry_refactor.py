@@ -209,5 +209,10 @@ def test_system_prompt_is_module_constant() -> None:
 def test_chat_nlp_uses_system_prompt_constant() -> None:
     import inspect
 
-    src = inspect.getsource(agent.Agent.chat_nlp)
+    # The system prompt must come from the shared module constant — now built
+    # inside _refresh_system_message (chat_nlp's first pipeline phase).
+    src = inspect.getsource(agent.Agent._refresh_system_message)
     assert '"content": _SYSTEM_PROMPT' in src
+    # ...and chat_nlp must delegate to that phase instead of inlining a prompt.
+    loop_src = inspect.getsource(agent.Agent.chat_nlp)
+    assert "_refresh_system_message(" in loop_src

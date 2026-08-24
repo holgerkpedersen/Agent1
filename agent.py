@@ -990,29 +990,21 @@ class Agent:
             return "No matches found"
         return results
 
-    async def chat_nlp(self, user_input: str,
-                       images: list[str] | None = None) -> None:
-        """Process natural language input through a structured tool-calling loop.
+    # ------------------------------------------------------------------
+    # Turn-pipeline helpers.  chat_nlp delegates to these so each phase —
+    # system-prompt refresh, user-turn append, chained tool loop, finish —
+    # can be read (and tested) in isolation.  Behaviour is unchanged.
+    # ------------------------------------------------------------------
 
-        The LLM receives native OpenAI-format tool schemas (``NLP_TOOL_SCHEMAS``)
-        and must either emit a structured ``tool_calls`` or answer in text — there
-        is no free-text tag format that lets it describe an action instead of
-        taking it.  Every tool call is executed, its result is fed back, and the
-        loop continues until the model answers in text or the iteration cap is
-        reached.
+    def _refresh_system_message(self) -> None:
+        """Ensure history starts with a system message and rebuild its dynamic
+        blocks (decision-constraints / plan-mode suffix).
 
-        *images* is an optional list of base64 data URLs (``data:<mime>;base64,…``)
-        sent as multimodal ``image_url`` content blocks alongside *user_input* —
-        used by the ``paste_image`` command to let vision-capable models see an
-        image (e.g. a screenshot, diagram, or photo).  Image blocks are never
-        persisted to ``chat_history.json`` (they are stripped before saving, see
-        :func:`_strip_image_blocks`), so a vision turn is resumable without
-        bloating the on-disk history with multi-megabyte blobs.
-
-        The loop auto-continues: if a run ends on the iteration cap, on repeated
-        calls, or with an answer that signals unfinished work, a fresh run starts
-        automatically (up to ``_MAX_CHAINED_RUNS``) so the model does not stop
-        mid-task and wait for the end-user.
+        The stored BASE prompt (position 0 minus previously injected dynamic
+        blocks) is preserved — only the dynamic blocks are rebuilt, so nothing
+        accumulates and a restored session's prompt is never clobbered.  A
+        long-lived session must see the CURRENT decision ledger, not the
+        snapshot taken on the first turn.
         """
         if not self._chat_history:
             self._chat_history.append({
@@ -1020,13 +1012,7 @@ class Agent:
                 "content": _SYSTEM_PROMPT + (
                     plan_mode_system_suffix() if self.is_plan_mode() else ""
                 ),
-            })        # Refresh the leading system message every turn: the design-decision
-        # constraints block depends on which files were read so far, and a
-        # long-lived session must see the CURRENT ledger, not the snapshot
-        # from the first turn.  The stored BASE prompt (position 0 minus the
-        # previously injected dynamic blocks) is preserved — only the dynamic
-        # blocks (constraints / plan-mode suffix) are rebuilt, so nothing
-        # accumulates and a restored session's prompt is never clobbered.
+            })
         self._chat_history[0] = {
             "role": "system",
             "content": _strip_dynamic_system_blocks(
@@ -1036,29 +1022,35 @@ class Agent:
             + (plan_mode_system_suffix() if self.is_plan_mode() else ""),
         }
 
-        #: A user turn may carry images (multimodal).  When *images* is given,
-        #: build an OpenAI-format content array with the text plus one
-        #: image_url block per image so vision-capable models can see them.
-        #: Plan mode (read-only) prepends a steering note to the user text:
-        #: the model is told to research and end with a plan instead of
-        #: promising changes it is not allowed to make (mutating tools are
-        #: additionally blocked in the executor — see ``_execute_tool_call``).
+    def _append_user_turn(
+        self, user_input: str, images: list[str] | None,
+    ) -> None:
+        """Append this turn's user message (multimodal when *images* given).
+
+        Plan mode (read-only) prepends a steering note telling the model to
+        research and end with a plan instead of promising changes it is not
+        allowed to make (mutating tools are additionally blocked in the
+        executor — see ``_execute_tool_call``).
+
+        Also sets ``_turn_start_index``: everything appended after this line
+        belongs to THIS turn — the boundary per-turn scans such as
+        ``_mutating_files_this_turn`` use, so tool results restored from a
+        previous session's chat_history.json are never rescanned.
+        """
         if self.is_plan_mode() and not images:
-            # Same visibility contract as every other status print in this
-            # method: suppressed in QUIET mode, which promises to show only
-            # the final answer.
+            # Same visibility contract as every other status print:
+            # suppressed in QUIET mode, which promises only the final answer.
             if _resolve_display_mode() != AgentDisplayMode.QUIET:
                 print(yellow(
                     "  [plan mode] Read-only research — mutating tools blocked. "
                     "Switch back with 'mode build' to apply changes."
                 ))
             user_input = f"{plan_mode_turn_note()}\n\n{user_input}"
-        #: Everything appended after this line belongs to THIS turn (the user
-        #: message plus its tool results) — the boundary per-turn scans such
-        #: as ``_mutating_files_this_turn`` use, so tool results restored from
-        #: a previous session's chat_history.json are never rescanned.
         self._turn_start_index = len(self._chat_history)
         if images:
+            #: OpenAI-format content array: text plus one image_url block per
+            #: base64 data URL, so vision-capable models can see the image(s).
+            #: Blocks are never persisted (see :func:`_strip_image_blocks`).
             content: Any = [
                 {"type": "text", "text": user_input or "(see the attached image)"},
             ]
@@ -1068,22 +1060,38 @@ class Agent:
         else:
             self._chat_history.append({"role": "user", "content": user_input})
 
-        #: Provider-level failures (reasoning-budget exhaustion, HTTP errors,
-        #: unreachable server, ...) are DETECTED here.  They must never be
-        #: mistaken for a model answer, fed into auto-continue chaining, or
-        #: printed as the green final answer — bad LLM behavior is surfaced
-        #: explicitly instead.
+    async def _run_chained_tool_loop(
+        self,
+        user_input: str,
+        messages: list[dict[str, Any]],
+        display_mode: AgentDisplayMode,
+        seen_calls: dict[tuple[str, str], int],
+    ) -> tuple[str, list[dict[str, Any]], str | None, ToolLoopRunner]:
+        """Run :class:`ToolLoopRunner`, auto-continuing unfinished tasks.
+
+        Returns ``(final_text, final_messages, llm_error, loop)``.  *llm_error*
+        carries a provider-level failure (reasoning-budget exhaustion, HTTP
+        error, unreachable server, ...) — such a failure must never be mistaken
+        for a model answer, fed into auto-continue chaining, or printed as the
+        green final answer.  *loop* exposes observability stats for the
+        final-answer fallback.
+
+        Auto-continue rules: a "cap" verdict (budget ran out while
+        progressing), an "answer" that signals unfinished work, or a
+        "no_progress" verdict whose forced answer STILL signals unfinished
+        work justify another run (up to ``_MAX_CHAINED_RUNS``).  Plain
+        "stuck"/"no_progress" verdicts mean the model is not making progress —
+        continuing would only re-enter the same loop.  A byte-identical
+        repeated answer stops chaining: the model is stuck, not working.
+        """
         llm_error: list[str] = []
-        #: Last non-empty answer of a chained run — a byte-identical repeat
-        #: means the model is stuck emitting the same incomplete answer.
-        last_answer = ""
 
         async def llm_chat_fn(
-            messages: list[dict[str, Any]], tools: list[dict[str, Any]],
+            msgs: list[dict[str, Any]], tools: list[dict[str, Any]],
         ) -> tuple[str, list[dict[str, Any]]]:
             """Call the LLM with tools; parse a JSON tool_calls message back into
             the message list so ToolLoopRunner can execute them."""
-            raw = await self.llm.chat(messages, tools=tools, disable_thinking=True)
+            raw = await self.llm.chat(msgs, tools=tools, disable_thinking=True)
             if raw.strip() == "(no output)":
                 # Providers use "(no output)" for an empty response — treat it
                 # as empty so the loop's forced-synthesis retry / the concrete
@@ -1092,33 +1100,28 @@ class Agent:
             if raw.startswith("[Error") or raw.startswith("[LM Studio"):
                 if not llm_error:
                     llm_error.append(raw)
-                return raw, messages
+                return raw, msgs
             try:
                 parsed = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
                 parsed = None
             if isinstance(parsed, dict) and parsed.get("tool_calls"):
                 parsed.pop("role", None)
-                updated = list(messages)
+                updated = list(msgs)
                 updated.append({"role": "assistant", "content": parsed.get("content") or "", **parsed})
                 text = str(parsed.get("content") or "")
                 return text, updated
             # Plain text answer — the loop terminates.
-            updated = list(messages)
+            updated = list(msgs)
             updated.append({"role": "assistant", "content": raw})
             return raw, updated
 
         final_text = ""
-        final_messages = self._chat_history
+        final_messages = messages
         continuations = 0
-        display_mode = _resolve_display_mode()
-        #: Files this turn mutated (write/edit tool results carry a py_compile
-        #: verification line) — feeds the post-turn self-review note (#B-6).
-        mutated_files: list[str] = []
-        #: Cross-run call registry: how many times each exact call has been
-        #: executed across ALL chained runs of this turn, so repeated probes
-        #: cannot hide behind a fresh run's duplicate counter.
-        seen_calls: dict[tuple[str, str], int] = {}
+        #: Last non-empty answer of a chained run — a byte-identical repeat
+        #: means the model is stuck emitting the same incomplete answer.
+        last_answer = ""
         #: One correlation id per TURN: every chained run of this chat_nlp
         #: call shares it, so a single task is linkable across its traces
         #: (decision #050).
@@ -1168,12 +1171,6 @@ class Agent:
                 # chaining would only re-burn the same broken LLM call.
                 if llm_error:
                     break
-                # "cap" (budget run-out while progressing), an "answer" that
-                # signals unfinished work, and — as a safety net — a "no_progress"
-                # verdict whose forced answer STILL signals unfinished work justify
-                # chaining.  Plain "stuck"/"no_progress" verdicts are explicit
-                # "model is not making progress" signals — continuing would only
-                # re-enter the same loop.
                 needs_more = (
                     reason == "cap"
                     or (reason in ("answer", "no_progress") and _looks_incomplete(final_text))
@@ -1227,7 +1224,21 @@ class Agent:
             m for m in final_messages
             if m.get(_CONTINUE_NOTE_TAG_KEY) != _CONTINUE_NOTE_TAG
         ]
-        self._chat_history = final_messages
+        return final_text, final_messages, (llm_error[0] if llm_error else None), loop
+
+    def _finish_turn(
+        self,
+        final_text: str,
+        llm_error: str | None,
+        loop: ToolLoopRunner,
+        display_mode: AgentDisplayMode,
+    ) -> None:
+        """Bound + persist the conversation and print the turn outcome.
+
+        The final answer is ALWAYS printed — in every display mode, including
+        QUIET (which only hides intermediate tool output, per the display-mode
+        contract: "only the final answer is printed").
+        """
         # Keep the conversation bounded and persist it so the next session
         # (or a follow-up prompt) can continue the dialogue.
         self._chat_history = _trim_chat_history(self._chat_history)
@@ -1241,7 +1252,7 @@ class Agent:
         if llm_error:
             # A provider-level failure was detected during the run: show the
             # actual error (not the generic fallback, not a green "answer").
-            err = llm_error[0].strip()
+            err = llm_error.strip()
             print(yellow("\n  [llm-error] The model did not produce a usable response:"))
             print(red(f"  {err[:400]}"))
             if "reasoning" in err.lower():
@@ -1261,9 +1272,6 @@ class Agent:
             if _NARRATION_PREFIX.match(clean):
                 clean = "Plan: " + clean.strip()
 
-        # The final answer is ALWAYS printed — in every display mode, including
-        # QUIET (which only hides intermediate tool output, per the display-mode
-        # contract: "only the final answer is printed").
         if clean.strip():
             print(green(clean))
         else:
@@ -1275,6 +1283,57 @@ class Agent:
         if mutated_files and clean.strip():
             self._print_self_review_note(mutated_files)
         self._nlp_workspace = None
+
+    async def chat_nlp(self, user_input: str,
+                       images: list[str] | None = None) -> None:
+        """Process natural language input through a structured tool-calling loop.
+
+        The LLM receives native OpenAI-format tool schemas (``NLP_TOOL_SCHEMAS``)
+        and must either emit a structured ``tool_calls`` or answer in text — there
+        is no free-text tag format that lets it describe an action instead of
+        taking it.  Every tool call is executed, its result is fed back, and the
+        loop continues until the model answers in text or the iteration cap is
+        reached.
+
+        *images* is an optional list of base64 data URLs (``data:<mime>;base64,…``)
+        sent as multimodal ``image_url`` content blocks alongside *user_input* —
+        used by the ``paste_image`` command to let vision-capable models see an
+        image (e.g. a screenshot, diagram, or photo).  Image blocks are never
+        persisted to ``chat_history.json`` (they are stripped before saving, see
+        :func:`_strip_image_blocks`), so a vision turn is resumable without
+        bloating the on-disk history with multi-megabyte blobs.
+
+        The loop auto-continues: if a run ends on the iteration cap, on repeated
+        calls, or with an answer that signals unfinished work, a fresh run starts
+        automatically (up to ``_MAX_CHAINED_RUNS``) so the model does not stop
+        mid-task and wait for the end-user.
+
+        The turn pipeline is split into four readable phases:
+        1. ``_refresh_system_message`` — current ledger/plan-mode in prompt.
+        2. ``_append_user_turn`` — multimodal user message + turn boundary.
+        3. ``_run_chained_tool_loop`` — tool loop + auto-continue chaining.
+        4. ``_finish_turn`` — trim/persist history, print the outcome.
+        """
+        self._refresh_system_message()
+        self._append_user_turn(user_input, images)
+
+        final_text, final_messages, llm_error, loop = (
+            await self._run_chained_tool_loop(
+                user_input=user_input,
+                messages=self._chat_history,
+                display_mode=_resolve_display_mode(),
+                seen_calls={},
+            )
+        )
+        # Tagged continuation notes were stripped inside the chained-loop phase;
+        # adopt its final message list as the session history.
+        self._chat_history = final_messages
+        self._finish_turn(
+            final_text=final_text,
+            llm_error=llm_error,
+            loop=loop,
+            display_mode=_resolve_display_mode(),
+        )
 
     def _mutating_files_this_turn(self) -> list[str]:
         """Files written/edited by this turn (plan item B-#6).
