@@ -180,8 +180,7 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   (the choke point shared by `chat_nlp` and `multillm`), so no file changes.
   A system-prompt suffix + per-turn note steer the model to end with a plan
   as text. Tests: `tests/test_plan_mode.py`.
-- ✅ **#076 — Regression gate for generated plan docs (DONE, 2026-08-24)**:
-  `agent_core/commands/plan_verifier.py` runs deterministic checks over
+- ✅ **#076 — Regression gate for generated plan docs (DONE, 2026-08-24)**:  `agent_core/commands/plan_verifier.py` runs deterministic checks over
   freshly generated `plan`/`entities`/`taskplan` docs (zero LLM tokens):
   backticked paths must exist or be marked new (`[NEW]` tag / create-add
   wording), `[MODIFY]` targets must already exist, entities python fences must
@@ -203,3 +202,17 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   tool call returns an error string instead of killing the turn). Tests:
   `tests/test_agent_improvements.py`, `tests/test_agent_dry_refactor.py`.
 - Taskplan-time phantom-module gate (plan-time existence check for planned files).
+- ✅ **Agentic quick-win batch (DONE, 2026-08-25)**: improvement plan in
+  `docs/AGENTIC_IMPROVEMENT_PLAN.md` (19 audited items, progress log there).
+  Landed: #1 decisions block injected into the chat_nlp system message
+  (`_decision_constraints_block`, rebuilt per turn via
+  `_strip_dynamic_system_blocks` so blocks never accumulate); #5 char-budget
+  chat-history trimming (`_HISTORY_CHAR_BUDGET` = 75k chars + the 60-message
+  cap; oldest-first contiguous trim, compaction note, assistant/tool pairs
+  never split); #7 LM Studio now retries transient HTTP 429/5xx
+  (`TransientHTTPError` from `_open_chat`, matching opencode's taxonomy);
+  #14 plan-mode answers persisted to `.docs/<ts>/plan_proposed.md`;
+  #15 `multillm --synthesize`; #18 db_io duplicate imports +
+  `llm/config.ProfileType` unified onto `llm_types`. Tests:
+  `tests/test_llm_retry_policy.py`, `tests/test_quickwins_2026_08_25.py`.
+  Full suite: 1470 passed / 2 skipped.

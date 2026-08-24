@@ -1,12 +1,9 @@
 from enum import Enum
 
+from agent_core.llm.llm_types import ProfileType as ProfileType
 from agent_core.llm.llm_types import TaskType
 
-
-class ProfileType(Enum):
-    FAST_CODEGEN = "fast-codegen"
-    DEEP_ANALYSIS = "deep-analysis"
-    PRECISE = "precise"
+__all__ = ["ProfileType", "TaskType", "TASK_PROFILE_MAP", "DEFAULT_RETRY_PARAMS"]
 
 
 TASK_PROFILE_MAP: dict[TaskType, ProfileType] = {

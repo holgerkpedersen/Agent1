@@ -39,8 +39,9 @@ work inline.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from agent_core.colors import cyan, yellow
 from .base import Command
 
 if TYPE_CHECKING:
@@ -75,8 +76,9 @@ class MultiLlmCommand(Command):
         return (
             'multillm "question" [--models laguna-s-2.1,opencode-go/...] '
             "[--max-tokens N] [--thinking] [--concurrency N] "
-            "[--role model:prompt] [--role-file path.json] — ask multiple "
-            "LLMs the same question in parallel, each with its own role"
+            "[--role model:prompt] [--role-file path.json] [--synthesize] — ask "
+            "multiple LLMs the same question in parallel, each with its own role; "
+            "--synthesize merges the answers through one extra LLM call"
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
@@ -92,10 +94,15 @@ class MultiLlmCommand(Command):
         concurrency: int | None = None
         template_id = "parallel"
         roles: dict[str, str] = {}
+        synthesize = False
 
         i = 0
         while i < len(parts):
             p = parts[i]
+            if p == "--synthesize":
+                synthesize = True
+                i += 1
+                continue
             if p == "--models" and i + 1 < len(parts):
                 models = [m.strip() for m in parts[i + 1].split(",") if m.strip()]
                 i += 2
@@ -159,7 +166,7 @@ class MultiLlmCommand(Command):
         # Everything that is not a flag is the question (quoted at the REPL).
         question_parts = [
             p for p in parts
-            if p not in ("--thinking",)
+            if p not in ("--thinking", "--synthesize")
             and not p.startswith("--")
         ]
         # Drop flag values from the question.
@@ -238,4 +245,58 @@ class MultiLlmCommand(Command):
             print()
         print(f"{'=' * 60}")
         print(summarize(run))
+
+        if synthesize:
+            self._synthesize(run, agent, question, disable_thinking)
         return True
+
+    def _synthesize(
+        self, run: Any, agent: "Agent", question: str, disable_thinking: bool,
+    ) -> None:
+        """Merge the successful answers through the current model (plan D-#15).
+
+        One extra LLM call; failures degrade to a printed notice — the
+        side-by-side answers above are already on screen.
+        """
+        usable = [r for r in run.ok_results if r.text.strip()]
+        if len(usable) < 2:
+            print(yellow(
+                "  [synthesize] needs at least two usable answers — skipped."
+            ))
+            return
+        merged = "\n\n".join(
+            f"## Answer from {r.model}\n\n{r.text}" for r in usable
+        )
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a synthesis engine. You receive several answers "
+                    "from different models to the same question. Merge them "
+                    "into ONE answer: keep every distinct correct point, drop "
+                    "repetitions, flag disagreements explicitly instead of "
+                    "silently picking a side. Output only the merged answer."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Question:\n{question}\n\nAnswers to merge:\n\n{merged}",
+            },
+        ]
+        try:
+            print(cyan("\n  [synthesize] merging answers..."))
+            import asyncio
+
+            merged_text = asyncio.run(agent.llm.chat(
+                messages, disable_thinking=disable_thinking,
+            ))
+        except Exception as exc:
+            print(yellow(f"  [synthesize] failed: {exc}"))
+            return
+        if merged_text.startswith("[Error"):
+            print(yellow(f"  [synthesize] model error: {merged_text[:200]}"))
+            return
+        print(f"{'=' * 60}")
+        print(cyan("  SYNTHESIZED ANSWER"))
+        print(f"{'=' * 60}")
+        print(merged_text)

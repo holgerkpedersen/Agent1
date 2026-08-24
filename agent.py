@@ -48,6 +48,7 @@ except Exception:  # pragma: no cover - tracing degrades gracefully if unavailab
         return False
 from agent_core.commands.base import Command, FlowStopped, chat_stoppable, clear_stop, save_file_py
 from agent_core.commands.registry import CommandRegistry
+from agent_core.decisions import decisions_as_system_prompt
 
 if TYPE_CHECKING:
     from http.server import ThreadingHTTPServer
@@ -974,6 +975,21 @@ class Agent:
                     plan_mode_system_suffix() if self.is_plan_mode() else ""
                 ),
             })
+        # Refresh the leading system message every turn: the design-decision
+        # constraints block depends on which files were read so far, and a
+        # long-lived session must see the CURRENT ledger, not the snapshot
+        # from the first turn.  The stored BASE prompt (position 0 minus the
+        # previously injected dynamic blocks) is preserved — only the dynamic
+        # blocks (constraints / plan-mode suffix) are rebuilt, so nothing
+        # accumulates and a restored session's prompt is never clobbered.
+        self._chat_history[0] = {
+            "role": "system",
+            "content": _strip_dynamic_system_blocks(
+                str(self._chat_history[0].get("content") or _SYSTEM_PROMPT)
+            )
+            + self._decision_constraints_block()
+            + (plan_mode_system_suffix() if self.is_plan_mode() else ""),
+        }
 
         #: A user turn may carry images (multimodal).  When *images* is given,
         #: build an OpenAI-format content array with the text plus one
@@ -1191,7 +1207,33 @@ class Agent:
             # No usable answer: tell the user CONCRETELY what the loop did
             # instead of the cryptic "did not produce a response".
             print(yellow(_final_answer_fallback(loop)))
+        if self.is_plan_mode() and clean.strip():
+            self._persist_plan_answer(clean)
         self._nlp_workspace = None
+
+    def _persist_plan_answer(self, plan_text: str) -> None:
+        """Save a plan-mode final answer to ``.docs/<ts>/plan_proposed.md``.
+
+        Plan-mode answers used to evaporate as terminal text; persisting them
+        gives the user a durable artifact to hand to ``implement``/``fix``
+        later (plan item D-#14).  Best-effort: a write failure must never
+        lose the already-printed answer or crash the turn.
+        """
+        try:
+            from agent_core.commands.doc_paths import new_run_dir
+
+            out = new_run_dir(self.workspace) / "plan_proposed.md"
+            out.write_text(
+                f"# Proposed plan\n\n"
+                f"_Generated in plan mode on {datetime.now():%Y-%m-%d %H:%M}. "
+                f"Review before applying — switch to build mode to implement._\n\n"
+                f"{plan_text}\n",
+                encoding="utf-8",
+            )
+            print(yellow(f"\n  [plan] Saved to {out}"))
+        except Exception:
+            logger.warning("Could not persist plan-mode answer:\n%s",
+                           traceback.format_exc())
 
     def check_stale_files(self) -> list[str]:
         """Return files whose mtime has changed since last read."""
@@ -1243,6 +1285,27 @@ class Agent:
             os.remove(AGENT_MEMORY_JSON_PATH)
         except OSError as e:
             logger.warning("Could not remove persisted state files: %s", e)
+
+    def _decision_constraints_block(self) -> str:
+        """Design-decision constraints for the chat system prompt.
+
+        Mirrors what ``implement``/``fix`` already inject (decision ledger
+        ``.decisions.json`` via :func:`decisions_as_system_prompt`) so the
+        conversational loop cannot contradict a recorded decision mid-chat.
+        Matched on the files read this session; empty string when no decision
+        touches them — the prompt stays byte-identical to before in that case.
+        Never raises: a broken/absent ledger must not kill a chat turn.
+        """
+        try:
+            if not self._files_read:
+                return ""
+            return decisions_as_system_prompt(
+                self.workspace, sorted(self._files_read),
+            )
+        except Exception:
+            logger.warning("Decision constraints unavailable:\n%s",
+                           traceback.format_exc())
+            return ""
 
     # ------------------------------------------------------------------
     #  Persistent NLP chat history (chat_history.json)
@@ -1341,6 +1404,18 @@ class Agent:
 
 
 _MAX_CHAT_MESSAGES = 60
+
+#: Rough character budget for the chat-history BODY (system prompt excluded;
+#: ~4 chars per token, so ~75k chars ≈ 19k tokens — a conservative slice of a
+#: 32k context that also leaves room for tool schemas and the answer).  When
+#: the body exceeds it, oldest messages are dropped (see _trim_chat_history).
+_HISTORY_CHAR_BUDGET = 75000
+
+_HISTORY_TRIM_NOTE = (
+    "[context compaction] {dropped} earlier message(s) were dropped to fit "
+    "the context window. Earlier file contents are no longer visible — "
+    "re-read anything you still need."
+)
 
 #: How many automatic continuation runs chat_nlp may chain before handing
 #: control back to the user.  The model cannot predict its own tool budget,
@@ -1477,6 +1552,26 @@ def _kill_process_tree(proc: "subprocess.Popen[Any]") -> None:
         logger.warning(
             "Failed to kill process tree for PID %s", getattr(proc, "pid", "?")
         )
+
+
+def _strip_dynamic_system_blocks(text: str) -> str:
+    """Remove previously injected dynamic blocks from a system prompt.
+
+    ``chat_nlp`` rebuilds the constraints block (decision ledger) and the
+    plan-mode suffix on every turn; without stripping, a long-lived session
+    would accumulate one stale block per turn.  The BASE prompt — everything
+    before the first dynamic marker — is what survives.
+    """
+    markers = (
+        "\n\nCRITICAL DESIGN CONSTRAINTS",
+        "\n\nSESSION MODE: PLAN",
+    )
+    cut = len(text)
+    for marker in markers:
+        pos = text.find(marker)
+        if pos != -1:
+            cut = min(cut, pos)
+    return text[:cut]
 
 
 def _detect_shell() -> str:
@@ -1628,17 +1723,76 @@ def _drop_orphan_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str,
     ]
 
 
-def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep the system prompt plus the last N-1 messages so the conversation
-    stays within a bounded context; returns a new list.
+def _message_size(m: dict[str, Any]) -> int:
+    """Approximate character size of one message (4 chars ≈ 1 token).
 
-    Also drops orphan tool messages that a cut could leave behind (see
-    :func:`_drop_orphan_tool_messages`).
+    Tool-call argument JSON counts too — a single big write call can dwarf
+    its tiny ``content`` string.
     """
+    total = len(str(m.get("content") or ""))
+    for tc in m.get("tool_calls") or []:
+        if isinstance(tc, dict):
+            func = tc.get("function") or {}
+            total += len(str(func.get("arguments") or ""))
+            total += len(str(func.get("name") or ""))
+    return total
+
+
+def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the conversation within a bounded context; returns a new list.
+
+    Two caps apply (plan item B-#5 — the old code had only the count cap, so
+    a handful of huge read/write messages could blow the context window while
+    staying under 60 messages):
+
+    - ``_MAX_CHAT_MESSAGES``: at most this many messages (system prompt +
+      newest tail), as before.
+    - ``_HISTORY_CHAR_BUDGET``: the body must also fit a rough char budget;
+      when it does not, the OLDEST body messages are dropped until it fits
+      (contiguous tail — no holes), and a compaction note tells the next turn
+      that earlier context was dropped.
+
+    Orphan tool messages are dropped both before and after the cut (see
+    :func:`_drop_orphan_tool_messages`): a count-based slice can cut between
+    an assistant tool_calls message and its tool result, and strict gateways
+    reject those orphans with HTTP 400.
+    """
+    messages = _drop_orphan_tool_messages(messages)
     if len(messages) <= _MAX_CHAT_MESSAGES:
-        return _drop_orphan_tool_messages(messages)
-    head = messages[:1]
-    return _drop_orphan_tool_messages(head + list(messages[-(_MAX_CHAT_MESSAGES - 1):]))
+        head = messages[:1]
+        body = list(messages[1:])
+    else:
+        head = messages[:1]
+        body = list(messages[-(_MAX_CHAT_MESSAGES - 1):])
+
+    # Char-budget trim: walk from the NEWEST body message backwards until the
+    # budget is exhausted.  A candidate is only accepted when it is not an
+    # assistant-tool_calls/tool boundary split — i.e. we may drop a prefix
+    # ending anywhere EXCEPT between an assistant(tool_calls) message and its
+    # following tool result.
+    total = sum(_message_size(m) for m in body)
+    if total <= _HISTORY_CHAR_BUDGET:
+        return _drop_orphan_tool_messages(head + body)
+    keep_from = 0
+    running = total
+    for i, m in enumerate(body):
+        if running <= _HISTORY_CHAR_BUDGET:
+            keep_from = i
+            break
+        running -= _message_size(m)
+        role = m.get("role")
+        prev_role = body[i - 1].get("role") if i else None
+        boundary_safe = not (
+            role == "tool" or prev_role == "assistant" and "tool_calls" in body[i - 1]
+        )
+        if i == len(body) - 1 or boundary_safe:
+            keep_from = i + 1
+    trimmed = body[keep_from:]
+    note = {
+        "role": "user",
+        "content": _HISTORY_TRIM_NOTE.format(dropped=keep_from),
+    }
+    return _drop_orphan_tool_messages(head + [note] + trimmed)
 
 
 def _strip_image_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -11,7 +11,7 @@ import urllib.error
 import httpx
 
 from .provider import ResponseMetrics
-from .retry import RetryPolicy
+from .retry import RetryPolicy, TRANSIENT_HTTP_STATUSES, TransientHTTPError
 from agent_core.constants import KNOWN_MODELS, resolve_model
 
 logger = logging.getLogger(__name__)
@@ -371,6 +371,11 @@ class LMStudioProvider:
                 if ok:
                     return urllib.request.urlopen(req, timeout=timeout)
                 detail = f"{detail} (auto-load failed: {msg})"
+            # Transient statuses become a typed error the RetryPolicy
+            # understands (rate limit / gateway blip) — every other status
+            # stays a plain RuntimeError so permanent failures fail fast.
+            if exc.code in TRANSIENT_HTTP_STATUSES:
+                raise TransientHTTPError(exc.code, detail) from exc
             raise RuntimeError(f"HTTP Error {exc.code}: {detail}") from exc
 
     def _make_request(self, payload: dict[str, Any], timeout: int = 3600) -> dict[str, Any]:
