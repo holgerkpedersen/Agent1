@@ -4,6 +4,8 @@ from __future__ import annotations
 from harnessfix.diagnose import Diagnosis, diagnose_graph
 from harnessfix.htir import HTIRStep, TraceGraph
 from harnessfix.tracing import (
+    GUARD_BUDGET,
+    KIND_GUARD_TRIGGERED,
     KIND_LLM_RESPONSE,
     KIND_LOOP_END,
     KIND_TOOL_CALL,
@@ -68,7 +70,11 @@ def test_security_rejection_maps_to_governance():
     assert "security policy rejected tool call" == d.mechanism
 
 
-def test_truncation_warning_maps_to_context():
+def test_truncation_warning_in_model_output_is_not_context_pressure():
+    """Regression (2026-08-25 corpus): all five "context layer" diagnoses were
+    bogus - the signature matched llm_response.text, i.e. the model QUOTING
+    the tracer's storage marker "...[truncated N chars]" in its own chat
+    output.  Free-text model output is never a system diagnostic."""
     g = _graph(
         [
             (KIND_LLM_RESPONSE, LAYER_CONTEXT, {"text": "WARNING: conversation truncated at 8192 tokens"}),
@@ -76,7 +82,25 @@ def test_truncation_warning_maps_to_context():
         ]
     )
     d = diagnose_graph(g)
+    assert d.root_layer != "context"
+
+
+def test_truncation_marker_in_system_note_maps_to_context():
+    """A SYSTEM event carrying truncation wording IS context pressure: the
+    signature matches guard/loop notes, not free text."""
+    g = _graph(
+        [
+            (
+                KIND_GUARD_TRIGGERED,
+                LAYER_LIFECYCLE,
+                {"guard": GUARD_BUDGET, "note": "history truncated to fit the token budget"},
+            ),
+            _loop_end("completed"),
+        ]
+    )
+    d = diagnose_graph(g)
     assert d.root_layer == "context"
+    assert "history truncation / token limit pressure" == d.mechanism
 
 
 def test_verification_failure_maps_to_verification():

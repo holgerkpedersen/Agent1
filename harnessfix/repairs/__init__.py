@@ -10,13 +10,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from .stuck_repeat import STUCK_REPEAT_REPAIR_ID
+from .stuck_repeat import apply as _apply_stuck_repeat
+from .stuck_repeat import revert as _revert_stuck_repeat
+from .stuck_repeat import COLLISION_FRAGMENTS as _STUCK_REPEAT_COLLISIONS
 from .tool_interface import apply as _apply_tool_interface
 from .tool_interface import revert as _revert_tool_interface
 from .tool_interface import TOOL_INTERFACE_REPAIR_ID
 from .tool_interface import COLLISION_FRAGMENTS
 
-#: Harness layer this repair targets (must be a valid HarnessFix facet).
+#: Harness layers targeted by catalog repairs (must be valid HarnessFix facets).
 TOOL_INTERFACE_LAYER = "tool_interface"
+LIFECYCLE_LAYER = "lifecycle"
 
 
 @dataclass(frozen=True)
@@ -52,6 +57,19 @@ CATALOG: dict[str, Repair] = {
         apply=_apply_tool_interface,
         revert=_revert_tool_interface,
         collision_fragments=COLLISION_FRAGMENTS,
+    ),
+    STUCK_REPEAT_REPAIR_ID: Repair(
+        id=STUCK_REPEAT_REPAIR_ID,
+        layer=LIFECYCLE_LAYER,
+        description=(
+            "stuck-repeat prevention: the second consecutive identical tool "
+            "call gets concrete alternatives (per-tool hint table) while the "
+            "model still has budget, instead of only being stopped at strike "
+            "three."
+        ),
+        apply=_apply_stuck_repeat,
+        revert=_revert_stuck_repeat,
+        collision_fragments=_STUCK_REPEAT_COLLISIONS,
     ),
 }
 

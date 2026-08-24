@@ -11,7 +11,8 @@ per decision #079 — no emojis in files.)
    `decisions_as_system_prompt()` guarded `implement_cmd`/`fix_cmd`, but the
    conversational loop never saw `.decisions.json`. Now `chat_nlp` rebuilds
    the leading system message every turn with a constraints block matched on
-   the files read this session (`Agent._decision_constraints_block`).2. [S] **Real semantic memory** — `Agent._semantic_index` / `_knowledge_graph`
+   the files read this session (`Agent._decision_constraints_block`).
+2. [S] **Real semantic memory** — `Agent._semantic_index` / `_knowledge_graph`
    / `_working_memory` are loaded, saved, counted, never read into any
    prompt; `src/agent1/core/__init__.py::EmbeddingService.embed_text`
    returns `np.zeros((n, 384))` (stub). Options: real embeddings via LM
@@ -59,11 +60,12 @@ per decision #079 — no emojis in files.)
 
 ## C. Complete the self-improvement loop
 
-10. [S] **Grow the repair catalog** — `harnessfix/repairs/` has exactly one
-    repair (`tool_interface.py`). Each diagnosed mechanism in `diagnose.py`
-    maps naturally to a catalog repair (truncation-pressure → auto-compaction
-    note; stuck-repeat → tool-hint table; abandonment-after-mutation → resume
-    protocol). Apply/revert/collision-guard scaffolding already built.
+10. [S] **Grow the repair catalog** — STATUS: **IN PROGRESS 2026-08-25**
+    (second repair landed, see progress log). `harnessfix/repairs/` now has
+    `tool_interface.py` (error-detail) and `stuck_repeat.py`
+    (`stuck-repeat-tool-hints`, lifecycle layer). Remaining candidates:
+    truncation-pressure → auto-compaction note; abandonment-after-mutation →
+    resume protocol. Apply/revert/collision-guard scaffolding already built.
 11. **LLM-tier diagnosis** — `diagnose.py` promises an LLM fallback tier when
     heuristic precision <70%; measure precision from labeled `review` data
     before building.
@@ -88,9 +90,12 @@ per decision #079 — no emojis in files.)
 
 ## E. Code health
 
-17. [Q] **Dead duplicate modules** — `agent_core/tool_executor.py`,
-    `secure_file_retriever.py`, `tools/file_ops.py` are not imported by the
-    live path (phantom-module bait, invariant #5). Wire or archive.
+17. [Q] **Dead duplicate modules** — STATUS: **PARTIALLY DONE 2026-08-25**.
+    `agent_core/tool_executor.py` and `agent_core/secure_file_retriever.py`
+    deleted (zero references anywhere; the secure retriever was superseded by
+    the live `agent_core/file_context_retriever.py` that `agent.py` imports).
+    `tools/file_ops.py` + `tools/shell_ops.py` stay: consumed by
+    `benchmarks/security_benchmarks.py` and `tests/test_security_hardening.py`.
 18. [Q] **Fix duplicated imports / enum drift** — `db_io.py` has
     `from typing import Any` seven times; `llm_types.ProfileType`
     ("fast_codegen") vs `config.ProfileType` ("fast-codegen") enums diverge.
@@ -103,11 +108,35 @@ per decision #079 — no emojis in files.)
 
 Weekend of quick wins: ~~#1~~ → ~~#14~~ → ~~#6~~ → ~~#7~~ — **all quick
 wins from the original sequencing are DONE** (plus #5, #15, #18).
-Next substantive feature: #8 or #10. Strategic horizon: #12 / #13 / #2.
+Next substantive feature: #10 IN PROGRESS (second catalog repair landed
+2026-08-25, see progress log). Strategic horizon: #12 / #13 / #2.
 Remaining quick wins: none — remaining items are [S]-scale.
 
 ## Progress log
 
+- 2026-08-25 — **#10 started**: second catalog repair
+  `stuck-repeat-tool-hints` (`harnessfix/repairs/stuck_repeat.py`,
+  lifecycle layer). Trace evidence: stuck loops reach THREE identical calls
+  before anything concrete is offered; the repair gives per-tool
+  alternatives (read/search/list_files/run) at strike TWO, while the model
+  still has budget — the pinned second-strike prefix is preserved, the
+  third-strike stop guarantee is unchanged. Prerequisite fix: the context
+  layer's truncation signature matched `llm_response.text`, i.e. the model
+  QUOTING the tracer's storage marker "...[truncated N chars]" in its own
+  output — all five "context" diagnoses on the 2026-08-25 corpus were bogus.
+  The signature now matches system fields only (`guard_triggered.note`);
+  re-diagnosing the corpus: context FPs gone AND two additional real
+  stuck-cycles surfaced (2 → 4), so 4 of 27 remaining failures map to the
+  new repair. Also #17 partially done: dead duplicates
+  `agent_core/tool_executor.py` and `agent_core/secure_file_retriever.py`
+  deleted (zero references anywhere; secure retriever superseded by live
+  `agent_core/file_context_retriever.py`). `tools/file_ops.py` +
+  `tools/shell_ops.py` stay: consumed by benchmarks/security_benchmarks.py
+  and tests. Tests: `tests/test_repairs_stuck_repeat.py` (12; runtime
+  behaviour verified in a fresh interpreter against the applied source),
+  updated `tests/test_harnessfix_diagnose.py` (17). Full suite 1578 passed,
+  mypy delta vs baseline = zero (49 pre-existing errors with and without
+  the deleted files).
 - 2026-08-25 — **#8 DONE**: symbol-level tools. `agent_core/symbol_intel.py`
   (pure-AST, stdlib-only) + `definitions`/`references` NLP tools wired into
   the schema set, dispatch table and plan-mode read-only set; system prompt

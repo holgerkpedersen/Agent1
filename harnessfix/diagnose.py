@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from .htir import TraceGraph, compile_trace
 from .tracing import (
     GUARD_STUCK,
+    KIND_LLM_RESPONSE,
     LAYER_CONTEXT,
     LAYER_EXECUTION,
     LAYER_GOVERNANCE,
@@ -35,7 +36,13 @@ _SIGNATURES: list[tuple[str, str, str, str, bool]] = [
     (LAYER_GOVERNANCE, "security policy rejected tool call", "message", "SecurityViolation", False),
     (LAYER_GOVERNANCE, "path escape blocked by sanitizer", "message", "path escape", True),
     (LAYER_VERIFICATION, "benchmark checker failed after completion", "result", "verification failed", True),
-    (LAYER_CONTEXT, "history truncation / token limit pressure", "text", "truncat", True),
+    #: Context pressure is a SYSTEM steering note (guard/budget), never the
+    #: model's own chat output: llm_response.text routinely QUOTES the
+    #: tracer's storage marker "...[truncated N chars]" when the model echoes
+    #: file content or its own earlier answer.  All five "context layer"
+    #: diagnoses on the 2026-08-25 corpus were exactly that (five hits on
+    #: llm_response.text, zero on any system field).
+    (LAYER_CONTEXT, "history truncation / token limit pressure", "note", "truncat", True),
 ]
 
 #: Event kinds whose payloads may carry SYSTEM diagnostics worth signature
@@ -43,8 +50,9 @@ _SIGNATURES: list[tuple[str, str, str, str, bool]] = [
 #: and loop bookkeeping).  tool_result is eligible EXCEPT its "text" field:
 #: that field carries FILE CONTENTS — a read of a file that merely mentions
 #: "truncation" once produced a bogus context-layer diagnosis (task
-#: a669a26e...).  Structured result/message/exception fields of tool_result
-#: are system diagnostics and stay eligible.
+#: a669a26e...).  For the same reason llm_response is eligible EXCEPT its
+#: free-text "text" field: that is MODEL OUTPUT, not a system diagnostic.
+#: Structured result/message/exception/note fields stay eligible.
 _SIGNATURE_KINDS = frozenset({"tool_error", "guard_triggered", "llm_response", "loop_end", "tool_result"})
 
 
@@ -64,7 +72,12 @@ def _find_signature(kind: str, payload: dict[str, Any]) -> tuple[str, str] | Non
     if kind not in _SIGNATURE_KINDS:
         return None
     for layer, mechanism, field, needle, casefold in _SIGNATURES:
+        # Free-text fields carry file contents (tool_result) or the model's
+        # own output (llm_response); both routinely CONTAIN system marker
+        # words without any system event having occurred.
         if kind == "tool_result" and field == "text":
+            continue
+        if kind == KIND_LLM_RESPONSE and field == "text":
             continue
         value = str(payload.get(field, ""))
         if casefold:
