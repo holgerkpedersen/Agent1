@@ -98,7 +98,7 @@ class DemoDataCommand(Command):
             return True
 
         activities = (activity,) if activity else _DEFAULT_ACTIVITIES
-        total = 0
+        total: float = 0
         for round_no in range(loop_rounds):
             if round_no:
                 await asyncio.sleep(1.0)  # spread batches so the log scrolls

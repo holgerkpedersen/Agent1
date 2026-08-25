@@ -243,6 +243,12 @@ class ToolLoopRunner:
         #: Keys of calls that already counted as discovery this run — a
         #: repeated key is a stuck signal, not progress.
         self._seen_progress_keys: set[Any] = set()
+        #: Files mutated (write/edit/fix) this run, for the abandonment-resume
+        #: protocol (repair abandonment-resume-protocol): when the run ends
+        #: non-completed after changes, the next turn is told what was touched
+        #: so it resumes instead of restarting (decision #052).  Populated from
+        #: the trace effects callback; empty unless a sink is attached.
+        self._mutated_files: set[str] = set()
 
     async def run(
         self,
@@ -590,6 +596,11 @@ class ToolLoopRunner:
                     result_str = f"Tool error: {exc}"
                 else:
                     affected = self._collect_effects(tool_name, args)
+                #: Record mutated files for the abandonment-resume protocol
+                #: (repair abandonment-resume-protocol): the reconnect note
+                #: names exactly what this run changed (decision #052).
+                if affected:
+                    self._mutated_files.update(str(f) for f in affected)
 
                 #: Path-existence recovery (decision #035): when a read/edit/write
                 #: reports the path does not exist, augment the result with a parent-

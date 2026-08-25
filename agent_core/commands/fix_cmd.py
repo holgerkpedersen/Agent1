@@ -51,6 +51,35 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent import Agent
 
+# A wedged child (cold mypy cache over a huge target set, a file lock left by
+# a Ctrl-C'd session) used to pin an entire turn with ZERO feedback because
+# the NLP ``fix`` handler captures stdout.  Every child process therefore gets
+# a hard wall-clock cap; on expiry it is killed and reported on stderr, which
+# ``_run_command_quietly`` does NOT capture.
+MYPY_TIMEOUT_S = 300
+PY_COMPILE_TIMEOUT_S = 60
+
+
+def _run_capped(
+    cmd: list[str],
+    cwd: str | None = None,
+    timeout_s: float = MYPY_TIMEOUT_S,
+) -> subprocess.CompletedProcess[str]:
+    """Run *cmd* capturing output; never blocks forever."""
+    try:
+        return subprocess.run(
+            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"  [fix] timed out after {timeout_s:.0f}s: {' '.join(cmd[:4])} ...",
+            file=sys.stderr,
+        )
+        return subprocess.CompletedProcess(
+            cmd, returncode=-1, stdout="",
+            stderr=f"timed out after {timeout_s:.0f}s",
+        )
+
 
 def _is_stdlib_path(p: str) -> bool:
     """True when *p* lives under the Python installation (stdlib or site-packages)."""
@@ -1506,11 +1535,14 @@ class FixCommand(Command):
                 targets.append(os.path.join(ws_dir, "agent.py"))
 
         def run_mypy(args: list[str]) -> str:
-            r = subprocess.run(
-                [sys.executable, "-m", "mypy", *args, "--ignore-missing-imports"],
-                capture_output=True, text=True, cwd=ws_dir,
+            print(
+                f"  [fix --mypy] running mypy over {len(args)} path(s)...",
+                file=sys.stderr,
             )
-            return r.stdout
+            return _run_capped(
+                [sys.executable, "-m", "mypy", *args, "--ignore-missing-imports"],
+                cwd=ws_dir,
+            ).stdout
 
         def parse_errors(stdout: str) -> dict[str, list[str]]:
             by_file: dict[str, list[str]] = {}
@@ -1706,7 +1738,10 @@ class FixCommand(Command):
                     remaining = remaining[len(slice_errs):]
                     print(f"  No usable fix for these {len(slice_errs)} error(s) — skipping them")
                     continue
-                r = subprocess.run([sys.executable, "-m", "py_compile", full], capture_output=True, text=True)
+                r = _run_capped(
+                    [sys.executable, "-m", "py_compile", full],
+                    timeout_s=PY_COMPILE_TIMEOUT_S,
+                )
                 if r.returncode != 0:
                     print(f"  Fix introduced a compile error — restoring previous version\n  {r.stderr.strip()[:200]}")
                     with open(full, "w", encoding="utf-8") as f:
@@ -1756,10 +1791,10 @@ class FixCommand(Command):
         the LLM).
         """
         def mypy_sigs() -> list[tuple[str, str, str]]:
-            r = subprocess.run(
+            r = _run_capped(
                 [sys.executable, "-m", "mypy", *targets, "--ignore-missing-imports",
                  "--explicit-package-bases", "--namespace-packages"],
-                capture_output=True, text=True, cwd=ws_dir,
+                cwd=ws_dir,
             )
             return _mypy_error_signatures(r.stdout)
 
@@ -1903,9 +1938,9 @@ class FixCommand(Command):
     ) -> list[str]:
         """Re-run mypy on *full* and return its current error list for it."""
         ws_dir = os.path.dirname(full)
-        r = subprocess.run(
+        r = _run_capped(
             [sys.executable, "-m", "mypy", full, "--ignore-missing-imports"],
-            capture_output=True, text=True, cwd=ws_dir,
+            cwd=ws_dir,
         )
         by_file: dict[str, list[str]] = {}
         for line in r.stdout.split('\n'):
@@ -2076,10 +2111,10 @@ class FixCommand(Command):
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(result)
-            r = subprocess.run(
+            r = _run_capped(
                 [sys.executable, "-m", "mypy", tmp, "--ignore-missing-imports",
                  "--explicit-package-bases", "--namespace-packages"],
-                capture_output=True, text=True, cwd=ws_dir,
+                cwd=ws_dir,
             )
         except OSError:
             return
@@ -2115,10 +2150,10 @@ class FixCommand(Command):
             )
             with os.fdopen(fd2, "w", encoding="utf-8") as f:
                 f.write(current_text)
-            r2 = subprocess.run(
+            r2 = _run_capped(
                 [sys.executable, "-m", "mypy", tmp2, "--ignore-missing-imports",
                  "--explicit-package-bases", "--namespace-packages"],
-                capture_output=True, text=True, cwd=ws_dir,
+                cwd=ws_dir,
             )
         except OSError:
             r2 = None
@@ -2329,7 +2364,7 @@ class FixCommand(Command):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
             tf.write(''.join(result))
             tmp = tf.name
-        r = subprocess.run(["python", "-m", "py_compile", tmp], capture_output=True, text=True)
+        r = _run_capped(["python", "-m", "py_compile", tmp], timeout_s=PY_COMPILE_TIMEOUT_S)
         os.unlink(tmp)
         if r.returncode != 0:
             print(f"  Patch would break syntax: {r.stderr[:200]}")
@@ -2550,16 +2585,16 @@ class FixCommand(Command):
             ok = self._apply_patch(patch_text, fpath_patch, ws_dir, reason=error_msg)
             if ok:
                 print(f"\nFixed: {fpath_patch} (patch applied)")
-                result = subprocess.run(
+                result = _run_capped(
                     ["python", "-m", "py_compile", fpath],
-                    capture_output=True, text=True
+                    timeout_s=PY_COMPILE_TIMEOUT_S,
                 )
                 if result.returncode == 0:
                     print("Compiled OK!")
                 else:
                     print(f"Still has errors:\n{result.stderr[:300]}")
             else:
-                print(f"Patch failed for {fpath_patch}")
+                print(f"\nPatch failed for {fpath_patch}")
         elif match:
             new_code = match.group(2).strip()
             if len(new_code) > len(current_code) * 0.1 and 'import' in new_code:
@@ -2578,9 +2613,9 @@ class FixCommand(Command):
                 with open(changelog_path, "a", encoding="utf-8") as cl:
                     cl.write(entry)
 
-                result = subprocess.run(
+                result = _run_capped(
                     ["python", "-m", "py_compile", fpath],
-                    capture_output=True, text=True
+                    timeout_s=PY_COMPILE_TIMEOUT_S,
                 )
                 if result.returncode == 0:
                     print("Compiled OK!")

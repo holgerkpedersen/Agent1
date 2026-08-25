@@ -2108,7 +2108,8 @@ def get_metrics_collector() -> "MetricsCollector":
     if _shared_metrics_collector is None:
         from agent_core.monitoring import MetricsCollector as _MC
         _shared_metrics_collector = _MC()
-    return cast("MetricsCollector", _shared_metrics_collector)
+    assert _shared_metrics_collector is not None
+    return _shared_metrics_collector
 
 
 def _emit_command_metrics(command: str, elapsed_s: float) -> None:

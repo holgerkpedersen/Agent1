@@ -38,6 +38,9 @@ _FAILED_RE = re.compile(r"FAILED\s+([\w./\\-]+)::")
 class SelfHealCommand(Command):
     """Propose a patch, run the test suite, auto-revert or chain fixes until green."""
 
+    def __init__(self) -> None:
+        self.backups: dict[str, tuple[str, str]] = {}
+
     @property
     def name(self) -> str:
         return "self_heal"
@@ -135,8 +138,6 @@ class SelfHealCommand(Command):
             print(f"    patched {basename} does not compile: {exc}")
             return False
 
-        if self.backups is None:
-            self.backups = {}
         self.backups[path] = (path + ".heal_bak", source)
         try:
             shutil.copyfile(path, path + ".heal_bak")
@@ -183,7 +184,6 @@ class SelfHealCommand(Command):
             print("[self_heal] Suite already green — nothing to heal.")
             return True
 
-        self.backups: dict[str, tuple[str, str]] | None = {}
         baseline_failures = self._failing_files(output)
         print(f"[self_heal] {len(baseline_failures)} failing file(s): {', '.join(baseline_failures)}")
 

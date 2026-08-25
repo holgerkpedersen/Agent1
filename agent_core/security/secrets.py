@@ -61,7 +61,7 @@ def _keyring_backend() -> Any | None:
 def _crypto_backend() -> Any | None:
     """Return ``cryptography.fernet.Fernet``, or None when not installed."""
     try:
-        from cryptography.fernet import Fernet  # type: ignore[import-not-found]
+        from cryptography.fernet import Fernet
         return Fernet
     except ImportError:
         return None
@@ -69,7 +69,7 @@ def _crypto_backend() -> Any | None:
 
 def _load_or_create_key() -> bytes:
     """Load the machine-scoped Fernet key, creating it on first use."""
-    from cryptography.fernet import Fernet  # type: ignore[import-not-found]
+    from cryptography.fernet import Fernet
 
     key_path = _key_path()
     key_path.parent.mkdir(parents=True, exist_ok=True)

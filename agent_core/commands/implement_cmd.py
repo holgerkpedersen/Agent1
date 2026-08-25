@@ -448,7 +448,7 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
     # Assignment-type groups: root cause = file where variable is initialized
     for var_name, var_errs in assign_errors.items():
         # Try to find where the variable is defined/initialized
-        defn_path = _find_variable_definition(var_name, var_errs, ws_dir)
+        var_defn_path: str | None = _find_variable_definition(var_name, var_errs, ws_dir)
         if defn_path:
             root_err = (os.path.basename(defn_path), defn_path,
                         f"ROOT_CAUSE: {var_name} has wrong type at definition site")
@@ -1099,10 +1099,12 @@ def _check_planned_duplicates(planned_new: list[str], ws: str, taskplan_content:
         PlannedModule(fname, descriptions.get(fname, "")) for fname in planned_new
     ]
     if planned:
+        from agent_core.utils.module_similarity import SimilarityFinding
         sim = ModuleSimilarity(ws)
         for finding in sim.find_duplicates(planned):
+            f: SimilarityFinding = finding
             reasons.append(
-                f"{finding.file} — {finding.evidence} -> {finding.existing}"
+                f"{f.file} — {f.evidence} -> {f.existing}"
             )
     return reasons
 
@@ -2039,11 +2041,11 @@ class ImplementCommand(Command):
 
             print(f"\nExport map: {sum(len(v) for v in export_map.values())} exports across {len(export_map)} modules")
 
-            broken_imports = {}
+            broken_imports: dict[str, list[tuple[str, str]]] = {}
             stdlib_modules = set()
 
             for fname, content in generated_content.items():
-                missing = []
+                missing: list[tuple[str, str]] = []
                 for match in re.finditer(r'from\s+(\S+)\s+import\s+(.+?)(?:\s*#|\s*$)', content):
                     src_module = match.group(1)
                     imported_names = [n.strip().split(' as ')[0].strip() for n in match.group(2).strip('()').split(',')]

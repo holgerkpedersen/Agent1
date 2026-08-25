@@ -246,7 +246,7 @@ class ReconstructCommand(Command):
             by_path[path].sort(key=lambda o: o.ts)
 
         # ── Compute final state per file (last-write + subsequent edits)
-        file_results: dict[str, str | None] = {}  # path -> final content or None (skip)
+        file_results: dict[str, str] = {}  # path -> final content
         skipped = 0
         applied = 0
         edit_warnings = 0
@@ -290,8 +290,6 @@ class ReconstructCommand(Command):
         # ── Write results ───────────────────────────────────────────────
         written = 0
         for path, content in file_results.items():
-            if content is None:
-                continue
             abs_path = path
             # If path is relative, resolve against workspace.
             if not os.path.isabs(path):
