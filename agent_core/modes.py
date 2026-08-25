@@ -43,6 +43,9 @@ MODE_PLAN = "plan"
 PLAN_MODE_TOOLS: frozenset[str] = frozenset({
     "search", "read", "list_files", "diff", "web_search",
     "definitions", "references",
+    # ``delegate`` is safe in plan mode: the parent's mode caps every child
+    # to read-only (SubAgent.__init__), so delegation cannot mutate files.
+    "delegate",
 })
 
 #: Runtime rejection returned by the executor for a blocked tool call.
@@ -92,8 +95,9 @@ def plan_mode_system_suffix() -> str:
     """Appended to the system prompt when a session STARTS in plan mode."""
     return (
         "\n\nSESSION MODE: PLAN (read-only).\n"
-        "- Your toolset is limited to search, read, list_files, diff and "
-        "web_search; any write/edit/run/git/tests/fix call is REJECTED.\n"
+        "- Your toolset is limited to read-only tools (search, read, "
+        "list_files, diff, web_search, definitions, references, delegate); "
+        "any write/edit/run/git/tests/fix call is REJECTED.\n"
         "- Do not attempt or promise changes: research the workspace, then "
         "end the turn with a concrete, file-by-file implementation plan as "
         "your final text answer.\n"

@@ -128,6 +128,33 @@ Deep analysis (follows imports without a question):
 
 ---
 
+## Subagents (role-based delegation)
+
+The main agent can fan work out to role subagents — each runs in its own
+context with a restricted toolset, so the main conversation stays small.
+
+Roles: `planner`, `implementer`, `tester`, `debugger`, `reviewer`,
+`integrator`, `researcher`, `security`, `documenter`.
+
+```
+> subagent roles                          list roles + their tools
+> subagent route TypeError in parser.py   suggest a role for an issue
+Suggested role: debugger (Debugger/Fixer) — score 1
+> subagent create fix1 --role debugger    create a named subagent
+> subagent run fix1 Fix the TypeError in parse_line()
+> subagent summary fix1                   what the child did so far
+> subagent reset fix1                     clear its history for a new task
+```
+
+In natural language turns the model can delegate on its own via the
+`delegate` and `delegate_batch` tools (up to 3 children run concurrently,
+600s timeout per child). A plan-mode session caps every child to read-only,
+so delegation can never mutate files while researching. Results come back
+as compact summaries; a child that hits its turn cap or times out reports
+`stopped early: <reason>` instead of holding the turn.
+
+---
+
 ## The Workflow Pipeline
 
 ### 1. Analyze existing codebase

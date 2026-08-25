@@ -141,6 +141,10 @@ class SubAgent:
         final_text, _final_messages = await runner.run(
             msgs, llm_chat_fn, self._execute_tool_call, tools=schemas,
         )
+        #: Propagated to the parent's ``delegate`` report (phase 4): an
+        #: ``answer`` means the child finished cleanly; ``cap``/``stuck``/
+        #: ``no_progress`` mean a guard fired and the parent should know.
+        self.last_termination_reason: str | None = runner.termination_reason
         return final_text
 
     # ------------------------------------------------------------------

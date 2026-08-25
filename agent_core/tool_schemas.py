@@ -267,6 +267,52 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate",
+            "description": (
+                "Delegate a self-contained task to a role subagent (planner, "
+                "implementer, tester, debugger, reviewer, integrator, "
+                "researcher, security, documenter). The child runs in its own "
+                "context with a restricted toolset and returns its final "
+                "answer; your context stays small. Give it everything it "
+                "needs — file paths, symbols, exact expectations."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "role": {"type": "string", "description": "Role name (see subagent roles)"},
+                    "task": {"type": "string", "description": "Self-contained task description"},
+                },
+                "required": ["role", "task"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_batch",
+            "description": (
+                "Fan ONE task out to up to 3 roles in parallel and receive "
+                "merged reports. Use for independent perspectives on the same "
+                "question (e.g. security + reviewer + planner triage). Each "
+                "child still runs in its own isolated context."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "roles": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Role names (max 3 used, extras dropped)",
+                    },
+                    "task": {"type": "string", "description": "Self-contained task for every role"},
+                },
+                "required": ["roles", "task"],
+            },
+        },
+    },
 ]
 
 NLP_TOOL_NAMES: frozenset[str] = frozenset(

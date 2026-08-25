@@ -50,7 +50,10 @@ class SubAgentCommand(Command):
             "  subagent roles                                 List available roles\n"
             "  subagent create <name> [--role <role>] [--workspace <path>]\n"
             "  subagent run <name> <task ...>                  Run a task in a subagent\n"
-            "  subagent list / summary <name> / reset <name>"
+            "  subagent list / summary <name> / reset <name>\n"
+            "  subagent route <issue text>                     Suggest a role for an issue\n"
+            "  subagent create fix1 --role debugger            Create with an explicit role\n"
+            "  subagent create w1 --role auto --workspace path Assign role automatically"
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
@@ -71,6 +74,7 @@ class SubAgentCommand(Command):
             "list": self._cmd_list,
             "summary": self._cmd_summary,
             "reset": self._cmd_reset,
+            "route": self._cmd_route,
         }
         handler = handlers.get(cmd)
         if handler is None:
@@ -96,10 +100,11 @@ class SubAgentCommand(Command):
                   f"{', '.join(sorted(role.tools_allowed))}")
 
     async def _cmd_create(self, args: list[str], agent: "Agent") -> None:
+        from agent_core.issue_router import route_issue
         from agent_core.subagent_roles import get_role, role_names
 
         if not args:
-            print("Usage: subagent create <name> [--role <role>] [--workspace <path>]")
+            print("Usage: subagent create <name> [--role <role>|--role auto] [--workspace <path>]")
             return
 
         name = args[0]
@@ -118,6 +123,12 @@ class SubAgentCommand(Command):
                 print(f"Unrecognized argument: {args[i]}")
                 return
 
+        if role is None:
+            print("Tip: pass --role (see 'subagent roles', or --role auto).")
+        elif role.lower() == "auto":
+            # Auto-routing needs the task; without one, triage is the safe default.
+            role = "planner"
+            print("No task given for auto-routing — using 'planner' (triage).")
         if role is not None and get_role(role) is None:
             print(f"Unknown role '{role}'. Available: {', '.join(role_names())}")
             return
@@ -129,6 +140,22 @@ class SubAgentCommand(Command):
         print(f"Created SubAgent '{name}'{ws_note}{role_note}.")
         if sub.role_name:
             print(f"  Tools: {', '.join(sorted(sub._tools_allowed))}")
+
+    async def _cmd_route(self, args: list[str], agent: "Agent") -> None:
+        from agent_core.issue_router import route_with_score, routing_table
+
+        issue = " ".join(args).strip()
+        if not issue:
+            print(routing_table())
+            return
+        role_name, score = route_with_score(issue)
+        from agent_core.subagent_roles import get_role
+        spec = get_role(role_name)
+        title = spec.title if spec else role_name
+        print(f"Suggested role: {role_name} ({title}) — score {score}")
+        if score == 0:
+            print("  (no keyword hits — ambiguous issue; planner/triage is the safe default)")
+        print(f"  next: subagent create w1 --role {role_name}")
 
     async def _cmd_run(self, args: list[str], agent: "Agent") -> None:
         if len(args) < 2:

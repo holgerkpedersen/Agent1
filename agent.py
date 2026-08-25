@@ -40,6 +40,7 @@ from agent_core.modes import (
     plan_mode_system_suffix,
     plan_mode_turn_note,
 )
+from agent_core.subagent_roles import get_role, role_names
 from agent_core.llm.tool_loop import ToolLoopRunner
 from agent_core.context_management import CorrelationIdContext
 try:
@@ -317,6 +318,16 @@ class Agent:
         #: it crosses ``_MAX_CONSECUTIVE_READS`` a steering note is appended
         #: to read results telling the model to stop paging and act.
         self._read_streak: int = 0
+        #: True while a subagent is executing a tool through this parent's
+        #: executor.  Child reads must not inflate the PARENT turn's
+        #: read-loop streak (the steering note would leak into the child's
+        #: tool result); nested delegation restores the previous value.
+        self._delegating: bool = False
+        #: Names of currently-running delegated subagents (concurrency cap
+        #: for the ``delegate`` tool — children exist to keep contexts small;
+        #: a pile of running subagents re-creates the pressure they avoid).
+        self._active_subagents: set[str] = set()
+        self._delegate_counter: int = 0
         self._nlp_workspace: str | None = None  # workspace override for NLP tools (set by paste --workspace)
         #: Session mode ("build" | "plan", see :mod:`agent_core.modes`).
         #: Plan mode restricts the NLP tool loop to read-only tools so no
@@ -533,6 +544,157 @@ class Agent:
             logger.exception("NLP tool %r failed", name)
             return f"{name} error: {e}"
 
+    async def _nlp_delegate(self, args: dict[str, Any]) -> str:
+        """Run one task in a role subagent and return its final answer.
+
+        The child gets an isolated history (parent context stays small) and a
+        restricted toolset; its tool calls flow through this parent's
+        executor with ``_delegating`` set so child reads never inflate the
+        parent turn's read-loop streak.  Concurrency is capped at
+        ``_MAX_ACTIVE_SUBAGENTS``; a hung child surfaces as an error after
+        ``_DELEGATE_TIMEOUT_S`` instead of holding the turn hostage.
+        """
+        import time as _time
+
+        from agent_core.modes import MODE_PLAN, is_plan_mode
+
+        role = str(args.get("role", "")).strip().strip('"').strip("'")
+        task = str(args.get("task", "")).strip()
+        if not role or not task:
+            return "Error: delegate requires 'role' and 'task'."
+
+        spec = get_role(role)
+        if spec is None:
+            return (
+                f"Error: unknown role '{role}'. "
+                f"Available: {', '.join(role_names())}"
+            )
+
+        if len(self._active_subagents) >= _MAX_ACTIVE_SUBAGENTS:
+            return (
+                f"Error: {_MAX_ACTIVE_SUBAGENTS} subagents already running — "
+                f"wait for one to finish before delegating again."
+            )
+
+        self._delegate_counter += 1
+        name = f"{spec.name}-{self._delegate_counter}"
+        try:
+            sub = self.spawn_subagent(name, role=role)
+        except Exception as exc:  # defensive: a broken spawn must not kill the turn
+            logger.exception("Delegated subagent %s failed to spawn", name)
+            return f"[delegate:{name}] failed to spawn: {exc}"
+        self._active_subagents.add(name)
+        prev_delegating = self._delegating
+        self._delegating = True
+        try:
+            result = await asyncio.wait_for(
+                sub.respond(task), timeout=_DELEGATE_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            result = (
+                f"[delegate:{name}] timed out after {_DELEGATE_TIMEOUT_S:.0f}s "
+                f"— the task did not finish. Partial context preserved in the "
+                f"subagent; retry with a smaller task."
+            )
+        except Exception as exc:  # defensive: a broken child must not kill the turn
+            logger.exception("Delegated subagent %s failed", name)
+            result = f"[delegate:{name}] failed: {exc}"
+        finally:
+            self._delegating = prev_delegating
+            self._active_subagents.discard(name)
+
+        summary = sub.get_context_summary(max_messages=3)
+        reason = getattr(sub, "last_termination_reason", None)
+        reason_note = (
+            "" if reason == "answer"
+            else f", stopped early: {reason or 'unknown'}"
+        )
+        mode_note = ""
+        if is_plan_mode(self.mode):
+            mode_note = (
+                f"\n[plan mode] The '{spec.name}' child was capped to read-only "
+                f"(plan-mode parent); it reported findings only."
+                if spec.mode != MODE_PLAN
+                else ""
+            )
+        return (
+            f"{result}\n\n{summary}\n"
+            f"[delegate:{name}] finished ({spec.title}, {sub.mode} mode"
+            f"{reason_note}).{mode_note}"
+        )
+
+    async def _nlp_delegate_batch(self, args: dict[str, Any]) -> str:
+        """Fan one task out to several roles in parallel and merge reports.
+
+        Each child still runs alone in its own context; the parent only pays
+        for the merged summaries.  The per-call cap is
+        ``min(len(roles), _MAX_ACTIVE_SUBAGENTS)``.
+        """
+        raw_roles = args.get("roles") or []
+        if not isinstance(raw_roles, list):
+            return "Error: 'roles' must be a list of role names."
+        roles = [str(r).strip() for r in raw_roles if str(r).strip()]
+        task = str(args.get("task", "")).strip()
+        if not roles or not task:
+            return "Error: delegate_batch requires 'roles' (list) and 'task'."
+        unknown = [r for r in roles if get_role(r) is None]
+        if unknown:
+            return (
+                f"Error: unknown role(s): {', '.join(unknown)}. "
+                f"Available: {', '.join(role_names())}"
+            )
+        # Dedupe, keep order, cap concurrency.
+        seen: set[str] = set()
+        unique_roles = [r for r in roles if not (r in seen or seen.add(r))]
+        unique_roles = unique_roles[:_MAX_ACTIVE_SUBAGENTS]
+        dropped = len(roles) - len(unique_roles)
+
+        self._delegate_counter += 1
+        batch_id = self._delegate_counter
+
+        async def run_one(role_name: str, idx: int) -> tuple[str, str]:
+            name = f"{role_name}-b{batch_id}-{idx}"
+            try:
+                sub = self.spawn_subagent(name, role=role_name)
+            except Exception as exc:
+                logger.exception("Batch subagent %s failed to spawn", name)
+                return role_name, f"### {role_name}\nfailed to spawn: {exc}"
+            prev = self._delegating
+            self._delegating = True
+            self._active_subagents.add(name)
+            try:
+                res = await asyncio.wait_for(
+                    sub.respond(task), timeout=_DELEGATE_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                res = (f"timed out after {_DELEGATE_TIMEOUT_S:.0f}s — no result.")
+            except Exception as exc:
+                logger.exception("Batch subagent %s failed", name)
+                res = f"failed: {exc}"
+            finally:
+                self._delegating = prev
+                self._active_subagents.discard(name)
+            reason = getattr(sub, "last_termination_reason", None)
+            reason_note = (
+                "" if reason == "answer" else f" [stopped early: {reason}]"
+            )
+            return role_name, (
+                f"### {role_name}{reason_note}\n"
+                f"{res}\n\n{sub.get_context_summary(max_messages=2)}"
+            )
+
+        results = await asyncio.gather(
+            *(run_one(r, i) for i, r in enumerate(unique_roles))
+        )
+        header = (
+            f"[delegate_batch:{batch_id}] {len(unique_roles)} role(s) on: "
+            f"{task[:120]}{'...' if len(task) > 120 else ''}"
+        )
+        if dropped:
+            header += f" ({dropped} extra role(s) dropped — concurrency cap)"
+        body = "\n\n".join(report for _role, report in results)
+        return f"{header}\n\n{body}"
+
     async def _run_command_quietly(
         self, command: Command, args: list[str], done_msg: str,
     ) -> str:
@@ -581,6 +743,8 @@ class Agent:
             "tests": self._nlp_tests,
             "web_search": self._nlp_web_search,
             "write": self._nlp_write,
+            "delegate": self._nlp_delegate,
+            "delegate_batch": self._nlp_delegate_batch,
         }
 
     async def _nlp_definitions(self, args: dict[str, Any]) -> str:
@@ -644,7 +808,8 @@ class Agent:
         if content.startswith("File not found") or content.startswith("Error"):
             return content
         self._note_effect(path)
-        self._read_streak += 1
+        if not self._delegating:
+            self._read_streak += 1
         lines = content.splitlines()
         if offset > len(lines):
             return f"Offset {offset} is beyond the end of {path} ({len(lines)} lines)."
@@ -1722,6 +1887,14 @@ _READ_LOOP_NOTE = (
     "later call. Work with what you have: use definitions/references/search "
     "for targeted lookups, or give your answer / take the next action now."
 )
+
+#: Delegation limits for the NLP ``delegate`` tool.  Children exist to KEEP
+#: contexts small — a pile of simultaneously running subagents re-creates
+#: the very pressure they were meant to avoid, so the cap is deliberately
+#: tight and the timeout mirrors the engine stall cap philosophy (a hung
+#: child must surface as an error, not hold the parent turn hostage).
+_MAX_ACTIVE_SUBAGENTS = 3
+_DELEGATE_TIMEOUT_S = 600.0
 
 #: Message key marking loop-injected notes (see LOOP_NOTE_TAG_KEY in
 #: agent_core.constants — re-exported here for the chat_nlp loop).
