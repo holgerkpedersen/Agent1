@@ -92,6 +92,24 @@ def _management_url() -> str:
     return f"{base}/api/v1"
 
 
+def chat_timeout() -> int:
+    """Socket cap (seconds) for one chat request to LM Studio.
+
+    Was hard-wired at 3600: a stalled engine (KV-cache thrash at ~33k prompt
+    tokens, observed live 2026-08-25 as a silent 12-minute freeze) then held
+    the turn hostage for up to an hour with zero feedback.  The cap is a
+    SOCKET-INACTIVITY timeout, not a total-duration limit — a healthy slow
+    generation keeps streaming/receiving and never trips it, while a dead
+    engine surfaces as a timeout error that the existing retry policy treats
+    as transient.  Override with ``LMSTUDIO_CHAT_TIMEOUT``.
+    """
+    raw = os.environ.get("LMSTUDIO_CHAT_TIMEOUT", "600")
+    try:
+        return max(30, int(raw))
+    except ValueError:
+        return 600
+
+
 def _http_get_json(url: str, timeout: int = 10) -> dict[str, Any] | None:
     """Synchronous HTTP GET that returns parsed JSON, or None on failure."""
     try:
@@ -402,13 +420,14 @@ class LMStudioProvider:
                 raise TransientHTTPError(exc.code, detail) from exc
             raise RuntimeError(f"HTTP Error {exc.code}: {detail}") from exc
 
-    def _make_request(self, payload: dict[str, Any], timeout: int = 3600) -> dict[str, Any]:
+    def _make_request(self, payload: dict[str, Any], timeout: int | None = None) -> dict[str, Any]:
         """Make synchronous HTTP request to LM Studio.
 
         HTTP errors surface their response body (LM Studio explains the
         reason there — e.g. "model is not loaded"); a 400 whose body says the
         model is not in VRAM triggers an automatic load + single retry.
         """
+        t = timeout if timeout is not None else chat_timeout()
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(
             f"{self.lmstudio_url}/chat/completions",
@@ -420,7 +439,7 @@ class LMStudioProvider:
             method='POST'
         )
         try:
-            with self._open_chat(req, timeout) as response:
+            with self._open_chat(req, t) as response:
                 return cast(dict[str, Any], json.loads(response.read().decode()))
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"LM Studio returned non-JSON response: {exc}") from exc
@@ -548,7 +567,7 @@ class LMStudioProvider:
             # _open_chat (not raw urlopen): a 400 "model is not loaded" here
             # means another shell evicted our pinned model — reload + retry
             # once, same recovery as the non-streaming path.
-            with self._open_chat(req, timeout=3600) as response:
+            with self._open_chat(req, timeout=chat_timeout()) as response:
                 for line_bytes in response:
                     line = line_bytes.decode('utf-8').strip()
                     if not line.startswith('data: '):

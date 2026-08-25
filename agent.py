@@ -312,6 +312,11 @@ class Agent:
         #: :meth:`_mutating_files_this_turn` must never treat those as files
         #: changed by the live turn.
         self._turn_start_index: int = len(self._chat_history)
+        #: Consecutive ``read`` tool calls in the current turn (read-loop
+        #: guard).  Reset at turn start and by every non-read tool call; when
+        #: it crosses ``_MAX_CONSECUTIVE_READS`` a steering note is appended
+        #: to read results telling the model to stop paging and act.
+        self._read_streak: int = 0
         self._nlp_workspace: str | None = None  # workspace override for NLP tools (set by paste --workspace)
         #: Session mode ("build" | "plan", see :mod:`agent_core.modes`).
         #: Plan mode restricts the NLP tool loop to read-only tools so no
@@ -504,6 +509,8 @@ class Agent:
         cannot take down the whole turn.
         """
         name = name.lower()
+        if name != "read":
+            self._read_streak = 0
         rejection = check_tool_allowed(name, self.mode)
         if rejection:
             return rejection
@@ -630,14 +637,18 @@ class Agent:
         if content.startswith("File not found") or content.startswith("Error"):
             return content
         self._note_effect(path)
+        self._read_streak += 1
         lines = content.splitlines()
         if offset > len(lines):
             return f"Offset {offset} is beyond the end of {path} ({len(lines)} lines)."
         chunk_lines = lines[offset - 1: offset - 1 + limit]
         chunk = "\n".join(chunk_lines)
+        result = chunk
         if offset - 1 + limit < len(lines):
-            return f"{chunk}\n[truncated — use read with offset={offset + limit} to continue]"
-        return chunk
+            result = f"{chunk}\n[truncated — use read with offset={offset + limit} to continue]"
+        if self._read_streak >= _MAX_CONSECUTIVE_READS:
+            result += _READ_LOOP_NOTE.format(n=self._read_streak)
+        return result
 
     async def _nlp_list_files(self, args: dict[str, Any]) -> str:
         """List up to 50 directory entries, directories marked with ``/``."""
@@ -1347,6 +1358,7 @@ class Agent:
         4. ``_finish_turn`` — trim/persist history, print the outcome.
         """
         self._refresh_system_message()
+        self._read_streak = 0
         self._append_user_turn(user_input, images)
 
         final_text, final_messages, llm_error, loop = (
@@ -1687,6 +1699,22 @@ _MAX_RUN_TIMEOUT_S = 600
 
 #: Hard ceiling for the NLP ``read`` tool's per-call line limit.
 _MAX_READ_LINES = 500
+
+#: Consecutive ``read`` calls allowed within one turn before the read-loop
+#: guard starts appending a steering note.  Traces from the 2026-08-25
+#: stalls (a01f1bde / 39a90f8f) show the failure spiral: dozens of sequential
+#: reads balloon the prompt toward the char budget, every later request then
+#: re-processes a huge context, prefill/decode crawl, and the turn ends as
+#: ``stuck``/``no_progress`` after 35+ minutes.  Breaking the read loop at
+#: the source keeps prompts small enough to stay fast.
+_MAX_CONSECUTIVE_READS = 6
+
+_READ_LOOP_NOTE = (
+    "\n[read-loop guard] {n} consecutive reads this turn without acting. "
+    "Stop paging files — each extra page inflates the prompt and slows every "
+    "later call. Work with what you have: use definitions/references/search "
+    "for targeted lookups, or give your answer / take the next action now."
+)
 
 #: Message key marking loop-injected notes (see LOOP_NOTE_TAG_KEY in
 #: agent_core.constants — re-exported here for the chat_nlp loop).

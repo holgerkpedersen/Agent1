@@ -365,8 +365,24 @@ class ToolLoopRunner:
         #: searched).  Duplicates are not re-executed; they get a note instead.
         #: A third consecutive duplicate stops the loop and forces synthesis.
         prev_call_key: tuple[str, str] | None = None
-        prev_was_duplicate = False
         prev_result: str = ""
+        #: Seen-call sets for parallel-repeat detection (decision #062):
+        #: ``_seen_this_iter`` accumulates every call key of the CURRENT batch
+        #: (catches identical calls inside one batch); ``_prev_batch_keys``
+        #: holds the FULL key set of the PREVIOUS batch so a model repeating
+        #: an entire parallel batch gets every call flagged — not just the one
+        #: adjacent to ``prev_call_key``.
+        _seen_this_iter: set[tuple[str, str]] = set()
+        _prev_batch_keys: set[tuple[str, str]] = set()
+        #: Total executions per call_key across ALL batches in this run —
+        #: shared with the cross-run ``seen_calls`` registry for consistency.
+        _run_seen_calls: dict[tuple[str, str], int] = {}
+        #: Per-call-key consecutive-duplicate memory: a key whose PREVIOUS
+        #: occurrence was already flagged as a duplicate triggers stuck-
+        #: synthesis on its next repeat (third time).  Keyed — not a global
+        #: bool — so unrelated calls in a mixed batch never inherit another
+        #: call's duplicate history.
+        _dup_streak: dict[tuple[str, str], bool] = {}
         #: Progress guard: calls since the last MUTATION or DISCOVERY of new
         #: information.  Read-only tasks (audits, reviews) never mutate, so
         #: mutation alone was a wrong progress proxy that stopped them
@@ -451,6 +467,14 @@ class ToolLoopRunner:
             #: human-readable reason in CLEAN mode so bare calls are explained.
             prev_text = str(last_msg.get("content") or "")
 
+            # Seed this batch's duplicate detection with the FULL key set of
+            # the previous batch: any key re-issued in consecutive batches is
+            # a parallel repeat, even when batch N+1 reorders or adds calls.
+            _seen_this_iter = set(_prev_batch_keys)
+            _run_seen_calls.clear()
+            #: Keys actually EXECUTED in this batch (duplicates excluded).
+            _executed_this_batch: set[tuple[str, str]] = set()
+
             # Execute each tool call
             for tc in tool_calls:
                 tc_id = tc.get("id", "")
@@ -478,13 +502,18 @@ class ToolLoopRunner:
                     calls_without_progress = 0
                 else:
                     calls_without_progress += 1
-                if call_key == prev_call_key:
+                # Per-iteration duplicate check: catches parallel repeats where
+                # two different calls in batch N are identical to two different
+                # calls in batch N+1 (prev_call_key alone misses this).
+                is_dup_this_iter = call_key in _seen_this_iter
+                _seen_this_iter.add(call_key)
+                total_runs = _run_seen_calls.get(call_key, 0) + 1
+                _run_seen_calls[call_key] = total_runs
+                if call_key == prev_call_key or is_dup_this_iter:
                     #: Total executions of this exact call across ALL chained
                     #: runs (shared registry), so a repeated probe is flagged as
                     #: a known dead-end even after an auto-continue restart.
-                    total_runs = (
-                        seen_calls.get(call_key, 1) if seen_calls is not None else 1
-                    )
+                    total_runs = max(total_runs, seen_calls.get(call_key, 1) if seen_calls is not None else 1)
                     # If the repeated call's prior result was a missing path and this
                     # tool can follow up with a listing, recover before declaring stuck —
                     # an invented-path retry gets un-stuck instead of dead-ending (decision #035).
@@ -501,7 +530,7 @@ class ToolLoopRunner:
                             tool=tool_name,
                             note=_PATH_RECOVERY_NOTE.format(listing="..."),
                         )
-                    elif prev_was_duplicate:
+                    elif _dup_streak.get(call_key):
                         # Third consecutive identical call: the model is stuck.
                         # Stop the loop right here and force a text answer.
                         result_str = (
@@ -525,7 +554,7 @@ class ToolLoopRunner:
                             "It is not re-executed — unless the file changed, the result is "
                             "identical. Take a different action or answer in text."
                         )
-                    prev_was_duplicate = True
+                    _dup_streak[call_key] = True
                     self._emit(
                         KIND_TOOL_CALL,
                         LAYER_TOOL_INTERFACE,
@@ -643,8 +672,9 @@ class ToolLoopRunner:
                             shown = red(shown)
                         print(f"  {yellow('[result]')} {shown}")
                 prev_call_key = call_key
-                prev_was_duplicate = False
+                _dup_streak[call_key] = False
                 prev_result = result_str
+                _executed_this_batch.add(call_key)
                 if seen_calls is not None:
                     seen_calls[call_key] = seen_calls.get(call_key, 0) + 1
                 # Tool-level consecutive-failure guard (decision #061):
@@ -683,6 +713,7 @@ class ToolLoopRunner:
                     "tool_call_id": tc_id,
                     "content": result_str,
                 })
+            _prev_batch_keys = _executed_this_batch
 
             if stuck:
                 break

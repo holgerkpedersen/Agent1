@@ -30,6 +30,28 @@ class _ScriptedLLM:
     async def chat(self, messages, tools=None, **kwargs):
         self.calls.append((list(messages), tools))
         step = self.script.pop(0)
+        if isinstance(step, tuple) and len(step) == 2 and isinstance(step[0], list):
+            # Parallel tool calls: ([(name, args), ...], [(name, args), ...])
+            tool_calls = []
+            for i, item in enumerate(step[0]):
+                if isinstance(item, tuple):
+                    tool_name, args = item
+                else:
+                    tool_name, args = item, {}
+                tool_calls.append({
+                    "id": f"call_{i}",
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": json.dumps(args),
+                    },
+                })
+            message = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": tool_calls,
+            }
+            return json.dumps(message)
         if isinstance(step, tuple):
             tool_name, args = step
             message = {
@@ -291,6 +313,39 @@ class TestToolLoopExecution:
             if m["role"] == "system" and "BUDGET WARNING" in m["content"]
         ]
         assert notes == []
+
+    def test_parallel_duplicate_reads_are_caught(self):
+        """When the model emits two DIFFERENT reads in parallel, then repeats
+        those same two reads on the next iteration, BOTH must be flagged as
+        duplicates — not just the second one (decision #062).
+
+        Without the per-iteration seen-set fix, only the second read would be
+        caught because ``prev_call_key`` only tracks the immediately previous
+        call, so read_A in batch 2 is not equal to read_B from batch 1.
+        """
+        fake = _ScriptedLLM([
+            # Iteration 1: two different reads in parallel.
+            ([("read", {"path": "a.py"}), ("read", {"path": "b.py"})], []),
+            # Iteration 2: same two reads repeated — both should be blocked.
+            ([("read", {"path": "a.py"}), ("read", {"path": "b.py"})], []),
+            "Done.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append((name, args["path"]))
+            return f"content-of-{args['path']}"
+
+        runner = ToolLoopRunner(max_iterations=10)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        # Only the first batch of reads should have executed.
+        assert executed == [("read", "a.py"), ("read", "b.py")]
+        assert final_text == "Done."
+        # Both repeated calls should have gotten duplicate notes, not re-executed.
+        tool_contents = [m["content"] for m in messages if m["role"] == "tool"]
+        dup_notes = [c for c in tool_contents if "NOTE: This exact call" in c]
+        assert len(dup_notes) == 2
 
 
 def _loop_runner_sync(runner, fake_llm, execute_tool, **kwargs):
