@@ -10,6 +10,8 @@ and wrap the diff in markdown fences — so instead of trusting positions it
 anchors each hunk by matching the patch lines against the file text, using
 the claimed position only as a search window hint.
 """
+
+from __future__ import annotations
 import difflib
 import os
 import re

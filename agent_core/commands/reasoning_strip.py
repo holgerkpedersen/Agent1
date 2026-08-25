@@ -1,4 +1,6 @@
 """Strip LLM reasoning tokens and leaked chain-of-thought from workflow output."""
+
+from __future__ import annotations
 import re
 
 THINK_OPEN = chr(60) + 'think' + chr(62)

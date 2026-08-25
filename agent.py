@@ -1745,10 +1745,15 @@ class Agent:
             _project_chat_history(_strip_image_blocks(self._chat_history)),
             ensure_ascii=False, indent=2,
         )
+        # Derive the temp file from the CURRENT json path so tests that
+        # monkeypatch CHAT_HISTORY_JSON_PATH keep the atomic-write pair
+        # consistent (a stale module-level tmp path pointing into a
+        # non-existent ~/.agent1/models dir made every save a silent no-op).
+        tmp_path = CHAT_HISTORY_JSON_PATH + ".tmp"
         try:
-            with open(CHAT_HISTORY_TMP_PATH, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 f.write(payload)
-            os.replace(CHAT_HISTORY_TMP_PATH, CHAT_HISTORY_JSON_PATH)
+            os.replace(tmp_path, CHAT_HISTORY_JSON_PATH)
         except OSError as e:
             logger.warning("Failed to save chat history: %s", e)
 

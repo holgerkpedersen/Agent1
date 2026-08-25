@@ -1,5 +1,7 @@
 """Model command — list, switch, load, and unload LLM models via LM Studio API."""
 
+from __future__ import annotations
+
 import difflib
 
 from .base import Command

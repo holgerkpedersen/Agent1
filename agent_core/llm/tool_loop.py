@@ -1,4 +1,6 @@
 """Tool calling loop orchestrator for LLM conversations."""
+
+from __future__ import annotations
 import enum
 import json
 import sys

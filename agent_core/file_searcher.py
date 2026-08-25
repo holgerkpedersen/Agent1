@@ -4,6 +4,8 @@ A deterministic pure-Python walker (no findstr/grep subprocess) that
 excludes git-ignored runtime state and binary/cache files, and reports
 matches as ``path:lineno: content`` lines so the LLM can act on them.
 """
+
+from __future__ import annotations
 import os
 
 from agent_core.path_utils import safe_path

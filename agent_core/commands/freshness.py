@@ -7,6 +7,8 @@ REPL warn the user instead of silently executing stale code (2026-08-19
 incident: a paste-session fix to ``workflow_cmd.py`` never took effect in
 the running REPL).
 """
+
+from __future__ import annotations
 import os
 import sys
 

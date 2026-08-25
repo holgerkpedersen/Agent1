@@ -1,4 +1,6 @@
 """Retry policy for transient LLM API errors."""
+
+from __future__ import annotations
 import asyncio
 from typing import Awaitable, Callable, TypeVar, Any
 

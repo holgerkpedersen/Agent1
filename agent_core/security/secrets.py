@@ -16,6 +16,8 @@ The store directory can be redirected with ``AGENT1_SECRETS_DIR`` (used by
 tests and portable setups).
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -183,7 +185,9 @@ def delete_secret(name: str) -> bool:
     removed = False
     if keyring is not None:
         try:
-            removed = keyring.delete_password("agent1", name)
+            # Some backends return None instead of a bool — coerce so the
+            # documented ``True when it existed`` contract always holds.
+            removed = bool(keyring.delete_password("agent1", name))
         except Exception:  # noqa: BLE001 — not present or backend limitation
             removed = False
     data = _encrypted_store()

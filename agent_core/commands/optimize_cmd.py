@@ -38,6 +38,8 @@ Batching:
     Each batch is processed independently with its own context window.
 """
 
+from __future__ import annotations
+
 import ast
 import logging
 import os
@@ -55,6 +57,20 @@ from agent_core.patterns import Finding, _docstring_lines, analyze as static_ana
 
 if TYPE_CHECKING:
     from agent import Agent
+
+
+def _safe_relpath(path: str, start: str | None = None) -> str:
+    """``os.path.relpath`` that never explodes on cross-drive layouts.
+
+    ``os.path.relpath`` raises ``ValueError: path is on mount 'C:', start on
+    mount 'D:'`` when the file and the base live on different Windows drives
+    (CI bug: checkout on D:, TEMP on C:).  Falling back to the absolute path
+    keeps the report usable instead of crashing the command.
+    """
+    try:
+        return os.path.relpath(path, start) if start else os.path.relpath(path)
+    except ValueError:
+        return path
 
 logger = logging.getLogger(__name__)
 
@@ -1935,7 +1951,7 @@ class OptimizeCommand(Command):
         if list_mode:
             print(f"\n  {len(by_file)} file(s) with {len(all_findings)} issue(s):\n")
             for fpath, group in sorted(by_file.items()):
-                rel = os.path.relpath(fpath, os.getcwd()) if not stdin_mode else fpath
+                rel = _safe_relpath(fpath, os.getcwd()) if not stdin_mode else fpath
                 patterns = ", ".join(sorted(set(f["pattern"] for f in group)))
                 print(f"  {rel} ({len(group)}): {patterns}")
             print("\n  Run with --apply to fix these issues.")
@@ -1944,7 +1960,7 @@ class OptimizeCommand(Command):
         # Print static findings
         print(f"\n  Static analysis found {len(all_findings)} issue(s) in {len(file_contents)} file(s):\n")
         for fpath, group in sorted(by_file.items()):
-            rel = os.path.relpath(fpath, os.getcwd()) if not stdin_mode else fpath
+            rel = _safe_relpath(fpath, os.getcwd()) if not stdin_mode else fpath
             print(f"  {rel}:")
             for item in group:
                 print(f"    line {item['line']:>4}: [{item['pattern']}] {item['suggestion']}")

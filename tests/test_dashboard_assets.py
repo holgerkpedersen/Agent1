@@ -17,20 +17,24 @@ Root causes fixed:
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import typing
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
-REPO = r"C:\Dev\Agent1"
+#: Repo root derived from this file's location — a hardcoded C:\Dev\Agent1
+#: broke CI the moment the checkout landed anywhere else (D:\a\Agent1\...).
+REPO = str(Path(__file__).resolve().parent.parent)
 LIBS = [
-    r"static\ttheme\css\lib\bootstrap.min.css",
-    r"static\ttheme\js\lib\jquery-3.7.1.min.js",
-    r"static\ttheme\js\lib\bootstrap.bundle.min.js",
-    r"static\ttheme\js\lib\iconify-icon.min.js",
+    os.path.join("static", "ttheme", "css", "lib", "bootstrap.min.css"),
+    os.path.join("static", "ttheme", "js", "lib", "jquery-3.7.1.min.js"),
+    os.path.join("static", "ttheme", "js", "lib", "bootstrap.bundle.min.js"),
+    os.path.join("static", "ttheme", "js", "lib", "iconify-icon.min.js"),
 ]
 
 

@@ -10,6 +10,11 @@ class _FakeProc:
 
     def __init__(self, *a, **k):
         self.calls = 0
+        self.killed = False
+
+    def kill(self):
+        # POSIX path: _kill_process_tree calls proc.kill() directly.
+        self.killed = True
 
     def communicate(self, timeout=None):
         self.calls += 1
@@ -25,7 +30,9 @@ class TestRunTimeout:
 
         def fake_popen(*a, **k):
             captured["kwargs"] = k
-            return _FakeProc()
+            proc = _FakeProc()
+            captured["proc"] = proc
+            return proc
 
         def fake_taskkill(args, **k):
             captured["taskkill"] = args
@@ -39,12 +46,17 @@ class TestRunTimeout:
         )
         assert "timed out after 1s" in out
         assert "tree" in out
-        assert captured["taskkill"][0] == "taskkill"
-        assert captured["taskkill"][3] == "/T"  # tree kill
-        assert "4242" in captured["taskkill"]
-        # The shell runs in its own process group on Windows.
         if os_name() == "nt":
+            # Windows: the tree is killed via taskkill /T /F.
+            assert captured["taskkill"][0] == "taskkill"
+            assert captured["taskkill"][3] == "/T"  # tree kill
+            assert "4242" in captured["taskkill"]
+            # The shell runs in its own process group on Windows.
             assert captured["kwargs"]["creationflags"] == subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            # POSIX: a plain proc.kill() — taskkill must never be invoked.
+            assert captured["proc"].killed is True
+            assert "taskkill" not in captured
 
     def test_kill_process_tree_never_raises(self, monkeypatch):
         from agent import _kill_process_tree

@@ -28,6 +28,10 @@ needs_backend = pytest.mark.skipif(
 @pytest.fixture
 def store_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT1_SECRETS_DIR", str(tmp_path))
+    # These tests assert on the ENCRYPTED-FILE tier (secrets.enc on disk).
+    # When the OS keyring is installed, set_secret prefers it and the file is
+    # never written — force the file tier so the tests test what they claim.
+    monkeypatch.setattr(secrets, "_keyring_backend", lambda: None)
     yield tmp_path
 
 

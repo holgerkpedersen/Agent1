@@ -1,4 +1,6 @@
 """Implement command for agent interactive mode."""
+
+from __future__ import annotations
 import difflib
 import hashlib
 import json

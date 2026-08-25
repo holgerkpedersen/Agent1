@@ -1,6 +1,8 @@
 """Tests for the flow-stop controls: stop tokens, Ctrl+C, and the
 "issues this patch targets" display at patch-presentation time."""
 
+from __future__ import annotations
+
 import asyncio
 from unittest.mock import patch
 

@@ -1,4 +1,6 @@
 """Command base class and registry for agent interactive mode."""
+
+from __future__ import annotations
 import asyncio
 import difflib
 import os

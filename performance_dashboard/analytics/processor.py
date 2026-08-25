@@ -7,6 +7,8 @@ by subscription; ``isinstance()`` checks against TypedDict classes raise
 ``TypeError`` and attribute access raises ``AttributeError``.
 """
 
+from __future__ import annotations
+
 from typing import Union
 
 from performance_dashboard.models import (

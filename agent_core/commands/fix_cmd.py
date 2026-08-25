@@ -29,6 +29,8 @@ Exit / return
 ``execute`` returns ``True``; per-file outcomes are printed (``Fixed N/M
 files.``) and appended to ``CHANGES.md`` under a timestamped ``fix`` entry.
 """
+
+from __future__ import annotations
 import ast
 import os
 import re

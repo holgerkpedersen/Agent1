@@ -4,6 +4,8 @@ This module provides an explicit allow-list of permitted shell commands to repla
 the fragile blacklist approach previously used in tool execution.
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Final, Set
 

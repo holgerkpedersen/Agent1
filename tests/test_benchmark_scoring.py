@@ -1,6 +1,8 @@
 """Tests for the tightened benchmark scorer (plan FIX item 21):
 exact/word-bounded matching instead of lenient substring/keyword overlap,
 plus the optional LLM-judge fallback."""
+
+from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, patch
 

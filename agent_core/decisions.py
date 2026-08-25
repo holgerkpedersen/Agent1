@@ -8,6 +8,8 @@ Integration points:
 - decide: manual command to record/search/check/resolve decisions
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -48,7 +50,10 @@ def _canonical_rel(workspace: str | Path, path: str) -> str | None:
     CWD) — the absolute form is always derivable via ``join(workspace, rel)``.
     """
     ws = Path(workspace).resolve()
-    p = Path(path)
+    # Canonical input: treat backslashes as separators regardless of host OS
+    # so decision records compare equal across platforms (on POSIX a raw
+    # ``a\b`` would otherwise stay one literal component).
+    p = Path(str(path).replace("\\", "/"))
     if not p.is_absolute():
         p = ws / p
     try:

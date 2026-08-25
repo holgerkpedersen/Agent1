@@ -1,4 +1,6 @@
 """Tests for fix_cmd helpers: stdlib detection and trackable file checks."""
+
+from __future__ import annotations
 import os
 import sys
 import tempfile

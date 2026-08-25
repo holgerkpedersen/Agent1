@@ -1,4 +1,6 @@
 """Taskplan command for agent interactive mode."""
+
+from __future__ import annotations
 import os
 import re
 

@@ -1,5 +1,7 @@
 """File context retriever — extracts file content snippets for /file and @file keywords."""
 
+from __future__ import annotations
+
 
 import re
 from pathlib import Path

@@ -9,22 +9,34 @@ Security Guarantees:
 - Input hardening: Rejects empty, non-string, or malformed inputs before filesystem resolution.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
+
+import os
+
 from .entities import SecurityViolationError, FileOperationError
 
 
 def to_windows_path(path: str) -> str:
-    """Convert Unix-style paths to Windows paths.
-    
+    """Convert Unix-style paths to Windows paths (Windows hosts only).
+
     Converts /c/... to C:\\..., /d/... to D:\\..., etc.
     Used for cross-platform path compatibility in LM Studio interactions.
-    
+
+    On POSIX hosts this is an identity function: ``/tmp/x`` is a perfectly
+    valid absolute path there, and rewriting it to ``C:\\tmp\\x`` broke every
+    filesystem tool on Linux/macOS (CI bug: reads/writes reported
+    "File not found: C:\\tmp\\..." on ubuntu runners).
+
     Args:
         path: Input path string (Unix or Windows format)
-        
+
     Returns:
-        Windows-format path string
+        Windows-format path string on Windows; the input unchanged elsewhere.
     """
+    if os.name != "nt":
+        return path
     if path.startswith("/c/") or path.startswith("/C/"):
         return "C:\\" + path[3:].replace("/", "\\")
     elif path.startswith("/d/") or path.startswith("/D/"):
@@ -64,9 +76,16 @@ def safe_path(path: str) -> str:
 def workspace_path(path: str) -> str:
     """Normalize a workspace path for reliable cross-platform use.
 
-    Returns a forward-slash-separated absolute path (e.g. ``C:/Dev/Agent1``)
-    suitable for ``Path()`` construction and string operations.
+    Returns a forward-slash-separated absolute path (e.g. ``C:/Dev/Agent1``
+    on Windows, ``/home/user/project`` on POSIX) suitable for ``Path()``
+    construction and string operations.
+
+    The ``/c/...`` → ``C:/...`` rewrite applies on Windows hosts only —
+    rewriting ``/tmp`` to ``C:/tmp`` on Linux broke workspace comparisons
+    there (CI bug: SubAgent inherited a mangled workspace path).
     """
+    if os.name != "nt":
+        return path.replace("\\", "/")
     if path.startswith("/c/") or path.startswith("/C/"):
         return "C:/" + path[3:]
     if path.startswith("/"):

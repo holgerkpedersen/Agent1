@@ -6,6 +6,8 @@ into ``agent_core/exceptions`` to avoid duplicate/conflicting signatures; this
 module re-exports them so existing import paths remain valid.
 """
 
+from __future__ import annotations
+
 
 import json
 from typing import Any, Protocol

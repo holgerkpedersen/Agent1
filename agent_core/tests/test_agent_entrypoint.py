@@ -1,6 +1,8 @@
 """Core tests for the agent entry point: LLMClient wiring, configuration
 error handling, run-tool timeout validation, and workspace paths."""
 
+from __future__ import annotations
+
 import asyncio
 import os
 from pathlib import Path

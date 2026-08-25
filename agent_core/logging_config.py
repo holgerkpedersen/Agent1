@@ -13,6 +13,8 @@ The root-level ``logging_config.py`` is a deprecated re-export of this
 module; new code must import from ``agent_core.logging_config``.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import logging.config

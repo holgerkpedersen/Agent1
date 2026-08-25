@@ -1,3 +1,4 @@
+from __future__ import annotations
 import time
 import random
 from typing import Callable, TypeVar, Any

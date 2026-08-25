@@ -33,6 +33,8 @@ Return
 ``execute`` returns ``True`` after printing the next-command hint
 (``implement ... --workspace <ws>``) unless ``--auto`` runs it inline.
 """
+
+from __future__ import annotations
 import os
 import re
 import shutil

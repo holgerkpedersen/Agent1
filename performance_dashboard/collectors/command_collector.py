@@ -1,5 +1,7 @@
 """Collectors that capture command execution statistics as CommandMetric records."""
 
+from __future__ import annotations
+
 import re
 import subprocess
 import time

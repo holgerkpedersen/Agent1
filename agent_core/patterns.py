@@ -5,6 +5,8 @@ Each detector takes source code as a string and returns a list of
 are possible but kept low by regex anchoring.
 """
 
+from __future__ import annotations
+
 import ast
 import io
 import re

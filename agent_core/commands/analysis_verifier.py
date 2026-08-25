@@ -8,6 +8,8 @@ and checks each one against the actual workspace, so unverifiable statements
 are flagged instead of silently trusted. Claim text is never rewritten; the
 analysis is preserved and a ``## Verification Report`` section is appended.
 """
+
+from __future__ import annotations
 import asyncio
 import builtins
 import os

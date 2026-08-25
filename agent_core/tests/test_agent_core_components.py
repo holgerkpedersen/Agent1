@@ -1,5 +1,7 @@
 """Tests for agent_core path, security, logging, and decisions helpers."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging

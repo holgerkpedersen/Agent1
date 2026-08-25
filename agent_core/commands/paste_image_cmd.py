@@ -6,6 +6,8 @@ as a base64 data URL, and handed to :meth:`Agent.chat_nlp` as a multimodal
 user message.  Vision-capable models (e.g. Qwen-VL, Gemma-3, Pixtral, ...)
 can then describe, transcribe, or reason about the image.
 """
+
+from __future__ import annotations
 import base64
 import io
 import os as _os
