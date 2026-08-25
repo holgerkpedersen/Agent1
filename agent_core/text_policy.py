@@ -116,21 +116,65 @@ def scan_tree(
     extensions: tuple[str, ...] = DEFAULT_TEXT_EXTS,
     skip_dirs: set[str] = SKIP_DIRS,
 ) -> dict[str, list[tuple[int, str]]]:
-    """Scan a directory tree; returns relative-path -> findings."""
+    """Scan a directory tree; returns relative-path -> findings.
+
+    Only **git-tracked** files are scanned when git is available — the policy
+    (decision #079) governs repository content, not whatever untracked
+    directories happen to sit inside the checkout (a stray virtualenv full of
+    third-party license files otherwise produces bogus findings).  Falls back
+    to a plain walk outside a repo or when git is missing.
+    """
     findings: dict[str, list[tuple[int, str]]] = {}
     root_path = Path(root)
-    for path in sorted(root_path.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in extensions:
-            continue
+    tracked = _git_tracked_files(root_path)
+    if tracked is not None:
+        candidates = [
+            root_path / rel for rel in sorted(tracked)
+            if Path(rel).suffix.lower() in extensions
+        ]
+    else:
+        candidates = [
+            path for path in sorted(root_path.rglob("*"))
+            if path.is_file() and path.suffix.lower() in extensions
+        ]
+        # keep the legacy dir-skip behaviour only for the fallback walk;
+        # the tracked-file list already excludes ignored paths.
+        candidates = [
+            path for path in candidates
+            if not any(part in skip_dirs for part in path.parts[:-1])
+        ]
+    for path in candidates:
         rel = path.relative_to(root_path).as_posix()
         if rel in RUNTIME_STATE_FILES:
-            continue
-        if any(part in skip_dirs for part in path.parts[:-1]):
             continue
         rows = scan_file(path)
         if rows:
             findings[rel] = rows
     return findings
+
+
+def _git_tracked_files(root: Path) -> set[str] | None:
+    """Relative posix paths of files git tracks under *root*.
+
+    ``None`` when the directory is not a git worktree or git is unavailable —
+    callers then fall back to a plain filesystem walk.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=str(root), capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return {
+        item.replace("\\", "/")
+        for item in proc.stdout.decode("utf-8", errors="replace").split("\0")
+        if item
+    }
 
 
 def summarize_findings(
