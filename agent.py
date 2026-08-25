@@ -1807,10 +1807,15 @@ class Agent:
             "working_memory": self._working_memory,
             "history": self._history,
         }
+        # Derive the temp file from the CURRENT json path (same rule as
+        # _save_chat_history): a stale module-level AGENT_MEMORY_TMP_PATH can
+        # point onto another volume (CI: repo on D:, temp on C:) and
+        # os.replace then dies with WinError 17 / OSError EXDEV.
+        tmp_path = AGENT_MEMORY_JSON_PATH + ".tmp"
         try:
-            with open(AGENT_MEMORY_TMP_PATH, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            os.replace(AGENT_MEMORY_TMP_PATH, AGENT_MEMORY_JSON_PATH)
+            os.replace(tmp_path, AGENT_MEMORY_JSON_PATH)
         except OSError:
             logger.warning("Failed to save agent memory:\n%s", traceback.format_exc())
 

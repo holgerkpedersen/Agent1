@@ -83,6 +83,26 @@ class TestAtomicPersistence:
         data = json.loads(mem.read_text(encoding="utf-8"))
         assert data["files_read"] == [str(tmp_path / "x.py")]
 
+    def test_save_memory_sidecar_tracks_destination_not_stale_constant(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        """Regression (CI WinError 17): the tmp sidecar must be derived from
+        the CURRENT AGENT_MEMORY_JSON_PATH.  A stale module-level
+        AGENT_MEMORY_TMP_PATH pointing elsewhere (CI: repo on D:, patched
+        destination on C:) must not break or misplace the save."""
+        mem = tmp_path / "agent_memory.json"
+        monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
+        monkeypatch.setattr(
+            agent, "AGENT_MEMORY_TMP_PATH",
+            str(tmp_path / "no-such-dir" / "agent_memory.json.tmp"),
+        )
+        bot = Agent(workspace=str(tmp_path))
+        bot._files_read.add(str(tmp_path / "x.py"))
+        bot._save_memory()
+        assert mem.exists()
+        data = json.loads(mem.read_text(encoding="utf-8"))
+        assert data["files_read"] == [str(tmp_path / "x.py")]
+
     def test_corrupt_chat_history_is_quarantined_not_silently_dropped(
         self, tmp_path: Path, monkeypatch,
     ) -> None:

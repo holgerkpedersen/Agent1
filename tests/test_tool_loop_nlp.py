@@ -862,7 +862,9 @@ class TestRunToolShellAwareness:
 
     def test_silent_pipeline_failure_gets_shell_hint(self):
         """cmd.exe fails whole Unix-style pipelines silently (rc 255, no
-        output) — the exact 'mypy ... 2>&1 | tail -40' case."""
+        output) when a pipe element does not exist.  Both sides use names
+        guaranteed to be absent everywhere — real tools (mypy/tail) exist on
+        CI runners, which made the pipeline actually run and hid the bug."""
         import os
         import asyncio
         from agent import Agent
@@ -870,7 +872,10 @@ class TestRunToolShellAwareness:
 
         async def run():
             return await agent._execute_tool_call(
-                "run", {"command": "mypy nonexistent_module 2>&1 | tail -40"},
+                "run", {"command": (
+                    "definitely_not_a_real_cmd_9k2f x "
+                    "2>&1 | definitely_not_a_real_cmd2_9k2f -40"
+                )},
             )
 
         result = asyncio.run(run())
