@@ -351,16 +351,23 @@ class Agent:
         self.dispatcher.register("llm_analyze", lambda args: self._tool_llm_analyze(**args))
 
     # ── Sub-agent support ───────────────────────────────────────────────
-    def spawn_subagent(self, name: str, workspace: str | None = None) -> "SubAgent":
+    def spawn_subagent(
+        self, name: str, workspace: str | None = None,
+        role: str | None = None,
+    ) -> "SubAgent":
         """Create a child :class:`SubAgent` sharing this agent's workspace.
 
         The subagent gets its own conversation history so work done there does
         not pollute the parent's context.  It inherits the parent's model name
         and filesystem access by default; pass *workspace* to isolate it to a
         different directory within the same project tree.
+
+        Pass *role* (see :mod:`agent_core.subagent_roles`) to give the child a
+        persona, a tool whitelist and a turn cap; a plan-mode parent caps every
+        child at read-only regardless of the role's own mode.
         """
         from agent_core.subagent import SubAgent
-        return SubAgent(parent=self, name=name, workspace=workspace)
+        return SubAgent(parent=self, name=name, workspace=workspace, role=role)
 
     def run_parallel_tasks(
         self, tasks: list[Callable[[], str]], max_workers: int = 10
@@ -2298,6 +2305,8 @@ def _register_commands(registry: CommandRegistry) -> None:
     registry.register(DemoDataCommand())
     from agent_core.commands.mode_cmd import ModeCommand
     registry.register(ModeCommand())
+    from agent_core.commands.subagent_cmd import SubAgentCommand
+    registry.register(SubAgentCommand())
 
 
 def _build_registry() -> CommandRegistry:
