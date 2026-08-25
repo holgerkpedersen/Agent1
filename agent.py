@@ -345,6 +345,39 @@ class Agent:
         self.dispatcher.register("analyze_file", lambda args: self._tool_analyze_file(**args))
         self.dispatcher.register("llm_analyze", lambda args: self._tool_llm_analyze(**args))
 
+    # ── Sub-agent support ───────────────────────────────────────────────
+    def spawn_subagent(self, name: str, workspace: str | None = None) -> "SubAgent":
+        """Create a child :class:`SubAgent` sharing this agent's workspace.
+
+        The subagent gets its own conversation history so work done there does
+        not pollute the parent's context.  It inherits the parent's model name
+        and filesystem access by default; pass *workspace* to isolate it to a
+        different directory within the same project tree.
+        """
+        from agent_core.subagent import SubAgent
+        return SubAgent(parent=self, name=name, workspace=workspace)
+
+    def run_parallel_tasks(
+        self, tasks: list[Callable[[], str]], max_workers: int = 10
+    ) -> list[str]:
+        """Run *tasks* in parallel threads and collect their string results.
+
+        Each task is typically a closure that spawns a :meth:`spawn_subagent`,
+        runs work, and returns its result.  The parent can then inspect or
+        merge the subagent outputs.
+        """
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [pool.submit(task) for task in tasks]
+            results = []
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    results.append(future.result())
+                except Exception as exc:  # pragma: no cover - defensive
+                    results.append(f"[task-error] {exc}")
+        return results
+
     # ── Dashboard data feed (shared MetricsCollector bridge) ────────────
     def record_demo_activity(
         self, activity: str = "analyze", latency_ms: float = 120.0
