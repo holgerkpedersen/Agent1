@@ -28,6 +28,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Extras mirror the lazy-import feature modules: each group provides what its
+# feature needs at runtime. CI / development installs everything via [dev].
+vision = [
+    "pillow>=10.0",
+]
+secrets = [
+    "cryptography>=41.0",
+    "keyring>=24.0",
+]
 dev = [
     "mypy>=1.0",
     "pytest>=7.0",
@@ -35,6 +44,10 @@ dev = [
     "ruff>=0.4",
     "types-networkx>=3.0",
     "types-pyyaml>=6.0",
+    # Test suite exercises the vision + secrets features directly.
+    "pillow>=10.0",
+    "cryptography>=41.0",
+    "keyring>=24.0",
 ]
 
 [project.urls]

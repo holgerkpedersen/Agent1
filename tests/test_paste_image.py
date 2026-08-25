@@ -4,12 +4,29 @@ Regression coverage for:
 - ``PasteImageCommand`` encoding a file / clipboard and dispatching to chat_nlp
 - ``Agent.chat_nlp`` building an OpenAI-format image_url content block
 - ``_strip_image_blocks`` removing base64 blobs from persisted history
+
+Pillow is an optional dependency (``pip install -e .[vision]``); the tests that
+need it are skipped with a clear reason when it is absent, mirroring the
+library's own graceful degradation in ``paste_image_cmd.encode_clipboard_image``.
 """
 import base64
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+try:
+    import PIL  # noqa: F401
+
+    _HAS_PIL = True
+except ImportError:
+    _HAS_PIL = False
+
+#: Marker for the tests that genuinely build/decode PNGs via Pillow.
+needs_pil = pytest.mark.skipif(
+    not _HAS_PIL,
+    reason="pillow not installed — vision tests need 'pip install -e .[vision]'",
+)
 
 from agent import Agent, _strip_image_blocks
 from agent_core.commands.paste_image_cmd import (
@@ -28,6 +45,7 @@ def _make_png(tmp_path: Path) -> Path:
     return p
 
 
+@needs_pil
 def test_encode_image_file_returns_data_url():
     import io
 
@@ -119,6 +137,7 @@ def test_chat_nlp_builds_multimodal_user_message():
     assert last[-1]["image_url"]["url"] == "data:image/png;base64,ZZZ"
 
 
+@needs_pil
 def test_paste_image_command_reads_file_and_dispatches():
     """paste_image <path> encodes the file and calls chat_nlp with images."""
     agent = Agent(workspace=".")
@@ -205,6 +224,7 @@ def test_paste_image_desc_flag_no_path_uses_clipboard():
     assert sent["images"] == [fake_url]
 
 
+@needs_pil
 def test_paste_image_desc_flag_with_path():
     """`paste_image <path> --desc "..."` extracts both the path and the prompt."""
     agent = Agent(workspace=".")
