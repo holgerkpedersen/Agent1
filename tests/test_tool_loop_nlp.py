@@ -552,6 +552,11 @@ class TestAgentExecuteToolCall:
 
         assert "Unknown tool" in asyncio.run(run())
 
+    @pytest.mark.skipif(
+        os.name != "nt",
+        reason="Git-Bash /c/... workspaces are a Windows-only concern; the "
+        "test builds one by slicing a Windows path, which mangles POSIX paths",
+    )
     def test_git_bash_workspace_is_normalized(self, tmp_path):
         """A Git-Bash /c/... workspace must not break subprocess-based tools
         (regression: WinError 267 'directory name is invalid' on git/run/diff).

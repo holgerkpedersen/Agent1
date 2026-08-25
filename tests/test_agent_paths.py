@@ -37,10 +37,27 @@ def test_block_traversal_double_dot(workspace: Path) -> None:
         normalize_path("../etc/passwd", workspace)
 
 
-def test_block_traversal_absolute_escape(workspace: Path) -> None:
+@pytest.mark.parametrize(
+    "escape",
+    [
+        # Rooted/absolute path outside the workspace: on POSIX /etc/passwd is
+        # absolute outside; on Windows a rooted no-drive path collapses to
+        # "<workspace-drive>:\etc\passwd", also outside.  Raises everywhere.
+        "/etc/passwd",
+        pytest.param(
+            "C:\\Windows\\System32",
+            marks=pytest.mark.skipif(
+                os.name != "nt",
+                reason="drive-letter paths are only 'absolute' on Windows "
+                "(on POSIX they are plain filenames inside the workspace)",
+            ),
+        ),
+    ],
+)
+def test_block_traversal_absolute_escape(workspace: Path, escape: str) -> None:
     from agent_core.entities import SecurityViolationError
     with pytest.raises(SecurityViolationError):
-        normalize_path("C:\\Windows\\System32", workspace)
+        normalize_path(escape, workspace)
 
 
 def test_reject_empty_path(workspace: Path) -> None:
