@@ -12,12 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.9", "3.12"]
-        exclude:
-          # Keep the matrix at four jobs: newest Python on both OSes plus a
-          # 3.9 compatibility canary on Linux.
-          - os: windows-latest
-            python-version: "3.9"
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
 

@@ -7,15 +7,15 @@ name = "agent-framework"
 version = "0.1.0"
 description = "Consolidated agent framework with unified command system, LLM client, and vector memory."
 readme = { content-type = "text/markdown", text = "Agent Framework - a modular agent orchestration library." }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Agent Framework Team" }]
 keywords = ["agent", "llm", "framework", "automation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]

@@ -844,11 +844,16 @@ class TestRunToolShellAwareness:
         agent = Agent(workspace=".")
 
         async def run():
-            return await agent._execute_tool_call("run", {"command": "tail -40 x"})
+            return await agent._execute_tool_call(
+                # A name guaranteed to be absent on every platform/PATH: the
+                # subject is the "command not found" -> Hint path, which must
+                # not depend on whether real Unix tools like tail exist.
+                "run", {"command": "definitely_not_a_real_command_9k2f"},
+            )
 
         result = asyncio.run(run())
         assert "Hint" in result
-        assert "tail" in result
+        assert "tail" in result  # the generic hint text lists tail/grep/ls
 
     def test_silent_pipeline_failure_gets_shell_hint(self):
         """cmd.exe fails whole Unix-style pipelines silently (rc 255, no
