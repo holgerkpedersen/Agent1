@@ -60,12 +60,15 @@ per decision #079 — no emojis in files.)
 
 ## C. Complete the self-improvement loop
 
-10. [S] **Grow the repair catalog** — STATUS: **IN PROGRESS 2026-08-25**
-    (second repair landed, see progress log). `harnessfix/repairs/` now has
-    `tool_interface.py` (error-detail) and `stuck_repeat.py`
-    (`stuck-repeat-tool-hints`, lifecycle layer). Remaining candidates:
-    truncation-pressure → auto-compaction note; abandonment-after-mutation →
-    resume protocol. Apply/revert/collision-guard scaffolding already built.
+10. [S] **Grow the repair catalog** — STATUS: **DONE**
+    `harnessfix/repairs/` now carries three repairs across the tool-interface
+    and lifecycle layers: `tool-interface-error-detail`, `stuck-repeat-tool-hints`,
+    and `abandonment-resume-protocol` (third landed — see progress log).
+    The truncation-pressure → auto-compaction note was delivered separately as
+    the char-budget trim in `_trim_chat_history` (item #5); the
+    abandonment-after-mutation → resume protocol is `abandonment-resume-protocol`.
+    Apply/revert/collision-guard scaffolding already built and exercised by
+    `tests/test_repairs_abandonment_resume.py` (10 tests).
 11. **LLM-tier diagnosis** — `diagnose.py` promises an LLM fallback tier when
     heuristic precision <70%; measure precision from labeled `review` data
     before building.
@@ -169,3 +172,20 @@ Remaining quick wins: none — remaining items are [S]-scale.
   `llm/config.py` now re-exports the canonical `llm_types.ProfileType`
   (the divergent "fast-codegen" enum is gone).
 - Tests for all of the above: `tests/test_quickwins_2026_08_25.py` (14).
+- 2026-08-25 — **#10 DONE** (third catalog repair): `abandonment-resume-protocol`
+  (`harnessfix/repairs/abandonment_resume.py`, lifecycle layer). Trace evidence:
+  of 263 traces in the 2026-08-25 corpus, 8 mutated files (write/edit/fix,
+  recorded in `tool_result.affected_files`) and then ended WITHOUT a `loop_end`
+  event — i.e. interrupted (crash/kill/provider loss, decision #052) after the
+  workspace was already changed. The repair injects a RECONNECT note naming the
+  touched files when a run ends non-completed after mutation, so the next turn
+  RESUMES instead of restarting. The loop already tracks `_mutated_files` (fed
+  from the trace effects callback); the note travels as a "user" message and is
+  stripped from the persisted history like the other steering notes, so it
+  never leaks into a fresh session. Verified: byte-identical apply/revert
+  roundtrip, collision-fragment surface clean (no real test pins the runtime
+  string), and runtime behaviour driven through the REAL `ToolLoopRunner` in a
+  fresh interpreter — reconnect fires after mutation+non-completion, and does
+  NOT fire on a clean completed run or a read-only cap. Tests:
+  `tests/test_repairs_abandonment_resume.py` (10). Full suite: 1595 passed,
+  2 skipped.
