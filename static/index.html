@@ -31,13 +31,24 @@
       min-width: 220px;
       font-size: var(--font-sm, 0.875rem);
     }
-    .hgram-chart {
+    /* Outer wrapper: just a block container. The real 240px bar area lives on
+       .hgram-chart-inner (rendered by JS). Keeping the height off the wrapper
+       prevents the X-axis tick row from overflowing onto the stat chips below. */
+    .hgram-chart { display: block; }
+    .hgram-chart-inner {
       display: flex;
       align-items: stretch;
       gap: 6px;
       height: 240px;
       padding: 12px 8px 0 8px;
       border-bottom: 1px solid var(--border-color, #d1d5db80);
+    }
+    .hgram-chart-empty {
+      height: 240px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary-light, #94a3b8);
     }
     .hgram-col {
       flex: 1 1 0;
@@ -79,6 +90,44 @@
       font-size: var(--font-xs, 0.75rem);
       color: var(--text-secondary-light, #94a3b8);
       padding: 6px 8px 0 8px;
+    }
+    /* Axis scaffolding: a Y-axis gutter + X-axis tick row so the chart shows
+       real value indicators instead of a bare border line. */
+    .hgram-plot { display: flex; align-items: stretch; gap: 6px; flex: 1 1 0; min-width: 0; }
+    .hgram-yaxis-title {
+      width: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .hgram-yaxis-title span {
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+      font-size: var(--font-xs, 0.75rem);
+      color: var(--text-secondary-light, #94a3b8);
+      white-space: nowrap;
+    }
+    .hgram-yaxis {
+      width: 44px;
+      height: 240px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: flex-end;
+      padding: 12px 4px 0 0;
+      font-size: var(--font-xs, 0.75rem);
+      color: var(--text-secondary-light, #94a3b8);
+      text-align: right;
+    }
+    .hgram-plot-main { flex: 1 1 0; min-width: 0; }
+    .hgram-axis-label {
+      font-size: var(--font-xs, 0.75rem);
+      color: var(--text-secondary-light, #94a3b8);
+      margin-top: 4px;
+    }
+    /* Cumulative view uses a warm colour so it reads as "share finished" */
+    .hgram-bar-cum {
+      background: linear-gradient(180deg, #FBBF77, #F59E0B);
     }
     .hgram-stats { row-gap: 8px; }
     .hgram-stats > div {
@@ -423,7 +472,17 @@
                       aria-label="Metric to display"></select>
             </div>
             <div class="card-body p-24">
-              <p class="text-sm text-secondary-light mb-8" id="hgram-caption">-</p>
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-16 mb-8">
+                <p class="text-sm text-secondary-light mb-0" id="hgram-caption">-</p>
+                <div class="btn-group btn-group-sm" role="group" aria-label="Histogram view mode">
+                  <input type="radio" class="btn-check" name="hgram-view" id="hgram-view-bars" value="bars" autocomplete="off" checked>
+                  <label class="btn btn-outline-secondary" for="hgram-view-bars">Bars</label>
+                  <input type="radio" class="btn-check" name="hgram-view" id="hgram-view-cum" value="cumulative" autocomplete="off">
+                  <label class="btn btn-outline-secondary" for="hgram-view-cum">Cumulative %</label>
+                  <input type="radio" class="btn-check" name="hgram-view" id="hgram-view-table" value="table" autocomplete="off">
+                  <label class="btn btn-outline-secondary" for="hgram-view-table">Bin table</label>
+                </div>
+              </div>
               <div id="hgram-chart" class="hgram-chart" role="img"
                    aria-label="Distribution of recorded durations"></div>
               <div class="d-flex flex-wrap gap-24 mt-16 hgram-stats">
@@ -598,6 +657,7 @@
       try {
         const d = await fetchJSON(API.histograms);
         const samples = d.samples || {};
+        window.__hgramSamples = samples;  // kept for the view-mode toggle
         const keys = Object.keys(samples);
         // -- stat card + "All metrics" table --------------------------------
         document.getElementById('stat-histogram').textContent = keys.length || '-';
@@ -637,8 +697,12 @@
       }
     }
 
-    // Bins raw samples into up to 24 bars, renders them as CSS columns and
-    // fills the p50/p95 stat chips. Pure DOM/CSS - no chart library needed.
+    // Bins raw samples into up to 24 bars and renders them as CSS columns,
+    // with real X (time) and Y (count) value indicators. Three view modes:
+    //   bars       - raw count per time bin (default)
+    //   cumulative - running % of commands finished by the end of each bin
+    //   table      - the same bins as a readable table
+    // Pure DOM/CSS - no chart library needed.
     function renderChart(vals) {
       const chart = document.getElementById('hgram-chart');
       const caption = document.getElementById('hgram-caption');
@@ -647,7 +711,7 @@
       };
       vals = (vals || []).filter(function (n) { return isFinite(n); });
       if (!vals.length) {
-        chart.innerHTML = '<div class="w-100 text-center text-secondary-light align-self-center">No histogram data collected yet</div>';
+        chart.innerHTML = '<div class="hgram-chart-empty w-100 text-center text-secondary-light">No histogram data collected yet</div>';
         chart.style.borderBottomColor = '';
         caption.textContent = 'Distribution of recorded durations';
         ['hstat-count', 'hstat-mean', 'hstat-p50', 'hstat-p95', 'hstat-min', 'hstat-max']
@@ -660,7 +724,10 @@
       const mean = vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
       const p50 = percentile(sorted, 0.50);
       const p95 = percentile(sorted, 0.95);
-      const unit = /seconds$/.test(String(document.getElementById('hgram-select').value || '')) ? 's' : '';
+      const metricName = String(document.getElementById('hgram-select').value || '');
+      const unit = /seconds$/.test(metricName) ? 's' : '';
+      const yLabel = unit ? 'commands / bin' : 'samples / bin';
+      const xLabel = unit ? ('time (' + unit + ')') : 'value';
       const fmt = function (v) {
         if (!unit) return String(Math.round(v * 100) / 100);
         return v >= 10 ? v.toFixed(1) + unit : v.toFixed(2) + unit;
@@ -674,25 +741,109 @@
         counts[idx] += 1;
       });
       const peak = Math.max.apply(null, counts) || 1;
-      chart.innerHTML = counts.map(function (c, i) {
-        const lo = min + span * i / BINS;
-        const hi = min + span * (i + 1) / BINS;
-        const hPct = c ? Math.max(3, Math.round(c / peak * 100)) : 0;
-        const tip = c
-          ? fmt(lo) + ' \u2013 ' + fmt(hi) + ' \u00b7 ' + c + ' sample' + (c === 1 ? '' : 's')
-          : '';
-        return '<div class="hgram-col">' +
-                 '<div class="hgram-bar" data-tip="' + tip + '" style="height:' + hPct + '%"></div>' +
-               '</div>';
+      const mode = (document.querySelector('input[name="hgram-view"]:checked') || {}).value || 'bars';
+
+      // --- shared: X-axis tick labels (min, 1/4, 1/2, 3/4, max) -----------
+      const tickFracs = [0, 0.25, 0.5, 0.75, 1];
+      const ticks = tickFracs.map(function (f) {
+        return '<span>' + fmt(min + span * f) + '</span>';
       }).join('');
-      caption.textContent = 'Distribution of ' + (document.getElementById('hgram-select').value || 'samples') +
-        ' across ' + BINS + ' bins (' + fmt(min) + ' \u2013 ' + fmt(max) + ')';
+      const xAxis = '<div class="hgram-tick">' + ticks + '</div>' +
+                    '<div class="hgram-axis-label text-center">' + xLabel + '</div>';
+
+      // --- Y-axis value ladder (0, peak/2, peak) --------------------------
+      const yAxis = '<div class="hgram-yaxis">' +
+        '<span>' + peak + '</span><span>' + Math.round(peak / 2) + '</span><span>0</span>' +
+        '</div>';
+      const yTitle = '<div class="hgram-yaxis-title"><span>' + yLabel + '</span></div>';
+
+      const plot = function (barsHtml) {
+        return '<div class="hgram-plot">' + yTitle + yAxis +
+                 '<div class="hgram-plot-main">' +
+                   '<div class="hgram-chart-inner" style="border-bottom:1px solid var(--border-color,#d1d5db80)">' +
+                     barsHtml +
+                   '</div>' + xAxis +
+                 '</div>' +
+               '</div>';
+      };
+
+      if (mode === 'table') {
+        const rows = counts.map(function (c, i) {
+          const lo = min + span * i / BINS;
+          const hi = min + span * (i + 1) / BINS;
+          const pct = (100 * c / vals.length).toFixed(1);
+          return '<tr><td class="text-end">' + (i + 1) + '</td>' +
+                 '<td>' + fmt(lo) + ' \u2013 ' + fmt(hi) + '</td>' +
+                 '<td class="text-end">' + c + '</td>' +
+                 '<td class="text-end">' + pct + '%</td></tr>';
+        }).join('');
+        const tbl = '<div class="table-responsive"><table class="table table-sm mb-0">' +
+          '<thead><tr><th class="text-end">#</th><th>' + xLabel + ' bin</th>' +
+          '<th class="text-end">count</th><th class="text-end">share</th></tr></thead>' +
+          '<tbody>' + rows + '</tbody></table></div>';
+        // Render the table directly - it already carries its own column
+        // headers (# / time bin / count / share), so the chart's Y value
+        // ladder, rotated "commands / bin" label, X-axis tick row and
+        // "time (s)" axis label must NOT be drawn around it.
+        chart.innerHTML = tbl;
+        caption.textContent = 'Bin table of ' + metricName + ' (' + vals.length +
+          ' samples, ' + BINS + ' bins, ' + fmt(min) + ' \u2013 ' + fmt(max) + ')';
+      } else if (mode === 'cumulative') {
+        let run = 0;
+        const cum = counts.map(function (c) { run += c; return run; });
+        const bars = counts.map(function (c, i) {
+          const lo = min + span * i / BINS;
+          const hi = min + span * (i + 1) / BINS;
+          const pct = (100 * cum[i] / vals.length);
+          const hPct = c ? Math.max(3, Math.round(pct)) : 0;
+          const tip = c ? fmt(hi) + ' \u00b7 ' + pct.toFixed(1) + '% done' : '';
+          return '<div class="hgram-col">' +
+                   '<div class="hgram-bar hgram-bar-cum" data-tip="' + tip + '" style="height:' + hPct + '%"></div>' +
+                 '</div>';
+        }).join('');
+        // Y-axis redrawn as 0-100% for the cumulative view.
+        const yAxisCum = '<div class="hgram-yaxis">' +
+          '<span>100%</span><span>50%</span><span>0%</span></div>';
+        chart.innerHTML = '<div class="hgram-plot">' + yTitle + yAxisCum +
+          '<div class="hgram-plot-main">' +
+            '<div class="hgram-chart-inner" style="border-bottom:1px solid var(--border-color,#d1d5db80)">' +
+              bars + '</div>' + xAxis +
+          '</div></div>';
+        caption.textContent = 'Cumulative share of ' + metricName +
+          ' finished by each time bin (' + fmt(min) + ' \u2013 ' + fmt(max) + ')';
+      } else {
+        const bars = counts.map(function (c, i) {
+          const lo = min + span * i / BINS;
+          const hi = min + span * (i + 1) / BINS;
+          const hPct = c ? Math.max(3, Math.round(c / peak * 100)) : 0;
+          const tip = c
+            ? fmt(lo) + ' \u2013 ' + fmt(hi) + ' \u00b7 ' + c + ' sample' + (c === 1 ? '' : 's')
+            : '';
+          return '<div class="hgram-col">' +
+                   '<div class="hgram-bar" data-tip="' + tip + '" style="height:' + hPct + '%"></div>' +
+                 '</div>';
+        }).join('');
+        chart.innerHTML = plot(bars);
+        caption.textContent = 'Distribution of ' + metricName +
+          ' across ' + BINS + ' bins (' + fmt(min) + ' \u2013 ' + fmt(max) + ')';
+      }
       setStat('hstat-count', String(vals.length));
       setStat('hstat-mean', fmt(mean));
       setStat('hstat-p50', fmt(p50));
       setStat('hstat-p95', fmt(p95));
       setStat('hstat-min', fmt(min));
       setStat('hstat-max', fmt(max));
+    }
+
+    // Re-render the current metric when the view-mode toggle changes.
+    function bindHgramViewToggle() {
+      document.querySelectorAll('input[name="hgram-view"]').forEach(function (r) {
+        r.addEventListener('change', function () {
+          const sel = document.getElementById('hgram-select');
+          const samples = window.__hgramSamples || {};
+          renderChart((samples[sel.value] || []).map(Number).filter(function (n) { return !isNaN(n); }));
+        });
+      });
     }
 
     function percentile(sortedAsc, q) {
@@ -738,6 +889,7 @@
         renderChart([]);
       }
     });
+    bindHgramViewToggle();
 
     async function loadGauges() {
       try {
