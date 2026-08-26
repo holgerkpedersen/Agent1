@@ -12,6 +12,9 @@ from typing import Dict, List, Optional, Any
 from flask import Blueprint, request, jsonify, current_app
 from marshmallow import ValidationError
 
+# Initialize logger (must precede the ImportError fallback below, which logs)
+logger = logging.getLogger(__name__)
+
 # Local imports for models and services
 try:
     from ..models.performance_metrics import MetricType
@@ -22,9 +25,6 @@ try:
 except ImportError:
     # Fallback implementations for development/testing
     logger.warning("Silenced exception in endpoints.py:22")
-
-# Initialize logger
-logger = logging.getLogger(__name__)
 
 # Create Blueprint with URL prefix
 api_bp = Blueprint('performance_api', __name__, url_prefix='/api/v1')

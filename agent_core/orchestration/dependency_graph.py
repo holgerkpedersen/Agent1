@@ -148,7 +148,8 @@ class DependencyGraph:
         if nx is not None:
             self._graph: GraphBackend = cast(GraphBackend, nx.DiGraph())
         else:
-            # noqa: no-redef — fallback branch re-declares same attribute; py_compile ok
+            # Fallback branch re-declares self._graph without the annotated type;
+            # py_compile ok (no ruff rule fires here).
             self._graph = _FallbackDiGraph()
 
     # -- construction ------------------------------------------------------
@@ -293,7 +294,6 @@ class DependencyGraph:
         """
         if self.find_cycle():
             raise CycleError("Graph contains a cycle", cycle=self.find_cycle())
-        order = self.topological_order()
         # weight lookup helper -------------------------------------------------
         def _weight(u: str, v: str) -> int:
             node_v = self.get_node(v)
