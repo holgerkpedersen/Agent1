@@ -12,6 +12,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import threading
 from collections import defaultdict
@@ -2097,6 +2098,24 @@ def _kill_process_tree(proc: "subprocess.Popen[Any]") -> None:
         )
 
 
+def _git_branch() -> str:
+    """Return the current Git branch name, or ``"(unknown)"`` if not available."""
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        branch = result.stdout.strip()
+        if branch:
+            return branch
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "(unknown)"
+
+
 def _strip_dynamic_system_blocks(text: str) -> str:
     """Remove previously injected dynamic blocks from a system prompt.
 
@@ -2169,6 +2188,7 @@ _SYSTEM_PROMPT = (
     "- Never assert facts about this repo that you have not verified with a "
     "tool. project_plan.md / project_tasks.md are HISTORICAL phase docs and "
     "may be outdated — verify claims against the actual code.\n"
+    f"- You are currently on Git branch: {_git_branch()}.\n"
     "- Verify numbers (e.g. how many tests exist) with the tests tool or git "
     "log before claiming them.\n"
     "- If a search finds nothing in source files, state that the symbol does "
