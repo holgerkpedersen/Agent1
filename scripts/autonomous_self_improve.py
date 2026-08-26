@@ -41,6 +41,10 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+# Make the repo root importable when run as a standalone CLI (pytest already
+# puts it on sys.path, but `python scripts/autonomous_self_improve.py` does not).
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 STOP_FILENAME = "STOP_AUTONOMOUS"
 SUMMARY_PATH = REPO_ROOT / "reports" / "harnessfix" / "summary.json"
 
