@@ -152,7 +152,20 @@ def main(argv: list[str] | None = None) -> int:
         auto_approve=args.auto_approve,
     )
     print(json.dumps(summary, indent=2, ensure_ascii=False))
-    return 0
+    # Exit code reflects the outcome so callers (CI, wrappers, humans) get a
+    # real signal.  Previously this was hardcoded to 0, which masked a
+    # rejected/reverted/apply-failed repair as success.  A verdict of
+    # ``accepted`` is success; a safe no-op (fail-closed, nothing catalogued,
+    # or a collision-guarded skip) is also 0 because the tree was left
+    # unchanged and safe; any verdict where a repair was attempted but did not
+    # land is a non-zero failure.
+    verdict = summary.get("verdict")
+    failed = verdict in (
+        "rejected_and_reverted",
+        "apply_failed",
+        "revert_failed",
+    )
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

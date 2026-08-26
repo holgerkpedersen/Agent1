@@ -206,3 +206,66 @@ def test_auto_approve_reverts_on_failing_test(tmp_path, monkeypatch):
     # The tree is byte-identical to before: the repair never stuck.
     assert _OLD in _loop_source()
     assert _NEW not in _loop_source()
+
+
+class TestMainExitCode:
+    """main() must surface the loop outcome via its exit code, not always 0
+    (regression: a hardcoded `return 0` masked rejected/reverted repairs as
+    success to any caller of `raise SystemExit(main())`).
+
+    main() returns the int directly; the module-level
+    ``raise SystemExit(main())`` is what turns it into a process exit code.
+    """
+
+    def test_accepted_exits_zero(self, tmp_path, monkeypatch):
+        from harnessfix.loop import main
+
+        traces_dir = tmp_path / "traces_ok"
+        traces_dir.mkdir()
+        _write_tool_error_trace(traces_dir, "exit_ok")
+
+        monkeypatch.setattr(gates, "run_test_gate", lambda: (True, "passed"))
+        monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+        monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+        (tmp_path / "no_tests_ec").mkdir()
+        monkeypatch.setattr(
+            "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_ec"
+        )
+        out = tmp_path / "out_ec"
+        try:
+            code = main(["--traces", str(traces_dir), "--approve", "--output", str(out)])
+            assert code == 0
+        finally:
+            revert()
+
+    def test_rejected_and_reverted_exits_nonzero(self, tmp_path, monkeypatch):
+        from harnessfix.loop import main
+
+        traces_dir = tmp_path / "traces_rej"
+        traces_dir.mkdir()
+        _write_tool_error_trace(traces_dir, "exit_rej")
+
+        monkeypatch.setattr(gates, "run_test_gate", lambda: (False, "failed"))
+        monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+        monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+        (tmp_path / "no_tests_rej").mkdir()
+        monkeypatch.setattr(
+            "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_rej"
+        )
+        out = tmp_path / "out_rej"
+        try:
+            code = main(["--traces", str(traces_dir), "--approve", "--output", str(out)])
+            assert code == 1
+        finally:
+            revert()
+
+    def test_fail_closed_exits_zero(self, tmp_path):
+        from harnessfix.loop import main
+
+        traces_dir = tmp_path / "traces_fc"
+        traces_dir.mkdir()
+        _write_tool_error_trace(traces_dir, "exit_fc")
+
+        out = tmp_path / "out_fc"
+        code = main(["--traces", str(traces_dir), "--output", str(out)])
+        assert code == 0
