@@ -17,15 +17,20 @@ _GATE_TIMEOUT = 1800
 
 def run_test_gate() -> tuple[bool, str]:
     """Run the full pytest suite; True iff every test passes."""
-    proc = subprocess.run(
-        [
-            sys.executable, "-m", "pytest", "-q",
-            "--no-cov", "-p", "no:cacheprovider", "--no-header",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=_GATE_TIMEOUT,
-    )
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable, "-m", "pytest", "-q",
+                "--no-cov", "-p", "no:cacheprovider", "--no-header",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_GATE_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return False, f"test gate timed out after {_GATE_TIMEOUT}s: {exc}"
+    except OSError as exc:
+        return False, f"test gate failed to start: {exc}"
     summary = (proc.stdout or "").strip().splitlines()
     tail = " | ".join(summary[-3:]) if summary else (proc.stderr or "")[-300:]
     return proc.returncode == 0, tail
@@ -104,7 +109,8 @@ def run_benchmark_gate(
             if isinstance(entry, dict):
                 accuracy = entry.get("overall_accuracy")
         return float(accuracy) if accuracy is not None else None
-    except (OSError, json.JSONDecodeError, KeyError, ValueError, AttributeError, TypeError):
+    except (OSError, json.JSONDecodeError, KeyError, ValueError, AttributeError,
+            TypeError, subprocess.TimeoutExpired):
         return None
 
 

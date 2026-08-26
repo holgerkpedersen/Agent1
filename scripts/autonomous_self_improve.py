@@ -156,6 +156,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[autonomous] Loop stopped: {exc}")
             _git(["stash", "pop"], check=False)
             return 0
+        except Exception as exc:  # noqa: BLE001 - never let one bad iteration
+            # crash the whole driver with a dirty tree.  Log, restore the
+            # checkpoint, and stop so the human can inspect.
+            print(f"[autonomous] Iteration {iteration} raised {type(exc).__name__}: {exc}")
+            _git(["stash", "pop"], check=False)
+            return 1
 
         verdict = summary.get("verdict")
         print(f"[autonomous] verdict={verdict} repair={summary.get('proposed_repair')}")

@@ -108,3 +108,26 @@ def test_stops_on_rejected_verdict(monkeypatch, tmp_path):
         rc = drv.main(["--auto", "--max-iterations", "5"])
     assert rc == 0
     assert iters == [1]
+
+
+def test_iteration_exception_is_caught_and_stops(monkeypatch, tmp_path):
+    """A non-SystemExit exception in an iteration must NOT crash the driver
+    with a traceback; it should be logged, the checkpoint restored, and the
+    loop should stop (return 1)."""
+    monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)
+    git_calls: list[list[str]] = []
+
+    def spy_git(args, check=True):
+        git_calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    def boom(iteration, **k):
+        raise RuntimeError("boom in iteration")
+
+    with mock.patch.object(drv, "_stop_requested", lambda: False), \
+         mock.patch.object(drv, "_git", spy_git), \
+         mock.patch.object(drv, "run_iteration", boom):
+        rc = drv.main(["--auto", "--max-iterations", "5"])
+    assert rc == 1
+    # The checkpoint stash was popped so the tree is not left dirty.
+    assert any(c[:2] == ["stash", "pop"] for c in git_calls)
