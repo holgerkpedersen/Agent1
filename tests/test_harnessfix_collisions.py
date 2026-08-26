@@ -95,6 +95,9 @@ class TestLoopCollisionGuard:
         monkeypatch.setattr(
             "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tests_dir
         )
+        # The collision guard fires before the gate, so get_baseline_failures
+        # must still be stubbed to avoid a real (slow) suite run.
+        monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
 
         out = tmp_path / "out"
         summary = run_loop(traces_dir, approve=True, model=None, output_dir=out)
@@ -118,7 +121,8 @@ class TestLoopCollisionGuard:
         monkeypatch.setattr(
             "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tests_dir
         )
-        monkeypatch.setattr(gates, "run_test_gate", lambda: (True, "passed"))
+        monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+        monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
         monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
         monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
 
@@ -148,7 +152,8 @@ class TestLoopCollisionGuard:
         monkeypatch.setattr(
             "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tests_dir
         )
-        monkeypatch.setattr(gates, "run_test_gate", lambda: (True, "passed"))
+        monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+        monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
         monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
         monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
 

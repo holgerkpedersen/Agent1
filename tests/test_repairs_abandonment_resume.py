@@ -61,6 +61,20 @@ def _original_source() -> str:
     return Path("agent_core/llm/tool_loop.py").read_text(encoding="utf-8")
 
 
+@pytest.fixture(autouse=True)
+def _clean_real_tree():
+    """Both this module and test_repairs_stuck_repeat.py apply/remove repairs
+    on the SAME real file (agent_core/llm/tool_loop.py).  A prior module can
+    leak a modified state into this one, so guarantee a clean tree before each
+    test instead of assuming it."""
+    yield
+    for revert in (revert_resume, revert_stuck):
+        try:
+            revert()
+        except Exception:  # noqa: BLE001 - best-effort cleanup
+            pass
+
+
 def test_repair_is_catalogued_on_the_lifecycle_layer():
     repair = CATALOG[ABANDONMENT_RESUME_REPAIR_ID]
     assert repair.layer == LIFECYCLE_LAYER
@@ -362,7 +376,8 @@ def test_loop_proposes_a_lifecycle_repair_for_abandonment_corpus(tmp_path, monke
     traces_dir.mkdir()
     _write_abandonment_trace(traces_dir, "abandon1", ["a.py"])
 
-    monkeypatch.setattr(gates, "run_test_gate", lambda: (True, "passed"))
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
     monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
     monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
     (tmp_path / "no_tests").mkdir()

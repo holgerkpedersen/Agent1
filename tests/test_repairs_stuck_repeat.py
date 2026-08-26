@@ -404,7 +404,8 @@ def test_loop_now_proposes_a_lifecycle_repair_for_stuck_traces(tmp_path, monkeyp
     traces_dir.mkdir()
     _write_stuck_trace(traces_dir, "stuck1")
 
-    monkeypatch.setattr(gates, "run_test_gate", lambda: (True, "passed"))
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
     monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
     monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
     (tmp_path / "no_tests").mkdir()

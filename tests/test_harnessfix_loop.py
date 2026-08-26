@@ -93,7 +93,8 @@ def test_loop_rejects_repair_that_fails_tests(tmp_path, monkeypatch):
     traces_dir.mkdir()
     _write_tool_error_trace(traces_dir, "tr1")
 
-    monkeypatch.setattr(gates, "run_test_gate", lambda: (False, "1 failed"))
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (False, "1 failed"))
     monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
     monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
     # The collision guard must not skip these flows: point it at an empty dir.
@@ -136,7 +137,8 @@ def test_loop_accepts_repair_when_all_gates_pass(tmp_path, monkeypatch):
     traces_dir.mkdir()
     _write_tool_error_trace(traces_dir, "tr3")
 
-    monkeypatch.setattr(gates, "run_test_gate", lambda: (True, "passed"))
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
     monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
     monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
     # Collision guard: empty tests dir so the apply/accept path is exercised.
@@ -163,7 +165,8 @@ def test_auto_approve_accepts_when_all_gates_pass(tmp_path, monkeypatch):
     traces_dir.mkdir()
     _write_tool_error_trace(traces_dir, "tra_ok")
 
-    monkeypatch.setattr(gates, "run_test_gate", lambda: (True, "passed"))
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
     monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
     monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
     (tmp_path / "no_tests_auto").mkdir()
@@ -190,7 +193,8 @@ def test_auto_approve_reverts_on_failing_test(tmp_path, monkeypatch):
     traces_dir.mkdir()
     _write_tool_error_trace(traces_dir, "tra_fail")
 
-    monkeypatch.setattr(gates, "run_test_gate", lambda: (False, "1 failed"))
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (False, "1 failed"))
     monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
     monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
     (tmp_path / "no_tests_af").mkdir()
@@ -224,7 +228,8 @@ class TestMainExitCode:
         traces_dir.mkdir()
         _write_tool_error_trace(traces_dir, "exit_ok")
 
-        monkeypatch.setattr(gates, "run_test_gate", lambda: (True, "passed"))
+        monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+        monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
         monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
         monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
         (tmp_path / "no_tests_ec").mkdir()
@@ -245,7 +250,8 @@ class TestMainExitCode:
         traces_dir.mkdir()
         _write_tool_error_trace(traces_dir, "exit_rej")
 
-        monkeypatch.setattr(gates, "run_test_gate", lambda: (False, "failed"))
+        monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+        monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (False, "failed"))
         monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
         monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
         (tmp_path / "no_tests_rej").mkdir()
@@ -269,3 +275,120 @@ class TestMainExitCode:
         out = tmp_path / "out_fc"
         code = main(["--traces", str(traces_dir), "--output", str(out)])
         assert code == 0
+
+
+def _write_abandonment_trace(traces_dir: Path, task_id: str) -> None:
+    """A lifecycle trace (mutation + non-completion, no loop_end) that maps to
+    the lifecycle layer, which has TWO catalog repairs (stuck-repeat before
+    abandonment-resume).  Mirrors the proven writer in
+    test_repairs_abandonment_resume.py so it diagnoses as lifecycle."""
+    from harnessfix.tracing import (
+        KIND_TOOL_CALL,
+        KIND_TOOL_RESULT,
+        LAYER_TOOL_INTERFACE,
+    )
+
+    writer = TraceWriter(task_id=task_id, directory=traces_dir)
+    writer.emit({"kind": KIND_TOOL_CALL, "layer": LAYER_TOOL_INTERFACE,
+                 "tool": "write", "args_hash": "a"})
+    writer.emit({"kind": KIND_TOOL_RESULT, "layer": LAYER_TOOL_INTERFACE,
+                 "tool": "write", "affected_files": ["a.py"]})
+    # A third event so the corpus counts it as failed (>= MIN_ACTIVITY_EVENTS);
+    # no loop_end -> interrupted after mutation (decision #052).
+    writer.emit({"kind": KIND_TOOL_CALL, "layer": LAYER_TOOL_INTERFACE,
+                 "tool": "read", "args_hash": "r"})
+    writer.close()
+
+
+def test_loop_falls_through_to_next_repair_on_rejection(tmp_path, monkeypatch):
+    """When the highest-priority repair is rejected by the gates, the loop must
+    try the NEXT catalog repair for the same layer instead of giving up — so a
+    single bad repair does not stall the whole autonomous run."""
+    from harnessfix.repairs.abandonment_resume import ABANDONMENT_RESUME_REPAIR_ID
+    from harnessfix.repairs.stuck_repeat import STUCK_REPEAT_REPAIR_ID, revert as revert_stuck
+
+    traces_dir = tmp_path / "traces_fb"
+    traces_dir.mkdir()
+    _write_abandonment_trace(traces_dir, "fb1")
+
+    # The collision guard must not skip these flows: point it at an empty dir.
+    (tmp_path / "no_tests_fb").mkdir()
+    monkeypatch.setattr(
+        "harnessfix.repaused.collisions.DEFAULT_TESTS_DIR"
+        if False else "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR",
+        tmp_path / "no_tests_fb",
+    )
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+
+    # First candidate (stuck-repeat) is rejected; second (abandonment-resume)
+    # is accepted.  The loop should land on the accepted one.
+    states = {"call": 0}
+
+    def _test_gate(*a, **k):
+        states["call"] += 1
+        # Reject the first call (stuck-repeat), accept the second.
+        return (False, "1 failed") if states["call"] == 1 else (True, "passed")
+
+    monkeypatch.setattr(gates, "run_test_gate", _test_gate)
+    monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+
+    out = tmp_path / "out_fb"
+    try:
+        summary = run_loop(traces_dir, approve=True, model=None, output_dir=out)
+        assert summary["verdict"] == "accepted"
+        # The first candidate was rejected and the loop fell through to the
+        # second (abandonment-resume), which was accepted.
+        assert summary["proposed_repair"] == STUCK_REPEAT_REPAIR_ID
+        assert summary["accepted_repair"] == ABANDONMENT_RESUME_REPAIR_ID
+        assert summary.get("attempted_repairs") == [STUCK_REPEAT_REPAIR_ID]
+    finally:
+        revert_stuck()
+
+
+def test_loop_accepts_repair_that_adds_no_new_failures(tmp_path, monkeypatch):
+    """The repo carries pre-existing test failures (corpus-drift /
+    environment-specific).  The regression-aware gate must ACCEPT a repair
+    that introduces no NEW failures, so the autonomous loop is not permanently
+    blocked by a non-100%-green suite.  This is the exact scenario that made
+    the loop reject everything and stop at iteration 1."""
+    from harnessfix.repairs.stuck_repeat import STUCK_REPEAT_REPAIR_ID, revert as revert_stuck
+
+    traces_dir = tmp_path / "traces"
+    traces_dir.mkdir()
+    _write_abandonment_trace(traces_dir, "fb2")
+
+    (tmp_path / "no_tests_pf").mkdir()
+    monkeypatch.setattr(
+        "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_pf"
+    )
+    # Baseline: the suite already has 4 failing tests (pre-existing).
+    baseline = frozenset(
+        {
+            "tests/test_autoreview.py::test_real_corpus_matches_pre050_labels",
+            "tests/test_flow_control.py::TestShowPatchVerdict::test_verdict_ignores_pre_existing_errors",
+            "tests/test_workflow_cmd.py::TestAnalysisFlagGate::test_flagged_without_force_confirms",
+            "tests/test_workflow_cmd.py::TestExtractDecisionsGate::test_warned_candidate_recorded_with_explicit_yes",
+        }
+    )
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: baseline)
+
+    # Post-repair run: same 4 failures, nothing new -> regression gate passes.
+    def _test_gate(*a, **k):
+        # collect_test_failures() would return these; run_test_gate compares
+        # against the baseline and accepts (no new failures).
+        return True, "4 failed, 1843 passed"
+
+    monkeypatch.setattr(gates, "run_test_gate", _test_gate)
+    monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+
+    out = tmp_path / "out_pf"
+    try:
+        summary = run_loop(traces_dir, approve=True, model=None, output_dir=out)
+        assert summary["verdict"] == "accepted"
+        assert summary["accepted_repair"] == STUCK_REPEAT_REPAIR_ID
+        assert summary["tests_passed"] is True
+    finally:
+        revert_stuck()
+

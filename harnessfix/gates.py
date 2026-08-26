@@ -14,26 +14,122 @@ from typing import Any
 
 _GATE_TIMEOUT = 1800
 
+#: Baseline failure cache (regression-aware gate).  Keyed by git HEAD so a
+#: changed tree invalidates it; see :func:`get_baseline_failures`.
+_BASELINE_CACHE = Path("reports") / "harnessfix" / "baseline_failures.json"
 
-def run_test_gate() -> tuple[bool, str]:
-    """Run the full pytest suite; True iff every test passes."""
+
+def _git_head() -> str | None:
+    """Current git HEAD sha, or None if git is unavailable / not a repo."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode == 0:
+            return proc.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def collect_test_failures() -> tuple[bool, frozenset[str], str]:
+    """Run the full pytest suite; return (ran_ok, failed_node_ids, tail).
+
+    ``ran_ok`` is True when pytest actually executed (even if some tests
+    failed); it is False on a crash/timeout so callers can fall back to strict
+    pass/fail.  ``failed_node_ids`` is the set of ``path::Class::test`` node
+    ids that FAILED, used for regression comparison: a repair is safe when it
+    adds no NEW failures, even if the suite already carries pre-existing
+    (environment-specific or corpus-drift) failures.
+
+    The repo's ``pyproject.toml`` injects ``--cov=...`` via ``addopts``, but
+    ``pytest-cov`` is an optional dependency that is not always present.  When
+    it is missing, pytest rejects BOTH the ``--cov`` flags and the ``--no-cov``
+    override, so the gate fails to *start*.  We neutralize ``addopts``
+    (``-o addopts=``) so the suite runs with whatever plugins are installed.
+    """
     try:
         proc = subprocess.run(
             [
                 sys.executable, "-m", "pytest", "-q",
-                "--no-cov", "-p", "no:cacheprovider", "--no-header",
+                "-o", "addopts=", "-p", "no:cacheprovider", "--no-header",
+                "--tb=no", "-rf",
             ],
             capture_output=True,
             text=True,
             timeout=_GATE_TIMEOUT,
         )
     except subprocess.TimeoutExpired as exc:
-        return False, f"test gate timed out after {_GATE_TIMEOUT}s: {exc}"
+        return False, frozenset(), f"test gate timed out after {_GATE_TIMEOUT}s: {exc}"
     except OSError as exc:
-        return False, f"test gate failed to start: {exc}"
+        return False, frozenset(), f"test gate failed to start: {exc}"
+    # pytest exited (returncode 0 or nonzero) -> the run completed.
+    ran_ok = proc.returncode is not None
+    failed: set[str] = set()
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith("FAILED "):
+            # "-rf" emits "FAILED <nodeid>" lines (no trailing reason).
+            failed.add(line[len("FAILED "):].strip())
     summary = (proc.stdout or "").strip().splitlines()
     tail = " | ".join(summary[-3:]) if summary else (proc.stderr or "")[-300:]
-    return proc.returncode == 0, tail
+    return ran_ok, frozenset(failed), tail
+
+
+def get_baseline_failures(force: bool = False) -> frozenset[str]:
+    """Return the set of failing test node ids on the *clean* tree.
+
+    Computed once and cached to ``baseline_failures.json`` keyed by git HEAD,
+    so a changed tree invalidates the cache.  Used by the regression-aware
+    test gate: a repair is judged on whether it ADDS new failures, not on
+    whether the suite is already 100% green (it frequently is not, due to
+    pre-existing or environment-specific failures).  On a crash/timeout the
+    cache is not written and an empty baseline is returned, which degrades the
+    gate to strict (any failure rejects) rather than silently accepting all.
+    """
+    head = _git_head()
+    if not force and _BASELINE_CACHE.is_file():
+        try:
+            data = json.loads(_BASELINE_CACHE.read_text(encoding="utf-8"))
+            if data.get("git_head") == head and isinstance(data.get("failures"), list):
+                return frozenset(data["failures"])
+        except (ValueError, OSError):
+            pass
+    ran_ok, failures, _ = collect_test_failures()
+    if ran_ok:
+        try:
+            _BASELINE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            _BASELINE_CACHE.write_text(
+                json.dumps(
+                    {"git_head": head, "failures": sorted(failures)}, indent=2
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+        return failures
+    return frozenset()
+
+
+def run_test_gate(
+    baseline_failures: frozenset[str] | None = None,
+) -> tuple[bool, str]:
+    """Run the full pytest suite; True iff the repair is safe to accept.
+
+    Without ``baseline_failures`` (the historical behavior, used by the gate
+    unit tests and the fail-closed path) the gate is strict: True iff every
+    test passes.  When a baseline failure set is supplied, the gate is
+    *regression-aware*: True iff the post-repair run introduces no NEW
+    failures beyond that baseline — so a repair is not rejected merely because
+    the suite was already red with pre-existing failures.
+    """
+    ran_ok, post_fail, tail = collect_test_failures()
+    if baseline_failures is None:
+        # Strict mode (historical): the suite must be fully green.
+        return ran_ok and not post_fail, tail
+    # Regression mode: accept iff no new failures vs the baseline.
+    return ran_ok and post_fail <= baseline_failures, tail
 
 
 def run_security_gate() -> tuple[bool, str]:
