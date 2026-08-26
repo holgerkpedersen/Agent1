@@ -133,6 +133,29 @@ def test_iteration_exception_is_caught_and_stops(monkeypatch, tmp_path):
     assert any(c[:2] == ["stash", "pop"] for c in git_calls)
 
 
+def test_keyboard_interrupt_restores_checkpoint_and_reraises(monkeypatch):
+    """A Ctrl+C (KeyboardInterrupt, a BaseException) during an iteration must
+    restore the checkpoint so the tree is not left dirty, and must still
+    propagate so the process actually stops."""
+    monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)
+    git_calls: list[list[str]] = []
+
+    def spy_git(args, check=True):
+        git_calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    def interrupt(iteration, **k):
+        raise KeyboardInterrupt()
+
+    with mock.patch.object(drv, "_stop_requested", lambda: False), \
+         mock.patch.object(drv, "_git", spy_git), \
+         mock.patch.object(drv, "run_iteration", interrupt):
+        with pytest.raises(KeyboardInterrupt):
+            drv.main(["--auto", "--max-iterations", "5"])
+    # The checkpoint stash was popped before re-raising.
+    assert any(c[:2] == ["stash", "pop"] for c in git_calls)
+
+
 def test_git_missing_raises_clear_error(monkeypatch):
     """If git is not on PATH, _git must raise a clear RuntimeError — not a bare
     FileNotFoundError pointing at an opaque call site (e.g. line 146)."""

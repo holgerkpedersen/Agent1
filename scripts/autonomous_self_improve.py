@@ -175,6 +175,15 @@ def main(argv: list[str] | None = None) -> int:
             if have_checkpoint:
                 _git(["stash", "pop"], check=False)
             return 0
+        except KeyboardInterrupt:
+            # A Ctrl+C during a long gate run is a BaseException, so it is NOT
+            # caught by `except Exception` below.  Restore the checkpoint first
+            # so the tree is not left dirty, then re-raise to actually stop.
+            print("[autonomous] Interrupted (KeyboardInterrupt) — restoring "
+                  "checkpoint and halting.")
+            if have_checkpoint:
+                _git(["stash", "pop"], check=False)
+            raise
         except Exception as exc:  # noqa: BLE001 - never let one bad iteration
             # crash the whole driver with a dirty tree.  Log, restore the
             # checkpoint, and stop so the human can inspect.
