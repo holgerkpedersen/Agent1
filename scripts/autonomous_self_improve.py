@@ -50,9 +50,18 @@ SUMMARY_PATH = REPO_ROOT / "reports" / "harnessfix" / "summary.json"
 
 
 def _git(args: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=check
-    )
+    try:
+        return subprocess.run(
+            ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=check
+        )
+    except FileNotFoundError as exc:
+        # git is not on PATH for this process.  Surface a clear, actionable
+        # error instead of a bare FileNotFoundError pointing at the _git() call
+        # site (e.g. the per-iteration `git stash push` on line 146).
+        raise RuntimeError(
+            "git executable not found on PATH; the autonomous driver requires "
+            "git to be installed and reachable.  Add git to PATH and retry."
+        ) from exc
 
 
 def _stop_requested() -> bool:
@@ -142,8 +151,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         # Git checkpoint so any autonomous change is a one-step revert.
-        _git(["stash", "push", "-u", "-m", f"autonomous-checkpoint-iter-{iteration}"],
-             check=False)
+        # Track whether the checkpoint was actually created: a `git stash push`
+        # can be a no-op (nothing to stash) or fail outright (e.g. no initial
+        # commit), and blindly popping afterwards would pop an *unrelated*
+        # stash and corrupt state.
+        checkpoint = f"autonomous-checkpoint-iter-{iteration}"
+        pushed = _git(["stash", "push", "-u", "-m", checkpoint], check=False)
+        have_checkpoint = pushed.returncode == 0
+        if not have_checkpoint:
+            print(f"[autonomous] WARNING: git stash push failed "
+                  f"(rc={pushed.returncode}); continuing without a checkpoint: "
+                  f"{pushed.stderr.strip()}")
 
         print(f"\n[autonomous] === iteration {iteration}/{args.max_iterations} ===")
         try:
@@ -154,13 +172,15 @@ def main(argv: list[str] | None = None) -> int:
         except SystemExit as exc:
             # run_loop raises SystemExit when no traces exist — a clean stop.
             print(f"[autonomous] Loop stopped: {exc}")
-            _git(["stash", "pop"], check=False)
+            if have_checkpoint:
+                _git(["stash", "pop"], check=False)
             return 0
         except Exception as exc:  # noqa: BLE001 - never let one bad iteration
             # crash the whole driver with a dirty tree.  Log, restore the
             # checkpoint, and stop so the human can inspect.
             print(f"[autonomous] Iteration {iteration} raised {type(exc).__name__}: {exc}")
-            _git(["stash", "pop"], check=False)
+            if have_checkpoint:
+                _git(["stash", "pop"], check=False)
             return 1
 
         verdict = summary.get("verdict")
@@ -171,7 +191,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[autonomous] Repair accepted and "
                   f"{'committed' if committed else 'already clean'}.")
             # Restore the stash (nothing should remain uncommitted after commit).
-            _git(["stash", "drop"], check=False)
+            if have_checkpoint:
+                _git(["stash", "drop"], check=False)
             continue
 
         # Any non-accepted verdict (review_required_fail_closed,
@@ -179,7 +200,8 @@ def main(argv: list[str] | None = None) -> int:
         # apply_failed, revert_failed) ends the loop: there is no improvement
         # to keep, and re-running would only repeat the same dead end.
         print(f"[autonomous] No accepted repair this round ({verdict}) — stopping.")
-        _git(["stash", "pop"], check=False)
+        if have_checkpoint:
+            _git(["stash", "pop"], check=False)
         return 0
 
     print("[autonomous] Reached max_iterations — stopping.")

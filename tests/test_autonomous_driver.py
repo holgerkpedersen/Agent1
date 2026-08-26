@@ -131,3 +131,45 @@ def test_iteration_exception_is_caught_and_stops(monkeypatch, tmp_path):
     assert rc == 1
     # The checkpoint stash was popped so the tree is not left dirty.
     assert any(c[:2] == ["stash", "pop"] for c in git_calls)
+
+
+def test_git_missing_raises_clear_error(monkeypatch):
+    """If git is not on PATH, _git must raise a clear RuntimeError — not a bare
+    FileNotFoundError pointing at an opaque call site (e.g. line 146)."""
+    monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)
+
+    def missing_run(*_a, **_k):
+        raise FileNotFoundError(2, "No such file or directory", "git")
+
+    # Patch the real subprocess.run that _git() delegates to, so the
+    # try/except FileNotFoundError branch inside _git() is exercised.
+    with mock.patch.object(drv.subprocess, "run", missing_run), \
+         mock.patch.object(drv, "_stop_requested", lambda: False), \
+         mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
+        with pytest.raises(RuntimeError, match="git executable not found"):
+            drv.main(["--auto", "--max-iterations", "3"])
+
+
+def test_failed_stash_push_does_not_pop_unrelated_stash(monkeypatch):
+    """A `git stash push` that fails (rc != 0) must NOT be followed by a
+    `git stash pop` — otherwise an unrelated stash would be popped and the
+    tree corrupted."""
+    monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)
+    git_calls: list[list[str]] = []
+
+    def fake_git(args, check=True):
+        git_calls.append(args)
+        # The checkpoint push "fails" (e.g. nothing to stash / no initial
+        # commit).  Every other git call (status/add/commit) succeeds.
+        if args[:2] == ["stash", "push"]:
+            return subprocess.CompletedProcess(args, 1, "", "nothing to stash")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    with mock.patch.object(drv, "_stop_requested", lambda: False), \
+         mock.patch.object(drv, "_git", fake_git), \
+         mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
+        rc = drv.main(["--auto", "--max-iterations", "3"])
+    assert rc == 0
+    # No stash pop should have been issued because no checkpoint was created.
+    assert not any(c[:2] == ["stash", "pop"] for c in git_calls)
+    assert not any(c[:2] == ["stash", "drop"] for c in git_calls)
