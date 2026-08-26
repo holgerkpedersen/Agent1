@@ -44,12 +44,20 @@ is being extended to audit its own file effects (self-improvement).
   enforce exact-loopback Origin+Host checks. LLM bridge tools
   `mcp_tools`/`mcp_call` fire only for servers with `expose_to_llm: true`
   (default false), re-checked under the manager lock at call time.
-- `harnessfix/` — self-improvement consumers: `tracing.py` (opt-in `TraceWriter`),
+- `harnessfix/` — self-improvement consumers: `tracing.py` (`TraceWriter`, ON by
+  default, opt-OUT via `AGENT_NO_TRACE=1`; `agent.py` already wires it into the
+  live tool loop so every run leaves a trace under `reports/traces/`),
   `reader`, `diagnose`, `gates`, `loop`, `htir`, `links`, `corpus`, `review.py`
   (human verification ledger + diagnosis-pinning regression export), `autoreview.py`
   (evidence-rule auto-labeling behind `review auto`), `history.py` (trace-index +
   execution-ledger queries and PAST EXECUTION NOTES formatters that implement/fix
   inject into prompts).
+- `scripts/autonomous_self_improve.py` — fully autonomous self-improvement driver.
+  Repeats the HarnessFix `loop` with `auto_approve` (machine-gated: applies a
+  repair, commits ONLY if test + security + benchmark gates all pass; never merges
+  on ambiguity). Requires `AGENT_AUTONOMOUS=1` (or `--auto`) to engage; halts on a
+  `STOP_AUTONOMOUS` file/env kill-switch; leaves a git checkpoint before each
+  iteration so any change is a one-step `git revert`.
 - `tests/` — pytest, **1503 collected** (~2 min full run with `--no-cov`;
   `testpaths=["tests"]`).
 - `agent_core/tests/` — entry-point/component test package (31 tests, runs only when

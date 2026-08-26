@@ -155,3 +155,54 @@ def test_loop_accepts_repair_when_all_gates_pass(tmp_path, monkeypatch):
         # Keep the working tree clean regardless of the outcome.
         revert()
     assert _OLD in _loop_source()
+
+
+def test_auto_approve_accepts_when_all_gates_pass(tmp_path, monkeypatch):
+    """Fully autonomous mode applies + accepts a repair when the gates are green."""
+    traces_dir = tmp_path / "traces_auto_ok"
+    traces_dir.mkdir()
+    _write_tool_error_trace(traces_dir, "tra_ok")
+
+    monkeypatch.setattr(gates, "run_test_gate", lambda: (True, "passed"))
+    monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+    (tmp_path / "no_tests_auto").mkdir()
+    monkeypatch.setattr(
+        "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_auto"
+    )
+
+    out = tmp_path / "out_auto_ok"
+    try:
+        summary = run_loop(traces_dir, approve=False, auto_approve=True,
+                           model=None, output_dir=out)
+        assert summary["accepted"] is True
+        assert summary["verdict"] == "accepted"
+        assert _NEW in _loop_source()
+    finally:
+        revert()
+    assert _OLD in _loop_source()
+
+
+def test_auto_approve_reverts_on_failing_test(tmp_path, monkeypatch):
+    """Autonomous mode must NOT keep a repair that fails the test gate — it
+    reverts, exactly like the manual --approve path."""
+    traces_dir = tmp_path / "traces_auto_fail"
+    traces_dir.mkdir()
+    _write_tool_error_trace(traces_dir, "tra_fail")
+
+    monkeypatch.setattr(gates, "run_test_gate", lambda: (False, "1 failed"))
+    monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+    (tmp_path / "no_tests_af").mkdir()
+    monkeypatch.setattr(
+        "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_af"
+    )
+
+    out = tmp_path / "out_auto_fail"
+    summary = run_loop(traces_dir, approve=False, auto_approve=True,
+                       model=None, output_dir=out)
+    assert summary["accepted"] is False
+    assert summary["verdict"] == "rejected_and_reverted"
+    # The tree is byte-identical to before: the repair never stuck.
+    assert _OLD in _loop_source()
+    assert _NEW not in _loop_source()

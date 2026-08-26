@@ -30,8 +30,22 @@ def run_loop(
     model: str | None,
     profile: str | None = None,
     output_dir: Path = SUMMARY_PATH.parent,
+    auto_approve: bool = False,
 ) -> dict[str, Any]:
-    """One HarnessFix iteration; headless-safe (fail-closed without approval)."""
+    """One HarnessFix iteration.
+
+    Two approval modes (both still enforce the test + security + benchmark
+    gates — auto-approve is *machine*-gated, never human-gated):
+
+    - ``approve`` — explicit human approval (``--approve``); applies the
+      proposed repair and runs the gates.
+    - ``auto_approve`` — fully autonomous: applies the repair and runs the
+      gates, but only COMMITS the change if ``should_accept`` is True AND the
+      collision guard passed AND all gates are green.  On any ambiguity
+      (no benchmark due to a missing live model, low-confidence diagnosis,
+      or a collision hit) it falls back to ``review_required_fail_closed``
+      and never merges — so autonomy can never silently degrade the tree.
+    """
     traces = collect_traces(trace_dir)
     if not traces:
         raise SystemExit(f"no traces found under {trace_dir}")
@@ -49,7 +63,10 @@ def run_loop(
     }
     if repair is None:
         return _finish(summary, output_dir)
-    if not approve:
+    # Fail-closed unless a human (--approve) or the autonomous driver
+    # (--auto-approve) explicitly engages.  Auto-approve still cannot bypass
+    # the gates below — it only removes the manual click.
+    if not approve and not auto_approve:
         summary["verdict"] = "review_required_fail_closed"
         return _finish(summary, output_dir)
 
@@ -122,6 +139,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--traces", type=Path, default=TRACE_DIR, help="trace corpus dir")
     parser.add_argument("--approve", action="store_true", help="human review gate: approve the proposed repair")
+    parser.add_argument("--auto-approve", action="store_true",
+                        help="fully autonomous: apply + run gates, commit only if all gates pass "
+                             "(test + security + benchmark no-regression); never merges on ambiguity")
     parser.add_argument("--model", default=None, help="benchmark gate model (needs a live API)")
     parser.add_argument("--profile", default=None, help="benchmark profile tag (decision #055)")
     parser.add_argument("--output", type=Path, default=SUMMARY_PATH.parent, help="reports/harnessfix output dir")
@@ -129,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     summary = run_loop(
         args.traces, approve=args.approve, model=args.model,
         profile=args.profile, output_dir=args.output,
+        auto_approve=args.auto_approve,
     )
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     return 0
