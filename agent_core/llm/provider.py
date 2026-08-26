@@ -102,11 +102,14 @@ def build_provider(settings: Any, model_name: str) -> "LLMProvider":
     # The model prefix still overrides the provider for a single-provider
     # setup; with a failover chain the primary entry is the active provider.
     primary = provider_for(model_name, chain[0], persisted_provider)
+
+    # A single configured provider always yields the concrete provider —
+    # routing (persisted/prefix) selects WHICH one, it never extends the
+    # chain.  Only an explicit multi-provider chain builds a FailoverProvider.
+    if len(chain) == 1:
+        return _build_one(primary)
+
     ordered = (primary, *[p for p in chain if p != primary])
-
-    if len(ordered) == 1:
-        return _build_one(ordered[0])
-
     providers = [_build_one(p) for p in ordered]
     return FailoverProvider(providers, model_name=model_name)
 
