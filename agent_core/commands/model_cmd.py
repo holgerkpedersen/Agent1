@@ -84,6 +84,60 @@ class ModelCommand(Command):
         loaded_ids = [m["instance_id"] for m in models if m["loaded"] and m["instance_id"]]
         return models, loaded_ids
 
+    def _opencode_catalog(self, agent: "Agent") -> tuple[list[str], list[str], bool]:
+        """Return (opencode-go ids, opencode-zen free ids, api_mode).
+
+        The keyed opencode-go catalog uses the agent's real provider when it
+        is one (same API-key resolution: OPENCODE_API_KEY / opencode's
+        auth.json), or a freshly built provider from settings.  The keyless
+        opencode-zen FREE catalog is fetched directly from ZEN_API_BASE and is
+        always available without a key.
+        """
+        from agent_core.llm.opencode_provider import OpencodeProvider
+
+        go_models: list[str] = []
+        api_mode = False
+        provider = getattr(getattr(agent, "llm", None), "_provider", None)
+        if provider is not None and type(provider).__name__ == "OpencodeProvider":
+            try:
+                go_models = list(provider.list_models())
+                api_mode = bool(getattr(provider, "api_mode", False))
+            except Exception:
+                go_models, api_mode = [], bool(getattr(provider, "api_mode", False))
+        else:
+            try:
+                from agent_core.config import load_agent_settings
+                s = load_agent_settings()
+                oc = OpencodeProvider(
+                    model_name=getattr(getattr(agent, "llm", None), "model_name", "opencode-go/placeholder") or "opencode-go/placeholder",
+                    server_url=getattr(s, "opencode_server_url", "http://127.0.0.1:4096"),
+                    password=getattr(s, "opencode_password", ""),
+                    api_url=getattr(s, "opencode_api_url", "https://opencode.ai/zen/go/v1"),
+                    api_key=getattr(s, "opencode_api_key", ""),
+                )
+                go_models = list(oc.list_models())
+                api_mode = bool(oc.api_mode)
+            except Exception:
+                go_models, api_mode = [], False
+
+        # Keyless free tier — always reachable without a key.
+        zen_models = self._zen_free_catalog()
+        return go_models, zen_models, api_mode
+
+    def _zen_free_catalog(self) -> list[str]:
+        """Return the keyless opencode-zen FREE model ids (no API key needed).
+
+        These are fetched live from ZEN_API_BASE; on any failure we return an
+        empty list so listing never crashes (the rest of `model list` still
+        works).  Free models carry a ``-free`` suffix.
+        """
+        try:
+            from agent_core.llm.opencode_provider import OpencodeProvider
+            prov = OpencodeProvider("opencode-zen/hy3-free", read_store=False)
+            return list(prov.list_models())
+        except Exception:
+            return []
+
     def _get_vram_display(self, models: list[dict[str, Any]]) -> str:
         """Build a one-line VRAM summary string."""
         loaded = [m for m in models if m["loaded"]]
@@ -121,19 +175,14 @@ class ModelCommand(Command):
             active_provider = "lmstudio"
 
         # ---- opencode provider models ----
-        opencode_models: list[str] = []
-        try:
-            from agent_core.llm.opencode_provider import OpencodeProvider
-            oc = OpencodeProvider(
-                model_name="opencode-go/placeholder",
-                server_url=getattr(settings, "opencode_server_url", "http://127.0.0.1:4096"),
-                password=getattr(settings, "opencode_password", ""),
-                api_url=getattr(settings, "opencode_api_url", "https://opencode.ai/v1"),
-                api_key=getattr(settings, "opencode_api_key", ""),
-            )
-            opencode_models = oc.list_models()
-        except Exception:
-            opencode_models = []
+        # Use the agent's REAL opencode provider when it is one, so `model
+        # list` shows exactly the catalog chat is using (same API-key
+        # resolution: OPENCODE_API_KEY / opencode's auth.json).  The old code
+        # built a placeholder with an empty key, so api_mode was forced off
+        # and the hosted catalog was unreachable — opencode models vanished
+        # from the list and could not be selected by name.  The keyless
+        # opencode-zen FREE tier is always fetched separately (no key).
+        opencode_models, zen_models, oc_api_mode = self._opencode_catalog(agent)
 
         print(f"\n  Providers: lmstudio (active: {'*' if active_provider == 'lmstudio' else ' '})"
               f"  opencode (active: {'*' if active_provider == 'opencode' else ' '})")
@@ -144,10 +193,20 @@ class ModelCommand(Command):
                 marker = "  *" if is_current else "   "
                 print(f"{marker} {key}")
         else:
-            hint = ("'opencode serve --port 4096'" if not oc.api_mode
+            hint = ("'opencode serve --port 4096'" if not oc_api_mode
                     else "set OPENCODE_API_KEY to reach the hosted opencode-go API")
             print(f"  [opencode] unreachable — start {hint}")
             print("            (models appear once the connection works)\n")
+
+        # ---- opencode-zen FREE tier (no API key required) ----
+        if zen_models:
+            print(f"\n  [opencode-zen] {len(zen_models)} FREE model(s) — no API key:\n")
+            for key in zen_models:
+                is_current = key == current
+                marker = "  *" if is_current else "   "
+                print(f"{marker} {key}")
+        else:
+            print("\n  [opencode-zen] free tier unreachable — check network\n")
 
         # ---- LM Studio models ----
         models, loaded_ids = self._fetch_models()
@@ -246,7 +305,61 @@ class ModelCommand(Command):
             print(f"  Switched: {old} -> {query}  (provider=opencode)")
             return
 
+        # Keyless opencode-zen FREE tier (e.g. "opencode-zen/hy3-free",
+        # "model nemotron-3.5-lightning-free").  No API key needed.
+        if lowered.startswith("opencode-zen/") or lowered.startswith("zen/"):
+            q = query if lowered.startswith("opencode-zen/") else f"opencode-zen/{query}"
+            old = agent.llm.model_name
+            if q == old:
+                print(f"  Already using: {q}")
+                return
+            from agent_core.config import load_agent_settings
+            from agent_core.llm.provider import build_provider
+            settings = load_agent_settings()
+            agent.llm._provider = build_provider(settings, q)
+            agent.llm.model_name = q
+            persist_model_choice(q, provider="opencode")
+            print(f"  Switched: {old} -> {q}  (provider=opencode-zen, free)")
+            return
+
         models, loaded_ids = self._fetch_models()
+
+        # Opencode models are matched first — a partial opencode name (e.g.
+        # "nemotron-3.5-lightning-free") must NOT be hijacked to an LM Studio
+        # substring match.  The opencode catalog uses the agent's real
+        # provider (with the resolved API key), so it reflects what chat uses.
+        opencode_models, zen_models, _ = self._opencode_catalog(agent)
+        # The keyless free tier is checked first so "model nemotron-3.5-
+        # lightning-free" resolves to opencode-zen, not a paid opencode-go
+        # substring or an LM Studio model.
+        zen_match = self._resolve_opencode_match(query, zen_models)
+        if zen_match:
+            old = agent.llm.model_name
+            if zen_match == old:
+                print(f"  Already using: {zen_match}")
+                return
+            from agent_core.config import load_agent_settings
+            from agent_core.llm.provider import build_provider
+            settings = load_agent_settings()
+            agent.llm._provider = build_provider(settings, zen_match)
+            agent.llm.model_name = zen_match
+            persist_model_choice(zen_match, provider="opencode")
+            print(f"  Switched: {old} -> {zen_match}  (provider=opencode-zen, free)")
+            return
+        oc_match = self._resolve_opencode_match(query, opencode_models)
+        if oc_match:
+            old = agent.llm.model_name
+            if oc_match == old:
+                print(f"  Already using: {oc_match}")
+                return
+            from agent_core.config import load_agent_settings
+            from agent_core.llm.provider import build_provider
+            settings = load_agent_settings()
+            agent.llm._provider = build_provider(settings, oc_match)
+            agent.llm.model_name = oc_match
+            persist_model_choice(oc_match, provider="opencode")
+            print(f"  Switched: {old} -> {oc_match}  (provider=opencode)")
+            return
 
         if not models:
             print("  LM Studio not reachable — trying hardcoded list.")
@@ -611,6 +724,44 @@ class ModelCommand(Command):
     # ------------------------------------------------------------------
     #  Helpers
     # ------------------------------------------------------------------
+
+    def _resolve_opencode_match(self, query: str, opencode_models: list[str]) -> str | None:
+        """Fuzzy-match *query* against the opencode model catalog.
+
+        Mirrors the LM Studio fuzzy logic (exact, substring, then difflib) but
+        against the opencode id list so partial names like
+        ``nemotron-3.5-lightning-free`` resolve to ``opencode-go/...`` instead
+        of being silently switched to an LM Studio model.
+        """
+        if not query or not opencode_models:
+            return None
+        qlo = query.lower()
+        norm = [m.lower() for m in opencode_models]
+
+        # Exact (also accept an unprefixed id, e.g. "deepseek-v4-flash")
+        for m in opencode_models:
+            if qlo == m.lower() or qlo == m.lower().split("/")[-1]:
+                return str(m)
+        # Substring on the full id
+        sub = [m for m in opencode_models if qlo in m.lower()]
+        if len(sub) == 1:
+            return str(sub[0])
+        # Substring on the unprefixed tail
+        sub_tail = [m for m in opencode_models if qlo in m.lower().split("/")[-1]]
+        if len(sub_tail) == 1:
+            return str(sub_tail[0])
+        # difflib on full ids
+        matches = difflib.get_close_matches(query, opencode_models, n=1, cutoff=0.3)
+        if matches:
+            return str(matches[0])
+        # difflib on unprefixed tails
+        tails = [m.split("/")[-1] for m in opencode_models]
+        matches = difflib.get_close_matches(query, tails, n=1, cutoff=0.3)
+        if matches:
+            for m in opencode_models:
+                if m.split("/")[-1] == matches[0]:
+                    return str(m)
+        return None
 
     def _resolve_match(self, query: str, models: list[dict[str, Any]]) -> str | None:
         """Fuzzy-match *query* against model keys and display names."""

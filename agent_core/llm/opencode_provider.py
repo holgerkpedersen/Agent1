@@ -39,13 +39,49 @@ _TRANSIENT_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
 #: opencode-go catalog with UNPREFIXED ids like "deepseek-v4-flash").
 DEFAULT_API_BASE = "https://opencode.ai/zen/go/v1"
 
+#: Keyless OpenAI-compatible hosted endpoint for the opencode-zen FREE tier
+#: (no API key required — verified live: GET /models returns 63 models with
+#: UNPREFIXED ids, free ones suffixed "-free", e.g. "hy3-free",
+#: "nemotron-3.5-lightning-free", "laguna-s-2.1-free").  The agent names these
+#: "opencode-zen/<id>" so provider_for() routes them to this provider.
+ZEN_API_BASE = "https://opencode.ai/zen/v1"
+
+#: Model id prefixes that map to the keyless opencode-zen free tier.
+ZEN_PREFIXES = ("opencode-zen/", "zen/")
+
 #: Model ids on the hosted API are unprefixed; this agent's persisted names
-#: keep the "opencode-go/..." prefix for provider resolution.
+#: keep the "opencode-go/..." / "opencode-zen/..." prefix for provider
+#: resolution.
 def _hosted_model_id(model_name: str) -> str:
-    for prefix in ("opencode-go/", "opencode/"):
+    for prefix in ("opencode-go/", "opencode-zen/", "opencode/", "zen/"):
         if model_name.startswith(prefix):
             return model_name[len(prefix):]
     return model_name
+
+#: Curated opencode-zen FREE models that are reliably up (verified live).
+#: When the user's chosen free model is temporarily unavailable on opencode's
+#: backend ("Model is unavailable" / 5xx / timeout), chat transparently
+#: retries one of these so a `model opencode-zen/<x>-free` session still works
+#: instead of hard-failing.  Ordered by observed reliability.
+_ZEN_FREE_FALLBACK = [
+    "opencode-zen/hy3-free",
+    "opencode-zen/laguna-s-2.1-free",
+    "opencode-zen/mimo-v2.5-free",
+]
+
+#: Substrings in a provider error string that mean the backend model itself
+#: is down (as opposed to a bug in our request) — these trigger the free-tier
+#: fallback rather than being returned to the user.
+_BACKEND_DOWN_MARKERS = (
+    "model is unavailable",
+    "upstream request failed",
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "timed out",
+    "read operation timed out",
+)
 
 #: Default port for ``opencode serve``.
 DEFAULT_SERVER_URL = "http://127.0.0.1:4096"
@@ -161,8 +197,17 @@ class OpencodeProvider:
         self.api_url = api_url.rstrip("/")
         stored = _api_key_from_store() if read_store else ""
         self.api_key = api_key or os.environ.get("OPENCODE_API_KEY", "") or stored
-        #: Direct API mode when a key is available; otherwise local server.
-        self.api_mode = bool(self.api_key)
+        #: True for the keyless opencode-zen FREE tier (no API key needed —
+        #: routed to ZEN_API_BASE).  A "opencode-zen/<id>" model name switches
+        #: the provider into this mode regardless of any key present.
+        self.zen_mode = model_name.lower().startswith(ZEN_PREFIXES)
+        if self.zen_mode:
+            # The free tier needs no key and ignores any supplied one.
+            self.api_url = ZEN_API_BASE
+            self.api_key = ""
+        #: Direct API mode when a key is available (or zen free tier, which is
+        #: keyless but still uses the OpenAI-compatible /chat/completions).
+        self.api_mode = bool(self.api_key) or self.zen_mode
         #: Compatibility attributes — callers poke provider state directly.
         self.temperature: float = 0.7
         self.max_tokens: int = 50000
@@ -480,8 +525,64 @@ class OpencodeProvider:
         """
         self._label()
         if self.api_mode:
-            return await self._chat_api(messages, tools, max_tokens, disable_thinking)
+            result = await self._chat_api(messages, tools, max_tokens, disable_thinking)
+            # Free-tier self-healing: opencode's backend occasionally marks a
+            # specific free model "unavailable" (HTTP 400 "Model is
+            # unavailable", 5xx, or a read timeout).  Rather than hard-fail the
+            # turn, transparently retry against a known-good free model.
+            if self.zen_mode and self._is_backend_down(result):
+                return await self._zen_free_fallback(messages, tools, max_tokens, disable_thinking)
+            return result
         return await self._chat_server(messages, max_tokens, disable_thinking)
+
+    @staticmethod
+    def _is_backend_down(result: str) -> bool:
+        """True when *result* indicates the free backend model is down."""
+        if not isinstance(result, str) or not result.startswith("[Error:"):
+            return False
+        low = result.lower()
+        return any(marker in low for marker in _BACKEND_DOWN_MARKERS)
+
+    async def _zen_free_fallback(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        max_tokens: int | None,
+        disable_thinking: bool,
+    ) -> str:
+        """Retry the turn on other known-good free models, then give up clearly.
+
+        Tries each :data:`_ZEN_FREE_FALLBACK` model (skipping the one already
+        in use) once.  If all are down, returns a clear message naming the
+        originally requested model so the user can pick a different free model
+        with `model opencode-zen/<id>-free`.
+        """
+        tried = [self.model_name]
+        for fallback in _ZEN_FREE_FALLBACK:
+            if fallback == self.model_name:
+                continue
+            print(
+                f"\n  [opencode-zen] {self.model_name} unavailable — "
+                f"falling back to {fallback}",
+                flush=True,
+            )
+            try:
+                prov = OpencodeProvider(fallback, read_store=False)
+                prov.temperature = self.temperature
+                prov.max_tokens = self.max_tokens
+                prov._profile_name = self._profile_name
+                out = await prov._chat_api(messages, tools, max_tokens, disable_thinking)
+            except Exception as exc:  # noqa: BLE001 - defensive per-turn
+                out = f"[Error: {exc}]"
+            if not self._is_backend_down(out):
+                return out
+            tried.append(fallback)
+        return (
+            f"[Error: opencode-zen free model {self.model_name} is currently "
+            f"unavailable on the backend. Try another free model with "
+            f"'model opencode-zen/<id>-free' (e.g. opencode-zen/hy3-free). "
+            f"Checked: {', '.join(tried)}.]"
+        )
 
     async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """No streaming support — return the full text response."""
@@ -501,20 +602,27 @@ class OpencodeProvider:
     def list_models(self) -> list[str]:
         """Models for this provider.
 
-        API mode: GET /models (the hosted opencode-go catalog, ids like
-        ``opencode-go/...``).  Server mode: /config/providers (model ids of
-        every provider, grouped as ``provider/model``).
+        API mode: GET /models.  For the keyless opencode-zen FREE tier the ids
+        are namespaced ``opencode-zen/...`` (free ones carry a ``-free``
+        suffix); for the keyed opencode-go tier they are ``opencode-go/...``.
+        Server mode: /config/providers (model ids of every provider, grouped
+        as ``provider/model``).
         """
         try:
             if self.api_mode:
+                prefix = "opencode-zen" if self.zen_mode else "opencode-go"
                 data = self._request("GET", f"{self.api_url}/models", timeout=15)
                 items = data.get("data") if isinstance(data, dict) else []
                 return sorted(
-                    f"opencode-go/{m.get('id')}" for m in (items or []) if isinstance(m, dict)
+                    f"{prefix}/{m.get('id')}" for m in (items or []) if isinstance(m, dict)
                 )
             config = self._request("GET", f"{self.server_url}/config/providers", timeout=15)
         except Exception:
             return []
+        if self.zen_mode:
+            # Server mode never applies to the free tier; surface the live
+            # keyless catalog directly so `model list` still shows it.
+            return self._zen_free_models()
         providers = config.get("providers") if isinstance(config, dict) else None
         out: list[str] = []
         for prov in providers or []:
@@ -524,3 +632,18 @@ class OpencodeProvider:
                 for mid in models:
                     out.append(f"{pid}/{mid}" if pid else str(mid))
         return sorted(out)
+
+    def _zen_free_models(self) -> list[str]:
+        """Keyless opencode-zen FREE catalog (GET {ZEN_API_BASE}/models).
+
+        Always available without an API key.  Returns ids namespaced
+        ``opencode-zen/...``; free models are suffixed ``-free``.
+        """
+        try:
+            data = self._request("GET", f"{ZEN_API_BASE}/models", timeout=15)
+            items = data.get("data") if isinstance(data, dict) else []
+            return sorted(
+                f"opencode-zen/{m.get('id')}" for m in (items or []) if isinstance(m, dict)
+            )
+        except Exception:
+            return []

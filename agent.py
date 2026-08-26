@@ -2624,6 +2624,25 @@ def _warn_uncommitted(agent: "Agent") -> None:
         logger.debug("Uncommitted-changes check skipped: %s", e)
 
 
+def _build_chat_prompt(agent: "Agent", branch: str, now: datetime) -> str:
+    """Build the interactive chat prompt, colored by session mode.
+
+    The prompt reads ``[build]`` in green (full mutating toolset) or
+    ``[plan]`` in blue (read-only research mode), so the active mode is
+    unmistakable at a glance.  Falls back to green/build styling when the
+    agent has no ``is_plan_mode`` (defensive — the prompt must always render).
+    """
+    plan = getattr(agent, "is_plan_mode", None)
+    plan = bool(plan() if callable(plan) else False)
+    mode_tag = "[plan] " if plan else "[build] "
+    prompt_color = blue if plan else green
+    return (
+        f"\n[{now:%Y-%m-%d %H:%M}] {branch} "
+        f"{prompt_color(mode_tag)}"
+        f"{prompt_color('> ')}"
+    )
+
+
 async def run_interactive() -> None:
     """Interactive mode - allows user to input commands."""
 
@@ -2674,7 +2693,7 @@ async def run_interactive() -> None:
             # so the process can be killed via SIGBREAK on Windows.
             branch = _current_git_branch() or "?"
             user_input = _interruptible_input(
-                f"\n[{datetime.now():%Y-%m-%d %H:%M}] {branch} > "
+                _build_chat_prompt(agent, branch, datetime.now())
             )
             if user_input is None:
                 # Shutdown requested or stdin exhausted
