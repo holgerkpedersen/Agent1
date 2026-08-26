@@ -174,6 +174,20 @@ def _install_signal_handlers(agent: Optional["Agent"] = None) -> None:
         signal.signal(signal.SIGBREAK, handler)
 
 
+def _current_git_branch() -> str | None:
+    """Return the current git branch name, or ``None`` if not a git repo / unavailable."""
+    try:
+        head = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".git", "HEAD")
+        if os.path.exists(head):
+            with open(head, encoding="utf-8", errors="ignore") as fh:
+                ref = fh.read().strip()
+            if ref.startswith("ref:"):
+                return ref.split("/", 2)[-1]
+        return None
+    except Exception:
+        return None
+
+
 def _interruptible_input(prompt: str) -> str | None:
     """Read a line from stdin using a background thread.
 
@@ -2658,7 +2672,10 @@ async def run_interactive() -> None:
         try:
             # Get user input — _interruptible_input uses a background thread
             # so the process can be killed via SIGBREAK on Windows.
-            user_input = _interruptible_input(f"\n[{datetime.now():%Y-%m-%d %H:%M}] > ")
+            branch = _current_git_branch() or "?"
+            user_input = _interruptible_input(
+                f"\n[{datetime.now():%Y-%m-%d %H:%M}] {branch} > "
+            )
             if user_input is None:
                 # Shutdown requested or stdin exhausted
                 agent._save_memory()
