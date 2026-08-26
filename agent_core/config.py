@@ -10,6 +10,42 @@ from .exceptions import ConfigurationError
 
 logger = logging.getLogger(__name__)
 
+#: Default LM Studio server port (OpenAI-compatible + management REST API).
+DEFAULT_LMSTUDIO_PORT: Final[int] = 1234
+
+
+def lmstudio_port() -> int:
+    """LM Studio server port.
+
+    Single source of truth: ``LMSTUDIO_PORT`` env var (or ``.env`` entry),
+    falling back to :data:`DEFAULT_LMSTUDIO_PORT`.  Invalid values warn and
+    use the default — settings resolution must never raise.
+    """
+    raw = os.environ.get("LMSTUDIO_PORT")
+    if not raw:
+        return DEFAULT_LMSTUDIO_PORT
+    try:
+        return int(raw.strip())
+    except ValueError:
+        logger.warning(
+            "Invalid LMSTUDIO_PORT '%s', using default %d", raw, DEFAULT_LMSTUDIO_PORT
+        )
+        return DEFAULT_LMSTUDIO_PORT
+
+
+def lmstudio_base_url() -> str:
+    """LM Studio OpenAI-compatible base URL (e.g. ``http://localhost:1234/v1``).
+
+    Resolution order:
+      1. ``LMSTUDIO_URL`` — explicit full-URL override (backward compatible).
+      2. ``LMSTUDIO_PORT`` via :func:`lmstudio_port` — port-only override.
+      3. :data:`DEFAULT_LMSTUDIO_PORT`.
+    """
+    url = os.environ.get("LMSTUDIO_URL")
+    if url:
+        return url.strip().rstrip("/")
+    return f"http://localhost:{lmstudio_port()}/v1"
+
 
 class AgentDisplayMode(str, enum.Enum):
     """How much tool-call activity is printed to the end user during NLP turns.
@@ -32,7 +68,7 @@ class AgentSettings:
     """Immutable configuration settings for the agent."""
 
     workspace_root: Path = field(default_factory=lambda: Path.cwd())
-    llm_api_url: str = "http://localhost:1234/v1"
+    llm_api_url: str = field(default_factory=lmstudio_base_url)
     max_concurrent_tools: int = 5
     search_command_timeout_sec: float = 30.0
     compilation_check_timeout_sec: float = 30.0
@@ -205,7 +241,7 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
 
     settings = AgentSettings(
         workspace_root=workspace_root,
-        llm_api_url=merged.get("AGENT_LLM_API_URL", "http://localhost:1234/v1"),
+        llm_api_url=merged.get("AGENT_LLM_API_URL") or lmstudio_base_url(),
         max_concurrent_tools=_parse_int(merged.get("AGENT_MAX_CONCURRENT_TOOLS"), 5),
         search_command_timeout_sec=_parse_float(merged.get("AGENT_SEARCH_COMMAND_TIMEOUT_SEC"), 30.0),
         compilation_check_timeout_sec=_parse_float(merged.get("AGENT_COMPILATION_CHECK_TIMEOUT_SEC"), 30.0),

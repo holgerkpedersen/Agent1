@@ -19,6 +19,7 @@ from agent_core.constants import (
     resolve_model,
     LOOP_NOTE_TAG_KEY,
 )
+from agent_core.config import lmstudio_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ def _model_load_hint(detail: str) -> bool:
 
 def _management_url() -> str:
     """Return the LM Studio model-management base URL (REST API, not OpenAI-compat)."""
-    base = os.environ.get("LMSTUDIO_URL", "http://localhost:1234/v1")
+    base = lmstudio_base_url()
     # Strip trailing /v1 and construct /api/v1
     if base.endswith("/v1"):
         base = base[:-3]
@@ -321,7 +322,7 @@ class LMStudioProvider:
     ):
         self.model_name = resolve_model(model_name)
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        self.lmstudio_url = os.environ.get("LMSTUDIO_URL", "http://localhost:1234/v1")
+        self.lmstudio_url = lmstudio_base_url()
         self.retry_policy = retry_policy or RetryPolicy(max_retries=3, base_delay=2.0)
         self.temperature: float = 0.7
         self.max_tokens: int = 50000

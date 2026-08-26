@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 
 from .base import Command
+from agent_core.config import lmstudio_base_url
 from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, persist_model_choice
 from agent_core.llm import lmstudio as _lms
 from agent_core.llm import model_profiles as _profiles
@@ -152,7 +153,7 @@ class ModelCommand(Command):
         models, loaded_ids = self._fetch_models()
 
         if not models:
-            print("  [lmstudio] LM Studio server not reachable at localhost:1234")
+            print(f"  [lmstudio] LM Studio server not reachable at {lmstudio_base_url()}")
             print("  [lmstudio] Developer tab > Start Server, or 'lms server start'")
             self._list_known_only(agent)
             return

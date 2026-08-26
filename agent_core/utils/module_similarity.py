@@ -212,8 +212,9 @@ class _EmbeddingBackend:
     """Optional LM Studio /v1/embeddings client (precision-boost plug-in)."""
 
     def __init__(self) -> None:
+        from agent_core.config import lmstudio_base_url
         self.model = os.environ.get("AGENT_EMBEDDING_MODEL", "")
-        self.base_url = os.environ.get("LMSTUDIO_URL", "http://localhost:1234/v1")
+        self.base_url = lmstudio_base_url()
         self._available: bool | None = None
 
     def _probe(self) -> bool:

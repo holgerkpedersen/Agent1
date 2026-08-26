@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent_core.config import lmstudio_base_url
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -565,7 +567,7 @@ async def score_question(
 # Benchmark Runner
 # ---------------------------------------------------------------------------
 
-BASE_URL = "http://localhost:1234/v1/chat/completions"
+BASE_URL = f"{lmstudio_base_url()}/chat/completions"
 
 
 async def query_model(

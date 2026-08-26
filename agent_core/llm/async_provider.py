@@ -42,7 +42,10 @@ class LMStudioProvider(AsyncLLMProvider):
 
     def __init__(self, base_url: Optional[str] = None) -> None:
         super().__init__()
-        self.base_url = base_url or "http://localhost:1234/v1"
+        if base_url is None:
+            from agent_core.config import lmstudio_base_url
+            base_url = lmstudio_base_url()
+        self.base_url = base_url
 
 
 class LLMProviderRegistry:
