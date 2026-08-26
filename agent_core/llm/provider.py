@@ -53,6 +53,8 @@ def provider_for(
     m = (model_name or "").lower()
     if m.startswith("opencode"):
         return "opencode"
+    if m.startswith("zen"):
+        return "opencode"
     if m.startswith(("laguna", "qwen", "kwaipilot", "gemma", "meta/", "prism", "lmstudio")):
         return "lmstudio"
     if persisted_provider in ("lmstudio", "opencode"):

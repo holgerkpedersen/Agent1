@@ -479,3 +479,131 @@ class TestNemotronThinkingKnob:
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             out = asyncio.run(prov.chat([{"role": "user", "content": "q"}]))
         assert out == "the answer"
+
+
+class TestZenFreeTier:
+    """The opencode-zen FREE tier is keyless and lives under a separate
+    namespace (opencode-zen/<id>).  A provider built for such a model must
+    route to ZEN_API_BASE, need no API key, and list the free catalog."""
+
+    def test_zen_mode_set_for_zen_prefix(self):
+        prov = OpencodeProvider("opencode-zen/hy3-free", read_store=False)
+        assert prov.zen_mode is True
+        assert prov.api_mode is True
+        assert prov.api_key == ""
+        from agent_core.llm.opencode_provider import ZEN_API_BASE
+        assert prov.api_url == ZEN_API_BASE
+
+    def test_zen_mode_set_for_zen_slash_prefix(self):
+        prov = OpencodeProvider("zen/hy3-free", read_store=False)
+        assert prov.zen_mode is True
+
+    def test_go_model_is_not_zen(self):
+        prov = OpencodeProvider("opencode-go/hy3", api_key="sk", read_store=False)
+        assert prov.zen_mode is False
+
+    def test_hosted_model_id_strips_zen_prefix(self):
+        from agent_core.llm.opencode_provider import _hosted_model_id
+        assert _hosted_model_id("opencode-zen/hy3-free") == "hy3-free"
+        assert _hosted_model_id("zen/hy3-free") == "hy3-free"
+
+    def test_list_models_namespaces_zen(self):
+        prov = OpencodeProvider("opencode-zen/hy3-free", read_store=False)
+        payload = {"data": [{"id": "hy3-free"}, {"id": "nemotron-3.5-lightning-free"}]}
+        with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
+            models = prov.list_models()
+        assert models == ["opencode-zen/hy3-free", "opencode-zen/nemotron-3.5-lightning-free"]
+
+    def test_list_models_go_namespace(self):
+        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk", read_store=False)
+        payload = {"data": [{"id": "glm-5.2"}, {"id": "deepseek-v4-flash"}]}
+        with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
+            models = prov.list_models()
+        assert models == ["opencode-go/deepseek-v4-flash", "opencode-go/glm-5.2"]
+
+    def test_chat_uses_zen_base_without_key(self):
+        import asyncio
+        prov = OpencodeProvider("opencode-zen/hy3-free", read_store=False)
+        seen = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["url"] = req.full_url
+            seen["auth"] = req.get_header("Authorization")
+            seen["body"] = json.loads(req.data)
+            return _FakeHttp({"choices": [{"message": {"role": "assistant", "content": "pong"}}]})
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out == "pong"
+        from agent_core.llm.opencode_provider import ZEN_API_BASE
+        assert seen["url"].startswith(ZEN_API_BASE)
+        assert seen["url"].endswith("/chat/completions")
+        assert seen["body"]["model"] == "hy3-free"
+        # No Authorization header on the keyless free tier.
+        assert seen["auth"] is None or seen["auth"] == ""
+
+
+class TestProviderForZen:
+    def test_zen_prefix_routes_to_opencode(self):
+        assert provider_for("opencode-zen/hy3-free", "lmstudio") == "opencode"
+        assert provider_for("zen/hy3-free", "lmstudio") == "opencode"
+
+
+class TestZenFreeFallback:
+    """When a specific opencode-zen free model is down on the backend
+    ("Model is unavailable" / 5xx / timeout), chat must transparently fall
+    back to a known-good free model instead of hard-failing the turn. This is
+    the fix for `model opencode-zen/deepseek-v4-flash-free` returning
+    'Model is unavailable' — that model is intermittently offline upstream."""
+
+    def test_is_backend_down_detects_markers(self):
+        assert OpencodeProvider._is_backend_down(
+            "[Error: opencode API request failed: HTTP Error 400: "
+            '{"error":{"message":"Model is unavailable."}}]') is True
+        assert OpencodeProvider._is_backend_down(
+            "[Error: opencode API request failed: The read operation timed out]") is True
+        assert OpencodeProvider._is_backend_down(
+            "[Error: opencode API request failed: HTTP Error 500: "
+            '{"error":{"message":"Internal server error"}}]') is True
+        assert OpencodeProvider._is_backend_down("pong") is False
+        assert OpencodeProvider._is_backend_down("hi there") is False
+
+    def test_falls_back_when_model_unavailable(self, monkeypatch):
+        import asyncio
+
+        async def fake_chat_api(self, messages, tools, max_tokens, disable_thinking):
+            if self.model_name == "opencode-zen/deepseek-v4-flash-free":
+                return ("[Error: opencode API request failed: HTTP Error 400: "
+                        '{"error":{"message":"Model is unavailable."}}]')
+            if self.model_name == "opencode-zen/hy3-free":
+                return "pong"
+            return "[Error: down]"
+
+        monkeypatch.setattr(OpencodeProvider, "_chat_api", fake_chat_api)
+        prov = OpencodeProvider("opencode-zen/deepseek-v4-flash-free", read_store=False)
+        out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out == "pong"
+
+    def test_no_fallback_when_request_succeeds(self, monkeypatch):
+        import asyncio
+
+        async def fake_chat_api(self, messages, tools, max_tokens, disable_thinking):
+            return "ok"
+
+        monkeypatch.setattr(OpencodeProvider, "_chat_api", fake_chat_api)
+        prov = OpencodeProvider("opencode-zen/deepseek-v4-flash-free", read_store=False)
+        out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out == "ok"
+
+    def test_clear_error_when_all_free_models_down(self, monkeypatch):
+        import asyncio
+
+        async def fake_chat_api(self, messages, tools, max_tokens, disable_thinking):
+            return ("[Error: opencode API request failed: HTTP Error 400: "
+                    '{"error":{"message":"Model is unavailable."}}]')
+
+        monkeypatch.setattr(OpencodeProvider, "_chat_api", fake_chat_api)
+        prov = OpencodeProvider("opencode-zen/deepseek-v4-flash-free", read_store=False)
+        out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert "unavailable" in out
+        assert "opencode-zen/hy3-free" in out

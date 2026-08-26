@@ -12,6 +12,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import threading
 from collections import defaultdict
@@ -171,6 +172,20 @@ def _install_signal_handlers(agent: Optional["Agent"] = None) -> None:
         handler = _signal_break
     if hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, handler)
+
+
+def _current_git_branch() -> str | None:
+    """Return the current git branch name, or ``None`` if not a git repo / unavailable."""
+    try:
+        head = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".git", "HEAD")
+        if os.path.exists(head):
+            with open(head, encoding="utf-8", errors="ignore") as fh:
+                ref = fh.read().strip()
+            if ref.startswith("ref:"):
+                return ref.split("/", 2)[-1]
+        return None
+    except Exception:
+        return None
 
 
 def _interruptible_input(prompt: str) -> str | None:
@@ -2097,6 +2112,24 @@ def _kill_process_tree(proc: "subprocess.Popen[Any]") -> None:
         )
 
 
+def _git_branch() -> str:
+    """Return the current Git branch name, or ``"(unknown)"`` if not available."""
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        branch = result.stdout.strip()
+        if branch:
+            return branch
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "(unknown)"
+
+
 def _strip_dynamic_system_blocks(text: str) -> str:
     """Remove previously injected dynamic blocks from a system prompt.
 
@@ -2169,6 +2202,7 @@ _SYSTEM_PROMPT = (
     "- Never assert facts about this repo that you have not verified with a "
     "tool. project_plan.md / project_tasks.md are HISTORICAL phase docs and "
     "may be outdated — verify claims against the actual code.\n"
+    f"- You are currently on Git branch: {_git_branch()}.\n"
     "- Verify numbers (e.g. how many tests exist) with the tests tool or git "
     "log before claiming them.\n"
     "- If a search finds nothing in source files, state that the symbol does "
@@ -2590,6 +2624,25 @@ def _warn_uncommitted(agent: "Agent") -> None:
         logger.debug("Uncommitted-changes check skipped: %s", e)
 
 
+def _build_chat_prompt(agent: "Agent", branch: str, now: datetime) -> str:
+    """Build the interactive chat prompt, colored by session mode.
+
+    The prompt reads ``[build]`` in green (full mutating toolset) or
+    ``[plan]`` in blue (read-only research mode), so the active mode is
+    unmistakable at a glance.  Falls back to green/build styling when the
+    agent has no ``is_plan_mode`` (defensive — the prompt must always render).
+    """
+    plan = getattr(agent, "is_plan_mode", None)
+    plan = bool(plan() if callable(plan) else False)
+    mode_tag = "[plan] " if plan else "[build] "
+    prompt_color = blue if plan else green
+    return (
+        f"\n[{now:%Y-%m-%d %H:%M}] {branch} "
+        f"{prompt_color(mode_tag)}"
+        f"{prompt_color('> ')}"
+    )
+
+
 async def run_interactive() -> None:
     """Interactive mode - allows user to input commands."""
 
@@ -2638,7 +2691,10 @@ async def run_interactive() -> None:
         try:
             # Get user input — _interruptible_input uses a background thread
             # so the process can be killed via SIGBREAK on Windows.
-            user_input = _interruptible_input(f"\n[{datetime.now():%Y-%m-%d %H:%M}] > ")
+            branch = _current_git_branch() or "?"
+            user_input = _interruptible_input(
+                _build_chat_prompt(agent, branch, datetime.now())
+            )
             if user_input is None:
                 # Shutdown requested or stdin exhausted
                 agent._save_memory()
