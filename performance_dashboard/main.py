@@ -162,7 +162,7 @@ class JobScheduler(Generic[T]):
                 try:
                     callback()
                 except Exception:
-                    pass
+                    print("Silenced exception in main.py:164")
                 executed += 1
                 with self._lock:
                     self._last_run[name] = now
@@ -220,7 +220,7 @@ class DashboardRuntime:
             try:
                 signal.signal(sig, lambda _signum, _frame: self._shutdown_event.set())  # type: ignore[arg-type]
             except (ValueError, OSError):
-                pass
+                print("Silenced exception in main.py:222")
         db = self._bootstrapper._database
         tsdb = self._bootstrapper._time_series_db
         if db is not None and db.is_connected():

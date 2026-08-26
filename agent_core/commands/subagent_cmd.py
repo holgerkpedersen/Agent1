@@ -100,7 +100,6 @@ class SubAgentCommand(Command):
                   f"{', '.join(sorted(role.tools_allowed))}")
 
     async def _cmd_create(self, args: list[str], agent: "Agent") -> None:
-        from agent_core.issue_router import route_issue
         from agent_core.subagent_roles import get_role, role_names
 
         if not args:

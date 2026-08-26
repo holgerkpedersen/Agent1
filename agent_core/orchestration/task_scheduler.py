@@ -157,7 +157,7 @@ class TaskScheduler:
             try:
                 await asyncio.wait_for(self._loop_task, timeout=1.0)
             except (asyncio.TimeoutError, asyncio.CancelledError):
-                pass
+                print("Silenced exception in task_scheduler.py:159")
         self._loop_task = None
         # Drain every in-flight execution so no RUNNING task is orphaned when the
         # scheduler stops; each reaches a terminal (COMPLETED/FAILED) status.
@@ -238,7 +238,7 @@ class TaskScheduler:
             try:
                 handler(message)
             except Exception as exc:  # noqa: BLE001 - isolate handler failures
-                pass
+                print("Silenced exception in task_scheduler.py:240")
 
     def get_result(self, task_id: str) -> Optional[Dict[str, Any]]:
         return self._results.get(task_id)

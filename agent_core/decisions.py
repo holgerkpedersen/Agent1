@@ -235,15 +235,12 @@ def format_for_prompt(decisions: list[dict[str, Any]]) -> str:
     if not decisions:
         return ""
     lines = ["## Past Decisions (do NOT contradict these)"]
-    for d in decisions:
-        body = d.get("decision", "") or d.get("title", "")
-        why = d.get("rationale", "")
-        files = ", ".join(d.get("affected_files", [])[:5])
-        lines.append(
-            f"Decision #{d['id']}: {body}\n"
-            f"  Rationale: {why}\n"
-            f"  Affected files: {files}\n"
-        )
+    lines += [
+        f"Decision #{d['id']}: {d.get('decision', '') or d.get('title', '')}\n"
+        f"  Rationale: {d.get('rationale', '')}\n"
+        f"  Affected files: {', '.join(d.get('affected_files', [])[:5])}\n"
+        for d in decisions
+    ]
     return "\n".join(lines)
 
 
@@ -265,15 +262,14 @@ async def check_contradictions(
         "the exact nature of the conflict. If no contradiction, say so clearly "
         "and explain why they are compatible."
     )
-    past = []
-    for d in decisions:
-        past.append(
-            f"#{d['id']}: {d['title']}\n"
-            f"  Decision: {d.get('decision', '')}\n"
-            f"  Rationale: {d.get('rationale', '')}\n"
-            f"  Files: {', '.join(d.get('affected_files', []))}\n"
-            f"  Tags: {', '.join(d.get('tags', []))}"
-        )
+    past = [
+        f"#{d['id']}: {d['title']}\n"
+        f"  Decision: {d.get('decision', '')}\n"
+        f"  Rationale: {d.get('rationale', '')}\n"
+        f"  Files: {', '.join(d.get('affected_files', []))}\n"
+        f"  Tags: {', '.join(d.get('tags', []))}"
+        for d in decisions
+    ]
     user_msg = (
         "## Past decisions\n\n" + "\n\n".join(past) + "\n\n"
         f"## New decision to evaluate\n\n{new_decision_text}\n\n"

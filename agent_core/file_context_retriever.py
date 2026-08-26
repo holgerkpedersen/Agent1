@@ -29,7 +29,7 @@ class FileContextRetriever:
             target = normalize_path(self._base_dir, filename)
             return target.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError, SecurityViolationError):
-            pass
+            print("Silenced exception in file_context_retriever.py:31")
 
         # Context-aware fallback 1: append common extensions when none present
         if not Path(filename).suffix:

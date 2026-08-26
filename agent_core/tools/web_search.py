@@ -77,9 +77,10 @@ def search_ddg(query: str, max_results: int = DEFAULT_MAX_RESULTS) -> list[dict[
         r'.*?<a[^>]+class=["\']result__snippet["\'][^>]*>(.*?)</a>',
         page, re.DOTALL,
     )
+    _UDDG_ASSIGN_RE = re.compile(r"uddg=([^&]+)")
     for raw_url, raw_title, raw_snippet in blocks:
         if raw_url.startswith("/"):
-            uddg = re.search(r"uddg=([^&]+)", raw_url)
+            uddg = _UDDG_ASSIGN_RE.search(raw_url)
             if not uddg:
                 continue
             raw_url = urllib.parse.unquote(uddg.group(1))
@@ -102,11 +103,14 @@ def format_results(query: str, results: list[dict[str, Any]]) -> str:
     if not results:
         return f"No web results found for: {query}"
     lines = [f"Web search results for: {query}", UNTRUSTED_MARKER]
-    for i, r in enumerate(results, 1):
-        lines.append(f"{i}. {r.get('title', '')}")
-        lines.append(f"   {r.get('url', '')}")
-        snippet = r.get("snippet", "").strip()
-        if snippet:
-            lines.append(f"   {snippet}")
+    lines += [
+        part
+        for i, r in enumerate(results, 1)
+        for part in (
+            f"{i}. {r.get('title', '')}",
+            f"   {r.get('url', '')}",
+            *(f"   {s}" for s in [r.get("snippet", "").strip()] if s),
+        )
+    ]
     output = "\n".join(lines)
     return output[:MAX_OUTPUT_CHARS]

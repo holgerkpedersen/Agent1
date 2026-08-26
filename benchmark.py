@@ -4,7 +4,6 @@ import json
 import logging
 import re
 import statistics
-import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -1073,14 +1072,14 @@ async def main() -> None:
         args.model
     ) * args.repetitions
 
-    print(f"\n  Benchmark Configuration")
+    print("\n  Benchmark Configuration")
     print(f"  {'-' * 40}")
     print(f"  Models:        {', '.join(args.model)}")
     if args.profile:
         print(f"  Profile:       {args.profile}")
     print(f"  Categories:    {', '.join(categories.keys())}")
     print(
-        f"  Questions:     "
+        "  Questions:     "
         f"{total_q // (len(args.model) * args.repetitions)} per model "
         f"({total_q} total with repetitions)"
     )

@@ -14,7 +14,6 @@ import logging
 import os
 import signal
 import traceback
-from pathlib import Path
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)

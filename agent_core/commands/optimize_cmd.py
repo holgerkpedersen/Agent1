@@ -799,14 +799,14 @@ def _fix_dead_assignment(wl: list[str], idx: int, line: int, basename: str, find
 
 
 def _fix_silent_except(wl: list[str], idx: int, line: int, basename: str, finding: dict[str, Any]) -> str | None:
-    # Only reference ``logger`` when the file actually provides it — the old
-    # fixer emitted ``logger.warning(...)`` unconditionally, which is a
-    # NameError in files without a logger.  Fall back to a plain print so the
-    # replacement never introduces an undefined name.
+    # Only reference ``logger`` when the file defines it ABOVE the target
+    # line — a definition further down (agent.py: logger at :104, target at
+    # :73) would turn the silent fallback into a NameError at runtime.
     has_logger = any(
-        re.search(r"\blogger\s*=|(?:from\s+\S+\s+import\s+[^\n]*\blogger\b|\bimport\s+logger\b)", ln)
+        i < idx
+        and re.search(r"\blogger\s*=(?!=)|(?:from\s+\S+\s+import\s+[^\n]*\blogger\b|\bimport\s+logger\b)", ln)
         and not ln.lstrip().startswith("#")
-        for ln in wl
+        for i, ln in enumerate(wl)
     )
     ei = idx
     e_indent = len(wl[ei]) - len(wl[ei].lstrip())
@@ -914,12 +914,13 @@ def _scrub_pattern(pattern: str) -> str:
     """
     out: list[str] = []
     i, n = 0, len(pattern)
+    _ID_RE = re.compile(r"[A-Za-z]")
     while i < n:
         c = pattern[i]
         if c == "[":
             end = pattern.find("]", i + 1)
             seg = pattern[i + 1 : end if end != -1 else n]
-            if re.search(r"[A-Za-z]", seg):
+            if _ID_RE.search(seg):
                 out.append("ID")
             i = n if end == -1 else end + 1
             continue
@@ -984,8 +985,9 @@ def _enclosing_func_span(wl: list[str], index: int) -> tuple[int, int] | None:
     ``index``, or ``None`` at module level.  ``end`` is exclusive."""
     depth: int | None = None
     start: int | None = None
+    _ASYNC_DEF_CLASS_RE = re.compile(r"^(\s*)(?:async\s+)?(?:def|class)\s+\w+")
     for i in range(index - 1, -1, -1):
-        m = re.match(r"^(\s*)(?:async\s+)?(?:def|class)\s+\w+", wl[i])
+        m = _ASYNC_DEF_CLASS_RE.match(wl[i])
         if m:
             indent = len(m.group(1))
             if depth is None or indent < depth:
@@ -1058,8 +1060,9 @@ def _fix_regex_in_loop(wl: list[str], idx: int, line: int, basename: str, findin
     func_span = _enclosing_func_span(wl, idx)
 
     known: list[tuple[int, str, str, bool]] = []
+    _ID_COMPILE_ASSIGN_RE = re.compile(r"^(\s*)([A-Za-z_]\w*)\s*=\s*re\.compile\((.+)\)\s*$")
     for i, l in enumerate(wl):
-        m = re.match(r"^(\s*)([A-Za-z_]\w*)\s*=\s*re\.compile\((.+)\)\s*$", l)
+        m = _ID_COMPILE_ASSIGN_RE.match(l)
         if not m or i >= loop_start:
             continue
         d_indent = len(m.group(1))
@@ -1073,8 +1076,17 @@ def _fix_regex_in_loop(wl: list[str], idx: int, line: int, basename: str, findin
         )
 
     reused = None
-    for _, d_name, d_arg, visible in known:
-        if visible and _same_regex_arg(d_arg, first_arg_src):
+    for k_i, d_name, d_arg, visible in known:
+        if not visible or not _same_regex_arg(d_arg, first_arg_src):
+            continue
+        # Hard visibility recheck (regression gate: fix_cmd.py got
+        # ``_ERROR_RE.match(...)`` referencing another function's local,
+        # NameError at runtime).  A constant defined elsewhere in the file is
+        # only reusable when it sits at module scope (indent 0) or inside the
+        # exact enclosing span of the call we are rewriting.
+        d_indent_k = len(wl[k_i]) - len(wl[k_i].lstrip())
+        in_current_func = bool(func_span) and func_span[0] <= k_i <= func_span[1]
+        if d_indent_k == 0 or in_current_func:
             reused = d_name
             break
 
@@ -1108,9 +1120,26 @@ def _fix_regex_in_loop(wl: list[str], idx: int, line: int, basename: str, findin
     else:
         after_clean = _rest
 
+    # Flag preservation (regression gate: patch_utils got
+    # ``_ID_RE.match(part, re.DOTALL)`` — on a compiled pattern the 2nd
+    # positional is *pos*, not flags, so matching silently started at char
+    # 64).  A trailing ``re.X|re.Y`` / ``flags=re.X`` argument belongs in
+    # ``re.compile(pattern, flags)`` and must NOT survive on the call.
+    flags_src: str | None = None
+    _FLAGS_TAIL_RE = re.compile(
+        r",\s*(?:flags\s*=\s*)?(re\.[A-Za-z_]+(?:\s*\|\s*re\.[A-Za-z_]+)*)\s*\)\s*$"
+    )
+    m_flags = _FLAGS_TAIL_RE.search(after_clean)
+    if m_flags:
+        flags_src = m_flags.group(1)
+        after_clean = after_clean[: m_flags.start()] + ")"
+    elif re.search(r"\bflags\s*=", after_clean):
+        return None  # non-trailing flags kwarg — refuse rather than corrupt
+
     new_line = f"{orig_line[:re_pos]}{name}.{func_name}({after_clean}"
 
-    compile_line = f"{' ' * loop_indent}{name} = re.compile({first_arg_src})"
+    compile_args = first_arg_src if flags_src is None else f"{first_arg_src}, {flags_src}"
+    compile_line = f"{' ' * loop_indent}{name} = re.compile({compile_args})"
 
     loop_header = wl[loop_start]
     context = wl[loop_start + 1 : idx]
@@ -1155,6 +1184,11 @@ def _fix_list_append_join(wl: list[str], idx: int, line: int, basename: str, fin
         return None
     target_var = m.group(1)
     expr = m.group(2).strip()
+
+    # Self-referencing accumulation (e.g. ``stats.append(f"{len(stats)}")``):
+    # a comprehension cannot reference the list being built -> NameError.
+    if re.search(rf"\b{re.escape(target_var)}\b", expr):
+        return None
 
     for j in range(s + 1, e):
         stripped_j = wl[j].strip()
@@ -1246,6 +1280,15 @@ def _tri_mech_fix(work_lines: list[str], line: int, pattern: str,
         return None
     idx = line - 1
     if not (0 <= idx < len(work_lines)):
+        return None
+    # Central string-literal guard: if the target line's text lives inside a
+    # multi-line string (docstring, test fixture) or an escaped-newline
+    # single-line string, it is DATA, not code — no mechanical fixer may
+    # touch it.  This is the regression gate for the 2026-08-26 incident
+    # where fixture samples in tests/test_optimize_cmd.py were "fixed" and
+    # broke 40+ detector tests.
+    from agent_core.patterns import string_literal_rows
+    if line in string_literal_rows("\n".join(work_lines)):
         return None
     return fixer(work_lines, idx, line, basename, finding)
 
@@ -1936,6 +1979,16 @@ class OptimizeCommand(Command):
             file_contents[fpath] = content_val
             findings = static_analyze(content_val)
             if findings:
+                # Suppress findings that live inside string literals (test
+                # fixtures, embedded samples) — they are data, not code.
+                # regex_in_loop is exempt: its target line legitimately
+                # CONTAINS a string (the pattern argument of re.compile etc.).
+                from agent_core.patterns import string_literal_rows
+                sl_rows = string_literal_rows(content_val)
+                findings = [
+                    f for f in findings
+                    if f["pattern"] == "regex_in_loop" or f.get("line") not in sl_rows
+                ]
                 all_findings.extend({"file": fpath, **f} for f in findings)
 
         if not all_findings:
@@ -2079,9 +2132,9 @@ class OptimizeCommand(Command):
                                 past = find_decisions(ws, files=[basename])
                                 if past:
                                     decisions_ctx = format_for_prompt(past)
-                                    user_content += "\n\n" + decisions_ctx
+                                    user_content = "\n\n".join([user_content, decisions_ctx])
                             except Exception:
-                                pass
+                                logger.warning("Silenced exception in optimize_cmd.py:2086")
                         if feedback:
                             user_content = feedback + "\n\n" + user_content
                         try:
@@ -2139,7 +2192,7 @@ class OptimizeCommand(Command):
                                     ids = ", ".join(f"#{d['id']}" for d in overlaps)
                                     titles = "; ".join(d['title'] for d in overlaps)
                                     print(f"    WARNING: Fix contradicts past decisions: {ids} ({titles})")
-                                    print(f"    Use --force to override and apply anyway.")
+                                    print("    Use --force to override and apply anyway.")
                                     resolved = False
                                     break
                         placeholder_warn = any(p in raw.lower() for p in _PLACEHOLDER_PHRASES)
@@ -2237,7 +2290,7 @@ class OptimizeCommand(Command):
                         missing_imports = _regressed_imports(original, patched)
                         if missing_imports:
                             feedback = (
-                                f"Your patch removed an import that the file still uses: "
+                                "Your patch removed an import that the file still uses: "
                                 f"{', '.join(missing_imports)}. Remove ONLY the unused name(s) "
                                 "from the import; keep every imported name that is referenced."
                             )

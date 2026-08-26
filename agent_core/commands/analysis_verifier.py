@@ -183,11 +183,12 @@ def _extract_claims(segment: str, seg_start: int) -> list[_Claim]:
     # Backticked regions are masked so _FILE_RE only sees bare file refs
     # (backticked file paths become dedicated file claims below).
     masked = _mask_backticks(segment)
+    _RE_1 = re.compile(r":(\d+)")
     for m in _FILE_RE.finditer(masked):
         rel = m.group(1).replace("\\", "/")
         offset = seg_start + m.start()
         claims.append(_Claim(kind="file", text=rel, offset=offset, file=rel, segment_start=seg_start))
-        line_m = re.match(r":(\d+)", segment[m.end():])
+        line_m = _RE_1.match(segment[m.end():])
         if line_m:
             claims.append(_Claim(
                 kind="line",
@@ -419,8 +420,9 @@ def _verify_snippet(
         # references the module prefix — this is a valid code pattern even though
         # no single file literally contains the dotted wildcard string.
         prefix = snippet.rstrip(".*").rstrip(".")  # e.g. "commands" from "commands.*"
+        _FROM_ID_IMPORT_RE = re.compile(r'from\s+[\w.]+\s+import\s+')
         for rel, content in contents.items():
-            if re.search(r'from\s+[\w.]+\s+import\s+', content) and (prefix + ".") in content or prefix in content:
+            if _FROM_ID_IMPORT_RE.search(content) and (prefix + ".") in content or prefix in content:
                 return _STATUS_OK, f"module path reference found in {rel}"
         # Check raw filesystem for filename globs too.
         ws_dir = Path(".")  # verifier runs from workspace root
@@ -517,17 +519,19 @@ def _pair_symbol_with_line(claims: list[_Claim]) -> None:
     adjacent bullet — matching _iter_lines' "avoiding bleed between bullet points" design.
     """
     lines = [c for c in claims if c.kind == "line" and c.status == _STATUS_OK and c.file]
+    _DEFINED_AT_RE = re.compile(r"defined at (\S+):(\d+)")
+    _RE_2 = re.compile(r":(\d+)")
     for c in claims:
         if c.kind != "symbol" or c.status != _STATUS_OK:
             continue
         if c.file is None:
             # Global hit: reason already stores "defined at file:line"
-            m = re.search(r"defined at (\S+):(\d+)", c.reason)
+            m = _DEFINED_AT_RE.search(c.reason)
             if not m:
                 continue
             file, def_line = m.group(1), int(m.group(2))
         else:
-            m = re.search(r":(\d+)", c.reason)
+            m = _RE_2.search(c.reason)
             if not m:
                 continue
             file, def_line = c.file, int(m.group(1))
@@ -628,7 +632,6 @@ async def verify_analysis_claims(analysis: str, ws_path: Path) -> VerificationRe
     lines = [
         f"- Code claims checked: {len(checked)} — {len(checked) - len(flagged)} verified, {len(flagged)} flagged."
     ]
-    for c in flagged:
-        lines.append(f"- [UNVERIFIED] `{c.text}` — {c.reason}")
+    lines += [f"- [UNVERIFIED] `{c.text}` — {c.reason}" for c in flagged]
     report = "\n\n---\n\n## Verification Report\n\n" + "\n".join(lines) + "\n"
     return VerificationResult(analysis + report, len(checked), len(flagged))

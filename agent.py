@@ -573,7 +573,7 @@ class Agent:
         if len(self._active_subagents) >= _MAX_ACTIVE_SUBAGENTS:
             return (
                 f"Error: {_MAX_ACTIVE_SUBAGENTS} subagents already running — "
-                f"wait for one to finish before delegating again."
+                "wait for one to finish before delegating again."
             )
 
         self._delegate_counter += 1
@@ -593,8 +593,8 @@ class Agent:
         except asyncio.TimeoutError:
             result = (
                 f"[delegate:{name}] timed out after {_DELEGATE_TIMEOUT_S:.0f}s "
-                f"— the task did not finish. Partial context preserved in the "
-                f"subagent; retry with a smaller task."
+                "— the task did not finish. Partial context preserved in the "
+                "subagent; retry with a smaller task."
             )
         except Exception as exc:  # defensive: a broken child must not kill the turn
             logger.exception("Delegated subagent %s failed", name)
@@ -613,7 +613,7 @@ class Agent:
         if is_plan_mode(self.mode):
             mode_note = (
                 f"\n[plan mode] The '{spec.name}' child was capped to read-only "
-                f"(plan-mode parent); it reported findings only."
+                "(plan-mode parent); it reported findings only."
                 if spec.mode != MODE_PLAN
                 else ""
             )
@@ -1622,9 +1622,9 @@ class Agent:
 
             out = new_run_dir(self.workspace) / "plan_proposed.md"
             out.write_text(
-                f"# Proposed plan\n\n"
+                "# Proposed plan\n\n"
                 f"_Generated in plan mode on {datetime.now():%Y-%m-%d %H:%M}. "
-                f"Review before applying — switch to build mode to implement._\n\n"
+                "Review before applying — switch to build mode to implement._\n\n"
                 f"{plan_text}\n",
                 encoding="utf-8",
             )
@@ -2450,7 +2450,7 @@ def start_dashboard_thread(port: int = 8080) -> Optional["ThreadingHTTPServer"]:
         try:
             httpd.serve_forever()
         except Exception:
-            pass
+            logger.warning("Silenced exception in agent.py:2452")
 
     threading.Thread(target=_serve, name="agent1-dashboard", daemon=True).start()
     print(f"  Dashboard: http://localhost:{port}  (Ctrl+C to stop)")
@@ -2724,7 +2724,7 @@ def run_dashboard_server() -> None:
             refresh=server_holder.get_refresh(),
         )
     except KeyboardInterrupt:
-        pass
+        logger.warning("Silenced exception in agent.py:2726")
 
 
 if __name__ == "__main__":

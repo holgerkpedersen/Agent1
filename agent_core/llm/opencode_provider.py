@@ -521,6 +521,6 @@ class OpencodeProvider:
             pid = prov.get("id") if isinstance(prov, dict) else ""
             models = prov.get("models") if isinstance(prov, dict) else {}
             if isinstance(models, dict):
-                for mid in models.keys():
+                for mid in models:
                     out.append(f"{pid}/{mid}" if pid else str(mid))
         return sorted(out)

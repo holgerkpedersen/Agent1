@@ -174,7 +174,7 @@ class SubAgent:
                 return (
                     f"[subagent:{self.name}] turn cap reached "
                     f"({self.role_spec.max_turns} turns). Collect my summary "
-                    f"via get_context_summary() or reset me for a new task."
+                    "via get_context_summary() or reset me for a new task."
                 )
 
         self._conversation.append({"role": "user", "content": prefixed})

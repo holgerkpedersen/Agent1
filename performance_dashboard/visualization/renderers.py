@@ -29,9 +29,7 @@ class HTMLRenderer:
 
     def render_controls(self, controls: Dict[str, Any]) -> str:
         """Render interactive control markup (filters, refresh buttons)."""
-        html_parts: List[str] = []
-        for name, spec in controls.items():
-            html_parts.append(self._control_markup(name, spec))
+        html_parts = [self._control_markup(name, spec) for name, spec in controls.items()]
         return "\n".join(html_parts)
 
     def _wrap_document(self, body_content: str) -> str:
@@ -42,7 +40,7 @@ class HTMLRenderer:
         return (
             "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
             f"<meta charset=\"utf-8\">\n<meta http-equiv=\"refresh\" content=\"{refresh_ms / 1000:.1f}\">\n"
-            f"<title>Performance Dashboard</title>\n<style>\n"
+            "<title>Performance Dashboard</title>\n<style>\n"
             f":root {{ --grid-cols: {grid_cols}; --chart-height: {height_px}px; }}\n"
             f".theme-{theme} {{ background:#fff;color:#222;}}\n"
             ".dashboard-grid {{ display:grid;grid-template-columns:repeat(var(--grid-cols),1fr);gap:8px;}}\n"
@@ -109,7 +107,7 @@ class ImageSnapshotter:
             if rendered is not None and isinstance(rendered, str):
                 return rendered
         except Exception:
-            pass
+            print("Silenced exception in renderers.py:109")
         fallback: SVGExporter = SVGExporter()
         fallback.render = lambda: ""  # noqa: E731  -- placeholder guard
         try:
@@ -364,7 +362,6 @@ class LayoutTranslator:
 
     def translate_from_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Translate from a serialized dashboard state."""
-        layout_spec: DashboardLayoutSpec = _rebuild_layout(state.get("layout", {}))  # type: ignore[arg-type]
         records_data: List[Any] = list(state.get("records", []))  # type: ignore[arg-type]
         reconstructed_records: List[PerformanceRecord] = [_reconstruct_record(r) for r in records_data if isinstance(r, dict)]  # noqa: E501
         return self.translate(reconstructed_records)

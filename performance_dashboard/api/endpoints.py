@@ -14,15 +14,14 @@ from marshmallow import ValidationError
 
 # Local imports for models and services
 try:
-    from ..models.performance_metrics import PerformanceMetric, MetricType
+    from ..models.performance_metrics import MetricType
     from ..services.metrics_service import MetricsService
     from ..services.analytics_service import AnalyticsService
     from ..utils.pagination import paginate_query
-    from ..utils.filters import apply_metric_filters
     from ..schemas.metric_schema import MetricSchema, AggregatedMetricSchema
 except ImportError:
     # Fallback implementations for development/testing
-    pass
+    logger.warning("Silenced exception in endpoints.py:22")
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -97,7 +96,6 @@ def get_metrics():
         }
 
         # Apply filters and pagination
-        metrics_data = service.get_metrics(query_params)
         
         if not hasattr(service, '_query'):
             # Fallback for mock implementations

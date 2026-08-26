@@ -19,9 +19,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
-from pathlib import Path
-from typing import Any
 
 from .base import Command, read_choice, stop_requested
 
@@ -168,7 +165,7 @@ class SelfHealCommand(Command):
                 try:
                     rounds = max(1, int(args[i + 1]))
                 except ValueError:
-                    pass
+                    print("Silenced exception in self_heal_cmd.py:167")
                 i += 2
                 continue
             if args[i] in ("--yes", "--force"):

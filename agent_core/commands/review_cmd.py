@@ -126,7 +126,7 @@ class ReviewCommand(Command):
         unreviewed = [r for r in reviews.values() if not r.is_labeled()]
         if unreviewed:
             print(f"\n{len(unreviewed)} unreviewed — `review auto` labels them "
-                  f"for you, or `review label <task> auto` for one.")
+                  "for you, or `review label <task> auto` for one.")
         return True
 
     # ── show ────────────────────────────────────────────────────────────
@@ -205,7 +205,7 @@ class ReviewCommand(Command):
             if task_id not in reviews:
                 self.error(
                     f"No review record for task {task_id} (trace missing or "
-                    f"not a failed run)."
+                    "not a failed run)."
                 )
                 return True
         if not trace.is_file():

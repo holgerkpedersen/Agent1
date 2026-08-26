@@ -13,7 +13,6 @@ the claimed position only as a search window hint.
 
 from __future__ import annotations
 import difflib
-import os
 import re
 
 
@@ -87,11 +86,12 @@ def split_patch_hunks(patch_text: str) -> list[tuple[int, list[tuple[str, str]]]
         return []
     parts = re.split(r"(?=@@\s*-\d+)", text)
     hunks: list[tuple[int, list[tuple[str, str]]]] = []
+    _ID_RE = re.compile(r"@@\s*-(\d+)(?:,(\d+))?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@[^\n]*\n(.*)", re.DOTALL)
     for part in parts:
         part = part.strip("\n")
         if not part:
             continue
-        m = re.match(r"@@\s*-(\d+)(?:,(\d+))?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@[^\n]*\n(.*)", part, re.DOTALL)
+        m = _ID_RE.match(part)
         if not m:
             continue
         start = int(m.group(1))
@@ -375,7 +375,7 @@ def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bo
     for claimed, chunks in valid:
         anchor = _find_hunk_anchor(original_lines, chunks, claimed)
         if anchor is None:
-            return False, (f"Cannot anchor patch content in the file around "
+            return False, ("Cannot anchor patch content in the file around "
                            f"line {claimed}")
         # Verify the whole old run verbatim (strip-compare) at the anchor and
         # detect the LLM padding-space convention from the first '-'/' ' line.

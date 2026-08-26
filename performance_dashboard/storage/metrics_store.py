@@ -14,8 +14,7 @@ import pickle
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections import defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from functools import lru_cache, wraps
@@ -423,7 +422,7 @@ class FilesystemBackend(MetricsBackend):
             try:
                 existing_data = json.loads(file_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):  # noqa: BLE001
-                pass
+                logger.warning("Silenced exception in metrics_store.py:424")
 
         series_dict = series.to_dict()
         found_existing = False

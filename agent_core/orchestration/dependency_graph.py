@@ -519,7 +519,6 @@ class _FallbackDiGraph:
         # seed with priority of each node as its own length contribution
         for n in order:
             base = best[n][0]
-            w_self = weight(n, n) if weight else 0  # noqa: E731 - simple lambda-free call
             # We treat the path length as sum of successor weights.
             for s in self._succ[n]:
                 edge_weight = (weight(n, s) or 0) if weight else 1

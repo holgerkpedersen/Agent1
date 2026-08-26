@@ -216,7 +216,7 @@ def label_review(
         if disposition in AGENT_FORBIDDEN:
             raise ValueError(
                 f"agent auto-review may not assign {disposition!r} "
-                f"(no self-certification)"
+                "(no self-certification)"
             )
         if record.is_labeled():
             raise ValueError(
@@ -241,7 +241,7 @@ def review_table(reviews: dict[str, ReviewRecord]) -> str:
     for rec in sorted(reviews.values(), key=lambda r: r.task_id):
         disp = rec.disposition or "-"
         if rec.source == "agent" and rec.disposition:
-            disp += " (agent)"
+            disp = "".join([disp, " (agent)"])
         lines.append(
             f"{rec.task_id:<36} {disp:<16} "
             f"{(rec.model or '-'):<20} {(rec.root_layer or '-'):<24} "

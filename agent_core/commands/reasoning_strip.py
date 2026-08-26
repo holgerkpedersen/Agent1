@@ -226,8 +226,9 @@ def _clean_analysis_sections(text: str) -> str:
 
     # Find first '## 1.' section header at column 0 (no leading whitespace)
     first_section = -1
+    _RE_1 = re.compile(r'^##\s+1\.')
     for j, line in enumerate(lines):
-        if re.match(r'^##\s+1\.', line):  # no strip() - must start at col 0
+        if _RE_1.match(line):  # no strip() - must start at col 0
             first_section = j
             break
 
@@ -297,6 +298,7 @@ def _strip_taskplan_reasoning(text: str) -> str:
     lines = text.split('\n')
     result = []
     in_reasoning_block = False
+    _RE_2 = re.compile(r'^\d+\.\s+`')
     for line in lines:
         stripped = line.strip()
 
@@ -310,7 +312,7 @@ def _strip_taskplan_reasoning(text: str) -> str:
 
         # End of reasoning block: empty line or a task item starts
         if in_reasoning_block:
-            if not stripped or re.match(r'^\d+\.\s+`', stripped):
+            if not stripped or _RE_2.match(stripped):
                 in_reasoning_block = False
 
         if not in_reasoning_block:
@@ -382,10 +384,12 @@ def dedupe_repeated_sections(text: str) -> str:
     out: list[str] = []
     seen_keys: set[str] = set()
     draining = False
+    _RE_3 = re.compile(r'\s*\(.*?\)\s*$')
+    _BLOCKED_RE = re.compile(r'^\*\*BLOCKED:')
     for line in text.split('\n'):
         stripped = line.strip()
         if stripped.startswith('## '):
-            key = re.sub(r'\s*\(.*?\)\s*$', '', stripped)
+            key = _RE_3.sub('', stripped)
             if key in seen_keys:
                 draining = True
                 continue
@@ -394,7 +398,7 @@ def dedupe_repeated_sections(text: str) -> str:
             out.append(line)
             continue
         if draining:
-            if re.match(r'^\*\*BLOCKED:', stripped):
+            if _BLOCKED_RE.match(stripped):
                 # Structural end marker — keep it and stop draining.
                 draining = False
                 out.append(line)

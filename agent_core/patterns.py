@@ -17,6 +17,47 @@ from typing import TypedDict, Any, Any, Any, Any, Any, Any, Any, Any, Any
 _DS_CACHE: dict[str, set[int]] = {}
 _DS_CACHE_MAX = 64
 
+_SL_ROWS_CACHE: dict[str, frozenset[int]] = {}
+_SL_ROWS_CACHE_MAX = 64
+
+
+def string_literal_rows(source: str) -> frozenset[int]:
+    """Return 1-based line numbers whose text lies INSIDE a string literal.
+
+    Covers two shapes that imitate code and must never be auto-fixed:
+
+    - multi-line strings (triple-quoted docstrings AND test fixtures such as
+      ``UNFIXED = textwrap.dedent(\"\"\"...\"\"\")``): every row strictly after
+      the row where the token starts is marked (the start row itself usually
+      carries real code before the opening quotes);
+    - single-line strings embedding escaped newlines
+      (``code = "if x == None:\\n    return"``), which line-based detectors
+      otherwise read as statements.
+
+    Returns an empty set when *source* does not tokenize (best effort).
+    """
+    cached = _SL_ROWS_CACHE.get(source)
+    if cached is not None:
+        return cached
+    rows: set[int] = set()
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except Exception:
+        toks = []
+    for tok in toks:
+        if tok.type != tokenize.STRING:
+            continue
+        s_row, e_row = tok.start[0], tok.end[0]
+        if e_row > s_row:
+            rows.update(range(s_row + 1, e_row + 1))
+        elif "\\n" in tok.string:
+            rows.add(s_row)
+    result = frozenset(rows)
+    if len(_SL_ROWS_CACHE) >= _SL_ROWS_CACHE_MAX:
+        _SL_ROWS_CACHE.clear()
+    _SL_ROWS_CACHE[source] = result
+    return result
+
 
 def _docstring_lines(source: str) -> set[int]:
     """Return 1-based line numbers that belong to any docstring in *source*."""
@@ -361,7 +402,6 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
             if isinstance(node.func, ast.Name) and node.func.id == "closing":
                 closing = True
             elif isinstance(node.func, ast.Attribute) and node.func.attr == "closing":
-                closing = True
                 for call_arg in node.args:
                     for sub in ast.walk(call_arg):
                         exempt_ids.add(id(sub))
@@ -645,7 +685,7 @@ def detect_file_read_in_loop(source: str) -> list[tuple[int, str, str]]:
             continue
         path = _open_path_arg(line)
         if path is None:
-            # bare ``f.read()`` — resolve through its with/as alias
+            # bare receiver-dot-read call — resolve through its with/as alias
             rm = re.search(r"\.read\s*\(", line)
             if not rm:
                 continue
@@ -882,6 +922,24 @@ def detect_dead_assignment(source: str) -> list[tuple[int, str, str]]:
         if var_name.startswith("_"):
             continue  # convention: intentionally unused
 
+        # nonlocal/global: the stored value is consumed by an outer scope
+        # after this function returns — a textual "never referenced again"
+        # scan cannot see that read.  (Regression 2026-08-26: a nested
+        # callback's ``nonlocal patched`` + ``patched = True`` store was
+        # flagged and removed, silently breaking the test's mechanism.)
+        if re.search(
+            rf"\b(?:nonlocal|global)\s+[^#\n]*\b{re.escape(var_name)}\b", source
+        ):
+            continue
+
+        # Class-body attributes are consumed dynamically through instances
+        # (``_FakeProfile().temperature``, duck-typed stubs) — no static Load
+        # of the bare name exists, so "never used after" is unprovable here.
+        # (Regression 2026-08-26: a stub class lost an attribute the code
+        # under test reads via getattr-style access -> AttributeError.)
+        if func_depth[i - 1] == 0 and _nearest_block_header_is_class(lines, i):
+            continue
+
         if func_depth[i - 1] == 0:
             continue  # module-level: may be exported/used elsewhere
 
@@ -912,6 +970,27 @@ def detect_dead_assignment(source: str) -> list[tuple[int, str, str]]:
 
     findings.sort(key=lambda f: f[0])
     return findings
+
+
+def _nearest_block_header_is_class(lines: list[str], line: int) -> bool:
+    """True if the nearest block header above (smaller indent than *line*)
+    is a ``class`` statement; False for def/if/module level."""
+    indent = len(lines[line - 1]) - len(lines[line - 1].lstrip())
+    header_re = re.compile(r"(?:(?:async\s+)?def|class)\b")
+    j = line - 2
+    while j >= 0:
+        lj = lines[j]
+        if not lj.strip():
+            j -= 1
+            continue
+        lj_indent = len(lj) - len(lj.lstrip())
+        if lj_indent >= indent:
+            j -= 1
+            continue
+        if header_re.match(lj.strip()):
+            return lj.strip().startswith("class")
+        return False
+    return False
 
 
 def _loop_body_references(lines: list[str], line: int, var_name: str) -> bool:
@@ -1023,9 +1102,7 @@ def _strip_strings(line: str) -> str:
 def _balance_delta(line: str) -> int:
     """Return net open-minus-close delimiter count for () [] {} on *line* (strings ignored)."""
     clean = _strip_strings(line)
-    return clean.count("(") - clean.count(")") + \
-           clean.count("[") - clean.count("]") + \
-           clean.count("{") - clean.count("}")
+    return clean.count("(") - clean.count(")") + clean.count("[") - clean.count("]") + clean.count("{") - clean.count("}")
 
 
 def detect_unreachable_code(source: str) -> list[tuple[int, str, str]]:
@@ -1053,7 +1130,6 @@ def detect_unreachable_code(source: str) -> list[tuple[int, str, str]]:
             j += 1
             if j >= len(lines):
                 break
-            balance += _balance_delta(lines[j - 1])
 
         # Now the statement has ended at line j (0-based index j-1).
         # Find the next non-empty, non-comment line.

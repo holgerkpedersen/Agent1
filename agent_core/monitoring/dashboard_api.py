@@ -289,7 +289,7 @@ class DashboardAPIServer:
         try:
             server.serve_forever()
         except KeyboardInterrupt:
-            pass
+            print("Silenced exception in dashboard_api.py:291")
         finally:
             self.stop(server)
 

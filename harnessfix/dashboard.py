@@ -302,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(sys.stderr, "reconfigure"):
             sys.stderr.reconfigure(encoding="utf-8")
     except (ValueError, OSError):
-        pass
+        print("Silenced exception in dashboard.py:304")
 
     parser = argparse.ArgumentParser(prog="harnessfix.dashboard", description="Print a short dashboard of recent traces/diagnoses")
     parser.add_argument("--traces", type=Path, default=TRACE_DIR, help="trace directory")

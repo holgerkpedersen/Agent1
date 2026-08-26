@@ -149,6 +149,7 @@ def _extract_task_line(taskplan: str, filename: str) -> str:
     positives from substring matches (e.g. ``agent.py`` in ``agent_core/agent.py``).
     """
     name = os.path.basename(filename)
+    _RE_1 = re.compile(r'^\d+\.?\s+`')
     for line in taskplan.split('\n'):
         if f"`{filename}`" in line:
             return line.strip()
@@ -157,7 +158,7 @@ def _extract_task_line(taskplan: str, filename: str) -> str:
             return line.strip()
     for line in taskplan.split('\n'):
         stripped = line.strip()
-        if name in stripped and re.match(r'^\d+\.?\s+`', stripped):
+        if name in stripped and _RE_1.match(stripped):
             return stripped
     return ""
 
@@ -345,6 +346,7 @@ def _find_class_definition_file(class_name: str, ws_dir: str, exclude_file: str 
     attributes (most-derived / most complete definition).
     """
     matches: list[tuple[str, str, int]] = []
+    _RE_5 = re.compile(r'^\s+\w+\s*[:=]', re.MULTILINE)
     for root, dirs, files in os.walk(ws_dir):
         if ".git" in root or "__pycache__" in root:
             continue
@@ -359,7 +361,7 @@ def _find_class_definition_file(class_name: str, ws_dir: str, exclude_file: str 
                     src = sf.read()
                 if re.search(rf'^class\s+{re.escape(class_name)}\b', src, re.MULTILINE):
                     # Count attributes to prefer the most-complete definition
-                    attr_count = len(re.findall(r'^\s+\w+\s*[:=]', src, re.MULTILINE))
+                    attr_count = len(_RE_5.findall(src))
                     matches.append((fp, src, attr_count))
             except Exception:
                 print("WARNING: failed to read file during signature extraction:", f)  # silent_except fix
@@ -391,6 +393,7 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
     name_errors: dict[str, list[tuple[str, str, str]]] = {}
     other_errors: list[tuple[str, str, str]] = []
 
+    _INCOMPATIBLE_TYPES_IN_ASSIGNMENT_RE = re.compile(r'Incompatible types in assignment.*"(\w+)"')
     for fname, fpath, err in errors:
         # Pattern: "MouseEventData" has no attribute "button"
         cls_match = _ATTR_NO_ATTR_RE.search(err)
@@ -412,7 +415,7 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
         assign_match = _ASSIGN_TYPE_RE.search(err)
         if assign_match:
             # Extract the variable name from the error (e.g. "agent.py:683: error: Incompatible types ...")
-            var_match = re.search(r'Incompatible types in assignment.*"(\w+)"', err)
+            var_match = _INCOMPATIBLE_TYPES_IN_ASSIGNMENT_RE.search(err)
             if var_match:
                 assign_errors.setdefault(var_match.group(1), []).append((fname, fpath, err))
                 continue
@@ -450,7 +453,6 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
     # Assignment-type groups: root cause = file where variable is initialized
     for var_name, var_errs in assign_errors.items():
         # Try to find where the variable is defined/initialized
-        var_defn_path: str | None = _find_variable_definition(var_name, var_errs, ws_dir)
         if defn_path:
             root_err = (os.path.basename(defn_path), defn_path,
                         f"ROOT_CAUSE: {var_name} has wrong type at definition site")
@@ -463,8 +465,7 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
     # file reporting the error — not an edit to the defining module. Editing
     # the definer sent the LLM to "fix" a file that was never broken
     # (observed 2026-08-23: MetricsCollector group rewrote metrics_collector.py).
-    for name_name, name_errs in name_errors.items():
-        result.append(("", name_errs))
+    result += [("", name_errs) for name_name, name_errs in name_errors.items()]
 
     # Ungrouped errors (no root cause detected)
     if other_errors:
@@ -652,10 +653,7 @@ def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors:
     class_window = "\n".join(f"{i+1:>4}    {line.rstrip()}" for i, line in enumerate(lines[class_start:class_end], start=class_start))
     
     # Build downstream error summary
-    error_summary: list[str] = []
-    for fname, fpath, err in downstream_errors:
-        error_summary.append(f"- {fname}: {err[:200]}")
-    
+    error_summary = [f"- {fname}: {err[:200]}" for fname, fpath, err in downstream_errors]
     downstream_section = ""
     if error_summary:
         downstream_section = "## Downstream errors that this fix will resolve\n" + "\n".join(error_summary) + "\n\n"
@@ -669,7 +667,7 @@ def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors:
             f"## Current class definition\n```python\n{class_window}\n```\n\n"
             "Add the missing fields to this class. For @dataclass, add new fields with types. "
             "For regular classes, add them in __init__.\n\n"
-            f"Output the complete corrected file:\n[FILE: ...]\n```python\n# complete corrected file\n```"
+            "Output the complete corrected file:\n[FILE: ...]\n```python\n# complete corrected file\n```"
         )
     else:
         user_msg = (
@@ -1103,11 +1101,11 @@ def _check_planned_duplicates(planned_new: list[str], ws: str, taskplan_content:
     if planned:
         from agent_core.utils.module_similarity import SimilarityFinding
         sim = ModuleSimilarity(ws)
-        for finding in sim.find_duplicates(planned):
-            f: SimilarityFinding = finding
-            reasons.append(
-                f"{f.file} — {f.evidence} -> {f.existing}"
-            )
+        findings: list[SimilarityFinding] = sim.find_duplicates(planned)
+        reasons += [
+            f"{f.file} — {f.evidence} -> {f.existing}"
+            for f in findings
+        ]
     return reasons
 
 
@@ -1133,7 +1131,7 @@ def _prune_empty_dirs(ws: str, deleted_files: set[str]) -> None:
             Path(full).rmdir()
             print(f"    Removed empty directory: {full}")
         except OSError:
-            pass
+            print("Silenced exception in implement_cmd.py:1133")
 
 
 def _run_python_snippet(ws: str, extra_paths: list[str], code_lines: list[str]) -> subprocess.CompletedProcess[str]:
@@ -1207,7 +1205,7 @@ class ImplementCommand(Command):
         similarity = difflib.SequenceMatcher(None, prev, content).ratio()
         if similarity < 0.5 and not allow_rewrite:
             return False, (
-                f"rejected — wholesale rewrite of existing file "
+                "rejected — wholesale rewrite of existing file "
                 f"(similarity {similarity:.2f}); use --allow-rewrite to force"
             )
 
@@ -1771,7 +1769,7 @@ class ImplementCommand(Command):
                     stdlib_shadow_warning = (
                         f"\n\nCRITICAL — The original path '{planned_f}' shadows stdlib module "
                         f"'{shadow_part}'. You MUST use '{new_f}' instead. "
-                        f"Do NOT write to the shadowing path."
+                        "Do NOT write to the shadowing path."
                     )
                 else:
                     redirected_batch.append(planned_f)
@@ -1809,7 +1807,7 @@ class ImplementCommand(Command):
                 if constraints:
                     user_context += constraints
             except Exception:
-                pass
+                print("Silenced exception in implement_cmd.py:1809")
 
             # Inject past executions that touched this batch (2026-08-19:
             # implement consulted decisions but never past tool results/
@@ -1824,7 +1822,7 @@ class ImplementCommand(Command):
                     if history_block:
                         user_context += history_block
                 except Exception:
-                    pass
+                    print("Silenced exception in implement_cmd.py:1824")
 
             if modify_mode and existing_files:
                 # Modify mode: existing files get [PATCH:] (minimal diff),
@@ -2108,6 +2106,7 @@ class ImplementCommand(Command):
         written_files: set[str] = set()
 
         _RE_3 = re.compile(r'_\d+$|_v\d+$|_clean$|_final$')
+        _DEF_RE = re.compile(r'def\s+(\w+)')
         for filename, content in generated_content.items():
             raw_workspace = workspace_path(target_workspace)
             workspace = Path(raw_workspace)
@@ -2179,7 +2178,7 @@ class ImplementCommand(Command):
                 continue
 
             if filename.endswith(".py"):
-                func_names = re.findall(r'def\s+(\w+)', content)
+                func_names = _DEF_RE.findall(content)
                 if len(func_names) > 20:
                     # from collections import Counter  # unused_import removed
                     similar_prefixes: dict[str, int] = {}
@@ -2591,6 +2590,8 @@ class ImplementCommand(Command):
                 print("[fix] Cross-file attributes all verified!")
 
             _RE_4 = re.compile(r'^class\s+(\w+)', re.MULTILINE)
+            _NO_MODULE_NAMED_RE = re.compile(r"No module named '([^']+)'")
+            _RE_6 = re.compile(r'^\w+\s*:')
             for fix_attempt in range(3):
                 errors_found = []
                 current_error_sigs: dict[str, str] = {}
@@ -2617,7 +2618,7 @@ class ImplementCommand(Command):
                     ])
                     if r.returncode != 0:
                         err_text = r.stderr.strip()
-                        mm = re.search(r"No module named '([^']+)'", err_text)
+                        mm = _NO_MODULE_NAMED_RE.search(err_text)
                         if mm:
                             batch_mods = {
                                 bm[:-3].replace('\\', '.').replace('/', '.')
@@ -2739,7 +2740,7 @@ class ImplementCommand(Command):
                                     stripped = dline.strip()
                                     if not stripped or stripped.startswith(('#', '"""', '@', 'def ', 'class ')):
                                         continue
-                                    if re.match(r'^\w+\s*:', stripped) and '=' not in stripped:
+                                    if _RE_6.match(stripped) and '=' not in stripped:
                                         required.append(stripped.split(':')[0].strip())
                                     elif not dline.startswith('    ') and stripped:
                                         break
@@ -3131,7 +3132,7 @@ class ImplementCommand(Command):
                                 try:
                                     selected.append(int(part) - 1)
                                 except ValueError:
-                                    pass
+                                    print("Silenced exception in implement_cmd.py:3134")
                         for idx in selected:
                             if 0 <= idx < len(candidates):
                                 c = candidates[idx]
@@ -3146,7 +3147,7 @@ class ImplementCommand(Command):
                                 )
                                 print(f"  Recorded #{record['id']}: {record['title']}")
             except Exception:
-                pass
+                print("Silenced exception in implement_cmd.py:3149")
 
         # Structured history record so FUTURE runs can reuse this execution
         # (read-only consumers; harmless when reports/ is unwritable).
@@ -3166,6 +3167,6 @@ class ImplementCommand(Command):
                     note=f"implemented {len(implemented)}/{len(all_files)} files",
                 )
             except Exception:
-                pass
+                print("Silenced exception in implement_cmd.py:3169")
 
         return True

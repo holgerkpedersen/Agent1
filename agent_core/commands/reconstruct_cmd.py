@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
@@ -308,7 +307,7 @@ class ReconstructCommand(Command):
                         print(f"  UNCHANGED: {abs_path}")
                         continue
                 except (OSError, UnicodeDecodeError):
-                    pass
+                    print("Silenced exception in reconstruct_cmd.py:309")
 
             parent = os.path.dirname(abs_path)
             if parent:

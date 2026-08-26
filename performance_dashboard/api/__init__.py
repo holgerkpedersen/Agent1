@@ -44,14 +44,14 @@ try:
         "performance_dashboard.api.endpoints", fromlist=["*"]
     )
 except ImportError:
-    pass
+    print("Silenced exception in __init__.py:46")
 
 try:
     serializers = __import__(
         "performance_dashboard.api.serializers", fromlist=["*"]
     )
 except ImportError:
-    pass
+    print("Silenced exception in __init__.py:53")
 
 
 def is_module_available(module_name: str) -> bool:

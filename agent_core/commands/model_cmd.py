@@ -199,12 +199,12 @@ class ModelCommand(Command):
                     "automatically on the next request."
                 )
                 print(
-                    f"  To adopt a loaded model instead, run: "
+                    "  To adopt a loaded model instead, run: "
                     f"model {loaded_keys[0]}   (or: model reload)"
                 )
             elif not loaded_keys and current:
                 print(
-                    f"\n  ⚠ No models loaded in LM Studio. This session stays "
+                    "\n  ⚠ No models loaded in LM Studio. This session stays "
                     f"pinned to: {current} (auto-reloads on next request)."
                 )
         elif current:

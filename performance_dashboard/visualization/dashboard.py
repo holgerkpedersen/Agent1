@@ -65,10 +65,6 @@ class LayoutManager:
 
         # Determine grid dimensions based on panel count and max width
         total_width = sum(p.dimensions[0] for p in sorted_panels) or 1200
-        avg_height = (
-            sum(p.dimensions[1] for p in sorted_panels) / len(sorted_panels)
-            if sorted_panels else 300
-        )
 
         self._grid_cols = max(1, min(len(sorted_panels), math.ceil(total_width / 400)))
         self._grid_rows = max(

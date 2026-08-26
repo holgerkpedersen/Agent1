@@ -277,7 +277,7 @@ def _tailored_implement_parts(
                     "rebuild the file list and resume."
                 )
         except Exception:
-            pass
+            print("Silenced exception in workflow_cmd.py:279")
 
     hint = (
         "\n".join(f"  {h}" for h in hints)
@@ -363,7 +363,7 @@ def _scan_workspace_context(ws_path: Path, spec_content: str) -> tuple[bool, str
             remaining = max_lines - lines_used
             if remaining <= 0:
                 break
-            combined += "\n".join(entry.splitlines()[:remaining])
+            combined = "".join([combined, "\n".join(entry.splitlines()[:remaining])])
             break
         combined += entry
         lines_used += len(content.splitlines())
@@ -571,7 +571,7 @@ async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: s
                     try:
                         selected.append(int(part) - 1)
                     except ValueError:
-                        pass
+                        print("Silenced exception in workflow_cmd.py:573")
             warned = [
                 i for i in selected
                 if 0 <= i < len(candidates) and candidates[i].get("warnings")
@@ -599,7 +599,7 @@ async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: s
                     )
                     print(f"  Recorded #{record['id']}: {record['title']}")
     except Exception:
-        pass
+        print("Silenced exception in workflow_cmd.py:601")
 
 
 class WorkflowCommand(Command):
@@ -1241,7 +1241,7 @@ class WorkflowCommand(Command):
                     if lines_used + entry_lines > max_lines:
                         remaining = max_lines - lines_used
                         if remaining > 0:
-                            combined += "\n".join(entry.splitlines()[:remaining])
+                            combined = "".join([combined, "\n".join(entry.splitlines()[:remaining])])
                         break
                     combined += entry
                     lines_used += entry_lines

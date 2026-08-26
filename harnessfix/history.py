@@ -226,7 +226,7 @@ def file_history(target: str, workspace: str, limit: int = 4) -> list[HistoryEve
     try:
         targets.add(_norm(os.path.join(workspace, target)))
     except (TypeError, ValueError):
-        pass
+        print("Silenced exception in history.py:228")
     t_key = min(targets)
     events: list[HistoryEvent] = []
     seen: set[tuple[str, str, str]] = set()
@@ -261,8 +261,7 @@ def format_batch_history(files: list[str], workspace: str, per_file: int = 2, li
         events = file_history(target, workspace, per_file)
         if events:
             lines.append(f"- {target}: {len(events)} past event(s)")
-            for ev in events:
-                lines.append(f"    {ev.tool} {ev.kind} [{ev.ref[:8]}]: {ev.summary}")
+            lines += [f"    {ev.tool} {ev.kind} [{ev.ref[:8]}]: {ev.summary}" for ev in events]
             if len(lines) >= line_cap:
                 lines.append("  ...")
                 break

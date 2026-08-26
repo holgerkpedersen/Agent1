@@ -170,7 +170,7 @@ def main() -> int:
     if emoji_findings:
         errors.append(
             f"emoji/pictograph symbols in {len(emoji_findings)} repo file(s) "
-            f"(decision #079 — no emojis in files): "
+            "(decision #079 — no emojis in files): "
             f"{summarize_findings(emoji_findings)}"
         )
 

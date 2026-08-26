@@ -200,7 +200,7 @@ def _looks_corrupted(original: str, result: str) -> str | None:
     res_n = sum(1 for ln in result.split('\n') if ln.strip())
     if orig_n > 20 and res_n > 2 * orig_n:
         return (f"result grew {orig_n}->{res_n} non-blank lines (>2x) — "
-                f"rejecting runaway patch")
+                "rejecting runaway patch")
     return None
 
 
@@ -615,12 +615,13 @@ def _fix_container_optional(lines: list[str], err: str) -> list[str] | None:
     container = re.compile(r'\b(list|tuple|dict|set|frozenset)\[')
     pair = re.compile(rf'\b{re.escape(base)}\s*\|\s*None\b')
     in_docstring: str | None = None  # '"' or "'" — the open triple-quote
+    _RF_FR_RE = re.compile(r'^(?:r|u|f|rf|fr|b)?("""|\'\'\')')
     for i, line in enumerate(lines):
         # Track triple-quoted string blocks so docstring prose that merely
         # *mentions* ``str | None`` next to ``list[...]`` is never edited.
         stripped = line.strip()
         if in_docstring is None:
-            tm = re.match(r'^(?:r|u|f|rf|fr|b)?("""|\'\'\')', stripped)
+            tm = _RF_FR_RE.match(stripped)
             if tm:
                 delim = tm.group(1)
                 if stripped.count(delim) >= 2:
@@ -717,8 +718,10 @@ def _fix_tuple_arity(lines: list[str], lineno: int, err: str) -> list[str] | Non
 
 def _ensure_typing_any(lines: list[str]) -> list[str]:
     """Return *lines* with ``Any`` importable (merge or add typing import)."""
+    _FROM_TYPING_IMPORT_RE = re.compile(r'^from typing import (.+)$')
+    _FROM_IMPORT_RE = re.compile(r'^(from|import) ')
     for i, line in enumerate(lines):
-        m = re.match(r'^from typing import (.+)$', line.strip())
+        m = _FROM_TYPING_IMPORT_RE.match(line.strip())
         if m:
             names = {n.strip() for n in m.group(1).split(",")}
             if "Any" not in names:
@@ -726,7 +729,7 @@ def _ensure_typing_any(lines: list[str]) -> list[str]:
                 return lines[:i] + [new_line] + lines[i + 1:]
             return lines
     for i, line in enumerate(lines):
-        if re.match(r'^(from|import) ', line.strip()):
+        if _FROM_IMPORT_RE.match(line.strip()):
             return lines[:i] + [line] + ["from typing import Any"] + lines[i + 1:]
     return ["from typing import Any"] + lines
 
@@ -974,8 +977,7 @@ def _type_context(lines: list[str], err: str, error_line: int) -> str:
     found = list(dict.fromkeys(x for x in (_extract(ln) for ln in body) if x))
     if not found:
         return ""
-    return "Types in scope (from annotations/assignments/imports):\n" + \
-        "\n".join(f"  {l}" for l in found) + "\n"
+    return "Types in scope (from annotations/assignments/imports):\n" + "\n".join(f"  {l}" for l in found) + "\n"
 
 
 def _shared_type_hint(errs: list[str]) -> str:
@@ -1010,8 +1012,9 @@ def _mypy_error_signatures(stdout: str) -> list[tuple[str, str, str]]:
     so fixing one of several still counts as progress.
     """
     sigs: list[tuple[str, str, str]] = []
+    _ERROR_ID_RE = re.compile(r'^(.*?):(\d+): error: (.*?)\s*\[([a-z-]+)\]\s*$')
     for line in stdout.split('\n'):
-        m = re.match(r'^(.*?):(\d+): error: (.*?)\s*\[([a-z-]+)\]\s*$', line.strip())
+        m = _ERROR_ID_RE.match(line.strip())
         if m:
             sigs.append((
                 m.group(1).replace('\\', '/'),
@@ -1048,8 +1051,9 @@ def _mypy_error_kinds(stdout: str) -> set[tuple[str, str]]:
     so a fix is recognized by its error code + message text surviving or not.
     """
     kinds: set[tuple[str, str]] = set()
+    _ERROR_ID_RE = re.compile(r'^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$')
     for line in stdout.split('\n'):
-        m = re.match(r'^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$', line.strip())
+        m = _ERROR_ID_RE.match(line.strip())
         if m:
             kinds.add((m.group(3), m.group(2).strip()))
     return kinds
@@ -1331,7 +1335,7 @@ class FixCommand(Command):
                     if history_block:
                         context += history_block
             except Exception:
-                pass
+                print("Silenced exception in fix_cmd.py:1337")
 
             print(f"  On-demand: {len(top_files)} full files + {len(rest_files)} candidate sigs + {len(sig_map)} other sigs ({len(context)} bytes)")
             print(f"  Full source: {', '.join(os.path.basename(fp) for fp, _, _ in top_files)}")
@@ -1480,7 +1484,7 @@ class FixCommand(Command):
                             hroot, "fix", hist_files, outcome="ok", note=desc_text[:120]
                         )
                 except Exception:
-                    pass
+                    print("Silenced exception in fix_cmd.py:1486")
 
             return True
 
@@ -1548,8 +1552,9 @@ class FixCommand(Command):
 
         def parse_errors(stdout: str) -> dict[str, list[str]]:
             by_file: dict[str, list[str]] = {}
+            _ERROR_RE = re.compile(r'^(.*?):(\d+): error: (.*)$')
             for line in stdout.split('\n'):
-                m = re.match(r'^(.*?):(\d+): error: (.*)$', line.strip())
+                m = _ERROR_RE.match(line.strip())
                 if m:
                     fpath = m.group(1).replace('\\', '/')
                     by_file.setdefault(fpath, []).append(line.strip())
@@ -1600,8 +1605,8 @@ class FixCommand(Command):
                     window = _extract_window(lines, start, 0, end - start + 2)
                     err_block = "\n".join(f"- {e}" for e in slice_errs)
                     type_blocks = [
-                        t for e in slice_errs
-                        if (t := _type_context(lines, e, _parse_line_number(e)))
+                        _tc for _tc in (_type_context(lines, e, _parse_line_number(e)) for e in slice_errs)
+                        if _tc
                     ]
                     type_section = "\n".join(type_blocks)
                     user_sections.append(
@@ -1670,7 +1675,7 @@ class FixCommand(Command):
                     break
                 if not changed:
                     fail_summary = "\n".join(f"  - {f}" for f in failures) if failures else "  (unknown — no diagnostics captured)"
-                    print(f"  Fix did not apply — retrying once with verbatim-copy instructions")
+                    print("  Fix did not apply — retrying once with verbatim-copy instructions")
                     if stop_requested():
                         break
                     retry_msgs = [
@@ -1826,6 +1831,8 @@ class FixCommand(Command):
         changed = False
         work = list(errs)
         rejected: set[tuple[str, str]] = set()
+        _REDUNDANT_CAST_TO_RE = re.compile(r'Redundant cast to "([^"]+)"')
+        _HAS_NO_ATTRIBUTE_MAYBE_RE = re.compile(r'has no attribute "([^"]+)"; maybe "([^"]+)"')
         while True:
             if stop_requested():
                 print("  Stopped by user — remaining mechanical fixes skipped.")
@@ -1853,7 +1860,7 @@ class FixCommand(Command):
                     after = _fix_unused_ignore(before, lineno)
                     label = "unused-ignore"
                 elif code == "redundant-cast":
-                    m = re.search(r'Redundant cast to "([^"]+)"', err)
+                    m = _REDUNDANT_CAST_TO_RE.search(err)
                     if m:
                         after = _fix_redundant_cast(before, lineno, m.group(1))
                     label = "redundant-cast"
@@ -1861,7 +1868,7 @@ class FixCommand(Command):
                     after = _fix_implicit_optional(before, lineno)
                     label = "implicit-optional"
                 elif code == "attr-defined":
-                    m = re.search(r'has no attribute "([^"]+)"; maybe "([^"]+)"', err)
+                    m = _HAS_NO_ATTRIBUTE_MAYBE_RE.search(err)
                     if m:
                         after = _fix_attr_defined_rename(
                             before, lineno, '\n'.join(new_lines), m.group(1), m.group(2)
@@ -1945,8 +1952,9 @@ class FixCommand(Command):
             cwd=ws_dir,
         )
         by_file: dict[str, list[str]] = {}
+        _ERROR_RE = re.compile(r'^(.*?):(\d+): error: (.*)$')
         for line in r.stdout.split('\n'):
-            m = re.match(r'^(.*?):(\d+): error: (.*)$', line.strip())
+            m = _ERROR_RE.match(line.strip())
             if m:
                 fpath = m.group(1).replace('\\', '/')
                 by_file.setdefault(fpath, []).append(line.strip())
@@ -2007,6 +2015,7 @@ class FixCommand(Command):
         lines = split_source_lines(current)
         failed_attempts = 0
         seen_failures: set[str] = set()
+        _IMPORT_DEF_CLASS_RE = re.compile(r'\b(import|def |class )\b')
         for m in re.finditer(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL):
             if applied:
                 break
@@ -2046,7 +2055,7 @@ class FixCommand(Command):
                     patched_func_lines = result.split('\n')[0:end_line]
                     patched_func_src = '\n'.join(patched_func_lines)
                     if _function_can_fall_off_end(patched_func_src, _return_error_line):
-                        print(f"  WARNING: patch does not resolve 'Missing return statement' "
+                        print("  WARNING: patch does not resolve 'Missing return statement' "
                               f"at line {_return_error_line} — function still falls off the end")
             _show_targeted_issues()
             if not auto_yes and context_errors:
@@ -2062,7 +2071,7 @@ class FixCommand(Command):
             if not _targets(m.group(1).strip()):
                 continue
             new_code = m.group(2).strip()
-            if len(new_code) < 10 or not re.search(r'\b(import|def |class )\b', new_code):
+            if len(new_code) < 10 or not _IMPORT_DEF_CLASS_RE.search(new_code):
                 failures.append(f"Invalid [FILE:] content for {rel_file}")
                 print(f"  WARNING: [FILE:] content for {rel_file} looks invalid, skipping")
                 continue
@@ -2089,7 +2098,7 @@ class FixCommand(Command):
                 with open(changelog_path, "a", encoding="utf-8") as cl:
                     cl.write(entry)
             except OSError:
-                pass
+                print("Silenced exception in fix_cmd.py:2099")
         return applied, failures
 
     def _show_patch_verdict(
@@ -2124,12 +2133,13 @@ class FixCommand(Command):
             try:
                 os.remove(tmp)
             except OSError:
-                pass
+                print("Silenced exception in fix_cmd.py:2134")
 
         tmp_base = os.path.basename(tmp)
         patched_kinds: set[tuple[str, str]] = set()
+        _ERROR_ID_RE = re.compile(r'^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$')
         for line in r.stdout.split('\n'):
-            m = re.match(r'^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$', line.strip())
+            m = _ERROR_ID_RE.match(line.strip())
             if m and m.group(1).replace('\\', '/').split('/')[-1] == tmp_base:
                 patched_kinds.add((m.group(3), m.group(2).strip()))
 
@@ -2163,12 +2173,12 @@ class FixCommand(Command):
             try:
                 os.remove(tmp2)
             except OSError:
-                pass
+                print("Silenced exception in fix_cmd.py:2174")
         baseline_kinds: set[tuple[str, str]] = set()
         if r2 is not None:
             tmp2_base = os.path.basename(tmp2)
             for line in r2.stdout.split('\n'):
-                m = re.match(r'^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$', line.strip())
+                m = _ERROR_ID_RE.match(line.strip())
                 if m and m.group(1).replace('\\', '/').split('/')[-1] == tmp2_base:
                     baseline_kinds.add((m.group(3), m.group(2).strip()))
 
@@ -2566,7 +2576,7 @@ class FixCommand(Command):
                 if history_block:
                     fix_system += history_block
         except Exception:
-            pass
+            print("Silenced exception in fix_cmd.py:2577")
         fix_msgs = [
             {"role": "system", "content": fix_system},
             {"role": "user", "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n" + "\n".join([f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}" for m, n, s, a in all_broken]) + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}
@@ -2656,7 +2666,7 @@ class FixCommand(Command):
                                 try:
                                     selected.append(int(part) - 1)
                                 except ValueError:
-                                    pass
+                                    print("Silenced exception in fix_cmd.py:2667")
                         for idx in selected:
                             if 0 <= idx < len(candidates):
                                 c = candidates[idx]
@@ -2671,7 +2681,7 @@ class FixCommand(Command):
                                 )
                                 print(f"  Recorded #{record['id']}: {record['title']}")
             except Exception:
-                pass
+                print("Silenced exception in fix_cmd.py:2682")
 
         # Structured history record for future runs (read-only consumers).
         try:
@@ -2684,6 +2694,6 @@ class FixCommand(Command):
                 ]
                 append_execution(root, "fix", files, outcome="ok", note=error_msg[:120] if error_msg else "")
         except Exception:
-            pass
+            print("Silenced exception in fix_cmd.py:2695")
 
         return True

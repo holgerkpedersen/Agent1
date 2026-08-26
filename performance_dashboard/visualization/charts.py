@@ -29,8 +29,7 @@ def _points_to_path(points: Sequence[Tuple[float, float]]) -> str:
     if not points:
         return ""
     parts: List[str] = [f"M {points[0][0]:.2f},{points[0][1]:.2f}"]
-    for x, y in list(points)[1:]:
-        parts.append(f"L {x:.2f},{y:.2f}")
+    parts += [f"L {x:.2f},{y:.2f}" for x, y in list(points)[1:]]
     return " ".join(parts)
 
 
@@ -171,8 +170,7 @@ class DistributionHistogram(HistogramBuilder):
         stats: List[str] = []
         if summary is not None:
             for label, val in [("mean", summary.mean_value), ("median", summary.median_value), ("p95", summary.percentile_95)]:
-                stats.append(f'<text x="{self.margin:.2f}" y="{self.margin + 14 * (stats.__len__()):.2f}" fill="black">{label}={val:.2f}</text>')
-
+                stats.append(f'<text x="{self.margin:.2f}" y="{self.margin + 14 * len(stats):.2f}" fill="black">{label}={val:.2f}</text>')
         return "<g>" + " ".join(parts) + " ".join(stats) + "</g>"
 
 

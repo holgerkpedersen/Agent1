@@ -313,7 +313,7 @@ class DecideCommand(Command):
                     try:
                         selected.append(int(part) - 1)
                     except ValueError:
-                        pass
+                        print("Silenced exception in decide_cmd.py:315")
 
         warned = [
             i for i in selected

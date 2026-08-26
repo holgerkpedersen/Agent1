@@ -11,7 +11,6 @@ import logging
 from collections import defaultdict
 from typing import Union
 
-from performance_dashboard.config import CollectorIntervals
 from performance_dashboard.models import TaskMetric
 from performance_dashboard.utils.time_utils import get_current_timestamp
 from performance_dashboard.utils.validation import MetricSchemaValidator, validate_task_metric

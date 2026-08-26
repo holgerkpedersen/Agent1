@@ -130,7 +130,7 @@ def _first_docstring(path: str) -> str:
                     continue
                 break
     except OSError:
-        pass
+        print("Silenced exception in module_similarity.py:132")
     return ""
 
 
