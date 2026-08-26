@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import re
 
 from .base import Command
 from agent_core.config import lmstudio_base_url
@@ -98,7 +99,16 @@ class ModelCommand(Command):
         go_models: list[str] = []
         api_mode = False
         provider = getattr(getattr(agent, "llm", None), "_provider", None)
-        if provider is not None and type(provider).__name__ == "OpencodeProvider":
+        # Only reuse the agent's provider for the GO catalog when it is itself
+        # a go-mode provider.  A zen-mode provider (current model is e.g.
+        # opencode-zen/hy3-free) would call list_models() against ZEN_API_BASE
+        # and return opencode-zen/* ids, which must NOT appear under the
+        # [opencode] header — that is what caused the duplicate listing.
+        if (
+            provider is not None
+            and type(provider).__name__ == "OpencodeProvider"
+            and not getattr(provider, "zen_mode", False)
+        ):
             try:
                 go_models = list(provider.list_models())
                 api_mode = bool(getattr(provider, "api_mode", False))
@@ -108,8 +118,11 @@ class ModelCommand(Command):
             try:
                 from agent_core.config import load_agent_settings
                 s = load_agent_settings()
+                # Force a go-mode provider (never zen) so the [opencode] block
+                # always reflects the keyed opencode-go catalog, even when the
+                # active model is a keyless opencode-zen free model.
                 oc = OpencodeProvider(
-                    model_name=getattr(getattr(agent, "llm", None), "model_name", "opencode-go/placeholder") or "opencode-go/placeholder",
+                    model_name="opencode-go/placeholder",
                     server_url=getattr(s, "opencode_server_url", "http://127.0.0.1:4096"),
                     password=getattr(s, "opencode_password", ""),
                     api_url=getattr(s, "opencode_api_url", "https://opencode.ai/zen/go/v1"),
@@ -324,10 +337,58 @@ class ModelCommand(Command):
 
         models, loaded_ids = self._fetch_models()
 
-        # Opencode models are matched first — a partial opencode name (e.g.
-        # "nemotron-3.5-lightning-free") must NOT be hijacked to an LM Studio
-        # substring match.  The opencode catalog uses the agent's real
-        # provider (with the resolved API key), so it reflects what chat uses.
+        # Opencode catalog models (go tier + keyless zen free tier) are fetched
+        # lazily — only needed if the query does NOT resolve to an LM Studio
+        # model.  The opencode catalog uses the agent's real provider (with the
+        # resolved API key), so it reflects what chat uses.
+        #
+        # Precedence for a bare query (no opencode-go/ or opencode-zen/ prefix):
+        #   1. A leading number index ("8" / "8.") selects the Nth LM Studio
+        #      model shown by `model list` — unambiguous, never hijacked by a
+        #      catalog substring.
+        #   2. A unique strong LM Studio match (exact / substring on key,
+        #      display name, params).  This prevents "model 8. Laguna S 2.1 UD"
+        #      or "model laguna" from being hijacked to an opencode-zen
+        #      substring such as "opencode-zen/laguna-s-2.1-free".
+        #   3. Fall back to the opencode catalogs (zen first, then go) so
+        #      partial names like "nemotron-3.5-lightning-free" still resolve
+        #      to opencode-zen — difflib fuzz is NOT allowed to hijack them to
+        #      a similarly-named LM Studio model.
+        #   4. As a last resort, difflib against LM Studio models.
+        lmstudio_match = self._resolve_lmstudio(query, models)
+
+        if lmstudio_match is None and not models:
+            print("  LM Studio not reachable — trying hardcoded list.")
+            await self._switch_known(query, agent)
+            return
+
+        if lmstudio_match:
+            current = agent.llm.model_name
+            if lmstudio_match == current:
+                print(f"  Already using: {lmstudio_match}")
+                return
+
+            target = next((m for m in models if m["key"] == lmstudio_match), None)
+            if target and not target["loaded"]:
+                print(f"  Loading {lmstudio_match} ...")
+                ok, msg = self._try_load_or_unload(lmstudio_match)
+                if not ok:
+                    print(f"  Could not load: {msg}")
+                    return
+                print(f"  {msg}")
+
+            info = KNOWN_MODELS.get(lmstudio_match, {})
+            old = agent.llm.model_name
+            agent.llm.model_name = lmstudio_match
+            persist_model_choice(lmstudio_match, provider="lmstudio")
+            # Rebuild the provider: a previously selected opencode provider must
+            # not keep receiving LM Studio models (it would 401 on the hosted
+            # API).
+            self._rebuild_provider(agent, lmstudio_match)
+            print(f"  Switched: {old} -> {lmstudio_match}  ({info.get('desc', '')})")
+            return
+
+        # No LM Studio match — try the opencode catalogs.
         opencode_models, zen_models, _ = self._opencode_catalog(agent)
         # The keyless free tier is checked first so "model nemotron-3.5-
         # lightning-free" resolves to opencode-zen, not a paid opencode-go
@@ -361,42 +422,33 @@ class ModelCommand(Command):
             print(f"  Switched: {old} -> {oc_match}  (provider=opencode)")
             return
 
-        if not models:
-            print("  LM Studio not reachable — trying hardcoded list.")
-            await self._switch_known(query, agent)
-            return
-
-        current = agent.llm.model_name
-        matched = self._resolve_match(query, models)
-
-        if not matched:
-            print(f"  No model matching '{query}'")
-            self._list_models(agent)
-            return
-
-        if matched == current:
-            print(f"  Already using: {matched}")
-            return
-
-        target = next((m for m in models if m["key"] == matched), None)
-
-        if target and not target["loaded"]:
-            print(f"  Loading {matched} ...")
-            ok, msg = self._try_load_or_unload(matched)
-            if not ok:
-                print(f"  Could not load: {msg}")
+        # Last resort: difflib against LM Studio models (no catalog match).
+        lmstudio_fuzzy = self._resolve_lmstudio_fuzzy(query, models)
+        if lmstudio_fuzzy:
+            current = agent.llm.model_name
+            if lmstudio_fuzzy == current:
+                print(f"  Already using: {lmstudio_fuzzy}")
                 return
-            print(f"  {msg}")
+            target = next((m for m in models if m["key"] == lmstudio_fuzzy), None)
+            if target and not target["loaded"]:
+                print(f"  Loading {lmstudio_fuzzy} ...")
+                ok, msg = self._try_load_or_unload(lmstudio_fuzzy)
+                if not ok:
+                    print(f"  Could not load: {msg}")
+                    return
+                print(f"  {msg}")
+            info = KNOWN_MODELS.get(lmstudio_fuzzy, {})
+            old = agent.llm.model_name
+            agent.llm.model_name = lmstudio_fuzzy
+            persist_model_choice(lmstudio_fuzzy, provider="lmstudio")
+            self._rebuild_provider(agent, lmstudio_fuzzy)
+            print(f"  Switched: {old} -> {lmstudio_fuzzy}  ({info.get('desc', '')})")
+            return
 
-        # Update the agent's model name
-        info = KNOWN_MODELS.get(matched, {})
-        old = agent.llm.model_name
-        agent.llm.model_name = matched
-        persist_model_choice(matched, provider="lmstudio")
-        # Rebuild the provider: a previously selected opencode provider must
-        # not keep receiving LM Studio models (it would 401 on the hosted API).
-        self._rebuild_provider(agent, matched)
-        print(f"  Switched: {old} -> {matched}  ({info.get('desc', '')})")
+        # No LM Studio match and no opencode match — nothing resolves.
+        print(f"  No model matching '{query}'")
+        self._list_models(agent)
+        return
 
     def _rebuild_provider(self, agent: "Agent", model_name: str) -> None:
         """Rebuild the agent's LLM provider for *model_name* (provider-aware)."""
@@ -767,6 +819,34 @@ class ModelCommand(Command):
         """Fuzzy-match *query* against model keys and display names."""
         if not query:
             return None
+        # Strong matches first (exact / substring on key, name, params).
+        strong = self._resolve_match_strong(query, models)
+        if strong:
+            return strong
+        qlo = query.lower()
+
+        # difflib on keys
+        keys = [m["key"] for m in models]
+        matches = difflib.get_close_matches(query, keys, n=1, cutoff=0.3)
+        if matches:
+            return str(matches[0])
+
+        # difflib on display names
+        names = [m["display_name"] for m in models]
+        matches = difflib.get_close_matches(query, names, n=1, cutoff=0.3)
+        if matches:
+            for m in models:
+                if m["display_name"] == matches[0]:
+                    return str(m["key"])
+
+        return None
+
+    def _resolve_match_strong(self, query: str, models: list[dict[str, Any]]) -> str | None:
+        """Exact / substring match against LM Studio model keys, display names
+        and params — no difflib fuzz.  Used to decide LM Studio precedence
+        over the opencode catalogs without spurious fuzzy collisions."""
+        if not query or not models:
+            return None
         qlo = query.lower()
 
         # Search keys and display names (return the key)
@@ -789,12 +869,70 @@ class ModelCommand(Command):
         if len(sub_params) == 1:
             return str(sub_params[0]["key"])
 
+        return None
+
+    def _resolve_lmstudio(self, query: str, models: list[dict[str, Any]]) -> str | None:
+        """Resolve *query* to an LM Studio model key, or ``None``.
+
+        A bare query has two kinds of LM Studio references:
+
+        * A leading number index — ``8`` or ``8.`` — selects the Nth model in
+          the ``model list`` output.  This is the unambiguous, position-based
+          selector and is checked FIRST so that e.g.
+          ``model 8. Laguna S 2.1 UD`` selects LM Studio item #8 rather than
+          being hijacked by an opencode-zen substring match
+          (``opencode-zen/laguna-s-2.1-free``).
+        * Otherwise the query is matched (exact / substring only, no difflib)
+          against LM Studio keys / display names / params.  Difflib fuzz is
+          intentionally excluded here so a partial opencode name like
+          ``nemotron-3.5-lightning-free`` is not hijacked to a similarly-named
+          LM Studio model — it should resolve to the opencode catalog instead.
+
+        Returns ``None`` when the query is not a strong LM Studio reference.
+        """
+        if not query or not models:
+            return None
+
+        stripped = query.strip()
+        m = re.match(r"^(\d+)\.?\s*(.*)$", stripped)
+        if m and not m.group(2).strip():
+            # Bare number index: "8", "8.", " 8." — 1-based position in the
+            # `model list` output.  An out-of-range bare number is not an LM
+            # Studio reference.
+            idx = int(m.group(1))
+            if 1 <= idx <= len(models):
+                return str(models[idx - 1]["key"])
+            return None
+
+        # Full-query strong match (exact / substring on key, display, params).
+        # This catches "9b" (params), "laguna" (display name), etc. BEFORE the
+        # number-stripping below, so a query like "9b" is never read as
+        # "model #9".
+        full = self._resolve_match_strong(query, models)
+        if full:
+            return full
+
+        # Numbered reference: "8. Laguna S 2.1 UD" — the "8." is the listing
+        # position, the remainder is the model name.  A numbered reference is
+        # an LM Studio listing reference, so the remainder is matched only
+        # against LM Studio models (never the opencode catalogs).
+        if m:
+            rest = m.group(2).strip()
+            if rest:
+                return self._resolve_match_strong(rest, models)
+
+        return None
+
+    def _resolve_lmstudio_fuzzy(self, query: str, models: list[dict[str, Any]]) -> str | None:
+        """Difflib-only fallback for LM Studio — used only when neither a strong
+        LM Studio match nor an opencode catalog match was found."""
+        if not query or not models:
+            return None
         # difflib on keys
         keys = [m["key"] for m in models]
         matches = difflib.get_close_matches(query, keys, n=1, cutoff=0.3)
         if matches:
             return str(matches[0])
-
         # difflib on display names
         names = [m["display_name"] for m in models]
         matches = difflib.get_close_matches(query, names, n=1, cutoff=0.3)
@@ -802,5 +940,4 @@ class ModelCommand(Command):
             for m in models:
                 if m["display_name"] == matches[0]:
                     return str(m["key"])
-
         return None
