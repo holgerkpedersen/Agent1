@@ -133,6 +133,13 @@ _TOOL_CONSECUTIVE_FAILURE_NOTE = (
 #: which made read/search output look cut off).
 _RESULT_DISPLAY_LIMIT = 1500
 
+#: Arg keys whose value is a shell command — rendered in FULL on the
+#: [tool]/[reason] lines.  Truncating a command makes the display useless
+#: (e.g. ``run(command=cd /d ... && git stash && ...)`` cut mid-string);
+#: every other key keeps the compact 60-char cap so path/query/content
+#: lines stay tidy.
+_COMMAND_KEYS = frozenset({"command", "cmd"})
+
 #: Tools whose result a missing-path recovery can meaningfully follow up on.
 _PATH_SENSITIVE_TOOLS = frozenset({"read", "edit", "write"})
 
@@ -820,11 +827,16 @@ class ToolLoopRunner:
 
 
 def _fmt_args(args: dict[str, Any]) -> str:
-    """Short one-line rendering of tool arguments for the console."""
+    """Short one-line rendering of tool arguments for the console.
+
+    Command-valued keys (``command``/``cmd``) are rendered in full — a
+    truncated shell command is useless on the [tool]/[reason] lines.  All
+    other values keep the compact 60-char cap.
+    """
     pieces = []
     for key, value in list(args.items())[:4]:
         text = str(value)
-        if len(text) > 60:
+        if key not in _COMMAND_KEYS and len(text) > 60:
             text = text[:57] + "..."
         pieces.append(f"{key}={text}")
     return ", ".join(pieces)
@@ -837,7 +849,7 @@ def _derive_reason(tool_name: str, args: dict[str, Any], prior_text: str | None)
     message content), otherwise falls back to a small heuristic keyed on the
     tool name and its arguments so bare calls are never unexplained."""
     if prior_text:
-        first = " ".join(prior_text.split())[:140]
+        first = " ".join(prior_text.split())[:260]
         return f"{tool_name}({_fmt_args(args)}) — {first}"
     # Heuristic fallback keyed on the tool name + args.
     arg_summary = _fmt_args(args) or ""

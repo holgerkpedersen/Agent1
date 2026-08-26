@@ -1680,6 +1680,90 @@ class TestDisplayModes:
         assert "Final quiet answer." in out
         assert "[tool]" not in out
 
+    def test_verbose_tool_line_shows_full_run_command(self, capsys):
+        """The [tool] line must render a long run(command=...) in FULL — no
+        mid-command '...' truncation (regression: _fmt_args cut every value
+        >60 chars, making shell commands unreadable)."""
+        import asyncio
+        from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
+
+        command = (
+            'cd /d D:\\Dev\\Agent1 && git stash && '
+            'python -m pytest "tests/test_flow_control.py" -q'
+        )
+        assert len(command) > 60
+        fake = _ScriptedLLM([
+            ("run", {"command": command}),
+            "Done.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append((name, args))
+            return "ok"
+
+        runner = ToolLoopRunner(max_iterations=5)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert runner.display_mode == DisplayMode.VERBOSE
+        # The executor receives the full command verbatim (model→tool contract).
+        assert executed == [("run", {"command": command})]
+        out = capsys.readouterr().out
+        assert "[tool]" in out
+        assert command in out          # full command rendered
+        assert "command=" in out
+        # No mid-command ellipsis after the command= prefix.
+        assert "command=" + command[:57] + "..." not in out
+        assert final_text == "Done."
+
+    def test_non_command_args_still_truncate_on_tool_line(self, capsys):
+        """The 60-char cap must remain for non-command values (paths, queries)
+        so read/search/write lines stay compact."""
+        import asyncio
+        from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
+
+        long_path = "x" * 120
+        fake = _ScriptedLLM([
+            ("read", {"path": long_path}),
+            "Done.",
+        ])
+
+        async def execute_tool(name, args):
+            return "content"
+
+        runner = ToolLoopRunner(max_iterations=5)
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        assert "[tool]" in out
+        assert long_path not in out          # long path still truncated
+        assert "..." in out                  # ellipsis still used for non-commands
+        assert long_path[:57] + "..." in out
+
+    def test_clean_reason_line_shows_full_run_command(self, capsys):
+        """CLEAN mode's [reason] line must also render the full run command."""
+        import asyncio
+        from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
+
+        command = (
+            'cd /d D:\\Dev\\Agent1 && git stash && '
+            'python -m pytest "tests/test_flow_control.py" -q'
+        )
+        fake = _ScriptedLLM([
+            ("run", {"command": command}),
+            "Done.",
+        ])
+
+        async def execute_tool(name, args):
+            return "ok"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="clean")
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        assert "[reason]" in out
+        assert command in out          # full command on the reason line too
+
 
 class TestLLMBadBehaviorDetection:
     """chat_nlp must DETECT bad LLM behavior instead of surfacing it as an
