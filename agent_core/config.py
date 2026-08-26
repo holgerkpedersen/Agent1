@@ -80,6 +80,20 @@ class AgentSettings:
     llm_provider: str = field(
         default_factory=lambda: os.environ.get("AGENT_LLM_PROVIDER", "lmstudio").strip().lower()
     )
+    #: Ordered LLM provider fallback chain (decision #013).  When the active
+    #: provider loses connectivity, the agent fails over to the next entry in
+    #: this list (e.g. ``lmstudio,opencode`` -> local first, hosted on outage).
+    #: Defaults to a single-element list built from ``AGENT_LLM_PROVIDER`` so
+    #: existing single-provider setups keep working unchanged.  Set
+    #: ``AGENT_LLM_PROVIDERS`` (comma-separated) to enable multi-provider
+    #: failover.
+    llm_providers: tuple[str, ...] = field(
+        default_factory=lambda: _parse_provider_chain(
+            os.environ.get("AGENT_LLM_PROVIDERS")
+            or os.environ.get("AGENT_LLM_PROVIDER")
+            or "lmstudio"
+        )
+    )
     #: opencode server connection (decision #008 configured provider).
     opencode_server_url: str = field(
         default_factory=lambda: os.environ.get("OPENCODE_SERVER_URL", "http://127.0.0.1:4096")
@@ -103,8 +117,30 @@ class AgentSettings:
         default_factory=lambda: os.environ.get("OPENCODE_API_KEY", "")
     )
 
+    def __post_init__(self) -> None:
+        # Enforce the invariant on every construction (not just at the two
+        # load entry points) so misconfigured settings fail fast everywhere.
+        _validate_settings(self)
+
 
 _LLM_PROVIDERS = ("lmstudio", "opencode")
+
+
+def _parse_provider_chain(raw: str | None) -> tuple[str, ...]:
+    """Parse a comma-separated provider list into a clean ordered tuple.
+
+    Strips whitespace, lowercases each entry, and drops empties so
+    ``"lmstudio, opencode"`` and ``"lmstudio,,opencode,"`` both yield
+    ``("lmstudio", "opencode")``.  Falls back to ``("lmstudio",)`` when the
+    input is empty/None.  Validation against :data:`_LLM_PROVIDERS` happens
+    later in :func:`_validate_settings`.
+    """
+    if not raw:
+        return ("lmstudio",)
+    cleaned = tuple(
+        part.strip().lower() for part in raw.split(",") if part.strip()
+    )
+    return cleaned or ("lmstudio",)
 
 
 def _store_secret(name: str) -> str:
@@ -140,6 +176,24 @@ def _validate_settings(settings: AgentSettings) -> None:
     if settings.llm_provider not in _LLM_PROVIDERS:
         raise ConfigurationError(
             f"llm_provider must be one of {', '.join(_LLM_PROVIDERS)}, got '{settings.llm_provider}'"
+        )
+
+    invalid_providers = tuple(
+        p for p in settings.llm_providers if p not in _LLM_PROVIDERS
+    )
+    if invalid_providers:
+        raise ConfigurationError(
+            f"llm_providers must contain only {', '.join(_LLM_PROVIDERS)}, "
+            f"got {', '.join(settings.llm_providers)} "
+            f"(invalid: {', '.join(invalid_providers)})"
+        )
+
+    # The single-provider setting must be the first entry in the chain so the
+    # "active" provider and the failover order agree.
+    if settings.llm_providers and settings.llm_provider != settings.llm_providers[0]:
+        raise ConfigurationError(
+            f"llm_provider ('{settings.llm_provider}') must match the first "
+            f"entry of llm_providers ({settings.llm_providers[0]})"
         )
 
 
@@ -239,6 +293,20 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
     workspace_root_str = merged.get("AGENT_WORKSPACE_ROOT")
     workspace_root = Path(workspace_root_str) if workspace_root_str else Path.cwd()
 
+    # The failover chain drives the active provider: its first entry IS the
+    # active provider, so llm_provider is derived from it (never diverges).
+    # AGENT_LLM_PROVIDERS wins; otherwise fall back to the single-provider
+    # AGENT_LLM_PROVIDER setting; finally "lmstudio".
+    raw_chain = (
+        os.environ.get("AGENT_LLM_PROVIDERS")
+        or env_vars.get("AGENT_LLM_PROVIDERS")
+        or os.environ.get("AGENT_LLM_PROVIDER")
+        or env_vars.get("AGENT_LLM_PROVIDER")
+        or "lmstudio"
+    )
+    llm_providers = _parse_provider_chain(raw_chain)
+    llm_provider = llm_providers[0]
+
     settings = AgentSettings(
         workspace_root=workspace_root,
         llm_api_url=merged.get("AGENT_LLM_API_URL") or lmstudio_base_url(),
@@ -246,7 +314,8 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         search_command_timeout_sec=_parse_float(merged.get("AGENT_SEARCH_COMMAND_TIMEOUT_SEC"), 30.0),
         compilation_check_timeout_sec=_parse_float(merged.get("AGENT_COMPILATION_CHECK_TIMEOUT_SEC"), 30.0),
         display_mode=_parse_display_mode(display_mode_raw, AgentDisplayMode.VERBOSE),
-        llm_provider=(os.environ.get("AGENT_LLM_PROVIDER") or env_vars.get("AGENT_LLM_PROVIDER") or "lmstudio").strip().lower(),
+        llm_provider=llm_provider,
+        llm_providers=llm_providers,
         opencode_server_url=os.environ.get("OPENCODE_SERVER_URL") or env_vars.get("OPENCODE_SERVER_URL") or "http://127.0.0.1:4096",
         opencode_password=os.environ.get("OPENCODE_SERVER_PASSWORD") or env_vars.get("OPENCODE_SERVER_PASSWORD") or _store_secret("OPENCODE_SERVER_PASSWORD"),
         opencode_model=os.environ.get("AGENT_OPENCODE_MODEL") or env_vars.get("AGENT_OPENCODE_MODEL") or "opencode-go/deepseek-v4-flash",
