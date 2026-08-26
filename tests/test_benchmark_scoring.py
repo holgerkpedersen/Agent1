@@ -7,6 +7,7 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 from benchmark import (
+    BenchmarkError,
     ModelAPIError,
     accuracy_delta,
     answers_match,
@@ -310,3 +311,69 @@ class TestLooksIncompleteTuning:
         from agent import _looks_incomplete
         assert _looks_incomplete("The tool budget is exhausted, I still need more calls.")
         assert _looks_incomplete("I could not complete the analysis yet — would need more budget.")
+
+
+class TestProbeEndpoint:
+    """The fail-fast probe must abort quickly when no usable LM Studio
+    endpoint/model is present, so the autonomous gate never stalls for the
+    full 1800s timeout grinding through ~125 failing questions."""
+
+    def test_no_model_loaded_raises_benchmark_error(self, monkeypatch):
+        import urllib.error
+
+        class _FakeResp:
+            def read(self):
+                return (b'{"error":{"message":"No models loaded. Please load a '
+                        b'model in the developer page.","type":"invalid_request_error"}}')
+
+            def close(self):
+                return None
+
+            @property
+            def code(self):
+                return 400
+
+        def _urlopen(req, timeout=5.0):
+            raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, _FakeResp())
+
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+        from benchmark import _probe_endpoint
+        try:
+            _probe_endpoint("http://localhost:1234/v1/chat/completions", timeout=1.0)
+            assert False, "expected BenchmarkError"
+        except BenchmarkError as exc:
+            assert "no model" in str(exc).lower()
+
+    def test_unreachable_endpoint_raises_benchmark_error(self, monkeypatch):
+        import urllib.error
+
+        def _urlopen(req, timeout=5.0):
+            raise urllib.error.URLError("connection refused")
+
+        import urllib.request
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+        from benchmark import _probe_endpoint
+        try:
+            _probe_endpoint("http://localhost:1234/v1/chat/completions", timeout=1.0)
+            assert False, "expected BenchmarkError"
+        except BenchmarkError as exc:
+            assert "unreachable" in str(exc).lower()
+
+    def test_valid_chat_response_passes(self, monkeypatch):
+        import urllib.request
+
+        class _Ctx:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"choices":[{"message":{"content":"hi"}}]}'
+
+        monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=5.0: _Ctx())
+        from benchmark import _probe_endpoint
+        # Should not raise.
+        _probe_endpoint("http://localhost:1234/v1/chat/completions", timeout=1.0)

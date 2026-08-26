@@ -643,6 +643,73 @@ async def query_model(
     raise ModelAPIError(f"Failed after {max_retries} retries: {last_error}")
 
 
+def _probe_endpoint(base_url: str, timeout: float = 5.0) -> None:
+    """Verify the LM Studio endpoint is usable before running the benchmark.
+
+    Sends a minimal chat request; raises BenchmarkError with a clear message if
+    the server is down, rejects the request (e.g. no model loaded), or fails to
+    return a valid chat-completion body.  This is the fast path to a "no live
+    model" condition so the caller can fall back instead of stalling per-
+    question on urlopen(timeout=120) retries.
+    """
+    import urllib.error
+    import urllib.request
+
+    payload = json.dumps(
+        {
+            "model": "_probe_",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        base_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        # A 4xx with a "no model loaded" / "model not found" body is the
+        # common autonomous failure mode: the server is up but no model is
+        # loaded, so every one of the ~125 real queries would fail slowly.
+        # Surface it immediately so the caller can fall back fast.
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001 - best-effort
+            pass
+        lowered = detail.lower()
+        if ("no models loaded" in lowered or "model not found" in lowered
+                or "does not exist" in lowered):
+            raise BenchmarkError(
+                f"LM Studio has no model available at {base_url}: {detail[:200]}"
+            ) from exc
+        if exc.code >= 500:
+            raise BenchmarkError(
+                f"LM Studio endpoint returned {exc.code} on probe: {base_url}"
+            ) from exc
+        return
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise BenchmarkError(
+            f"LM Studio endpoint unreachable at {base_url}: {exc}"
+        ) from exc
+    # A server that accepts the connection but never returns valid chat JSON
+    # (e.g. a stub/health endpoint) would otherwise make every real query
+    # block on urlopen(timeout=120).  Treat a non-conforming body as a probe
+    # failure so the caller can fall back quickly.
+    try:
+        data = json.loads(body)
+        if not isinstance(data, dict) or "choices" not in data:
+            raise ValueError("response missing 'choices'")
+    except ValueError as exc:
+        raise BenchmarkError(
+            f"LM Studio endpoint at {base_url} did not return a chat response: {exc}"
+        ) from exc
+
+
 async def run_category(
     model: str,
     category: str,
@@ -1068,6 +1135,19 @@ async def main() -> None:
 
     global BASE_URL  # noqa: PLW0603
     BASE_URL = args.url.rstrip("/")
+
+    # Fail fast: probe the endpoint with a short timeout before fanning out
+    # across ~125 questions.  Without this, an unreachable LM Studio server
+    # (or one with no model loaded) makes every query_model() call block on
+    # urlopen(timeout=120) and retry, so the whole benchmark (and the
+    # autonomous driver's gate) stalls for the full gate timeout instead of
+    # reporting the problem immediately.
+    try:
+        _probe_endpoint(BASE_URL)
+    except BenchmarkError as exc:
+        print(f"Error: {exc}")
+        print("Benchmark aborted: no usable LM Studio endpoint/model.")
+        return
 
     categories = {k: v for k, v in ALL_CATEGORIES.items() if k in args.categories}
     total_q = sum(len(qs) for qs in categories.values()) * len(
