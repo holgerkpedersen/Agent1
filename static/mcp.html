@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent1 - MCP Services</title>
+  <link rel="icon" type="image/png" href="static/ttheme/images/logo-icon.png" sizes="16x16">
+  <style>
+    @font-face { font-family: 'Poppins'; src: url('static/ttheme/fonts/Poppins-Regular.ttf') format('truetype'); font-weight: 400; }
+    @font-face { font-family: 'Poppins'; src: url('static/ttheme/fonts/Poppins-Medium.ttf') format('truetype'); font-weight: 500; }
+    @font-face { font-family: 'Poppins'; src: url('static/ttheme/fonts/Poppins-Bold.ttf') format('truetype'); font-weight: 700; }
+  </style>
+  <link rel="stylesheet" href="static/ttheme/css/remixicon.css">
+  <link rel="stylesheet" href="static/ttheme/css/lib/bootstrap.min.css">
+  <link rel="stylesheet" href="static/ttheme/css/style.css">
+  <style>
+    :root {
+      --mcp-bg: #0f172a;
+      --mcp-card: #1e293b;
+      --mcp-border: rgba(148,163,184,.2);
+      --mcp-text: #e2e8f0;
+      --mcp-muted: #94a3b8;
+      --mcp-accent: #458eff;
+      --mcp-ok: #10b981;
+      --mcp-bad: #ef4444;
+    }
+    [data-theme="light"] {
+      --mcp-bg: #f8fafc;
+      --mcp-card: #ffffff;
+      --mcp-border: rgba(100,116,139,.25);
+      --mcp-text: #0f172a;
+      --mcp-muted: #64748b;
+    }
+    body {
+      background: var(--mcp-bg);
+      color: var(--mcp-text);
+      font-family: 'Poppins', sans-serif;
+      margin: 0;
+      padding: 24px;
+    }
+    .wrap { max-width: 1080px; margin: 0 auto; }
+    h1 { font-size: 1.35rem; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+    .sub { color: var(--mcp-muted); font-size: .85rem; margin-bottom: 20px; }
+    .card {
+      background: var(--mcp-card);
+      border: 1px solid var(--mcp-border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card h2 { font-size: 1rem; font-weight: 500; margin: 0 0 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th { text-align: left; color: var(--mcp-muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--mcp-border); }
+    td { padding: 8px; border-bottom: 1px solid var(--mcp-border); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .badge { padding: 2px 10px; border-radius: 999px; font-size: .75rem; font-weight: 500; }
+    .badge.connected { background: color-mix(in srgb, var(--mcp-ok) 18%, transparent); color: var(--mcp-ok); }
+    .badge.error     { background: color-mix(in srgb, var(--mcp-bad) 18%, transparent); color: var(--mcp-bad); }
+    .badge.stopped   { background: color-mix(in srgb, var(--mcp-muted) 18%, transparent); color: var(--mcp-muted); }
+    .llm-tag { font-size: .7rem; color: var(--mcp-accent); border: 1px solid var(--mcp-accent); border-radius: 999px; padding: 1px 8px; margin-left: 6px; }
+    button {
+      background: var(--mcp-accent); color: #fff; border: none; border-radius: 8px;
+      padding: 6px 14px; font-family: inherit; font-size: .82rem; cursor: pointer;
+    }
+    button.secondary { background: transparent; color: var(--mcp-text); border: 1px solid var(--mcp-border); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    select, textarea, input {
+      background: var(--mcp-bg); color: var(--mcp-text);
+      border: 1px solid var(--mcp-border); border-radius: 8px;
+      padding: 8px; font-family: inherit; font-size: .85rem; width: 100%;
+    }
+    textarea { min-height: 110px; font-family: Consolas, monospace; resize: vertical; }
+    .row2 { display: grid; grid-template-columns: 240px 1fr; gap: 12px; margin-bottom: 12px; }
+    label { display: block; color: var(--mcp-muted); font-size: .78rem; margin-bottom: 4px; }
+    pre.result {
+      background: var(--mcp-bg); border: 1px solid var(--mcp-border);
+      border-radius: 8px; padding: 12px; font-size: .82rem;
+      white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto;
+      margin: 0;
+    }
+    pre.result.err { color: var(--mcp-bad); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+    @media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } .row2 { grid-template-columns: 1fr; } }
+    a.back { color: var(--mcp-muted); text-decoration: none; font-size: .82rem; }
+    .hint { color: var(--mcp-muted); font-size: .78rem; margin-top: 8px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MCP Services <span class="live-dot" id="live"></span></h1>
+  <div class="sub">
+    Model Context Protocol servers connected by the Agent1 REPL.
+    Browse tools and invoke them here - configuration is managed only via the REPL (<code>mcp add</code>). |
+    <a class="back" href="/">performance dashboard</a>
+  </div>
+
+  <div class="card">
+    <h2>Servers</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Transport</th><th>State</th><th>Tools</th><th style="width:180px">Actions</th></tr></thead>
+      <tbody id="servers"><tr><td colspan="5" style="color:var(--mcp-muted)">loading...</td></tr></tbody>
+    </table>
+    <div class="hint">Connect a server in the REPL first: <code>mcp add &lt;name&gt; stdio ...</code> then <code>mcp connect &lt;name&gt;</code> - or press Connect here.</div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h2>Tool call</h2>
+      <div class="row2">
+        <div>
+          <label for="serverPick">Server</label>
+          <select id="serverPick"></select>
+        </div>
+        <div>
+          <label for="toolPick">Tool</label>
+          <select id="toolPick"></select>
+        </div>
+      </div>
+      <label for="argsJson">Arguments (JSON object)</label>
+      <textarea id="argsJson" spellcheck="false">{}</textarea>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="runBtn">Run tool</button>
+        <button class="secondary" id="fillSchemaBtn">Fill schema template</button>
+        <span id="callState" style="color:var(--mcp-muted); font-size:.8rem;"></span>
+      </div>
+      <div class="hint" id="schemaHint"></div>
+    </div>
+
+    <div class="card">
+      <h2>Result</h2>
+      <pre class="result" id="resultPane">Run a tool to see its output here.</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const api = {
+  state: "/api/mcp/state",
+  tools: (s) => "/api/mcp/tools?server=" + encodeURIComponent(s),
+  connect: "/api/mcp/connect",
+  disconnect: "/api/mcp/disconnect",
+  call: "/api/mcp/call",
+};
+
+async function postJSON(url, body) {
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok && resp.status !== 200) throw new Error("HTTP " + resp.status);
+  return await resp.json();
+}
+
+let currentTools = [];
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = String(s ?? "");
+  return d.innerHTML;
+}
+
+async function refresh() {
+  try {
+    const state = await (await fetch(api.state)).json();
+    renderServers(state.servers || [], state.llm_catalog || {});
+    $("live").style.background = "var(--mcp-ok)";
+  } catch (e) {
+    $("live").style.background = "var(--mcp-bad)";
+  }
+}
+
+function renderServers(servers, catalog) {
+  const tbody = $("servers");
+  if (!servers.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--mcp-muted)">No MCP servers configured. Add one via the REPL: mcp add ...</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  for (const s of servers) {
+    const tr = document.createElement("tr");
+
+    const name = document.createElement("td");
+    name.innerHTML = "<strong>" + esc(s.name) + "</strong>" +
+      (s.expose_to_llm ? '<span class="llm-tag">llm</span>' : "");
+    tr.appendChild(name);
+
+    const transport = document.createElement("td");
+    transport.textContent = s.transport;
+    tr.appendChild(transport);
+
+    const state = document.createElement("td");
+    state.innerHTML = '<span class="badge ' + esc(s.state) + '">' + esc(s.state) + "</span>";
+    if (s.detail) state.title = s.detail;
+    tr.appendChild(state);
+
+    const tools = document.createElement("td");
+    tools.textContent = s.tool_count;
+    tr.appendChild(tools);
+
+    const actions = document.createElement("td");
+    const btn = document.createElement("button");
+    if (s.state === "connected") {
+      btn.textContent = "Disconnect";
+      btn.className = "secondary";
+      btn.onclick = () => act(() => postJSON(api.disconnect, {name: s.name}));
+    } else {
+      btn.textContent = "Connect";
+      btn.onclick = () => act(() => postJSON(api.connect, {name: s.name}));
+    }
+    actions.appendChild(btn);
+
+    const pick = document.createElement("button");
+    pick.textContent = "Tools";
+    pick.className = "secondary";
+    pick.style.marginLeft = "6px";
+    pick.onclick = () => selectServer(s.name);
+    actions.appendChild(pick);
+    tr.appendChild(actions);
+
+    tbody.appendChild(tr);
+  }
+}
+
+async function act(fn) {
+  try { await fn(); } catch (e) { /* status poll will reflect reality */ }
+  await refresh();
+}
+
+async function selectServer(name) {
+  $("serverPick").value = name;
+  await loadTools();
+}
+
+async function loadServersIntoPicker() {
+  const state = await (await fetch(api.state)).json();
+  const sel = $("serverPick");
+  const prev = sel.value;
+  sel.innerHTML = "";
+  for (const s of state.servers || []) {
+    if (s.state !== "connected") continue;
+    const opt = document.createElement("option");
+    opt.value = s.name;
+    opt.textContent = s.name;
+    sel.appendChild(opt);
+  }
+  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
+
+async function loadTools() {
+  const server = $("serverPick").value;
+  const toolSel = $("toolPick");
+  toolSel.innerHTML = "";
+  currentTools = [];
+  $("schemaHint").textContent = "";
+  if (!server) return;
+  try {
+    const data = await (await fetch(api.tools(server))).json();
+    currentTools = data.tools || [];
+  } catch (e) { /* leave empty */ }
+  for (const t of currentTools) {
+    const opt = document.createElement("option");
+    opt.value = t.name;
+    opt.textContent = t.name;
+    toolSel.appendChild(opt);
+  }
+  showSchema();
+}
+
+function currentTool() {
+  const name = $("toolPick").value;
+  return currentTools.find((t) => t.name === name) || null;
+}
+
+function showSchema() {
+  const t = currentTool();
+  if (!t) { $("schemaHint").textContent = ""; return; }
+  const schema = JSON.stringify(t.inputSchema || {});
+  $("schemaHint").textContent =
+    (t.description ? t.description.slice(0, 120) : "") +
+    (t.description ? " | " : "") + "schema: " + schema.slice(0, 160);
+}
+
+async function runTool() {
+  const server = $("serverPick").value;
+  const tool = $("toolPick").value;
+  if (!server || !tool) return;
+  let args;
+  try {
+    args = JSON.parse($("argsJson").value || "{}");
+  } catch (e) {
+    setResult("Arguments are not valid JSON:\n" + e.message, true);
+    return;
+  }
+  $("runBtn").disabled = true;
+  $("callState").textContent = "calling...";
+  try {
+    const out = await postJSON(api.call, {server, tool, arguments: args});
+    if (out.ok) setResult(out.result ?? "(empty result)", false);
+    else setResult(out.error || "unknown error", true);
+    $("callState").textContent = "done";
+  } catch (e) {
+    setResult(String(e), true);
+    $("callState").textContent = "failed";
+  } finally {
+    $("runBtn").disabled = false;
+  }
+}
+
+function fillSchemaTemplate() {
+  const t = currentTool();
+  if (!t) return;
+  const build = (schema) => {
+    if (!schema || typeof schema !== "object") return null;
+    switch (schema.type) {
+      case "object": {
+        const o = {};
+        for (const [k, v] of Object.entries(schema.properties || {})) o[k] = build(v);
+        return o;
+      }
+      case "array": return [];
+      case "string": return "";
+      case "integer":
+      case "number": return 0;
+      case "boolean": return false;
+      default: return null;
+    }
+  };
+  $("argsJson").value = JSON.stringify(build(t.inputSchema) ?? {}, null, 2);
+}
+
+function setResult(text, isError) {
+  const pane = $("resultPane");
+  pane.textContent = text;
+  pane.classList.toggle("err", !!isError);
+}
+
+$("serverPick").addEventListener("change", loadTools);
+$("toolPick").addEventListener("change", showSchema);
+$("runBtn").addEventListener("click", runTool);
+$("fillSchemaBtn").addEventListener("click", fillSchemaTemplate);
+
+refresh();
+loadServersIntoPicker().then(loadTools);
+setInterval(refresh, 3000);
+setInterval(loadServersIntoPicker, 6000);
+</script>
+</body>
+</html>

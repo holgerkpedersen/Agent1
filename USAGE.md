@@ -155,6 +155,42 @@ as compact summaries; a child that hits its turn cap or times out reports
 
 ---
 
+## MCP services (Model Context Protocol)
+
+Agent1 can consume external MCP servers: browse their tools/resources and
+invoke tools, from the REPL, a web page, or (opt-in) from the LLM itself.
+
+```
+> mcp                                          status of configured servers
+> mcp add files stdio npx -y @modelcontextprotocol/server-filesystem C:\Dev\Agent1
+> mcp add gh http https://api.example.com/mcp --header "Authorization=secret:gh_token"
+> mcp connect files | all                      spawn + handshake
+> mcp tools [server]                           list tools + input schemas
+> mcp call files read_file '{"path": "a.py"}'  invoke a tool
+> mcp resources files                          list resources
+> mcp read files fake://note                   read one resource
+> mcp expose files on|off                      opt server into the LLM bridge
+> mcp remove files                             delete config entry
+```
+
+Web UI: start the dashboard (`--dashboard` or `--serve`) and open
+`http://localhost:<port>/mcp` - browse connected servers, fill tool argument
+templates from their schemas, invoke, and see capped results. The page can
+never edit configuration; `mcp.json` is written only by the REPL.
+
+LLM bridge: after `mcp expose <name> on`, the model gains two tools -
+`mcp_tools` (list what is available) and `mcp_call` (invoke with schema-
+validated arguments). The gate is re-checked at every call, so `expose off`
+takes effect immediately. Plan mode blocks both tools.
+
+Configuration lives in `mcp.json` at the repo root (gitignored). Secrets are
+never stored in plaintext: header/env values may reference the OS keyring via
+`secret:<name>` or an environment variable via `${VAR}`. Every request is
+wall-clock capped (default 30s per server, max 600); tool results are capped
+at 20k characters before reaching the terminal, the web page, or the model.
+
+---
+
 ## The Workflow Pipeline
 
 ### 1. Analyze existing codebase

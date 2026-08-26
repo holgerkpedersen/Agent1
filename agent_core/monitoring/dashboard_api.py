@@ -29,6 +29,8 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         params = parse_qs(parsed_path.query)
         if path in ("/", "/index.html"):
             self._send_html_page()
+        elif path == "/mcp":
+            self._send_mcp_page()
         elif path == "/api/snapshot":
             self._send_json(self._snapshot())
         elif path == "/api/counters":
@@ -41,10 +43,118 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             self._send_json(self._alerts())
         elif path == "/api/log":
             self._send_json(self._log())
+        elif path == "/api/mcp/state":
+            self._send_json(self._mcp_state())
+        elif path == "/api/mcp/tools":
+            self._send_json(self._mcp_tools(params))
         elif path.startswith("/static/"):
             self._send_static(path)
         else:
             self.send_error(404, "Not found")
+
+    # -- MCP endpoints -----------------------------------------------------
+    #
+    # Safety contract for everything under /mcp* :
+    # - the server binds localhost ONLY (see DashboardAPIServer.start);
+    # - POST is accepted solely for connect/disconnect/call on ALREADY
+    #   configured servers - there is NO endpoint that can read or write
+    #   mcp.json, so a browser can never alter configuration;
+    # - cross-origin POSTs are rejected (CSRF guard) before any work.
+
+    _MCP_POST_PATHS = ("/api/mcp/connect", "/api/mcp/disconnect", "/api/mcp/call")
+    _MCP_MAX_BODY = 64 * 1024
+
+    def do_POST(self) -> None:
+        path = urlparse(self.path).path
+        if path not in self._MCP_POST_PATHS:
+            self.send_error(404, "Not found")
+            return
+        # CSRF / DNS-rebinding guards: the dashboard binds localhost only,
+        # so both the Origin (browser requests) and the Host header must
+        # name a loopback host EXACTLY - "http://localhost.evil.com" must
+        # not slip through a prefix match.
+        origin = self.headers.get("Origin", "")
+        if origin:
+            try:
+                ohost = urlparse(origin).hostname or ""
+            except ValueError:
+                ohost = ""
+            if ohost not in ("localhost", "127.0.0.1", "::1"):
+                self.send_error(403, "Cross-origin MCP calls are not allowed")
+                return
+        host = (self.headers.get("Host") or "").split(":")[0].strip("[]")
+        if host and host not in ("localhost", "127.0.0.1", "::1"):
+            self.send_error(403, "Host header is not loopback")
+            return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = -1
+        if not 0 <= length <= self._MCP_MAX_BODY:
+            self.send_error(413, "Body too large")
+            return
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(payload, dict):
+                raise ValueError("body must be a JSON object")
+        except (json.JSONDecodeError, ValueError) as exc:
+            self._send_json({"ok": False, "error": f"bad request body: {exc}"})
+            return
+        name = str(payload.get("name", ""))
+        try:
+            if path == "/api/mcp/connect":
+                result = self._mcp().connect(name)
+                self._send_json({"ok": True, "status": result})
+            elif path == "/api/mcp/disconnect":
+                self._mcp().disconnect(name)
+                self._send_json({"ok": True})
+            else:
+                text = self._mcp().call_tool(
+                    str(payload.get("server", "")),
+                    str(payload.get("tool", "")),
+                    payload.get("arguments") or {},
+                )
+                self._send_json({"ok": True, "result": text})
+        except Exception as exc:  # surface manager/protocol errors to the UI
+            self._send_json({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+
+    @staticmethod
+    def _mcp() -> Any:
+        # Late import: keeps monitoring free of any hard dependency on the
+        # mcp package when only metrics are served.
+        from agent_core.mcp.manager import get_manager
+        return get_manager()
+
+    def _mcp_state(self) -> Dict[str, Any]:
+        mgr = self._mcp()
+        state = {
+            "servers": mgr.status(),
+            "llm_catalog": mgr.llm_catalog(),
+        }
+        return state
+
+    def _mcp_tools(self, params: Dict[str, List[str]]) -> Dict[str, Any]:
+        names = params.get("server", [])
+        if not names:
+            return {"error": "missing ?server="}
+        try:
+            return {"server": names[0], "tools": self._mcp().tools(names[0])}
+        except Exception as exc:
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+    def _send_mcp_page(self) -> None:
+        """Serve static/mcp.html verbatim."""
+        page_path = os.path.join(self._base_dir, "static", "mcp.html")
+        if not os.path.isfile(page_path):
+            self.send_error(404, "mcp.html not found")
+            return
+        with open(page_path, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _send_json(self, data: Dict[str, Any]) -> None:
         body = json.dumps(data).encode("utf-8")

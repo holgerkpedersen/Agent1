@@ -33,6 +33,17 @@ is being extended to audit its own file effects (self-improvement).
   path utilities (`to_windows_path`, `normalize_path`, `safe_path`, `resolve_path`);
   `agent_core/commands/freshness.py` — REPL stale-module guard (warns when loaded
   `agent_core`/`harnessfix` files change on disk mid-session); **do NOT invent new ones**.
+- `agent_core/mcp/` — MCP (Model Context Protocol) consumer: `jsonrpc.py`
+  (typed JSON-RPC 2.0 framing), `transports.py` (Stdio argv-list Popen +
+  HTTP/SSE, every request wall-clock capped), `config.py` (`mcp.json`,
+  gitignored; secrets only via `secret:<keyring>` / `${VAR}` refs, fail-closed),
+  `client.py` (schema-validated tool calls, 20k-char result cap), `manager.py`
+  (lock-guarded lifecycle, process-wide singleton). REPL `mcp` command
+  (`mcp_cmd.py`) is the ONLY writer of mcp.json; the dashboard `/mcp` page
+  can connect/disconnect/call but never read or write config; POST endpoints
+  enforce exact-loopback Origin+Host checks. LLM bridge tools
+  `mcp_tools`/`mcp_call` fire only for servers with `expose_to_llm: true`
+  (default false), re-checked under the manager lock at call time.
 - `harnessfix/` — self-improvement consumers: `tracing.py` (opt-in `TraceWriter`),
   `reader`, `diagnose`, `gates`, `loop`, `htir`, `links`, `corpus`, `review.py`
   (human verification ledger + diagnosis-pinning regression export), `autoreview.py`

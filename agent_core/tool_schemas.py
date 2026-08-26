@@ -313,6 +313,41 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "mcp_tools",
+            "description": (
+                "List available MCP (external service) tools. Only servers the "
+                "user explicitly exposed to you are shown. Call this before "
+                "mcp_call to discover tool names and argument shapes."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mcp_call",
+            "description": (
+                "Invoke a tool on an MCP server the user exposed to you. "
+                "Arguments must match the schema reported by mcp_tools; they "
+                "are validated locally and rejected before anything is sent."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "server": {"type": "string", "description": "MCP server name"},
+                    "tool": {"type": "string", "description": "Tool name on that server"},
+                    "arguments": {
+                        "type": "object",
+                        "description": "Tool arguments per its declared schema",
+                    },
+                },
+                "required": ["server", "tool"],
+            },
+        },
+    },
 ]
 
 NLP_TOOL_NAMES: frozenset[str] = frozenset(

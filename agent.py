@@ -745,7 +745,64 @@ class Agent:
             "write": self._nlp_write,
             "delegate": self._nlp_delegate,
             "delegate_batch": self._nlp_delegate_batch,
+            "mcp_tools": self._nlp_mcp_tools,
+            "mcp_call": self._nlp_mcp_call,
         }
+
+    async def _nlp_mcp_tools(self, args: dict[str, Any]) -> str:
+        """List MCP tools the user exposed to the LLM (opt-in per server)."""
+        from agent_core.mcp.manager import get_manager
+        catalog = get_manager().llm_catalog()
+        if not catalog:
+            return (
+                "No MCP tools available: either no server is connected or none "
+                "is exposed to you. The user opts a server in with "
+                "'mcp expose <name> on'."
+            )
+        lines = ["Available MCP tools (server.tool):"]
+        for server, tools in sorted(catalog.items()):
+            for tool in tools:
+                lines.append(f"  - {server}.{tool}")
+        return "\n".join(lines)
+
+    async def _nlp_mcp_call(self, args: dict[str, Any]) -> str:
+        """Invoke an MCP tool on an LLM-exposed server.
+
+        The expose_to_llm gate is re-checked HERE (not just in llm_catalog)
+        so a hallucinated server name can never reach a non-exposed one.
+        Arguments are schema-validated inside the client before anything
+        leaves the process; results are size-capped.
+        """
+        from agent_core.mcp.config import McpConfigError
+        from agent_core.mcp.manager import McpManagerError, get_manager
+        server = str(args.get("server", "")).strip().strip('"').strip("'")
+        tool = str(args.get("tool", "")).strip().strip('"').strip("'")
+        if not server or not tool:
+            return "Error: mcp_call needs both 'server' and 'tool'."
+        manager = get_manager()
+        try:
+            exposed = manager.llm_catalog()
+        except Exception as e:
+            return f"mcp error: {e}"
+        if server not in exposed:
+            return (
+                f"Error: MCP server '{server}' is not exposed to you "
+                f"(exposed: {', '.join(sorted(exposed)) or 'none'}). The user "
+                f"controls exposure with 'mcp expose <name> on'."
+            )
+        arguments = args.get("arguments")
+        if arguments is not None and not isinstance(arguments, dict):
+            return "Error: 'arguments' must be a JSON object."
+        try:
+            # require_exposed=True re-validates the opt-in flag under the
+            # manager lock - no TOCTOU window between gate check and call.
+            return manager.call_tool(server, tool, arguments, require_exposed=True)
+        except McpManagerError as e:
+            return f"mcp error: {e}"
+        except McpConfigError as e:
+            return f"mcp config error: {e}"
+        except Exception as e:
+            return f"mcp error calling {server}.{tool}: {type(e).__name__}: {e}"
 
     async def _nlp_definitions(self, args: dict[str, Any]) -> str:
         """Index a Python file's classes/functions via AST (plan item B-#8)."""
@@ -2490,6 +2547,8 @@ def _register_commands(registry: CommandRegistry) -> None:
     registry.register(ModeCommand())
     from agent_core.commands.subagent_cmd import SubAgentCommand
     registry.register(SubAgentCommand())
+    from agent_core.commands.mcp_cmd import MCPCommand
+    registry.register(MCPCommand())
 
 
 def _build_registry() -> CommandRegistry:
