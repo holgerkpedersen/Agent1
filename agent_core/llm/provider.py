@@ -66,13 +66,21 @@ def provider_for(
     return provider_setting if provider_setting in ("lmstudio", "opencode") else "lmstudio"
 
 
-def build_provider(settings: Any, model_name: str) -> "LLMProvider":
+def build_provider(
+    settings: Any, model_name: str, provider_override: str | None = None
+) -> "LLMProvider":
     """Configured provider factory (decision #008/#013).
 
     Builds the concrete provider for the selected provider (LM Studio default,
     #009).  When :attr:`settings.llm_providers` lists more than one provider,
     builds each entry in order and wraps them in a :class:`FailoverProvider`
     so a connectivity loss on the active provider fails over to the next.
+
+    When *provider_override* is given (``"lmstudio"`` or ``"opencode"``) it
+    takes precedence over the model-name prefix and the persisted provider —
+    this is how the ``model <name> --provider <p>`` command lets the user
+    explicitly choose which provider a model name routes to, instead of the
+    provider being inferred purely from the model name.
     """
     from agent_core.constants import load_model_json
 
@@ -99,13 +107,17 @@ def build_provider(settings: Any, model_name: str) -> "LLMProvider":
     if not chain:
         chain = (getattr(settings, "llm_provider", "lmstudio"),)
 
-    # The model prefix still overrides the provider for a single-provider
-    # setup; with a failover chain the primary entry is the active provider.
-    primary = provider_for(model_name, chain[0], persisted_provider)
+    # An explicit override wins over prefix-based and persisted routing.
+    if provider_override in ("lmstudio", "opencode"):
+        primary = provider_override
+    else:
+        # The model prefix still overrides the provider for a single-provider
+        # setup; with a failover chain the primary entry is the active provider.
+        primary = provider_for(model_name, chain[0], persisted_provider)
 
     # A single configured provider always yields the concrete provider —
-    # routing (persisted/prefix) selects WHICH one, it never extends the
-    # chain.  Only an explicit multi-provider chain builds a FailoverProvider.
+    # routing (persisted/prefix/override) selects WHICH one, it never extends
+    # the chain.  Only an explicit multi-provider chain builds a FailoverProvider.
     if len(chain) == 1:
         return _build_one(primary)
 
