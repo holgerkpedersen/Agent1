@@ -116,6 +116,21 @@ class AgentSettings:
     opencode_api_key: str = field(
         default_factory=lambda: os.environ.get("OPENCODE_API_KEY", "")
     )
+    #: llama.cpp (llama-server) OpenAI-compatible endpoint (decision #014).
+    #: When AGENT_LLM_PROVIDER=llama the agent talks to a local llama.cpp
+    #: ``llama-server`` over the standard /v1/chat/completions protocol
+    #: instead of LM Studio.  Override with AGENT_LLAMA_URL.
+    llama_base_url: str = field(
+        default_factory=lambda: os.environ.get("AGENT_LLAMA_URL", "http://127.0.0.1:8080/v1")
+    )
+    #: Extra CLI args passed to ``llama-server`` when the agent auto-launches
+    #: or relaunches it (e.g. "--gpu-layers 999 --ctx-size 262144").  These are
+    #: appended verbatim after the agent's own --host/--port/--model/--alias
+    #: flags so a manual launch's tuning survives a model switch.  Space-
+    #: separated string; override with AGENT_LLAMA_EXTRA_ARGS.  Empty = none.
+    llama_extra_args: str = field(
+        default_factory=lambda: os.environ.get("AGENT_LLAMA_EXTRA_ARGS", "")
+    )
 
     def __post_init__(self) -> None:
         # Enforce the invariant on every construction (not just at the two
@@ -123,7 +138,7 @@ class AgentSettings:
         _validate_settings(self)
 
 
-_LLM_PROVIDERS = ("lmstudio", "opencode")
+_LLM_PROVIDERS = ("lmstudio", "opencode", "llama")
 
 
 def _parse_provider_chain(raw: str | None) -> tuple[str, ...]:
@@ -321,6 +336,8 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         opencode_model=os.environ.get("AGENT_OPENCODE_MODEL") or env_vars.get("AGENT_OPENCODE_MODEL") or "opencode-go/deepseek-v4-flash",
         opencode_api_url=os.environ.get("OPENCODE_API_URL") or env_vars.get("OPENCODE_API_URL") or "https://opencode.ai/zen/go/v1",
         opencode_api_key=os.environ.get("OPENCODE_API_KEY") or env_vars.get("OPENCODE_API_KEY") or _store_secret("OPENCODE_API_KEY"),
+        llama_base_url=os.environ.get("AGENT_LLAMA_URL") or env_vars.get("AGENT_LLAMA_URL") or "http://127.0.0.1:8080/v1",
+        llama_extra_args=os.environ.get("AGENT_LLAMA_EXTRA_ARGS") or env_vars.get("AGENT_LLAMA_EXTRA_ARGS") or "",
     )
 
     _validate_settings(settings)

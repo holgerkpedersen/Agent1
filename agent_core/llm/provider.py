@@ -59,11 +59,13 @@ def provider_for(
         return "opencode"
     if m.startswith("zen"):
         return "opencode"
+    if m.startswith("llama"):
+        return "llama"
     if m.startswith(("laguna", "qwen", "kwaipilot", "gemma", "meta/", "prism", "lmstudio")):
         return "lmstudio"
-    if persisted_provider in ("lmstudio", "opencode"):
+    if persisted_provider in ("lmstudio", "opencode", "llama"):
         return persisted_provider
-    return provider_setting if provider_setting in ("lmstudio", "opencode") else "lmstudio"
+    return provider_setting if provider_setting in ("lmstudio", "opencode", "llama") else "lmstudio"
 
 
 def build_provider(
@@ -98,6 +100,14 @@ def build_provider(
                 api_url=getattr(settings, "opencode_api_url", "https://opencode.ai/zen/go/v1"),
                 api_key=getattr(settings, "opencode_api_key", ""),
             )
+        # llama.cpp (llama-server) OpenAI-compatible provider.
+        if provider_name == "llama":
+            from .llama_provider import LlamaProvider
+            return LlamaProvider(
+                model_name=model_name,
+                api_url=getattr(settings, "llama_base_url", "http://127.0.0.1:8080/v1"),
+            )
+
         # Unknown entries fall back to LM Studio (the default provider).
         from .lmstudio import LMStudioProvider
 
@@ -108,7 +118,7 @@ def build_provider(
         chain = (getattr(settings, "llm_provider", "lmstudio"),)
 
     # An explicit override wins over prefix-based and persisted routing.
-    if provider_override in ("lmstudio", "opencode"):
+    if provider_override in ("lmstudio", "opencode", "llama"):
         primary = provider_override
     else:
         # The model prefix still overrides the provider for a single-provider

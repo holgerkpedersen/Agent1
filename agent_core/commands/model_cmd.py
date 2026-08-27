@@ -6,7 +6,7 @@ import difflib
 import re
 
 from .base import Command
-from agent_core.config import lmstudio_base_url
+from agent_core.config import lmstudio_base_url, load_agent_settings
 from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, persist_model_choice
 from agent_core.llm import lmstudio as _lms
 from agent_core.llm import model_profiles as _profiles
@@ -25,6 +25,24 @@ def _format_size(bytes_val: int) -> str:
     if mb >= 1:
         return f"{mb:.0f} MB"
     return f"{bytes_val} B"
+
+
+def _concrete_llama_provider(provider: Any) -> Any:
+    """Return a concrete ``LlamaProvider`` from *provider*.
+
+    ``build_provider`` may wrap the llama provider in a ``FailoverProvider``
+    when several ``llm_providers`` are configured.  The llama-server
+    reconciliation code needs the concrete ``LlamaProvider`` (it exposes
+    ``api_url``); this unwraps a failover wrapper to find it, falling back to
+    the original object if no llama provider is present.
+    """
+    if type(provider).__name__ == "LlamaProvider":
+        return provider
+    if type(provider).__name__ == "FailoverProvider":
+        for wrapped in getattr(provider, "providers", []):
+            if type(wrapped).__name__ == "LlamaProvider":
+                return wrapped
+    return provider
 
 
 class ModelCommand(Command):
@@ -163,6 +181,31 @@ class ModelCommand(Command):
     #  List
     # ------------------------------------------------------------------
 
+
+    def _llama_catalog(self, agent: "Agent") -> list[str]:
+        """Return llama.cpp model ids (namespaced llama/<id>).
+
+        Uses the agent's real LlamaProvider when it is active (so the
+        list reflects what chat uses), otherwise a freshly built one from
+        settings.llama_base_url.  Returns [] on any failure.
+        """
+        from agent_core.llm.llama_provider import LlamaProvider
+
+        provider = getattr(getattr(agent, "llm", None), "_provider", None)
+        if type(provider).__name__ == "LlamaProvider":
+            try:
+                return list(provider.list_models())
+            except Exception:
+                return []
+        try:
+            from agent_core.config import load_agent_settings
+            s = load_agent_settings()
+            return list(LlamaProvider(
+                api_url=getattr(s, "llama_base_url", "http://127.0.0.1:8080/v1")
+            ).list_models())
+        except Exception:
+            return []
+
     def _list_models(self, agent: "Agent", interactive: bool = False) -> None:
         """Show available models per LLM provider (LM Studio + opencode).
 
@@ -198,7 +241,8 @@ class ModelCommand(Command):
         opencode_models, zen_models, oc_api_mode = self._opencode_catalog(agent)
 
         print(f"\n  Providers: lmstudio (active: {'*' if active_provider == 'lmstudio' else ' '})"
-              f"  opencode (active: {'*' if active_provider == 'opencode' else ' '})")
+              f"  opencode (active: {'*' if active_provider == 'opencode' else ' '})"
+              f"  llama (active: {'*' if active_provider == 'llama' else ' '})")
         if opencode_models:
             print(f"  [opencode] {len(opencode_models)} model(s) — needs API key:\n")
             for key in opencode_models:
@@ -220,6 +264,22 @@ class ModelCommand(Command):
                 print(f"{marker} {key}  (provider=opencode-zen, free)")
         else:
             print("\n  [opencode-zen] free tier unreachable — check network\n")
+
+        # ---- llama.cpp (llama-server) models ----
+        llama_models = self._llama_catalog(agent)
+        if llama_models:
+            print(f"\n  [llama] {len(llama_models)} model(s) from llama.cpp:\n")
+            for key in llama_models:
+                is_current = key == current
+                marker = "  *" if is_current else "   "
+                print(f"{marker} {key}  (provider=llama)")
+        else:
+            try:
+                from agent_core.config import load_agent_settings
+                _lurl = load_agent_settings().llama_base_url
+            except Exception:
+                _lurl = "http://127.0.0.1:8080/v1"
+            print(f"\n  [llama] llama.cpp server unreachable at {_lurl} - start llama-server")
 
         # ---- LM Studio models ----
         models, loaded_ids = self._fetch_models()
@@ -345,6 +405,45 @@ class ModelCommand(Command):
             agent.llm.model_name = q
             persist_model_choice(q, provider="opencode")
             print(f"  Switched: {old} -> {q}  (provider=opencode-zen, free)")
+            return
+
+        # llama.cpp (llama-server) models, e.g. "llama/qwen3.8-flash-next".
+        if lowered.startswith("llama/"):
+            old = agent.llm.model_name
+            if query == old:
+                print(f"  Already using: {query}")
+                return
+            from agent_core.config import load_agent_settings
+            from agent_core.llm.provider import build_provider
+            settings = load_agent_settings()
+            provider = build_provider(settings, query, provider_override="llama")
+            # Reconciliation needs the concrete LlamaProvider (it exposes
+            # api_url); unwrap a possible FailoverProvider wrapper.
+            llama_provider = _concrete_llama_provider(provider)
+            # Make the server actually serve the requested model: if the
+            # running llama-server is a router it dynamically loads it (and
+            # unloads the old one); otherwise we relaunch the router with
+            # --models-dir so local GGUFs resolve.  This is what lets `model
+            # llama/Bonsai -p llama` use Bonsai directly instead of silently
+            # falling back to whatever GGUF the pre-started server loaded.
+            from agent_core.llm import llama_server
+            ok, msg = llama_server.ensure_model_served(llama_provider.api_url, query)
+            if not ok:
+                print(f"  [llama] WARNING: could not ensure model served: {msg}")
+            # Pin model_name to the id the server now serves so list/switch
+            # and chat agree.  Falls back to the routing label if the server
+            # is unreachable (chat self-heals on the first 400).
+            resolved = self._resolve_llama_server_model(llama_provider, query)
+            # Pin the concrete LlamaProvider (not a possible FailoverProvider
+            # wrapper) so chat targets the llama-server directly.
+            agent.llm._provider = llama_provider
+            agent.llm.model_name = resolved
+            persist_model_choice(resolved, provider="llama")
+            if resolved != query:
+                print(f"  Switched: {old} -> {resolved}  (provider=llama)")
+                print(f"  llama-server now serves '{resolved}'.")
+            else:
+                print(f"  Switched: {old} -> {resolved}  (provider=llama)")
             return
 
         models, loaded_ids = self._fetch_models()
@@ -510,8 +609,8 @@ class ModelCommand(Command):
             print("  Specify a model name, e.g. `model <name> --provider <lmstudio|opencode>`.")
             return
 
-        if provider not in ("lmstudio", "opencode"):
-            print(f"  Unknown provider '{provider}'. Options: lmstudio, opencode.")
+        if provider not in ("lmstudio", "opencode", "llama"):
+            print(f"  Unknown provider '{provider}'. Options: lmstudio, opencode, llama.")
             return
 
         from agent_core.config import load_agent_settings
@@ -553,6 +652,41 @@ class ModelCommand(Command):
             agent.llm.model_name = q
             persist_model_choice(q, provider="opencode")
             print(f"  Switched: {old} -> {q}  (provider=opencode)")
+            return
+
+        # provider == "llama" - build the llama.cpp provider directly.
+        # No catalog match is needed: the model id is whatever the
+        # llama-server serves (e.g. "llama/qwen3.8-flash-next").
+        if provider == "llama":
+            # Store the routing-prefixed id so model list / routing agree; the
+            # provider strips the prefix at the HTTP boundary.
+            name = query if query.startswith("llama/") else f"llama/{query}"
+            old = agent.llm.model_name
+            if name == old:
+                print(f"  Already using: {name}")
+                return
+            provider = build_provider(settings, name, provider_override="llama")
+            # Reconciliation needs the concrete LlamaProvider (it exposes
+            # api_url); unwrap a possible FailoverProvider wrapper.
+            llama_provider = _concrete_llama_provider(provider)
+            # Make the server actually serve the requested model (router
+            # load/unload, or relaunch with --models-dir), then pin model_name
+            # to the id the server now serves.
+            from agent_core.llm import llama_server
+            ok, msg = llama_server.ensure_model_served(llama_provider.api_url, name)
+            if not ok:
+                print(f"  [llama] WARNING: could not ensure model served: {msg}")
+            resolved = self._resolve_llama_server_model(llama_provider, name)
+            # Pin the concrete LlamaProvider (not a possible FailoverProvider
+            # wrapper) so chat targets the llama-server directly.
+            agent.llm._provider = llama_provider
+            agent.llm.model_name = resolved
+            persist_model_choice(resolved, provider="llama")
+            if resolved != name:
+                print(f"  Switched: {old} -> {resolved}  (provider=llama)")
+                print(f"  llama-server now serves '{resolved}'.")
+            else:
+                print(f"  Switched: {old} -> {resolved}  (provider=llama)")
             return
 
         # provider == "lmstudio" — match against the LM Studio API.
@@ -599,6 +733,27 @@ class ModelCommand(Command):
 
         agent.llm._provider = build_provider(load_agent_settings(), model_name)
 
+    def _resolve_llama_server_model(
+        self, provider: Any, routing_label: str
+    ) -> str:
+        """Resolve the llama-server's REAL served model id for a switch.
+
+        The user types a routing label (e.g. ``llama/oss-20b``) but the
+        llama-server was started with a specific ``--model`` and registered it
+        under that exact id.  We ask the server (``GET /v1/models``) which id
+        it serves and pin ``model_name`` to that, so the chat ``model`` field
+        and ``model list`` agree with reality.  Returns *routing_label* if the
+        server is unreachable (chat will lazily refresh on the first 400).
+        """
+        try:
+            server_id = provider.refresh_server_model_id()
+        except Exception:
+            server_id = None
+        if not server_id:
+            return routing_label
+        # Keep the routing prefix so provider routing / persistence agree.
+        return f"llama/{server_id}" if not server_id.startswith("llama/") else server_id
+
     async def _handle_provider(self, args: list[str], agent: "Agent") -> None:
         """`model provider [lmstudio|opencode]` — show or switch the provider."""
         if not args:
@@ -610,13 +765,13 @@ class ModelCommand(Command):
             current = provider_for(agent.llm.model_name, settings.llm_provider, persisted_provider)
             print(f"  Provider: {current}  (model: {agent.llm.model_name})")
             print(f"  Persisted provider: {persisted_provider or '(auto)'}")
-            print("  Options: model provider lmstudio | model provider opencode")
-            print("  Pick a model + provider explicitly: model <name> --provider <lmstudio|opencode>")
+            print("  Options: model provider lmstudio | model provider opencode | model provider llama")
+            print("  Pick a model + provider explicitly: model <name> --provider <lmstudio|opencode|llama>")
             return
 
         target = args[0].strip().lower()
-        if target not in ("lmstudio", "opencode"):
-            print(f"  Unknown provider '{target}'. Options: lmstudio, opencode.")
+        if target not in ("lmstudio", "opencode", "llama"):
+            print(f"  Unknown provider '{target}'. Options: lmstudio, opencode, llama.")
             return
 
         from agent_core.constants import load_model_json, persist_model_choice
@@ -877,8 +1032,42 @@ class ModelCommand(Command):
         except KeyError:
             print(f"  No profile: {sub}")
 
+    async def _unload_llama_model(self, rest: list[str], agent: "Agent") -> None:
+        """Unload the current model from the llama-server process.
+
+        llama-server loads exactly one model at startup (via ``--model`` on
+        the command line) and has no per-model unload API.  The only way to
+        unload is to shut the server down via ``POST /shutdown``.
+        """
+        provider = agent.llm._provider
+        if provider is None or not hasattr(provider, "shutdown"):
+            print("  Current llama provider has no shutdown method.")
+            return
+
+        query = " ".join(rest).strip()
+        if query:
+            print(f"  llama-server holds a single model; ignoring target '{query}'.")
+        print(f"  Shutting down llama-server (unloading {agent.llm.model_name}) ...")
+        ok, msg = provider.shutdown()
+        print(f"  {msg}")
+
     async def _unload_model(self, rest: list[str], agent: "Agent") -> None:
-        """Unload a model from LM Studio."""
+        """Unload a model from LM Studio or llama-server, depending on provider."""
+        from agent_core.llm.provider import provider_for
+        from agent_core.constants import load_model_json
+
+        settings = load_agent_settings()
+        persisted_provider = str(load_model_json().get("provider") or "")
+        current_provider = provider_for(
+            agent.llm.model_name, settings.llm_provider, persisted_provider
+        )
+
+        # --- llama provider: shut down the llama-server process ---
+        if current_provider == "llama":
+            await self._unload_llama_model(rest, agent)
+            return
+
+        # --- LM Studio provider (default path) ---
         query = " ".join(rest).strip()
         models, loaded_ids = self._fetch_models()
 

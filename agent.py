@@ -247,7 +247,64 @@ class LLMClient:
                 traceback.format_exc(),
             )
             self._profile_name = None
-    
+        # Make the llama-server actually serve the requested model (router
+        # load/unload, or relaunch with --models-dir).  This is what lets
+        # `model llama/... -p llama` (and a persisted llama model at startup)
+        # use the Bonsai/whatever model directly instead of silently falling
+        # back to whatever GGUF the pre-started server happened to load.
+        self._reconcile_llama_model(settings)
+
+    def _reconcile_llama_model(self, settings: Any) -> None:
+        """Best-effort: ensure the running llama-server serves self._model_name.
+
+        No-op unless the active provider is llama and the provider is a
+        LlamaProvider.  On any failure we log and continue — chat still works
+        against whatever the server serves (it self-heals the request ``model``
+        id), we just can't guarantee it's the *requested* model.
+        """
+        try:
+            from agent_core.llm.provider import provider_for
+            from agent_core.constants import load_model_json
+        except Exception:
+            return
+        if not self._model_name.startswith("llama/"):
+            return
+        persisted = load_model_json()
+        persisted_provider = str(persisted.get("provider") or "")
+        provider_setting = getattr(settings, "llm_provider", "lmstudio") if settings else "lmstudio"
+        if provider_for(self._model_name, provider_setting, persisted_provider) != "llama":
+            return
+        provider = self._provider
+        # A FailoverProvider may wrap the LlamaProvider when several
+        # llm_providers are configured — unwrap to reach the concrete one.
+        if type(provider).__name__ == "FailoverProvider":
+            for wrapped in getattr(provider, "providers", []):
+                if type(wrapped).__name__ == "LlamaProvider":
+                    provider = wrapped
+                    break
+        if type(provider).__name__ != "LlamaProvider":
+            return
+        try:
+            from agent_core.llm import llama_server
+            api_url = getattr(provider, "api_url", None)
+            if not api_url:
+                return
+            print(f"  [llama] ensuring '{self._model_name}' is served by llama-server...")
+            ok, msg = llama_server.ensure_model_served(api_url, self._model_name)
+            if ok:
+                # Pin model_name to the id the server now serves so chat/list
+                # agree with what's actually loaded.
+                served = llama_server.list_served_models(api_url)
+                if served:
+                    provider._cached_server_model_id = served[0]
+                    print(f"  [llama] serving '{served[0]}' ({msg})")
+                else:
+                    print(f"  [llama] {msg}")
+            else:
+                print(f"  [llama] WARNING: could not ensure model served: {msg}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("llama model reconciliation failed:\n%s", traceback.format_exc())
+
     @property
     def model_name(self) -> str:
         return self._model_name
