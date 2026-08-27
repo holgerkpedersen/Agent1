@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
@@ -29,8 +32,12 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         params = parse_qs(parsed_path.query)
         if path in ("/", "/index.html"):
             self._send_html_page()
-        elif path == "/mcp":
+        el        if path == "/mcp":
             self._send_mcp_page()
+        elif path == "/autonomous" or path == "/autonomous.html":
+            self._send_autonomous_page()
+        elif path == "/api/autonomous/status":
+            self._send_json(self._autonomous_status())
         elif path == "/api/snapshot":
             self._send_json(self._snapshot())
         elif path == "/api/counters":
@@ -155,6 +162,82 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_autonomous_page(self) -> None:
+        """Serve static/autonomous.html verbatim (real-time autonomous view)."""
+        page_path = os.path.join(self._base_dir, "static", "autonomous.html")
+        if not os.path.isfile(page_path):
+            self.send_error(404, "autonomous.html not found")
+            return
+        with open(page_path, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    #: A run-status heartbeat older than this (seconds) means the process is
+    #: assumed dead even if it left ``running=true`` (e.g. it was killed).
+    _AUTONOMOUS_STALE_SECONDS = 180
+
+    def _autonomous_status(self) -> Dict[str, Any]:
+        """Assemble the live autonomous-run state for the dashboard.
+
+        Merges the per-phase beacon (run_status.json), the latest finished
+        iteration summary (summary.json), the cross-iteration history
+        (run_history.jsonl) and the most recent commits, plus a derived
+        ``running`` flag so the UI can show a live/idle indicator.
+        """
+        from harnessfix.progress import read_history, read_progress
+
+        status = read_progress()
+        # Derive liveness: explicit running flag AND a recent heartbeat.
+        now = time.time()
+        ts = status.get("ts")
+        stale = (
+            not isinstance(ts, (int, float))
+            or (now - float(ts)) > self._AUTONOMOUS_STALE_SECONDS
+        )
+        running = bool(status.get("running")) and not stale
+        if "running" in status:
+            status = dict(status)
+            status["running"] = running
+
+        # Latest summary.json (written at end of each iteration).
+        summary: Dict[str, Any] = {}
+        summary_path = os.path.join(self._base_dir, "reports", "harnessfix", "summary.json")
+        if os.path.isfile(summary_path):
+            try:
+                summary = json.loads(Path(summary_path).read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                summary = {}
+
+        history = read_history(limit=50)
+
+        # Recent commits touching the autonomous run (most recent first).
+        recent_commits: list[str] = []
+        try:
+            out = subprocess.run(
+                ["git", "log", "-5", "--oneline"],
+                cwd=self._base_dir,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            if out.returncode == 0:
+                recent_commits = [ln for ln in out.stdout.splitlines() if ln.strip()]
+        except Exception:
+            recent_commits = []
+
+        return {
+            "status": status,
+            "summary": summary,
+            "history": history,
+            "recent_commits": recent_commits,
+            "server_time": now,
+        }
 
     def _send_json(self, data: Dict[str, Any]) -> None:
         body = json.dumps(data).encode("utf-8")

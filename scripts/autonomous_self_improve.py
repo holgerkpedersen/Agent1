@@ -101,6 +101,44 @@ def _commit_repair(iteration: int, summary: dict[str, Any]) -> bool:
     return True
 
 
+def _record_iteration(iteration: int, summary: dict[str, Any], output_dir: Path) -> None:
+    """Append one finished-iteration record to the dashboard history log."""
+    try:
+        head = _git(["rev-parse", "HEAD"], check=False).stdout.strip()
+    except Exception:
+        head = ""
+    baseline = summary.get("harness_baseline") or {}
+    post = summary.get("harness_post") or {}
+    append_history({
+        "iteration": iteration,
+        "timestamp": _git_time(),
+        "verdict": summary.get("verdict"),
+        "accepted": bool(summary.get("accepted")),
+        "proposed_repair": summary.get("proposed_repair"),
+        "accepted_repair": summary.get("accepted_repair"),
+        "repair_applied": summary.get("repair_applied"),
+        "tests_passed": summary.get("tests_passed"),
+        "security_passed": summary.get("security_passed"),
+        "harness_baseline_rate": baseline.get("success_rate"),
+        "harness_post_rate": post.get("success_rate"),
+        "git_head": head,
+    })
+
+
+def _git_time() -> float:
+    """Best-effort epoch seconds for the current commit (fallback: now)."""
+    try:
+        out = _git(["log", "-1", "--format=%ct"], check=False).stdout.strip()
+        return float(out) if out else _now()
+    except Exception:
+        return _now()
+
+
+def _now() -> float:
+    import time as _t
+    return _t.time()
+
+
 def run_iteration(
     iteration: int,
     *,
@@ -112,6 +150,7 @@ def run_iteration(
 ) -> dict[str, Any]:
     """One autonomous HarnessFix iteration; returns its summary dict."""
     from harnessfix.loop import run_loop
+from harnessfix.progress import append_history, clear_progress, write_progress
 
     return run_loop(
         trace_dir,
@@ -120,6 +159,7 @@ def run_iteration(
         model=None if no_benchmark else model,
         profile=profile,
         output_dir=output_dir,
+        iteration=iteration,
     )
 
 
@@ -172,6 +212,14 @@ def main(argv: list[str] | None = None) -> int:
                   f"{pushed.stderr.strip()}")
 
         print(f"\n[autonomous] === iteration {iteration}/{args.max_iterations} ===")
+        write_progress({
+            "iteration": iteration,
+            "max_iterations": args.max_iterations,
+            "running": True,
+            "phase": "loop_iteration_start",
+            "model": args.model or "none (offline harness-quality gate)",
+            "no_benchmark": args.no_benchmark,
+        })
         try:
             summary = run_iteration(
                 iteration, model=args.model, profile=args.profile,
@@ -183,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[autonomous] Loop stopped: {exc}")
             if have_checkpoint:
                 _git(["stash", "pop"], check=False)
+            clear_progress()
             return 0
         except KeyboardInterrupt:
             # A Ctrl+C during a long gate run is a BaseException, so it is NOT
@@ -199,10 +248,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[autonomous] Iteration {iteration} raised {type(exc).__name__}: {exc}")
             if have_checkpoint:
                 _git(["stash", "pop"], check=False)
+            clear_progress()
             return 1
 
         verdict = summary.get("verdict")
         print(f"[autonomous] verdict={verdict} repair={summary.get('proposed_repair')}")
+
+        # Record the finished iteration for the live dashboard history view.
+        _record_iteration(iteration, summary, output_dir)
+        write_progress({
+            "iteration": iteration,
+            "phase": "finished_iteration",
+            "verdict": verdict,
+            "accepted": bool(summary.get("accepted")),
+        })
 
         if verdict == "accepted":
             committed = _commit_repair(iteration, summary)
@@ -220,9 +279,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[autonomous] No accepted repair this round ({verdict}) — stopping.")
         if have_checkpoint:
             _git(["stash", "pop"], check=False)
+        clear_progress()
         return 0
 
     print("[autonomous] Reached max_iterations — stopping.")
+    clear_progress()
     return 0
 
 

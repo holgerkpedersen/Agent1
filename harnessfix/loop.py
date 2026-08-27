@@ -18,6 +18,7 @@ from typing import Any
 
 from . import gates
 from .corpus import collect_traces, diagnose_corpus, layer_counts
+from .progress import set_phase, write_progress
 from .repairs import collisions, repairs_for_layer
 from .tracing import TRACE_DIR
 
@@ -32,6 +33,7 @@ def run_loop(
     profile: str | None = None,
     output_dir: Path = SUMMARY_PATH.parent,
     auto_approve: bool = False,
+    iteration: int | None = None,
 ) -> dict[str, Any]:
     """One HarnessFix iteration.
 
@@ -47,12 +49,29 @@ def run_loop(
       or a collision hit) it falls back to ``review_required_fail_closed``
       and never merges — so autonomy can never silently degrade the tree.
     """
+    if iteration is not None:
+        write_progress({"iteration": iteration, "running": True})
+    set_phase("collecting_traces", traces=None)
+
     traces = collect_traces(trace_dir)
     if not traces:
         raise SystemExit(f"no traces found under {trace_dir}")
 
+    set_phase(
+        "diagnosing",
+        traces=len(traces),
+        diagnosed=None,
+        layer_distribution=None,
+    )
+
     diagnoses = diagnose_corpus(traces, output_dir / "diagnoses")
     counts = layer_counts(diagnoses)
+    set_phase(
+        "diagnosing",
+        traces=len(traces),
+        diagnosed=len(diagnoses),
+        layer_distribution=dict(counts),
+    )
     # Ordered catalog repairs to attempt: highest-frequency diagnosed layer
     # first, then catalog order within a layer, then remaining layers by
     # frequency.  A rejected repair falls through to the next candidate so the
@@ -67,12 +86,14 @@ def run_loop(
         "verdict": "no_repair_catalogued" if not candidates else "review_required",
     }
     if not candidates:
+        set_phase("finished", verdict="no_repair_catalogued", accepted=False)
         return _finish(summary, output_dir)
     # Fail-closed unless a human (--approve) or the autonomous driver
     # (--auto-approve) explicitly engages.  Auto-approve still cannot bypass
     # the gates below — it only removes the manual click.
     if not approve and not auto_approve:
         summary["verdict"] = "review_required_fail_closed"
+        set_phase("finished", verdict="review_required_fail_closed", accepted=False)
         return _finish(summary, output_dir)
 
     # Baseline failure set captured ONCE (and cached by git HEAD) so every
@@ -92,6 +113,12 @@ def run_loop(
     # Try each candidate in order; stop at the first that the gates accept.
     attempted: list[str] = []
     for repair in candidates:
+        set_phase(
+            "evaluating_candidate",
+            candidate=repair.id,
+            candidate_layer=repair.layer,
+            candidate_summary=repair.applied_summary(),
+        )
         # String-collision guard: a repair that rewrites a runtime string
         # must not break test assertions pinning the old string.  Any hit
         # skips the repair (fail-safe; recorded for the human gate) instead
@@ -128,17 +155,27 @@ def run_loop(
         except Exception as exc:  # apply/revert must never corrupt the tree silently
             summary["verdict"] = "apply_failed"
             summary["error"] = str(exc)
-            return _finish(summary, output_dir)
+            set_phase("finished", verdict="apply_failed", accepted=False)
+    set_phase(
+        "finished",
+        verdict=summary.get("verdict"),
+        accepted=bool(summary.get("accepted")),
+    )
+    return _finish(summary, output_dir)
 
+        set_phase("applying_repair", repair_applied=summary.get("repair_applied"))
         tests_passed, tests_tail = gates.run_test_gate(
             baseline_failures=baseline_fail
         )
+        set_phase("running_test_gate", tests_passed=tests_passed)
         security_passed, security_tail = gates.run_security_gate()
+        set_phase("running_security_gate", security_passed=security_passed)
         post_rate = gates.run_benchmark_gate(model, profile)
         # Offline harness-quality gate: re-score the corpus after the repair
         # is applied; the repair's own layer is the targeting key (a repair
         # must address a failure mode the corpus actually evidences).
         harness_post = gates.run_harness_quality_gate(trace_dir)
+        set_phase("running_harness_gate")
         harness_ok = gates.should_accept_harness(
             harness_baseline, harness_post,
             target_layer=repair.layer,
@@ -175,11 +212,13 @@ def run_loop(
                 summary["error"] = str(exc)
             attempted.append(repair.id)
             summary["attempted_repairs"] = attempted
+            set_phase("evaluating_candidate", candidate=repair.id, verdict=summary["verdict"])
             continue
 
         summary["verdict"] = "accepted"
         summary["accepted_repair"] = repair.id
         summary["attempted_repairs"] = attempted
+        set_phase("finished", verdict="accepted", accepted=True)
         return _finish(summary, output_dir)
 
     # Every candidate was rejected/skipped.
