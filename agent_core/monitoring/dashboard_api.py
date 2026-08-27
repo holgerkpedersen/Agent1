@@ -32,7 +32,7 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         params = parse_qs(parsed_path.query)
         if path in ("/", "/index.html"):
             self._send_html_page()
-        el        if path == "/mcp":
+        elif path == "/mcp":
             self._send_mcp_page()
         elif path == "/autonomous" or path == "/autonomous.html":
             self._send_autonomous_page()

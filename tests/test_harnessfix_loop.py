@@ -12,7 +12,22 @@ from harnessfix import gates
 from harnessfix.gates import should_accept
 from harnessfix.loop import run_loop
 from harnessfix.repairs.tool_interface import TOOL_INTERFACE_REPAIR_ID, revert
+from harnessfix.repairs.abandonment_resume import revert as _revert_abandon
+from harnessfix.repairs.stuck_repeat import revert as _revert_stuck
 from harnessfix.tracing import KIND_LOOP_END, KIND_TOOL_ERROR, TraceWriter
+
+
+def _reset_repairs() -> None:
+    """Revert any repair a prior test left applied to the real tree.
+
+    The loop's already-applied guard reads the real source file, so these
+    tests must start from a clean tree regardless of test ordering.
+    """
+    for _r in (revert, _revert_stuck, _revert_abandon):
+        try:
+            _r()
+        except Exception:
+            pass
 
 _OLD = 'result_str = f"Tool error: {exc}"'
 _NEW = 'result_str = f"Tool error ({type(exc).__name__}): {exc}"'
@@ -133,6 +148,7 @@ def test_loop_fail_closed_without_approval(tmp_path):
 
 
 def test_loop_accepts_repair_when_all_gates_pass(tmp_path, monkeypatch):
+    _reset_repairs()
     traces_dir = tmp_path / "traces3"
     traces_dir.mkdir()
     _write_tool_error_trace(traces_dir, "tr3")
@@ -161,6 +177,7 @@ def test_loop_accepts_repair_when_all_gates_pass(tmp_path, monkeypatch):
 
 def test_auto_approve_accepts_when_all_gates_pass(tmp_path, monkeypatch):
     """Fully autonomous mode applies + accepts a repair when the gates are green."""
+    _reset_repairs()
     traces_dir = tmp_path / "traces_auto_ok"
     traces_dir.mkdir()
     _write_tool_error_trace(traces_dir, "tra_ok")
@@ -304,8 +321,23 @@ def test_loop_falls_through_to_next_repair_on_rejection(tmp_path, monkeypatch):
     """When the highest-priority repair is rejected by the gates, the loop must
     try the NEXT catalog repair for the same layer instead of giving up — so a
     single bad repair does not stall the whole autonomous run."""
-    from harnessfix.repairs.abandonment_resume import ABANDONMENT_RESUME_REPAIR_ID
-    from harnessfix.repairs.stuck_repeat import STUCK_REPEAT_REPAIR_ID, revert as revert_stuck
+    from harnessfix.repairs.abandonment_resume import (
+        ABANDONMENT_RESUME_REPAIR_ID,
+        revert as revert_abandon,
+    )
+    from harnessfix.repairs.stuck_repeat import (
+        STUCK_REPEAT_REPAIR_ID,
+        revert as revert_stuck,
+    )
+
+    # The loop's already-applied guard reads the real tree, so reset any
+    # repair a prior test left applied — this test must start from a clean
+    # tree (it asserts the loop applies both candidates in sequence).
+    for _r in (revert_stuck, revert_abandon):
+        try:
+            _r()
+        except Exception:
+            pass
 
     traces_dir = tmp_path / "traces_fb"
     traces_dir.mkdir()
@@ -344,6 +376,10 @@ def test_loop_falls_through_to_next_repair_on_rejection(tmp_path, monkeypatch):
         assert summary.get("attempted_repairs") == [STUCK_REPEAT_REPAIR_ID]
     finally:
         revert_stuck()
+        try:
+            revert_abandon()
+        except Exception:
+            pass
 
 
 def test_loop_accepts_repair_that_adds_no_new_failures(tmp_path, monkeypatch):
@@ -465,6 +501,78 @@ def test_loop_benchmark_is_optional_cross_check(tmp_path, monkeypatch):
         assert summary["verdict"] == "rejected_and_reverted"
         # The harness gate still ran and recorded its (passing) verdict.
         assert summary["harness_accepted"] is True
+    finally:
+        revert()
+
+
+def test_loop_skips_already_applied_repair(tmp_path, monkeypatch):
+    """Regression: a static corpus diagnoses the same layer every run, so the
+    top candidate is the same repair each iteration.  If that repair is
+    ALREADY applied to the tree, the loop must skip it (no-op apply) instead
+    of re-accepting it — otherwise the autonomous driver would commit the
+    same repair repeatedly until max_iterations."""
+    from harnessfix.repairs.tool_interface import apply, revert
+
+    _reset_repairs()
+    traces_dir = tmp_path / "traces_aa"
+    traces_dir.mkdir()
+    _write_tool_error_trace(traces_dir, "aa1")
+
+    # Pre-apply the repair so it is already in the tree.
+    apply()
+
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
+    monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+    (tmp_path / "no_tests_aa").mkdir()
+    monkeypatch.setattr(
+        "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_aa"
+    )
+
+    out = tmp_path / "out_aa"
+    try:
+        summary = run_loop(traces_dir, approve=True, model=None, output_dir=out)
+        # The only candidate was already applied -> nothing new to do.
+        assert summary["verdict"] == "no_repair_catalogued"
+        assert summary.get("skipped_already_applied") == [TOOL_INTERFACE_REPAIR_ID]
+        # The repair was NOT reverted: it stays applied in the tree.
+        assert _NEW in _loop_source()
+    finally:
+        revert()
+    assert _OLD in _loop_source()
+
+
+def test_loop_does_not_reapply_when_already_present(tmp_path, monkeypatch):
+    """The already-applied guard must also hold in autonomous mode: a repair
+    that is already in the tree is reported as skipped, never 'accepted', so
+    the driver stops (no second iteration, no repeat commit)."""
+    from harnessfix.repairs.tool_interface import apply, revert
+
+    _reset_repairs()
+    traces_dir = tmp_path / "traces_aa2"
+    traces_dir.mkdir()
+    _write_tool_error_trace(traces_dir, "aa2")
+
+    apply()  # already applied before the loop runs
+
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
+    monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+    (tmp_path / "no_tests_aa2").mkdir()
+    monkeypatch.setattr(
+        "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_aa2"
+    )
+
+    out = tmp_path / "out_aa2"
+    try:
+        summary = run_loop(
+            traces_dir, approve=False, auto_approve=True, model=None, output_dir=out
+        )
+        assert summary["verdict"] == "no_repair_catalogued"
+        assert summary["accepted"] is False
+        assert summary.get("skipped_already_applied") == [TOOL_INTERFACE_REPAIR_ID]
     finally:
         revert()
 

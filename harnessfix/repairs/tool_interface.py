@@ -21,6 +21,10 @@ _TARGET = Path("agent_core/llm/tool_loop.py")
 _OLD = 'result_str = f"Tool error: {exc}"'
 _NEW = 'result_str = f"Tool error ({type(exc).__name__}): {exc}"'
 
+#: The single source file this repair transforms (used to scope the
+#: autonomous driver's commit to the repair's own files only).
+FILES: tuple[str, ...] = (str(_TARGET),)
+
 
 class RepairApplyError(RuntimeError):
     """Raised when a repair cannot be applied or reverted cleanly."""
@@ -54,3 +58,12 @@ def revert() -> None:
         raise RepairApplyError(f"repaired pattern not found in {_TARGET}")
     _TARGET.write_text(source.replace(_NEW, _OLD, 1), encoding="utf-8")
     _verify()
+
+
+def is_applied() -> bool:
+    """Pure probe: True if the repair is already present in the tree.
+
+    Does NOT apply the repair (unlike ``apply()``); the loop uses this to
+    skip an already-applied candidate without mutating the tree.
+    """
+    return _NEW in _TARGET.read_text(encoding="utf-8")

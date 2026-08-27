@@ -44,6 +44,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from harnessfix.progress import append_history, clear_progress, write_progress
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # Make the repo root importable when run as a standalone CLI (pytest already
 # puts it on sys.path, but `python scripts/autonomous_self_improve.py` does not).
@@ -75,17 +77,36 @@ def _stop_requested() -> bool:
     return (REPO_ROOT / STOP_FILENAME).exists()
 
 
-def _has_changes() -> bool:
-    proc = _git(["status", "--porcelain"], check=False)
-    return bool(proc.stdout.strip())
-
-
 def _commit_repair(iteration: int, summary: dict[str, Any]) -> bool:
-    """Commit an accepted repair. Returns False if there is nothing to commit."""
-    if not _has_changes():
-        return False
+    """Commit an accepted repair. Returns False if there is nothing to commit.
+
+    SAFETY: only the repair's own source file(s) are staged — never a blanket
+    ``git add -A``.  A blanket add would sweep unrelated or scratch files
+    (e.g. ``_tmp_*.txt``) into an autonomous commit.  If the proposed repair
+    is unknown (so its files cannot be determined) or none of its files are
+    actually modified, the commit is skipped and the loop is left to stop.
+    """
     repair_id = summary.get("proposed_repair") or "unknown"
     verdict = summary.get("verdict", "accepted")
+    files = _repair_files(repair_id)
+
+    # Stage ONLY the repair's targeted files that are actually changed.
+    changed: list[str] = []
+    for f in files:
+        proc = _git(["status", "--porcelain", "--", f], check=False)
+        if proc.stdout.strip():
+            changed.append(f)
+    if not changed:
+        return False
+
+    # Refuse to do a blanket add: if we somehow have no file list for a known
+    # repair, do NOT fall back to `git add -A` (that is exactly the bug that
+    # committed unrelated work).  Skip the commit instead.
+    if not files:
+        print(f"[autonomous] WARNING: repair {repair_id!r} has no file list; "
+              f"refusing to commit (skipping to avoid a blanket add).")
+        return False
+
     msg = (
         f"autonomous(self-improve): apply {repair_id} [{verdict}] "
         f"(iter {iteration})\n\n"
@@ -95,8 +116,9 @@ def _commit_repair(iteration: int, summary: dict[str, Any]) -> bool:
         f"  security_passed={summary.get('security_passed')}\n"
         f"  baseline_rate={summary.get('baseline_rate')} "
         f"post_rate={summary.get('post_rate')}\n"
+        f"  files={', '.join(changed)}\n"
     )
-    _git(["add", "-A"])
+    _git(["add", "--", *changed])
     _git(["commit", "-m", msg], check=False)
     return True
 
@@ -150,7 +172,6 @@ def run_iteration(
 ) -> dict[str, Any]:
     """One autonomous HarnessFix iteration; returns its summary dict."""
     from harnessfix.loop import run_loop
-from harnessfix.progress import append_history, clear_progress, write_progress
 
     return run_loop(
         trace_dir,
@@ -161,6 +182,18 @@ from harnessfix.progress import append_history, clear_progress, write_progress
         output_dir=output_dir,
         iteration=iteration,
     )
+
+
+def _repair_files(repair_id: str | None) -> tuple[str, ...]:
+    """Source file(s) a catalogued repair touches, for scoped staging.
+
+    Returns an empty tuple for an unknown repair id so the caller can refuse
+    to do a blanket ``git add -A`` (which would sweep unrelated/scratch files
+    into an autonomous commit).
+    """
+    from harnessfix.repairs import CATALOG
+
+    return CATALOG[repair_id].files if repair_id in CATALOG else ()
 
 
 def main(argv: list[str] | None = None) -> int:

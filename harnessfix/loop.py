@@ -119,6 +119,20 @@ def run_loop(
             candidate_layer=repair.layer,
             candidate_summary=repair.applied_summary(),
         )
+        # Already-applied guard: a static corpus diagnoses the same layers
+        # every run, so the top candidate is the same repair each iteration.
+        # If it is already in the tree, re-applying is a no-op (and the
+        # offline gate would "accept" it again, looping forever).  Skip it
+        # so the loop falls through to the next candidate or stops cleanly.
+        if repair.is_applied():
+            summary.setdefault("skipped_already_applied", []).append(repair.id)
+            attempted.append(repair.id)
+            set_phase(
+                "evaluating_candidate",
+                candidate=repair.id,
+                verdict="already_applied_skip",
+            )
+            continue
         # String-collision guard: a repair that rewrites a runtime string
         # must not break test assertions pinning the old string.  Any hit
         # skips the repair (fail-safe; recorded for the human gate) instead
@@ -151,17 +165,16 @@ def run_loop(
 
         baseline_rate = gates.run_benchmark_gate(model, profile)
         try:
-            summary["repair_applied"] = repair.applied_summary()
+            # Apply the repair to the real tree.  NOTE: ``applied_summary``
+            # is intentionally PURE (it must not mutate the tree — see
+            # repairs/__init__.py); applying is a separate, explicit step so
+            # the loop never depends on a description side effect.
+            summary["repair_applied"] = repair.apply()
         except Exception as exc:  # apply/revert must never corrupt the tree silently
             summary["verdict"] = "apply_failed"
             summary["error"] = str(exc)
             set_phase("finished", verdict="apply_failed", accepted=False)
-    set_phase(
-        "finished",
-        verdict=summary.get("verdict"),
-        accepted=bool(summary.get("accepted")),
-    )
-    return _finish(summary, output_dir)
+            return _finish(summary, output_dir)
 
         set_phase("applying_repair", repair_applied=summary.get("repair_applied"))
         tests_passed, tests_tail = gates.run_test_gate(
@@ -223,14 +236,25 @@ def run_loop(
 
     # Every candidate was rejected/skipped.
     summary["attempted_repairs"] = attempted
-    if summary.get("verdict") in (None, "review_required"):
+    if summary.get("verdict") in (None, "review_required", "no_repair_catalogued"):
         # A collision skip is a fail-safe for a specific repair; if that was
         # the only outcome (no acceptance, no hard rejection), report it so
         # the human gate sees why nothing was applied.
-        summary["verdict"] = (
-            "skipped_test_collision" if summary.get("skipped_collisions")
-            else "rejected_and_reverted"
-        )
+        if summary.get("skipped_collisions"):
+            summary["verdict"] = "skipped_test_collision"
+        elif summary.get("skipped_already_applied"):
+            # The corpus only diagnoses layers whose repairs are already
+            # applied: there is nothing new to improve, so stop (the driver
+            # ends the run on any non-accepted verdict instead of looping).
+            summary["verdict"] = "no_repair_catalogued"
+        else:
+            summary["verdict"] = "rejected_and_reverted"
+    summary["accepted"] = bool(summary.get("accepted"))
+    set_phase(
+        "finished",
+        verdict=summary.get("verdict"),
+        accepted=summary["accepted"],
+    )
     return _finish(summary, output_dir)
 
 

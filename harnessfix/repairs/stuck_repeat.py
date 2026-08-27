@@ -31,6 +31,10 @@ COLLISION_FRAGMENTS: tuple[str, ...] = (
 
 _TARGET = Path("agent_core/llm/tool_loop.py")
 
+#: The single source file this repair transforms (used to scope the
+#: autonomous driver's commit to the repair's own files only).
+FILES: tuple[str, ...] = (str(_TARGET),)
+
 #: Anchor line the hint-table block is inserted ABOVE (unique in the file).
 _ANCHOR = '_PATH_MISS_PREFIXES = ("File not found:", "Error reading file:")'
 
@@ -122,3 +126,13 @@ def revert() -> None:
     source = source.replace(_NEW_LINE, _OLD_LINE, 1)
     _TARGET.write_text(source, encoding="utf-8")
     _verify()
+
+
+def is_applied() -> bool:
+    """Pure probe: True if the repair is already present in the tree.
+
+    Does NOT apply the repair (unlike ``apply()``); the loop uses this to
+    skip an already-applied candidate without mutating the tree.
+    """
+    source = _TARGET.read_text(encoding="utf-8")
+    return _NEW_LINE in source and _HINT_SENTINEL in source

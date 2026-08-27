@@ -38,6 +38,10 @@ COLLISION_FRAGMENTS: tuple[str, ...] = (
 
 _TARGET = Path("agent_core/llm/tool_loop.py")
 
+#: The single source file this repair transforms (used to scope the
+#: autonomous driver's commit to the repair's own files only).
+FILES: tuple[str, ...] = (str(_TARGET),)
+
 #: Anchor 1: the mutation-tool set, above which the reconnect note constant
 #: and the mutation-tracking accumulator are inserted.
 _ANCHOR_MUT = "MUTATING_TOOLS = frozenset({\"write\", \"edit\", \"fix\"})"
@@ -145,3 +149,13 @@ def revert() -> None:
     source = source.replace(_ANCHOR_MUT + "\n" + _INSERT_BLOCK, _ANCHOR_MUT, 1)
     _TARGET.write_text(source, encoding="utf-8")
     _verify()
+
+
+def is_applied() -> bool:
+    """Pure probe: True if the repair is already present in the tree.
+
+    Does NOT apply the repair (unlike ``apply()``); the loop uses this to
+    skip an already-applied candidate without mutating the tree.
+    """
+    source = _TARGET.read_text(encoding="utf-8")
+    return _NEW_END in source and _HINT_SENTINEL in source

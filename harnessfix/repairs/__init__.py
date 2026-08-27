@@ -13,15 +13,21 @@ from typing import Callable
 from .stuck_repeat import STUCK_REPEAT_REPAIR_ID
 from .stuck_repeat import apply as _apply_stuck_repeat
 from .stuck_repeat import revert as _revert_stuck_repeat
+from .stuck_repeat import is_applied as _is_applied_stuck_repeat
 from .stuck_repeat import COLLISION_FRAGMENTS as _STUCK_REPEAT_COLLISIONS
+from .stuck_repeat import FILES as _STUCK_REPEAT_FILES
 from .tool_interface import apply as _apply_tool_interface
 from .tool_interface import revert as _revert_tool_interface
+from .tool_interface import is_applied as _is_applied_tool_interface
 from .tool_interface import TOOL_INTERFACE_REPAIR_ID
 from .tool_interface import COLLISION_FRAGMENTS
+from .tool_interface import FILES as _TOOL_INTERFACE_FILES
 from .abandonment_resume import apply as _apply_abandonment_resume
 from .abandonment_resume import revert as _revert_abandonment_resume
+from .abandonment_resume import is_applied as _is_applied_abandonment_resume
 from .abandonment_resume import ABANDONMENT_RESUME_REPAIR_ID
 from .abandonment_resume import COLLISION_FRAGMENTS as _ABANDONMENT_RESUME_COLLISIONS
+from .abandonment_resume import FILES as _ABANDONMENT_RESUME_FILES
 
 #: Harness layers targeted by catalog repairs (must be valid HarnessFix facets).
 TOOL_INTERFACE_LAYER = "tool_interface"
@@ -43,9 +49,39 @@ class Repair:
     apply: Callable[[], str]
     revert: Callable[[], None]
     collision_fragments: tuple[str, ...] = ()
+    #: Source file(s) this repair touches.  Used by the autonomous driver to
+    #: stage ONLY the repair's own files (never `git add -A`), so an unrelated
+    #: or scratch change in the tree is never swept into an autonomous commit.
+    files: tuple[str, ...] = ()
+    #: Pure probe (no side effects) returning True if the repair is already
+    #: present in the tree.  Used by the loop to skip already-applied
+    #: candidates instead of re-applying/re-committing them every iteration.
+    is_applied_probe: Callable[[], bool] = lambda: False
 
     def applied_summary(self) -> str:
-        return self.apply()
+        """Human-readable description of the repair's effect.
+
+        Pure: this must NOT have the side effect of applying the repair.
+        Previously it called ``self.apply()`` to derive the summary, which
+        meant merely *describing* a candidate mutated the tree and, in the
+        loop, re-applied an already-applied repair on every iteration.
+        """
+        return self.description
+
+    def is_applied(self) -> bool:
+        """True if the repair is already present in the tree.
+
+        Delegates to the repair's pure ``is_applied()`` probe — it must NOT
+        have the side effect of applying the repair.  The loop uses this to
+        skip a candidate that is already in place instead of re-accepting it
+        (and re-committing) on every iteration.
+        """
+        try:
+            return bool(self.is_applied_probe())
+        except Exception:
+            # If the probe cannot run (e.g. anchor missing), treat as not
+            # applied rather than crashing the loop on a description probe.
+            return False
 
 
 #: Catalog of concrete repairs, keyed by repair id.
@@ -61,6 +97,8 @@ CATALOG: dict[str, Repair] = {
         apply=_apply_tool_interface,
         revert=_revert_tool_interface,
         collision_fragments=COLLISION_FRAGMENTS,
+        files=_TOOL_INTERFACE_FILES,
+        is_applied_probe=_is_applied_tool_interface,
     ),
     STUCK_REPEAT_REPAIR_ID: Repair(
         id=STUCK_REPEAT_REPAIR_ID,
@@ -74,6 +112,8 @@ CATALOG: dict[str, Repair] = {
         apply=_apply_stuck_repeat,
         revert=_revert_stuck_repeat,
         collision_fragments=_STUCK_REPEAT_COLLISIONS,
+        files=_STUCK_REPEAT_FILES,
+        is_applied_probe=_is_applied_stuck_repeat,
     ),
     ABANDONMENT_RESUME_REPAIR_ID: Repair(
         id=ABANDONMENT_RESUME_REPAIR_ID,
@@ -87,6 +127,8 @@ CATALOG: dict[str, Repair] = {
         apply=_apply_abandonment_resume,
         revert=_revert_abandonment_resume,
         collision_fragments=_ABANDONMENT_RESUME_COLLISIONS,
+        files=_ABANDONMENT_RESUME_FILES,
+        is_applied_probe=_is_applied_abandonment_resume,
     ),
 }
 

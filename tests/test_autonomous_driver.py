@@ -221,3 +221,72 @@ def test_failed_stash_push_does_not_pop_unrelated_stash(monkeypatch):
     # No stash pop should have been issued because no checkpoint was created.
     assert not any(c[:2] == ["stash", "pop"] for c in git_calls)
     assert not any(c[:2] == ["stash", "drop"] for c in git_calls)
+
+
+def test_commit_stages_only_repair_files_not_blanket_add(monkeypatch, tmp_path):
+    """Regression: the autonomous driver must NOT `git add -A` (which would
+    sweep unrelated/scratch files into the commit).  It stages ONLY the repair's
+    own source file(s)."""
+    monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)
+    git_calls: list[list[str]] = []
+
+    def fake_git(args, check=True):
+        git_calls.append(args)
+        if args[:1] == ["status"] and "--porcelain" in args:
+            # Only the repair's file is reported as changed; a scratch file
+            # (_tmp_zen_out.txt) exists in the real tree but must be ignored.
+            if "tool_loop.py" in args[-1]:
+                return subprocess.CompletedProcess(
+                    args, 0, " M agent_core/llm/tool_loop.py\n"
+                )
+            return subprocess.CompletedProcess(args, 0, "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    with mock.patch.object(drv, "_stop_requested", lambda: False), \
+         mock.patch.object(drv, "_git", fake_git), \
+         mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
+        rc = drv.main(["--auto", "--max-iterations", "3"])
+    assert rc == 0
+    # No blanket add.
+    assert not any(c == ["add", "-A"] for c in git_calls)
+    # Every accepted iteration stages ONLY the repair's file via a scoped
+    # `git add -- <file>` (never a blanket `git add -A`).  The fake iteration
+    # returns "accepted" each round without mutating the tree, so we expect
+    # one scoped add per committed iteration.
+    add_calls = [c for c in git_calls if c[:1] == ["add"]]
+    norm = [tuple(p.replace("\\", "/") for p in c) for c in add_calls]
+    assert all(c == ("add", "--", "agent_core/llm/tool_loop.py") for c in norm)
+    assert len(norm) >= 1
+    assert any(c[:1] == ["commit"] for c in git_calls)
+
+
+def test_commit_skips_when_no_repair_files_changed(monkeypatch, tmp_path):
+    """If the accepted repair's own files are NOT in the change set (e.g. it
+    was a no-op or the diff is unrelated), the driver must NOT commit — and
+    must NOT fall back to a blanket `git add -A`."""
+    monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)
+    git_calls: list[list[str]] = []
+
+    def fake_git(args, check=True):
+        git_calls.append(args)
+        if args[:2] == ["status", "--porcelain", "--"]:
+            # The repair's file is NOT changed; only an unrelated scratch file.
+            return subprocess.CompletedProcess(args, 0, "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    with mock.patch.object(drv, "_stop_requested", lambda: False), \
+         mock.patch.object(drv, "_git", fake_git), \
+         mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
+        rc = drv.main(["--auto", "--max-iterations", "3"])
+    assert rc == 0
+    # Nothing staged, nothing committed.
+    assert not any(c[:1] == ["add"] for c in git_calls)
+    assert not any(c[:1] == ["commit"] for c in git_calls)
+
+
+def test_repair_files_returns_empty_for_unknown_repair():
+    """_repair_files returns () for an unknown repair id so the driver can
+    refuse a blanket add rather than guessing.  This is the safety backstop
+    that prevents committing unrelated work."""
+    assert drv._repair_files("does-not-exist") == ()
+    assert drv._repair_files(None) == ()
