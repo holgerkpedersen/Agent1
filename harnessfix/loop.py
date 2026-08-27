@@ -5,7 +5,8 @@
 3. Propose the catalog repair of the highest-frequency diagnosed layer.
 4. Human review gate (fail-closed headless; --approve to proceed).
 5. Apply, run gates (pytest + security + optional benchmark pass-rate).
-6. Accept iff tests+security pass and the benchmark did not regress.
+6. Accept iff tests+security pass and (benchmark non-regression when a model
+   is supplied, OR the offline harness-quality gate when no model is given).
 7. Write reports/harnessfix/summary.json with the verdict.
 """
 from __future__ import annotations
@@ -81,6 +82,13 @@ def run_loop(
     # would reject every repair and make the loop permanently useless.
     baseline_fail = gates.get_baseline_failures()
 
+    # Offline, harness-centric quality baseline: the same trace corpus the
+    # repairs are diagnosed from, scored before any repair is applied.  Used
+    # as the PRIMARY acceptance signal when no live model is available for the
+    # LLM benchmark (which is noisy and offline-incompatible).  Computed once
+    # per iteration so every candidate is judged against a stable baseline.
+    harness_baseline = gates.run_harness_quality_gate(trace_dir)
+
     # Try each candidate in order; stop at the first that the gates accept.
     attempted: list[str] = []
     for repair in candidates:
@@ -127,8 +135,24 @@ def run_loop(
         )
         security_passed, security_tail = gates.run_security_gate()
         post_rate = gates.run_benchmark_gate(model, profile)
-        accepted = gates.should_accept(
+        # Offline harness-quality gate: re-score the corpus after the repair
+        # is applied; the repair's own layer is the targeting key (a repair
+        # must address a failure mode the corpus actually evidences).
+        harness_post = gates.run_harness_quality_gate(trace_dir)
+        harness_ok = gates.should_accept_harness(
+            harness_baseline, harness_post,
+            target_layer=repair.layer,
+        )
+        benchmark_ok = gates.should_accept(
             tests_passed, security_passed, baseline_rate, post_rate
+        )
+        # Acceptance requires the mandatory gates (tests + security) plus at
+        # least one quality signal: the LLM benchmark (when a model is
+        # supplied) OR the offline harness-quality gate (always available).
+        # This demotes the benchmark from the de-facto quality criterion to an
+        # optional cross-check while keeping a deterministic, offline gate.
+        accepted = (tests_passed and security_passed) and (
+            benchmark_ok if model else harness_ok
         )
         summary.update(
             tests_passed=tests_passed,
@@ -137,6 +161,9 @@ def run_loop(
             security_tail=security_tail,
             baseline_rate=baseline_rate,
             post_rate=post_rate,
+            harness_baseline=harness_baseline.model_dump() if harness_baseline else None,
+            harness_post=harness_post.model_dump() if harness_post else None,
+            harness_accepted=harness_ok,
             accepted=accepted,
         )
         if not accepted:

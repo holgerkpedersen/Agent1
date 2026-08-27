@@ -392,3 +392,79 @@ def test_loop_accepts_repair_that_adds_no_new_failures(tmp_path, monkeypatch):
     finally:
         revert_stuck()
 
+
+def test_loop_consults_offline_harness_gate_when_no_model(tmp_path, monkeypatch):
+    """With no --model, the loop must gate on the offline harness-quality
+    signal (target alignment) instead of the LLM benchmark, and record both
+    the baseline/post snapshots and the harness verdict in the summary."""
+    from harnessfix.repairs.tool_interface import revert
+
+    traces_dir = tmp_path / "traces_hg"
+    traces_dir.mkdir()
+    _write_tool_error_trace(traces_dir, "hg1")
+
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
+    monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+    (tmp_path / "no_tests_hg").mkdir()
+    monkeypatch.setattr(
+        "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_hg"
+    )
+
+    out = tmp_path / "out_hg"
+    try:
+        summary = run_loop(traces_dir, approve=True, model=None, output_dir=out)
+        # The corpus evidences tool_interface, so the offline gate passes and
+        # the repair is accepted (benchmark is None -> non-blocking).
+        assert summary["accepted"] is True
+        assert summary["harness_accepted"] is True
+        assert summary["harness_baseline"] is not None
+        assert summary["harness_post"] is not None
+        assert summary["harness_baseline"]["layer_counts"].get("tool_interface", 0) >= 1
+    finally:
+        revert()
+
+
+def test_loop_benchmark_is_optional_cross_check(tmp_path, monkeypatch):
+    """When a --model IS supplied, the LLM benchmark is the quality signal and
+    the offline harness gate is NOT the deciding factor (benchmark wins).  This
+    demotes the benchmark from de-facto criterion to an optional cross-check
+    while keeping the deterministic offline gate as the default offline path."""
+    from harnessfix.repairs.tool_interface import revert
+
+    traces_dir = tmp_path / "traces_bc"
+    traces_dir.mkdir()
+    _write_tool_error_trace(traces_dir, "bc1")
+
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
+    monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+    # Benchmark supplied but REGRESSING: baseline (first call) 60.0, post
+    # (second call) 55.0 -> should_accept is False -> rejected.
+    _bm_calls = {"n": 0}
+
+    def _benchmark(model, profile=None):
+        if not model:
+            return None
+        _bm_calls["n"] += 1
+        return 60.0 if _bm_calls["n"] == 1 else 55.0
+
+    monkeypatch.setattr(gates, "run_benchmark_gate", _benchmark)
+    (tmp_path / "no_tests_bc").mkdir()
+    monkeypatch.setattr(
+        "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_bc"
+    )
+
+    out = tmp_path / "out_bc"
+    try:
+        summary = run_loop(traces_dir, approve=True, model="some-model", output_dir=out)
+        # Benchmark regressed (baseline None -> post 55.0 is treated as a
+        # regression), so the offline harness pass does NOT override it.
+        assert summary["accepted"] is False
+        assert summary["verdict"] == "rejected_and_reverted"
+        # The harness gate still ran and recorded its (passing) verdict.
+        assert summary["harness_accepted"] is True
+    finally:
+        revert()
+

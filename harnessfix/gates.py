@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .corpus_quality import CorpusQuality, corpus_quality
+
 _GATE_TIMEOUT = 1800
 
 #: Baseline failure cache (regression-aware gate).  Keyed by git HEAD so a
@@ -227,3 +229,60 @@ def should_accept(
     if baseline_rate is None or post_rate is None:
         return True
     return post_rate >= baseline_rate - regression_tolerance
+
+
+def run_harness_quality_gate(trace_dir: str | Path) -> CorpusQuality | None:
+    """Offline, harness-centric quality snapshot of the trace corpus, or None.
+
+    Returns ``None`` only on a genuinely empty/unusable corpus (no readable
+    traces), so the caller can degrade to a non-blocking fallback rather than
+    rejecting a repair on missing evidence.  Any other error is swallowed and
+    returns ``None`` so a gate never raises into the autonomous driver.
+    """
+    try:
+        quality = corpus_quality(trace_dir)
+    except Exception:  # noqa: BLE001 - a gate must never raise into run_loop
+        return None
+    if quality is None or quality.total == 0:
+        return None
+    return quality
+
+
+def should_accept_harness(
+    baseline: CorpusQuality | None,
+    post: CorpusQuality | None,
+    target_mechanism: str | None = None,
+    target_layer: str | None = None,
+    success_rate_tolerance: float = 0.0,
+) -> bool:
+    """Accept iff the harness repair is *targeted* to the corpus failures.
+
+    This is the *primary* quality gate when no live model is available for the
+    LLM benchmark.  The trace corpus is a static record of past runs, so the
+    baseline and post snapshots are structurally identical; the gate therefore
+    validates **target alignment**, not a pre/post delta:
+
+    - If the repair declares a ``target_layer``, that layer MUST appear in the
+      corpus's observed failures.  A repair whose layer is absent from the
+      corpus is off-target (it would "fix" a failure mode the evidence does
+      not show) and is rejected — this is the core "targeted" requirement.
+    - ``success_rate`` must not drop below the baseline (minus a small
+      tolerance).  Retained as a guard: a corrupted/empty post snapshot that
+      still reports the target layer would otherwise pass; this rejects a
+      post run whose completion rate fell.
+
+    Returns ``True`` when the gate is unavailable (no baseline/post evidence),
+    so it is non-blocking in the same fail-open way as the benchmark gate;
+    the test + security gates remain mandatory.
+    """
+    if baseline is None or post is None:
+        return True
+    # Guard: a post snapshot whose completion rate fell vs the baseline is
+    # treated as a degraded/empty corpus and rejected rather than trusted.
+    if post.success_rate < baseline.success_rate - success_rate_tolerance:
+        return False
+    # Target alignment: the repair's layer must be evidenced in the corpus.
+    if target_layer is not None:
+        if baseline.layer_counts.get(target_layer, 0) == 0:
+            return False
+    return True

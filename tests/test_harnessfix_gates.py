@@ -7,10 +7,12 @@ must return a safe value (False for test/security, None for benchmark).
 """
 import subprocess
 import sys
+from pathlib import Path
 
 sys.path.insert(0, ".")
 
 import harnessfix.gates as gates
+from harnessfix.corpus_quality import CorpusQuality
 
 
 def test_benchmark_gate_returns_none_on_timeout(monkeypatch):
@@ -137,4 +139,59 @@ def test_get_baseline_failures_caches_and_invalidates_on_head(monkeypatch, tmp_p
     monkeypatch.setattr(gates, "_git_head", lambda: "head-bbb")
     third = gates.get_baseline_failures(force=True)
     assert calls["n"] == 2
+
+
+def test_run_harness_quality_gate_returns_none_on_empty(tmp_path):
+    """An empty/unusable corpus yields None so the loop degrades to a
+    non-blocking fallback instead of rejecting on missing evidence."""
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    assert gates.run_harness_quality_gate(traces) is None
+
+
+def test_run_harness_quality_gate_returns_snapshot(tmp_path):
+    """A corpus with a tool-interface failure yields a real snapshot whose
+    layer_counts evidences the diagnosed layer."""
+    from harnessfix.tracing import KIND_LOOP_END, KIND_TOOL_ERROR, TraceWriter
+
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    writer = TraceWriter(task_id="ti1", directory=traces)
+    writer.emit({"kind": KIND_TOOL_ERROR, "layer": "tool_interface",
+                 "exception": "ValidationError", "message": "schema validation failed"})
+    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
+                 "outcome": "completed", "termination_reason": "answer"})
+    writer.close()
+
+    q = gates.run_harness_quality_gate(traces)
+    assert q is not None
+    assert q.total == 1
+    assert q.layer_counts.get("tool_interface", 0) == 1
+
+
+def test_should_accept_harness_targets_corpus_layer(tmp_path):
+    """The offline gate accepts a repair whose layer is evidenced in the
+    corpus and rejects one whose layer is absent (off-target)."""
+    from harnessfix.corpus_quality import corpus_quality
+
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    from harnessfix.tracing import KIND_LOOP_END, KIND_TOOL_ERROR, TraceWriter
+
+    writer = TraceWriter(task_id="ti1", directory=traces)
+    writer.emit({"kind": KIND_TOOL_ERROR, "layer": "tool_interface",
+                 "exception": "ValidationError", "message": "schema validation failed"})
+    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
+                 "outcome": "completed", "termination_reason": "answer"})
+    writer.close()
+    baseline = corpus_quality(traces)
+    post = corpus_quality(traces)  # static corpus -> identical
+
+    assert gates.should_accept_harness(baseline, post, target_layer="tool_interface") is True
+    assert gates.should_accept_harness(baseline, post, target_layer="lifecycle") is False
+
+
+def test_should_accept_harness_unavailable_is_non_blocking():
+    assert gates.should_accept_harness(None, None, target_layer="lifecycle") is True
+
 

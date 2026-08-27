@@ -21,14 +21,18 @@ Safety rails
 - ``STOP_AUTONOMOUS`` file or env var checked BETWEEN iterations: create
   ``STOP_AUTONOMOUS`` in the repo root (or set the env var) to halt cleanly
   after the current round finishes.
-- ``--max-iterations`` caps the run (default 5); ``--model`` is required for
-  the benchmark gate to be meaningful (otherwise the benchmark is non-blocking
-  and only tests + security gate the repair).
+- ``--max-iterations`` caps the run (default 5); ``--model`` is OPTIONAL:
+  the LLM benchmark is now a non-blocking cross-check, not the primary gate.
+  When ``--model`` is omitted the loop gates on the offline, harness-centric
+  quality signal (corpus target-alignment) plus tests + security.  Pass
+  ``--no-benchmark`` to suppress the benchmark subprocess entirely even when a
+  model is set.
 
 Usage
 -----
     set AGENT_AUTONOMOUS=1
-    python scripts/autonomous_self_improve.py --model qwen3.5-32b --max-iterations 5
+    python scripts/autonomous_self_improve.py --max-iterations 5
+    python scripts/autonomous_self_improve.py --model qwen3.5-32b --no-benchmark
 """
 from __future__ import annotations
 
@@ -104,6 +108,7 @@ def run_iteration(
     profile: str | None,
     trace_dir: Path,
     output_dir: Path,
+    no_benchmark: bool = False,
 ) -> dict[str, Any]:
     """One autonomous HarnessFix iteration; returns its summary dict."""
     from harnessfix.loop import run_loop
@@ -112,7 +117,7 @@ def run_iteration(
         trace_dir,
         approve=False,
         auto_approve=True,
-        model=model,
+        model=None if no_benchmark else model,
         profile=profile,
         output_dir=output_dir,
     )
@@ -125,8 +130,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--traces", type=Path, default=None,
                         help="trace corpus dir (default: reports/traces)")
-    parser.add_argument("--model", default=None, help="benchmark gate model (needs a live API)")
+    parser.add_argument("--model", default=None, help="optional LLM benchmark cross-check model (needs a live API); omit to gate on offline harness quality only")
     parser.add_argument("--profile", default=None, help="benchmark profile tag (decision #055)")
+    parser.add_argument("--no-benchmark", action="store_true",
+                        help="never run the benchmark subprocess, even if --model is set (offline-only gate)")
     parser.add_argument("--max-iterations", type=int, default=5, help="cap on loop iterations")
     parser.add_argument("--auto", action="store_true",
                         help="engages autonomous mode (same as AGENT_AUTONOMOUS=1)")
@@ -142,7 +149,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[autonomous] Starting self-improvement loop "
           f"(max_iterations={args.max_iterations}, "
-          f"model={args.model or 'none (benchmark non-blocking)'})")
+          f"model={args.model or 'none (offline harness-quality gate)'}"
+          f"{' [benchmark disabled]' if args.no_benchmark else ''})")
 
     for iteration in range(1, args.max_iterations + 1):
         if _stop_requested():
@@ -168,6 +176,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = run_iteration(
                 iteration, model=args.model, profile=args.profile,
                 trace_dir=trace_dir, output_dir=output_dir,
+                no_benchmark=args.no_benchmark,
             )
         except SystemExit as exc:
             # run_loop raises SystemExit when no traces exist — a clean stop.

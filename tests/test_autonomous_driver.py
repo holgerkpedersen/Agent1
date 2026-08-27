@@ -39,7 +39,8 @@ def test_engages_with_auto_flag(monkeypatch, tmp_path):
     monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)
     calls = []
 
-    def fake_run_iteration(iteration, *, model, profile, trace_dir, output_dir):
+    def fake_run_iteration(iteration, *, model, profile, trace_dir, output_dir,
+                            no_benchmark=False):
         calls.append(iteration)
         return _fake_summary("no_repair_catalogued")
 
@@ -68,6 +69,30 @@ def test_stops_on_kill_switch(monkeypatch, tmp_path):
          mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
         rc = drv.main(["--auto", "--max-iterations", "3"])
     assert rc == 0
+
+
+def test_no_benchmark_disables_model(tmp_path):
+    """--no-benchmark forces the model to None so the loop never spawns the
+    benchmark subprocess; the offline harness-quality gate is used instead."""
+    import os as _os
+    _os.environ.pop("AGENT_AUTONOMOUS", None)
+    seen = {}
+
+    def fake_run_iteration(iteration, *, model, profile, trace_dir, output_dir,
+                           no_benchmark=False):
+        # Mirror the real run_iteration: --no-benchmark forces model=None.
+        eff_model = None if no_benchmark else model
+        seen["model"] = eff_model
+        seen["no_benchmark"] = no_benchmark
+        return _fake_summary("no_repair_catalogued")
+
+    with mock.patch.object(drv, "run_iteration", fake_run_iteration), \
+         mock.patch.object(drv, "_git", _noop_git), \
+         mock.patch.object(drv, "_stop_requested", lambda: False):
+        rc = drv.main(["--auto", "--model", "qwen3", "--no-benchmark"])
+    assert rc == 0
+    assert seen["no_benchmark"] is True
+    assert seen["model"] is None
 
 
 def test_commits_accepted_repair_then_stops(monkeypatch, tmp_path):
