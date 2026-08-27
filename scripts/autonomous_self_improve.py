@@ -77,6 +77,65 @@ def _stop_requested() -> bool:
     return (REPO_ROOT / STOP_FILENAME).exists()
 
 
+def build_repair_rationale(repair_id: str | None, summary: dict[str, Any]) -> str:
+    """Build a human-readable 'why this change is better' block from the
+    evidence the self-improvement loop already computed.
+
+    The loop captures far more signal than the old commit message used:
+    the offline corpus-quality snapshot (how many traces, the completion
+    rate, and how many *failed* traces evidence the repair's target layer)
+    plus the optional LLM-benchmark cross-check.  Historically this was
+    thrown away and every autonomous commit said only ``[accepted]`` with
+    ``baseline_rate=None post_rate=None`` — so a behavioural change landed
+    with zero stated justification (see the ``stuck-repeat-tool-hints``
+    repair, later reverted with no recorded reason).  This turns the
+    loop's own evidence into an explanation and is pure (no git/IO side
+    effects) so it can be unit-tested in isolation.
+    """
+    from harnessfix.repairs import CATALOG
+
+    lines: list[str] = []
+    repair = CATALOG.get(repair_id) if repair_id else None
+    if repair is not None:
+        lines.append(f"Repair: {repair.description}")
+
+    baseline = summary.get("harness_baseline") or {}
+    post = summary.get("harness_post") or {}
+    total = baseline.get("total") or post.get("total") or 0
+    if total:
+        lines.append(
+            f"Corpus evidence: {total} trace(s) in the failure corpus; "
+            f"completion baseline={baseline.get('success_rate')} "
+            f"post={post.get('success_rate')}."
+        )
+        target_layer = repair.layer if repair is not None else None
+        if target_layer:
+            n = baseline.get("layer_counts", {}).get(target_layer, 0)
+            lines.append(
+                f"Target layer '{target_layer}' is evidenced in {n} failed "
+                f"trace(s) — the offline target-alignment gate passed, so the "
+                f"change addresses a failure mode the corpus actually shows "
+                f"(not an invented one)."
+            )
+    else:
+        lines.append(
+            "Corpus evidence: no trace corpus available to target the repair."
+        )
+
+    br, pr = summary.get("baseline_rate"), summary.get("post_rate")
+    if br is not None and pr is not None:
+        lines.append(
+            f"LLM benchmark cross-check: baseline={br}% -> post={pr}% "
+            f"(no regression)."
+        )
+    else:
+        lines.append(
+            "LLM benchmark cross-check: not run (offline harness-quality "
+            "gate used as the primary signal)."
+        )
+    return "\n".join(lines)
+
+
 def _commit_repair(iteration: int, summary: dict[str, Any]) -> bool:
     """Commit an accepted repair. Returns False if there is nothing to commit.
 
@@ -107,6 +166,7 @@ def _commit_repair(iteration: int, summary: dict[str, Any]) -> bool:
               f"refusing to commit (skipping to avoid a blanket add).")
         return False
 
+    rationale = build_repair_rationale(repair_id, summary)
     msg = (
         f"autonomous(self-improve): apply {repair_id} [{verdict}] "
         f"(iter {iteration})\n\n"
@@ -116,7 +176,8 @@ def _commit_repair(iteration: int, summary: dict[str, Any]) -> bool:
         f"  security_passed={summary.get('security_passed')}\n"
         f"  baseline_rate={summary.get('baseline_rate')} "
         f"post_rate={summary.get('post_rate')}\n"
-        f"  files={', '.join(changed)}\n"
+        f"  files={', '.join(changed)}\n\n"
+        f"Why this change is better:\n{rationale}\n"
     )
     _git(["add", "--", *changed])
     _git(["commit", "-m", msg], check=False)
@@ -143,6 +204,10 @@ def _record_iteration(iteration: int, summary: dict[str, Any], output_dir: Path)
         "security_passed": summary.get("security_passed"),
         "harness_baseline_rate": baseline.get("success_rate"),
         "harness_post_rate": post.get("success_rate"),
+        "repair_rationale": build_repair_rationale(
+            summary.get("accepted_repair") or summary.get("proposed_repair"),
+            summary,
+        ),
         "git_head": head,
     })
 

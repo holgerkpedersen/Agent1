@@ -44,23 +44,92 @@ _HINT_SENTINEL = "_REPEAT_HINTS: dict[str, str] = {"
 _HINT_BLOCK = '''#: Steering hints appended to the SECOND-consecutive-identical-call note
 #: (repair stuck-repeat-tool-hints): the model still has budget at strike two,
 #: so a concrete alternative beats waiting for the third strike to stop the
-#: loop.  Keys are tool names; anything unmapped falls back to the default.
+#: loop.  Keys MUST match the LLM tool-calling names in
+#: agent_core/tool_schemas.NLP_TOOL_NAMES so no real tool silently falls
+#: through to the default.  The coverage test asserts every tool name has a
+#: dedicated entry (or shares a capability-class fallback), so a future
+#: schema rename cannot silently drop a tool's hint.
 _REPEAT_HINTS: dict[str, str] = {
+    # Read-like: you already have the contents — stop re-reading.
     "read": (
         "Alternatives: use definitions() on the file for a symbol map, search "
         "for what you actually need, or answer from what you already read."
     ),
+    # Search-like: vary the query/path or act on what you have.
     "search": (
         "Alternatives: try a different symbol or path, list_files() to see what "
         "exists, or answer from the matches you already have."
     ),
+    "references": (
+        "Alternatives: read the file at a known location, search() for the "
+        "symbol in context, or answer from the usages you already have."
+    ),
+    "definitions": (
+        "Alternatives: read the file you just indexed, search() for a symbol "
+        "inside it, or answer from the signatures you already have."
+    ),
+    "web_search": (
+        "Alternatives: rephrase the query, open one of the results you already "
+        "have, or answer from the snippets returned."
+    ),
+    # List-like: you already have the directory — proceed or narrow.
     "list_files": (
         "Alternatives: search() instead of listing again, or proceed with the "
         "entries you already have."
     ),
+    # Mutating-file: a repeated write/edit usually means the prior change did
+    # not land as expected — inspect rather than re-apply blindly.
+    "write": (
+        "Alternatives: read() the file to confirm its current state, edit() the "
+        "existing content instead of overwriting, or report what you already wrote."
+    ),
+    "edit": (
+        "Alternatives: read() the file to see why the edit did not apply, use a "
+        "more distinctive old_text, or report the change you already made."
+    ),
+    # Command/shell-like: vary the command or inspect its result.
     "run": (
-        "Alternatives: run the tests to verify state, change the command's "
-        "arguments, or report the result you already have."
+        "Alternatives: change the command's arguments, run the tests to verify "
+        "state, or report the result you already have."
+    ),
+    "git": (
+        "Alternatives: run a different subcommand (status/diff/log), inspect the "
+        "output you already have, or report the current state."
+    ),
+    "tests": (
+        "Alternatives: narrow the path/framework, read() a failing test, or "
+        "report the failures you already have."
+    ),
+    "fix": (
+        "Alternatives: target a specific file instead of the batch, read() the "
+        "error yourself, or report the issue you already identified."
+    ),
+    "diff": (
+        "Alternatives: read() the file directly, compare a different file, or "
+        "answer from the diff you already have."
+    ),
+    # Analysis/delegation: a repeat means the answer did not satisfy — ask
+    # differently or act on what came back.
+    "analyze": (
+        "Alternatives: ask a more specific question, read() the file yourself, "
+        "or act on the summary you already have."
+    ),
+    "delegate": (
+        "Alternatives: give the subagent a sharper task, delegate a different "
+        "role, or act on the answer you already received."
+    ),
+    "delegate_batch": (
+        "Alternatives: narrow the roles, sharpen the shared task, or act on the "
+        "merged reports you already have."
+    ),
+    # MCP: the server/tool combo already failed or repeated — re-check args.
+    "mcp_tools": (
+        "Alternatives: pick a different server, read the discovered tool schema, "
+        "or act on the catalog you already listed."
+    ),
+    "mcp_call": (
+        "Alternatives: re-check the server/tool/arguments, call a different MCP "
+        "tool, or act on the result you already have."
     ),
 }
 _REPEAT_HINT_DEFAULT = (
