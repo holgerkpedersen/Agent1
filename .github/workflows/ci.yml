@@ -41,3 +41,12 @@ jobs:
         env:
           AGENT_NO_TRACE: "1"
         run: pytest -q --no-cov
+
+      - name: Integration tests (skips if no llama-server)
+        # Real-server integration tests need a llama-server binary. On GitHub
+        # runners none exists, so they skip cleanly. On a self-hosted runner
+        # with the binary on PATH they actually launch/switch/verify.
+        continue-on-error: true
+        env:
+          AGENT_NO_TRACE: "1"
+        run: pytest -q -m integration --no-cov

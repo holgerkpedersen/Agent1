@@ -88,6 +88,9 @@ addopts = "-v --cov=agent_core --cov-report=term-missing"
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "integration: end-to-end tests that require a real llama-server binary on PATH; skipped automatically when none is found",
+]
 
 [tool.ruff]
 line-length = 88

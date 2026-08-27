@@ -323,6 +323,17 @@ def _kill_pids(pids: list[int]) -> None:
             pass
 
 
+def kill_only_pids(pids: list[int]) -> None:
+    """Public, targeted kill of *only* the given llama-server PIDs.
+
+    Unlike ``_taskkill_by_image`` (which kills every llama-server on the host),
+    this terminates just the supplied PIDs (and their process trees on Windows).
+    Used by the live integration tests so teardown never touches a server the
+    user started themselves.
+    """
+    _kill_pids([int(p) for p in pids if p])
+
+
 def _taskkill_by_image() -> bool:
     """Kill every llama-server / llama-swap process tree (Windows).
 
