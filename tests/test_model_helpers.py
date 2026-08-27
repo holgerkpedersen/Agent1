@@ -68,8 +68,6 @@ class TestModelCommandProviderSync:
 
         cmd._list_models(agent)
         out = capsys.readouterr().out
-        with open("_tmp_zen_out.txt", "w", encoding="utf-8") as _fh:
-            _fh.write(out)
         assert "switching" not in out.lower()
         assert agent.llm.model_name == "opencode-go/deepseek-v4-flash"
 

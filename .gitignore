@@ -159,3 +159,6 @@ reports/benchmark_*.json
 .pytest_cache/
 mcp.json
 reports/mcp/
+
+# Scratch / debug output files (e.g. _tmp_*.txt written by tests)
+_tmp_*.txt
