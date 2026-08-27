@@ -200,7 +200,7 @@ class ModelCommand(Command):
         print(f"\n  Providers: lmstudio (active: {'*' if active_provider == 'lmstudio' else ' '})"
               f"  opencode (active: {'*' if active_provider == 'opencode' else ' '})")
         if opencode_models:
-            print(f"  [opencode] {len(opencode_models)} model(s):\n")
+            print(f"  [opencode] {len(opencode_models)} model(s) — needs API key:\n")
             for key in opencode_models:
                 is_current = key == current
                 marker = "  *" if is_current else "   "
@@ -217,7 +217,7 @@ class ModelCommand(Command):
             for key in zen_models:
                 is_current = key == current
                 marker = "  *" if is_current else "   "
-                print(f"{marker} {key}")
+                print(f"{marker} {key}  (provider=opencode-zen, free)")
         else:
             print("\n  [opencode-zen] free tier unreachable — check network\n")
 
@@ -247,7 +247,7 @@ class ModelCommand(Command):
 
             marker_str = f"  [{', '.join(markers)}]" if markers else ""
             prefix = " *" if is_current else "  "
-            print(f" {prefix}{i:>3}. {name:<40} {params:<10} {size:<8}{marker_str}")
+            print(f" {prefix}{i:>3}. {name:<40} {params:<10} {size:<8}  [lmstudio]{marker_str}")
 
         kinfo = KNOWN_MODELS.get(current, {})
         active_profile = agent.llm._provider._profile_name
@@ -300,7 +300,19 @@ class ModelCommand(Command):
 
         ``opencode-go/...`` names select the opencode provider directly;
         everything else goes through the LM Studio fuzzy match.
+
+        An explicit ``--provider <lmstudio|opencode>`` (or ``-p <p>``) flag
+        overrides the model-name-based routing, so e.g. ``model laguna-s-2.1
+        --provider opencode`` routes a name that would normally be LM Studio
+        to the opencode provider, and ``model opencode-zen/laguna-s-2.1-free
+        --provider lmstudio`` does the reverse.  Without the flag, routing is
+        unchanged (prefix-based + fuzzy match).
         """
+        args, provider_override = self._parse_provider_flag(args)
+        if provider_override is not None:
+            await self._switch_model_with_provider(args, agent, provider_override)
+            return
+
         query = " ".join(args).strip()
         lowered = query.lower()
 
@@ -450,6 +462,136 @@ class ModelCommand(Command):
         self._list_models(agent)
         return
 
+    def _parse_provider_flag(self, args: list[str]) -> tuple[list[str], str | None]:
+        """Strip an optional ``--provider <p>`` / ``-p <p>`` flag from *args*.
+
+        Returns ``(remaining_args, provider_override)`` where *provider_override*
+        is ``"lmstudio"`` or ``"opencode"`` (lower-cased) when present, else
+        ``None``.  Validation of the value happens in the caller so we can
+        print a friendly error.
+        """
+        remaining: list[str] = []
+        override: str | None = None
+        i = 0
+        while i < len(args):
+            token = args[i]
+            if token in ("--provider", "-p"):
+                if i + 1 < len(args):
+                    override = args[i + 1].strip().lower()
+                    i += 2
+                    continue
+                # Flag with no value — leave it in `remaining` so the caller
+                # reports the missing value, and don't set an override.
+                remaining.append(token)
+                i += 1
+                continue
+            # Also accept the joined form ``--provider=opencode``.
+            if token.startswith("--provider="):
+                override = token.split("=", 1)[1].strip().lower()
+                i += 1
+                continue
+            remaining.append(token)
+            i += 1
+        return remaining, override
+
+    async def _switch_model_with_provider(
+        self, args: list[str], agent: "Agent", provider: str
+    ) -> None:
+        """Switch model with an explicitly chosen provider.
+
+        Bypasses the model-name prefix routing: the user said which provider
+        to use, so we honor it instead of inferring from the name.  The model
+        name is matched against the appropriate catalog (LM Studio API for
+        ``lmstudio``, opencode catalogs for ``opencode``) and persisted with
+        the explicit provider.
+        """
+        query = " ".join(args).strip()
+        if not query:
+            print("  Specify a model name, e.g. `model <name> --provider <lmstudio|opencode>`.")
+            return
+
+        if provider not in ("lmstudio", "opencode"):
+            print(f"  Unknown provider '{provider}'. Options: lmstudio, opencode.")
+            return
+
+        from agent_core.config import load_agent_settings
+        from agent_core.llm.provider import build_provider
+        settings = load_agent_settings()
+
+        if provider == "opencode":
+            # Match against the opencode catalogs (zen free first, then go).
+            opencode_models, zen_models, _ = self._opencode_catalog(agent)
+            zen_match = self._resolve_opencode_match(query, zen_models)
+            if zen_match:
+                old = agent.llm.model_name
+                if zen_match == old:
+                    print(f"  Already using: {zen_match}")
+                    return
+                agent.llm._provider = build_provider(settings, zen_match)
+                agent.llm.model_name = zen_match
+                persist_model_choice(zen_match, provider="opencode")
+                print(f"  Switched: {old} -> {zen_match}  (provider=opencode-zen, free)")
+                return
+            oc_match = self._resolve_opencode_match(query, opencode_models)
+            if oc_match:
+                old = agent.llm.model_name
+                if oc_match == old:
+                    print(f"  Already using: {oc_match}")
+                    return
+                agent.llm._provider = build_provider(settings, oc_match)
+                agent.llm.model_name = oc_match
+                persist_model_choice(oc_match, provider="opencode")
+                print(f"  Switched: {old} -> {oc_match}  (provider=opencode)")
+                return
+            # Bare name — treat as an opencode-go model id directly.
+            q = query if query.startswith("opencode-go/") else f"opencode-go/{query}"
+            old = agent.llm.model_name
+            if q == old:
+                print(f"  Already using: {q}")
+                return
+            agent.llm._provider = build_provider(settings, q, provider_override="opencode")
+            agent.llm.model_name = q
+            persist_model_choice(q, provider="opencode")
+            print(f"  Switched: {old} -> {q}  (provider=opencode)")
+            return
+
+        # provider == "lmstudio" — match against the LM Studio API.
+        models, _ = self._fetch_models()
+        if not models:
+            print("  LM Studio not reachable — trying hardcoded list.")
+            await self._switch_known(query, agent)
+            return
+
+        lmstudio_match = self._resolve_lmstudio(query, models)
+        if lmstudio_match is None:
+            lmstudio_match = self._resolve_lmstudio_fuzzy(query, models)
+        if not lmstudio_match:
+            print(f"  No LM Studio model matching '{query}'")
+            self._list_models(agent)
+            return
+
+        current = agent.llm.model_name
+        if lmstudio_match == current:
+            print(f"  Already using: {lmstudio_match}")
+            return
+
+        target = next((m for m in models if m["key"] == lmstudio_match), None)
+        if target and not target["loaded"]:
+            print(f"  Loading {lmstudio_match} ...")
+            ok, msg = self._try_load_or_unload(lmstudio_match)
+            if not ok:
+                print(f"  Could not load: {msg}")
+                return
+            print(f"  {msg}")
+
+        info = KNOWN_MODELS.get(lmstudio_match, {})
+        old = agent.llm.model_name
+        agent.llm.model_name = lmstudio_match
+        persist_model_choice(lmstudio_match, provider="lmstudio")
+        self._rebuild_provider(agent, lmstudio_match)
+        print(f"  Switched: {old} -> {lmstudio_match}  ({info.get('desc', '')})")
+        return
+
     def _rebuild_provider(self, agent: "Agent", model_name: str) -> None:
         """Rebuild the agent's LLM provider for *model_name* (provider-aware)."""
         from agent_core.config import load_agent_settings
@@ -467,7 +609,9 @@ class ModelCommand(Command):
             persisted_provider = str(load_model_json().get("provider") or "")
             current = provider_for(agent.llm.model_name, settings.llm_provider, persisted_provider)
             print(f"  Provider: {current}  (model: {agent.llm.model_name})")
+            print(f"  Persisted provider: {persisted_provider or '(auto)'}")
             print("  Options: model provider lmstudio | model provider opencode")
+            print("  Pick a model + provider explicitly: model <name> --provider <lmstudio|opencode>")
             return
 
         target = args[0].strip().lower()
@@ -788,7 +932,6 @@ class ModelCommand(Command):
         if not query or not opencode_models:
             return None
         qlo = query.lower()
-        norm = [m.lower() for m in opencode_models]
 
         # Exact (also accept an unprefixed id, e.g. "deepseek-v4-flash")
         for m in opencode_models:
