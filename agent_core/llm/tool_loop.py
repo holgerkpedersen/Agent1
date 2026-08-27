@@ -102,6 +102,33 @@ _NO_PROGRESS_FORCE = (
 #: read_file/write_file/apply_patch return these verbatim).  These are exactly what
 #: laguna-s-2.1-style models see when they cite an invented path instead of checking
 #: it exists — without this, the model loops retrying the same dead path forever.
+#: Steering hints appended to the SECOND-consecutive-identical-call note
+#: (repair stuck-repeat-tool-hints): the model still has budget at strike two,
+#: so a concrete alternative beats waiting for the third strike to stop the
+#: loop.  Keys are tool names; anything unmapped falls back to the default.
+_REPEAT_HINTS: dict[str, str] = {
+    "read": (
+        "Alternatives: use definitions() on the file for a symbol map, search "
+        "for what you actually need, or answer from what you already read."
+    ),
+    "search": (
+        "Alternatives: try a different symbol or path, list_files() to see what "
+        "exists, or answer from the matches you already have."
+    ),
+    "list_files": (
+        "Alternatives: search() instead of listing again, or proceed with the "
+        "entries you already have."
+    ),
+    "run": (
+        "Alternatives: run the tests to verify state, change the command's "
+        "arguments, or report the result you already have."
+    ),
+}
+_REPEAT_HINT_DEFAULT = (
+    "Alternatives: take a different action with what you already know, or "
+    "give your final answer now."
+)
+
 _PATH_MISS_PREFIXES = ("File not found:", "Error reading file:")
 
 #: Steering note injected with a parent-directory listing when a tool result shows
@@ -561,7 +588,7 @@ class ToolLoopRunner:
                             f"NOTE: This exact call has now been executed {total_runs} "
                             f"time(s) in this conversation (result: {prev_result[:160]}). "
                             "It is not re-executed — unless the file changed, the result is "
-                            "identical. Take a different action or answer in text."
+                            "identical. " + _REPEAT_HINTS.get(tool_name, _REPEAT_HINT_DEFAULT)
                         )
                     _dup_streak[call_key] = True
                     self._emit(
