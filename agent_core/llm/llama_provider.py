@@ -42,6 +42,10 @@ def _lmstudio_models_dir() -> str | None:
       1. ``LMSTUDIO_MODELS_DIR`` env var (explicit override)
       2. ``%USERPROFILE%\\.lmstudio\\models`` (default Windows LM Studio path)
       3. ``~/.lmstudio/models`` (default path on macOS/Linux)
+
+    IMPORTANT: this directory is for LM Studio ONLY.  llama.cpp GGUF models
+    live in a SEPARATE folder (see ``_llama_models_dir``) and must never be
+    read from or written to the LM Studio directory, and vice versa.
     """
     explicit = os.environ.get("LMSTUDIO_MODELS_DIR")
     if explicit:
@@ -56,12 +60,41 @@ def _lmstudio_models_dir() -> str | None:
     return None
 
 
-def discover_local_gguf_models() -> list[str]:
-    """Scan the LM Studio models directory for ``.gguf`` files.
+def _llama_models_dir() -> str | None:
+    """Return the directory holding llama.cpp GGUF models, or None if absent.
 
-    Returns a sorted list of model ids namespaced as ``llama/<relative_path>``
-    where ``<relative_path>`` is the file path relative to the models dir with
-    the ``.gguf`` extension stripped.  For example a file at
+    llama-server models are kept SEPARATE from LM Studio models so the two
+    engines never share (or clobber) each other's files.  Resolution order:
+      1. ``LLAMA_MODELS_DIR`` env var (explicit override)
+      2. ``<repo>/models/llama`` (project-local llama models folder)
+      3. ``~/.cache/llama.cpp`` (llama.cpp default cache, if present)
+
+    Only the first entry that actually exists is returned, so a missing
+    project-local folder harmlessly falls through without inventing a path
+    that points at LM Studio.
+    """
+    explicit = os.environ.get("LLAMA_MODELS_DIR")
+    if explicit:
+        return explicit
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates = [
+        os.path.join(repo_root, "models", "llama"),
+        os.path.expanduser("~/.cache/llama.cpp"),
+    ]
+    for c in candidates:
+        if os.path.isdir(c):
+            return c
+    return None
+
+
+def discover_local_gguf_models() -> list[str]:
+    """Scan the llama.cpp models directory for ``.gguf`` files.
+
+    llama.cpp GGUFs live in a SEPARATE folder from LM Studio models (see
+    ``_llama_models_dir``).  Returns a sorted list of model ids namespaced as
+    ``llama/<relative_path>`` where ``<relative_path>`` is the file path
+    relative to the llama models dir with the ``.gguf`` extension stripped.
+    For example a file at
     ``unsloth/Qwen3-Coder-30B-A3B-Instruct-Q4_K_S.gguf`` becomes
     ``llama/unsloth/Qwen3-Coder-30B-A3B-Instruct-Q4_K_S``.
 
@@ -70,7 +103,7 @@ def discover_local_gguf_models() -> list[str]:
 
     Returns ``[]`` if the directory does not exist or is not readable.
     """
-    models_dir = _lmstudio_models_dir()
+    models_dir = _llama_models_dir()
     if not models_dir:
         return []
     discovered: set[str] = set()

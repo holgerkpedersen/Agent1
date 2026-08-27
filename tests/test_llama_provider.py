@@ -81,10 +81,10 @@ class TestSwitchModelLlama:
         """`model llama/qwen3.8-flash-next` routes to LlamaProvider and
         persists provider=llama.
 
-        When the llama-server is unreachable, the switch keeps the typed
-        routing label (chat will later self-heal on the first 400).  We mock
-        the server probe so the test is deterministic regardless of whether a
-        real llama-server happens to be running on 127.0.0.1:8080.
+        The switch must NOT launch or touch a real llama-server, so we mock
+        ``ensure_model_served`` (and the status probes) — the test is
+        deterministic and safe regardless of whether a real llama-server is
+        running on 127.0.0.1:8080.
         """
         agent = SimpleNamespace(
             llm=SimpleNamespace(model_name="laguna-s-2.1", _provider=None)
@@ -94,6 +94,10 @@ class TestSwitchModelLlama:
         monkeypatch.setattr(
             "agent_core.llm.llama_provider.LlamaProvider.refresh_server_model_id",
             lambda self: None,
+        )
+        monkeypatch.setattr(
+            "agent_core.llm.llama_server.ensure_model_served",
+            lambda api_url, model_name, **kw: (True, "mocked"),
         )
         persisted = {}
         monkeypatch.setattr(
@@ -113,7 +117,7 @@ class TestSwitchModelLlama:
     def test_explicit_provider_flag_llama(self, monkeypatch, capsys):
         """`model <other> --provider llama` is accepted and routes to LlamaProvider.
 
-        With the server probe mocked as unreachable the typed label is kept.
+        ``ensure_model_served`` is mocked so no real llama-server is touched.
         """
         agent = SimpleNamespace(
             llm=SimpleNamespace(model_name="laguna-s-2.1", _provider=None)
@@ -123,6 +127,10 @@ class TestSwitchModelLlama:
         monkeypatch.setattr(
             "agent_core.llm.llama_provider.LlamaProvider.refresh_server_model_id",
             lambda self: None,
+        )
+        monkeypatch.setattr(
+            "agent_core.llm.llama_server.ensure_model_served",
+            lambda api_url, model_name, **kw: (True, "mocked"),
         )
         monkeypatch.setattr("agent_core.commands.model_cmd.persist_model_choice", lambda *a, **k: None)
 
@@ -317,7 +325,7 @@ class TestListModels:
 class TestDiscoverLocalGguf:
     def test_returns_empty_when_dir_missing(self, monkeypatch):
         monkeypatch.setattr(
-            "agent_core.llm.llama_provider._lmstudio_models_dir",
+            "agent_core.llm.llama_provider._llama_models_dir",
             lambda: None,
         )
         assert discover_local_gguf_models() == []
@@ -327,7 +335,7 @@ class TestDiscoverLocalGguf:
         (models_dir / "unsloth" / "Qwen3-Coder-30B-A3B-Instruct-GGUF").mkdir(parents=True)
         (models_dir / "unsloth" / "Qwen3-Coder-30B-A3B-Instruct-GGUF" / "Qwen3-Coder-30B-A3B-Instruct-Q4_K_S.gguf").touch()
         monkeypatch.setattr(
-            "agent_core.llm.llama_provider._lmstudio_models_dir",
+            "agent_core.llm.llama_provider._llama_models_dir",
             lambda: str(models_dir),
         )
         result = discover_local_gguf_models()
@@ -341,7 +349,7 @@ class TestDiscoverLocalGguf:
             (models_dir / "unsloth" / "Qwen3.8-Flash-Next-GGUF" /
              f"Qwen3.8-Flash-Next-UD-IQ3_XXS-0000{i}-of-00003.gguf").touch()
         monkeypatch.setattr(
-            "agent_core.llm.llama_provider._lmstudio_models_dir",
+            "agent_core.llm.llama_provider._llama_models_dir",
             lambda: str(models_dir),
         )
         result = discover_local_gguf_models()
@@ -355,7 +363,7 @@ class TestDiscoverLocalGguf:
         (models_dir / "gemma-4-12b-it-GGUF" / "gemma-4-12b-it-Q4_K_M.gguf").touch()
         (models_dir / "gemma-4-12b-it-GGUF" / "mmproj-gemma-4-12b-it-BF16.gguf").touch()
         monkeypatch.setattr(
-            "agent_core.llm.llama_provider._lmstudio_models_dir",
+            "agent_core.llm.llama_provider._llama_models_dir",
             lambda: str(models_dir),
         )
         result = discover_local_gguf_models()
@@ -363,11 +371,11 @@ class TestDiscoverLocalGguf:
         assert result[0] == "llama/gemma-4-12b-it-GGUF/gemma-4-12b-it-Q4_K_M"
 
     def test_uses_env_override(self, monkeypatch, tmp_path):
-        """LMSTUDIO_MODELS_DIR env var overrides the default path."""
+        """LLAMA_MODELS_DIR env var overrides the default path."""
         models_dir = tmp_path / "custom_models"
         models_dir.mkdir(parents=True)
         (models_dir / "my-model.gguf").touch()
-        monkeypatch.setenv("LMSTUDIO_MODELS_DIR", str(models_dir))
+        monkeypatch.setenv("LLAMA_MODELS_DIR", str(models_dir))
         result = discover_local_gguf_models()
         assert result == ["llama/my-model"]
 
@@ -379,11 +387,54 @@ class TestDiscoverLocalGguf:
         (models_dir / "a-model.gguf").touch()
         (models_dir / "m-model.gguf").touch()
         monkeypatch.setattr(
-            "agent_core.llm.llama_provider._lmstudio_models_dir",
+            "agent_core.llm.llama_provider._llama_models_dir",
             lambda: str(models_dir),
         )
         result = discover_local_gguf_models()
         assert result == ["llama/a-model", "llama/m-model", "llama/z-model"]
+
+    def test_ignores_lmstudio_models_dir(self, monkeypatch, tmp_path):
+        """llama discovery must read ONLY the llama folder, never LM Studio's.
+
+        A GGUF placed in the LM Studio models dir must NOT be discovered as a
+        llama model, even when LLAMA_MODELS_DIR is unset and an LM Studio dir
+        exists.
+        """
+        lmstudio_dir = tmp_path / "lmstudio_models"
+        (lmstudio_dir / "unsloth").mkdir(parents=True)
+        (lmstudio_dir / "unsloth" / "LeakTest-Q4_K_S.gguf").touch()
+        monkeypatch.setattr(
+            "agent_core.llm.llama_provider._lmstudio_models_dir",
+            lambda: str(lmstudio_dir),
+        )
+        # No llama folder configured -> nothing should be discovered.
+        monkeypatch.setattr(
+            "agent_core.llm.llama_provider._llama_models_dir",
+            lambda: None,
+        )
+        assert discover_local_gguf_models() == []
+
+    def test_uses_repo_local_llama_folder(self, monkeypatch, tmp_path):
+        """The default llama folder is <repo>/models/llama, isolated from LM Studio."""
+        llama_dir = tmp_path / "repo" / "models" / "llama"
+        llama_dir.mkdir(parents=True)
+        (llama_dir / "unsloth" / "Qwen3-Coder-30B-A3B-Instruct-GGUF").mkdir(parents=True)
+        (llama_dir / "unsloth" / "Qwen3-Coder-30B-A3B-Instruct-GGUF" /
+         "Qwen3-Coder-30B-A3B-Instruct-Q4_K_S.gguf").touch()
+        # LM Studio dir exists but must NOT be consulted for llama models.
+        lmstudio_dir = tmp_path / "lmstudio_models"
+        lmstudio_dir.mkdir(parents=True)
+        (lmstudio_dir / "LeakTest-Q4_K_S.gguf").touch()
+        monkeypatch.setattr(
+            "agent_core.llm.llama_provider._lmstudio_models_dir",
+            lambda: str(lmstudio_dir),
+        )
+        monkeypatch.setattr(
+            "agent_core.llm.llama_provider._llama_models_dir",
+            lambda: str(llama_dir),
+        )
+        result = discover_local_gguf_models()
+        assert result == ["llama/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/Qwen3-Coder-30B-A3B-Instruct-Q4_K_S"]
 
 
 # ---------------------------------------------------------------------------

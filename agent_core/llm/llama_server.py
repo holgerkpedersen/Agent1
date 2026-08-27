@@ -178,13 +178,14 @@ def _bare_id(model_name: str) -> str:
 def _resolve_local_gguf(bare_id: str) -> str | None:
     """Map a routing label to a local GGUF file path, if one exists.
 
-    The LM Studio models dir uses ``<repo>/<file-stem>`` layout, which matches
-    the agent's ``llama/<repo>/<file-stem>`` ids.  Returns the absolute path
-    of the first matching ``.gguf`` (ignoring mmproj files).
+    Resolves against the llama.cpp models dir ONLY (``_llama_models_dir``) —
+    never the LM Studio models dir, so the two engines keep separate model
+    folders.  Returns the absolute path of the first matching ``.gguf``
+    (ignoring mmproj files).
     """
-    from .llama_provider import _lmstudio_models_dir
+    from .llama_provider import _llama_models_dir
 
-    models_dir = _lmstudio_models_dir()
+    models_dir = _llama_models_dir()
     if not models_dir:
         return None
     # bare_id is like "lmstudio-community/Bonsai-27B-GGUF/Bonsai-27B-Q1_0"
@@ -475,17 +476,23 @@ def _launch_server(api_url: str, bare: str | None,
 
 
 def _models_dir_for_launch() -> str:
-    """Pick the --models-dir for a launched router."""
-    from .llama_provider import _lmstudio_models_dir
-    d = _lmstudio_models_dir()
+    """Pick the --models-dir for a launched router.
+
+    Uses the llama.cpp models dir ONLY (``_llama_models_dir``) so a launched
+    router never reaches into the LM Studio models folder.  Falls back to the
+    llama.cpp cache dir if the project-local folder is absent.
+    """
+    from .llama_provider import _llama_models_dir
+    d = _llama_models_dir()
     if d:
         return d
     # Fallback: a llama.cpp cache dir if present.
     cache = os.path.expanduser("~/.cache/llama.cpp")
     if os.path.isdir(cache):
         return cache
-    # Last resort: the LM Studio default location (may not exist yet).
-    return os.path.expanduser("~/.lmstudio/models")
+    # Last resort: the project-local llama folder (may not exist yet).
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(repo_root, "models", "llama")
 
 
 @dataclass

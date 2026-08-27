@@ -140,7 +140,7 @@ class TestEnsureModelServed:
 
 class TestResolveLocalGguf:
     def test_maps_routing_label_to_local_file(self, monkeypatch):
-        # Point the LM Studio models dir at a temp tree containing the GGUF.
+        # Point the llama models dir (NOT the LM Studio dir) at a temp tree.
         import os, tempfile
         from agent_core.llm import llama_provider
         d = tempfile.mkdtemp()
@@ -149,15 +149,30 @@ class TestResolveLocalGguf:
         gguf = os.path.join(rel, "Bonsai-27B-Q1_0.gguf")
         with open(gguf, "w") as f:
             f.write("x")
-        monkeypatch.setattr(llama_provider, "_lmstudio_models_dir", lambda: d)
+        monkeypatch.setattr(llama_provider, "_llama_models_dir", lambda: d)
+        monkeypatch.setattr(llama_provider, "_lmstudio_models_dir", lambda: None)
         got = mod._resolve_local_gguf("lmstudio-community/Bonsai-27B-GGUF/Bonsai-27B-Q1_0")
         assert got is not None and got.replace(os.sep, "/").endswith(
             "lmstudio-community/Bonsai-27B-GGUF/Bonsai-27B-Q1_0.gguf")
 
     def test_returns_none_when_missing(self, monkeypatch):
         from agent_core.llm import llama_provider
-        monkeypatch.setattr(llama_provider, "_lmstudio_models_dir", lambda: None)
+        monkeypatch.setattr(llama_provider, "_llama_models_dir", lambda: None)
         assert mod._resolve_local_gguf("nope/Bonsai") is None
+
+    def test_never_reads_lmstudio_dir(self, monkeypatch):
+        """A GGUF in the LM Studio models dir must NOT resolve for llama."""
+        import os, tempfile
+        from agent_core.llm import llama_provider
+        d = tempfile.mkdtemp()
+        rel = os.path.join(d, "lmstudio-community", "Bonsai-27B-GGUF")
+        os.makedirs(rel)
+        with open(os.path.join(rel, "Bonsai-27B-Q1_0.gguf"), "w") as f:
+            f.write("x")
+        monkeypatch.setattr(llama_provider, "_lmstudio_models_dir", lambda: d)
+        monkeypatch.setattr(llama_provider, "_llama_models_dir", lambda: None)
+        assert mod._resolve_local_gguf(
+            "lmstudio-community/Bonsai-27B-GGUF/Bonsai-27B-Q1_0") is None
 
 
 class TestLaunchServer:
