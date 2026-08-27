@@ -36,7 +36,7 @@ class ModelCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "model [list|load|unload|reload|provider|profile] — Manage LLM models and providers"
+        return "model [list|load|unload|reload|provider|profile] - Manage LLM models and providers"
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         sub = args[0].strip().lower() if args else ""

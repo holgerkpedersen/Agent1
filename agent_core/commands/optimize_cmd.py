@@ -1922,7 +1922,7 @@ class OptimizeCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "optimize <file|dir> [--apply] [--yes] [--list] — Find and apply optimizations (batched)"
+        return "optimize <file|dir> [--apply] [--yes] [--list] - Find and apply optimizations (batched)"
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         parts = list(args)

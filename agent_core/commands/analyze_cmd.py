@@ -61,7 +61,7 @@ class AnalyzeCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return 'analyze <file> [--desc "q"] [--stdin] [--deep] — AI analysis via LM Studio'
+        return 'analyze <file> [--desc "q"] [--stdin] [--deep] - AI analysis via LM Studio'
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         parts = list(args)

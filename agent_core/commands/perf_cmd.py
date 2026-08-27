@@ -66,7 +66,7 @@ class PerfCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "perf [--detail|--reset|--html] — Command performance dashboard"
+        return "perf [--detail|--reset|--html] - Command performance dashboard"
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         if "--reset" in args:

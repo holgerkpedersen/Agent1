@@ -107,8 +107,16 @@ def load_decisions(workspace: str | Path) -> list[dict[str, Any]]:
     except (json.JSONDecodeError, OSError):
         return []
     # Normalize legacy affected_files so matching is on ONE canonical form.
+    # Also normalize tags: stored records may carry null/non-list values,
+    # which would otherwise crash consumers that slice them (e.g. decide list).
+    # And date: some records store the timestamp under ``created_at`` instead
+    # of ``date``; unify on ``date`` so list/show never KeyError on it.
     for d in decisions:
         d["affected_files"] = normalize_affected_files(workspace, d.get("affected_files"))
+        tags = d.get("tags")
+        d["tags"] = tags if isinstance(tags, list) else []
+        if not d.get("date"):
+            d["date"] = d.get("created_at") or ""
     return decisions
 
 

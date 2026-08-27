@@ -36,7 +36,7 @@ from harnessfix.review import (
     save_reviews,
 )
 
-_REVIEW_HELP = """review — Human gate over failed task traces (verification gate)
+_REVIEW_HELP = """review - Human gate over failed task traces (verification gate)
 
   review refresh [--trace-dir dir] [--diags-dir dir]
       Rebuild the review ledger from the trace corpus

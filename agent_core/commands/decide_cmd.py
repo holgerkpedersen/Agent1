@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from agent import Agent
 
 
-_DECIDE_HELP = """decide — Track design decisions for this workspace
+_DECIDE_HELP = """decide [add|list|show|check|resolve|link|extract|review] - Track design decisions for this workspace
 
   decide "title" --why "..." --what "..." [--tags t1,t2] [--files f1.py]
       Record a new decision
@@ -137,10 +137,13 @@ class DecideCommand(Command):
         print(f"{len(results)} decision(s):")
         print("-" * 60)
         for d in results:
-            files_str = ", ".join(d.get("affected_files", [])[:3])
-            tags_str = ", ".join(d.get("tags", [])[:5])
+            files = d.get("affected_files") or []
+            tags = d.get("tags") or []
+            files_str = ", ".join(files[:3])
+            tags_str = ", ".join(tags[:5])
+            date_str = (d.get("date") or "")[:10]
             print(
-                f"  #{d['id']}  {d['date'][:10]}  {d['title']}\n"
+                f"  #{d['id']}  {date_str}  {d['title']}\n"
                 f"         files: {files_str or '-'}\n"
                 f"         tags:  {tags_str or '-'}"
             )

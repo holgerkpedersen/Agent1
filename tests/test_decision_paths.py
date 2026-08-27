@@ -4,6 +4,7 @@ Relative paths are interpreted against the WORKSPACE (never the process
 CWD); the absolute form is always derivable via join(workspace, rel).
 """
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -124,6 +125,47 @@ class TestDecisionMatching:
             str(tmp_path),
         )
         assert len(overlaps) == 1
+
+    def test_load_decisions_normalizes_null_tags(self, tmp_path):
+        """Stored records with tags=null must load as [] (regression for the
+        TypeError at decide_cmd.py:143, ``None[:5]``)."""
+        store = tmp_path / ".decisions.json"
+        store.write_text(
+            json.dumps([
+                {"id": "001", "title": "legacy", "tags": None, "affected_files": []},
+                {"id": "002", "title": "legacy-obj", "tags": "not-a-list", "affected_files": []},
+            ]),
+            encoding="utf-8",
+        )
+        decisions = load_decisions(str(tmp_path))
+        assert decisions[0]["tags"] == []
+        assert decisions[1]["tags"] == []
+        # And the exact consuming expression from decide_cmd list must not crash.
+        for d in decisions:
+            assert ", ".join((d.get("tags") or [])[:5]) == ""
+
+    def test_load_decisions_unifies_date_from_created_at(self, tmp_path):
+        """Records that store the timestamp under ``created_at`` (instead of
+        ``date``) must still load with a usable ``date`` — regression for the
+        KeyError at decide_cmd.py:145, ``d['date'][:10]``."""
+        store = tmp_path / ".decisions.json"
+        store.write_text(
+            json.dumps([
+                {"id": "078", "title": "renamed-date",
+                 "created_at": "2026-08-24T10:43:00.306892+00:00",
+                 "tags": [], "affected_files": []},
+                {"id": "079", "title": "no-date-at-all",
+                 "tags": [], "affected_files": []},
+            ]),
+            encoding="utf-8",
+        )
+        decisions = load_decisions(str(tmp_path))
+        by_id = {d["id"]: d for d in decisions}
+        assert by_id["078"]["date"] == "2026-08-24T10:43:00.306892+00:00"
+        assert by_id["079"]["date"] == ""
+        # The exact consuming expression from decide_cmd list must not crash.
+        for d in decisions:
+            assert (d.get("date") or "")[:10] is not None
 
 
 class TestAnnotateCandidates:

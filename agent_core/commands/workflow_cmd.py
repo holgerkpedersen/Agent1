@@ -619,7 +619,7 @@ class WorkflowCommand(Command):
     def help_text(self) -> str:
         return (
             "workflow <target> [--from spec.md] [--stdin] [--brainstorm] "
-            "[--features spec.md] [--workspace <path>] — Full pipeline\n"
+            "[--features spec.md] [--workspace <path>] - Full pipeline\n"
             "  Greenfield analyze auto-scans the target workspace when the spec references\n"
             "  agent/self-improvement/security. Produces a structured 8-section analysis and\n"
             "  halts at an ambiguity gate (print clarifying questions) unless --force is given.\n"

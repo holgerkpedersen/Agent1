@@ -76,7 +76,7 @@ class MultiLlmCommand(Command):
         return (
             'multillm "question" [--models laguna-s-2.1,opencode-go/...] '
             "[--max-tokens N] [--thinking] [--concurrency N] "
-            "[--role model:prompt] [--role-file path.json] [--synthesize] — ask "
+            "[--role model:prompt] [--role-file path.json] [--synthesize] - ask "
             "multiple LLMs the same question in parallel, each with its own role; "
             "--synthesize merges the answers through one extra LLM call"
         )
