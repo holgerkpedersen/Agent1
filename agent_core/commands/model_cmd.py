@@ -89,6 +89,13 @@ class ModelCommand(Command):
             self._sync_with_lmstudio(agent)
             return True
 
+        if sub == "openrouter":
+            # `model openrouter [--all | --paid]` — list the OpenRouter catalog
+            # (free tier by default; full paid+free catalog with --all/--paid).
+            show_paid = any(a in ("--all", "--paid") for a in rest)
+            self._list_models(agent, interactive=True, openrouter_free_only=not show_paid)
+            return True
+
         # Subcommand not matched — treat as model name
         await self._switch_model(args, agent)
         return True
@@ -206,7 +213,37 @@ class ModelCommand(Command):
         except Exception:
             return []
 
-    def _list_models(self, agent: "Agent", interactive: bool = False) -> None:
+    def _openrouter_catalog(self, agent: "Agent", free_only: bool = True) -> list[str]:
+        """Return OpenRouter model ids (namespaced openrouter/<id>).
+
+        Uses the agent's real OpenRouterProvider when it is active (so the
+        list reflects what chat uses), otherwise a freshly built one from
+        settings.  Returns [] on any failure so listing never crashes.
+
+        *free_only* defaults to True — the owner only uses the free tier, so
+        `model list` shows free models only; `model openrouter --all` passes
+        False to fetch the complete (paid + free) catalog.
+        """
+        from agent_core.llm.openrouter_provider import OpenRouterProvider
+
+        provider = getattr(getattr(agent, "llm", None), "_provider", None)
+        if type(provider).__name__ == "OpenRouterProvider":
+            try:
+                return list(provider.list_models(free_only=free_only))
+            except Exception:
+                return []
+        try:
+            from agent_core.config import load_agent_settings
+            s = load_agent_settings()
+            return list(OpenRouterProvider(
+                model_name=getattr(s, "openrouter_model", "openrouter/meta-llama/llama-3.1-8b-instruct:free"),
+                api_url=getattr(s, "openrouter_api_url", "https://openrouter.ai/api/v1"),
+                api_key=getattr(s, "openrouter_api_key", ""),
+            ).list_models(free_only=free_only))
+        except Exception:
+            return []
+
+    def _list_models(self, agent: "Agent", interactive: bool = False, openrouter_free_only: bool = True) -> None:
         """Show available models per LLM provider (LM Studio + opencode).
 
         READ-ONLY by design (multi-shell safety): listing must never switch
@@ -242,7 +279,8 @@ class ModelCommand(Command):
 
         print(f"\n  Providers: lmstudio (active: {'*' if active_provider == 'lmstudio' else ' '})"
               f"  opencode (active: {'*' if active_provider == 'opencode' else ' '})"
-              f"  llama (active: {'*' if active_provider == 'llama' else ' '})")
+              f"  llama (active: {'*' if active_provider == 'llama' else ' '})"
+              f"  openrouter (active: {'*' if active_provider == 'openrouter' else ' '})")
         if opencode_models:
             print(f"  [opencode] {len(opencode_models)} model(s) — needs API key:\n")
             for key in opencode_models:
@@ -280,6 +318,23 @@ class ModelCommand(Command):
             except Exception:
                 _lurl = "http://127.0.0.1:8080/v1"
             print(f"\n  [llama] llama.cpp server unreachable at {_lurl} - start llama-server")
+
+        # ---- OpenRouter hosted gateway models (FREE tier by default) ----
+        # The owner only uses OpenRouter's no-cost models, so `model list`
+        # shows the free tier only.  `model openrouter --all` / `--paid` shows
+        # the full (paid + free) catalog via _openrouter_catalog(free_only=False).
+        openrouter_models = self._openrouter_catalog(agent, free_only=openrouter_free_only)
+        if openrouter_models:
+            suffix = " (free tier)" if openrouter_free_only else " (free + paid)"
+            print(f"\n  [openrouter] {len(openrouter_models)} model(s){suffix} — needs API key:\n")
+            for key in openrouter_models:
+                is_current = key == current
+                marker = "  *" if is_current else "   "
+                print(f"{marker} {key}  (provider=openrouter)")
+            if openrouter_free_only:
+                print("            (show the full paid catalog with: model openrouter --all)")
+        else:
+            print("\n  [openrouter] unreachable — set OPENROUTER_API_KEY / check network")
 
         # ---- LM Studio models ----
         models, loaded_ids = self._fetch_models()
@@ -446,6 +501,23 @@ class ModelCommand(Command):
                 print(f"  Switched: {old} -> {resolved}  (provider=llama)")
             return
 
+        # OpenRouter hosted models, e.g. "openrouter/anthropic/claude-3.5-haiku".
+        # The openrouter-go/ prefix is also accepted as an alias for openrouter/.
+        if lowered.startswith("openrouter/") or lowered.startswith("openrouter-go/"):
+            q = query if lowered.startswith("openrouter/") else f"openrouter/{query[len('openrouter-go/'):]}"
+            old = agent.llm.model_name
+            if q == old:
+                print(f"  Already using: {q}")
+                return
+            from agent_core.config import load_agent_settings
+            from agent_core.llm.provider import build_provider
+            settings = load_agent_settings()
+            agent.llm._provider = build_provider(settings, q)
+            agent.llm.model_name = q
+            persist_model_choice(q, provider="openrouter")
+            print(f"  Switched: {old} -> {q}  (provider=openrouter)")
+            return
+
         models, loaded_ids = self._fetch_models()
 
         # Opencode catalog models (go tier + keyless zen free tier) are fetched
@@ -565,9 +637,9 @@ class ModelCommand(Command):
         """Strip an optional ``--provider <p>`` / ``-p <p>`` flag from *args*.
 
         Returns ``(remaining_args, provider_override)`` where *provider_override*
-        is ``"lmstudio"`` or ``"opencode"`` (lower-cased) when present, else
-        ``None``.  Validation of the value happens in the caller so we can
-        print a friendly error.
+        is ``"lmstudio"``, ``"opencode"``, ``"llama"`` or ``"openrouter"``
+        (lower-cased) when present, else ``None``.  Validation of the value
+        happens in the caller so we can print a friendly error.
         """
         remaining: list[str] = []
         override: str | None = None
@@ -609,13 +681,34 @@ class ModelCommand(Command):
             print("  Specify a model name, e.g. `model <name> --provider <lmstudio|opencode>`.")
             return
 
-        if provider not in ("lmstudio", "opencode", "llama"):
-            print(f"  Unknown provider '{provider}'. Options: lmstudio, opencode, llama.")
+        if provider not in ("lmstudio", "opencode", "llama", "openrouter"):
+            print(f"  Unknown provider '{provider}'. Options: lmstudio, opencode, llama, openrouter.")
             return
 
         from agent_core.config import load_agent_settings
         from agent_core.llm.provider import build_provider
         settings = load_agent_settings()
+
+        if provider == "openrouter":
+            # Match against the live OpenRouter catalog (exact id, or a bare
+            # vendor/model name that resolves to an openrouter/<id>).
+            or_models = self._openrouter_catalog(agent)
+            q = self._resolve_openrouter_match(query, or_models)
+            if q is None:
+                # Bare name — treat as an openrouter/<id> directly (OpenRouter
+                # ids are already vendor/model).  Only do this when the query
+                # does not contain a slash, so a typo'd vendor/model still
+                # fails clearly instead of being force-namespaced.
+                q = query if query.startswith("openrouter/") else f"openrouter/{query}"
+            old = agent.llm.model_name
+            if q == old:
+                print(f"  Already using: {q}")
+                return
+            agent.llm._provider = build_provider(settings, q, provider_override="openrouter")
+            agent.llm.model_name = q
+            persist_model_choice(q, provider="openrouter")
+            print(f"  Switched: {old} -> {q}  (provider=openrouter)")
+            return
 
         if provider == "opencode":
             # Match against the opencode catalogs (zen free first, then go).
@@ -765,13 +858,13 @@ class ModelCommand(Command):
             current = provider_for(agent.llm.model_name, settings.llm_provider, persisted_provider)
             print(f"  Provider: {current}  (model: {agent.llm.model_name})")
             print(f"  Persisted provider: {persisted_provider or '(auto)'}")
-            print("  Options: model provider lmstudio | model provider opencode | model provider llama")
-            print("  Pick a model + provider explicitly: model <name> --provider <lmstudio|opencode|llama>")
+            print("  Options: model provider lmstudio | model provider opencode | model provider llama | model provider openrouter")
+            print("  Pick a model + provider explicitly: model <name> --provider <lmstudio|opencode|llama|openrouter>")
             return
 
         target = args[0].strip().lower()
-        if target not in ("lmstudio", "opencode", "llama"):
-            print(f"  Unknown provider '{target}'. Options: lmstudio, opencode, llama.")
+        if target not in ("lmstudio", "opencode", "llama", "openrouter"):
+            print(f"  Unknown provider '{target}'. Options: lmstudio, opencode, llama, openrouter.")
             return
 
         from agent_core.constants import load_model_json, persist_model_choice
@@ -788,11 +881,13 @@ class ModelCommand(Command):
 
         if target == "opencode":
             model = settings.opencode_model
+        elif target == "openrouter":
+            model = settings.openrouter_model
         else:
             from agent_core.constants import DEFAULT_MODEL
             persisted = load_model_json()
             model = str(persisted.get("model") or DEFAULT_MODEL)
-            if model.startswith("opencode"):
+            if model.startswith("opencode") or model.startswith("openrouter"):
                 model = DEFAULT_MODEL
 
         agent.llm._provider = build_provider(settings, model)
@@ -1144,6 +1239,42 @@ class ModelCommand(Command):
         if matches:
             for m in opencode_models:
                 if m.split("/")[-1] == matches[0]:
+                    return str(m)
+        return None
+
+    def _resolve_openrouter_match(self, query: str, openrouter_models: list[str]) -> str | None:
+        """Fuzzy-match *query* against the OpenRouter catalog.
+
+        Same precedence as the opencode matcher (exact, substring, difflib)
+        but against OpenRouter ids (e.g. ``openrouter/anthropic/claude-3.5-
+        haiku``), so a partial name like ``claude-3.5`` resolves correctly.
+        """
+        if not query or not openrouter_models:
+            return None
+        qlo = query.lower()
+
+        # Exact (also accept an unprefixed id, e.g. "anthropic/claude-3.5-haiku")
+        for m in openrouter_models:
+            if qlo == m.lower() or qlo == m.lower().split("/", 1)[-1]:
+                return str(m)
+        # Substring on the full id
+        sub = [m for m in openrouter_models if qlo in m.lower()]
+        if len(sub) == 1:
+            return str(sub[0])
+        # Substring on the unprefixed tail (after the openrouter/ prefix)
+        sub_tail = [m for m in openrouter_models if qlo in m.lower().split("/", 1)[-1]]
+        if len(sub_tail) == 1:
+            return str(sub_tail[0])
+        # difflib on full ids
+        matches = difflib.get_close_matches(query, openrouter_models, n=1, cutoff=0.3)
+        if matches:
+            return str(matches[0])
+        # difflib on unprefixed tails
+        tails = [m.split("/", 1)[-1] for m in openrouter_models]
+        matches = difflib.get_close_matches(query, tails, n=1, cutoff=0.3)
+        if matches:
+            for m in openrouter_models:
+                if m.split("/", 1)[-1] == matches[0]:
                     return str(m)
         return None
 

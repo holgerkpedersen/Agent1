@@ -131,6 +131,28 @@ class AgentSettings:
     llama_extra_args: str = field(
         default_factory=lambda: os.environ.get("AGENT_LLAMA_EXTRA_ARGS", "")
     )
+    #: OpenRouter hosted gateway (OpenAI-compatible, native tool calling).
+    #: When AGENT_LLM_PROVIDER=openrouter (or a model is prefixed openrouter/)
+    #: the agent talks to OpenRouter over the standard /v1/chat/completions
+    #: protocol instead of LM Studio / opencode / llama.cpp.  Override the base
+    #: URL with OPENROUTER_API_URL (e.g. a proxy); the key resolves from
+    #: OPENROUTER_API_KEY first, then the secure store.
+    openrouter_api_url: str = field(
+        default_factory=lambda: os.environ.get("OPENROUTER_API_URL", "https://openrouter.ai/api/v1")
+    )
+    openrouter_api_key: str = field(
+        default_factory=lambda: os.environ.get("OPENROUTER_API_KEY", "") or _store_secret("OPENROUTER_API_KEY")
+    )
+    #: Default OpenRouter model (persisted model choice in model.json wins).
+    #: The owner only uses the FREE tier, so the default is a free model; the
+    #: user overrides it with `model openrouter/<vendor>/<model>` or the
+    #: AGENT_OPENROUTER_MODEL env var.  (Free models carry a ``:free`` suffix —
+    #: `model list` only shows free models by default.)
+    openrouter_model: str = field(
+        default_factory=lambda: os.environ.get(
+            "AGENT_OPENROUTER_MODEL", "openrouter/meta-llama/llama-3.1-8b-instruct:free"
+        )
+    )
 
     def __post_init__(self) -> None:
         # Enforce the invariant on every construction (not just at the two
@@ -138,7 +160,7 @@ class AgentSettings:
         _validate_settings(self)
 
 
-_LLM_PROVIDERS = ("lmstudio", "opencode", "llama")
+_LLM_PROVIDERS = ("lmstudio", "opencode", "llama", "openrouter")
 
 
 def _parse_provider_chain(raw: str | None) -> tuple[str, ...]:
@@ -338,6 +360,9 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         opencode_api_key=os.environ.get("OPENCODE_API_KEY") or env_vars.get("OPENCODE_API_KEY") or _store_secret("OPENCODE_API_KEY"),
         llama_base_url=os.environ.get("AGENT_LLAMA_URL") or env_vars.get("AGENT_LLAMA_URL") or "http://127.0.0.1:8080/v1",
         llama_extra_args=os.environ.get("AGENT_LLAMA_EXTRA_ARGS") or env_vars.get("AGENT_LLAMA_EXTRA_ARGS") or "",
+        openrouter_api_url=os.environ.get("OPENROUTER_API_URL") or env_vars.get("OPENROUTER_API_URL") or "https://openrouter.ai/api/v1",
+        openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or env_vars.get("OPENROUTER_API_KEY") or _store_secret("OPENROUTER_API_KEY"),
+        openrouter_model=os.environ.get("AGENT_OPENROUTER_MODEL") or env_vars.get("AGENT_OPENROUTER_MODEL") or "openrouter/meta-llama/llama-3.1-8b-instruct:free",
     )
 
     _validate_settings(settings)

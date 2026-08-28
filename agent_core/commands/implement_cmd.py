@@ -1386,6 +1386,19 @@ class ImplementCommand(Command):
         plan_file = find_input(target_workspace, plan_file)
         entities_file = find_input(target_workspace, entities_file)
 
+        # Natural-language misuse guard: `implement` requires a plan FILE, not a
+        # prose description.  If the first argument is not a real file and the
+        # user clearly passed a phrase (several non-flag tokens), steer them to
+        # `workflow` instead of emitting a cryptic "File not found: a".
+        non_flag = [p for p in parts if not p.startswith("--")]
+        if non_flag and not os.path.exists(taskplan_file) and len(non_flag) > 1:
+            self.error(
+                "implement expects a task-plan FILE (e.g. tasks.md), not a description.\n"
+                "  To build a plan from prose, use:  workflow <target> --brainstorm\n"
+                "  Or generate plan/entities/tasks first, then:  implement <taskplan.md>"
+            )
+            return True
+
         cache_file = os.path.join(os.path.dirname(os.path.realpath(taskplan_file)), ".implement_cache.json")
 
         analysis_content = ""

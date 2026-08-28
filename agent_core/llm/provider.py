@@ -59,13 +59,15 @@ def provider_for(
         return "opencode"
     if m.startswith("zen"):
         return "opencode"
+    if m.startswith("openrouter"):
+        return "openrouter"
     if m.startswith("llama"):
         return "llama"
     if m.startswith(("laguna", "qwen", "kwaipilot", "gemma", "meta/", "prism", "lmstudio")):
         return "lmstudio"
-    if persisted_provider in ("lmstudio", "opencode", "llama"):
+    if persisted_provider in ("lmstudio", "opencode", "llama", "openrouter"):
         return persisted_provider
-    return provider_setting if provider_setting in ("lmstudio", "opencode", "llama") else "lmstudio"
+    return provider_setting if provider_setting in ("lmstudio", "opencode", "llama", "openrouter") else "lmstudio"
 
 
 def build_provider(
@@ -108,6 +110,15 @@ def build_provider(
                 api_url=getattr(settings, "llama_base_url", "http://127.0.0.1:8080/v1"),
             )
 
+        # OpenRouter hosted gateway (OpenAI-compatible, native tool calling).
+        if provider_name == "openrouter":
+            from .openrouter_provider import OpenRouterProvider
+            return OpenRouterProvider(
+                model_name=model_name,
+                api_url=getattr(settings, "openrouter_api_url", "https://openrouter.ai/api/v1"),
+                api_key=getattr(settings, "openrouter_api_key", ""),
+            )
+
         # Unknown entries fall back to LM Studio (the default provider).
         from .lmstudio import LMStudioProvider
 
@@ -118,7 +129,7 @@ def build_provider(
         chain = (getattr(settings, "llm_provider", "lmstudio"),)
 
     # An explicit override wins over prefix-based and persisted routing.
-    if provider_override in ("lmstudio", "opencode", "llama"):
+    if provider_override in ("lmstudio", "opencode", "llama", "openrouter"):
         primary = provider_override
     else:
         # The model prefix still overrides the provider for a single-provider

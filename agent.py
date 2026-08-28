@@ -47,6 +47,7 @@ from agent_core.modes import (
     plan_mode_turn_note,
 )
 from agent_core.subagent_roles import get_role, role_names
+from agent_core.llm.provider import is_connection_failure
 from agent_core.llm.tool_loop import ToolLoopRunner
 from agent_core.context_management import CorrelationIdContext
 try:
@@ -1762,15 +1763,36 @@ class Agent:
         self._refresh_system_message()
         self._read_streak = 0
         self._append_user_turn(user_input, images)
+        # Snapshot history right after the user turn so a transient LLM failure
+        # can be retried from a clean slate — the failed run's tool messages are
+        # discarded on retry (otherwise the retry would re-feed them and
+        # duplicate work).  Without this the first timeout would end the task.
+        history_snapshot = list(self._chat_history)
 
-        final_text, final_messages, llm_error, loop = (
-            await self._run_chained_tool_loop(
-                user_input=user_input,
-                messages=self._chat_history,
-                display_mode=_resolve_display_mode(),
-                seen_calls={},
+        final_text, final_messages, llm_error, loop = "", self._chat_history, None, None
+        for attempt in range(1, _LLM_ERROR_MAX_RETRIES + 1):
+            final_text, final_messages, llm_error, loop = (
+                await self._run_chained_tool_loop(
+                    user_input=user_input,
+                    messages=self._chat_history,
+                    display_mode=_resolve_display_mode(),
+                    seen_calls={},
+                )
             )
-        )
+            # Only retry on a TRANSIENT provider failure (timeout/connection).
+            # A permanent error (4xx/auth) must not be retried — it would loop
+            # forever and never surface to the user.
+            if not llm_error or not is_connection_failure(llm_error):
+                break
+            if attempt < _LLM_ERROR_MAX_RETRIES:
+                self._chat_history = list(history_snapshot)
+                if _resolve_display_mode() != AgentDisplayMode.QUIET:
+                    print(yellow(
+                        f"\n  [retry {attempt}/{_LLM_ERROR_MAX_RETRIES}] LLM call "
+                        f"failed transiently ({llm_error[:120]}); retrying...\n"
+                    ))
+                await asyncio.sleep(_LLM_ERROR_BACKOFF_S * (2 ** (attempt - 1)))
+
         # Tagged continuation notes were stripped inside the chained-loop phase;
         # adopt its final message list as the session history.
         self._chat_history = final_messages
@@ -2096,6 +2118,15 @@ _HISTORY_TRIM_NOTE = (
 #: chained run has its own guards (no-progress, stuck, deadline), so a high
 #: cap cannot turn into an infinite loop — it only bounds total work.
 _MAX_CHAINED_RUNS = 6
+
+#: Transient LLM-failure retry for a whole turn.  A single timeout/connection
+#: blip (e.g. the hosted gateway hiccups, or a failover to a slow local model
+#: times out) must NOT destroy an in-flight task — the turn is retried a few
+#: times with backoff.  Only *transient* failures (detected via
+#: :func:`is_connection_failure`) are retried; a permanent 4xx/auth error is
+#: surfaced immediately so it cannot loop forever.  See :meth:`chat_nlp`.
+_LLM_ERROR_MAX_RETRIES = 2
+_LLM_ERROR_BACKOFF_S = 5.0
 
 #: Metadata key marking a loop-INJECTED user note (currently the continuation
 #: note).  Tagged messages are removed from the history when the turn ends.

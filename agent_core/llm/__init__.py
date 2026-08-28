@@ -4,6 +4,7 @@ from .retry import RetryPolicy, TRANSIENT_HTTP_STATUSES, TransientHTTPError
 from .tool_loop import ToolLoopRunner
 from .lmstudio import LMStudioProvider
 from .llama_provider import LlamaProvider
+from .openrouter_provider import OpenRouterProvider
 
 __all__ = [
     "LLMProvider",
@@ -13,4 +14,5 @@ __all__ = [
     "ToolLoopRunner",
     "LMStudioProvider",
     "LlamaProvider",
+    "OpenRouterProvider",
 ]

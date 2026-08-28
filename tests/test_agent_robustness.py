@@ -32,6 +32,7 @@ import pytest
 
 import agent
 from agent import Agent
+from agent_core.config import AgentDisplayMode
 from agent_core.constants import (
     CHAT_HISTORY_TMP_PATH,
     AGENT_MEMORY_TMP_PATH,
@@ -381,3 +382,78 @@ class TestTagStrippedAtPayloadBoundary:
         ]
         assert out[1]["content"] == "task"
         assert out[3]["content"] == agent._CONTINUE_NOTE
+
+
+# ---------------------------------------------------------------------------
+# Turn-level retry on transient LLM failure (timeout must not destroy execution)
+# ---------------------------------------------------------------------------
+
+class TestTransientLlmErrorRetry:
+    """A single transient timeout/connection failure must not end the task.
+
+    chat_nlp retries the whole turn (from a clean history snapshot) on a
+    connection-failure error and only surfaces the error if it persists or is
+    permanent.  See _LLM_ERROR_MAX_RETRIES / chat_nlp.
+    """
+
+    def _patch(self, monkeypatch, bot, fake_loop):
+        captured = {}
+
+        def fake_finish(final_text=None, llm_error=None, loop=None,
+                        display_mode=None):
+            captured["text"] = final_text
+            captured["err"] = llm_error
+
+        monkeypatch.setattr(bot, "_run_chained_tool_loop", fake_loop)
+        monkeypatch.setattr(bot, "_finish_turn", fake_finish)
+        monkeypatch.setattr(bot, "_refresh_system_message", lambda: None)
+        monkeypatch.setattr(bot, "_append_user_turn", lambda *a, **k: None)
+        monkeypatch.setattr(agent, "_resolve_display_mode",
+                            lambda: AgentDisplayMode.QUIET)
+        # Keep the retry backoff instant in tests (no-op awaitable).
+        async def _no_sleep(*a, **k):
+            return None
+
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        return captured
+
+    def test_retries_transient_timeout_then_succeeds(self, monkeypatch) -> None:
+        from agent_core.config import AgentDisplayMode
+
+        bot = Agent(workspace=".")
+        calls = {"n": 0}
+        loop_token = object()
+
+        async def fake_loop(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # First attempt: transient timeout -> must be retried.
+                return ("", [], "[Error: read timed out]", loop_token)
+            return ("Done", [{"role": "assistant", "content": "Done"}],
+                    None, loop_token)
+
+        captured = self._patch(monkeypatch, bot, fake_loop)
+        asyncio.run(bot.chat_nlp("do it"))
+        assert calls["n"] == 2, calls
+        assert captured["err"] is None
+        assert captured["text"] == "Done"
+
+    def test_permanent_error_is_not_retried(self, monkeypatch) -> None:
+        from agent_core.config import AgentDisplayMode
+
+        bot = Agent(workspace=".")
+        calls = {"n": 0}
+        loop_token = object()
+
+        async def fake_loop(*args, **kwargs):
+            calls["n"] += 1
+            # A 401 is permanent — must NOT be retried (would loop forever).
+            return ("", [], "[Error: opencode API request failed: "
+                    "HTTP Error 401: Unauthorized]", loop_token)
+
+        captured = self._patch(monkeypatch, bot, fake_loop)
+        asyncio.run(bot.chat_nlp("do it"))
+        assert calls["n"] == 1, calls
+        assert captured["err"] is not None
+        assert "401" in captured["err"]
+
