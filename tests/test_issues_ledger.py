@@ -46,11 +46,24 @@ def test_upsert_is_idempotent(tmp_path: Path) -> None:
     assert len(reloaded) == 2
 
 
-def test_collect_issues_is_idempotent(tmp_path: Path) -> None:
+def test_collect_issues_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Inject a synthetic finding so collection has something to seed; the real
+    # repo is currently clean of these patterns, so we can't rely on it here.
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "import logging, traceback\n"
+        "logger = logging.getLogger(__name__)\n"
+        "try:\n"
+        "    risky()\n"
+        "except Exception:\n"
+        "    logger.warning('boom %s', traceback.format_exc())\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(il, "_iter_py_files", lambda root: [sample])
     ledger = tmp_path / ".issues.json"
     n1 = il.collect_issues(ledger)
     n2 = il.collect_issues(ledger)
-    assert n1 > 0  # the 8 known best-effort-except sites exist in the repo
+    assert n1 == 1
     assert n2 == 0  # re-running adds nothing
     saved = issue_store.load_issues(ledger)
     assert len(saved) == n1
@@ -81,37 +94,94 @@ def test_promote_validates_level(tmp_path: Path) -> None:
     assert not bad and "invalid" in msg
 
 
-def test_detectors_find_the_known_sites() -> None:
+def test_detectors_find_no_remaining_log_swallow_sites() -> None:
     files = il._iter_py_files(il.REPO_ROOT)
     dups = il.find_duplicate_handlers(files)
     swallows = il.find_log_swallow_excepts(files)
-    # The merge-introduced duplicate was fixed; the 8 log-and-swallow sites remain.
+    # Every known log-and-swallow site was fixed by the deterministic resolver
+    # (agent.py + agent_core/security/shutdown.py); the shared `_suppress_and_log`
+    # sink is intentionally excluded from detection.
     assert dups == []
-    locs = {f["locations"][0] for f in swallows}
-    for exp in (
-        "agent.py:129", "agent.py:271", "agent.py:1865", "agent.py:1936",
-        "agent_core/security/shutdown.py:50", "agent_core/security/shutdown.py:59",
-        "agent_core/security/shutdown.py:100", "agent_core/security/shutdown.py:109",
-    ):
-        assert any(l.endswith(exp) for l in locs), f"missing {exp}"
+    assert swallows == []
 
 
-def test_verify_issue_detects_unfixed_and_clears_when_fixed(tmp_path: Path) -> None:
-    # A best-effort-except issue about a real site should verify False (unfixed).
-    issues = issue_store.load_issues()
-    target = next(
-        it for it in issues
-        if it["category"] == "best-effort-except"
-        and it["locations"][0].endswith("shutdown.py:50")
+def test_resolve_log_swallow_fixes_and_verifies(tmp_path: Path) -> None:
+    """End-to-end: the deterministic resolver removes the flagged pattern and the
+    verifier then passes. Re-running on the fixed file is a no-op."""
+    mod = tmp_path / "mod.py"
+    mod.write_text(
+        "import logging, traceback\n"
+        "logger = logging.getLogger(__name__)\n"
+        "def do():\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except Exception:\n"
+        "        logger.warning('boom %s', traceback.format_exc())\n",
+        encoding="utf-8",
     )
-    files = il._issue_files(target)
-    assert il.verify_issue(target, files) is False
+    issue = issue_store.make_issue("best-effort-except", "x", [f"{mod.as_posix()}:5"])
+    files = il._issue_files(issue)
+    assert il.verify_issue(issue, files) is False
+    assert il._resolve_log_swallow(issue, None) is True
+    assert il.find_log_swallow_excepts([mod]) == []
+    assert il.verify_issue(issue, files) is True
+    # Idempotent: re-running on the fixed file changes nothing.
+    assert il._resolve_log_swallow(issue, None) is False
 
-    # A made-up 'duplication' issue on a clean temp file verifies True (nothing to flag).
-    clean = tmp_path / "clean.py"
-    clean.write_text("def f():\n    return 1\n", encoding="utf-8")
-    fake = issue_store.make_issue("duplication", "x", [f"{clean.as_posix()}:1"])
-    assert il.verify_issue(fake, [clean]) is True
+
+def test_resolve_log_swallow_multistmt_handler(tmp_path: Path) -> None:
+    """A handler with a fallback statement after the log call keeps the broad
+    `except` (so the fallback still runs on exception) but the leading log+format_exc
+    call is replaced by `<logger>.exception(label)`, so the detector no longer flags it
+    and the original exception is still logged with its traceback."""
+    mod = tmp_path / "mod.py"
+    mod.write_text(
+        "import logging, traceback\n"
+        "logger = logging.getLogger(__name__)\n"
+        "val = 1\n"
+        "try:\n"
+        "    val = risky()\n"
+        "except Exception:\n"
+        "    logger.warning('boom %s', traceback.format_exc())\n"
+        "    val = 0\n",
+        encoding="utf-8",
+    )
+    issue = issue_store.make_issue("best-effort-except", "x", [f"{mod.as_posix()}:5"])
+    assert il._resolve_log_swallow(issue, None) is True
+    out = mod.read_text(encoding="utf-8")
+    assert "val = 0" in out  # fallback preserved
+    assert "except Exception" in out  # broad except kept (semantics preserved)
+    assert "traceback.format_exc" not in out  # detector no longer flags it
+    assert "logger.exception(" in out  # logs the current exception + traceback
+
+
+def test_resolve_log_swallow_fail_closed_on_branchy_handler(tmp_path: Path) -> None:
+    """A handler that branches on the bound exception must NOT be rewritten."""
+    mod = tmp_path / "mod.py"
+    mod.write_text(
+        "import logging, traceback\n"
+        "logger = logging.getLogger(__name__)\n"
+        "try:\n"
+        "    risky()\n"
+        "except Exception as e:\n"
+        "    if 'x' in str(e):\n"
+        "        logger.warning('boom %s', traceback.format_exc())\n"
+        "    else:\n"
+        "        raise\n",
+        encoding="utf-8",
+    )
+    issue = issue_store.make_issue("best-effort-except", "x", [f"{mod.as_posix()}:4"])
+    assert il._resolve_log_swallow(issue, None) is False
+    assert "except Exception as e:" in mod.read_text(encoding="utf-8")
+
+
+def test_resolve_log_swallow_skips_shared_sink() -> None:
+    """The canonical `_suppress_and_log` sink must never be rewritten."""
+    sink = il.REPO_ROOT / "agent_core" / "suppress_log.py"
+    before = sink.read_text(encoding="utf-8")
+    issue = issue_store.make_issue("best-effort-except", "x", [f"{sink.as_posix()}:1"])
+    assert il._resolve_log_swallow(issue, None) is False
+    assert sink.read_text(encoding="utf-8") == before
 
 
 def test_resolve_issue_accepts_when_generator_fixes_and_gates_pass(

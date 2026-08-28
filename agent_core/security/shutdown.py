@@ -9,6 +9,7 @@ mask the shutdown itself.
 The store directory can be redirected with ``AGENT1_SECRETS_DIR`` (tests/portable).
 """
 from __future__ import annotations
+from agent_core.suppress_log import _suppress_and_log
 
 import logging
 import os
@@ -43,23 +44,15 @@ def safe_signal_break_handler(
     save_memory_fn : callable or None
         Callable that persists agent cross-session memory (``_save_memory``).
     """
-    try:
+    with _suppress_and_log('Error saving memory during signal break:\n'):
         if callable(save_memory_fn):
             save_memory_fn()
             logger.info("Memory saved during signal break handler (%s)", memory_path)
-    except Exception as exc:  # noqa: BLE001 — never abort shutdown for a hook failure
-        logger.error(
-            "Error saving memory during signal break:\n%s", traceback.format_exc(),
-        )
 
-    try:
+    with _suppress_and_log('Error closing trace writer during signal break:\n'):
         if callable(trace_writer_close):
             trace_writer_close()
             logger.info("Trace writer closed during signal break handler")
-    except Exception as exc:  # noqa: BLE001 — never abort shutdown for a hook failure
-        logger.error(
-            "Error closing trace writer during signal break:\n%s", traceback.format_exc(),
-        )
 
     os._exit(1)
 
@@ -93,20 +86,12 @@ def shutdown_for_exit(
     trace_writer_close: Callable[[], Any] | None = None,
 ) -> None:
     """Non-signal cleanup path (e.g. normal REPL exit): same hooks, no hard exit."""
-    try:
+    with _suppress_and_log('Error saving memory during shutdown:\n'):
         if callable(save_memory_fn):
             save_memory_fn()
             logger.info("Memory saved during shutdown (%s)", memory_path)
-    except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "Error saving memory during shutdown:\n%s", traceback.format_exc(),
-        )
 
-    try:
+    with _suppress_and_log('Error closing trace writer during shutdown:\n'):
         if callable(trace_writer_close):
             trace_writer_close()
             logger.info("Trace writer closed during shutdown")
-    except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "Error closing trace writer during shutdown:\n%s", traceback.format_exc(),
-        )

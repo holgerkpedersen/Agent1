@@ -269,10 +269,7 @@ class LLMClient:
                     prof_name, profile.temperature, profile.max_tokens,
                 )
         except Exception as _prof_err:
-            logger.warning(
-                "Failed to restore active profile from model.json:\n%s",
-                traceback.format_exc(),
-            )
+            logger.exception('Failed to restore active profile from model.json:\n')
             self._profile_name = None
         # Make the llama-server actually serve the requested model (router
         # load/unload, or relaunch with --models-dir).  This is what lets
@@ -1850,7 +1847,7 @@ class Agent:
         later (plan item D-#14).  Best-effort: a write failure must never
         lose the already-printed answer or crash the turn.
         """
-        try:
+        with _suppress_and_log('Could not persist plan-mode answer:\n'):
             from agent_core.commands.doc_paths import new_run_dir
 
             out = new_run_dir(self.workspace) / "plan_proposed.md"
@@ -1862,9 +1859,6 @@ class Agent:
                 encoding="utf-8",
             )
             print(yellow(f"\n  [plan] Saved to {out}"))
-        except Exception:
-            logger.warning("Could not persist plan-mode answer:\n%s",
-                           traceback.format_exc())
 
     def check_stale_files(self) -> list[str]:
         """Return files whose mtime has changed since last read."""
@@ -1934,8 +1928,7 @@ class Agent:
                 self.workspace, sorted(self._files_read),
             )
         except Exception:
-            logger.warning("Decision constraints unavailable:\n%s",
-                           traceback.format_exc())
+            logger.exception('Decision constraints unavailable:\n')
             return ""
 
     # ------------------------------------------------------------------

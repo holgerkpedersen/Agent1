@@ -236,20 +236,33 @@ def test_agent_has_no_duplicate_or_unreachable_except_handlers() -> None:
 
 
 def test_issue_verifier_detects_best_effort_excepts() -> None:
-    """The ``best-effort-except`` detector (used as an issue verifier) must
-    actually flag the known inline log-and-swallow sites, so the autonomous
-    agent has real, verifiable work items."""
+    """The ``best-effort-except`` detector (used as an issue verifier) must still
+    flag inline log-and-swallow sites. The eight known sites were resolved by the
+    deterministic resolver, so they must be gone; a synthetic site must still be
+    detected."""
     from harnessfix import issue_loop as il
+    import tempfile
+    from pathlib import Path
 
     findings = il.find_log_swallow_excepts(il._iter_py_files(il.REPO_ROOT))
     locations = {f["locations"][0] for f in findings}
-    # The eight sites identified during the merge-fix review.
+    # The eight known sites were resolved by the deterministic resolver.
     for expected in (
         "agent.py:129", "agent.py:271", "agent.py:1865", "agent.py:1936",
         "agent_core/security/shutdown.py:50", "agent_core/security/shutdown.py:59",
         "agent_core/security/shutdown.py:100", "agent_core/security/shutdown.py:109",
     ):
-        assert any(loc.endswith(expected) or loc == expected for loc in locations), (
-            f"expected best-effort-except finding at {expected}; got {findings}"
+        assert not any(loc.endswith(expected) or loc == expected for loc in locations), (
+            f"expected {expected} to be fixed; still flagged: {findings}"
         )
+    # A synthetic site is still detected (detector still works).
+    tmp = Path(tempfile.mkdtemp()) / "sample.py"
+    tmp.write_text(
+        "import logging, traceback\n"
+        "logger = logging.getLogger(__name__)\n"
+        "try:\n    risky()\n"
+        "except Exception:\n    logger.warning('boom %s', traceback.format_exc())\n",
+        encoding="utf-8",
+    )
+    assert il.find_log_swallow_excepts([tmp]) != []
 

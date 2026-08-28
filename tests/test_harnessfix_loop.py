@@ -581,11 +581,20 @@ def test_run_issue_loop_continues_past_failure(monkeypatch):
     """Regression (2026-08-28): a non-accepted issue must not halt the whole
     run. run_issue_loop should defer the failed issue and continue to the next
     eligible one (previously it `return`ed after the first failure). git is
-    stubbed so the real repo tree is never touched.
+    stubbed so the real repo tree is never touched. The ledger is injected so the
+    test is independent of the real `.issues.json` state.
     """
+    from harnessfix import issues as issue_store
     from scripts.autonomous_self_improve import run_issue_loop
 
     calls: list[str] = []
+
+    def fake_load_issues(path=None):
+        return [
+            issue_store.make_issue("best-effort-except", "x", ["agent.py:1"]),
+            issue_store.make_issue("best-effort-except", "y", ["agent.py:2"]),
+            issue_store.make_issue("best-effort-except", "z", ["agent.py:3"]),
+        ]
 
     class _FakeLLM:
         async def chat(self, messages, *a, **k):
@@ -606,6 +615,7 @@ def test_run_issue_loop_continues_past_failure(monkeypatch):
     def fake_git(*a, **k):
         return _FakeProc()
 
+    monkeypatch.setattr(issue_store, "load_issues", fake_load_issues)
     monkeypatch.setattr("harnessfix.issue_loop.resolve_issue", fake_resolve)
     monkeypatch.setattr("scripts.autonomous_self_improve._git", fake_git)
 

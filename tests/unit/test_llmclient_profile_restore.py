@@ -57,7 +57,9 @@ def test_profile_restore_failure_is_logged_with_traceback(_capture_warnings, mon
 
     client = agent_mod.LLMClient(model_name="test-model-failure")
     assert client._profile_name is None  # fix: explicit reset, not indeterminate
-    warnings_text = "\n".join(r.getMessage() for r in _capture_warnings.records)
+    # `logger.exception` attaches the traceback via exc_info, so it appears in the
+    # rendered log output (caplog.text) rather than inline in getMessage().
+    warnings_text = _capture_warnings.text
     assert "Failed to restore active profile from model.json" in warnings_text
     assert "RuntimeError" in warnings_text  # traceback content captured
     assert "corrupt model.json: missing 'temperature'" in warnings_text

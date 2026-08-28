@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -108,20 +109,29 @@ def find_log_swallow_excepts(files: list[Path]) -> list[dict[str, Any]]:
             tree = ast.parse(f.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, SyntaxError):
             continue
-        for node in ast.walk(tree):
+
+        def visit(node: ast.AST, func_name: str | None) -> None:
+            fname = func_name
+            if isinstance(node, ast.FunctionDef):
+                fname = node.name
             handlers = getattr(node, "handlers", None)
-            if not handlers:
-                continue
-            for h in handlers:
-                names = _except_type_names(h)
-                if names & {"Exception", "BaseException", ""} and (
-                    _handler_body_uses_traceback(h)
-                ):
-                    findings.append(_finding(
-                        f, h.lineno, "best-effort-except",
-                        "inline log-and-swallow except should use the shared "
-                        "_suppress_and_log context manager",
-                    ))
+            # The canonical `_suppress_and_log` context manager IS the sink;
+            # never flag its own body (would seed an unfixable issue).
+            if handlers is not None and fname != "_suppress_and_log":
+                for h in handlers:
+                    names = _except_type_names(h)
+                    if names & {"Exception", "BaseException", ""} and (
+                        _handler_body_uses_traceback(h)
+                    ):
+                        findings.append(_finding(
+                            f, h.lineno, "best-effort-except",
+                            "inline log-and-swallow except should use the shared "
+                            "_suppress_and_log context manager",
+                        ))
+            for child in ast.iter_child_nodes(node):
+                visit(child, fname)
+
+        visit(tree, None)
     return findings
 
 
@@ -256,6 +266,210 @@ def _tree_changed(files: list[Any]) -> bool:
     return False
 
 
+_LOG_LEVELS = frozenset({"debug", "info", "warning", "error", "critical", "exception"})
+
+
+def _handler_log_call(handler: ast.ExceptHandler) -> tuple[str, str] | None:
+    """Return (label, logger_expr_source) for a qualifying handler's leading log
+    call, or None.
+
+    Handles the canonical best-effort handler whose FIRST statement is a log call
+    that includes the traceback::
+
+        except Exception [as e]:
+            logger.<level>(<msg>, traceback.format_exc())
+            ...optional further fallback statements...
+
+    ``logger_expr_source`` is the unparsed logger object (e.g. ``logger``) so the
+    rewrite can emit ``<logger>.exception(label)`` and preserve the local logger.
+    Anything that doesn't start with that exact log call returns None so we fail
+    closed (e.g. handlers that reference the bound exception, or branch on it).
+    """
+    if not handler.body:
+        return None
+    stmt = handler.body[0]
+    if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+        return None
+    call = stmt.value
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr in _LOG_LEVELS):
+        return None
+    # Must actually log the traceback via format_exc().
+    if not any(
+        isinstance(a, ast.Call) and isinstance(a.func, ast.Attribute)
+        and a.func.attr == "format_exc"
+        for a in ast.walk(call)
+    ):
+        return None
+    if not call.args:
+        return None
+    msg = call.args[0]
+    if not isinstance(msg, ast.Constant) or not isinstance(msg.value, str):
+        return None
+    # If the handler binds the exception, it must not be referenced anywhere in
+    # the body (it would be undefined inside the generated `with` block).
+    if getattr(handler, "name", None):
+        for n in ast.walk(handler):
+            if isinstance(n, ast.Name) and n.id == handler.name:
+                return None
+    label = msg.value
+    label = re.sub(r"\\n%s$", "", label)
+    label = re.sub(r"%s$", "", label)
+    label = re.sub(r"\\n$", "", label)  # avoid a doubled newline with the sink's own
+    try:
+        logger_expr = ast.unparse(call.func.value)
+    except Exception:
+        logger_expr = "logger"
+    return label, logger_expr
+
+
+def _extract_suppress_label(handler: ast.ExceptHandler) -> str | None:
+    info = _handler_log_call(handler)
+    return info[0] if info else None
+
+
+def _try_qualifies(try_node: "ast.Try | ast.TryStar") -> bool:
+    if len(try_node.handlers) != 1 or getattr(try_node, "orelse", None) or getattr(try_node, "finalbody", None):
+        return False
+    h = try_node.handlers[0]
+    names = _except_type_names(h)
+    if not (names & {"Exception", "BaseException", ""}):
+        return False
+    if not _handler_body_uses_traceback(h):
+        return False
+    return _handler_log_call(h) is not None
+
+
+def _rewrite_log_swallow(src: str) -> tuple[str, int]:
+    """Convert qualifying log-swallow excepts to ``with _suppress_and_log(label):``.
+
+    Returns (new_source, count). Fails closed: only the canonical single-statement
+    handler shape is rewritten; anything else is left untouched.
+    """
+    try:
+        tree = ast.parse(src)
+    except (SyntaxError, ValueError):
+        return src, 0
+    sep = "\r\n" if "\r\n" in src else "\n"
+    lines = src.splitlines(keepends=True)
+
+    targets: list[ast.Try | ast.TryStar] = []
+
+    def visit(node: ast.AST, func_name: str | None) -> None:
+        fname = func_name
+        if isinstance(node, ast.FunctionDef):
+            fname = node.name
+        if isinstance(node, (ast.Try, ast.TryStar)) and fname != "_suppress_and_log":
+            if _try_qualifies(node):
+                targets.append(node)
+        for child in ast.iter_child_nodes(node):
+            visit(child, fname)
+
+    visit(tree, None)
+    if not targets:
+        return src, 0
+
+    # Apply bottom-up so earlier edits don't shift later line numbers.
+    targets.sort(key=lambda n: n.lineno, reverse=True)
+    replaced: list[tuple[int, int]] = []
+    for node in targets:
+        start = node.lineno - 1
+        end = node.end_lineno  # exclusive
+        assert end is not None
+        # Skip if contained in an already-replaced range (nested tries).
+        if any(r[0] <= start and end <= r[1] for r in replaced):
+            continue
+        h = node.handlers[0]
+        info = _handler_log_call(h)
+        if info is None:
+            continue
+        label, logger_expr = info
+        base_line = lines[node.lineno - 1]
+        base_indent = base_line[: len(base_line) - len(base_line.lstrip())]
+        if len(h.body) == 1:
+            # Canonical single-statement handler: swap the whole `try/except`
+            # for `with _suppress_and_log(label): <try body>`. The handler's log
+            # call is dropped (the context manager logs the traceback instead),
+            # so on success the body returns before any logging; on exception the
+            # label logs-and-swallows — identical original `except` semantics.
+            try_body = lines[node.lineno : h.lineno - 1]
+            nonblank = [b for b in try_body if b.strip()]
+            common = min(len(b) - len(b.lstrip()) for b in nonblank) if nonblank else 0
+            new_body: list[str] = []
+            for b in try_body:
+                if not b.strip():
+                    new_body.append("")
+                else:
+                    new_body.append(base_indent + "    " + b[common:].rstrip("\r\n"))
+            block = base_indent + "with _suppress_and_log(" + repr(label) + "):"
+            for bl in new_body:
+                block += sep + bl
+            block += sep  # trailing newline so the following line isn't merged
+            lines[start:end] = [block]
+        else:
+            # Multi-statement handler: keep `except Exception:` (so fallback
+            # statements like `return ""` still run on exception) but replace only
+            # the leading log call with `<logger>.exception(label)`. `logger.exception`
+            # logs the *current* exception with its traceback and needs no
+            # `traceback.format_exc()` call, so the detector no longer flags it and
+            # the original exception is still captured — without changing control flow.
+            stmt0 = h.body[0]
+            s0 = stmt0.lineno - 1
+            e0 = stmt0.end_lineno  # exclusive
+            repl = base_indent + "    " + f"{logger_expr}.exception({repr(label)})" + sep
+            lines[s0:e0] = [repl]
+        replaced.append((start, end))
+
+    if not replaced:
+        return src, 0
+    new_src = "".join(lines)
+    if new_src == src:
+        return src, 0
+    return new_src, len(replaced)
+
+
+def _ensure_suppress_import(src: str) -> str:
+    """Add `from agent_core.suppress_log import _suppress_and_log` if not present."""
+    if re.search(r"\bdef _suppress_and_log\b|\bfrom agent_core\.suppress_log import _suppress_and_log\b", src):
+        return src
+    lines = src.splitlines(keepends=True)
+    sep = "\r\n" if "\r\n" in src else "\n"
+    ins = 0
+    for i, l in enumerate(lines):
+        if l.lstrip().startswith("from __future__"):
+            ins = i + 1
+            break
+    lines[ins:ins] = [f"from agent_core.suppress_log import _suppress_and_log{sep}"]
+    return "".join(lines)
+
+
+def _resolve_log_swallow(issue: dict[str, Any], agent: Any) -> bool:
+    """Deterministic, AST-based fix for `best-effort-except` issues.
+
+    Converts every qualifying ``except Exception: logger.<level>(msg,
+    traceback.format_exc())`` into ``with _suppress_and_log(label):`` across the
+    issue's files — no LLM guesswork, so it is complete and reproducible. The
+    shared ``_suppress_and_log`` is imported where needed. Returns True only if a
+    file actually changed.
+    """
+    files = _issue_files(issue)
+    changed = False
+    for fp in files:
+        if not fp.exists():
+            continue
+        src = fp.read_text(encoding="utf-8")
+        new_src, n = _rewrite_log_swallow(src)
+        if n == 0:
+            continue
+        new_src = _ensure_suppress_import(new_src)
+        try:
+            compile(new_src, str(fp), "exec")
+        except SyntaxError:
+            continue
+        fp.write_text(new_src, encoding="utf-8")
+        changed = True
+    return changed
+
+
 def resolve_issue(
     issue: dict[str, Any],
     agent: Any,
@@ -291,7 +505,9 @@ def resolve_issue(
             "issue_id": issue["id"],
         }
 
-    gen = generate_fn or _default_generate
+    gen = generate_fn or (
+        _resolve_log_swallow if issue.get("category") == "best-effort-except" else _default_generate
+    )
     try:
         applied = bool(gen(issue, agent))
     except Exception:  # noqa: BLE001 - generation failure is a soft stop, not a crash
