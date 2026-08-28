@@ -2737,6 +2737,8 @@ def _register_commands(registry: CommandRegistry) -> None:
     registry.register(DisplayCommand())
     registry.register(DecideCommand())
     registry.register(ReviewCommand())
+    from agent_core.commands.issue_cmd import IssueCommand
+    registry.register(IssueCommand())
     registry.register(RunCommand())
     registry.register(SelfHealCommand())
     registry.register(ReconstructCommand())

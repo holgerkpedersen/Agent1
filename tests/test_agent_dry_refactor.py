@@ -19,7 +19,6 @@ diverge the call sites again.
 from __future__ import annotations
 
 import asyncio
-import ast as _ast
 import os
 import sys
 
@@ -219,60 +218,38 @@ def test_chat_nlp_uses_system_prompt_constant() -> None:
     assert "_refresh_system_message(" in loop_src
 
 
-def _except_type_names(handler: "ast.ExceptHandler") -> set[str]:
-    """Return the set of exception class name(s) caught by a handler.
-
-    A bare ``except:`` is represented by the sentinel ``""`` so it sorts as
-    the broadest possible catch.
-    """
-    if not handler.type:
-        return {""}
-    types = handler.type.elts if isinstance(handler.type, _ast.Tuple) else [handler.type]
-    names: set[str] = set()
-    for t in types:
-        if isinstance(t, _ast.Name):
-            names.add(t.id)
-        elif isinstance(t, _ast.Attribute):
-            names.add(_ast.unparse(t))
-    return names
-
-
 def test_agent_has_no_duplicate_or_unreachable_except_handlers() -> None:
-    """Regression guard: no two handlers in one ``try`` may be redundant.
+    """Regression guard (repo-wide): no redundant/unreachable ``except``.
 
-    Catches the exact bug that slipped in via a github merge — two identical
-    consecutive ``except Exception as exc:`` blocks, the second of which is
-    unreachable dead code.  Any of these fail the test:
-
-    * the same exception class caught by more than one handler in a ``try``;
-    * a handler catching ``Exception``/``BaseException``/bare ``except`` that
-      is *not* the last handler (later handlers can never run).
+    Delegates to the shared ``find_duplicate_handlers`` verifier so the same
+    check the autonomous issue system uses runs here.  Catches the exact bug
+    that slipped in via a github merge — two identical consecutive
+    ``except Exception as exc:`` blocks, the second unreachable dead code.
     """
-    import inspect
+    from harnessfix import issue_loop as il
 
-    tree = _ast.parse(inspect.getsource(agent))
+    findings = il.find_duplicate_handlers(il._iter_py_files(il.REPO_ROOT))
+    assert findings == [], (
+        "duplicate/unreachable except handlers found:\n"
+        + "\n".join(f"  {f['file']}:{f['line']} {f['evidence']}" for f in findings)
+    )
 
-    def check(handlers: list["ast.ExceptHandler"], where: str) -> None:
-        seen: set[str] = set()
-        for idx, h in enumerate(handlers):
-            for name in _except_type_names(h):
-                # Bare/broad catches must be last; otherwise they shadow later
-                # handlers and make them dead code.
-                broad = name in ("", "Exception", "BaseException")
-                if broad and idx != len(handlers) - 1:
-                    raise AssertionError(
-                        f"{where}: broad handler {name!r} at position {idx} "
-                        f"shadows {len(handlers) - idx - 1} later handler(s)"
-                    )
-                # Duplicate exception class in the same try is redundant.
-                if name in seen:
-                    raise AssertionError(
-                        f"{where}: exception class {name!r} caught by more "
-                        f"than one handler in the same try"
-                    )
-                seen.add(name)
 
-    for node in _ast.walk(tree):
-        handlers = getattr(node, "handlers", None)
-        if handlers:
-            check(handlers, f"agent.py:{node.lineno}")
+def test_issue_verifier_detects_best_effort_excepts() -> None:
+    """The ``best-effort-except`` detector (used as an issue verifier) must
+    actually flag the known inline log-and-swallow sites, so the autonomous
+    agent has real, verifiable work items."""
+    from harnessfix import issue_loop as il
+
+    findings = il.find_log_swallow_excepts(il._iter_py_files(il.REPO_ROOT))
+    locations = {f["locations"][0] for f in findings}
+    # The eight sites identified during the merge-fix review.
+    for expected in (
+        "agent.py:129", "agent.py:271", "agent.py:1865", "agent.py:1936",
+        "agent_core/security/shutdown.py:50", "agent_core/security/shutdown.py:59",
+        "agent_core/security/shutdown.py:100", "agent_core/security/shutdown.py:109",
+    ):
+        assert any(loc.endswith(expected) or loc == expected for loc in locations), (
+            f"expected best-effort-except finding at {expected}; got {findings}"
+        )
+

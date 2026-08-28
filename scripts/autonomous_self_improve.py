@@ -37,20 +37,23 @@ Usage
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-from harnessfix.progress import append_history, clear_progress, write_progress
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
 # Make the repo root importable when run as a standalone CLI (pytest already
-# puts it on sys.path, but `python scripts/autonomous_self_improve.py` does not).
+# puts it on sys.path, but `python scripts/autonomous_self_improve.py` does
+# not). This must run BEFORE any `harnessfix` import below.
+REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from harnessfix.progress import append_history, clear_progress, write_progress
+from harnessfix import issue_loop
+from harnessfix import issues as issue_store
+
 STOP_FILENAME = "STOP_AUTONOMOUS"
 SUMMARY_PATH = REPO_ROOT / "reports" / "harnessfix" / "summary.json"
 
@@ -249,6 +252,103 @@ def run_iteration(
     )
 
 
+def _commit_issue(iteration: int, summary: dict[str, Any]) -> bool:
+    """Scoped commit for an accepted issue: only its files + the ledger.
+
+    Never does a blanket ``git add -A`` (the same anti-sweep rule as
+    ``_commit_repair``). The ledger (``.issues.json``) is always included so the
+    resolution is recorded alongside the code change.
+    """
+    files = list(summary.get("files", []))
+    files.append(str(issue_store.ISSUES_PATH))
+    changed: list[str] = []
+    for f in files:
+        proc = _git(["status", "--porcelain", "--", f], check=False)
+        if proc.stdout.strip():
+            changed.append(f)
+    if not changed:
+        return False
+    msg = (
+        f"autonomous(self-improve): resolve {summary.get('issue_id')} "
+        f"(iter {iteration})\n\n"
+        f"Auto-committed by scripts/autonomous_self_improve.py after all "
+        f"gates passed (tests + security"
+        f"{'; benchmark' if summary.get('autonomy_level') == 2 else ''})."
+    )
+    _git(["add", "--", *changed])
+    _git(["commit", "-m", msg], check=False)
+    return True
+
+
+def run_issue_loop(
+    *,
+    max_iterations: int,
+    level_cap: int,
+    agent: "object",
+    no_benchmark: bool,
+    model: str | None,
+    profile: str | None,
+) -> None:
+    """Autonomous issue-resolution loop (mirrors the catalog loop's safety).
+
+    Works the next eligible issue each iteration: git checkpoint first, then
+    ``issue_loop.resolve_issue`` (verify + generate via ``fix`` + gates), commit
+    ONLY on acceptance (scoped to the issue's files + ``.issues.json``). Any
+    non-accepted verdict fails closed — revert the checkpoint and stop, so a
+    bad autonomous change can never be merged.
+    """
+    output_dir = SUMMARY_PATH.parent
+    for iteration in range(1, max_iterations + 1):
+        if _stop_requested():
+            print("[autonomous] Kill-switch detected — halting issue loop.")
+            return
+        issues = issue_store.load_issues()
+        eligible = issue_store.open_issues(issues, max_level=level_cap)
+        if not eligible:
+            print("[autonomous] No eligible issues remain (at or below "
+                  f"AGENT_AUTONOMY_LEVEL={level_cap}).")
+            return
+
+        issue = eligible[0]
+        checkpoint = f"autonomous-issue-{iteration}"
+        pushed = _git(["stash", "push", "-u", "-m", checkpoint], check=False)
+        have_checkpoint = pushed.returncode == 0
+        if not have_checkpoint:
+            print(f"[autonomous] WARNING: git stash push failed (rc="
+                  f"{pushed.returncode}); continuing without a checkpoint.")
+        print(f"\n[autonomous] === issue iteration {iteration}/{max_iterations} "
+              f"=== {issue['id']}")
+        try:
+            summary = issue_loop.resolve_issue(
+                issue, agent, level_cap=level_cap,
+                run_benchmark=not no_benchmark, model=model, profile=profile,
+            )
+        except Exception as exc:  # noqa: BLE001 - never let one bad issue crash the driver
+            print(f"[autonomous] issue iteration {iteration} raised "
+                  f"{type(exc).__name__}: {exc}")
+            if have_checkpoint:
+                _git(["stash", "pop"], check=False)
+            return
+
+        verdict = summary.get("verdict")
+        print(f"[autonomous] issue {issue['id']} -> {verdict}")
+        _record_iteration(iteration, {
+            "verdict": verdict,
+            "accepted": bool(summary.get("accepted")),
+            "proposed_repair": summary.get("issue_id"),
+            "accepted_repair": summary.get("issue_id") if summary.get("accepted") else None,
+        }, output_dir)
+        if summary.get("accepted"):
+            _commit_issue(iteration, summary)
+            if have_checkpoint:
+                _git(["stash", "drop"], check=False)
+            continue
+        # Fail-closed: revert and stop — no merge on ambiguity.
+        if have_checkpoint:
+            _git(["stash", "pop"], check=False)
+        return
+
+
 def _repair_files(repair_id: str | None) -> tuple[str, ...]:
     """Source file(s) a catalogued repair touches, for scoped staging.
 
@@ -273,6 +373,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-benchmark", action="store_true",
                         help="never run the benchmark subprocess, even if --model is set (offline-only gate)")
     parser.add_argument("--max-iterations", type=int, default=5, help="cap on loop iterations")
+    parser.add_argument("--source", default="both", choices=("issues", "catalog", "both"),
+                        help="what to work on: 'issues' (.issues.json), 'catalog' "
+                             "(HarnessFix repairs), or 'both' (issues first, then catalog)")
     parser.add_argument("--auto", action="store_true",
                         help="engages autonomous mode (same as AGENT_AUTONOMOUS=1)")
     args = parser.parse_args(argv)
@@ -289,6 +392,17 @@ def main(argv: list[str] | None = None) -> int:
           f"(max_iterations={args.max_iterations}, "
           f"model={args.model or 'none (offline harness-quality gate)'}"
           f"{' [benchmark disabled]' if args.no_benchmark else ''})")
+
+    level_cap = int(os.environ.get("AGENT_AUTONOMY_LEVEL", "") or 1)
+    if args.source in ("issues", "both"):
+        from agent import Agent
+        agent = Agent(workspace=str(REPO_ROOT))
+        run_issue_loop(
+            max_iterations=args.max_iterations, level_cap=level_cap, agent=agent,
+            no_benchmark=args.no_benchmark, model=args.model, profile=args.profile,
+        )
+        if args.source == "issues":
+            return 0
 
     for iteration in range(1, args.max_iterations + 1):
         if _stop_requested():

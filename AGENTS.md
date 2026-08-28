@@ -144,6 +144,39 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
 - Runtime state files (`chat_history.json`, `agent_memory.json`) and the
   `.docs/`, `backups/`, `reports/` trees are exempt from content scans.
 
+## Issues ledger (.issues.json) — systematic, autonomous-handled work
+
+Decisions live in `.decisions.json` (*why*); concrete, locatable work items
+live in the committed `.issues.json` (*what to fix*). The two ledgers never
+overlap. The autonomous driver consumes `.issues.json` and may work items
+incrementally as its capability grows — human stays in control.
+
+- **REPL command `issue`** (`agent_core/commands/issue_cmd.py`): `issue add
+  <category> <file:line> [--title ...] [--approach ...] [--level N]
+  [--severity S]`, `list`, `show <id>`, `resolve <id> [resolved|deferred|
+  wontfix]`, `promote <id> <0|1|2>`, `autonomy`. Mutating subcommands are
+  blocked in plan mode.
+- **Collector** `scripts/collect_issues.py`: scans the repo (excluding
+  `reports/ backups/ .docs/ generated/` etc.) via two detectors in
+  `harnessfix/issue_loop.py` — `duplication` (duplicate/unreachable `except`
+  handlers) and `best-effort-except` (inline log-and-swallow `except Exception:
+  logger.<level>(..., traceback.format_exc())`). Seeds `.issues.json`
+  idempotently (stable ids from category+location), never overwriting a
+  human-set status/level. Safe to run in pre-commit/CI.
+- **Autonomy levels** (per issue): `0` human-only, `1` auto-safe (tests +
+  security gates pass), `2` benchmark-required (explicit `issue promote`).
+  New issues default to `1`. The driver's `AGENT_AUTONOMY_LEVEL` env caps what
+  it may touch; raise it gradually as categories prove safe.
+- **Resolution engine** `harnessfix/issue_loop.resolve_issue`: verifies via the
+  SAME detector that raised the issue (acceptance = detector no longer flags
+  its files), generates the fix through the existing `fix` command (so the
+  AGENTS.md file-safety invariants hold), then runs the existing
+  `harnessfix.gates` (test + security + optional benchmark). Fail-closed: any
+  ambiguity leaves the tree untouched and stops (no merge). The autonomous
+  driver (`scripts/autonomous_self_improve.py`, `--source issues|catalog|both`)
+  commits ONLY the issue's files plus `.issues.json`, with `STOP_AUTONOMOUS`
+  and a per-iteration git checkpoint intact.
+
 ## Roadmap (recorded, in .decisions.json / .docs/2026-08-18_10-45-11/)
 
 - #047 — sanitize shell commands and file contents before trace persistence.
