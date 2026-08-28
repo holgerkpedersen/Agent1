@@ -113,7 +113,15 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   (implement_cmd.py 14; reconstruct_cmd.py 2; self_heal_cmd.py 2;
   security/secrets.py 2; cleanup_cmd.py 1; demo_data_cmd.py 1).
   Do not silently "fix" them; do NOT introduce new errors.
-- No ruff config; pyproject.toml configures mypy, pytest, coverage only.
+- ruff config lives in `pyproject.toml` (`[tool.ruff]`); CI runs
+  `ruff check agent_core harnessfix fixcommand tests performance_dashboard`
+  with a **blocking** `--select F821` gate plus an advisory full-lint step.
+- A local pre-commit hook (`.git/hooks/pre-commit`, tracked copy in
+  `.githooks/pre-commit`) mirrors CI: it blocks commits that introduce
+  F821/parse errors in staged files and prints the advisory lint. Install once
+  with `git config core.hooksPath .githooks` (or copy
+  `.githooks/pre-commit` to `.git/hooks/`). Run `ruff check --fix` yourself
+  before committing if you want the advisory issues cleaned too.
 - Implement auto-runs `py_compile` on every written file.
 
 ## Conventions
