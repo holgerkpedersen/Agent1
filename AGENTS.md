@@ -279,3 +279,18 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   scanned restored history from previous sessions — fixed with a per-turn boundary
   (`Agent._turn_start_index`). Tests: `tests/test_text_policy.py` (26),
   `tests/test_quickwins_batch2.py::TestTurnBoundaryAfterRestart` (3).
+
+## Git / remote auth (non-interactive)
+
+`git push`/`ls-remote` must NOT prompt for credentials (no human at the keyboard).
+Auth is supplied by a local credential helper that reads `GITHUB_TOKEN` from the
+gitignored `.env` — the token is never written into `.git/config` or the remote URL.
+
+- Helper: `scripts/git_credential_helper.py` (reads `.env`, emits `git`/token for
+  `protocol=https host=github.com`).
+- Wired at repo scope in `.git/config`:
+  `credential.helper=!D:/Dev/Agent1/scripts/git_credential_helper.cmd` (placed
+  before the global `manager`), plus `credential.interactive never`.
+- If a push hangs on a credential prompt, run `git config --local --get-regexp
+  credential` to confirm the helper is present, and verify `.env` has a live
+  `GITHUB_TOKEN`.
