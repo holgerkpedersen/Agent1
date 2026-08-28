@@ -18,11 +18,21 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
 import textwrap
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.harnessfix_self_test
+
+# The real source file, captured at import time (before the root conftest
+# fixture redirects the module's ``_TARGET`` to a temp copy).  These runtime
+# tests apply the repair to the REAL tree -- and restore it -- so the fresh
+# subprocess interpreter executes the repaired source.  The module is marked
+# ``harnessfix_self_test`` so the autonomous gate never runs it mid-loop.
+_REAL_TOOL_LOOP = Path("agent_core/llm/tool_loop.py").resolve()
 
 from harnessfix import gates
 from harnessfix.diagnose import diagnose_graph
@@ -63,10 +73,10 @@ def _original_source() -> str:
 
 @pytest.fixture(autouse=True)
 def _clean_real_tree():
-    """Both this module and test_repairs_stuck_repeat.py apply/remove repairs
-    on the SAME real file (agent_core/llm/tool_loop.py).  A prior module can
-    leak a modified state into this one, so guarantee a clean tree before each
-    test instead of assuming it."""
+    """Isolation is provided by the root conftest fixture, which redirects each
+    repair module's ``_TARGET`` to a per-test temp copy.  This fixture is kept
+    as a belt-and-braces guard: if a test ever leaves the real tree modified,
+    revert it afterwards so no modified state leaks into a sibling test."""
     yield
     for revert in (revert_resume, revert_stuck):
         try:
@@ -266,6 +276,14 @@ _DRIVER = textwrap.dedent(
 
 
 def _run_scenario(scenario: str) -> dict:
+    """Execute a scripted tool-loop scenario in a FRESH interpreter.
+
+    The repair is applied to the REAL ``agent_core/llm/tool_loop.py`` by the
+    ``_with_applied_resume`` context manager (which restores it afterwards)
+    and this test module is marked ``harnessfix_self_test`` so the autonomous
+    gate never runs it mid-loop.  Running in a fresh interpreter guarantees the
+    repaired source -- not a stale import -- is what executes.
+    """
     r = subprocess.run(
         [sys.executable, "-c", _DRIVER, scenario],
         capture_output=True,
@@ -281,15 +299,22 @@ def _run_scenario(scenario: str) -> dict:
 def _with_applied_resume():
     """Context manager: apply the repair to the real tree, revert after.
 
-    Applied/reverted INSIDE each runtime test (not a shared fixture) so the
-    real ``tool_loop.py`` can never leak a modified state into a sibling test
-    module (the stuck-repeat module reads the real tree as its baseline)."""
-    summary = apply_resume()
+    Overrides the root conftest ``_TARGET`` redirect (which routes other tests
+    to a temp copy) so the scenario subprocess -- which imports the real
+    ``agent_core.llm.tool_loop`` -- actually exercises the repaired source.
+    This module is marked ``harnessfix_self_test`` so the autonomous gate
+    excludes it and the real tree is never mutated mid-loop."""
+    import harnessfix.repairs.abandonment_resume as mod
+
+    real = _REAL_TOOL_LOOP  # real file, captured at import time
+    mod._TARGET = real
+    summary = mod.apply()
     assert "abandonment-resume" in summary or "already applied" in summary
     try:
         yield
     finally:
-        revert_resume()
+        mod.revert()
+        mod._TARGET = real
 
 
 def test_reconnect_note_fires_after_mutation_and_noncompletion():

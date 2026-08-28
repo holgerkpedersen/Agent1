@@ -229,6 +229,23 @@ def run_loop(
             set_phase("evaluating_candidate", candidate=repair.id, verdict=summary["verdict"])
             continue
 
+        # The test gate ran the *full* pytest suite, and some HarnessFix
+        # self-tests (e.g. ``_reset_repairs`` in tests/test_harnessfix_loop.py)
+        # revert this very file. If that happened, the repair was applied and
+        # then reverted during the gate, so an "accepted" tree would not
+        # actually carry the change (and the autonomous driver would then fail
+        # to commit it).  Re-apply idempotently here so the accepted tree is
+        # guaranteed to hold the repair.  ``apply()`` is a no-op when already
+        # present; any failure fails closed rather than silently returning an
+        # unmodified tree.
+        try:
+            repair.apply()
+        except Exception as exc:  # pragma: no cover - defensive
+            summary["verdict"] = "apply_failed"
+            summary["error"] = f"re-apply after gate reverted the repair: {exc}"
+            set_phase("finished", verdict="apply_failed", accepted=False)
+            return _finish(summary, output_dir)
+
         summary["verdict"] = "accepted"
         summary["accepted_repair"] = repair.id
         summary["attempted_repairs"] = attempted

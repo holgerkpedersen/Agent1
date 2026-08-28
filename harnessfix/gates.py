@@ -57,6 +57,11 @@ def collect_test_failures() -> tuple[bool, frozenset[str], str]:
                 sys.executable, "-m", "pytest", "-q",
                 "-o", "addopts=", "-p", "no:cacheprovider", "--no-header",
                 "--tb=no", "-rf",
+                # HarnessFix loop/repair self-tests (marker `harnessfix_self_test`)
+                # mutate agent_core/llm/tool_loop.py and would revert an applied
+                # repair mid-run; excluding them lets the gate validate the real
+                # repaired functional suite while the change is actually present.
+                "-m", "not harnessfix_self_test",
             ],
             capture_output=True,
             text=True,

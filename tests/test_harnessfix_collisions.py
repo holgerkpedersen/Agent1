@@ -4,7 +4,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from harnessfix import gates
+
+pytestmark = pytest.mark.harnessfix_self_test
 from harnessfix.loop import run_loop
 from harnessfix.repairs.collisions import find_test_collisions
 from harnessfix.repairs.tool_interface import _NEW, _OLD
@@ -28,7 +32,11 @@ def _write_tool_error_trace(traces_dir: Path, task_id: str) -> None:
 
 
 def _loop_source() -> str:
-    return Path("agent_core/llm/tool_loop.py").read_text(encoding="utf-8")
+    # Follow the (possibly sandboxed) repair target so assertions track the
+    # file the loop actually edits, not the unrelated real source tree.
+    from harnessfix.repairs import tool_interface
+
+    return tool_interface._TARGET.read_text(encoding="utf-8")
 
 
 def _write_asserting_test(tests_dir: Path, content: str, name: str = "test_x.py") -> None:

@@ -443,6 +443,12 @@ def main(argv: list[str] | None = None) -> int:
                   f"{pushed.stderr.strip()}")
 
         print(f"\n[autonomous] === iteration {iteration}/{args.max_iterations} ===")
+        print(
+            "[autonomous] Running harness gate (trace collection, diagnosis, "
+            f"baseline pytest, then per-candidate apply + test gate). This is "
+            f"silent for several minutes; live state is in "
+            f"reports/harnessfix/run_status.json."
+        )
         write_progress({
             "iteration": iteration,
             "max_iterations": args.max_iterations,
@@ -498,6 +504,23 @@ def main(argv: list[str] | None = None) -> int:
             committed = _commit_repair(iteration, summary)
             print(f"[autonomous] Repair accepted and "
                   f"{'committed' if committed else 'already clean'}.")
+            if not committed:
+                # An accepted repair that leaves nothing to commit is a
+                # contradiction: the tree was clean at commit time, so the
+                # "improvement" never actually landed.  This happens when an
+                # external process reverts the edit between apply() and commit
+                # (e.g. a test suite running inside the gate reverting the
+                # repair).  Fail closed: do NOT keep re-applying a phantom
+                # repair every iteration — stop so the operator can investigate.
+                print(
+                    "[autonomous] ERROR: repair was accepted but produced no "
+                    "committable change (tree was clean at commit time). "
+                    "Stopping to avoid spinning on a phantom repair."
+                )
+                if have_checkpoint:
+                    _git(["stash", "pop"], check=False)
+                clear_progress()
+                return 1
             # Restore the stash (nothing should remain uncommitted after commit).
             if have_checkpoint:
                 _git(["stash", "drop"], check=False)

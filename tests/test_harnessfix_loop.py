@@ -8,8 +8,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from harnessfix import gates
 from harnessfix.gates import should_accept
+
+pytestmark = pytest.mark.harnessfix_self_test
 from harnessfix.loop import run_loop
 from harnessfix.repairs.tool_interface import TOOL_INTERFACE_REPAIR_ID, revert
 from harnessfix.repairs.abandonment_resume import revert as _revert_abandon
@@ -50,7 +54,11 @@ def _write_tool_error_trace(traces_dir: Path, task_id: str) -> None:
 
 
 def _loop_source() -> str:
-    return Path("agent_core/llm/tool_loop.py").read_text(encoding="utf-8")
+    # Follow the (possibly sandboxed) repair target so assertions track the
+    # file the loop actually edits, not the unrelated real source tree.
+    from harnessfix.repairs import tool_interface
+
+    return tool_interface._TARGET.read_text(encoding="utf-8")
 
 
 def test_should_accept_requires_tests_and_security():
@@ -627,4 +635,45 @@ def test_run_issue_loop_continues_past_failure(monkeypatch):
     assert len(calls) >= 2, (
         f"loop stopped after {len(calls)} issue(s); expected to continue past failures"
     )
+
+
+def test_accepted_repair_survives_gate_revert(tmp_path, monkeypatch):
+    """Regression (decision in autonomous driver work): an accepted repair must
+    remain applied after ``run_loop`` returns even if the test gate reverts the
+    target file mid-run (which the full pytest suite used to do via
+    ``_reset_repairs`` in this very module).
+
+    The loop re-applies the repair on its accepted path, so the driver can
+    actually commit it instead of reporting "accepted" with a clean tree.
+    """
+    _reset_repairs()
+    traces_dir = tmp_path / "traces_rev"
+    traces_dir.mkdir()
+    _write_tool_error_trace(traces_dir, "tr_rev")
+
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    # Simulate a gate-time revert: the repair is applied by run_loop, then the
+    # test gate clobbers it (as HarnessFix self-tests once did), then reports
+    # the run as passing.
+    monkeypatch.setattr(
+        gates, "run_test_gate",
+        lambda *a, **k: (revert() or (True, "passed")),
+    )
+    monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+    (tmp_path / "no_tests").mkdir()
+    monkeypatch.setattr(
+        "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests"
+    )
+
+    out = tmp_path / "out_rev"
+    try:
+        summary = run_loop(traces_dir, approve=True, model=None, output_dir=out)
+        assert summary["accepted"] is True
+        assert summary["verdict"] == "accepted"
+        # Despite the gate reverting it, the repair must still be on disk when
+        # run_loop returns (the loop re-applies on the accepted path).
+        assert _NEW in _loop_source()
+    finally:
+        _reset_repairs()
 

@@ -90,6 +90,7 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 markers = [
     "integration: end-to-end tests that require a real llama-server binary on PATH; skipped automatically when none is found",
+    "harnessfix_self_test: HarnessFix loop/repair self-tests that mutate agent_core/llm/tool_loop.py; excluded from the autonomous test gate so they cannot revert an applied repair mid-run",
 ]
 
 [tool.ruff]

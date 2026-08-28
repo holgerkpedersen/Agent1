@@ -31,6 +31,26 @@ OUTPUT_DIR = REPO_ROOT / "reports" / "harnessfix"
 STATUS_PATH = OUTPUT_DIR / "run_status.json"
 HISTORY_PATH = OUTPUT_DIR / "run_history.jsonl"
 
+
+def output_dir() -> Path:
+    """Directory holding the live beacons.
+
+    Defined as a function (not a bare constant) so tests can redirect beacon
+    writes to a temp dir by monkeypatching ``OUTPUT_DIR`` -- a bare constant
+    would be copied into callers' namespaces and ignore the override.
+    """
+    return OUTPUT_DIR
+
+
+def status_path() -> Path:
+    """Path of the live run_status.json beacon (see :func:`output_dir`)."""
+    return STATUS_PATH
+
+
+def history_path() -> Path:
+    """Path of the live run_history.jsonl beacon (see :func:`output_dir`)."""
+    return HISTORY_PATH
+
 #: Phases the loop moves through, in rough order.  Used only for stable labels
 #: and human-readable ordering in the UI; the beacon stores a free-form string.
 PHASES = (
@@ -59,20 +79,21 @@ def write_progress(update: Dict[str, Any]) -> None:
     A ``ts`` heartbeat is stamped on every write so the dashboard can tell
     whether the process is still alive.
     """
+    OUTPUT_DIR = output_dir()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     existing: Dict[str, Any] = {}
-    if STATUS_PATH.is_file():
+    if status_path().is_file():
         try:
-            existing = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+            existing = json.loads(status_path().read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             existing = {}
     if not isinstance(existing, dict):
         existing = {}
     existing.update(update)
     existing["ts"] = _now()
-    tmp = STATUS_PATH.with_suffix(".tmp")
+    tmp = status_path().with_suffix(".tmp")
     tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, STATUS_PATH)
+    os.replace(tmp, status_path())
 
 
 def set_phase(phase: str, **extra: Any) -> None:
@@ -87,15 +108,15 @@ def append_history(record: Dict[str, Any]) -> None:
     here because appends are independent and the dashboard never reads a
     half-line (jsonlines is line-delimited).  We still guard the parent dir.
     """
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir().mkdir(parents=True, exist_ok=True)
     line = json.dumps(record, ensure_ascii=False)
-    with HISTORY_PATH.open("a", encoding="utf-8") as fh:
+    with history_path().open("a", encoding="utf-8") as fh:
         fh.write(line + "\n")
 
 
 def read_progress() -> Dict[str, Any]:
     """Return the live run_status.json, or an empty dict if absent/corrupt."""
-    if not STATUS_PATH.is_file():
+    if not status_path().is_file():
         return {}
     try:
         data = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
@@ -106,11 +127,11 @@ def read_progress() -> Dict[str, Any]:
 
 def read_history(limit: int | None = None) -> list[Dict[str, Any]]:
     """Return finished-iteration records, oldest first (newest appended last)."""
-    if not HISTORY_PATH.is_file():
+    if not history_path().is_file():
         return []
     records: list[Dict[str, Any]] = []
     try:
-        with HISTORY_PATH.open("r", encoding="utf-8") as fh:
+        with history_path().open("r", encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:

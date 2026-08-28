@@ -67,7 +67,9 @@ def test_stops_on_kill_switch(monkeypatch, tmp_path):
     with mock.patch.object(drv, "_stop_requested", lambda: next(stops)), \
          mock.patch.object(drv, "_git", _noop_git), \
          mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
-        rc = drv.main(["--auto", "--max-iterations", "3"])
+        # --source catalog so the kill-switch is consulted before the catalog
+        # loop (the issue loop would consume the first stop flag otherwise).
+        rc = drv.main(["--auto", "--source", "catalog", "--max-iterations", "3"])
     assert rc == 0
 
 
@@ -216,8 +218,10 @@ def test_failed_stash_push_does_not_pop_unrelated_stash(monkeypatch):
     with mock.patch.object(drv, "_stop_requested", lambda: False), \
          mock.patch.object(drv, "_git", fake_git), \
          mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
-        rc = drv.main(["--auto", "--max-iterations", "3"])
-    assert rc == 0
+        rc = drv.main(["--auto", "--source", "catalog", "--max-iterations", "3"])
+    # The fake iteration returns "accepted" but the tree is unchanged, so the
+    # driver fails closed (no commit possible) rather than spinning.
+    assert rc == 1
     # No stash pop should have been issued because no checkpoint was created.
     assert not any(c[:2] == ["stash", "pop"] for c in git_calls)
     assert not any(c[:2] == ["stash", "drop"] for c in git_calls)
@@ -277,8 +281,9 @@ def test_commit_skips_when_no_repair_files_changed(monkeypatch, tmp_path):
     with mock.patch.object(drv, "_stop_requested", lambda: False), \
          mock.patch.object(drv, "_git", fake_git), \
          mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
-        rc = drv.main(["--auto", "--max-iterations", "3"])
-    assert rc == 0
+        rc = drv.main(["--auto", "--source", "catalog", "--max-iterations", "3"])
+    # Accepted but nothing to commit -> fail closed (rc 1), not a silent 0.
+    assert rc == 1
     # Nothing staged, nothing committed.
     assert not any(c[:1] == ["add"] for c in git_calls)
     assert not any(c[:1] == ["commit"] for c in git_calls)
@@ -290,3 +295,25 @@ def test_repair_files_returns_empty_for_unknown_repair():
     that prevents committing unrelated work."""
     assert drv._repair_files("does-not-exist") == ()
     assert drv._repair_files(None) == ()
+
+
+def test_gate_runs_the_real_functional_suite(monkeypatch):
+    """The autonomous test gate must run the real functional suite (not the
+    HarnessFix loop/repair self-tests, which are isolated via the root conftest
+    fixture so they never mutate the real tree mid-gate)."""
+    import subprocess as _sp
+
+    from harnessfix import gates
+
+    captured: dict = {}
+
+    def fake_run(args, **kw):
+        captured["args"] = list(args)
+        return _sp.CompletedProcess(args, 0, "passed\n", "")
+
+    monkeypatch.setattr(gates.subprocess, "run", fake_run)
+    gates.collect_test_failures()
+    args = captured["args"]
+    # The gate invokes pytest as a subprocess (the real functional suite).
+    assert "pytest" in args
+
