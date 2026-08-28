@@ -228,3 +228,66 @@ def test_default_generate_false_when_no_tree_change() -> None:
     }
     agent = _FakeAgent()  # llm returns plain text -> no fix applied
     assert _default_generate(issue, agent) is False
+
+
+def test_ondemand_rejects_shrinking_rewrite_of_large_file(tmp_path: Path) -> None:
+    """Regression (2026-08-28): an autonomous run returned a one-method [FILE:]
+    block for agent.py (136KB) and the fix command overwrote the WHOLE file with
+    that 1KB stub, destroying the project. A [FILE:] whose content is drastically
+    smaller than the existing large file must be rejected (unless --allow-rewrite).
+    """
+    big = tmp_path / "bigmod.py"
+    _write_huge_file(big, 4000, "exception")  # ~240KB existing file
+    orig = big.read_text(encoding="utf-8")
+
+    # Model returns only a tiny partial body (still passes the import/length gate).
+    tiny = "[FILE: bigmod.py]\n```python\nimport os\n\n\ndef f0():\n    return 0\n\n\ndef f1():\n    return 1\n```"
+
+    class _TinyFixLLM:
+        def __init__(self) -> None:
+            self.captured: list[str] = []
+
+        async def chat(self, messages, *args, **kwargs):
+            user = next((m for m in messages if m.get("role") == "user"), None)
+            if user is not None:
+                self.captured.append(user["content"])
+            return tiny
+
+    agent = _FakeAgent()
+    agent.llm = _TinyFixLLM()
+    cmd = FixCommand()
+    desc = "fix best-effort-except in bigmod.py:200 — wrap in context manager"
+    asyncio.run(cmd.execute([str(big), "--desc", desc], agent))
+
+    # The large file must be untouched — the shrink was blocked.
+    assert big.read_text(encoding="utf-8") == orig, (
+        "large existing file was overwritten by a shrinking [FILE:] block"
+    )
+
+
+def test_ondemand_force_allows_rewrite(tmp_path: Path) -> None:
+    """The guard is overridable with --force (deliberate full rewrite)."""
+    big = tmp_path / "bigmod.py"
+    _write_huge_file(big, 4000, "exception")
+    new_body = (
+        "[FILE: bigmod.py]\n```python\nimport os\n\n\ndef f0():\n    return 0\n\n"
+        "def f1():\n    return 1\n```"
+    )
+
+    class _TinyFixLLM:
+        def __init__(self) -> None:
+            self.captured: list[str] = []
+
+        async def chat(self, messages, *args, **kwargs):
+            user = next((m for m in messages if m.get("role") == "user"), None)
+            if user is not None:
+                self.captured.append(user["content"])
+            return new_body
+
+    agent = _FakeAgent()
+    agent.llm = _TinyFixLLM()
+    cmd = FixCommand()
+    desc = "rewrite bigmod.py"
+    asyncio.run(cmd.execute(["--force", str(big), "--desc", desc], agent))
+
+    assert "def f0()" in big.read_text(encoding="utf-8")

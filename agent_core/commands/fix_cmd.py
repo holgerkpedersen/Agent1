@@ -1099,7 +1099,15 @@ class FixCommand(Command):
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         parts = args
-        
+
+        # Wholesale-rewrite guard (AGENTS.md #2): a [FILE:] block replaces the
+        # ENTIRE target file. For an existing file, a model returning a partial
+        # or drastically smaller body would silently destroy the file (this is
+        # exactly how an autonomous run truncated agent.py to a one-method stub).
+        # Such rewrites are blocked unless --allow-rewrite / --force is given.
+        force = "--force" in parts
+        allow_rewrite = "--allow-rewrite" in parts or force
+
         # Handle --stdin flag
         stdin_mode = "--stdin" in parts
         if stdin_mode:
@@ -1572,6 +1580,14 @@ class FixCommand(Command):
                 fpath = os.path.relpath(full, ws_dir).replace("\\", "/")
                 if not os.path.exists(full):
                     print(f"  Skipping {fpath} (not found)")
+                    continue
+                # Wholesale-rewrite guard: never let a [FILE:] block replace a
+                # large existing file with drastically smaller content (a partial
+                # write that would destroy the file). Blocked unless overridden.
+                if not allow_rewrite and os.path.getsize(full) > 10000 and len(new_code) < 0.5 * os.path.getsize(full):
+                    print(f"  Skipping {fpath} (existing-file rewrite blocked: new "
+                          f"{len(new_code)}B vs existing {os.path.getsize(full)}B — "
+                          f"pass --allow-rewrite to override)")
                     continue
                 if len(new_code) < 50 or "import" not in new_code:
                     print(f"  Skipping {fpath} (invalid content)")
