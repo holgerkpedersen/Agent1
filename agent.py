@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Agent implementation with workspace management and tool execution."""
 
+from collections.abc import Iterator
+
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, cast
 
 import asyncio
@@ -112,6 +114,21 @@ for _stream in (sys.stdout, sys.stderr):
             pass
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def _suppress_and_log(label: str) -> Iterator[None]:
+    """Run the block, logging (not propagating) any exception.
+
+    Centralises the "best-effort: log and continue" pattern so call sites have
+    a single, duplication-proof handler instead of an inline ``except Exception``
+    that an edit can accidentally clone.
+    """
+    try:
+        yield
+    except Exception:  # noqa: BLE001 - deliberate best-effort swallow
+        logger.warning("%s\n%s", label, traceback.format_exc())
+
 
 #: Handler signature for the NLP tool dispatch table: each handler receives the
 #: parsed JSON arguments and returns a string result for the model.
@@ -294,26 +311,38 @@ class LLMClient:
                     break
         if type(provider).__name__ != "LlamaProvider":
             return
-        try:
+        with _suppress_and_log("llama model reconciliation failed"):
             from agent_core.llm import llama_server
             api_url = getattr(provider, "api_url", None)
             if not api_url:
                 return
             print(f"  [llama] ensuring '{self._model_name}' is served by llama-server...")
-            ok, msg = llama_server.ensure_model_served(api_url, self._model_name)
-            if ok:
-                # Pin model_name to the id the server now serves so chat/list
-                # agree with what's actually loaded.
-                served = llama_server.list_served_models(api_url)
-                if served:
-                    provider._cached_server_model_id = served[0]
-                    print(f"  [llama] serving '{served[0]}' ({msg})")
+            served = llama_server.list_served_models(api_url)
+            if served:
+                current_served_model = served[0]
+                if current_served_model == self._model_name:
+                    print(f"  [llama] Model '{self._model_name}' already served by server.")
+                    provider._cached_server_model_id = current_served_model
                 else:
-                    print(f"  [llama] {msg}")
+                    print(f"  [llama] Server serving '{current_served_model}', attempting to ensure '{self._model_name}' is served...")
+                    ok, msg = llama_server.ensure_model_served(api_url, self._model_name)
+                    if ok:
+                        # Re-check after ensuring it's served
+                        served_after = llama_server.list_served_models(api_url)
+                        if served_after and served_after[0] == self._model_name:
+                            provider._cached_server_model_id = self._model_name
+                            print(f"  [llama] Successfully ensured '{self._model_name}' is served.")
+                        else:
+                            print(f"  [llama] WARNING: ensure_model_served reported success, but model not found in list: {msg}")
+                    else:
+                        print(f"  [llama] WARNING: could not ensure model served: {msg}")
             else:
-                print(f"  [llama] WARNING: could not ensure model served: {msg}")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("llama model reconciliation failed:\n%s", traceback.format_exc())
+                print(f"  [llama] No model currently served by the server. Attempting to ensure '{self._model_name}' is served.")
+                ok, msg = llama_server.ensure_model_served(api_url, self._model_name)
+                if ok:
+                    print(f"  [llama] Successfully ensured model served: {msg}")
+                else:
+                    print(f"  [llama] WARNING: could not ensure model served: {msg}")
 
     @property
     def model_name(self) -> str:

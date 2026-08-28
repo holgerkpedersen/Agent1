@@ -19,6 +19,7 @@ diverge the call sites again.
 from __future__ import annotations
 
 import asyncio
+import ast as _ast
 import os
 import sys
 
@@ -216,3 +217,62 @@ def test_chat_nlp_uses_system_prompt_constant() -> None:
     # ...and chat_nlp must delegate to that phase instead of inlining a prompt.
     loop_src = inspect.getsource(agent.Agent.chat_nlp)
     assert "_refresh_system_message(" in loop_src
+
+
+def _except_type_names(handler: "ast.ExceptHandler") -> set[str]:
+    """Return the set of exception class name(s) caught by a handler.
+
+    A bare ``except:`` is represented by the sentinel ``""`` so it sorts as
+    the broadest possible catch.
+    """
+    if not handler.type:
+        return {""}
+    types = handler.type.elts if isinstance(handler.type, _ast.Tuple) else [handler.type]
+    names: set[str] = set()
+    for t in types:
+        if isinstance(t, _ast.Name):
+            names.add(t.id)
+        elif isinstance(t, _ast.Attribute):
+            names.add(_ast.unparse(t))
+    return names
+
+
+def test_agent_has_no_duplicate_or_unreachable_except_handlers() -> None:
+    """Regression guard: no two handlers in one ``try`` may be redundant.
+
+    Catches the exact bug that slipped in via a github merge — two identical
+    consecutive ``except Exception as exc:`` blocks, the second of which is
+    unreachable dead code.  Any of these fail the test:
+
+    * the same exception class caught by more than one handler in a ``try``;
+    * a handler catching ``Exception``/``BaseException``/bare ``except`` that
+      is *not* the last handler (later handlers can never run).
+    """
+    import inspect
+
+    tree = _ast.parse(inspect.getsource(agent))
+
+    def check(handlers: list["ast.ExceptHandler"], where: str) -> None:
+        seen: set[str] = set()
+        for idx, h in enumerate(handlers):
+            for name in _except_type_names(h):
+                # Bare/broad catches must be last; otherwise they shadow later
+                # handlers and make them dead code.
+                broad = name in ("", "Exception", "BaseException")
+                if broad and idx != len(handlers) - 1:
+                    raise AssertionError(
+                        f"{where}: broad handler {name!r} at position {idx} "
+                        f"shadows {len(handlers) - idx - 1} later handler(s)"
+                    )
+                # Duplicate exception class in the same try is redundant.
+                if name in seen:
+                    raise AssertionError(
+                        f"{where}: exception class {name!r} caught by more "
+                        f"than one handler in the same try"
+                    )
+                seen.add(name)
+
+    for node in _ast.walk(tree):
+        handlers = getattr(node, "handlers", None)
+        if handlers:
+            check(handlers, f"agent.py:{node.lineno}")
