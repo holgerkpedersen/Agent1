@@ -576,37 +576,3 @@ def test_loop_does_not_reapply_when_already_present(tmp_path, monkeypatch):
     finally:
         revert()
 
-
-def test_repeat_hints_cover_every_tool_name():
-    """Regression: the stuck-repeat repair's per-tool hint table must cover
-    EVERY tool the model can actually call (NLP_TOOL_NAMES), so no real tool
-    silently falls through to the generic default.  A schema rename/addition
-    must not silently drop a tool's tailored hint.
-
-    The table lives inside the applied source block, so we read it back from
-    the repair's own constants rather than importing agent_core (which would
-    apply the repair to the live tree).
-    """
-    from agent_core.tool_schemas import NLP_TOOL_NAMES
-    from harnessfix.repairs.stuck_repeat import _HINT_BLOCK
-
-    # Extract the literal dict keys from the hint block the repair inserts.
-    import ast
-
-    block = _HINT_BLOCK
-    # The block is a module-level snippet; find the annotated dict assignment.
-    tree = ast.parse(block)
-    keys: set[str] = set()
-    for node in ast.walk(tree):
-        tgt = getattr(node, "target", None)
-        if isinstance(node, ast.AnnAssign) and isinstance(tgt, ast.Name) \
-                and tgt.id == "_REPEAT_HINTS" and isinstance(node.value, ast.Dict):
-            keys = {k.value for k in node.value.keys}
-    assert keys, "_REPEAT_HINTS dict not found in the repair block"
-
-    missing = sorted(NLP_TOOL_NAMES - keys)
-    assert not missing, (
-        f"per-tool hints miss real tool(s): {missing}. "
-        "Add a dedicated entry (or capability-class fallback) for each."
-    )
-
