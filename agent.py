@@ -1,26 +1,29 @@
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, cast
 #!/usr/bin/env python3
 """Agent implementation with workspace management and tool execution."""
 
-import os as _os
-_os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, cast
+
 import asyncio
 import concurrent.futures
 import contextlib
 import io
 import json
+import logging
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
 import threading
+import traceback
 from collections import defaultdict
 from datetime import datetime
+
 from agent_core import to_windows_path
 from agent_core.path_utils import resolve_path, safe_path
 from agent_core.colors import cyan, green, yellow, blue, magenta, gray, red
-from agent_core.constants import (
+from agent_core.constants import (  # noqa: F401
     resolve_model,
     CHAT_HISTORY_JSON_PATH,
     CHAT_HISTORY_TMP_PATH,
@@ -51,27 +54,13 @@ except Exception:  # pragma: no cover - tracing degrades gracefully if unavailab
 
     def trace_enabled() -> bool:
         return False
-from agent_core.commands.base import Command, FlowStopped, chat_stoppable, clear_stop, save_file_py
+from agent_core.commands.base import (
+    Command, FlowStopped, chat_stoppable, clear_stop, save_file_py
+)
 from agent_core.commands.registry import CommandRegistry
 from agent_core.decisions import decisions_as_system_prompt
 from agent_core.symbol_intel import collect_definitions, collect_references
-
-if TYPE_CHECKING:
-    from http.server import ThreadingHTTPServer
-
-    from agent_core.monitoring import MetricsCollector
-    from agent_core.monitoring.types import AlertRule
 from agent_core.commands.read_cmd import ReadCommand
-
-# Windows console default codec is cp1252, which cannot encode many Unicode
-# glyphs the UI prints (box-drawing chars, arrows). Reconfigure stdout/stderr
-# to UTF-8 at startup so no print() crashes on non-cp1252 characters.
-for _stream in (sys.stdout, sys.stderr):
-    if _stream is not None:
-        try:
-            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-        except (ValueError, OSError, AttributeError):
-            pass
 from agent_core.commands.write_cmd import WriteCommand
 from agent_core.commands.search_cmd import SearchCommand
 from agent_core.commands.clear_cmd import ClearCommand
@@ -97,10 +86,30 @@ from agent_core.commands.self_heal_cmd import SelfHealCommand
 from agent_core.commands.reconstruct_cmd import ReconstructCommand
 from agent_core.commands.multillm_cmd import MultiLlmCommand
 from agent_core.commands.demo_data_cmd import DemoDataCommand
-import subprocess
-import shlex
-import logging
-import traceback
+
+if TYPE_CHECKING:
+    from http.server import ThreadingHTTPServer
+
+    from agent_core.monitoring import MetricsCollector
+    from agent_core.monitoring.types import AlertRule
+    from agent_core.subagent import SubAgent
+
+# Restrict OpenBLAS to a single thread before any numpy import; moving this
+# after the import block is safe because none of the imports above pull numpy
+# in at module-import time.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
+# Windows console default codec is cp1252, which cannot encode many Unicode
+# glyphs the UI prints (box-drawing chars, arrows). Reconfigure stdout/stderr
+# to UTF-8 at startup so no print() crashes on non-cp1252 characters.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None:
+        try:
+            _stream.reconfigure(
+                encoding="utf-8", errors="replace"
+            )  # type: ignore[union-attr]
+        except (ValueError, OSError, AttributeError):
+            pass
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +184,8 @@ def _install_signal_handlers(agent: Optional["Agent"] = None) -> None:
 
 
 def _current_git_branch() -> str | None:
-    """Return the current git branch name, or ``None`` if not a git repo / unavailable."""
+    """Return the current git branch name, or ``None`` if not a git
+    repo / unavailable."""
     try:
         head = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".git", "HEAD")
         if os.path.exists(head):
@@ -217,7 +227,7 @@ class LLMClient:
     Delegates to the provider selected by :func:`build_provider` (decision
     #007 — one abstraction; LM Studio default, opencode-go selectable).
     """
-    
+
     def __init__(self, model_name: str | None = None, api_key: str | None = None):
         self._model_name: str = resolve_model(model_name)
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
@@ -308,21 +318,27 @@ class LLMClient:
     @property
     def model_name(self) -> str:
         return self._model_name
-    
+
     @model_name.setter
     def model_name(self, value: str) -> None:
         self._model_name = value
         self._provider.model_name = value
 
-    async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, **kwargs: Any) -> str:
+    async def chat(
+        self, messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None, **kwargs: Any,
+    ) -> str:
         """Send chat request to LLM via LM Studio (pass-through wrapper)."""
         return await self._provider.chat(messages, tools, **kwargs)
-    
+
     async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """Chat with real-time token streaming to console."""
         return await self._provider.chat_stream(messages)
-    
-    async def chat_with_continuation(self, messages: list[dict[str, Any]], max_continues: int = 3, max_tokens: int | None = None) -> str:
+
+    async def chat_with_continuation(
+        self, messages: list[dict[str, Any]],
+        max_continues: int = 3, max_tokens: int | None = None,
+    ) -> str:
         """Chat with auto-resume if response gets truncated at token limit."""
         full_response = ""
         current_messages = [dict(m) for m in messages]
@@ -336,16 +352,25 @@ class LLMClient:
             full_response += result
 
             stripped = full_response.rstrip()
-            if stripped and not stripped.endswith(('```', '}', ')', ']', '"', "'", '.', '\n')):
-                print(magenta(f"\n[auto-resume] Truncated ({len(result)} chars), continuing ({i+1}/{max_continues})..."))
+            if stripped and not stripped.endswith(
+                ('```', '}', ')', ']', '"', "'", '.', '\n')
+            ):
+                print(magenta(
+                    f"\n[auto-resume] Truncated ({len(result)} chars), "
+                    f"continuing ({i+1}/{max_continues})..."
+                ))
                 current_messages.append({"role": "assistant", "content": result})
-                current_messages.append({"role": "user", "content": "Continue exactly where you stopped. Output the remaining code without repeating anything."})
+                current_messages.append(
+                    {"role": "user", "content":
+                     "Continue exactly where you stopped. Output the "
+                     "remaining code without repeating anything."}
+                )
                 continue
             else:
                 break
 
         return full_response
-    
+
     async def analyze_code(self, code: str) -> str:
         """Analyze code using LLM."""
         return await self._provider.analyze_code(code)
@@ -353,7 +378,7 @@ class LLMClient:
 
 class Agent:
     """Main agent class with workspace management and tool execution."""
-    
+
     #: Real filesystem path (not a Git-Bash /c/... path) — subprocess cwd must
     #: be a valid Windows directory, so derive it from this file's location.
     DEFAULT_WORKSPACE = os.path.dirname(os.path.abspath(__file__))
@@ -361,7 +386,9 @@ class Agent:
     def __init__(self, workspace: str | None = None, model_name: str | None = None):
         # Translate Git-Bash-style paths (/c/Dev/...) to Windows paths so that
         # subprocess cwd and filesystem tools always see a valid directory.
-        self.workspace = os.path.abspath(to_windows_path(workspace or self.DEFAULT_WORKSPACE))
+        self.workspace = os.path.abspath(
+            to_windows_path(workspace or self.DEFAULT_WORKSPACE)
+        )
         self.model_name = resolve_model(model_name)
 
         self._semantic_index: dict[str, set[int]] = defaultdict(set)
@@ -400,7 +427,8 @@ class Agent:
         #: a pile of running subagents re-creates the pressure they avoid).
         self._active_subagents: set[str] = set()
         self._delegate_counter: int = 0
-        self._nlp_workspace: str | None = None  # workspace override for NLP tools (set by paste --workspace)
+        self._nlp_workspace: str | None = None  # workspace override for
+        # NLP tools (set by paste --workspace)
         #: Session mode ("build" | "plan", see :mod:`agent_core.modes`).
         #: Plan mode restricts the NLP tool loop to read-only tools so no
         #: file changes while researching; switched via the ``mode`` command.
@@ -423,15 +451,21 @@ class Agent:
     def _register_tool_handlers(self) -> None:
         """Register tool handlers with the dispatcher."""
         self.dispatcher.register("read_file", lambda args: self._tool_read_file(**args))
-        self.dispatcher.register("write_file", lambda args: self._tool_write_file(**args))
-        self.dispatcher.register("apply_patch", lambda args: self._tool_apply_patch(**args))
+        self.dispatcher.register(
+            "write_file", lambda args: self._tool_write_file(**args))
+        self.dispatcher.register(
+            "apply_patch", lambda args: self._tool_apply_patch(**args))
         self.dispatcher.register("edit_file", lambda args: self._tool_edit_file(**args))
         self.dispatcher.register("search", lambda args: self._tool_search(**args))
         self.dispatcher.register("search_file", lambda args: self._tool_search(**args))
-        self.dispatcher.register("list_files", lambda args: self._tool_list_files(**args))
-        self.dispatcher.register("delete_file", lambda args: self._tool_delete_file(**args))
-        self.dispatcher.register("analyze_file", lambda args: self._tool_analyze_file(**args))
-        self.dispatcher.register("llm_analyze", lambda args: self._tool_llm_analyze(**args))
+        self.dispatcher.register(
+            "list_files", lambda args: self._tool_list_files(**args))
+        self.dispatcher.register(
+            "delete_file", lambda args: self._tool_delete_file(**args))
+        self.dispatcher.register(
+            "analyze_file", lambda args: self._tool_analyze_file(**args))
+        self.dispatcher.register(
+            "llm_analyze", lambda args: self._tool_llm_analyze(**args))
 
     # ── Sub-agent support ───────────────────────────────────────────────
     def spawn_subagent(
@@ -528,7 +562,8 @@ class Agent:
     async def _verify_file(self, path: str) -> str:
         """Run py_compile on *path* and return a short verification summary."""
         try:
-            cwd = os.path.abspath(to_windows_path(self._nlp_workspace or self.workspace))
+            cwd = os.path.abspath(
+                to_windows_path(self._nlp_workspace or self.workspace))
             if not os.path.isdir(cwd):
                 cwd = self.workspace
             r = subprocess.run(
@@ -626,7 +661,6 @@ class Agent:
         ``_MAX_ACTIVE_SUBAGENTS``; a hung child surfaces as an error after
         ``_DELEGATE_TIMEOUT_S`` instead of holding the turn hostage.
         """
-        import time as _time
 
         from agent_core.modes import MODE_PLAN, is_plan_mode
 
@@ -946,7 +980,10 @@ class Agent:
         chunk = "\n".join(chunk_lines)
         result = chunk
         if offset - 1 + limit < len(lines):
-            result = f"{chunk}\n[truncated — use read with offset={offset + limit} to continue]"
+            result = (
+                f"{chunk}\n[truncated — use read with offset="
+                f"{offset + limit} to continue]"
+            )
         if self._read_streak >= _MAX_CONSECUTIVE_READS:
             result += _READ_LOOP_NOTE.format(n=self._read_streak)
         return result
@@ -1165,7 +1202,8 @@ class Agent:
                 sanitize_query,
                 search_ddg,
             )
-            max_results = max(1, min(int(args.get("max_results") or 5), MAX_RESULTS_LIMIT))
+            max_results = max(
+                1, min(int(args.get("max_results") or 5), MAX_RESULTS_LIMIT))
             clean_query = sanitize_query(query)
             hits = search_ddg(clean_query, max_results=max_results)
             output = format_results(clean_query, hits)
@@ -1187,7 +1225,9 @@ class Agent:
     async def _tool_write_file(self, path: str, content: str, **kwargs: Any) -> str:
         return await self.fs.write(path, content)
 
-    async def _tool_apply_patch(self, path: str, find: str, replace: str, **kwargs: Any) -> str:
+    async def _tool_apply_patch(
+        self, path: str, find: str, replace: str, **kwargs: Any,
+    ) -> str:
         return await self.fs.apply_patch(path, find, replace)
 
     async def _tool_edit_file(self, path: str, content: str, **kwargs: Any) -> str:
@@ -1196,20 +1236,28 @@ class Agent:
     async def _tool_search(self, query: str, path: str = ".", **kwargs: Any) -> str:
         return await self.searcher.search(query, path)
 
-    async def _tool_list_files(self, path: str = ".", pattern: str = "*", **kwargs: Any) -> str:
+    async def _tool_list_files(
+        self, path: str = ".", pattern: str = "*", **kwargs: Any,
+    ) -> str:
         return await self.fs.list_files(path, pattern)
 
     async def _tool_delete_file(self, path: str, **kwargs: Any) -> str:
         return await self.fs.delete(path)
 
     async def _tool_analyze_file(self, path: str, **kwargs: Any) -> str:
-        return cast(str, await self.llm.analyze_code(await self.read_file(path)))  # type: ignore[redundant-cast]
+        return cast(
+            str, await self.llm.analyze_code(await self.read_file(path))
+        )  # type: ignore[redundant-cast]
 
     async def _tool_llm_analyze(self, path: str, **kwargs: Any) -> str:
         file_content = await self.read_file(path, track_read=False)
-        if file_content.startswith("File not found:") or file_content.startswith("Error reading file:"):
+        if file_content.startswith("File not found:") or (
+                file_content.startswith("Error reading file:")
+        ):
             return f"Could not analyze: {file_content}"
-        return cast(str, await self.llm.analyze_code(file_content))  # type: ignore[redundant-cast]
+        return cast(
+            str, await self.llm.analyze_code(file_content)
+        )  # type: ignore[redundant-cast]
 
     async def execute_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
         """Execute a tool by name using the dispatcher."""
@@ -1273,7 +1321,10 @@ class Agent:
 
             count = content.count(find)
             if count > 1:
-                return f"Error: find text matches {count} locations. Add more context to make it unique."
+                return (
+                    f"Error: find text matches {count} locations. "
+                    "Add more context to make it unique."
+                )
 
             new_content = content.replace(find, replace, 1)
 
@@ -1300,10 +1351,10 @@ class Agent:
     def _build_semantic_index(self, words: list[str], idx: int) -> None:
         """Build semantic index with memory management."""
         MAX_INDEX_SIZE = 10000
-        
+
         if len(self._semantic_index) > MAX_INDEX_SIZE:
             self._cleanup_semantic_index()
-        
+
         for word in words:
             normalized_word = word.lower()
             self._semantic_index[normalized_word].add(idx)
@@ -1312,12 +1363,12 @@ class Agent:
         """Remove oldest entries from semantic index."""
         if not self._semantic_index:
             return
-        
+
         items = list(self._semantic_index.items())
         keep_count = max(100, len(items) - 500)
-        
+
         sorted_items = sorted(items, key=lambda x: len(x[1]), reverse=True)
-        
+
         self._semantic_index.clear()
         for word, idx_set in sorted_items[:keep_count]:
             self._semantic_index[word] = idx_set
@@ -1452,7 +1503,9 @@ class Agent:
             if isinstance(parsed, dict) and parsed.get("tool_calls"):
                 parsed.pop("role", None)
                 updated = list(msgs)
-                updated.append({"role": "assistant", "content": parsed.get("content") or "", **parsed})
+                updated.append(
+                    {"role": "assistant",
+                     "content": parsed.get("content") or "", **parsed})
                 text = str(parsed.get("content") or "")
                 return text, updated
             # Plain text answer — the loop terminates.
@@ -1474,7 +1527,8 @@ class Agent:
                 #: Per-run trace writer (one JSONL file per run() invocation,
                 #: decision #029).  AGENT_NO_TRACE=1 disables trace capture.
                 #: Model/profile are stamped on every record so a trace is
-                #: self-describing for review and cross-model comparison (decision #050).
+                #: self-describing for review and cross-model comparison
+                #: (decision #050).
                 trace_writer = (
                     TraceWriter(
                         meta={
@@ -1517,7 +1571,10 @@ class Agent:
                     break
                 needs_more = (
                     reason == "cap"
-                    or (reason in ("answer", "no_progress") and _looks_incomplete(final_text))
+                    or (
+                        reason in ("answer", "no_progress")
+                        and _looks_incomplete(final_text)
+                    )
                 )
                 if needs_more and continuations < _MAX_CHAINED_RUNS:
                     if final_text and final_text == last_answer:
@@ -1525,9 +1582,13 @@ class Agent:
                         # stuck, not working.  Stop chaining instead of looping.
                         if display_mode != AgentDisplayMode.QUIET:
                             print(
-                                magenta("\n  [stopped] The model repeated the same answer ")
+                                magenta(
+                                    "\n  [stopped] The model repeated the same answer "
+                                )
                                 + yellow("twice — ending the turn. ")
-                                + gray("Rephrase or ask something more specific to continue.\n")
+                                + gray(
+                                    "Rephrase or ask something more specific to"
+                                    " continue.\n")
                             )
                         break
                     last_answer = final_text
@@ -1551,11 +1612,22 @@ class Agent:
                          _CONTINUE_NOTE_TAG_KEY: _CONTINUE_NOTE_TAG},
                     ]
                     continue
-                if reason in ("stuck", "no_progress") and display_mode != AgentDisplayMode.QUIET:
+                if (
+                        reason in ("stuck", "no_progress")
+                        and display_mode != AgentDisplayMode.QUIET
+                ):
                     print(
                         magenta("\n  [stopped] The model stopped making progress ")
-                        + yellow(f"{'stuck on repeated calls' if reason == 'stuck' else 'too many calls without making new progress'}). ")
-                        + gray("The answer above is the best it produced — rephrase or ask something more specific to continue.\n")
+                        + yellow(
+                            (
+                                "stuck on repeated calls"
+                                if reason == "stuck"
+                                else "too many calls without making new progress"
+                            )
+                        )
+                        + gray(
+                            "The answer above is the best it produced — rephrase or"
+                            " ask something more specific to continue.\n")
                     )
                 break
 
@@ -1597,12 +1669,15 @@ class Agent:
             # A provider-level failure was detected during the run: show the
             # actual error (not the generic fallback, not a green "answer").
             err = llm_error.strip()
-            print(yellow("\n  [llm-error] The model did not produce a usable response:"))
+            print(yellow(
+                "\n  [llm-error] The model did not produce a usable response:"))
             print(red(f"  {err[:400]}"))
             if "reasoning" in err.lower():
                 print(
                     yellow("  The reasoning model exhausted its thinking budget. ")
-                    + gray("Switch to a non-reasoning model (model <name>) or retry the request.\n")
+                    + gray(
+                        "Switch to a non-reasoning model (model <name>) or retry"
+                        " the request.\n")
                 )
             self._nlp_workspace = None
             return
@@ -1853,7 +1928,9 @@ class Agent:
             return []
         messages = [
             m for m in data
-            if isinstance(m, dict) and m.get("role") in ("system", "user", "assistant", "tool")
+            if isinstance(m, dict) and m.get("role") in (
+                    "system", "user", "assistant", "tool"
+            )
             # Loop-internal tags never belong in a restored conversation.
             and _CONTINUE_NOTE_TAG_KEY not in m
         ]
@@ -2122,8 +2199,10 @@ def _unix_command_hint() -> str:
     return (
         f"\nHint: this shell ({_detect_shell()}) has no Unix tools like tail/grep/ls, "
         "and installed Python tools must be called as 'python -m <tool>'. Use Python "
-        "one-liners (python -c \"...\") or the built-in tools — run output is truncated "
-        "automatically, so pipes like '2>&1 | tail -40' are neither needed nor supported."
+        "one-liners (python -c \"...\") or the built-in tools — run output is"
+        " truncated "
+        "automatically, so pipes like '2>&1 | tail -40' are neither needed nor"
+        " supported."
     )
 
 
@@ -2711,13 +2790,17 @@ async def run_interactive() -> None:
     print(blue("Agent Interactive Mode with LM Studio"))
     print(f"Workspace: {cyan(Agent.DEFAULT_WORKSPACE)}")
     model_label = agent.llm.model_name
-    profile_part = (f"  |  Profile: {agent.llm._profile_name}" if agent.llm._profile_name else "")
+    profile_part = (
+        f"  |  Profile: {agent.llm._profile_name}"
+        if agent.llm._profile_name else "")
     print(f"Model: {cyan(model_label)}{gray(profile_part)}")
     try:
         from agent_core.llm.lmstudio import get_models_status
         models = get_models_status()
         loaded = [m for m in models if m.get("loaded")]
-        status = f"LM Studio: online ({len(loaded)}/{len(models)} models loaded)" if models else "LM Studio: online"
+        status = (
+            f"LM Studio: online ({len(loaded)}/{len(models)} models loaded)"
+            if models else "LM Studio: online")
         print(green(status) if models else yellow(status))
     except Exception:
         print(yellow("LM Studio: offline"))
@@ -2772,7 +2855,7 @@ async def run_interactive() -> None:
             if _stale_files:
                 print(yellow(format_stale_warning(_stale_files)))
                 _code_snapshot = loaded_module_mtimes(__file__)
-            
+
             # Parse and execute commands
             try:
                 parts = shlex.split(user_input, posix=False)
@@ -2809,7 +2892,9 @@ async def run_interactive() -> None:
             else:
                 await agent.chat_nlp(user_input)
         except KeyboardInterrupt:
-            print(yellow("\nInterrupted — the current run was stopped. Use 'quit' to exit."))
+            print(yellow(
+                "\nInterrupted — the current run was stopped. Use 'quit' to"
+                " exit."))
         except EOFError:
             if not sys.stdin.isatty():
                 print(yellow("\n[stdin] Input stream ended — shutting down."))

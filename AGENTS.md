@@ -113,7 +113,15 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   (implement_cmd.py 14; reconstruct_cmd.py 2; self_heal_cmd.py 2;
   security/secrets.py 2; cleanup_cmd.py 1; demo_data_cmd.py 1).
   Do not silently "fix" them; do NOT introduce new errors.
-- No ruff config; pyproject.toml configures mypy, pytest, coverage only.
+- ruff config lives in `pyproject.toml` (`[tool.ruff]`); CI runs
+  `ruff check agent_core harnessfix fixcommand tests performance_dashboard`
+  with a **blocking** `--select F821` gate plus an advisory full-lint step.
+- A local pre-commit hook (`.git/hooks/pre-commit`, tracked copy in
+  `.githooks/pre-commit`) mirrors CI: it blocks commits that introduce
+  F821/parse errors in staged files and prints the advisory lint. Install once
+  with `git config core.hooksPath .githooks` (or copy
+  `.githooks/pre-commit` to `.git/hooks/`). Run `ruff check --fix` yourself
+  before committing if you want the advisory issues cleaned too.
 - Implement auto-runs `py_compile` on every written file.
 
 ## Conventions
@@ -271,3 +279,18 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   scanned restored history from previous sessions — fixed with a per-turn boundary
   (`Agent._turn_start_index`). Tests: `tests/test_text_policy.py` (26),
   `tests/test_quickwins_batch2.py::TestTurnBoundaryAfterRestart` (3).
+
+## Git / remote auth (non-interactive)
+
+`git push`/`ls-remote` must NOT prompt for credentials (no human at the keyboard).
+Auth is supplied by a local credential helper that reads `GITHUB_TOKEN` from the
+gitignored `.env` — the token is never written into `.git/config` or the remote URL.
+
+- Helper: `scripts/git_credential_helper.py` (reads `.env`, emits `git`/token for
+  `protocol=https host=github.com`).
+- Wired at repo scope in `.git/config`:
+  `credential.helper=!D:/Dev/Agent1/scripts/git_credential_helper.cmd` (placed
+  before the global `manager`), plus `credential.interactive never`.
+- If a push hangs on a credential prompt, run `git config --local --get-regexp
+  credential` to confirm the helper is present, and verify `.env` has a live
+  `GITHUB_TOKEN`.

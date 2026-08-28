@@ -1,0 +1,50 @@
+#!/bin/sh
+# Pre-commit hook: keep ruff in the implementation loop so CI never breaks on
+# parse errors / undefined names.  Mirrors .github/workflows/ci.yml:
+#   - BLOCKING:  ruff check --select F821   (the gate CI fails on)
+#   - ADVISORY:  ruff check                  (full lint, non-blocking)
+#
+# Scope is limited to the FILES BEING COMMITTED (the staged diff), so the hook
+# only guards changes you are about to ship -- it never touches or stages
+# unrelated working-tree files.  It does NOT auto-fix (matching CI, whose full
+# lint step is advisory/continue-on-error); fix issues manually or run
+# `ruff check --fix` yourself before committing.
+set -e
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+
+if ! command -v ruff >/dev/null 2>&1; then
+  echo "pre-commit: ruff not found on PATH; skipping ruff checks." >&2
+  exit 0
+fi
+
+# Only the Python files this commit introduces or modifies.
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR -- '*.py')
+if [ -z "$STAGED" ]; then
+  echo "pre-commit: no Python files staged; skipping ruff checks."
+  exit 0
+fi
+
+# 1) BLOCKING gate: parse errors + undefined names (F821) must be clean,
+#    exactly like CI.  A non-zero exit aborts the commit.
+echo "pre-commit: ruff --select F821 (blocking, mirroring CI)..."
+# shellcheck disable=SC2086
+if ! ruff check --select F821 $STAGED; then
+  echo "" >&2
+  echo "pre-commit: FAILED — undefined names / parse errors above." >&2
+  echo "Fix these before committing (this is the same gate CI blocks on)." >&2
+  exit 1
+fi
+
+# 2) ADVISORY full lint (non-blocking, like CI's continue-on-error step).
+echo "pre-commit: ruff full lint (advisory, non-blocking)..."
+# shellcheck disable=SC2086
+if ! ruff check $STAGED; then
+  echo "" >&2
+  echo "pre-commit: advisory lint reported issues (non-blocking)." >&2
+  echo "Consider cleaning them up, but the commit is allowed to proceed." >&2
+fi
+
+echo "pre-commit: ruff checks passed for staged files."
+exit 0

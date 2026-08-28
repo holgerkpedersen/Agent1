@@ -7,7 +7,6 @@ opencode instead — and vice-versa for an opencode name routed to LM Studio.
 The `--provider`/`-p` flag bypasses prefix-based routing so the user can pick
 the provider explicitly.  Without the flag, routing is unchanged.
 """
-import pytest
 
 from agent_core.commands.model_cmd import ModelCommand
 
@@ -89,7 +88,6 @@ class TestBuildProviderOverride:
         """A `laguna-*` model name, when given provider_override='opencode',
         must build an OpencodeProvider instead of LMStudioProvider."""
         from agent_core.llm.opencode_provider import OpencodeProvider
-        from agent_core.llm.lmstudio import LMStudioProvider
 
         monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
         monkeypatch.setattr(
@@ -105,7 +103,6 @@ class TestBuildProviderOverride:
     def test_override_routes_opencode_name_to_lmstudio(self, monkeypatch):
         """An `opencode-go/...` model name, when given provider_override='lmstudio',
         must build an LMStudioProvider instead of OpencodeProvider."""
-        from agent_core.llm.opencode_provider import OpencodeProvider
         from agent_core.llm.lmstudio import LMStudioProvider
 
         monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
@@ -197,7 +194,7 @@ class TestSwitchModelWithProvider:
         self._patch_opencode_catalog(monkeypatch)
 
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             self.cmd._switch_model(["laguna-s-2.1-ud", "--provider", "opencode"], agent)
         )
 
@@ -220,7 +217,7 @@ class TestSwitchModelWithProvider:
         self._patch_opencode_catalog(monkeypatch)
 
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             self.cmd._switch_model(["laguna-s-2.1-ud", "--provider", "lmstudio"], agent)
         )
 
@@ -238,7 +235,7 @@ class TestSwitchModelWithProvider:
         self._patch_opencode_catalog(monkeypatch)
 
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             self.cmd._switch_model(["laguna-s-2.1-ud", "--provider", "bogus"], agent)
         )
 
@@ -258,7 +255,7 @@ class TestSwitchModelWithProvider:
         self._patch_opencode_catalog(monkeypatch)
 
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             self.cmd._switch_model(["laguna-s-2.1-ud"], agent)
         )
 
@@ -276,7 +273,7 @@ class TestSwitchModelWithProvider:
         self._patch_opencode_catalog(monkeypatch)
 
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             self.cmd._switch_model(["laguna-s-2.1-ud", "-p", "opencode"], agent)
         )
 
@@ -296,7 +293,7 @@ class TestSwitchModelWithProvider:
         self._patch_opencode_catalog(monkeypatch)
 
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             self.cmd._switch_model(["hy3", "--provider", "opencode"], agent)
         )
 
