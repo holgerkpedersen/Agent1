@@ -1303,12 +1303,67 @@ class FixCommand(Command):
                     except Exception as exc:
                         print(f"  Warning: failed to extract signatures from {fp}: {exc}")
 
-            # Build initial context: full source for top-N, signatures for rest
-            context = f"## Issue\n{desc_text}\n\n"
-            context += "## Relevant files (full source — highest keyword match)\n"
-            for fp, score, content in top_files:
+            # ---- Context size budget (prevents local-model timeouts) ----
+            # A single best-effort-except issue used to pull full source of the
+            # top-5 files (~575KB for agent.py + friends) into ONE non-streaming
+            # POST. On a local 27B model that prefill can't finish inside the
+            # socket-timeout window, so the call timed out and RetryPolicy resent
+            # the same giant prompt 4x (~40min before failing over). Cap the
+            # per-file contribution and the total so the model gets the most
+            # relevant content and can [READ:] anything else on demand.
+            _budget = int(os.environ.get("FIX_CONTEXT_MAX_CHARS", "50000"))
+            _per_file_cap = int(os.environ.get("FIX_FILE_MAX_CHARS", "22000"))
+
+            def _issue_lines() -> dict[str, int]:
+                """Map lowercased basename -> line number parsed from desc."""
+                out: dict[str, int] = {}
+                for m in re.finditer(r"(?:^|\s)([\w./\\-]+\.py):(\d+)", desc_text):
+                    out[os.path.basename(m.group(1)).lower()] = int(m.group(2))
+                return out
+
+            def _focused_window(content: str, center: int | None, max_chars: int) -> str:
+                lines = content.splitlines()
+                if not lines:
+                    return content
+                per_line = max(1, len(content) // len(lines))
+                if center is None or center <= 0:
+                    take = min(240, max(1, max_chars // per_line))
+                    return "\n".join(lines[:take])
+                margin = max(60, (max_chars // per_line) // 2)
+                lo = max(0, center - margin - 1)
+                hi = min(len(lines), center + margin)
+                return "\n".join(lines[lo:hi])
+
+            _lines_map = _issue_lines()
+
+            def _file_block(fp: str, score: int, content: str) -> str:
                 rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
-                context += f"\n# === {rel} (relevance: {score} keywords) ===\n{content}\n"
+                if len(content) <= _per_file_cap:
+                    return f"\n# === {rel} (relevance: {score} keywords) ===\n{content}\n"
+                center = _lines_map.get(os.path.basename(fp).lower())
+                window = _focused_window(content, center, _per_file_cap)
+                return (f"\n# === {rel} (relevance: {score} keywords; "
+                        f"{len(content)} bytes total — showing focused window, "
+                        f"request full with [READ: {rel}]) ===\n{window}\n")
+
+            # Build initial context: focused source for top-N, signatures for rest
+            context = f"## Issue\n{desc_text}\n\n"
+            context += "## Relevant files (highest keyword match)\n"
+            _running = len(context)
+            _first = True
+            for fp, score, content in top_files:
+                _block = _file_block(fp, score, content)
+                if _first or _running + len(_block) <= _budget:
+                    context += _block
+                    _running = len(context)
+                    _first = False
+                else:
+                    _rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
+                    _sigs = extract_signatures(content)
+                    _names = ", ".join(sorted(_sigs.keys())[:8]) if _sigs else "(empty)"
+                    context += (f"\n# === {_rel} (omitted — {len(content)} bytes; "
+                                f"signatures: {_names}; request with [READ: {_rel}]) ===\n")
+                    _running = len(context)
 
             if rest_files:
                 context += f"\n## Other candidate files ({len(rest_files)} more — signatures only)\n"

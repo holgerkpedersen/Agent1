@@ -475,10 +475,29 @@ class LMStudioProvider:
                 "]"
             )
         return None
-    
+
+    def _payload_bytes(self, payload: dict[str, Any]) -> int:
+        """Approximate serialized request size in bytes."""
+        try:
+            return len(json.dumps(payload).encode("utf-8"))
+        except Exception:
+            return 0
+
+    def _scaled_timeout(self, payload_bytes: int) -> int:
+        """Socket timeout (s) that scales with request size.
+
+        The base cap (:func:`chat_timeout`, env ``LMSTUDIO_CHAT_TIMEOUT``,
+        default 600) is a floor. Large prompts need more prefill time on
+        local models, so add ~1s per 50KB and cap at 3600s. This stops a
+        575KB prompt from dying at the 600s floor and then being retried
+        4x (~40min) by :class:`RetryPolicy`.
+        """
+        base = chat_timeout()
+        return min(base + min(payload_bytes // 50_000, 3000), 3600)
+
     async def chat(
         self, 
-        messages: list[dict[str, Any]], 
+        messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         disable_thinking: bool = False,
@@ -488,6 +507,14 @@ class LMStudioProvider:
             messages, tools, override_max_tokens=max_tokens,
             disable_thinking=disable_thinking,
         )
+        pbytes = self._payload_bytes(payload)
+        timeout = self._scaled_timeout(pbytes)
+        # A request that times out because it is genuinely too large for the
+        # local model will just time out again on retry — bound retries for
+        # oversized payloads so we fail fast instead of stalling ~40min.
+        policy = self.retry_policy
+        if pbytes > 200_000:
+            policy = RetryPolicy(max_retries=1, base_delay=self.retry_policy.base_delay)
         label = f"[model: {payload['model']}]"
         if self._profile_name:
             label = f"[model: {payload['model']} | profile={self._profile_name} t={self.temperature} tok={self.max_tokens}]"
@@ -504,7 +531,7 @@ class LMStudioProvider:
             # asyncio.gather in run_parallel() serializes every model: the
             # first coroutine's sync HTTP round-trip blocks the loop and the
             # second model's chat() cannot even start until it finishes.
-            result = await asyncio.to_thread(self._make_request, payload)
+            result = await asyncio.to_thread(self._make_request, payload, timeout)
             elapsed_ms = (_time.monotonic() - start_time) * 1000.0
 
             if 'choices' in result and len(result['choices']) > 0:
@@ -540,7 +567,7 @@ class LMStudioProvider:
             print(f"  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s...")
         
         try:
-            return await self.retry_policy.execute_with_retry(
+            return await policy.execute_with_retry(
                 _do_request, 
                 on_retry=_on_retry
             )

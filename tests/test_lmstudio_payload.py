@@ -195,3 +195,56 @@ class TestSanitizeMessageRoles:
         assert "ghost" not in ids
         assert "c1" in ids
 
+
+class TestScaledTimeout:
+    """Regression for the autonomous-agent timeout spiral (2026-08-28): a
+    single best-effort-except issue pulled ~575KB of full source into one
+    non-streaming POST; on a local 27B model the prefill couldn't finish
+    inside the 600s socket floor, so RetryPolicy resent the same giant
+    prompt 4x (~40min) before failing over. Timeout must scale with payload
+    and stay bounded."""
+
+    def _prov(self, monkeypatch, floor="600"):
+        monkeypatch.setenv("LMSTUDIO_CHAT_TIMEOUT", floor)
+        return _provider("qwen/qwen3.8-27b")
+
+    def test_small_payload_uses_floor(self, monkeypatch):
+        p = self._prov(monkeypatch)
+        assert p._scaled_timeout(100) == 600
+
+    def test_floor_respects_env(self, monkeypatch):
+        p = self._prov(monkeypatch, "120")
+        assert p._scaled_timeout(100) == 120
+
+    def test_scales_with_size(self, monkeypatch):
+        p = self._prov(monkeypatch)
+        small = p._scaled_timeout(50_000)
+        big = p._scaled_timeout(575_000)
+        assert small == 601            # 600 + 1 (per 50KB)
+        assert big == 600 + (575_000 // 50_000)
+        assert big > small
+
+    def test_scaling_capped_at_3600(self, monkeypatch):
+        p = self._prov(monkeypatch)
+        # ~500MB -> +3000 (the per-call cap) -> 600 + 3000 = 3600
+        assert p._scaled_timeout(500_000_000) == 3600
+
+    def test_chat_passes_scaled_timeout_to_request(self, monkeypatch):
+        import json
+        p = self._prov(monkeypatch)
+        captured = {}
+
+        def fake_make_request(payload, timeout=None):
+            captured["timeout"] = timeout
+            captured["payload_bytes"] = len(json.dumps(payload).encode("utf-8"))
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        monkeypatch.setattr(p, "_make_request", fake_make_request)
+        import asyncio
+        out = asyncio.run(p.chat([{"role": "user", "content": "x" * 300_000}]))
+        assert out == "ok"
+        assert captured["timeout"] is not None
+        assert captured["timeout"] == p._scaled_timeout(captured["payload_bytes"])
+        # 300KB payload -> 600 + 6 = 606, and retries are bounded for it.
+        assert captured["timeout"] == 606
+
