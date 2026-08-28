@@ -831,3 +831,79 @@ class TestChatFixTextRetries:
         assert out.startswith("[Error")
         assert len(agent.llm.prompts) == 1
 
+
+class TestNaturalLanguageMisuseGuard:
+    """`implement <prose description>` must steer the user to `workflow` rather
+    than raising a cryptic FileNotFoundError on the first word."""
+
+    def test_prose_description_reports_hint(self, tmp_path, monkeypatch) -> None:
+        import asyncio
+        from types import SimpleNamespace
+
+        from agent_core.commands.implement_cmd import ImplementCommand
+
+        captured = {}
+
+        def fake_error(self, msg):
+            captured["msg"] = msg
+
+        monkeypatch.setattr(ImplementCommand, "error", fake_error)
+
+        agent = SimpleNamespace(workspace=str(tmp_path))
+        ok = asyncio.run(
+            ImplementCommand().execute(
+                ["a", "Openrouter", "LLM", "Provider"], agent
+            )
+        )
+        assert ok is True
+        assert "workflow" in captured["msg"]
+        assert "File not found" not in captured["msg"]
+
+
+class TestConftestRedirectOutsideTestWorkspace:
+    """Regression: the autouse conftest fixture must NOT place harnessfix
+    redirect copies inside the per-test ``tmp_path``.
+
+    ``_suggest_consumers`` and ``_unwired_closure`` walk the workspace
+    treating every ``.py`` as a real project module.  The fixture in
+    ``conftest.py`` redirects ``harnessfix.repairs.*._TARGET`` (the real
+    ``agent_core/llm/tool_loop.py``) to a per-test copy so repair tests
+    don't mutate the real tree.  Earlier the copy lived inside
+    ``tmp_path``; the real ``tool_loop.py`` is ~900 lines of Python full
+    of the letters ``b`` and ``c`` (every other Python file is), so every
+    generated file with a ``b``/``c`` token in its name got pinned as
+    'referenced' and ``_unwired_closure`` refused to cascade.  The fix
+    moves the redirect target into a ``tmp_path_factory``-provided dir
+    that the walkers never see; this test pins that contract.
+    """
+
+    def test_redirect_target_lives_outside_per_test_workspace(self, tmp_path: Path) -> None:
+        # The autouse fixture has already redirected the modules' _TARGET
+        # by the time this test body runs (this test IS subject to the
+        # autouse fixture).  We inspect the live _TARGET values to pin
+        # the contract: they must NOT be under the per-test tmp_path.
+        import harnessfix.repairs.abandonment_resume as abandonment_resume
+        import harnessfix.repairs.stuck_repeat as stuck_repeat
+        import harnessfix.repairs.tool_interface as tool_interface
+
+        tmp_resolved = tmp_path.resolve()
+        for mod in (stuck_repeat, tool_interface, abandonment_resume):
+            target = mod._TARGET
+            # If the file does not exist locally the fixture skipped it
+            # (real target not present in this checkout), so the
+            # original path is left intact and the assertion below is
+            # vacuous — only assert when the fixture actually redirected.
+            if not target.exists():
+                continue
+            try:
+                target.resolve().relative_to(tmp_resolved)
+            except ValueError:
+                pass  # good: lives outside tmp_path
+            else:
+                raise AssertionError(
+                    f"{mod.__name__}._TARGET was redirected INSIDE the per-test "
+                    f"workspace ({tmp_resolved}); this causes "
+                    f"_suggest_consumers / _unwired_closure to see harnessfix "
+                    f"internals as 'project code'. Target: {target}"
+                )
+

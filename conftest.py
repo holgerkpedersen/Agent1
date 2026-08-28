@@ -15,7 +15,11 @@ os.environ.setdefault("AGENT_NO_TRACE", "1")
 
 
 @pytest.fixture(autouse=True)
-def _isolate_from_real_tree_and_beacons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolate_from_real_tree_and_beacons(
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Keep every test from mutating tracked source or the live beacons.
 
     Two classes of test previously touched the real repo / live dashboard:
@@ -46,11 +50,25 @@ def _isolate_from_real_tree_and_beacons(tmp_path: Path, monkeypatch: pytest.Monk
     import harnessfix.repairs.tool_interface as tool_interface
 
     # Modules that edit a real source file via a module-level ``_TARGET``.
+    # The redirected copies live in a SEPARATE temp dir (sibling of
+    # ``tmp_path``) — never inside the per-test workspace — so the
+    # workspace walkers in ``_suggest_consumers`` and ``_unwired_closure``
+    # (``agent_core/commands/implement_cmd.py``) never see the redirected
+    # files as "existing modules" or "reference sources".  Tests treat
+    # ``tmp_path`` as the user's project; leaking harnessfix internals in
+    # there caused false ``b``/``c``-substring pin matches against
+    # ``tool_loop.py``'s 900 lines of Python source (every other file is
+    # full of those letters) and false ``tool``-token matches in
+    # ``_suggest_consumers``.  The regressions are pinned by
+    # ``TestSuggestConsumers`` and ``TestUnwiredClosure`` in
+    # ``tests/test_implement_safety.py``.
+    targets_dir = tmp_path_factory.mktemp("harnessfix_targets_") / "targets"
+    targets_dir.mkdir(parents=True, exist_ok=True)
     for mod in (stuck_repeat, tool_interface, abandonment_resume):
         real = mod._TARGET
         if not real.exists():
             continue
-        local = tmp_path / f"{mod.__name__.split('.')[-1]}_{real.name}"
+        local = targets_dir / f"{mod.__name__.split('.')[-1]}_{real.name}"
         local.write_text(real.read_text(encoding="utf-8"), encoding="utf-8")
         monkeypatch.setattr(mod, "_TARGET", local)
 
