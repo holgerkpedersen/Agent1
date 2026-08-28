@@ -293,17 +293,21 @@ def run_issue_loop(
 
     Works the next eligible issue each iteration: git checkpoint first, then
     ``issue_loop.resolve_issue`` (verify + generate via ``fix`` + gates), commit
-    ONLY on acceptance (scoped to the issue's files + ``.issues.json``). Any
-    non-accepted verdict fails closed — revert the checkpoint and stop, so a
-    bad autonomous change can never be merged.
+    ONLY on acceptance (scoped to the issue's files + ``.issues.json``). A
+    non-accepted verdict fails closed for that issue — its checkpoint is
+    reverted and the issue deferred — but the loop continues to the next
+    eligible issue rather than halting, so one ambiguous result can't block the
+    rest of the run (2026-08-28).
     """
     output_dir = SUMMARY_PATH.parent
+    deferred: set[str] = set()
     for iteration in range(1, max_iterations + 1):
         if _stop_requested():
             print("[autonomous] Kill-switch detected — halting issue loop.")
             return
         issues = issue_store.load_issues()
-        eligible = issue_store.open_issues(issues, max_level=level_cap)
+        eligible = [i for i in issue_store.open_issues(issues, max_level=level_cap)
+                    if i["id"] not in deferred]
         if not eligible:
             print("[autonomous] No eligible issues remain (at or below "
                   f"AGENT_AUTONOMY_LEVEL={level_cap}).")
@@ -311,9 +315,14 @@ def run_issue_loop(
 
         issue = eligible[0]
         checkpoint = f"autonomous-issue-{iteration}"
+        # Only treat a stash as a real checkpoint if the tree was actually dirty
+        # before generation. A `git stash push` on a clean tree is a no-op that
+        # still returns rc=0, which would make `have_checkpoint` true and a later
+        # `git stash pop` pop an *unrelated* stash and corrupt state.
+        pre_dirty = bool(_git(["status", "--porcelain"]).stdout.strip())
         pushed = _git(["stash", "push", "-u", "-m", checkpoint], check=False)
-        have_checkpoint = pushed.returncode == 0
-        if not have_checkpoint:
+        have_checkpoint = pushed.returncode == 0 and pre_dirty
+        if pre_dirty and not have_checkpoint:
             print(f"[autonomous] WARNING: git stash push failed (rc="
                   f"{pushed.returncode}); continuing without a checkpoint.")
         print(f"\n[autonomous] === issue iteration {iteration}/{max_iterations} "
@@ -343,10 +352,20 @@ def run_issue_loop(
             if have_checkpoint:
                 _git(["stash", "drop"], check=False)
             continue
-        # Fail-closed: revert and stop — no merge on ambiguity.
+        # Fail-closed for this issue: leave the tree clean and move on to the
+        # next eligible issue instead of halting the whole run. A bad fix is
+        # reverted: if we took a real checkpoint (tree was dirty before
+        # generation) pop it; otherwise the failure left a bad fix on a
+        # previously-clean tree, so discard it. Defer the issue so it is not
+        # retried within this run.
         if have_checkpoint:
             _git(["stash", "pop"], check=False)
-        return
+        else:
+            _git(["checkout", "--", "."], check=False)
+        deferred.add(issue["id"])
+        print(f"[autonomous] issue {issue['id']} not accepted ({verdict}) — "
+              f"deferred and continuing.")
+        continue
 
 
 def _repair_files(repair_id: str | None) -> tuple[str, ...]:

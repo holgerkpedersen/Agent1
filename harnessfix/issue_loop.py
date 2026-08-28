@@ -219,12 +219,41 @@ def _default_generate(issue: dict[str, Any], agent: Any) -> bool:
     pre-existing file, #2 wholesale-rewrite guard, #3 [FILE:] name match) all
     apply. Constructing the Agent is cheap (no LLM connection until a patch is
     requested).
+
+    Returns ``True`` only if the generator actually changed one of the issue's
+    files. A no-op run (the model emitted only ``[READ:]`` directives, declined,
+    or produced the same content) must report ``False`` so the caller raises
+    ``generate_failed`` instead of a misleading ``verify_failed`` (2026-08-28).
     """
     from agent_core.commands.fix_cmd import FixCommand
 
+    files = _issue_files(issue)
     args = ["--yes", "--desc", issue.get("suggested_approach") or issue["title"]]
-    args.extend(str(p) for p in _issue_files(issue))
-    return bool(asyncio.run(FixCommand().execute(args, agent)))
+    args.extend(str(p) for p in files)
+    asyncio.run(FixCommand().execute(args, agent))
+    return _tree_changed(files)
+
+
+def _tree_changed(files: list[Any]) -> bool:
+    """True if any of *files* differs from HEAD in the working tree.
+
+    Uses ``git status --porcelain`` so both modified and newly-created files are
+    caught. Best-effort: returns False on any subprocess error.
+    """
+    import subprocess
+
+    for f in files:
+        try:
+            res = subprocess.run(
+                ["git", "status", "--porcelain", "--", str(f)],
+                capture_output=True,
+                text=True,
+            )
+        except Exception:
+            return False
+        if res.stdout.strip():
+            return True
+    return False
 
 
 def resolve_issue(

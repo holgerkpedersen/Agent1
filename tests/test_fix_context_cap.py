@@ -85,3 +85,69 @@ def test_ondemand_small_file_still_inlined(tmp_path: Path) -> None:
     # Small file fits the per-file cap, so its full source is inlined.
     assert "def do_work():" in prompt
     assert "request full with [READ:" not in prompt
+
+
+def test_ondemand_read_upgrades_windowed_file(tmp_path: Path) -> None:
+    """Regression (2026-08-28): a top file larger than FIX_FILE_MAX_CHARS is
+    sent as a focused WINDOW, not full source. The model must be able to upgrade
+    it to full source via [READ:] so it can actually make the edit. Previously
+    the READ handler skipped already-"included" top files, so the model never
+    saw the whole file and the loop ended with no fix.
+    """
+    big = tmp_path / "bigmod.py"
+    lines = [f"def f{i}(): return {i}  # except" for i in range(4000)]
+    lines[3000] = "# UNIQUE_DEEP_MARKER_LINE"
+    big.write_text("\n".join(lines), encoding="utf-8")
+    (tmp_path / "helper.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+
+    class _ReadThenFixLLM:
+        def __init__(self) -> None:
+            self.captured: list[str] = []
+            self.round = 0
+
+        async def chat(self, messages, *args, **kwargs):
+            user = next((m for m in messages if m.get("role") == "user"), None)
+            if user is not None:
+                self.captured.append(user["content"])
+            self.round += 1
+            if self.round == 1:
+                return "[READ: bigmod.py]"
+            return ("[FILE: bigmod.py]\n```python\n"
+                    "def f0(): return 0\n# UNIQUE_DEEP_MARKER_LINE\n"
+                    "```")
+
+    agent = _FakeAgent()
+    agent.llm = _ReadThenFixLLM()
+    cmd = FixCommand()
+    desc = "fix best-effort-except in bigmod.py:200 — wrap in context manager"
+    asyncio.run(cmd.execute([str(big), "--desc", desc], agent))
+
+    # Round-2 context must contain the FULL file (the deep marker only appears
+    # once the windowed file was upgraded to full source via [READ:]).
+    assert any("UNIQUE_DEEP_MARKER_LINE" in p for p in agent.llm.captured), (
+        "windowed file was not upgraded to full source on [READ:]"
+    )
+    # And the fix should have been applied to disk.
+    assert "def f0(): return 0" in big.read_text(encoding="utf-8")
+
+
+def test_default_generate_false_when_no_tree_change() -> None:
+    """Regression (2026-08-28): `_default_generate` must report False when the
+    generator runs but changes nothing, so the caller raises `generate_failed`
+    instead of a misleading `verify_failed`. The target is an existing tracked
+    file and the generator is a no-op, so the tree stays clean.
+    """
+    from harnessfix.issue_loop import _default_generate
+
+    issue = {
+        "id": "iss-tmp-1",
+        "category": "best-effort-except",
+        "title": "do nothing",
+        # An existing, tracked file: the no-op generator leaves it unchanged, so
+        # git status stays clean and _tree_changed must return False.
+        "locations": ["agent_core/llm/retry.py"],
+        "autonomy_level": 1,
+        "suggested_approach": "no-op",
+    }
+    agent = _FakeAgent()  # llm returns plain text -> no fix applied
+    assert _default_generate(issue, agent) is False

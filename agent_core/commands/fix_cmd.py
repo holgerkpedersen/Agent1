@@ -1400,7 +1400,14 @@ class FixCommand(Command):
                     print(f" ... +{len(rest_files) - 8} more", end="")
                 print()
 
-            read_paths: set[str] = {fp for fp, _, _ in top_files}
+            # Track which top files were sent in FULL vs as a focused WINDOW.
+            # [READ:] must be able to upgrade a windowed file to its full source
+            # (otherwise the model can never see the whole file to edit it) — this
+            # was the bug that made the autonomous loop abort with verify_failed
+            # on a one-line issue (2026-08-28).
+            read_paths: set[str] = {fp for fp, _, c in top_files if len(c) <= _per_file_cap}
+            windowed_paths: set[str] = {fp for fp, _, c in top_files if len(c) > _per_file_cap}
+            _nudged = False
             system = ("You are an expert Python debugger.\n\n"
                       f"WORKSPACE: {ws_dir}\n"
                       "Files below use paths RELATIVE to the workspace.\n\n"
@@ -1447,6 +1454,22 @@ class FixCommand(Command):
                         req_path = req_path.strip()
                         full = os.path.normpath(os.path.join(ws_dir, req_path))
                         if full in read_paths:
+                            # Already fully loaded in context — nothing to add.
+                            continue
+                        if full in windowed_paths:
+                            # The model only saw a focused window; upgrade it to
+                            # the full source so it can actually make the edit.
+                            try:
+                                with open(full, "r", encoding="utf-8") as fh:
+                                    fcontent = fh.read()
+                                rel = os.path.relpath(full, ws_dir).replace("\\", "/")
+                                context += (f"\n\n# === {rel} (requested by LLM — full "
+                                            f"source) ===\n{fcontent}\n")
+                                read_paths.add(full)
+                                windowed_paths.discard(full)
+                                new_files.append(rel)
+                            except Exception as exc:
+                                print(f"  Warning: failed to read requested file {full}: {exc}")
                             continue
                         if os.path.isfile(full) and full.endswith(".py"):
                             try:
@@ -1467,6 +1490,18 @@ class FixCommand(Command):
                         print(f"    [READ] could not resolve: {', '.join(bad_reads[:3])} — stopping")
                         break
                     else:
+                        # Every requested file was already fully in context, but the
+                        # model asked again instead of producing a fix. Nudge it once
+                        # (and give it one more round) rather than ending the loop
+                        # with no fix and a misleading verify_failed.
+                        if not _nudged:
+                            context += (
+                                "\n\n# NOTE: the files you requested with [READ:] are "
+                                "already present in the context above (some as focused "
+                                "windows). Provide the fix now using [FILE:] or [PATCH:]."
+                            )
+                            _nudged = True
+                            continue
                         break
 
                 # No [READ:] — check for [FILE:] or show raw response

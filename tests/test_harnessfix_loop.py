@@ -576,3 +576,45 @@ def test_loop_does_not_reapply_when_already_present(tmp_path, monkeypatch):
     finally:
         revert()
 
+
+def test_run_issue_loop_continues_past_failure(monkeypatch):
+    """Regression (2026-08-28): a non-accepted issue must not halt the whole
+    run. run_issue_loop should defer the failed issue and continue to the next
+    eligible one (previously it `return`ed after the first failure). git is
+    stubbed so the real repo tree is never touched.
+    """
+    from scripts.autonomous_self_improve import run_issue_loop
+
+    calls: list[str] = []
+
+    class _FakeLLM:
+        async def chat(self, messages, *a, **k):
+            return "no fix"
+
+    class _FakeAgent:
+        def __init__(self):
+            self.llm = _FakeLLM()
+
+    def fake_resolve(issue, agent, **kwargs):
+        calls.append(issue["id"])
+        return {"verdict": "verify_failed", "accepted": False, "issue_id": issue["id"]}
+
+    class _FakeProc:
+        stdout = ""
+        returncode = 0
+
+    def fake_git(*a, **k):
+        return _FakeProc()
+
+    monkeypatch.setattr("harnessfix.issue_loop.resolve_issue", fake_resolve)
+    monkeypatch.setattr("scripts.autonomous_self_improve._git", fake_git)
+
+    run_issue_loop(
+        max_iterations=3, level_cap=1, agent=_FakeAgent(),
+        no_benchmark=True, model=None, profile=None,
+    )
+    # Before the fix the loop returned after a single failed issue (calls == 1).
+    assert len(calls) >= 2, (
+        f"loop stopped after {len(calls)} issue(s); expected to continue past failures"
+    )
+
