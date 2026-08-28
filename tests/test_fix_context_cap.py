@@ -131,6 +131,83 @@ def test_ondemand_read_upgrades_windowed_file(tmp_path: Path) -> None:
     assert "def f0(): return 0" in big.read_text(encoding="utf-8")
 
 
+def test_ondemand_read_bounded_by_ceiling(tmp_path: Path, monkeypatch) -> None:
+    """Regression (2026-08-28): a [READ:] of a large module must NOT re-bloat the
+    prompt past the read ceiling. The Fix A change made [READ:] load full source,
+    which reintroduced the 500KB+ timeout when the LLM read several big modules.
+    Now a [READ:] only loads the full file when it fits under the ceiling;
+    otherwise a focused window is returned (the deep marker must not leak in).
+    """
+    monkeypatch.setenv("FIX_CONTEXT_READ_CEILING", "40000")
+    big = tmp_path / "bigmod.py"
+    lines = [f"def f{i}(): return {i}  # except" for i in range(4000)]
+    lines[3000] = "# UNIQUE_DEEP_MARKER_LINE"
+    big.write_text("\n".join(lines), encoding="utf-8")
+    (tmp_path / "helper.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+
+    class _ReadThenFixLLM:
+        def __init__(self) -> None:
+            self.captured: list[str] = []
+            self.round = 0
+
+        async def chat(self, messages, *args, **kwargs):
+            user = next((m for m in messages if m.get("role") == "user"), None)
+            if user is not None:
+                self.captured.append(user["content"])
+            self.round += 1
+            if self.round == 1:
+                return "[READ: bigmod.py]"
+            return "[FILE: bigmod.py]\n```python\nimport os\n\ndef f0(): return 0\n```"
+
+    agent = _FakeAgent()
+    agent.llm = _ReadThenFixLLM()
+    cmd = FixCommand()
+    desc = "fix best-effort-except in bigmod.py:200 — wrap in context manager"
+    asyncio.run(cmd.execute([str(big), "--desc", desc], agent))
+
+    # A windowed [READ:] must not inline the FULL file (deep marker stays out).
+    assert any("focused window" in p for p in agent.llm.captured), (
+        "expected a bounded window on [READ:], not full source"
+    )
+    assert not any("UNIQUE_DEEP_MARKER_LINE" in p for p in agent.llm.captured), (
+        "large [READ:] was not bounded by the ceiling — full source leaked in"
+    )
+    # No single prompt may approach the size that timed out the local model.
+    assert max(len(p) for p in agent.llm.captured) < 100000
+
+
+def test_ondemand_strips_shell_tool_calls(tmp_path: Path) -> None:
+    """Regression (2026-08-28): the model sometimes emits <tool_call>shell ...>
+    invocations (which the fix path cannot execute). These must be stripped so
+    they don't pollute the parse, and a [FILE:] fix in the same response still
+    applies.
+    """
+    small = tmp_path / "smallmod.py"
+    small.write_text("def do_work():\n    print('x')\n", encoding="utf-8")
+
+    class _ToolCallLLM:
+        def __init__(self) -> None:
+            self.captured: list[str] = []
+
+        async def chat(self, messages, *args, **kwargs):
+            user = next((m for m in messages if m.get("role") == "user"), None)
+            if user is not None:
+                self.captured.append(user["content"])
+            return ("<tool_call>shell<arg_key>cmd</arg_key>"
+                    "<arg_value>grep -rn x .</arg_value></tool_call>\n"
+                    "[FILE: smallmod.py]\n```python\nimport os\n\n\n"
+                    "def do_work() -> None:\n    print('y')\n    return None\n```")
+
+    agent = _FakeAgent()
+    agent.llm = _ToolCallLLM()
+    cmd = FixCommand()
+    desc = "change print in smallmod.py:2"
+    asyncio.run(cmd.execute([str(small), "--desc", desc], agent))
+
+    # The shell tool call is inert; the [FILE:] fix must still be applied.
+    assert "print('y')" in small.read_text(encoding="utf-8")
+
+
 def test_default_generate_false_when_no_tree_change() -> None:
     """Regression (2026-08-28): `_default_generate` must report False when the
     generator runs but changes nothing, so the caller raises `generate_failed`

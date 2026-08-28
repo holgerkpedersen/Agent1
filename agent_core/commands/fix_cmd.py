@@ -1313,6 +1313,13 @@ class FixCommand(Command):
             # relevant content and can [READ:] anything else on demand.
             _budget = int(os.environ.get("FIX_CONTEXT_MAX_CHARS", "50000"))
             _per_file_cap = int(os.environ.get("FIX_FILE_MAX_CHARS", "22000"))
+            # Hard ceiling on total context after a [READ:] upgrade. Loading a
+            # full file is allowed only if it keeps the prompt under this ceiling;
+            # otherwise we hand back a focused window. This stops the autonomous
+            # loop from re-bloating the prompt to 500KB+ (which timed out the
+            # local model) when the LLM [READ:]s several large modules
+            # (regression after Fix A made [READ:] load full source, 2026-08-28).
+            _read_ceiling = int(os.environ.get("FIX_CONTEXT_READ_CEILING", "200000"))
 
             def _issue_lines() -> dict[str, int]:
                 """Map lowercased basename -> line number parsed from desc."""
@@ -1335,6 +1342,27 @@ class FixCommand(Command):
                 return "\n".join(lines[lo:hi])
 
             _lines_map = _issue_lines()
+
+            def _load_for_read(fp: str) -> tuple[str, str, str]:
+                """Read a file requested via [READ:], bounding the context.
+
+                Returns (rel_path, loaded_text, note). Loads the FULL file when it
+                fits under `_read_ceiling`; otherwise a focused window centered on
+                the issue line. This keeps a [READ:] of a huge module from blowing
+                the prompt back up to the size that timed out the local model.
+                """
+                with open(fp, "r", encoding="utf-8") as fh:
+                    content = fh.read()
+                rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
+                if len(context) + len(content) <= _read_ceiling:
+                    return rel, content, "full source"
+                center = _lines_map.get(os.path.basename(fp).lower())
+                window = _focused_window(content, center, _per_file_cap)
+                if center:
+                    note = f"focused window (centered on line {center})"
+                else:
+                    note = "focused window (head)"
+                return rel, window, note
 
             def _file_block(fp: str, score: int, content: str) -> str:
                 rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
@@ -1411,17 +1439,26 @@ class FixCommand(Command):
             system = ("You are an expert Python debugger.\n\n"
                       f"WORKSPACE: {ws_dir}\n"
                       "Files below use paths RELATIVE to the workspace.\n\n"
+                      "You have NO shell/terminal access and cannot run commands. "
+                      "Do NOT emit <tool_call>, shell, or any tool invocations — "
+                      "they will be ignored. Only the directives below are recognized.\n\n"
                       "FORMAT (plain text only — NO XML or <tool_call> tags):\n"
                       "  To view a file:  [READ: <relative_path>]\n"
                       "  To submit a fix: [FILE: <relative_path>]\n"
                       "    ```python\n    # complete corrected code here\n    ```\n\n"
+                      "First decide the fix. Request at most one or two files with "
+                      "[READ:] if you truly need more context, then submit the fix "
+                      "with [FILE:]/[PATCH:]. Do not keep asking to read; output the "
+                      "fix directly.\n"
                       "Use EXACTLY the relative filenames shown in the 'Relevant files' section above.\n"
                       "Do NOT add directory prefixes that aren't already shown.\n"
-                      "Do NOT wrap commands in <tool_call> or any XML tags.\n"
                       "If you cannot determine the exact file, explain without [READ:] or [FILE:] tags.")
 
             _TOOL_CALL_RE = re.compile(r'</?tool_call>')
-            _READ_DIRECTIVE_RE = re.compile(r'\[READ:\s*([^\]]+)\]')
+            # Strip whole <tool_call>...</tool_call> blocks (e.g. shell calls the
+            # model emits) so they don't pollute the parse or look like a fix.
+            _TOOL_CALL_BLOCK_RE = re.compile(r'<tool_call>.*?</tool_call>', re.DOTALL)
+            _READ_DIRECTIVE_RE = re.compile(r'\[?READ:\s*([^\]\n<]+)\]?')
             response = ""
             for round_num in range(1, 4):
                 user = (f"Issue: {desc_text}\n\n## Context\n{context}\n\n"
@@ -1458,13 +1495,11 @@ class FixCommand(Command):
                             continue
                         if full in windowed_paths:
                             # The model only saw a focused window; upgrade it to
-                            # the full source so it can actually make the edit.
+                            # full source (if it fits the ceiling) or a centered
+                            # window so it can actually make the edit.
                             try:
-                                with open(full, "r", encoding="utf-8") as fh:
-                                    fcontent = fh.read()
-                                rel = os.path.relpath(full, ws_dir).replace("\\", "/")
-                                context += (f"\n\n# === {rel} (requested by LLM — full "
-                                            f"source) ===\n{fcontent}\n")
+                                rel, loaded, note = _load_for_read(full)
+                                context += f"\n\n# === {rel} (requested by LLM — {note}) ===\n{loaded}\n"
                                 read_paths.add(full)
                                 windowed_paths.discard(full)
                                 new_files.append(rel)
@@ -1473,10 +1508,8 @@ class FixCommand(Command):
                             continue
                         if os.path.isfile(full) and full.endswith(".py"):
                             try:
-                                with open(full, "r", encoding="utf-8") as fh:
-                                    fcontent = fh.read()
-                                rel = os.path.relpath(full, ws_dir).replace("\\", "/")
-                                context += f"\n\n# === {rel} (requested by LLM) ===\n{fcontent}\n"
+                                rel, loaded, note = _load_for_read(full)
+                                context += f"\n\n# === {rel} (requested by LLM — {note}) ===\n{loaded}\n"
                                 read_paths.add(full)
                                 new_files.append(rel)
                             except Exception as exc:
