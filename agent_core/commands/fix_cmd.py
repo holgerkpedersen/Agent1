@@ -1428,6 +1428,22 @@ class FixCommand(Command):
             except Exception:
                 print("Silenced exception in fix_cmd.py:1337")
 
+            # Episodic memory: analogous successful runs (semantic top-k).
+            # Opt-in via AGENT_RAG_EPISODES; additive to the on-demand context.
+            try:
+                from harnessfix.retrieval import format_episodic_notes
+
+                hroot = history_root(ws_dir)
+                if hroot:
+                    cand = [os.path.relpath(fp, hroot).replace("\\", "/") for fp, _, _ in top_files]
+                    episodic = format_episodic_notes(
+                        f"{desc_text}\n" + "\n".join(cand), mode="fix", workspace=hroot
+                    )
+                    if episodic:
+                        context += episodic
+            except Exception:
+                print("Silenced exception in fix_cmd.py:1432")
+
             print(f"  On-demand: {len(top_files)} full files + {len(rest_files)} candidate sigs + {len(sig_map)} other sigs ({len(context)} bytes)")
             print(f"  Full source: {', '.join(os.path.basename(fp) for fp, _, _ in top_files)}")
             if rest_files:
@@ -2716,6 +2732,22 @@ class FixCommand(Command):
                     fix_system += history_block
         except Exception:
             print("Silenced exception in fix_cmd.py:2577")
+
+        # Episodic memory: analogous successful runs (semantic top-k, file/
+        # error-class filtered).  Opt-in via AGENT_RAG_EPISODES; additive.
+        try:
+            from harnessfix.retrieval import format_episodic_notes
+
+            root_r = history_root(fpath) if fpath else None
+            if root_r:
+                rel_r = os.path.relpath(fpath, root_r).replace("\\", "/")
+                episodic = format_episodic_notes(
+                    f"{error_msg}\n{rel_r}\n{traceback_text}", mode="fix", workspace=root_r
+                )
+                if episodic:
+                    fix_system += episodic
+        except Exception:
+            print("Silenced exception in fix_cmd.py:2721")
         fix_msgs = [
             {"role": "system", "content": fix_system},
             {"role": "user", "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n" + "\n".join([f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}" for m, n, s, a in all_broken]) + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}

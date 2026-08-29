@@ -1837,6 +1837,22 @@ class ImplementCommand(Command):
                 except Exception:
                     print("Silenced exception in implement_cmd.py:1824")
 
+            # Episodic memory: analogous successful runs (semantic top-k over
+            # the task).  Opt-in via AGENT_RAG_EPISODES; additive — cannot
+            # affect the write/cascade invariants.
+            if history_mode:
+                try:
+                    from harnessfix.retrieval import format_episodic_notes
+
+                    episodic = format_episodic_notes(
+                        task_context or batch_files_md, mode="implement",
+                        workspace=workspace_path(target_workspace),
+                    )
+                    if episodic:
+                        user_context += episodic
+                except Exception:
+                    print("Silenced exception in implement_cmd.py:1840")
+
             if modify_mode and existing_files:
                 # Modify mode: existing files get [PATCH:] (minimal diff),
                 # new files get [FILE:] (complete implementation).  This
