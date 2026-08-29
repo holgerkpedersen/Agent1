@@ -81,9 +81,18 @@ per decision #079 — no emojis in files.)
 13. [S] **Planner→executor split** — `src/agent1/orchestration/task_scheduler.py::DependencyGraph`
     (get_ready_tasks/topological_order) is unused by the main agent; natural
     fit for plan-mode output → scheduled subtask execution.
+    **DONE** (2026-08-25): `agent_core/plan_execution/` activates the dormant
+    `TaskScheduler`/`DependencyGraph` — `plan exec` parses a plan's `## Tasks`
+    block (or `--tasks <json>`), validates acyclicity via the rich
+    `DependencyGraph`, then dispatches each task to an isolated, role-gated
+    subagent (`SubAgent.spawn_subagent`). Tests: `tests/unit/test_plan_execution.py`
+    (11) + `tests/integration/test_plan_exec.py` (4).
 14. [Q] **Plan-mode handoff** — plan-mode answers evaporate as terminal text;
     persist them to `.docs/<ts>/plan_proposed.md` and offer a one-command
     transition into build/implement.
+    **DONE** (2026-08-25): #14 persist (`.docs/<ts>/plan_proposed.md`) + #13
+    `plan exec` (run `mode build` then `plan exec` to execute the persisted plan
+    via isolated subagents; `--dry-run` previews the dependency graph).
 15. [Q] **multillm synthesis flag** — results print side-by-side then stop.
     Add `--synthesize` (merge answers through one model) and print per-model
     `ResponseMetrics` token/latency in the REPL summary.
