@@ -1,6 +1,7 @@
 """Tool calling loop orchestrator for LLM conversations."""
 
 from __future__ import annotations
+import asyncio
 import enum
 import json
 import sys
@@ -83,6 +84,21 @@ _FORCED_SYNTHESIS_RETRY = (
 
 #: Tools that count as making progress (they change the workspace).
 MUTATING_TOOLS = frozenset({"write", "edit", "fix"})
+
+#: Tools whose execution is side-effect-free AND whose results do not depend on
+#: other calls in the same batch — safe to fire concurrently within one model
+#: batch.  Derived from the verified read-only toolset (``PLAN_MODE_TOOLS`` in
+#: ``agent_core.modes``); ``delegate`` is deliberately excluded because it
+#: spawns subagents subject to ``_MAX_ACTIVE_SUBAGENTS`` and would race that
+#: cap under concurrency.  Mutating tools are excluded for obvious safety.
+try:
+    from agent_core.modes import PLAN_MODE_TOOLS as _PLAN_MODE_TOOLS
+except Exception:  # pragma: no cover - import isolation fallback
+    _PLAN_MODE_TOOLS = frozenset({
+        "search", "read", "list_files", "diff", "web_search",
+        "definitions", "references", "delegate",
+    })
+READONLY_FANOUT_TOOLS: frozenset[str] = _PLAN_MODE_TOOLS - {"delegate"}
 
 _NO_PROGRESS_NUDGE = (
     "NOTE: You have now made {count} calls without discovering anything new "
@@ -484,7 +500,126 @@ class ToolLoopRunner:
             #: Keys actually EXECUTED in this batch (duplicates excluded).
             _executed_this_batch: set[tuple[str, str]] = set()
 
-            # Execute each tool call
+            # Inner executor: runs ONE prepared (non-duplicate) tool call —
+            # execution, path-miss recovery, trace emit, display, and all
+            # post-accounting.  Defined per-run so it closes over the loop's
+            # mutable state without rebinding it (only the four scalars below
+            # are reassigned, so they are declared nonlocal).
+            async def _run_one(
+                prepared: tuple[str, str, dict[str, Any], tuple[str, str], str, str],
+                current_messages: list[dict[str, Any]],
+                injected_notes: list[str],
+                seen_calls: dict[tuple[str, str], int] | None,
+                executed_this_batch: set[tuple[str, str]],
+                dup_streak: dict[tuple[str, str], bool],
+                tool_consec_failures: dict[str, int],
+            ) -> dict[str, Any]:
+                nonlocal calls_without_progress, prev_call_key, prev_result, stuck
+                tc_id, tool_name, args, call_key, args_hash, prev_text = prepared
+                if self.display_mode != DisplayMode.QUIET:
+                    tool_label = cyan(tool_name) + "(" + gray(_fmt_args(args)) + ")"
+                    print(f"  {yellow('[tool]')} {tool_label}")
+                self._emit(
+                    KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, iteration=iteration,
+                    tool=tool_name, args_hash=args_hash, tc_id=tc_id, duplicate=False,
+                )
+                t_call = time.monotonic()
+                affected: list[str] = []
+                try:
+                    result_str = await execute_tool_fn(tool_name, args)
+                except Exception as exc:
+                    affected = self._collect_effects(tool_name, args)
+                    self._emit(
+                        KIND_TOOL_ERROR, LAYER_TOOL_INTERFACE, iteration=iteration,
+                        tool=tool_name, args_hash=args_hash,
+                        exception=type(exc).__name__, message=str(exc)[:500],
+                        affected_files=affected,
+                    )
+                    result_str = f"Tool error: {exc}"
+                else:
+                    affected = self._collect_effects(tool_name, args)
+                #: Record mutated files for the abandonment-resume protocol
+                #: (repair abandonment-resume-protocol): the reconnect note
+                #: names exactly what this run changed (decision #052).
+                if affected:
+                    self._mutated_files.update(str(f) for f in affected)
+                #: Path-existence recovery (decision #035): when a read/edit/write
+                #: reports the path does not exist, augment the result with a parent-
+                #: directory listing so the model can discover the real path instead of
+                #: looping on an invented one — this is the simple existence check
+                #: laguna-s-2.1 lacked.
+                if _is_path_miss(result_str) and tool_name in _PATH_SENSITIVE_TOOLS:
+                    result_str, discovered = await _recover_path_miss(
+                        execute_tool_fn, args, result_str)
+                    if discovered:
+                        calls_without_progress = 0
+                    self._emit(
+                        KIND_GUARD_TRIGGERED, LAYER_LIFECYCLE, guard=GUARD_PATH_MISS,
+                        iteration=iteration, tool=tool_name,
+                        note=_PATH_RECOVERY_NOTE.format(listing="..."),
+                    )
+                self._emit(
+                    KIND_TOOL_RESULT, LAYER_TOOL_INTERFACE, iteration=iteration,
+                    tool=tool_name, args_hash=args_hash, tc_id=tc_id, duplicate=False,
+                    duration_s=time.monotonic() - t_call,
+                    result=truncate(result_str, RESULT_CAP), affected_files=affected,
+                )
+                if self.display_mode != DisplayMode.QUIET:
+                    if self.display_mode == DisplayMode.CLEAN:
+                        print(f"  {yellow('[reason]')} {_derive_reason(tool_name, args, prev_text)}")
+                        summary = _summarize_result(tool_name, result_str)[:_RESULT_DISPLAY_LIMIT]
+                        print(f"  {yellow('[result]')} {colorize_result(summary)}")
+                    else:
+                        shown = colorize_result(result_str[:_RESULT_DISPLAY_LIMIT])
+                        if "tool error:" in shown.lower() or "error" in shown.lower():
+                            shown = red(shown)
+                        print(f"  {yellow('[result]')} {shown}")
+                prev_call_key = call_key
+                dup_streak[call_key] = False
+                prev_result = result_str
+                executed_this_batch.add(call_key)
+                if seen_calls is not None:
+                    seen_calls[call_key] = seen_calls.get(call_key, 0) + 1
+                # Tool-level consecutive-failure guard (decision #061):
+                # detect variant-repeat loops where the same tool is called
+                # with slightly different args that all produce empty/error
+                # results (e.g. grep with regex variations).
+                _result_stripped = result_str.strip()
+                _is_empty_or_error = (
+                    not _result_stripped
+                    or _result_stripped.startswith("No files found")
+                    or _result_stripped.startswith("Tool error:")
+                    or _result_stripped.startswith("Error")
+                    or "returned no output" in _result_stripped.lower()
+                )
+                if _is_empty_or_error:
+                    tool_consec_failures[tool_name] = tool_consec_failures.get(tool_name, 0) + 1
+                else:
+                    tool_consec_failures[tool_name] = 0
+                if tool_consec_failures.get(tool_name, 0) >= _TOOL_CONSECUTIVE_FAILURE_LIMIT:
+                    note = _TOOL_CONSECUTIVE_FAILURE_NOTE.format(
+                        tool=tool_name, count=tool_consec_failures[tool_name])
+                    current_messages.append({"role": "user", "content": note})
+                    injected_notes.append(note)
+                    tool_consec_failures[tool_name] = 0
+                    self._emit(
+                        KIND_GUARD_TRIGGERED, LAYER_LIFECYCLE, guard=GUARD_STUCK,
+                        iteration=iteration, tool=tool_name, note=note)
+                # Return the tool message instead of appending it here: under
+                # concurrent fan-out the caller appends results in ORIGINAL
+                # tool_call_id order (gather completes in arbitrary order),
+                # satisfying the chat-template contract.  Steering notes above
+                # are still appended inline (user-role, order-insensitive).
+                return {"role": "tool", "tool_call_id": tc_id, "content": result_str}
+
+            # Execute each tool call.  Pre-check every call (progress +
+            # duplicate/stuck detection) sequentially to preserve the existing
+            # guard semantics, then FAN OUT the read-only, non-duplicate calls
+            # concurrently (one wall-clock wait instead of N) — they are
+            # side-effect-free and order-independent.  Mutating calls and
+            # ``delegate`` run strictly sequentially AFTER the fan-out so no
+            # mutation races and the no-mutation/progress guards stay correct.
+            pending: list[tuple[str, str, dict[str, Any], tuple[str, str], str, str]] = []
             for tc in tool_calls:
                 tc_id = tc.get("id", "")
                 func = tc.get("function", {})
@@ -602,126 +737,37 @@ class ToolLoopRunner:
                     if stuck:
                         break
                     continue
+                pending.append((tc_id, tool_name, args, call_key, args_hash, prev_text))
 
-                if self.display_mode != DisplayMode.QUIET:
-                    tool_label = cyan(tool_name) + "(" + gray(_fmt_args(args)) + ")"
-                    print(f"  {yellow('[tool]')} {tool_label}")
-                self._emit(
-                    KIND_TOOL_CALL,
-                    LAYER_TOOL_INTERFACE,
-                    iteration=iteration,
-                    tool=tool_name,
-                    args_hash=args_hash,
-                    tc_id=tc_id,
-                    duplicate=False,
-                )
-                t_call = time.monotonic()
-                affected: list[str] = []
-                try:
-                    result_str = await execute_tool_fn(tool_name, args)
-                except Exception as exc:
-                    affected = self._collect_effects(tool_name, args)
-                    self._emit(
-                        KIND_TOOL_ERROR,
-                        LAYER_TOOL_INTERFACE,
-                        iteration=iteration,
-                        tool=tool_name,
-                        args_hash=args_hash,
-                        exception=type(exc).__name__,
-                        message=str(exc)[:500],
-                        affected_files=affected,
-                    )
-                    result_str = f"Tool error: {exc}"
-                else:
-                    affected = self._collect_effects(tool_name, args)
-                #: Record mutated files for the abandonment-resume protocol
-                #: (repair abandonment-resume-protocol): the reconnect note
-                #: names exactly what this run changed (decision #052).
-                if affected:
-                    self._mutated_files.update(str(f) for f in affected)
-
-                #: Path-existence recovery (decision #035): when a read/edit/write
-                #: reports the path does not exist, augment the result with a parent-
-                #: directory listing so the model can discover the real path instead of
-                #: looping on an invented one — this is the simple existence check laguna-s-2.1 lacked.
-                if _is_path_miss(result_str) and tool_name in _PATH_SENSITIVE_TOOLS:
-                    result_str, discovered = await _recover_path_miss(
-                        execute_tool_fn, args, result_str
-                    )
-                    if discovered:
-                        calls_without_progress = 0
-                    self._emit(
-                        KIND_GUARD_TRIGGERED,
-                        LAYER_LIFECYCLE,
-                        guard=GUARD_PATH_MISS,
-                        iteration=iteration,
-                        tool=tool_name,
-                        note=_PATH_RECOVERY_NOTE.format(listing="..."),
-                    )
-                self._emit(
-                    KIND_TOOL_RESULT,
-                    LAYER_TOOL_INTERFACE,
-                    iteration=iteration,
-                    tool=tool_name,
-                    args_hash=args_hash,
-                    tc_id=tc_id,
-                    duplicate=False,
-                    duration_s=time.monotonic() - t_call,
-                    result=truncate(result_str, RESULT_CAP),
-                    affected_files=affected,
-                )
-                if self.display_mode != DisplayMode.QUIET:
-                    if self.display_mode == DisplayMode.CLEAN:
-                        print(f"  {yellow('[reason]')} {_derive_reason(tool_name, args, prev_text)}")
-                        summary = _summarize_result(tool_name, result_str)[:_RESULT_DISPLAY_LIMIT]
-                        print(f"  {yellow('[result]')} {colorize_result(summary)}")
-                    else:
-                        shown = colorize_result(result_str[:_RESULT_DISPLAY_LIMIT])
-                        if "tool error:" in shown.lower() or "error" in shown.lower():
-                            shown = red(shown)
-                        print(f"  {yellow('[result]')} {shown}")
-                prev_call_key = call_key
-                _dup_streak[call_key] = False
-                prev_result = result_str
-                _executed_this_batch.add(call_key)
-                if seen_calls is not None:
-                    seen_calls[call_key] = seen_calls.get(call_key, 0) + 1
-                # Tool-level consecutive-failure guard (decision #061):
-                # detect variant-repeat loops where the same tool is called
-                # with slightly different args that all produce empty/error
-                # results (e.g. grep with regex variations).
-                _result_stripped = result_str.strip()
-                _is_empty_or_error = (
-                    not _result_stripped
-                    or _result_stripped.startswith("No files found")
-                    or _result_stripped.startswith("Tool error:")
-                    or _result_stripped.startswith("Error")
-                    or "returned no output" in _result_stripped.lower()
-                )
-                if _is_empty_or_error:
-                    _tool_consec_failures[tool_name] = _tool_consec_failures.get(tool_name, 0) + 1
-                else:
-                    _tool_consec_failures[tool_name] = 0
-                if _tool_consec_failures.get(tool_name, 0) >= _TOOL_CONSECUTIVE_FAILURE_LIMIT:
-                    note = _TOOL_CONSECUTIVE_FAILURE_NOTE.format(
-                        tool=tool_name, count=_tool_consec_failures[tool_name],
-                    )
-                    current_messages.append({"role": "user", "content": note})
-                    injected_notes.append(note)
-                    _tool_consec_failures[tool_name] = 0
-                    self._emit(
-                        KIND_GUARD_TRIGGERED,
-                        LAYER_LIFECYCLE,
-                        guard=GUARD_STUCK,
-                        iteration=iteration,
-                        tool=tool_name,
-                        note=note,
-                    )
-                current_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc_id,
-                    "content": result_str,
-                })
+            # Fan out read-only calls; run mutating/delegate sequentially after.
+            # Calls collected above are executed here EVEN IF ``stuck`` was set
+            # by a 3rd identical call: that stops the LOOP, but calls already
+            # requested this batch must still run and return their results —
+            # matching the pre-refactor inline behaviour.  The outer
+            # ``if stuck: break`` below ends the loop after this batch.
+            readonly_pending = [p for p in pending if p[1] in READONLY_FANOUT_TOOLS]
+            sequential_pending = [p for p in pending if p[1] not in READONLY_FANOUT_TOOLS]
+            if len(readonly_pending) >= 2:
+                tool_msgs = await asyncio.gather(*(
+                    _run_one(p, current_messages, injected_notes, seen_calls,
+                             _executed_this_batch, _dup_streak, _tool_consec_failures)
+                    for p in readonly_pending))
+            else:
+                tool_msgs = []
+                for p in readonly_pending:
+                    tool_msgs.append(await _run_one(
+                        p, current_messages, injected_notes, seen_calls,
+                        _executed_this_batch, _dup_streak, _tool_consec_failures))
+            for p in sequential_pending:
+                tool_msgs.append(await _run_one(
+                    p, current_messages, injected_notes, seen_calls,
+                    _executed_this_batch, _dup_streak, _tool_consec_failures))
+                if stuck:
+                    break
+            # Append tool messages in ORIGINAL batch (tool_call_id) order, not
+            # gather-completion order, to satisfy the chat-template contract.
+            for msg in tool_msgs:
+                current_messages.append(msg)
             _prev_batch_keys = _executed_this_batch
 
             if stuck:
