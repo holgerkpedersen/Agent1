@@ -84,6 +84,23 @@ _FORCED_SYNTHESIS_RETRY = (
 
 #: Tools that count as making progress (they change the workspace).
 MUTATING_TOOLS = frozenset({"write", "edit", "fix"})
+#: Injected when a run ends non-completed AFTER mutating the workspace
+#: (repair abandonment-resume-protocol): the model has no memory of what it
+#: touched, so without this it starts the next turn cold and repeats or
+#: contradicts the half-applied work.  Travels as a "user" message (strict
+#: chat templates reject mid-conversation system roles) and is stripped from
+#: the persisted history like the other steering notes.
+_RESUME_NOTE = (
+    "RECONNECT: this run was interrupted after mutating the following file(s): "
+    "{files}. Resume the task from there — do NOT re-apply changes that are "
+    "already written, and do NOT start over. Continue the remaining work, then "
+    "give your final answer."
+)
+#: Trace guard label for the abandonment-resume note (decision #052). Defined
+#: here because harnessfix.tracing does not expose a dedicated enum value.
+GUARD_RESUME = "abandonment_resume"
+
+
 
 #: Tools whose execution is side-effect-free AND whose results do not depend on
 #: other calls in the same batch — safe to fire concurrently within one model
@@ -842,6 +859,25 @@ class ToolLoopRunner:
                 all_text_parts.append(response_text)
         else:
             self.termination_reason = "answer"
+        #: Abandonment-after-mutation resume protocol (repair
+        #: abandonment-resume-protocol): when the run was interrupted
+        #: after mutating the workspace, the model has no memory of what
+        #: it touched.  Name the mutated files so the next turn RESUMES
+        #: instead of restarting (decision #052; corpus: 8/263 traces).
+        if self._mutated_files and self.termination_reason != "answer":
+            note = _RESUME_NOTE.format(
+                files=", ".join(sorted(self._mutated_files)),
+            )
+            current_messages.append({"role": "user", "content": note})
+            injected_notes.append(note)
+            self._emit(
+                KIND_GUARD_TRIGGERED,
+                LAYER_LIFECYCLE,
+                guard=GUARD_RESUME,
+                iteration=iteration,
+                note=note,
+                affected_files=sorted(self._mutated_files),
+            )
 
         # Only the LAST non-empty text matters: earlier texts are the model's
         # intermediate narration ("I will read the file...") and would clutter
