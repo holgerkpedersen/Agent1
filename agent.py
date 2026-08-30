@@ -2870,6 +2870,13 @@ async def run_interactive() -> None:
         cmd = registry.get(name)
         synopsis = cmd.help_text.splitlines()[0].strip() if cmd else name
         print(f"  {cyan(synopsis)}")
+    # Surface the safe read-only generation path prominently: `propose` (and the
+    # --propose flags on implement/fix) generate a reviewed diff bundle without
+    # ever touching the working tree — the recommended way to try changes.
+    print(gray(
+        "  Tip: `propose <taskplan.md>` (or `implement --propose` / "
+        "`fix --mypy --propose`) generates a reviewed diff bundle; "
+        "it never writes the working tree."))
     print(f"  {cyan('quit')} - {gray('Exit')}")
     print(blue("=" * 50))
     _register_commands(registry)
