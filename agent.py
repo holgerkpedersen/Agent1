@@ -776,9 +776,15 @@ class Agent:
                 f"Error: unknown role(s): {', '.join(unknown)}. "
                 f"Available: {', '.join(role_names())}"
             )
-        # Dedupe, keep order, cap concurrency.
+        # Dedupe (preserve order), then cap concurrency. Using `seen.add(r)`
+        # inside a boolean `or` is a fragile idiom (set.add returns None), so we
+        # spell the dedupe out explicitly.
         seen: set[str] = set()
-        unique_roles = [r for r in roles if not (r in seen or seen.add(r))]
+        unique_roles: list[str] = []
+        for r in roles:
+            if r not in seen:
+                seen.add(r)
+                unique_roles.append(r)
         unique_roles = unique_roles[:_MAX_ACTIVE_SUBAGENTS]
         dropped = len(roles) - len(unique_roles)
 
