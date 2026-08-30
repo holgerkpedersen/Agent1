@@ -5,131 +5,391 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent1 - Autonomous Self-Improvement</title>
   <link rel="icon" type="image/png" href="static/ttheme/images/logo-icon.png" sizes="16x16">
+  <!-- TTTHEME framework (same assets/order as index.html) -->
+  <link rel="stylesheet" href="static/assets/logo3d.css">
   <style>
-    @font-face { font-family: 'Poppins'; src: url('static/ttheme/fonts/Poppins-Regular.ttf') format('truetype'); font-weight: 400; }
-    @font-face { font-family: 'Poppins'; src: url('static/ttheme/fonts/Poppins-Medium.ttf') format('truetype'); font-weight: 500; }
-    @font-face { font-family: 'Poppins'; src: url('static/ttheme/fonts/Poppins-Bold.ttf') format('truetype'); font-weight: 700; }
+    @font-face { font-family: 'Poppins'; src: url('static/ttheme/fonts/Poppins-Regular.ttf') format('truetype'); font-weight: 400; font-display: swap; }
+    @font-face { font-family: 'Poppins'; src: url('static/ttheme/fonts/Poppins-Medium.ttf') format('truetype'); font-weight: 500; font-display: swap; }
+    @font-face { font-family: 'Poppins'; src: url('static/ttheme/fonts/Poppins-Bold.ttf') format('truetype'); font-weight: 700; font-display: swap; }
   </style>
   <link rel="stylesheet" href="static/ttheme/css/remixicon.css">
   <link rel="stylesheet" href="static/ttheme/css/lib/bootstrap.min.css">
   <link rel="stylesheet" href="static/ttheme/css/style.css">
+  <link rel="stylesheet" href="static/ttheme/css/monochrome-mode.css">
   <style>
-    :root {
-      --au-bg: #0f172a;
-      --au-card: #1e293b;
-      --au-border: rgba(148,163,184,.2);
-      --au-text: #e2e8f0;
-      --au-muted: #94a3b8;
-      --au-accent: #458eff;
-      --au-ok: #10b981;
-      --au-bad: #ef4444;
-      --au-warn: #f59e0b;
-    }
-    [data-theme="light"] {
-      --au-bg: #f8fafc;
-      --au-card: #ffffff;
-      --au-border: rgba(100,116,139,.25);
-      --au-text: #0f172a;
-      --au-muted: #64748b;
-    }
-    body {
-      background: var(--au-bg);
-      color: var(--au-text);
-      font-family: 'Poppins', sans-serif;
-      margin: 0;
-      padding: 24px;
-    }
-    .wrap { max-width: 1100px; margin: 0 auto; }
-    h1 { font-size: 1.35rem; font-weight: 700; display: flex; align-items: center; gap: 10px; margin: 0; }
-    .sub { color: var(--au-muted); font-size: .85rem; margin: 4px 0 20px; }
-    .topbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-    .card {
-      background: var(--au-card);
-      border: 1px solid var(--au-border);
-      border-radius: 12px;
-      padding: 16px;
-      margin-bottom: 16px;
-    }
-    .card h2 { font-size: 1rem; font-weight: 500; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
-    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
-    th { text-align: left; color: var(--au-muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--au-border); white-space: nowrap; }
-    td { padding: 8px; border-bottom: 1px solid var(--au-border); vertical-align: top; }
-    tr:last-child td { border-bottom: none; }
-    .badge { padding: 2px 10px; border-radius: 999px; font-size: .72rem; font-weight: 600; white-space: nowrap; }
-    .badge.ok   { background: color-mix(in srgb, var(--au-ok) 18%, transparent); color: var(--au-ok); }
-    .badge.bad  { background: color-mix(in srgb, var(--au-bad) 18%, transparent); color: var(--au-bad); }
-    .badge.warn { background: color-mix(in srgb, var(--au-warn) 18%, transparent); color: var(--au-warn); }
-    .badge.mut  { background: color-mix(in srgb, var(--au-muted) 22%, transparent); color: var(--au-muted); }
-    .badge.acc  { background: color-mix(in srgb, var(--au-accent) 18%, transparent); color: var(--au-accent); }
-    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: .78rem; font-weight: 500; }
-    .pill.live { background: color-mix(in srgb, var(--au-ok) 16%, transparent); color: var(--au-ok); }
-    .pill.idle { background: color-mix(in srgb, var(--au-muted) 18%, transparent); color: var(--au-muted); }
+    /* Reuse the dashboard's inline component helpers (metric-card / live-dot)
+       so the Autonomous view matches index.html exactly. */
+    [hidden] { display: none !important; }
+    .metric-card .icon-wrap { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success-main, #10b981); display: inline-block; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .table thead th { white-space: nowrap; }
+    .table tbody td { vertical-align: middle; }
+
+    /* Autonomous-only layout helpers (dashboard tokens only) */
+    .au-breadcrumb { list-style: none; margin: 0; padding: 0; }
+    .phase-steps { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 6px; }
+    .step { padding: 4px 12px; border-radius: 8px; font-size: .8rem; border: 1px solid var(--border-color); color: var(--text-secondary-light); }
+    .step.active { border-color: var(--primary-500); color: var(--primary-500); background: color-mix(in srgb, var(--primary-500) 12%, transparent); font-weight: 600; }
+    .step.done { color: var(--success-main); border-color: color-mix(in srgb, var(--success-main) 40%, transparent); }
+    .progress { height: 8px; background: var(--border-color); border-radius: 999px; overflow: hidden; margin-top: 6px; }
+    .progress > span { display: block; height: 100%; background: var(--primary-500); transition: width .4s; }
+    .kv { display: grid; grid-template-columns: 200px 1fr; gap: 8px 16px; font-size: .9rem; }
+    .kv .k { color: var(--text-secondary-light); }
+    .kv .v { word-break: break-word; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; color: var(--text-secondary-light); white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; border-radius: 999px; font-size: .8rem; font-weight: 500; }
+    .pill.live { background: color-mix(in srgb, var(--success-main) 16%, transparent); color: var(--success-main); }
+    .pill.idle { background: color-mix(in srgb, var(--text-secondary-light) 18%, transparent); color: var(--text-secondary-light); }
     .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; }
     .dot.blink { animation: pulse 1.2s infinite; }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
-    .kv { display: grid; grid-template-columns: 180px 1fr; gap: 6px 12px; font-size: .9rem; }
-    .kv .k { color: var(--au-muted); }
-    .kv .v { word-break: break-word; }
-    .phase-steps { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
-    .step { padding: 4px 10px; border-radius: 8px; font-size: .78rem; border: 1px solid var(--au-border); color: var(--au-muted); }
-    .step.active { border-color: var(--au-accent); color: var(--au-accent); background: color-mix(in srgb, var(--au-accent) 12%, transparent); font-weight: 600; }
-    .step.done { color: var(--au-ok); border-color: color-mix(in srgb, var(--au-ok) 40%, transparent); }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; color: var(--au-muted); white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }
-    a.link { color: var(--au-accent); text-decoration: none; }
-    a.link:hover { text-decoration: underline; }
-    .progress { height: 8px; background: var(--au-border); border-radius: 999px; overflow: hidden; margin-top: 8px; }
-    .progress > span { display: block; height: 100%; background: var(--au-accent); transition: width .4s; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="topbar">
-      <div>
-        <h1><i class="ri-robot-2-line"></i> Autonomous Self-Improvement</h1>
-        <div class="sub">Live view of <code>scripts/autonomous_self_improve.py</code> — what the agent is doing right now and the results so far.</div>
+  <!-- Sidebar (same TTTHEME shell as index.html, with the 3D Agent1 logo) -->
+  <aside class="sidebar">
+    <button type="button" class="sidebar-close-btn">
+      <iconify-icon icon="radix-icons:cross-2"></iconify-icon>
+    </button>
+    <div>
+      <a href="index.html" class="sidebar-logo" style="display:flex;align-items:center;gap:10px;padding:0 16px;">
+        <span class="a1-logo3d" role="img" aria-label="Agent1 Logo">
+          <span class="a1-cube">
+            <span class="a1-face a1-face--front"></span>
+            <span class="a1-face a1-face--back"></span>
+            <span class="a1-face a1-face--right"></span>
+            <span class="a1-face a1-face--left"></span>
+            <span class="a1-face a1-face--top"></span>
+            <span class="a1-face a1-face--bottom"></span>
+          </span>
+        </span>
+        <strong class="mb-0" style="font-size:20px;font-weight:700;font-family:'Poppins',sans-serif;color:inherit;line-height:1;">AGENT1</strong>
+      </a>
+    </div>
+    <div class="sidebar-menu-area">
+      <ul class="sidebar-menu" id="sidebar-menu">
+        <li class="sidebar-menu-group-title">Agent1</li>
+        <li data-view="dashboard">
+          <a href="index.html">
+            <iconify-icon icon="solar:home-smile-angle-outline" class="menu-icon"></iconify-icon>
+            <span>Dashboard</span>
+          </a>
+        </li>
+        <li data-view="commands">
+          <a href="index.html#view-commands" onclick="location.href='index.html#view-commands'">
+            <iconify-icon icon="solar:chart-2-outline" class="menu-icon"></iconify-icon>
+            <span>Command Summary</span>
+          </a>
+        </li>
+        <li data-view="log">
+          <a href="index.html#view-log" onclick="location.href='index.html#view-log'">
+            <iconify-icon icon="solar:clipboard-list-outline" class="menu-icon"></iconify-icon>
+            <span>Execution Log</span>
+          </a>
+        </li>
+        <li data-view="alerts">
+          <a href="index.html#view-alerts" onclick="location.href='index.html#view-alerts'">
+            <iconify-icon icon="solar:bell-outline" class="menu-icon"></iconify-icon>
+            <span>Alerts</span>
+          </a>
+        </li>
+        <li data-view="gauges">
+          <a href="index.html#view-gauges" onclick="location.href='index.html#view-gauges'">
+            <iconify-icon icon="line-md:gauge" class="menu-icon"></iconify-icon>
+            <span>Gauges</span>
+          </a>
+        </li>
+        <li class="active" data-view="autonomous">
+          <a href="autonomous.html">
+            <iconify-icon icon="ri:robot-2-line" class="menu-icon"></iconify-icon>
+            <span>Autonomous</span>
+          </a>
+        </li>
+        <li class="sidebar-menu-group-title">Application</li>
+        <li data-view="histogram">
+          <a href="index.html#view-histogram" onclick="location.href='index.html#view-histogram'">
+            <iconify-icon icon="ep:histogram" class="menu-icon"></iconify-icon>
+            <span>Histogram</span>
+          </a>
+        </li>
+        <li class="sidebar-menu-group-title">Resources</li>
+        <li>
+          <a href="https://github.com/holgerkpedersen/Agent1" target="_blank" rel="noopener">
+            <iconify-icon icon="mdi:github" class="menu-icon"></iconify-icon>
+            <span>Source</span>
+          </a>
+        </li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="dashboard-main">
+    <!-- Header (same TTTHEME shell as index.html) -->
+    <div class="navbar-header">
+      <div class="row align-items-center justify-content-between">
+        <div class="col-auto">
+          <div class="d-flex flex-wrap align-items-center gap-16">
+            <button type="button" class="sidebar-toggle">
+              <iconify-icon icon="heroicons:bars-3-solid" class="icon text-2xl non-active"></iconify-icon>
+              <iconify-icon icon="iconoir:arrow-right" class="icon text-2xl active"></iconify-icon>
+            </button>
+            <button type="button" class="sidebar-mobile-toggle">
+              <iconify-icon icon="heroicons:bars-3-solid" class="icon"></iconify-icon>
+            </button>
+          </div>
+        </div>
+        <div class="col-auto">
+          <div class="d-flex flex-wrap align-items-center gap-16">
+            <button type="button" data-theme-toggle
+              class="w-40-px h-40-px bg-neutral-200 rounded-circle d-flex justify-content-center align-items-center"></button>
+            <button type="button" onclick="toggleMonochrome()"
+              class="mono-toggle w-40-px h-40-px bg-neutral-200 rounded-circle d-flex justify-content-center align-items-center"
+              aria-label="Toggle Monochrome Mode">
+              <iconify-icon icon="tabler:palette" class="icon text-xl"></iconify-icon>
+            </button>
+            <div class="dropdown">
+              <button class="d-flex justify-content-center align-items-center rounded-circle" type="button"
+                data-bs-toggle="dropdown">
+                <img src="static/ttheme/images/users/default.png" alt="user"
+                  class="w-40-px h-40-px object-fit-cover rounded-circle">
+              </button>
+              <div class="dropdown-menu to-top dropdown-menu-sm">
+                <div
+                  class="py-12 px-16 radius-8 bg-primary-50 mb-16 d-flex align-items-center justify-content-between gap-2">
+                  <div>
+                    <h6 class="text-lg text-primary-light fw-semibold mb-2">Agent1</h6>
+                    <span class="text-secondary-light fw-medium text-sm">Local AI Agent</span>
+                  </div>
+                </div>
+                <ul class="to-top-list">
+                  <li>
+                    <a class="dropdown-item text-black px-0 py-8 hover-bg-transparent hover-text-primary d-flex align-items-center gap-16"
+                      href="https://github.com/holgerkpedersen/Agent1" target="_blank" rel="noopener">
+                      <iconify-icon icon="mdi:github" class="icon text-xl"></iconify-icon> Repository
+                    </a>
+                  </li>
+                  <li>
+                    <a class="dropdown-item text-black px-0 py-8 hover-bg-transparent hover-text-primary d-flex align-items-center gap-16"
+                      href="javascript:void(0)" onclick="location.reload()">
+                      <iconify-icon icon="lucide:refresh-cw" class="icon text-xl"></iconify-icon> Refresh
+                    </a>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div style="display:flex;align-items:center;gap:14px;">
-        <span id="livePill" class="pill idle"><span class="dot"></span> idle</span>
-        <span class="sub" id="updated" style="margin:0;">updated —</span>
-        <a class="link" href="index.html">back to dashboard</a>
+    </div>
+
+    <div class="dashboard-main-body">
+      <!-- Page title row (matches index.html) -->
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-16 mb-24">
+        <div>
+          <h6 class="fw-semibold mb-0">Autonomous Self-Improvement</h6>
+          <p class="text-sm text-secondary-light mb-0 mt-24">
+            Live view of <code>scripts/autonomous_self_improve.py</code>
+            <span class="live-dot ms-2" id="liveDot"></span>
+            <span id="connStatus" class="text-secondary-light ms-1">connecting…</span>
+          </p>
+        </div>
+        <ul class="au-breadcrumb d-flex align-items-center gap-2">
+          <li class="fw-medium">
+            <a href="index.html" class="d-flex align-items-center gap-1 hover-text-primary">
+              <iconify-icon icon="solar:home-smile-angle-outline" class="icon text-lg"></iconify-icon>
+              Dashboard
+            </a>
+          </li>
+          <li>-</li>
+          <li class="fw-medium">Autonomous</li>
+        </ul>
       </div>
-    </div>
 
-    <div class="card">
-      <h2><i class="ri-pulse-line"></i> Current run</h2>
-      <div class="kv" id="runKv">
-        <div class="k">Status</div><div class="v" id="runStatus">—</div>
+      <!-- Stat cards (same metric-card layout as index.html) -->
+      <div class="row row-cols-xxxl-4 row-cols-lg-2 row-cols-sm-2 row-cols-1 gy-4 mb-24">
+        <div class="col">
+          <div class="card shadow-none border h-100">
+            <div class="card-body p-20">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-16">
+                <div>
+                  <p class="fw-medium text-primary-light mb-1">Status</p>
+                  <h6 class="mb-0" id="stat-status">Idle</h6>
+                </div>
+                <div class="metric-card">
+                  <div class="icon-wrap bg-primary-50 text-primary-600">
+                    <iconify-icon icon="ri:robot-2-line" class="text-2xl"></iconify-icon>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card shadow-none border h-100">
+            <div class="card-body p-20">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-16">
+                <div>
+                  <p class="fw-medium text-primary-light mb-1">Iteration</p>
+                  <h6 class="mb-0" id="stat-iteration">—</h6>
+                </div>
+                <div class="metric-card">
+                  <div class="icon-wrap bg-warning-subtle text-warning-main">
+                    <iconify-icon icon="solar:loop-bold" class="text-2xl"></iconify-icon>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card shadow-none border h-100">
+            <div class="card-body p-20">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-16">
+                <div>
+                  <p class="fw-medium text-primary-light mb-1">Current Phase</p>
+                  <h6 class="mb-0" id="stat-phase">Idle</h6>
+                </div>
+                <div class="metric-card">
+                  <div class="icon-wrap bg-info-subtle text-info-main">
+                    <iconify-icon icon="solar:pulse-outline" class="text-2xl"></iconify-icon>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card shadow-none border h-100">
+            <div class="card-body p-20">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-16">
+                <div>
+                  <p class="fw-medium text-primary-light mb-1">Iterations Done</p>
+                  <h6 class="mb-0" id="stat-done">0</h6>
+                </div>
+                <div class="metric-card">
+                  <div class="icon-wrap bg-success-subtle text-success-main">
+                    <iconify-icon icon="solar:checklist-outline" class="text-2xl"></iconify-icon>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="phase-steps" id="phaseSteps"></div>
-      <div class="progress"><span id="phaseBar" style="width:0%"></span></div>
-      <div class="kv" id="runKv2" style="margin-top:12px;"></div>
-    </div>
 
-    <div class="card">
-      <h2><i class="ri-flag-line"></i> Latest iteration result</h2>
-      <div class="kv" id="summaryKv">
-        <div class="k">Verdict</div><div class="v" id="sumVerdict">—</div>
+      <!-- Main panels -->
+      <div class="row gy-4">
+        <div class="col-xxl-7">
+          <div class="card shadow-none border h-100">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Current Run</h6>
+              <span class="pill idle" id="livePill"><span class="dot"></span> idle</span>
+            </div>
+            <div class="card-body">
+              <div class="kv" id="runKv">
+                <div class="k">Status</div><div class="v" id="runStatus">—</div>
+              </div>
+              <div class="phase-steps" id="phaseSteps"></div>
+              <div class="progress"><span id="phaseBar" style="width:0%"></span></div>
+              <div class="kv" id="runKv2" style="margin-top:14px;"></div>
+            </div>
+          </div>
+        </div>
+        <div class="col-xxl-5">
+          <div class="card shadow-none border h-100">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Latest Iteration Result</h6>
+              <span class="badge bg-success-focus text-success-main rounded-pill" id="badge-verdict">—</span>
+            </div>
+            <div class="card-body">
+              <div class="kv" id="summaryKv">
+                <div class="k">Verdict</div><div class="v" id="sumVerdict">—</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
+
+      <div class="row gy-4 mt-2">
+        <div class="col-xxl-7">
+          <div class="card shadow-none border h-100">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Iteration History</h6>
+              <span class="badge bg-primary-50 text-primary-600 rounded-pill" id="badge-history-count">0</span>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table mb-0">
+                  <thead>
+                    <tr><th>#</th><th>Verdict</th><th>Repair</th><th>Tests</th><th>Security</th><th>Harness Δ</th><th>Commit</th></tr>
+                  </thead>
+                  <tbody id="historyBody">
+                    <tr><td colspan="7" class="text-center text-secondary-light">No iterations recorded yet.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-xxl-5">
+          <div class="card shadow-none border h-100">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Recent Commits</h6>
+            </div>
+            <div class="card-body">
+              <div class="mono" id="commits">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p class="text-sm text-secondary-light text-end mt-24 mb-0" id="updated">updated —</p>
     </div>
 
-    <div class="card">
-      <h2><i class="ri-history-line"></i> Iteration history</h2>
-      <table>
-        <thead>
-          <tr><th>#</th><th>Verdict</th><th>Repair</th><th>Tests</th><th>Security</th><th>Harness Δ</th><th>Commit</th></tr>
-        </thead>
-        <tbody id="historyBody">
-          <tr><td colspan="7" class="v" style="color:var(--au-muted)">No iterations recorded yet.</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <footer class="d-footer">
+      <div class="row align-items-center justify-content-between">
+        <div class="col-auto">
+          <p class="mb-0">© 2026 Agent1. All Rights Reserved.</p>
+        </div>
+        <div class="col-auto">
+          <p class="mb-0">
+            Developed by
+            <a href="https://github.com/holgerkpedersen/Agent1" target="_blank" rel="noopener"
+              class="text-primary-600">Holger K. Pedersen</a>
+            &middot; UI/UX
+            <a href="https://2tinteractive.com" target="_blank" rel="noopener" class="text-primary-600">2tinteractive.com</a>
+            (<a href="https://github.com/LebToki" target="_blank" rel="noopener" class="text-primary-600">Tarek Tarabichi</a>)
+          </p>
+        </div>
+      </div>
+    </footer>
+  </main>
 
-    <div class="card">
-      <h2><i class="ri-git-commit-line"></i> Recent commits</h2>
-      <div class="mono" id="commits">—</div>
-    </div>
-  </div>
-
+  <script src="static/ttheme/js/lib/jquery-3.7.1.min.js"></script>
+  <script src="static/ttheme/js/lib/bootstrap.bundle.min.js"></script>
+  <script src="static/ttheme/js/lib/iconify-icon.min.js"></script>
+  <script src="static/assets/agent1-icon-bundle.js"></script>
+  <script src="static/ttheme/js/app.js"></script>
+  <!-- Monochrome toggle (same handler as index.html; app.js only wires the
+       theme toggle, not this button). -->
+  <script>
+    function toggleMonochrome() {
+      const on = localStorage.getItem('agent1_monochrome') === 'true';
+      const next = !on;
+      localStorage.setItem('agent1_monochrome', String(next));
+      if (next) document.body.classList.add('monochrome-mode');
+      else document.body.classList.remove('monochrome-mode');
+      const btn = document.querySelector('.mono-toggle');
+      if (btn) btn.classList.toggle('active', next);
+    }
+    (function initMonochrome() {
+      if (localStorage.getItem('agent1_monochrome') === 'true') {
+        document.body.classList.add('monochrome-mode');
+        const btn = document.querySelector('.mono-toggle');
+        if (btn) btn.classList.add('active');
+      }
+    })();
+  </script>
   <script>
     const STEPS = [
       ["collecting_traces", "Collect"],
@@ -169,33 +429,44 @@
     function badge(cls, txt) { return '<span class="badge ' + cls + '">' + esc(txt) + "</span>"; }
 
     function verdictBadge(v) {
-      if (v === "accepted") return badge("ok", "accepted");
-      if (!v) return badge("mut", "—");
-      if (v === "review_required_fail_closed") return badge("mut", "fail-closed");
-      if (v === "skipped_test_collision") return badge("warn", "collision-skip");
-      if (v === "no_repair_catalogued") return badge("mut", "no repair");
-      return badge("bad", esc(v));
+      if (v === "accepted") return badge("bg-success-focus text-success-main", "accepted");
+      if (!v) return badge("bg-neutral-200 text-secondary-light", "—");
+      if (v === "review_required_fail_closed") return badge("bg-neutral-200 text-secondary-light", "fail-closed");
+      if (v === "skipped_test_collision") return badge("bg-warning-focus text-warning-main", "collision-skip");
+      if (v === "no_repair_catalogued") return badge("bg-neutral-200 text-secondary-light", "no repair");
+      return badge("bg-danger-focus text-danger-main", esc(v));
     }
 
     function boolBadge(b) {
-      if (b === true) return badge("ok", "pass");
-      if (b === false) return badge("bad", "fail");
-      return badge("mut", "—");
+      if (b === true) return badge("bg-success-focus text-success-main", "pass");
+      if (b === false) return badge("bg-danger-focus text-danger-main", "fail");
+      return badge("bg-neutral-200 text-secondary-light", "—");
     }
 
     function render(data) {
       const st = data.status || {};
       const running = !!st.running;
-      const pill = el("livePill");
-      pill.className = "pill " + (running ? "live" : "idle");
-      pill.innerHTML = '<span class="dot' + (running ? " blink" : "") + '"></span> ' + (running ? "live" : "idle");
-      el("updated").textContent = "updated " + new Date().toLocaleTimeString();
 
-      // Current run card
+      // Stat cards
       const iter = st.iteration != null ? st.iteration : "?";
       const maxIter = st.max_iterations != null ? st.max_iterations : "?";
       const phase = st.phase || (running ? "loop_iteration_start" : "idle");
       const phaseLabel = PHASE_LABEL[phase] || phase;
+      el("stat-status").textContent = running ? "Running" : "Idle";
+      el("stat-iteration").textContent = iter + " / " + maxIter;
+      el("stat-phase").textContent = phaseLabel;
+      const hist = data.history || [];
+      el("stat-done").textContent = String(hist.length);
+
+      // Live pill + connection status
+      const pill = el("livePill");
+      pill.className = "pill " + (running ? "live" : "idle");
+      pill.innerHTML = '<span class="dot' + (running ? " blink" : "") + '"></span> ' + (running ? "live" : "idle");
+      el("liveDot").style.visibility = running ? "visible" : "hidden";
+      el("connStatus").textContent = running ? "running" : "idle";
+      el("updated").textContent = "updated " + new Date().toLocaleTimeString();
+
+      // Current run card
       let elapsed = "";
       if (st.ts && running) {
         const secs = Math.max(0, Math.round((data.server_time || (Date.now()/1000)) - st.ts));
@@ -203,8 +474,8 @@
         elapsed = " (elapsed " + (m ? m + "m " : "") + s + "s)";
       }
       el("runStatus").innerHTML = running
-        ? badge("acc", "iteration " + iter + "/" + maxIter + " — " + esc(phaseLabel) + elapsed)
-        : badge("mut", "not running (last seen " + (st.ts ? new Date(st.ts*1000).toLocaleString() : "never") + ")");
+        ? badge("bg-primary-50 text-primary-600", "iteration " + iter + "/" + maxIter + " — " + esc(phaseLabel) + elapsed)
+        : badge("bg-neutral-200 text-secondary-light", "not running (last seen " + (st.ts ? new Date(st.ts*1000).toLocaleString() : "never") + ")");
 
       // Phase steps
       const steps = el("phaseSteps");
@@ -223,7 +494,7 @@
       const kv2 = el("runKv2");
       const rows = [];
       if (st.model) rows.push(["Model", esc(st.model)]);
-      if (st.candidate) rows.push(["Candidate repair", esc(st.candidate) + (st.candidate_layer ? " <span class='badge mut'>" + esc(st.candidate_layer) + "</span>" : "")]);
+      if (st.candidate) rows.push(["Candidate repair", esc(st.candidate) + (st.candidate_layer ? " <span class='badge bg-neutral-200 text-secondary-light'>" + esc(st.candidate_layer) + "</span>" : "")]);
       if (st.repair_applied) rows.push(["Repair applied", esc(st.repair_applied)]);
       if (st.traces != null) rows.push(["Traces", esc(st.traces)]);
       if (st.diagnosed != null) rows.push(["Diagnosed", esc(st.diagnosed)]);
@@ -235,34 +506,40 @@
       if (st.security_passed != null) rows.push(["Security gate", boolBadge(st.security_passed)]);
       kv2.innerHTML = rows.length
         ? rows.map(r => '<div class="k">' + r[0] + '</div><div class="v">' + r[1] + "</div>").join("")
-        : '<div class="k">Detail</div><div class="v" style="color:var(--au-muted)">waiting for an active iteration…</div>';
+        : '<div class="k">Detail</div><div class="v" style="color:var(--text-secondary-light)">waiting for an active iteration…</div>';
 
       // Summary card
       const sum = data.summary || {};
       const sk = el("summaryKv");
+      const vb = el("badge-verdict");
       if (!sum.verdict && !sum.proposed_repair) {
         sk.innerHTML = '<div class="k">Verdict</div><div class="v">—</div>';
+        vb.className = "badge bg-neutral-200 text-secondary-light rounded-pill";
+        vb.textContent = "—";
       } else {
         const rows = [
           ["Verdict", verdictBadge(sum.verdict)],
           ["Proposed repair", sum.proposed_repair ? esc(sum.proposed_repair) : "—"],
           ["Repair applied", sum.repair_applied ? esc(sum.repair_applied) : "—"],
-          ["Tests", boolBadge(sum.tests_passed) + " <span class='v' style='color:var(--au-muted);font-size:.8rem'>" + esc((sum.tests_tail || "").replace(/\s+/g, " ").slice(0, 120)) + "</span>"],
+          ["Tests", boolBadge(sum.tests_passed) + " <span class='v' style='color:var(--text-secondary-light);font-size:.8rem'>" + esc((sum.tests_tail || "").replace(/\s+/g, " ").slice(0, 120)) + "</span>"],
           ["Security", boolBadge(sum.security_passed)],
         ];
         const hb = sum.harness_baseline_rate, hp = sum.harness_post_rate;
         if (hb != null || hp != null) {
-          rows.push(["Harness quality", esc(hb) + " → " + esc(hp) + (sum.harness_accepted ? " " + badge("ok", "accepted") : " " + badge("bad", "regress"))]);
+          rows.push(["Harness quality", esc(hb) + " → " + esc(hp) + (sum.harness_accepted ? " " + badge("bg-success-focus text-success-main", "accepted") : " " + badge("bg-danger-focus text-danger-main", "regress"))]);
         }
         if (sum.accepted_repair) rows.push(["Accepted repair", esc(sum.accepted_repair)]);
         sk.innerHTML = rows.map(r => '<div class="k">' + r[0] + '</div><div class="v">' + r[1] + "</div>").join("");
+        if (sum.verdict === "accepted") { vb.className = "badge bg-success-focus text-success-main rounded-pill"; }
+        else { vb.className = "badge bg-danger-focus text-danger-main rounded-pill"; }
+        vb.textContent = esc(sum.verdict || "—");
       }
 
       // History
-      const hist = data.history || [];
       const hb2 = el("historyBody");
+      el("badge-history-count").textContent = String(hist.length);
       if (!hist.length) {
-        hb2.innerHTML = '<tr><td colspan="7" class="v" style="color:var(--au-muted)">No iterations recorded yet.</td></tr>';
+        hb2.innerHTML = '<tr><td colspan="7" class="text-center text-secondary-light">No iterations recorded yet.</td></tr>';
       } else {
         hb2.innerHTML = hist.map(h => {
           const delta = (h.harness_post_rate != null && h.harness_baseline_rate != null)
@@ -294,7 +571,8 @@
       } catch (e) {
         el("livePill").className = "pill idle";
         el("livePill").innerHTML = '<span class="dot"></span> offline';
-        el("updated").textContent = "offline: " + e.message;
+        el("liveDot").style.visibility = "hidden";
+        el("connStatus").textContent = "offline: " + e.message;
       }
     }
     refresh();

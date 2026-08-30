@@ -164,6 +164,40 @@ def test_endpoint_derives_idle_when_heartbeat_stale(
     assert payload["status"]["running"] is False
 
 
+def test_endpoint_returns_history_newest_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(progress, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(progress, "STATUS_PATH", tmp_path / "run_status.json")
+    monkeypatch.setattr(progress, "HISTORY_PATH", tmp_path / "run_history.jsonl")
+
+    # Seed three finished iterations in chronological (oldest-first) order.
+    progress.append_history({"iteration": 1, "timestamp": 1000.0, "verdict": "accepted"})
+    progress.append_history({"iteration": 2, "timestamp": 2000.0, "verdict": "rejected_and_reverted"})
+    progress.append_history({"iteration": 3, "timestamp": 3000.0, "verdict": "accepted"})
+
+    from agent_core.monitoring import dashboard_api
+    monkeypatch.setattr(dashboard_api.DashboardAPIHandler, "_base_dir", str(tmp_path))
+    monkeypatch.setattr(
+        dashboard_api.subprocess, "run",
+        lambda *a, **k: typing.cast(typing.Any, _FakeProc()),
+    )
+
+    server = DashboardAPIServer(__import__("agent_core.monitoring.metrics_collector", fromlist=["MetricsCollector"]).MetricsCollector(), port=0)
+    httpd = server.start()
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        port = httpd.server_address[1]
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/autonomous/status", timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    finally:
+        threading.Thread(target=httpd.shutdown, daemon=True).start()
+        httpd.server_close()
+
+    # The dashboard table must show the most recent iteration at the top.
+    assert [h["iteration"] for h in payload["history"]] == [3, 2, 1]
+
+
 def test_autonomous_page_served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from agent_core.monitoring import dashboard_api
 

@@ -187,7 +187,9 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         Merges the per-phase beacon (run_status.json), the latest finished
         iteration summary (summary.json), the cross-iteration history
         (run_history.jsonl) and the most recent commits, plus a derived
-        ``running`` flag so the UI can show a live/idle indicator.
+        ``running`` flag so the UI can show a live/idle indicator.  ``history``
+        is delivered newest-first (by timestamp, iteration as tiebreaker) so the
+        dashboard table shows the latest iteration at the top.
         """
         from harnessfix.progress import read_history, read_progress
 
@@ -214,6 +216,14 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
                 summary = {}
 
         history = read_history(limit=50)
+        # The dashboard table reads the most recent iteration first, so deliver
+        # history newest-first (records are appended chronologically; sort by
+        # timestamp with iteration as a stable tiebreaker).
+        history = sorted(
+            history,
+            key=lambda r: (r.get("timestamp") or 0, r.get("iteration") or 0),
+            reverse=True,
+        )
 
         # Recent commits touching the autonomous run (most recent first).
         recent_commits: list[str] = []
