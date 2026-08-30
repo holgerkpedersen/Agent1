@@ -58,7 +58,13 @@ function calculateSettingAsThemeString({ localStorageTheme }) {
   if (localStorageTheme !== null) {
     return localStorageTheme;
   }
-  return "light"; // default to light theme if nothing is stored
+  // Agent1 is dark-first: index.html ships <html data-theme="dark">. Respect
+  // the attribute declared on <html> so a fresh visit matches the static
+  // markup, and fall back to "dark" when nothing is stored or declared.
+  // (The old code unconditionally returned "light", which flipped the whole
+  // dashboard bright on first load despite data-theme="dark".)
+  const declared = document.documentElement.getAttribute("data-theme");
+  return (declared === "light" || declared === "dark") ? declared : "dark";
 }
 
 /**

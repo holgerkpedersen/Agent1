@@ -149,3 +149,89 @@ def test_header_buttons_keep_round_shape_classes(base_url: str) -> None:
         assert "w-40-px" in classes and "h-40-px" in classes
         assert "rounded-circle" in classes
         assert "justify-content-center" in classes
+
+
+def _extract_function(source: str, name: str) -> str:
+    """Return the top-level `function <name>(...) { ... }` source (brace-matched).
+
+    The parameter list must be skipped by balanced parens first — it may itself
+    contain braces (e.g. destructuring like ``({ localStorageTheme })``), which
+    would otherwise terminate the scan after the signature only.
+    """
+    start = source.index(f"function {name}(")
+    i = source.index("(", start)
+    depth = 0
+    for j in range(i, len(source)):
+        if source[j] == "(":
+            depth += 1
+        elif source[j] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+    k = source.index("{", j)  # body start, after the closing paren of params
+    depth = 0
+    for m in range(k, len(source)):
+        if source[m] == "{":
+            depth += 1
+        elif source[m] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : m + 1]
+    raise AssertionError(f"unbalanced braces while extracting {name}")
+
+
+def test_dark_mode_is_default_when_no_preference_stored(
+    base_url: str, tmp_path: Path
+) -> None:
+    """Regression: app.js used to force the theme to "light" whenever nothing
+    was stored in localStorage. On a fresh visit that overwrote the declared
+    <html data-theme="dark"> in index.html and rendered the whole dashboard
+    bright, even though the static markup is dark-first.
+
+    The resolver must now honour the attribute declared on <html> (or fall
+    back to "dark"), while an explicitly stored user preference still wins.
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        pytest.skip("node not available to execute the theme resolver")
+
+    status, body = _get(base_url + "/static/ttheme/js/app.js")
+    assert status == 200
+    fn_src = _extract_function(body.decode("utf-8"), "calculateSettingAsThemeString")
+
+    harness = tmp_path / "theme_resolver_harness.js"
+    harness.write_text(
+        f"{fn_src}\n"
+        "global.document = { documentElement: { getAttribute: () => global.__declared } };\n"
+        "const run = (stored, declared) => {\n"
+        "  global.__declared = declared;\n"
+        "  return calculateSettingAsThemeString({ localStorageTheme: stored });\n"
+        "};\n"
+        "console.log(JSON.stringify({\n"
+        "  fresh_dark_declared: run(null, 'dark'),\n"
+        "  fresh_light_declared: run(null, 'light'),\n"
+        "  fresh_no_declaration: run(null, null),\n"
+        "  stored_light_wins: run('light', 'dark'),\n"
+        "  stored_dark_wins: run('dark', null)\n"
+        "}));\n",
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        ["node", str(harness)], capture_output=True, text=True, timeout=30
+    )
+    assert proc.returncode == 0, f"node harness failed: {proc.stderr}"
+    result = json.loads(proc.stdout.strip().splitlines()[-1])
+
+    # Fresh visit with <html data-theme="dark"> (what index.html declares):
+    assert result["fresh_dark_declared"] == "dark", \
+        "first load must stay dark to match the declared markup"
+    # No stored preference and no declaration -> dark-first fallback:
+    assert result["fresh_no_declaration"] == "dark"
+    # An explicit light declaration is still honoured:
+    assert result["fresh_light_declared"] == "light"
+    # A stored user preference always wins over the declared attribute:
+    assert result["stored_light_wins"] == "light"
+    assert result["stored_dark_wins"] == "dark"
