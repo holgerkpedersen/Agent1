@@ -579,7 +579,7 @@ class ToolLoopRunner:
                         exception=type(exc).__name__, message=str(exc)[:500],
                         affected_files=affected,
                     )
-                    result_str = f"Tool error: {exc}"
+                    result_str = f"Tool error ({type(exc).__name__}): {exc}"
                 else:
                     affected = self._collect_effects(tool_name, args)
                 #: Record mutated files for the abandonment-resume protocol
