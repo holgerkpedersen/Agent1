@@ -141,7 +141,9 @@ class TestToolLoopExecution:
 
         assert final_text == "I got an error."
         tool_msg = next(m for m in messages if m["role"] == "tool")
-        assert "Tool error: boom" in tool_msg["content"]
+        # The tool-interface-error-detail repair feeds the exception type back
+        # to the model: "Tool error (RuntimeError): boom".
+        assert "Tool error (RuntimeError): boom" in tool_msg["content"]
 
     def test_cap_hit_while_tool_calls_pending_forces_final_synthesis(self):
         """If the model burns all iterations on tool calls, the loop must still
