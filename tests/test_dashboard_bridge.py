@@ -92,7 +92,7 @@ def test_main_dashboard_flag_boots_thread_and_repl(
 ) -> None:
     calls: list[str] = []
 
-    def fake_start(port: int = 8080) -> None:
+    def fake_start(port: int = 8081) -> None:
         calls.append(f"dashboard:{port}")
 
     async def fake_interactive() -> None:
@@ -104,15 +104,15 @@ def test_main_dashboard_flag_boots_thread_and_repl(
     import asyncio
 
     asyncio.run(agent.main())
-    assert calls == ["dashboard:8080", "interactive"]
+    assert calls == ["dashboard:8081", "interactive"]
 
 
 def test_dashboard_port_flag_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     for argv, expected in (
-        (["agent.py"], 8080),
+        (["agent.py"], 8081),  # dashboard defaults to 8081; llama-server keeps :8080
         (["agent.py", "--port", "9001"], 9001),
         (["agent.py", "--port=9002"], 9002),
-        (["agent.py", "--serve", "--port", "abc"], 8080),  # invalid -> default
+        (["agent.py", "--serve", "--port", "abc"], 8081),  # invalid -> default
     ):
         monkeypatch.setattr(sys, "argv", argv)
         assert agent._dashboard_port() == expected

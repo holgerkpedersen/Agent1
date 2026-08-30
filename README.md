@@ -118,13 +118,13 @@ collisions, and unwired modules (see agent_core/commands/implement_cmd.py).
 - **Tool schemas are declared once** in `agent_core/tool_schemas.py` — the schema set sent to the LLM is exactly the set the dispatcher can execute (`NLP_TOOL_NAMES`).
 - Conversation history is maintained so follow-up questions build on previous answers.
 
-### Web Dashboard (`http://localhost:8080`)
+### Web Dashboard (`http://localhost:8081`)
 
-Run the REPL and the live TTTHEME dashboard in the same process (or serve only the web UI):
+Run the REPL and the live TTTHEME dashboard in the same process (or serve only the web UI). The dashboard defaults to **port 8081**; port **8080 is reserved for the llama-server LLM backend** (override either with `--port N`):
 
 ```
-python agent.py --dashboard          # REPL + dashboard in one process
-python agent.py --serve              # dashboard only
+python agent.py --dashboard          # REPL + dashboard on :8081
+python agent.py --serve              # dashboard only, on :8081
 python agent.py --serve --port 9000  # custom port
 ```
 

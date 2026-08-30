@@ -2714,7 +2714,7 @@ def _build_dashboard(collector: "MetricsCollector", port: int) -> tuple[Any, Any
     return server_holder, alert_system
 
 
-def start_dashboard_thread(port: int = 8080) -> Optional["ThreadingHTTPServer"]:
+def start_dashboard_thread(port: int = 8081) -> Optional["ThreadingHTTPServer"]:
     """Serve the TTTHEME dashboard on a daemon thread from this process."""
     server_holder, alert_system = _build_dashboard(get_metrics_collector(), port)
     httpd = cast(
@@ -2974,7 +2974,7 @@ async def main() -> None:
 
 
 def _dashboard_port() -> int:
-    """Resolve the dashboard port: --port N / --port=N, else 8080."""
+    """Resolve the dashboard port: --port N / --port=N, else 8081."""
     argv = sys.argv[1:]
     for i, arg in enumerate(argv):
         if arg == "--port" and i + 1 < len(argv):
@@ -2987,7 +2987,7 @@ def _dashboard_port() -> int:
                 return int(arg.split("=", 1)[1])
             except ValueError:
                 break
-    return 8080
+    return 8081
 
 
 def _default_alert_rules() -> "list[AlertRule]":
@@ -3023,7 +3023,10 @@ def _default_alert_rules() -> "list[AlertRule]":
 
 
 def run_dashboard_server() -> None:
-    """Launch the TTTHEME web dashboard on localhost:8080."""
+    """Launch the TTTHEME web dashboard on localhost:8081.
+
+    Port 8080 is reserved for the llama-server LLM backend (see AGENT_LLAMA_URL),
+    so the dashboard defaults to 8081 and can be overridden with --port N."""
     port = _dashboard_port()
     # Reuse the process-wide collector so anything recorded before/while
     # serving (REPL commands, chat turns) is visible in the UI.

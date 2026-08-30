@@ -1,6 +1,6 @@
 """`demo_data` — feed synthetic activity into the shared metrics collector.
 
-Purpose: the TTTHEME dashboard (http://localhost:8080) renders whatever the
+Purpose: the TTTHEME dashboard (http://localhost:8081) renders whatever the
 process-wide ``MetricsCollector`` holds. On a fresh start every view shows
 "No counters / No activity recorded yet" until real commands run. This
 command fills every dashboard surface deterministically — LLM-free:
@@ -111,6 +111,6 @@ class DemoDataCommand(Command):
             print(f"  [demo] round {round_no + 1}/{loop_rounds}: "
                   f"+{count} events fed (running total {total})")
 
-        print("  [demo] done. Open http://localhost:8080 "
-              "(UI polls every 3s).")
+        print("  [demo] done. Open http://localhost:8081 "
+              "(UI polls every 3s; llama-server LLM backend on :8080).")
         return True
