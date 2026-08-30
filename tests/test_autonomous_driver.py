@@ -97,6 +97,39 @@ def test_no_benchmark_disables_model(tmp_path):
     assert seen["model"] is None
 
 
+def test_model_passed_to_agent_for_generation(tmp_path):
+    """Regression: --model must reach the Agent used for LLM fix-generation
+    (the issue loop routes `fix` LLM calls through agent.llm), not only the
+    optional benchmark gate.  Passing --model but building Agent without it
+    silently fell back to the default model for generation (bug report)."""
+    import os as _os
+    _os.environ.pop("AGENT_AUTONOMOUS", None)
+    captured = {}
+
+    class _FakeAgent:
+        def __init__(self, workspace=None, model_name=None):
+            captured["model_name"] = model_name
+            captured["workspace"] = workspace
+        def model_name(self):  # pragma: no cover - not used by driver
+            return captured["model_name"]
+
+    with mock.patch("agent.Agent", _FakeAgent), \
+         mock.patch.object(drv, "_git", _noop_git), \
+         mock.patch.object(drv, "_stop_requested", lambda: False), \
+         mock.patch.object(drv, "run_iteration", lambda *a, **k: _fake_summary("no_repair_catalogued")):
+        # --source issues enters the issue loop, which constructs the Agent.
+        # With no eligible issues the loop returns immediately (no real work),
+        # but the Agent must already have been built with the requested model.
+        rc = drv.main([
+            "--auto", "--source", "issues", "--model", "qwen/qwen3.8-27b",
+            "--max-iterations", "1",
+        ])
+    assert rc == 0
+    assert captured.get("model_name") == "qwen/qwen3.8-27b", (
+        f"--model not forwarded to Agent; got {captured.get('model_name')!r}"
+    )
+
+
 def test_commits_accepted_repair_then_stops(monkeypatch, tmp_path):
     """An accepted repair is committed; the loop then stops (single iteration)."""
     monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)

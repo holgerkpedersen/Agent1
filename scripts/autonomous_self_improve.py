@@ -21,12 +21,15 @@ Safety rails
 - ``STOP_AUTONOMOUS`` file or env var checked BETWEEN iterations: create
   ``STOP_AUTONOMOUS`` in the repo root (or set the env var) to halt cleanly
   after the current round finishes.
-- ``--max-iterations`` caps the run (default 5); ``--model`` is OPTIONAL:
-  the LLM benchmark is now a non-blocking cross-check, not the primary gate.
-  When ``--model`` is omitted the loop gates on the offline, harness-centric
-  quality signal (corpus target-alignment) plus tests + security.  Pass
-  ``--no-benchmark`` to suppress the benchmark subprocess entirely even when a
-  model is set.
+- ``--max-iterations`` caps the run (default 5); ``--model`` is OPTIONAL and
+  drives TWO things: (1) the model used for LLM fix-generation in the issue
+  loop (the ``fix`` command routes its LLM calls through ``agent.llm``), and
+  (2) the optional non-blocking benchmark cross-check.  When ``--model`` is
+  omitted, generation uses the Agent's default-resolved model (persisted /
+  AGENT_MODEL / live LM Studio) and the loop gates on the offline,
+  harness-centric quality signal (corpus target-alignment) plus tests +
+  security.  Pass ``--no-benchmark`` to suppress the benchmark subprocess
+  entirely even when a model is set.
 
 Usage
 -----
@@ -409,13 +412,19 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[autonomous] Starting self-improvement loop "
           f"(max_iterations={args.max_iterations}, "
-          f"model={args.model or 'none (offline harness-quality gate)'}"
-          f"{' [benchmark disabled]' if args.no_benchmark else ''})")
+          f"model={args.model or 'default (resolve_model)'}"
+          f"{' [benchmark disabled]' if args.no_benchmark else ''}"
+          f"{' — model drives fix-generation + benchmark' if args.model else ''})")
 
     level_cap = int(os.environ.get("AGENT_AUTONOMY_LEVEL", "") or 1)
     if args.source in ("issues", "both"):
         from agent import Agent
-        agent = Agent(workspace=str(REPO_ROOT))
+        # Pass the selected model through to the Agent so that fix generation
+        # (the `fix` command / LLM calls) actually uses it.  Previously --model
+        # only reached the optional benchmark gate, so generation silently fell
+        # back to the default model.  None is fine: Agent then resolves the
+        # default via resolve_model() (persisted / AGENT_MODEL / live LM Studio).
+        agent = Agent(workspace=str(REPO_ROOT), model_name=args.model)
         run_issue_loop(
             max_iterations=args.max_iterations, level_cap=level_cap, agent=agent,
             no_benchmark=args.no_benchmark, model=args.model, profile=args.profile,
