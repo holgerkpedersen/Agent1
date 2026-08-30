@@ -31,6 +31,15 @@ from harnessfix.loop import run_loop
 from harnessfix.repairs import CATALOG
 from harnessfix.tracing import KIND_LOOP_END, KIND_TOOL_ERROR, TraceWriter
 
+# These are repair/loop self-tests: they exercise apply()/revert() on the real
+# tool_loop.py and stub the gates, so running them inside the autonomous gate
+# (which applies the repair to the real file first) would revert the very
+# change the gate is validating.  Excluded from the gate via the same
+# harnessfix_self_test marker used by test_harnessfix_loop.py /
+# test_repairs_*.py (see gates.py: the gate runs `-m not harnessfix_self_test`
+# so the repaired functional suite is validated while the change is present).
+pytestmark = pytest.mark.harnessfix_self_test
+
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
