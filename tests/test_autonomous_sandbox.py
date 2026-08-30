@@ -101,6 +101,12 @@ def test_run_loop_does_not_pollute_real_beacons(tmp_path: Path, monkeypatch: pyt
     traces_dir.mkdir()
     _write_tool_error_trace(traces_dir, "sbx")
 
+    # Ensure the tool_interface repair is NOT already applied, so run_loop can
+    # exercise the apply+accept path (it is skipped as already-applied once
+    # landed in the real tree by the autonomous driver).
+    if tool_interface.is_applied():
+        tool_interface.revert()
+
     monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
     monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
     monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
