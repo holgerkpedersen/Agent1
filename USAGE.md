@@ -288,6 +288,9 @@ Flags:
 | `--fix` | Retry compilation errors with the LLM |
 | `--retry` | Re-generate only files missing from disk (uses cached file list) |
 | `--review` | After generation, review new files for bugs + DRY violations |
+| `--propose` | Generate + validate in memory, emit a bundle, **never write the tree** |
+| `--validate` | With `--propose`: run pytest/security gates and record results in the bundle |
+| `--out <dir>` | With `--propose`: write the bundle to `<dir>` (default `reports/proposals/<ts>/`) |
 | `--workspace <path>` | Target a different workspace |
 
 Example with supporting documents:
@@ -317,6 +320,35 @@ Safety: implement now has 6 layers of protection:
 6. **Auto-review + `--review`** — offers to delete dangerous files (y/N) + LLM deep analysis
 
 File discovery parses the taskplan directly — no LLM invents wrong filenames. Path rules adapt to any workspace by detecting existing `__init__.py` directories — no hardcoded prefixes.
+
+### 4b. Propose mode (read-only tree)
+
+`propose` (alias for `implement --propose`) generates code, validates it
+**in memory**, and emits a self-contained bundle — it never writes the working
+tree. This is strictly safer than the autonomous driver's `git stash`
+checkpoint: there is no dirty-tree window and no `stash pop` to corrupt state.
+The checkpoint becomes *the artifact* (a diff + rationale + test result) that a
+human or CI merges with `git apply`.
+
+```
+> propose project_tasks.md --validate
+[Generating...]
+PROPOSAL emitted (tree NOT modified): reports/proposals/20260830_181556
+  proposal.md    (human-readable bundle)
+  proposal.patch (git apply-compatible unified diff)
+  accepted=6 rejected=0 skipped=0
+```
+
+The bundle records the git `HEAD` and working-tree status so CI can assert the
+base matches before applying:
+
+```bash
+git apply reports/proposals/<ts>/proposal.patch
+```
+
+`fix --mypy --propose` does the same for error fixes — it captures the
+candidate `[PATCH:]`/`[FILE:]` blocks and emits them as a bundle instead of
+applying them.
 
 ---
 

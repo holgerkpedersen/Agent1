@@ -907,3 +907,69 @@ class TestConftestRedirectOutsideTestWorkspace:
                     f"internals as 'project code'. Target: {target}"
                 )
 
+
+class TestProposeMode:
+    """`implement --propose` / `propose` generate + validate in memory and emit
+    a bundle but NEVER write the working tree (stronger than a git-stash
+    checkpoint)."""
+
+    @staticmethod
+    def _run(tmp_path, stub_content, extra_args=(), auto="y"):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from agent_core.commands.implement_cmd import ImplementCommand
+
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        target = pkg / "mod_me.py"
+        target.write_text("def foo():\n    return 1\n", encoding="utf-8")
+        (tmp_path / "tasks.md").write_text(
+            "1. `pkg/mod_me.py` — extend foo\n", encoding="utf-8"
+        )
+
+        # The LLM returns a [FILE:] block; propose mode must NOT apply it.
+        async def chat(messages, **kwargs):
+            return f"[FILE: pkg/mod_me.py]\n```python\n{stub_content}```\n"
+
+        agent = SimpleNamespace(workspace=str(tmp_path), llm=SimpleNamespace(chat=chat))
+        with patch("agent_core.commands.implement_cmd.auto_choice", return_value=auto):
+            args = [str(tmp_path / "tasks.md"), "--propose", *extra_args]
+            ok = asyncio.run(ImplementCommand().execute(args, agent))
+        return ok, target
+
+    def test_propose_never_writes_tree(self, tmp_path):
+        ok, target = self._run(tmp_path, "def foo():\n    return 2\n")
+        assert ok is True
+        # The existing file is byte-identical — propose did not touch it.
+        assert target.read_text(encoding="utf-8") == "def foo():\n    return 1\n"
+
+    def test_propose_emits_bundle(self, tmp_path):
+        ok, target = self._run(
+            tmp_path, "def foo():\n    return 2\n",
+            extra_args=["--out", str(tmp_path / "bundle")],
+        )
+        assert ok is True
+        base = tmp_path / "bundle"
+        assert (base / "proposal.md").exists()
+        assert (base / "proposal.patch").exists()
+        patch = (base / "proposal.patch").read_text()
+        # git-apply-compatible unified diff for the proposed change.
+        assert "--- a/pkg/mod_me.py" in patch
+        assert "+++ b/pkg/mod_me.py" in patch
+        assert "+    return 2" in patch
+
+    def test_propose_rejects_broken_syntax_in_bundle(self, tmp_path):
+        """A generated file that does not compile is recorded as rejected,
+        not written or silently dropped."""
+        ok, target = self._run(
+            tmp_path, "def foo(:\n    return 2\n",
+            extra_args=["--out", str(tmp_path / "bundle2")],
+        )
+        assert ok is True
+        md = (tmp_path / "bundle2" / "proposal.md").read_text()
+        assert "## REJECTED" in md
+        # Still never touched the tree.
+        assert target.read_text(encoding="utf-8") == "def foo():\n    return 1\n"
+

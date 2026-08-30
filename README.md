@@ -48,10 +48,15 @@ implement <taskplan> [opts]      Implement files from task plan
                                   --allow-rewrite    Opt in to wholesale rewrite of existing file under --modify
                                   --refresh          With --keep: rebuild the cached file list from the taskplan
                                   --no-history       Skip injecting PAST EXECUTION NOTES from past runs
+                                  --propose          Generate + validate in memory, emit a bundle, NEVER write the tree
+                                  --validate         With --propose: run pytest/security gates and record results in the bundle
+                                  --out <dir>        With --propose: write the bundle to <dir> (default reports/proposals/<ts>/)
                                   --workspace <path> Target workspace
+propose <taskplan> [opts]        Alias for `implement --propose` — produce a reviewed diff bundle, tree untouched
 fix <traceback>                  Paste traceback to auto-fix root cause
     <file> --desc "text"        On-demand — top-5 files by keyword match, LLM requests more with [READ:]
     <file> --desc "text" --full  Send entire project context (old behavior)
+    --mypy [--propose]          Fix mypy errors; with --propose emit the fix as a bundle instead of applying
     [PATCH:] output              Prefer minimal diffs — shows changed lines, asks y/N before applying
 cleanup                          Show unreferenced files
 workflow <target> [opts]         Full pipeline: analyze → plan → entities → tasks → implement

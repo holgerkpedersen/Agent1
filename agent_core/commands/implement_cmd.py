@@ -1338,7 +1338,7 @@ class ImplementCommand(Command):
         parts = args
 
         if len(parts) < 1:
-            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--modify] [--fix] [--retry] [--review] [--allow-rewrite] [--no-history] [--status] [--workspace <path>]")
+            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--modify] [--fix] [--retry] [--review] [--allow-rewrite] [--no-history] [--status] [--propose] [--validate] [--out <dir>] [--workspace <path>]")
             return True
 
         keep_mode = "--keep" in parts
@@ -1351,6 +1351,17 @@ class ImplementCommand(Command):
         allow_rewrite = "--allow-rewrite" in parts
         history_mode = "--no-history" not in parts
         status_mode = "--status" in parts
+        # --propose: generate + validate in memory, emit a bundle, never write
+        # the tree (see agent_core/commands/proposal_core.py).  Stronger than
+        # the driver's git-stash checkpoint because the agent never mutates
+        # the working tree at all.
+        propose_mode = "--propose" in parts
+        validate_mode = "--validate" in parts
+        out_dir = None
+        if "--out" in parts:
+            oi = parts.index("--out")
+            if oi + 1 < len(parts):
+                out_dir = parts[oi + 1].strip('"')
 
         target_workspace = agent.workspace
         if "--workspace" in parts:
@@ -1358,7 +1369,7 @@ class ImplementCommand(Command):
             if ws_idx + 1 < len(parts):
                 target_workspace = parts[ws_idx + 1].strip('"')
 
-        skip_tokens = ["--keep", "--refresh", "--force", "--modify", "--fix", "--retry", "--review", "--workspace", "--allow-rewrite", "--no-history", "--status", target_workspace]
+        skip_tokens = ["--keep", "--refresh", "--force", "--modify", "--fix", "--retry", "--review", "--workspace", "--allow-rewrite", "--no-history", "--status", "--propose", "--validate", "--out", out_dir, target_workspace]
         filtered_parts = [p for p in parts if p not in skip_tokens]
 
         taskplan_file = filtered_parts[0] if filtered_parts else ""
@@ -2110,6 +2121,54 @@ class ImplementCommand(Command):
                 print("  All imports verified!")
         else:
             print("No content generated.")
+
+        # ---- PROPOSE MODE (read-only tree) -------------------------------
+        # Generate + validate in memory, emit a bundle, never write the tree.
+        # This is the safe-by-construction path: the working directory is
+        # untouched, so there is no dirty-tree window and no git-stash pop to
+        # corrupt state (stronger than the autonomous driver's checkpoint).
+        if propose_mode:
+            from agent_core.commands.proposal_core import (
+                emit_proposal,
+                gate_file,
+                run_proposal_security,
+                run_proposal_tests,
+            )
+
+            file_outcomes = {}
+            for fname, content in generated_content.items():
+                status, reason, effective = gate_file(
+                    fname, content, ws,
+                    allow_rewrite=allow_rewrite, force_mode=force_mode,
+                )
+                # Key outcomes by the ORIGINAL filename so the bundle can map
+                # every generated file back to its outcome (accepted/rejected/
+                # skipped) regardless of any auto-repair path change.
+                if status == "accepted":
+                    file_outcomes[fname] = "accepted"
+                elif status == "rejected":
+                    file_outcomes[fname] = f"rejected — {reason}"
+                else:
+                    file_outcomes[fname] = f"skipped — {reason}"
+            accepted = {f: c for f, c in generated_content.items()
+                        if file_outcomes.get(f, "").startswith("accepted")}
+            meta: dict[str, object] = {
+                "command": "implement --propose",
+                "model": getattr(getattr(agent, "llm", None), "model", "unknown"),
+                "rationale": {},
+            }
+            if validate_mode:
+                passed, detail = run_proposal_tests(ws, accepted)
+                meta["test_result"] = (passed, detail)
+                sec_passed, sec_detail = run_proposal_security()
+                meta["security_result"] = (sec_passed, sec_detail)
+            # Emit the FULL generated set (not just accepted) so rejected /
+            # skipped files are recorded in the bundle rather than dropped.
+            emit_proposal(generated_content, ws, file_outcomes, meta=meta, out_dir=out_dir)
+            print(f"\nPropose summary: {len(accepted)} accepted / "
+                  f"{sum(1 for v in file_outcomes.values() if v.startswith('rejected'))} rejected / "
+                  f"{sum(1 for v in file_outcomes.values() if v.startswith('skipped'))} skipped.")
+            return True
 
         # Safety net: back up every existing target BEFORE any write happens,
         # so a rejected or rolled-back generation can never destroy original

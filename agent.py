@@ -2774,6 +2774,8 @@ def _register_commands(registry: CommandRegistry) -> None:
     registry.register(SubAgentCommand())
     from agent_core.commands.mcp_cmd import MCPCommand
     registry.register(MCPCommand())
+    from agent_core.commands.propose_cmd import ProposeCommand
+    registry.register(ProposeCommand())
 
 
 def _build_registry() -> CommandRegistry:

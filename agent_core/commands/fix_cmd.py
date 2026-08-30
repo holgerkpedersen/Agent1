@@ -1107,6 +1107,15 @@ class FixCommand(Command):
         # Such rewrites are blocked unless --allow-rewrite / --force is given.
         force = "--force" in parts
         allow_rewrite = "--allow-rewrite" in parts or force
+        # --propose: produce the fix diff(s) but never apply them.  The agent
+        # emits a proposal bundle (diff + rationale) and leaves the tree
+        # untouched — stronger than the driver's git-stash checkpoint.
+        propose_mode = "--propose" in parts
+        out_dir = None
+        if "--out" in parts:
+            oi = parts.index("--out")
+            if oi + 1 < len(parts):
+                out_dir = parts[oi + 1].strip('"')
 
         # Handle --stdin flag
         stdin_mode = "--stdin" in parts
@@ -1644,13 +1653,19 @@ class FixCommand(Command):
             return True
 
         if "--mypy" in parts:
-            return await self._fix_mypy(parts, agent)
+            return await self._fix_mypy(parts, agent, propose_mode=propose_mode, out_dir=out_dir)
 
         else:
             return await self._fix_traceback(parts, agent)
 
-    async def _fix_mypy(self, parts: list[str], agent: 'Agent') -> bool:
+    async def _fix_mypy(
+        self, parts: list[str], agent: 'Agent', propose_mode: bool = False, out_dir: str | None = None
+    ) -> bool:
         """Run mypy over the workspace and LLM-fix errors grouped by owning file.
+
+        With *propose_mode* the LLM-generated [PATCH:]/[FILE:] blocks are
+        captured in memory and emitted as a proposal bundle — the tree is
+        never written (the agent proposes a fix but does not apply it).
 
         Usage: fix --mypy [path...] [--limit N] [--rounds N]
         Default targets: agent_core/, agent1/ and agent.py in the current dir.
@@ -1722,6 +1737,9 @@ class FixCommand(Command):
         if not files:
             print("Workspace is mypy-clean. Nothing to fix.")
             return True
+
+        # PROPOSE MODE accumulator: rel_file -> proposed full-file content.
+        proposed: dict[str, str] = {}
 
         for rel_file, errs in files[:limit]:
             if stop_requested():
@@ -1820,7 +1838,14 @@ class FixCommand(Command):
                     print(f"  LLM error: {response}")
                     print("  Hint: the model burned its whole output budget on reasoning. Load a non-thinking model (`model load <name>`) or a faster coder model for fix --mypy.")
                     break
-                prev = current
+                # PROPOSE MODE: capture the candidate fix in memory; never apply
+                # it to the tree.  The first successful-looking response per
+                # file is kept (later attempts refine it).
+                if propose_mode:
+                    captured = self._capture_proposed(response, rel_file, ws_dir)
+                    for fname, content in captured.items():
+                        proposed[fname] = content
+                    prev = current
                 before_errs = list(remaining)
                 count_before = len(before_errs)
                 failures: list[str] = []
@@ -1935,6 +1960,21 @@ class FixCommand(Command):
         print(f"\n[fix --mypy] Done. {total} error(s) remain in {len(final)} file(s).")
         for fp, cnt in sorted(final.items(), key=lambda kv: -len(kv[1]))[:10]:
             print(f"  {fp}: {len(cnt)}")
+
+        # PROPOSE MODE: emit the captured fixes as a bundle; never touch the tree.
+        if propose_mode:
+            from agent_core.commands.proposal_core import emit_proposal
+
+            file_outcomes = {f: "accepted" for f in proposed}
+            meta: dict[str, object] = {
+                "command": "fix --mypy --propose",
+                "model": getattr(getattr(agent, "llm", None), "model", "unknown"),
+                "rationale": {},
+            }
+            if proposed:
+                emit_proposal(proposed, ws_dir, file_outcomes, meta=meta, out_dir=out_dir)
+            else:
+                print("[fix --mypy --propose] No candidate fixes were produced.")
         return True
 
     def _repair_and_mechanical(
@@ -2353,6 +2393,41 @@ class FixCommand(Command):
             print("  → y (all targeted errors fixed, nothing new)")
         else:
             print("  → n (some targeted errors remain)  [s/q = stop whole run]")
+
+    def _capture_proposed(self, response: str, rel_file: str, ws_dir: str) -> dict[str, str]:
+        """PROPOSE MODE: turn an LLM [PATCH:]/[FILE:] response into in-memory
+        proposed file contents (full file text) WITHOUT writing the tree.
+
+        Returns a ``rel_file -> proposed_full_text`` mapping.  [PATCH:] blocks
+        are applied to the current on-disk file via ``proposal_core``; [FILE:]
+        blocks are taken verbatim.  Failures are reported and skipped.
+        """
+        from agent_core.commands.proposal_core import in_memory_apply_patch
+
+        out: dict[str, str] = {}
+        clean = re.sub(r'</?tool_call>', '', response or "")
+        patches = re.findall(
+            r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL
+        )
+        for fpath, patch_text in patches:
+            fpath = fpath.strip()
+            target = fpath if os.path.isfile(fpath) else os.path.normpath(os.path.join(ws_dir, fpath))
+            try:
+                existing = open(target, "r", encoding="utf-8").read() if os.path.isfile(target) else ""
+            except OSError:
+                existing = ""
+            ok, result = in_memory_apply_patch(os.path.basename(target), existing, patch_text.strip())
+            if ok:
+                out[fpath] = result
+            else:
+                print(f"  [propose] candidate patch for {fpath} not applied: {str(result)[:120]}")
+        fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', clean, re.DOTALL)
+        if not fixes and not patches:
+            fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?=\n```|\Z)', clean, re.DOTALL)
+        for fpath, content in fixes:
+            fpath = fpath.strip()
+            out[fpath] = content.strip()
+        return out
 
     def _apply_fix_response(self, response: str, ws_dir: str, desc_text: str) -> None:
         """Parse [FILE:] and [PATCH:] blocks from *response* and apply them to disk."""
