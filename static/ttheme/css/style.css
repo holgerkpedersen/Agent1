@@ -11719,6 +11719,17 @@ h6, .h6 {
 /* === badge css end === */
 /* === table css start === */
 /* Table Common Css Start */
+/* Bootstrap's own .table (used by the monitoring dashboard's data tables:
+   Command Summary, Counters, Execution Log, Alerts, Gauges, Histogram)
+   resolves its cell background via --bs-table-bg -> --bs-body-bg, which stays
+   #fff because the dashboard activates TTTHEME's [data-theme] but never
+   Bootstrap's [data-bs-theme]. Map the --bs-table-* variables onto TTTHEME
+   design tokens so data tables follow the active theme (dark-first). */
+.table {
+  --bs-table-bg: var(--white);
+  --bs-table-color: var(--text-primary-light);
+  --bs-table-border-color: var(--border-color);
+}
 .basic-table thead th {
   background-color: var(--neutral-50);
   color: var(--text-primary-light);
