@@ -1864,6 +1864,20 @@ class ImplementCommand(Command):
                 except Exception:
                     print("Silenced exception in implement_cmd.py:1840")
 
+            # WikiSkill layer 2 - consolidated knowledge distilled from prior
+            # traces (failed -> repair proposals, successful -> action patterns).
+            if history_mode:
+                try:
+                    from harnessfix.wiki import format_wiki_notes
+                    wiki = format_wiki_notes(
+                        task_context or batch_files_md, k=3,
+                        path=Path(workspace_path(target_workspace)) / "reports" / "wiki" / "wiki.jsonl",
+                    )
+                    if wiki:
+                        user_context += wiki
+                except Exception:
+                    print("Silenced exception in implement_cmd.py:1852")
+
             if modify_mode and existing_files:
                 # Modify mode: existing files get [PATCH:] (minimal diff),
                 # new files get [FILE:] (complete implementation).  This

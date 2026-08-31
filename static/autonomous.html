@@ -275,6 +275,23 @@
             </div>
           </div>
         </div>
+        <div class="col">
+          <div class="card shadow-none border h-100">
+            <div class="card-body p-20">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-16">
+                <div>
+                  <p class="fw-medium text-primary-light mb-1">Wiki Pages</p>
+                  <h6 class="mb-0" id="stat-wiki-pages">—</h6>
+                </div>
+                <div class="metric-card">
+                  <div class="icon-wrap bg-info-subtle text-info-main">
+                    <iconify-icon icon="solar:book-outline" class="text-2xl"></iconify-icon>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Main panels -->
@@ -394,6 +411,7 @@
     const STEPS = [
       ["collecting_traces", "Collect"],
       ["diagnosing", "Diagnose"],
+      ["consolidating_wiki", "WikiSkill"],
       ["evaluating_candidate", "Pick repair"],
       ["applying_repair", "Apply"],
       ["running_test_gate", "Test gate"],
@@ -406,6 +424,7 @@
       loop_iteration_start: "Starting iteration",
       collecting_traces: "Collecting traces",
       diagnosing: "Diagnosing corpus",
+      consolidating_wiki: "WikiSkill (consolidating)",
       evaluating_candidate: "Evaluating candidate repair",
       applying_repair: "Applying repair",
       running_test_gate: "Running test gate (pytest)",
@@ -414,6 +433,18 @@
       finished: "Finished",
       finished_iteration: "Iteration finished",
     };
+
+    // WikiSkill: derive a page count from the latest history record when the
+    // status payload didn't include wiki_stats directly.  Fail-open → "—".
+    function sum_wiki(data, hist) {
+      const st = data.status || {};
+      if (st.wiki_stats && typeof st.wiki_stats === "object") return st.wiki_stats;
+      let count = null;
+      for (let i = hist.length - 1; i >= 0; i--) {
+        if (hist[i].wiki_page_count != null) { count = hist[i].wiki_page_count; break; }
+      }
+      return { page_count: count };
+    }
 
     async function fetchJSON(url) {
       const res = await fetch(url);
@@ -457,6 +488,11 @@
       el("stat-phase").textContent = phaseLabel;
       const hist = data.history || [];
       el("stat-done").textContent = String(hist.length);
+
+      // Wiki stat card (WikiSkill layer 2)
+      const wikiStats = st.wiki_stats || sum_wiki(data, hist);
+      el("stat-wiki-pages").textContent =
+        wikiStats.page_count != null ? String(wikiStats.page_count) : "—";
 
       // Live pill + connection status
       const pill = el("livePill");
@@ -539,7 +575,7 @@
       const hb2 = el("historyBody");
       el("badge-history-count").textContent = String(hist.length);
       if (!hist.length) {
-        hb2.innerHTML = '<tr><td colspan="7" class="text-center text-secondary-light">No iterations recorded yet.</td></tr>';
+        hb2.innerHTML = '<tr><td colspan="8" class="text-center text-secondary-light">No iterations recorded yet.</td></tr>';
       } else {
         hb2.innerHTML = hist.map(h => {
           const delta = (h.harness_post_rate != null && h.harness_baseline_rate != null)
@@ -552,6 +588,7 @@
             + "<td>" + boolBadge(h.tests_passed) + "</td>"
             + "<td>" + boolBadge(h.security_passed) + "</td>"
             + "<td>" + esc(delta) + "</td>"
+            + "<td>" + esc(h.wiki_page_count != null ? h.wiki_page_count : "—") + "</td>"
             + "<td><span class='mono' style='font-size:.72rem'>" + esc((h.git_head || "").slice(0, 10)) + "</span></td>"
             + "</tr>";
         }).join("");

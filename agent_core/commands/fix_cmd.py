@@ -1453,6 +1453,18 @@ class FixCommand(Command):
             except Exception:
                 print("Silenced exception in fix_cmd.py:1432")
 
+            # WikiSkill layer 2 - consolidated knowledge for the candidate batch.
+            try:
+                from harnessfix.wiki import format_wiki_notes
+                wiki = format_wiki_notes(
+                    f"{desc_text}\n" + "\n".join(cand), k=3,
+                    path=Path(hroot) / "reports" / "wiki" / "wiki.jsonl",
+                ) if hroot else ""
+                if wiki:
+                    context += wiki
+            except Exception:
+                print("Silenced exception in fix_cmd.py:1446")
+
             print(f"  On-demand: {len(top_files)} full files + {len(rest_files)} candidate sigs + {len(sig_map)} other sigs ({len(context)} bytes)")
             print(f"  Full source: {', '.join(os.path.basename(fp) for fp, _, _ in top_files)}")
             if rest_files:
@@ -2823,6 +2835,18 @@ class FixCommand(Command):
                     fix_system += episodic
         except Exception:
             print("Silenced exception in fix_cmd.py:2721")
+
+        # WikiSkill layer 2 - consolidated knowledge for this file/layer.
+        try:
+            from harnessfix.wiki import format_wiki_notes
+            wiki = format_wiki_notes(
+                f"{error_msg}\n{rel_r}", k=3,
+                path=Path(root_r) / "reports" / "wiki" / "wiki.jsonl",
+            ) if root_r else ""
+            if wiki:
+                fix_system += wiki
+        except Exception:
+            print("Silenced exception in fix_cmd.py:2735")
         fix_msgs = [
             {"role": "system", "content": fix_system},
             {"role": "user", "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n" + "\n".join([f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}" for m, n, s, a in all_broken]) + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}

@@ -190,6 +190,23 @@ def _commit_repair(iteration: int, summary: dict[str, Any]) -> bool:
     return True
 
 
+def _consolidate_wiki(trace_dir: Path, output_dir: Path, summary: dict[str, Any] | None = None) -> int:
+    """Absorb this iteration's traces into the persistent wiki (WikiSkill).
+
+    Returns the post-consolidation page count.  Fail-open — never raises;
+    a wiki error must not halt the autonomous loop.
+    """
+    try:
+        from harnessfix.wiki import consolidate, WIKI_DIR
+        pages = consolidate(trace_dir, output_dir / "wiki")
+        return len(pages)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"Silenced wiki consolidation error: {exc}")
+        if summary and isinstance(summary, dict):
+            return summary.get("wiki_page_count", 0)
+        return 0
+
+
 def _record_iteration(iteration: int, summary: dict[str, Any], output_dir: Path) -> None:
     """Append one finished-iteration record to the dashboard history log."""
     try:
@@ -215,6 +232,8 @@ def _record_iteration(iteration: int, summary: dict[str, Any], output_dir: Path)
             summary,
         ),
         "git_head": head,
+        # WikiSkill: wiki page count at end of this iteration (dashboard history column).
+        "wiki_page_count": summary.get("wiki_page_count", 0),
     })
 
 
@@ -502,6 +521,16 @@ def main(argv: list[str] | None = None) -> int:
 
         # Record the finished iteration for the live dashboard history view.
         _record_iteration(iteration, summary, output_dir)
+
+        # WikiSkill: ensure traces are consolidated into the wiki after each
+        # iteration (run_loop already does this, but re-consolidate defensively
+        # so the driver's history record has an accurate page count even if
+        # run_loop's consolidation was skipped).  Fail-open.
+        try:
+            _consolidate_wiki(trace_dir, output_dir)
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"Silenced wiki re-consolidation error: {exc}")
+
         write_progress({
             "iteration": iteration,
             "phase": "finished_iteration",

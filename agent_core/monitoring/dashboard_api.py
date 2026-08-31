@@ -241,11 +241,26 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         except Exception:
             recent_commits = []
 
+        # Wiki knowledge state (WikiSkill layer 2). Fail-open: absent/corrupt
+        # wiki yields an empty dict so the dashboard degrades gracefully.
+        wiki_stats: Dict[str, Any] = {}
+        try:
+            from harnessfix.wiki import wiki_stats as _wiki_stats
+
+            wiki_path = os.path.join(self._base_dir, "reports", "wiki", "wiki.jsonl")
+            if not os.path.isfile(wiki_path):
+                # Fall back to the repo-root wiki (module-level default).
+                wiki_path = None
+            wiki_stats = _wiki_stats(path=Path(wiki_path) if wiki_path else None) or {}
+        except Exception:
+            pass
+
         return {
             "status": status,
             "summary": summary,
             "history": history,
             "recent_commits": recent_commits,
+            "wiki": wiki_stats,
             "server_time": now,
         }
 

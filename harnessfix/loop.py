@@ -23,6 +23,12 @@ from .progress import set_phase, write_progress
 from .repairs import collisions, repairs_for_layer
 from .tracing import TRACE_DIR
 
+try:
+    from .wiki import consolidate as _consolidate_wiki, format_wiki_notes as _format_wiki_notes
+except Exception:  # pragma: no cover - wiki is additive; never block the loop.
+    _consolidate_wiki = None
+    _format_wiki_notes = None
+
 SUMMARY_PATH = Path("reports") / "harnessfix" / "summary.json"
 
 
@@ -86,6 +92,28 @@ def run_loop(
         "proposed_repair": candidates[0].id if candidates else None,
         "verdict": "no_repair_catalogued" if not candidates else "review_required",
     }
+    # WikiSkill step (consolidate + wiki context): absorb this iteration's
+    # traces into the persistent wiki and surface consolidated knowledge for
+    # the repair proposal.  Additive — a consolidation/context error never
+    # blocks the loop or affects acceptance gates.
+    if _consolidate_wiki is not None:
+        try:
+            wiki_pages = _consolidate_wiki(trace_dir, output_dir.parent / "wiki")
+            summary["wiki_page_count"] = len(wiki_pages)
+            set_phase("consolidating_wiki", wiki_pages=len(wiki_pages))
+        except Exception:
+            pass  # fail-open; wiki is never a gating step.
+
+    if _format_wiki_notes is not None and candidates:
+        try:
+            target_layer = candidates[0].layer
+            summary["wiki_context"] = _format_wiki_notes(
+                f"{target_layer} harness mechanism", k=3,
+                path=output_dir.parent / "wiki" / "wiki.jsonl",
+            ) or ""
+        except Exception:
+            pass
+
     if not candidates:
         set_phase("finished", verdict="no_repair_catalogued", accepted=False)
         return _finish(summary, output_dir)

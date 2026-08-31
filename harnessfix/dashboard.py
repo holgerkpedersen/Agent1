@@ -22,6 +22,12 @@ from .evolution_metrics import (
 from .reader import read_trace, TraceValidationError
 from .tracing import TRACE_DIR
 
+try:
+    from .wiki import wiki_stats as _wiki_stats, WIKI_PATH as _WIKI_PATH
+except Exception:  # pragma: no cover - wiki is additive.
+    _wiki_stats = None
+    _WIKI_PATH = Path("reports/wiki/wiki.jsonl")
+
 #: Payload fields worth showing in the per-event timeline, by event kind.
 _EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "task_begin": ("model", "profile"),
@@ -292,6 +298,38 @@ def _quality_report(
     }
 
 
+def _wiki_report(wiki_path: Path | str | None = None) -> dict[str, Any]:
+    """Read-only wiki knowledge summary for the CLI dashboard.
+
+    Returns a dict with page_count, total_evidence, coverage (percentage of
+    diagnosed layers that have failure pages), avg_hit_count, top_pages and
+    last_consolidated timestamp.  Fail-open: returns zeros when the wiki is
+    absent/corrupt or the module cannot import.
+    """
+    if _wiki_stats is None:
+        return {
+            "page_count": 0,
+            "total_evidence": 0,
+            "coverage": 0.0,
+            "avg_hit_count": 0.0,
+            "top_pages": [],
+            "last_consolidated": None,
+        }
+    p = Path(wiki_path) if wiki_path else _WIKI_PATH
+    try:
+        return _wiki_stats(path=p) or {}
+    except Exception:
+        print("Silenced exception in dashboard.py:_wiki_report")
+        return {
+            "page_count": 0,
+            "total_evidence": 0,
+            "coverage": 0.0,
+            "avg_hit_count": 0.0,
+            "top_pages": [],
+            "last_consolidated": None,
+        }
+
+
 def main(argv: list[str] | None = None) -> int:
     # Windows console default codec (cp1252) cannot encode many Unicode chars
     # (e.g. U+2014 em dash) used in this dashboard's output. Reconfigure to
@@ -332,6 +370,11 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_THRESHOLD,
         help="quality threshold for --quality; below this, should_evolve is True (default: %(default)s)",
     )
+    parser.add_argument(
+        "--wiki",
+        action="store_true",
+        help="print a read-only wiki knowledge summary (page count, coverage, top pages by retrieval hits)",
+    )
     args = parser.parse_args(argv)
 
     if not args.traces.is_dir():
@@ -360,6 +403,41 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{'task_id':<36} {'score':>8}  outcome")
         for r in report["runs"]:
             print(f"{r['task_id']:<36} {r['score']:>8.4f}  {r['outcome']}")
+        return 0
+
+    if args.wiki:
+        report = _wiki_report(_WIKI_PATH)
+        if args.json:
+            print(json.dumps(report, indent=2, default=str))
+            return 0
+        avg_hits = report.get("avg_hit_count", 0.0) or 0.0
+        ts = report.get("last_consolidated")
+        when = ""
+        if isinstance(ts, (int, float)) and ts > 0:
+            from datetime import datetime as _dt
+
+            when = f"{_dt.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')}"
+        print(f"HarnessFix wiki — {report['page_count']} pages from {_WIKI_PATH}")
+        print("-" * 100)
+        print(f"  page count       : {report['page_count']}")
+        print(f"  total evidence    : {report['total_evidence']}")
+        print(f"  coverage          : {report.get('coverage', 0.0)}% (diagnosed layers with wiki pages)")
+        print(f"  avg hit count     : {avg_hits:.2f}")
+        print(f"  last consolidated : {when or '—'}")
+        print("-" * 100)
+        top = report.get("top_pages", [])
+        if top:
+            print(f"{'key':<48} {'hits':>5} {'evidence':>9} {'layer':<22} lesson (first 60 chars)")
+            print("-" * 100)
+            for pg in top:
+                lesson = str(pg.get("lesson_preview", "") or "").replace("\n", " ")[:60]
+                layer = pg.get("layer") or ""
+                key = str(pg.get("key", ""))[:48]
+                hits = int(pg.get("hits", 0) or 0)
+                evidence = int(pg.get("evidence", 0) or 0)
+                print(f"{key:<48} {hits:>5} {evidence:>9} {layer:<22} {lesson}")
+        else:
+            print("No wiki pages found.")
         return 0
 
     if args.task is not None:

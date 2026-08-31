@@ -57,6 +57,7 @@ PHASES = (
     "idle",
     "collecting_traces",
     "diagnosing",
+    "consolidating_wiki",
     "evaluating_candidate",
     "applying_repair",
     "running_test_gate",

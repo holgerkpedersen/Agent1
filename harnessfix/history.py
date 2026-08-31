@@ -242,16 +242,47 @@ def file_history(target: str, workspace: str, limit: int = 4) -> list[HistoryEve
     return events[:limit]
 
 
-def format_file_history(target: str, workspace: str, limit: int = 4) -> str:
-    """PAST EXECUTION NOTES block for one file (empty string when none)."""
-    events = file_history(target, workspace, limit)
-    if not events:
+def _append_wiki_notes(query: str, workspace: str) -> str:
+    """Best-effort append of COMPILED KNOWLEDGE (wiki) block to a history note.
+
+    Wiki is additive context — failure here never affects implement/fix's
+    write/cascade invariants.  Returns "" when the wiki module or pages are
+    unavailable.
+    """
+    try:
+        from .wiki import format_wiki_notes, WIKI_PATH
+    except Exception:
         return ""
-    lines = [f"\n## PAST EXECUTION NOTES — {len(events)} event(s) for {target}"]
+    if not query:
+        return ""
+    # Resolve the wiki file relative to the workspace root (not repo root),
+    # so tests pointing at a temp dir find their own wiki.  Fall back to the
+    # module-level WIKI_PATH when no per-workspace wiki exists.
+    wpath = Path(workspace) / "reports" / "wiki" / "wiki.jsonl"
+    if not wpath.is_file():
+        wpath = WIKI_PATH
+    try:
+        return format_wiki_notes(query, k=3, path=wpath) or ""
+    except Exception:
+        print("Silenced exception in history.py:_append_wiki_notes")
+        return ""
+
+
+def format_file_history(target: str, workspace: str, limit: int = 4) -> str:
+    """PAST EXECUTION NOTES block for one file (empty string when none).
+
+    Appends a COMPILED KNOWLEDGE (wiki) block when the wiki has relevant pages
+    for this file — additive context that never affects write/cascade invariants.
+    """
+    events = file_history(target, workspace, limit)
+    lines: list[str] = []
+    if not events:
+        return "" + _append_wiki_notes(f"{target}\n{workspace}", workspace)
+    lines.append(f"\n## PAST EXECUTION NOTES — {len(events)} event(s) for {target}")
     for ev in events:
         when = datetime.fromtimestamp(ev.ts).strftime("%m-%d %H:%M") if ev.ts else "?"
         lines.append(f"  - [{ev.source} {ev.ref[:8]}] {when} {ev.tool} {ev.kind}: {ev.summary}")
-    return "\n".join(lines)
+    return "\n".join(lines) + _append_wiki_notes(target, workspace)
 
 
 def format_batch_history(files: list[str], workspace: str, per_file: int = 2, line_cap: int = 10) -> str:
@@ -266,8 +297,10 @@ def format_batch_history(files: list[str], workspace: str, per_file: int = 2, li
                 lines.append("  ...")
                 break
     if not lines:
-        return ""
-    return "\n## PAST EXECUTION NOTES\n" + "\n".join(lines)
+        return _append_wiki_notes("\n".join(files), workspace)
+    return "\n## PAST EXECUTION NOTES\n" + "\n".join(lines) + _append_wiki_notes(
+        "\n".join(files), workspace
+    )
 
 
 def append_execution(workspace: str, command: str, files: list[Any], outcome: str = "ok", note: str = "") -> None:
