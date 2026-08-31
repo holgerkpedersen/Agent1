@@ -377,6 +377,14 @@ class LMStudioProvider:
             payload["tools"] = tools
         if stream:
             payload["stream"] = True
+        # Prompt caching: LM Studio (llama.cpp backend) honours the
+        # ``cache_prompt`` extension.  The system prompt + (now compacted)
+        # history form a stable prefix reused across every iteration of a tool
+        # loop, so enabling it turns per-iteration prompt processing from
+        # O(full history) into O(new suffix) — directly fixing the slow
+        # prefill ramp that previously tripped ``LMSTUDIO_CHAT_TIMEOUT`` (the
+        # socket-inactivity cap; env ``LMSTUDIO_CHAT_TIMEOUT``, default 600s).
+        payload["cache_prompt"] = True
         if disable_thinking or model_info.get("thinking") is False:
             # reasoning:"off" is the universal, safe knob — every probed model
             # answers normally with it and none burn their budget on it.

@@ -697,3 +697,24 @@ class TestServerModelIdHealing:
         assert out["choices"][0]["message"]["content"] == "ok"
         # Only the chat call; no /models probe, no retry.
         assert calls == ["http://127.0.0.1:8080/v1/chat/completions"]
+
+
+# ---------------------------------------------------------------------------
+#  Prompt caching (decision #B-5-compact): ask llama-server to cache the
+#  stable system+history prefix so per-iteration prompt processing does not
+#  reprocess the whole growing transcript every time.
+# ---------------------------------------------------------------------------
+
+class TestCachePrompt:
+    def test_payload_sets_cache_prompt(self):
+        """_build_payload must request prompt caching on every request."""
+        prov = LlamaProvider(model_name="llama/x", api_url="http://h/v1")
+        payload = prov._build_payload([{"role": "user", "content": "hi"}])
+        assert payload.get("cache_prompt") is True
+
+    def test_stream_payload_also_sets_cache_prompt(self):
+        """Streaming requests must request caching too."""
+        prov = LlamaProvider(model_name="llama/x", api_url="http://h/v1")
+        payload = prov._build_payload(
+            [{"role": "user", "content": "hi"}], stream=True)
+        assert payload.get("cache_prompt") is True

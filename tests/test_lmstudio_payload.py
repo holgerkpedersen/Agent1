@@ -81,6 +81,26 @@ def test_build_payload_merges_tools_and_stream() -> None:
     assert payload["chat_template_kwargs"] == {"enable_thinking": False, "preserve_thinking": False}
 
 
+def test_build_payload_sets_cache_prompt() -> None:
+    """_build_payload must request prompt caching on every request.
+
+    LM Studio (llama.cpp backend) caches the stable system+history prefix, so
+    each tool-loop iteration only re-processes the new suffix instead of the
+    whole growing transcript — this is what prevents the slow prefill ramp
+    that tripped ``LMSTUDIO_CHAT_TIMEOUT``."""
+    payload = _provider("qwen3.6-27b-mtp")._build_payload([{"role": "user", "content": "hi"}])
+    assert payload.get("cache_prompt") is True
+
+
+def test_stream_payload_also_sets_cache_prompt() -> None:
+    """The streaming path (chat_stream) shares _build_payload, so caching must
+    be present there too."""
+    payload = _provider("qwen3.6-27b-mtp")._build_payload(
+        [{"role": "user", "content": "hi"}], stream=True
+    )
+    assert payload.get("cache_prompt") is True
+
+
 def test_known_models_extra_only_for_qwen_and_laguna() -> None:
     allowed = {"qwen3.5-9b-mtp", "qwen3.6-27b-mtp", "qwen3-coder-30b-a3b-instruct", "laguna-s-2.1"}
     for name, info in KNOWN_MODELS.items():

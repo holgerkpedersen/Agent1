@@ -254,6 +254,13 @@ class LlamaProvider:
             payload["tools"] = tools
         if stream:
             payload["stream"] = True
+        # Prompt caching: the system prompt + (now compacted) history form a
+        # stable prefix that is reused across every iteration of a tool loop.
+        # Asking llama-server to cache it turns the per-iteration prompt
+        # processing from O(full history) into O(new suffix) — directly fixing
+        # the slow 0%->90% ramp that previously tripped the client timeout.
+        # Ignored harmlessly by servers that do not support it.
+        payload["cache_prompt"] = True
         # Disable reasoning budget when requested or when the model is known to
         # not support thinking.  Qwen's Jinja rejects a trailing system msg and
         # also honours chat_template_kwargs.enable_thinking=False, so we set it.

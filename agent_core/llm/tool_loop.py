@@ -207,6 +207,144 @@ _PATH_SENSITIVE_TOOLS = frozenset({"read", "edit", "write"})
 #: because harnessfix.tracing does not expose a dedicated enum value.
 GUARD_PATH_MISS = "path_miss"
 
+#: Trace guard label for in-run context compaction (decision #B-5-compact):
+#: the loop drops the oldest closed tool-exchange prefix once the live message
+#: list grows past a bound, so a long autonomous/NLP task does not ship the
+#: entire (ever-growing) transcript to the model on every iteration (which is
+#: what made LM Studio's per-iteration prompt processing crawl from 0% to 90%
+#: over ~10 minutes and trip the ``LMSTUDIO_CHAT_TIMEOUT`` socket cap — the
+#: disconnect symptom).
+GUARD_COMPACT = "in_loop_compact"
+
+#: In-run compaction bounds (decision #B-5-compact).  Deliberately looser than
+#: the persistence-time trim in agent.py — the goal is NOT to fit a small
+#: window but to stop UNBOUNDED growth that makes every iteration slower and
+#: eventually exhausts even a 600k-token context (and trips LM Studio's
+#: ``LMSTUDIO_CHAT_TIMEOUT`` socket cap during prefill).  A single huge
+#: read/write message can still dwarf the count cap, so a char budget backs it.
+_IN_LOOP_MAX_MESSAGES = 80
+#: ~150k chars ≈ ~37k tokens — leaves plenty of headroom under the 600k
+#: context window for the system prompt, the live tool calls, and generation.
+_IN_LOOP_CHAR_BUDGET = 150_000
+
+#: Injected as a "user" message (strict chat templates reject mid-conversation
+#: system roles) when a closed prefix is compacted away.  Tells the model the
+#: dropped history was summarized so it does not think context was lost silently.
+#: Appended to ``injected_notes`` so it is stripped from the persisted history
+#: at run end (consistent with the other steering notes).
+_COMPACT_NOTE = (
+    "CONTEXT NOTE: {dropped} older exchange(s) were compacted to save context "
+    "(working summary: {summary}). Continue from the most recent messages — do "
+    "not ask to re-read what was compacted."
+)
+
+_SUMMARIZE_INSTRUCTION = (
+    "Condense the following tool-call exchange history into a single dense "
+    "working-memory note (key files touched, findings, decisions, open "
+    "questions). Be factual and concise; output only the note:\n"
+)
+
+
+def _message_size(message: dict[str, Any]) -> int:
+    """Rough character size of one chat message (for the in-run char budget)."""
+    size = 0
+    for value in message.values():
+        if isinstance(value, str):
+            size += len(value)
+        elif isinstance(value, list):
+            try:
+                size += len(json.dumps(value, default=str))
+            except Exception:  # pragma: no cover - defensive
+                size += len(str(value))
+        else:
+            size += len(str(value))
+    return size
+
+
+def _total_chars(messages: list[dict[str, Any]]) -> int:
+    """Sum of :func:`_message_size` over *messages*."""
+    return sum(_message_size(m) for m in messages)
+
+
+def _split_for_compaction(
+    messages: list[dict[str, Any]], max_messages: int, char_budget: int,
+) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]]]:
+    """Return ``(dropped_prefix, kept_full)`` or ``(None, None)`` if the list
+    fits within the bounds and needs no compaction.
+
+    ``kept_full`` is the *entire* surviving list (system prompt + leading task
+    prompt + newest tail) — never just the tail.  The system prompt
+    (``messages[0]``) and the leading task prompt (first ``user`` message) are
+    always preserved; only the chatty middle/tool history is eligible for
+    dropping.  The kept tail never starts with a ``tool`` message (which would
+    be an orphan with no owning assistant in the kept list), so the
+    chat-template contract is preserved.
+    """
+    if len(messages) <= max_messages:
+        return None, None
+    # ``messages[0]`` is treated as the (preserved) system prompt only when it
+    # actually is one; otherwise the whole list is eligible body to trim.
+    if messages and messages[0].get("role") == "system":
+        head = messages[:1]
+        body = list(messages[1:])
+    else:
+        head = []
+        body = list(messages)
+    split = 0
+    for i, m in enumerate(body):
+        if m.get("role") == "user":
+            split = i + 1
+            break
+    fixed = body[:split]
+    rest = body[split:]
+    remaining_count = max(0, (max_messages - 1) - len(fixed))
+    remaining_chars = char_budget - _total_chars(fixed)
+    if remaining_chars < 0:
+        remaining_chars = 0
+    if not rest:
+        return None, None
+    keep_from = 0
+    while keep_from < len(rest):
+        tail = rest[keep_from:]
+        if len(tail) <= remaining_count and _total_chars(tail) <= remaining_chars:
+            break
+        keep_from += 1
+    # Never start the kept tail on a tool message (orphan guard).
+    while keep_from < len(rest) and rest[keep_from].get("role") == "tool":
+        keep_from += 1
+    # Nothing to drop (or dropping would remove the live tail entirely) — leave
+    # the list untouched rather than risk discarding the pending tool_calls.
+    if keep_from <= 0 or keep_from >= len(rest):
+        return None, None
+    kept_full = head + fixed + rest[keep_from:]
+    return rest[:keep_from], kept_full
+
+
+def _compact_messages(
+    messages: list[dict[str, Any]], max_messages: int, char_budget: int, summary: str,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Compact *messages* to a bounded working set.
+
+    Preserves the system prompt and the leading task prompt, drops the oldest
+    closed tool-exchange prefix, and inserts one stripable ``user`` note that
+    summarizes what was dropped.  Returns ``(compacted_list, note)`` where
+    *note* is the new note text (or ``None`` when nothing was dropped — i.e.
+    the list already fit within ``max_messages`` / ``char_budget``).
+
+    Any CONTEXT NOTE already present in *messages* (from a previous compaction
+    in this run) is replaced rather than stacked, so the note does not grow
+    stale and is not double-counted.
+    """
+    dropped, kept_full = _split_for_compaction(messages, max_messages, char_budget)
+    if dropped is None:
+        return messages, None
+    kept_full = [
+        m for m in kept_full
+        if not str(m.get("content", "")).startswith("CONTEXT NOTE:")
+    ]
+    note = _COMPACT_NOTE.format(dropped=len(dropped), summary=summary)
+    return kept_full + [{"role": "user", "content": note}], note
+
 
 def _is_path_miss(result_str: str) -> bool:
     """True when *result_str* reports that the requested path does not exist."""
@@ -271,8 +409,25 @@ class ToolLoopRunner:
         display_mode: DisplayMode | str | None = None,
         trace: TraceSink | None = None,
         effects_fn: Callable[[str, dict[str, Any]], list[str]] | None = None,
+        in_loop_compact: bool = True,
+        compact_strategy: str = "note",
+        compact_max_messages: int = _IN_LOOP_MAX_MESSAGES,
+        compact_char_budget: int = _IN_LOOP_CHAR_BUDGET,
     ):
         self.max_iterations = max_iterations
+        #: In-run context compaction (decision #B-5-compact): drop the oldest
+        #: closed tool-exchange prefix once the live message list grows past a
+        #: bound, so a long task does not ship the entire transcript to the
+        #: model on every iteration (that unbounded growth is what tripped the
+        #: llama-server client socket timeout).  ``compact_strategy`` is
+        #: ``"off"`` (disabled), ``"note"`` (insert a generic summary note), or
+        #: ``"summarize"`` (ask the model to condense the dropped prefix into a
+        #: working-memory note; fail-open to ``"note"`` on any empty/error).
+        self.in_loop_compact = in_loop_compact
+        self.compact_strategy = compact_strategy if compact_strategy in (
+            "off", "note", "summarize") else "note"
+        self.compact_max_messages = max(8, compact_max_messages)
+        self.compact_char_budget = max(4_000, compact_char_budget)
         #: Number of final iterations where the model is warned (and
         #: steered) toward producing a text answer before the cap hits.
         self.deadline_window = max(1, min(deadline_window, max_iterations))
@@ -509,6 +664,44 @@ class ToolLoopRunner:
                     iteration=iteration,
                     note=note,
                 )
+
+            # In-run context compaction (decision #B-5-compact): once the live
+            # message list grows past the bound, drop the oldest closed
+            # tool-exchange prefix so we stop shipping the entire (ever-growing)
+            # transcript to the model every iteration.  Without this, per-iteration
+            # prompt processing grows linearly with history and eventually trips
+            # the LM Studio ``LMSTUDIO_CHAT_TIMEOUT`` socket cap (the disconnect
+            # symptom you saw).
+            if self.in_loop_compact and len(current_messages) > self.compact_max_messages:
+                summary = "dropped to save context"
+                if self.compact_strategy == "summarize":
+                    dropped, _ = _split_for_compaction(
+                        current_messages, self.compact_max_messages, self.compact_char_budget)
+                    if dropped:
+                        try:
+                            raw_summary, _ = await llm_chat_fn(
+                                [{"role": "system", "content": "Summarize the tool-call history."},
+                                 {"role": "user", "content": _SUMMARIZE_INSTRUCTION
+                                  + "\n" + json.dumps(dropped, default=str)}],
+                                [],
+                            )
+                            if raw_summary and raw_summary.strip():
+                                summary = raw_summary.strip()
+                        except Exception:  # pragma: no cover - fail-open to note
+                            summary = "dropped to save context"
+                compacted, note = _compact_messages(
+                    current_messages, self.compact_max_messages, self.compact_char_budget, summary)
+                if note is not None:
+                    injected_notes.append(note)
+                    self._emit(
+                        KIND_GUARD_TRIGGERED,
+                        LAYER_LIFECYCLE,
+                        guard=GUARD_COMPACT,
+                        iteration=iteration,
+                        dropped=len(current_messages) - len(compacted),
+                        kept=len(compacted),
+                    )
+                    current_messages = compacted
 
             # Call LLM
             response_text, updated_messages = await llm_chat_fn(current_messages, tools)

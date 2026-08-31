@@ -14,7 +14,7 @@ per decision #079 — no emojis in files.)
    the files read this session (`Agent._decision_constraints_block`).
 2. [S] **Real semantic memory** — `Agent._semantic_index` / `_knowledge_graph`
    / `_working_memory` are loaded, saved, counted, never read into any
-   prompt; `src/agent1/core/__init__.py::EmbeddingService.embed_text`
+   prompt; `agent_core/memory/types.py::EmbeddingService.embed_text`
    returns `np.zeros((n, 384))` (stub). Options: real embeddings via LM
    Studio `/v1/embeddings`, or a zero-dep RAG block reusing
    `harnessfix/history.py` matchers to inject recent per-file history.
@@ -78,7 +78,7 @@ per decision #079 — no emojis in files.)
 
 ## D. Orchestration & UX
 
-13. [S] **Planner→executor split** — `src/agent1/orchestration/task_scheduler.py::DependencyGraph`
+13. [S] **Planner→executor split** — `agent_core/orchestration/task_scheduler.py::DependencyGraph`
     (get_ready_tasks/topological_order) is unused by the main agent; natural
     fit for plan-mode output → scheduled subtask execution.
     **DONE** (2026-08-25): `agent_core/plan_execution/` activates the dormant
