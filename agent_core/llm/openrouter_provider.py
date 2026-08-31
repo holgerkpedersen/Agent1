@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import re
 import time as _time
 import urllib.error
 import urllib.request
@@ -33,10 +35,25 @@ from typing import Any, Callable
 
 from .provider import ResponseMetrics
 
+logger = logging.getLogger(__name__)
+
 #: HTTP statuses that are safe to retry — 429 (rate limit / quota) plus the
 #: classic transient gateway failures.  OpenRouter routes through many upstream
 #: providers whose 5xx blips should not abort a workflow run.
 _TRANSIENT_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+#: OpenRouter HTTP 400 phrase returned when an endpoint *mandates* reasoning
+#: and the request tried to disable it. We detect this to transparently retry
+#: without the disable knob (the model reasons anyway) so the turn survives.
+_REASONING_MANDATORY_400 = "reasoning is mandatory"
+
+#: OpenRouter 402 phrase when the requested ``max_tokens`` exceeds what the
+#: account's remaining credits can afford. We parse the "can only afford N"
+#: number out of it to transparently retry with a smaller budget instead of
+#: surfacing a hard failure (the turn still completes with fewer tokens).
+_CREDITS_AFFORD_RE = re.compile(
+    r"can only afford\s+(\d+)", re.IGNORECASE
+)
 
 DEFAULT_API_BASE = "https://openrouter.ai/api/v1"
 
@@ -85,8 +102,22 @@ def _reasoning_exhausted(
     """Detect when a reasoning model used its budget thinking and left no usable
     output.  Returns an actionable ``[Error: ...]`` string instead of silently
     collapsing to ``(no output)`` — callers retry with thinking disabled rather
-    than burning more reasoning tokens (mirrors lmstudio/opencode behaviour)."""
-    if not content.strip() and reasoning and len(reasoning) > 300:
+    than burning more reasoning tokens (mirrors lmstudio/opencode behaviour).
+
+    NOTE: a model that legitimately returns only a ``reasoning`` block with no
+    ``content`` is NOT "exhausted" — that is a pure-reasoning response and is
+    recovered by :func:`_postprocess_content`.  We only flag exhaustion when the
+    turn was actually truncated (``finish_reason`` is ``"length"`` or absent),
+    never on a clean ``stop`` — otherwise a valid reasoning-only answer would be
+    misreported as a failure and the caller would uselessly retry.
+    """
+    truncated = finish_reason in (None, "length")
+    if (
+        truncated
+        and not content.strip()
+        and reasoning
+        and len(reasoning) > 300
+    ):
         return (
             f"[Error: model consumed {len(reasoning)} reasoning bytes with "
             "no output — reasoning models burn their budget thinking. Retry "
@@ -105,6 +136,51 @@ def _reasoning_exhausted(
             "Retry with disable_thinking=True or a larger output budget.]"
         )
     return None
+
+
+def _postprocess_content(
+    content: str, reasoning: str, finish_reason: str | None = None
+) -> str:
+    """Return usable text for a completed turn.
+
+    Some OpenRouter endpoints are *pure reasoning* models (e.g. the hosted
+    ``deepseek/deepseek-r1``): they return ``content=None`` and only a
+    ``reasoning`` block.  For those we fall back to the reasoning text so the
+    turn is not silently collapsed to ``(no output)``.  We only do this when
+    there is no real content and the reasoning is substantial — a tiny
+    reasoning stub is not a usable answer.
+    """
+    if content and content.strip():
+        return content
+    if reasoning and reasoning.strip() and len(reasoning.strip()) > 1:
+        return reasoning
+    return ""
+
+
+def _affordable_tokens(detail: str) -> int | None:
+    """Parse the affordable-token count out of a 402 detail string.
+
+    OpenRouter returns e.g. ``"...can only afford 34782..."`` when the
+    requested ``max_tokens`` exceeds the account's remaining credit budget.
+    Returns that integer (minus a small safety margin) or ``None`` when the
+    phrase is absent.
+    """
+    m = _CREDITS_AFFORD_RE.search(detail or "")
+    if not m:
+        return None
+    try:
+        return max(1, int(m.group(1)) - 256)
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_http_error_detail(exc: "urllib.error.HTTPError") -> str:
+    """Return the gateway's error detail string from an ``HTTPError``."""
+    try:
+        body = exc.read().decode("utf-8", "replace").strip()
+    except Exception:  # noqa: BLE001 - the fp may already be consumed
+        body = ""
+    return body or str(exc.reason)
 
 
 def _format_http_error(code: int, detail: str) -> str:
@@ -303,11 +379,96 @@ class OpenRouterProvider:
                 label="openrouter chat/completions",
             )
         except urllib.error.HTTPError as exc:
-            # Surface the gateway's explanation (e.g. 401 invalid key, 402
-            # credits exhausted) — the bare "402: Payment Required" is useless.
-            body = exc.read().decode("utf-8", "replace").strip()
-            detail = body or str(exc.reason)
-            return _format_http_error(exc.code, detail)
+            detail = _read_http_error_detail(exc)
+
+            repaired = False
+
+            # --- Fix A: endpoint mandates reasoning and rejects {"enabled": false}. ---
+            if (
+                exc.code == 400
+                and disable_thinking
+                and _REASONING_MANDATORY_400 in detail.lower()
+            ):
+                payload["reasoning"] = {"enabled": True}
+                try:
+                    result = await self._with_retry(
+                        lambda: self._request(
+                            "POST", f"{self.api_url}/chat/completions", payload,
+                            timeout=self._api_timeout,
+                        ),
+                        label="openrouter chat/completions (reasoning enabled)",
+                    )
+                    repaired = True
+                except urllib.error.HTTPError as exc2:
+                    detail = _read_http_error_detail(exc2)
+                    if (
+                        exc2.code == 400
+                        and disable_thinking
+                        and _REASONING_MANDATORY_400 in detail.lower()
+                    ):
+                        payload.pop("reasoning", None)
+                        try:
+                            result = await self._with_retry(
+                                lambda: self._request(
+                                    "POST", f"{self.api_url}/chat/completions", payload,
+                                    timeout=self._api_timeout,
+                                ),
+                                label="openrouter chat/completions (no reasoning knob)",
+                            )
+                            repaired = True
+                        except urllib.error.HTTPError as exc3:
+                            detail = _read_http_error_detail(exc3)
+                            return _format_http_error(exc3.code, detail)
+                        except (urllib.error.URLError, TimeoutError, OSError) as exc3:
+                            return (
+                                f"[Error: openrouter API request failed (connection "
+                                f"error): {exc3}]"
+                            )
+                        except Exception as exc3:  # noqa: BLE001 - defensive per-turn
+                            return f"[Error: openrouter API request failed: {exc3}]"
+                    else:
+                        return _format_http_error(exc2.code, detail)
+                except (urllib.error.URLError, TimeoutError, OSError) as exc2:
+                    return (
+                        f"[Error: openrouter API request failed (connection "
+                        f"error): {exc2}]"
+                    )
+                except Exception as exc2:  # noqa: BLE001 - defensive per-turn
+                    return f"[Error: openrouter API request failed: {exc2}]"
+
+            # --- Fix B: credits exhausted — transparently retry with the largest max_tokens we can afford. ---
+            if not repaired and exc.code == 402:
+                affordable = _affordable_tokens(detail)
+                if affordable is not None:
+                    new_max = max(1, min(self.max_tokens, affordable))
+                    payload["max_tokens"] = new_max
+                    logger.info(
+                        "OpenRouter credits exhausted (requested=%s); retrying with max_tokens=%d",
+                        self.max_tokens,
+                        new_max,
+                    )
+                    try:
+                        result = await self._with_retry(
+                            lambda: self._request(
+                                "POST", f"{self.api_url}/chat/completions", payload,
+                                timeout=self._api_timeout,
+                            ),
+                            label=f"openrouter chat/completions (reduced max_tokens={new_max})",
+                        )
+                        repaired = True
+                    except urllib.error.HTTPError as exc2:
+                        detail = _read_http_error_detail(exc2)
+                        return _format_http_error(exc2.code, detail)
+                    except (urllib.error.URLError, TimeoutError, OSError) as exc2:
+                        return (
+                            f"[Error: openrouter API request failed (connection "
+                            f"error): {exc2}]"
+                        )
+                    except Exception as exc2:  # noqa: BLE001 - defensive per-turn
+                        return f"[Error: openrouter API request failed: {exc2}]"
+
+            if not repaired:
+                return _format_http_error(exc.code, detail)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             # Transport-level failure — the "(connection error)" marker makes
             # is_connection_failure() fail over to the next provider.
@@ -321,9 +482,14 @@ class OpenRouterProvider:
             return "[Error: openrouter API returned no choices]"
         first = choices[0] if isinstance(choices, list) else choices
         message = first.get("message") or {}
-        content = message.get("content") or ""
-        reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
+        content_raw = message.get("content")
+        reasoning_raw = (
+            message.get("reasoning_content")
+            or message.get("reasoning")
+            or ""
+        )
         finish_reason = first.get("finish_reason")
+
         tool_calls = message.get("tool_calls")
         # Per-turn token/latency accounting (plan ARCH item 17).
         usage = result.get("usage") if isinstance(result, dict) else None
@@ -333,11 +499,16 @@ class OpenRouterProvider:
             latency_ms=elapsed_ms,
         )
         if tool_calls:
-            return json.dumps({"content": content, "tool_calls": tool_calls})
-        thinking_err = _reasoning_exhausted(str(content), str(reasoning), finish_reason)
+            return json.dumps({"content": content_raw, "tool_calls": tool_calls})
+        thinking_err = _reasoning_exhausted(
+            str(content_raw or ""), str(reasoning_raw or ""), finish_reason
+        )
         if thinking_err:
             return thinking_err
-        return str(content) if content else "(no output)"
+        content = _postprocess_content(
+            str(content_raw or ""), str(reasoning_raw or ""), finish_reason
+        )
+        return content if content else "(no output)"
 
     async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """No streaming support — return the full text response."""

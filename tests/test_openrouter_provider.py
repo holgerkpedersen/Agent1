@@ -270,6 +270,129 @@ async def test_disable_thinking_sends_reasoning_dict():
 
 
 @pytest.mark.anyio
+async def test_disable_thinking_recovers_from_reasoning_mandatory_400():
+    """Regression: some OpenRouter endpoints MANDATE reasoning and reject
+    ``reasoning: {"enabled": false}`` with HTTP 400 "Reasoning is mandatory
+    for this endpoint and cannot be disabled".  The fixer/implement/fix
+    subagents always pass disable_thinking=True, so this used to hard-fail the
+    whole turn.  The provider must transparently retry with reasoning
+    explicitly ENABLED (``{"enabled": true}``) so the request still succeeds —
+    deepseek/deepseek-r1 is a pure-reasoning model that only answers via reasoning."""
+    prov = _provider(max_retries=0)
+    calls: list[dict[str, Any]] = []
+
+    def fake_urlopen(req, timeout=None):
+        body = json.loads(req.data.decode())
+        calls.append(body)
+        if body.get("reasoning") == {"enabled": False}:
+            # First attempt (disable requested) is rejected as mandatory.
+            raise _http_error(
+                400,
+                '{"error":{"message":"Reasoning is mandatory for this endpoint '
+                'and cannot be disabled.","code":400,"metadata":{}}}',
+            )
+        # Second attempt (reasoning explicitly enabled) succeeds.
+        return _FakeHttp({
+            "choices": [{"message": {"content": "fixed"}, "finish_reason": "stop"}],
+            "usage": {},
+        })
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        out = await prov.chat(
+            [{"role": "user", "content": "improve it"}],
+            disable_thinking=True,
+        )
+    assert out == "fixed"
+    # Exactly two requests: the disabled one, then the recovered one.
+    assert len(calls) == 2
+    assert calls[0]["reasoning"] == {"enabled": False}
+    assert calls[1]["reasoning"] == {"enabled": True}
+
+
+@pytest.mark.anyio
+async def test_disable_thinking_recovers_from_credits_402():
+    """Regression: a hosted OpenRouter reasoning model (deepseek/deepseek-r1)
+    with the default max_tokens (50000) exceeds the account's remaining credit
+    budget, so OpenRouter returns HTTP 402 'can only afford N'.  The provider
+    must transparently retry with a smaller max_tokens instead of surfacing a
+    hard failure."""
+    prov = _provider(max_retries=0)
+    calls: list[dict[str, Any]] = []
+
+    def fake_urlopen(req, timeout=None):
+        body = json.loads(req.data.decode())
+        calls.append(body)
+        if len(calls) == 1:
+            raise _http_error(
+                402,
+                '{"error":{"message":"This request requires more credits, or '
+                'fewer max_tokens. You requested up to 50000 tokens, but can '
+                'only afford 34782.","code":402,"metadata":{}}}',
+            )
+        return _FakeHttp({
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {},
+        })
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        out = await prov.chat(
+            [{"role": "user", "content": "improve it"}],
+            disable_thinking=True,
+        )
+    assert out == "ok"
+    assert len(calls) == 2
+    # The retry must request a smaller budget than the original 50000.
+    assert calls[1]["max_tokens"] < calls[0]["max_tokens"]
+    assert calls[1]["max_tokens"] == 34782 - 256  # affordable - safety margin
+
+
+@pytest.mark.anyio
+async def test_pure_reasoning_model_returns_reasoning_as_content():
+    """Regression: a hosted OpenRouter reasoning model (deepseek/deepseek-r1)
+    returns content=None and only a reasoning block.  The provider must fall
+    back to the reasoning text as content so the turn is not silently collapsed
+    to '(no output)'."""
+    prov = _provider(max_retries=0)
+
+    def fake_urlopen(req, timeout=None):
+        return _FakeHttp({
+            "choices": [{
+                "message": {
+                    "content": None,
+                    "reasoning_content": "Here is my analysis and fix.",
+                },
+                "finish_reason": "stop",
+            }],
+            "usage": {},
+        })
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        out = await prov.chat(
+            [{"role": "user", "content": "improve it"}],
+            disable_thinking=False,
+        )
+    assert out == "Here is my analysis and fix."
+
+
+@pytest.mark.anyio
+async def test_disable_thinking_other_400_still_errors():
+    """A non-reasoning HTTP 400 (e.g. invalid model) must NOT be swallowed by
+    the mandatory-reasoning recovery path."""
+    prov = _provider(max_retries=0)
+
+    def boom(req, timeout=None):
+        raise _http_error(400, '{"error":{"message":"invalid model","code":400}}')
+
+    with patch("urllib.request.urlopen", side_effect=boom):
+        out = await prov.chat(
+            [{"role": "user", "content": "improve it"}],
+            disable_thinking=True,
+        )
+    assert "[Error:" in out
+    assert "invalid model" in out
+
+
+@pytest.mark.anyio
 async def test_chat_connection_failure_is_failover_worthy():
     prov = _provider(max_retries=0)
 
