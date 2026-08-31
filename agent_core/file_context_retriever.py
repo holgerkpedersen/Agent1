@@ -51,6 +51,30 @@ class FileContextRetriever:
 
         return None
 
-    def extract_filenames(self, message: str) -> list[str]:
-        """Return the filenames referenced in *message* via ``/file`` or ``@file``."""
-        return self._KEYWORD_RE.findall(message)
+    def retrieve_snippet(self, filename: str, start_line: int, end_line: int) -> str | None:
+        """Return a specific line range from the file."""
+        try:
+            target = normalize_path(self._base_dir, filename)
+            lines = target.read_text(encoding="utf-8").splitlines()
+            # Convert 1-based to 0-based for slicing
+            return "\n".join(lines[max(0, start_line - 1):end_line])
+        except (OSError, UnicodeDecodeError, SecurityViolationError, IndexError):
+            return None
+
+    def retrieve_skeleton(self, filename: str) -> str | None:
+        """Return the 'skeleton' (signatures and docstrings) of the file."""
+        from agent_core.symbol_intel import _walk_definitions
+        import ast
+
+        try:
+            target = normalize_path(self._base_dir, filename)
+            with open(target, 'r', encoding="utf-8") as f:
+                tree = ast.parse(f.read())
+            
+            skeleton = _walk_definitions(tree)
+            if not skeleton:
+                return None
+            
+            return "\n".join(skeleton)
+        except Exception:
+            return None

@@ -25,8 +25,10 @@ class LLMAgent:
     def __init__(self, llm_client: LLMClient | None = None) -> None:
         self._llm_client = llm_client
         self._file_context_retriever = FileContextRetriever()
+        self._context_optimizer = ContextOptimizer(self._file_context_retriever)
         self._file_context_interface = AgentFileContextInterface(
-            self._file_context_retriever
+            self._file_context_retriever,
+            optimizer=self._context_optimizer
         )
         self._conversation: list[dict[str, str]] = []
         self._pending_temp_systems: list[dict[str, str]] = []
@@ -85,3 +87,4 @@ class LLMAgent:
 
 from agent_core.file_context_retriever import FileContextRetriever  # noqa: E402
 from agent_core.agent_file_context_interface import AgentFileContextInterface  # noqa: E402
+from agent_core.context_optimizer import ContextOptimizer  # noqa: E402
