@@ -26,8 +26,19 @@ import shutil
 import subprocess
 import time
 
-import psutil
 import pytest
+
+try:
+    import psutil
+except ImportError:  # pragma: no cover - depends on host environment
+    # psutil is an optional, undeclared dependency: production code guards its
+    # import the same way (llama_server.running_server_pids). Without it we
+    # cannot discover/kill live PIDs, so skip the module instead of failing
+    # collection -- this module must never break a run on hosts lacking it.
+    pytest.skip(
+        "psutil not installed; skipping live llama-server integration tests",
+        allow_module_level=True,
+    )
 
 from agent_core.llm import llama_server as mod
 
