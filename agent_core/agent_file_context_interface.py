@@ -25,7 +25,11 @@ class AgentFileContextInterface:
         A :class:`ContextOptimizer` used to decide which content to return.
     """
 
-    def __init__(self, retriever: FileContextRetriever, optimizer: Optional[ContextOptimizer] = None) -> None:
+    def __init__(
+        self,
+        retriever: FileContextRetriever,
+        optimizer: Optional[ContextOptimizer] = None,
+    ) -> None:
         self._retriever = retriever
         self._optimizer = optimizer
 

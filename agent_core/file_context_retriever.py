@@ -17,10 +17,24 @@ class FileContextRetriever:
     """
 
     _KEYWORD_RE: re.Pattern[str] = re.compile(r"(?:/|@)(\S+\.\w+)")
-    _FALLBACK_EXTENSIONS: tuple[str, ...] = (".py", ".txt", ".md", ".json", ".yaml", ".yml", ".toml")
+    _FALLBACK_EXTENSIONS: tuple[str, ...] = (
+        ".py",
+        ".txt",
+        ".md",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+    )
 
     def __init__(self, base_dir: str | Path | None = None) -> None:
-        self._base_dir = Path(base_dir).resolve() if base_dir is not None else Path.cwd().resolve()
+        self._base_dir = (
+            Path(base_dir).resolve() if base_dir is not None else Path.cwd().resolve()
+        )
+
+    def extract_filenames(self, message: str) -> list[str]:
+        """Return the filenames referenced in *message* via ``/file`` or ``@file``."""
+        return self._KEYWORD_RE.findall(message)
 
     def retrieve(self, filename: str) -> str | None:
         """Return the text content of *filename* if it exists, else ``None``."""
@@ -51,13 +65,15 @@ class FileContextRetriever:
 
         return None
 
-    def retrieve_snippet(self, filename: str, start_line: int, end_line: int) -> str | None:
+    def retrieve_snippet(
+        self, filename: str, start_line: int, end_line: int
+    ) -> str | None:
         """Return a specific line range from the file."""
         try:
             target = normalize_path(self._base_dir, filename)
             lines = target.read_text(encoding="utf-8").splitlines()
             # Convert 1-based to 0-based for slicing
-            return "\n".join(lines[max(0, start_line - 1):end_line])
+            return "\n".join(lines[max(0, start_line - 1) : end_line])
         except (OSError, UnicodeDecodeError, SecurityViolationError, IndexError):
             return None
 
@@ -68,13 +84,13 @@ class FileContextRetriever:
 
         try:
             target = normalize_path(self._base_dir, filename)
-            with open(target, 'r', encoding="utf-8") as f:
+            with open(target, "r", encoding="utf-8") as f:
                 tree = ast.parse(f.read())
-            
+
             skeleton = _walk_definitions(tree)
             if not skeleton:
                 return None
-            
+
             return "\n".join(skeleton)
         except Exception:
             return None

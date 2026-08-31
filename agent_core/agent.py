@@ -27,8 +27,7 @@ class LLMAgent:
         self._file_context_retriever = FileContextRetriever()
         self._context_optimizer = ContextOptimizer(self._file_context_retriever)
         self._file_context_interface = AgentFileContextInterface(
-            self._file_context_retriever,
-            optimizer=self._context_optimizer
+            self._file_context_retriever, optimizer=self._context_optimizer
         )
         self._conversation: list[dict[str, str]] = []
         self._pending_temp_systems: list[dict[str, str]] = []

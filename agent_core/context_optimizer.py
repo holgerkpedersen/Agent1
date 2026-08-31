@@ -1,13 +1,12 @@
 """
 Context optimizer — decides the best way to represent a file to an LLM.
 
-This component implements a "Smart Selection" strategy to reduce token usage 
-by providing either a full file, a skeleton (signatures), or a snippet, 
+This component implements a "Smart Selection" strategy to reduce token usage
+by providing either a full file, a skeleton (signatures), or a snippet,
 based on the user's intent and file size.
 """
 
-from typing import List, Optional
-from pathlib import Path
+from typing import List
 from agent_core.file_context_retriever import FileContextRetriever
 
 
@@ -38,7 +37,10 @@ class ContextOptimizer:
 
         for fn in filenames:
             # 1. Check for explicit "skeleton" intent
-            if any(word in message_lower for word in ["skeleton", "structure", "signatures", "what is the api"]):
+            if any(
+                word in message_lower
+                for word in ["skeleton", "structure", "signatures", "what is the api"]
+            ):
                 skeleton = self._retriever.retrieve_skeleton(fn)
                 if skeleton:
                     optimized_contexts.append(f"--- SKELETON OF {fn} ---\n{skeleton}")
@@ -55,15 +57,20 @@ class ContextOptimizer:
                 continue
 
             lines = content.splitlines()
-            file_size = len(content.encode('utf-8'))
+            file_size = len(content.encode("utf-8"))
 
             # If file is large, prioritize the skeleton to save tokens
-            if file_size > self._MAX_FULL_SIZE_BYTES or len(lines) > self._MAX_FULL_LINES:
+            if (
+                file_size > self._MAX_FULL_SIZE_BYTES
+                or len(lines) > self._MAX_FULL_LINES
+            ):
                 # If the user didn't explicitly ask for the whole file (via a keyword like "full")
                 if "full" not in message_lower and "entire" not in message_lower:
                     skeleton = self._retriever.retrieve_skeleton(fn)
                     if skeleton:
-                        optimized_contexts.append(f"--- SKELETON OF {fn} (File is large) ---\n{skeleton}")
+                        optimized_contexts.append(
+                            f"--- SKELETON OF {fn} (File is large) ---\n{skeleton}"
+                        )
                         continue
 
             # 4. Fallback to full content
