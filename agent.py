@@ -325,10 +325,12 @@ class LLMClient:
                     print(f"  [llama] Server serving '{current_served_model}', attempting to ensure '{self._model_name}' is served...")
                     ok, msg = llama_server.ensure_model_served(api_url, self._model_name)
                     if ok:
-                        # Re-check after ensuring it's served
+                        # Re-check after ensuring it's served.  Server IDs are
+                        # bare (no "llama/" prefix), so strip ours for comparison.
+                        bare_model = self._model_name.removeprefix("llama/")
                         served_after = llama_server.list_served_models(api_url)
-                        if served_after and served_after[0] == self._model_name:
-                            provider._cached_server_model_id = self._model_name
+                        if served_after and served_after[0] == bare_model:
+                            provider._cached_server_model_id = served_after[0]
                             print(f"  [llama] Successfully ensured '{self._model_name}' is served.")
                         else:
                             print(f"  [llama] WARNING: ensure_model_served reported success, but model not found in list: {msg}")

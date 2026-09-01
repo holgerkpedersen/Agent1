@@ -106,7 +106,7 @@ class TestSwitchModelLlama:
         )
 
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             self.cmd._switch_model(["llama/qwen3.8-flash-next"], agent)
         )
 
@@ -135,7 +135,7 @@ class TestSwitchModelLlama:
         monkeypatch.setattr("agent_core.commands.model_cmd.persist_model_choice", lambda *a, **k: None)
 
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             self.cmd._switch_model(["qwen3.8-flash-next", "--provider", "llama"], agent)
         )
 
@@ -474,7 +474,7 @@ class TestNoLmStudioManagement:
 
         prov = LlamaProvider(model_name="llama/x", api_url="http://h/v1")
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             prov.chat([{"role": "user", "content": "hi"}])
         )
         assert result == "ok"
