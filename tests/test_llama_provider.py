@@ -106,9 +106,13 @@ class TestSwitchModelLlama:
         )
 
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
-            self.cmd._switch_model(["llama/qwen3.8-flash-next"], agent)
-        )
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(
+                self.cmd._switch_model(["llama/qwen3.8-flash-next"], agent)
+            )
+        finally:
+            loop.close()
 
         assert isinstance(agent.llm._provider, LlamaProvider)
         assert agent.llm.model_name == "llama/qwen3.8-flash-next"
@@ -135,9 +139,13 @@ class TestSwitchModelLlama:
         monkeypatch.setattr("agent_core.commands.model_cmd.persist_model_choice", lambda *a, **k: None)
 
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
-            self.cmd._switch_model(["qwen3.8-flash-next", "--provider", "llama"], agent)
-        )
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(
+                self.cmd._switch_model(["qwen3.8-flash-next", "--provider", "llama"], agent)
+            )
+        finally:
+            loop.close()
 
         assert isinstance(agent.llm._provider, LlamaProvider)
         assert agent.llm.model_name == "llama/qwen3.8-flash-next"
@@ -474,9 +482,13 @@ class TestNoLmStudioManagement:
 
         prov = LlamaProvider(model_name="llama/x", api_url="http://h/v1")
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
-            prov.chat([{"role": "user", "content": "hi"}])
-        )
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(
+                prov.chat([{"role": "user", "content": "hi"}])
+            )
+        finally:
+            loop.close()
         assert result == "ok"
         assert calls["load"] == 0
         assert calls["lms"] == 0

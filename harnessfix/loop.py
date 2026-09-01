@@ -148,27 +148,16 @@ def run_loop(
             candidate_layer=repair.layer,
             candidate_summary=repair.applied_summary(),
         )
-        # Already-applied guard: a static corpus diagnoses the same layers
-        # every run, so the top candidate is the same repair each iteration.
-        # If it is already in the tree, re-applying is a no-op (and the
-        # offline gate would "accept" it again, looping forever).  Skip it
-        # so the loop falls through to the next candidate or stops cleanly.
-        if repair.is_applied():
-            summary.setdefault("skipped_already_applied", []).append(repair.id)
-            attempted.append(repair.id)
-            set_phase(
-                "evaluating_candidate",
-                candidate=repair.id,
-                verdict="already_applied_skip",
-            )
-            continue
         # String-collision guard: a repair that rewrites a runtime string
         # must not break test assertions pinning the old string.  Any hit
         # skips the repair (fail-safe; recorded for the human gate) instead
         # of burning a full gate run and reverting afterwards.  The guard's
         # OWN fixture tests (GUARD_TEST_FILENAMES) are excluded: they contain
         # the fragments as literals, not as pins of the OLD runtime string
-        # (decision #051).
+        # (decision #051).  This runs BEFORE the already-applied check so a
+        # collision is detected even when the repair is already in the tree
+        # (otherwise the already-applied skip would mask the collision and
+        # the loop would silently miss the skip, returning no_repair_catalogued).
         all_hits = collisions.find_test_collisions(
             repair.collision_fragments,
             tests_dir=collisions.DEFAULT_TESTS_DIR,
@@ -189,7 +178,29 @@ def run_loop(
             summary.setdefault("skipped_collisions", []).append(
                 {"repair": repair.id, "collisions": [c.to_dict() for c in collisions_hits]}
             )
+            summary["verdict"] = "skipped_test_collision"
             attempted.append(repair.id)
+            set_phase(
+                "evaluating_candidate",
+                candidate=repair.id,
+                verdict="skipped_test_collision",
+            )
+            continue
+        # Already-applied guard: a static corpus diagnoses the same layers
+        # every run, so the top candidate is the same repair each iteration.
+        # If it is already in the tree, re-applying is a no-op (and the
+        # offline gate would "accept" it again, looping forever).  Skip it
+        # so the loop falls through to the next candidate or stops cleanly.
+        # Checked AFTER the collision guard so a collision is never masked
+        # by an already-applied skip.
+        if repair.is_applied():
+            summary.setdefault("skipped_already_applied", []).append(repair.id)
+            attempted.append(repair.id)
+            set_phase(
+                "evaluating_candidate",
+                candidate=repair.id,
+                verdict="already_applied_skip",
+            )
             continue
 
         baseline_rate = gates.run_benchmark_gate(model, profile)
