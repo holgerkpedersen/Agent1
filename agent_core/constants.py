@@ -79,8 +79,11 @@ KNOWN_MODELS = {
 DEFAULT_MODEL = os.environ.get("AGENT_MODEL", "laguna-s-2.1")
 
 #: Default opencode-go model when the opencode provider is active and no
-#: explicit model is configured.
-DEFAULT_OPENCODE_MODEL = "opencode-go/deepseek-v4-flash"
+#: explicit model is configured.  Reads AGENT_OPENCODE_MODEL from .env so
+#: this constant and AgentSettings.opencode_model share one source of truth.
+DEFAULT_OPENCODE_MODEL = os.environ.get(
+    "AGENT_OPENCODE_MODEL", "opencode-go/deepseek-v4-flash"
+)
 
 _MODEL_JSON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "model.json")

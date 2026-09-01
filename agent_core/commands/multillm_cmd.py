@@ -7,7 +7,7 @@ Usage::
              [--role model:system-prompt] [--role-file path.json]
 
 Default models: the current agent model plus the configured opencode model
-(``laguna-s-2.1`` + ``opencode-go/deepseek-v4-flash`` when nothing is
+(``laguna-s-2.1`` + the configured opencode model when nothing is
 persisted) — one local LM Studio model and one hosted opencode model answer
 the same prompt in parallel, so their answers can be compared directly.
 
@@ -42,6 +42,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_core.colors import cyan, yellow
+from agent_core.constants import DEFAULT_OPENCODE_MODEL
 from .base import Command
 
 if TYPE_CHECKING:
@@ -56,7 +57,7 @@ def _default_models(agent: "Agent") -> list[str]:
         settings = load_agent_settings()
         opencode_model = settings.opencode_model
     except Exception:
-        opencode_model = "opencode-go/deepseek-v4-flash"
+        opencode_model = DEFAULT_OPENCODE_MODEL
     seen: list[str] = []
     for m in (current, opencode_model):
         if m and m not in seen:
@@ -190,7 +191,7 @@ class MultiLlmCommand(Command):
         if len(models) < 2:
             self.error(
                 "multillm needs at least two models — pass --models "
-                "laguna-s-2.1,opencode-go/deepseek-v4-flash"
+                "laguna-s-2.1,opencode-go/..."
             )
             return True
 

@@ -63,11 +63,34 @@ def _hosted_model_id(model_name: str) -> str:
 #: backend ("Model is unavailable" / 5xx / timeout), chat transparently
 #: retries one of these so a `model opencode-zen/<x>-free` session still works
 #: instead of hard-failing.  Ordered by observed reliability.
-_ZEN_FREE_FALLBACK = [
+#:
+#: This is the fallback used when AGENT_ZEN_FREE_FALLBACKS is unset or when
+#: settings cannot be loaded.  Prefer :func:`_zen_free_fallbacks` at call
+#: sites so the user's configured list (via .env) takes precedence.
+_DEFAULT_ZEN_FREE_FALLBACKS = [
     "opencode-zen/hy3-free",
     "opencode-zen/laguna-s-2.1-free",
     "opencode-zen/mimo-v2.5-free",
 ]
+
+
+def _zen_free_fallbacks() -> list[str]:
+    """Return the configured opencode-zen FREE fallback model list.
+
+    Reads ``AGENT_ZEN_FREE_FALLBACKS`` from settings (set in .env); falls
+    back to :data:`_DEFAULT_ZEN_FREE_FALLBACKS` when settings can't load or
+    the var is unset, so a broken settings load never breaks chat retries.
+    """
+    try:
+        from agent_core.config import load_agent_settings
+
+        settings = load_agent_settings()
+        fallbacks = getattr(settings, "zen_free_fallbacks", None)
+        if fallbacks:
+            return list(fallbacks)
+    except Exception:
+        pass
+    return list(_DEFAULT_ZEN_FREE_FALLBACKS)
 
 #: Substrings in a provider error string that mean the backend model itself
 #: is down (as opposed to a bug in our request) — these trigger the free-tier
@@ -552,13 +575,14 @@ class OpencodeProvider:
     ) -> str:
         """Retry the turn on other known-good free models, then give up clearly.
 
-        Tries each :data:`_ZEN_FREE_FALLBACK` model (skipping the one already
-        in use) once.  If all are down, returns a clear message naming the
-        originally requested model so the user can pick a different free model
-        with `model opencode-zen/<id>-free`.
+        Tries each model from :func:`_zen_free_fallbacks` (skipping the one
+        already in use) once.  If all are down, returns a clear message naming
+        the originally requested model so the user can pick a different free
+        model with `model opencode-zen/<id>-free`.
         """
+        fallbacks = _zen_free_fallbacks()
         tried = [self.model_name]
-        for fallback in _ZEN_FREE_FALLBACK:
+        for fallback in fallbacks:
             if fallback == self.model_name:
                 continue
             print(
@@ -577,10 +601,13 @@ class OpencodeProvider:
             if not self._is_backend_down(out):
                 return out
             tried.append(fallback)
+        # Suggest the first fallback as an example so the user gets a concrete
+        # model name even if the originally requested one is gone.
+        example = fallbacks[0] if fallbacks else "opencode-zen/hy3-free"
         return (
             f"[Error: opencode-zen free model {self.model_name} is currently "
             f"unavailable on the backend. Try another free model with "
-            f"'model opencode-zen/<id>-free' (e.g. opencode-zen/hy3-free). "
+            f"'model opencode-zen/<id>-free' (e.g. {example}). "
             f"Checked: {', '.join(tried)}.]"
         )
 

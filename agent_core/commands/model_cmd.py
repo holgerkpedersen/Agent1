@@ -147,7 +147,7 @@ class ModelCommand(Command):
                 # always reflects the keyed opencode-go catalog, even when the
                 # active model is a keyless opencode-zen free model.
                 oc = OpencodeProvider(
-                    model_name="opencode-go/placeholder",
+                    model_name=s.opencode_model,
                     server_url=getattr(s, "opencode_server_url", "http://127.0.0.1:4096"),
                     password=getattr(s, "opencode_password", ""),
                     api_url=getattr(s, "opencode_api_url", "https://opencode.ai/zen/go/v1"),
@@ -171,7 +171,14 @@ class ModelCommand(Command):
         """
         try:
             from agent_core.llm.opencode_provider import OpencodeProvider
-            prov = OpencodeProvider("opencode-zen/hy3-free", read_store=False)
+            from agent_core.config import load_agent_settings
+
+            try:
+                settings = load_agent_settings()
+                zen_default = settings.zen_free_default
+            except Exception:
+                zen_default = "opencode-zen/hy3-free"
+            prov = OpencodeProvider(zen_default, read_store=False)
             return list(prov.list_models())
         except Exception:
             return []

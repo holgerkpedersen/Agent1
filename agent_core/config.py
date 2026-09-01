@@ -153,6 +153,21 @@ class AgentSettings:
             "AGENT_OPENROUTER_MODEL", "openrouter/meta-llama/llama-3.1-8b-instruct:free"
         )
     )
+    #: Default opencode-zen FREE model used for catalog listing / probing
+    #: (keyless tier — no API key needed).  Override with AGENT_ZEN_FREE_DEFAULT.
+    zen_free_default: str = field(
+        default_factory=lambda: os.environ.get(
+            "AGENT_ZEN_FREE_DEFAULT", "opencode-zen/hy3-free"
+        )
+    )
+    #: Ordered fallback models for the opencode-zen FREE tier, tried in order
+    #: when the user's chosen free model is temporarily unavailable on the
+    #: backend.  Comma-separated; override with AGENT_ZEN_FREE_FALLBACKS.
+    zen_free_fallbacks: tuple[str, ...] = field(
+        default_factory=lambda: _parse_zen_fallbacks(
+            os.environ.get("AGENT_ZEN_FREE_FALLBACKS")
+        )
+    )
 
     def __post_init__(self) -> None:
         # Enforce the invariant on every construction (not just at the two
@@ -178,6 +193,32 @@ def _parse_provider_chain(raw: str | None) -> tuple[str, ...]:
         part.strip().lower() for part in raw.split(",") if part.strip()
     )
     return cleaned or ("lmstudio",)
+
+
+def _parse_zen_fallbacks(raw: str | None) -> tuple[str, ...]:
+    """Parse a comma-separated opencode-zen FREE fallback list.
+
+    Strips whitespace and drops empties so ``"opencode-zen/hy3-free,
+    opencode-zen/laguna-s-2.1-free"`` yields a clean ordered tuple.  Falls
+    back to the default curated list when the input is empty/None.
+    """
+    if not raw:
+        return _DEFAULT_ZEN_FREE_FALLBACKS
+    cleaned = tuple(
+        part.strip() for part in raw.split(",") if part.strip()
+    )
+    return cleaned or _DEFAULT_ZEN_FREE_FALLBACKS
+
+
+#: Curated opencode-zen FREE models that are reliably up (verified live).
+#: Used as the default for AgentSettings.zen_free_fallbacks when the
+#: AGENT_ZEN_FREE_FALLBACKS env var is unset.  Update this tuple when models
+#: are added/removed on the backend.
+_DEFAULT_ZEN_FREE_FALLBACKS: tuple[str, ...] = (
+    "opencode-zen/hy3-free",
+    "opencode-zen/laguna-s-2.1-free",
+    "opencode-zen/mimo-v2.5-free",
+)
 
 
 def _store_secret(name: str) -> str:
