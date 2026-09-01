@@ -73,16 +73,15 @@ def _isolate_from_real_tree_and_beacons(
         monkeypatch.setattr(mod, "_TARGET", local)
         # Revert any repair already applied in the real tree so the
         # sandboxed copy starts from the UN-applied (original) state.
-        # Only tool_interface needs this — its loop tests read the target
-        # to assert whether the repair was applied; stuck_repeat and
-        # abandonment_resume tests create their own isolated copies and
-        # apply/revert independently, so reverting their copies here would
-        # interfere with their own apply/revert roundtrip assertions.
-        if mod is tool_interface:
-            try:
-                mod.revert()
-            except Exception:
-                pass
+        # All three repair modules need this: tool_interface's loop tests
+        # read the target to assert whether the repair was applied;
+        # stuck_repeat's apply/revert roundtrip tests copy the REAL file
+        # and need it in the un-applied state; and the harnessfix_loop
+        # tests expect stuck_repeat to be selectable (not already-applied).
+        try:
+            mod.revert()
+        except Exception:
+            pass
 
     # Redirect the live autonomous-run beacons to temp so driver/loop tests
     # never write into reports/harnessfix/*.

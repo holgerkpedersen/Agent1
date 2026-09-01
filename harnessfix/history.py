@@ -256,11 +256,18 @@ def _append_wiki_notes(query: str, workspace: str) -> str:
     if not query:
         return ""
     # Resolve the wiki file relative to the workspace root (not repo root),
-    # so tests pointing at a temp dir find their own wiki.  Fall back to the
-    # module-level WIKI_PATH when no per-workspace wiki exists.
+    # so tests pointing at a temp dir find their own wiki.  Only fall back
+    # to the module-level WIKI_PATH when the workspace IS the repo root
+    # (avoids leaking global wiki content into workspace-scoped lookups).
     wpath = Path(workspace) / "reports" / "wiki" / "wiki.jsonl"
     if not wpath.is_file():
-        wpath = WIKI_PATH
+        # Derive project root from this file's location (harnessfix/ is one
+        # level below the repo root).
+        _repo_root = Path(__file__).resolve().parent.parent
+        if Path(workspace).resolve() == _repo_root.resolve():
+            wpath = WIKI_PATH
+        else:
+            return ""
     try:
         return format_wiki_notes(query, k=3, path=wpath) or ""
     except Exception:
