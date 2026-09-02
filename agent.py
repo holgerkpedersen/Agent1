@@ -2382,7 +2382,12 @@ _SYSTEM_PROMPT = (
     f"- The shell for the run tool is: {_detect_shell()}. On Windows there "
     "is NO tail/grep/ls/find. Never pipe with '2>&1 | tail -40' — use Python "
     "one-liners (python -c \"...\") or the built-in tools; run output is "
-    "truncated to 5000 chars automatically.\n"
+    "truncated to 5000 chars automatically. The run tool reports non-zero "
+    "exit codes as [EXIT CODE: N] at the end of its output — read it from "
+    "there, never chain '...; echo $?' (the model cannot see $? afterwards).\n"
+    "- Python's sys.exitcode is only set at interpreter exit — use "
+    "sys.exit(). Shell test tools ship with pytest (scripts exit non-zero "
+    "on failure).\n"
     "- You have an effectively unlimited tool budget: do not rush, do not "
     "stop early, and do not plan around a budget. Take as many tool calls "
     "as the task needs — but make steady progress: when exploration is "
@@ -2458,16 +2463,24 @@ def _shape_run_stderr(err: str, output: str, returncode: int | None) -> str:
 
     Shared by the ``run`` NLP tool so its stderr handling lives in one
     testable place instead of being inlined in the handler.
+
+    When the command returns a non-zero exit code, the code is appended so
+    the model can observe it directly — no need to capture it via shell
+    pipelines (which often fail on Windows).
     """
     if not err:
         # cmd.exe silently fails whole pipelines (rc 255, no output)
         # when a pipe element or command does not exist.
         if os.name == "nt" and returncode == 255 and not output:
             return output + _unix_command_hint()
+        if returncode is not None and returncode != 0:
+            output += f"\n[EXIT CODE: {returncode}]"
         return output
     output += f"\n[STDERR]\n{err}"
     if re.search(r"is not recognized|not found", err, re.I):
         output += _unix_command_hint()
+    if returncode is not None and returncode != 0:
+        output += f"\n[EXIT CODE: {returncode}]"
     return output
 
 
