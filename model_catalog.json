@@ -1,0 +1,86 @@
+{
+  "qwen3.6-27b-mtp": {
+    "desc": "Qwen 3.6 27B — chat, codegen, large context",
+    "max_tokens": 100000,
+    "size_gb": 15.8,
+    "params": "27B",
+    "thinking": true,
+    "disable_thinking_kwargs": {
+      "chat_template_kwargs": {
+        "enable_thinking": false,
+        "preserve_thinking": false
+      }
+    }
+  },
+  "qwen3.5-9b-mtp": {
+    "desc": "Qwen 3.5 9B MTP — coding, thinking",
+    "max_tokens": 100000,
+    "size_gb": 5.3,
+    "params": "9B",
+    "thinking": true,
+    "disable_thinking_kwargs": {
+      "chat_template_kwargs": {
+        "enable_thinking": false,
+        "preserve_thinking": false
+      }
+    }
+  },
+  "qwen/qwen3.8-27b": {
+    "desc": "Qwen 3.8 27B — chat, codegen, reasoning (2026-08-18: no explicit disable_kwargs; uses the safe minimal fallback — aggressive switches cause a full-budget reasoning burn)",
+    "max_tokens": 100000,
+    "size_gb": 16.0,
+    "params": "27B",
+    "thinking": true
+  },
+  "google/gemma-4-12b": {
+    "desc": "Gemma 4 12B — chat, reasoning, fast token gen",
+    "max_tokens": 100000,
+    "size_gb": 7.0,
+    "params": "12B",
+    "thinking": true
+  },
+  "google/gemma-4-31b": {
+    "desc": "Gemma 4 31B — chat, reasoning, fast token gen",
+    "max_tokens": 100000,
+    "size_gb": 18.1,
+    "params": "31B",
+    "thinking": true
+  },
+  "kwaipilot_kat-coder-v2.5-dev": {
+    "desc": "Kwaipilot Kat-Coder 2.5 dev — coding, thinking",
+    "max_tokens": 100000,
+    "size_gb": 8.1,
+    "params": "8B",
+    "thinking": true
+  },
+  "qwen3-coder-30b-a3b-instruct": {
+    "desc": "Qwen3 Coder 30B A3B MoE — coding, thinking",
+    "max_tokens": 100000,
+    "size_gb": 18.1,
+    "params": "30B-A3B",
+    "thinking": true,
+    "disable_thinking_kwargs": {
+      "chat_template_kwargs": {
+        "enable_thinking": false,
+        "preserve_thinking": false
+      }
+    }
+  },
+  "laguna-s-2.1": {
+    "desc": "Laguna S 2.1 MoE A8B — agentic coding, thinking",
+    "max_tokens": 100000,
+    "size_gb": 4.2,
+    "params": "8B-MoE",
+    "thinking": true,
+    "disable_thinking_kwargs": {
+      "chat_template_kwargs": {
+        "enable_thinking": false,
+        "preserve_thinking": false
+      },
+      "thinking": {"type": "disabled"},
+      "enableThinking": false,
+      "preserve_thinking": false,
+      "reasoning": "off"
+    }
+  }
+}

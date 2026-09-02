@@ -1,80 +1,42 @@
 """Shared constants for agent configuration."""
 
 from __future__ import annotations
+import json as _json
 import logging
 import os
 from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
-KNOWN_MODELS = {
-    "qwen3.6-27b-mtp": {
-        "desc": "Qwen 3.6 27B — chat, codegen, large context",
-        "max_tokens": 100000,
-        "size_gb": 15.8,
-        "params": "27B",
-        "thinking": True,
-        "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False, "preserve_thinking": False}},
-    },
-    "qwen3.5-9b-mtp": {
-        "desc": "Qwen 3.5 9B MTP — coding, thinking",
-        "max_tokens": 100000,
-        "size_gb": 5.3,
-        "params": "9B",
-        "thinking": True,
-        "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False, "preserve_thinking": False}},
-    },
-    "qwen/qwen3.8-27b": {
-        "desc": "Qwen 3.8 27B — chat, codegen, reasoning (2026-08-18: no explicit disable_kwargs; uses the safe minimal fallback — aggressive switches cause a full-budget reasoning burn)",
-        "max_tokens": 100000,
-        "size_gb": 16.0,
-        "params": "27B",
-        "thinking": True,
-    },
-    "google/gemma-4-12b": {
-        "desc": "Gemma 4 12B — chat, reasoning, fast token gen",
-        "max_tokens": 100000,
-        "size_gb": 7.0,
-        "params": "12B",
-        "thinking": True,
-    },
-    "google/gemma-4-31b": {
-        "desc": "Gemma 4 31B — chat, reasoning, fast token gen",
-        "max_tokens": 100000,
-        "size_gb": 18.1,
-        "params": "31B",
-        "thinking": True,
-    },
-    "kwaipilot_kat-coder-v2.5-dev": {
-        "desc": "Kwaipilot Kat-Coder 2.5 dev — coding, thinking",
-        "max_tokens": 100000,
-        "size_gb": 8.1,
-        "params": "8B",
-        "thinking": True,
-    },
-    "qwen3-coder-30b-a3b-instruct": {
-        "desc": "Qwen3 Coder 30B A3B MoE — coding, thinking",
-        "max_tokens": 100000,
-        "size_gb": 18.1,
-        "params": "30B-A3B",
-        "thinking": True,
-        "disable_thinking_kwargs": {"chat_template_kwargs": {"enable_thinking": False, "preserve_thinking": False}},
-    },
-    "laguna-s-2.1": {
-        "desc": "Laguna S 2.1 MoE A8B — agentic coding, thinking",
-        "max_tokens": 100000,
-        "size_gb": 4.2,
-        "params": "8B-MoE",
-        "thinking": True,
-        "disable_thinking_kwargs": {
-            "chat_template_kwargs": {"enable_thinking": False, "preserve_thinking": False},
-            "thinking": {"type": "disabled"},
-            "enableThinking": False,
-            "preserve_thinking": False,
-            "reasoning": "off",
-        },
-    },
-}
+_MODEL_JSON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+#: Path to the external model catalog JSON (loaded at import time).
+_MODEL_CATALOG_PATH = os.path.join(_MODEL_JSON_DIR, "model_catalog.json")
+
+
+def _load_model_catalog() -> dict[str, dict[str, Any]]:
+    """Load model metadata from ``model_catalog.json``.
+
+    Returns a plain dict keyed by model name.  If the file is missing or
+    corrupt, logs a warning and returns ``{}`` — the payload builders
+    already handle unknown models via the safe minimal fallback.
+    """
+    try:
+        with open(_MODEL_CATALOG_PATH, "r", encoding="utf-8") as f:
+            data: Any = _json.load(f)
+        if not isinstance(data, dict):
+            logger.warning("model_catalog.json root is not a dict — ignoring")
+            return {}
+        return data
+    except FileNotFoundError:
+        logger.warning("model_catalog.json not found — KNOWN_MODELS will be empty")
+        return {}
+    except _json.JSONDecodeError as exc:
+        logger.warning("model_catalog.json malformed (%s) — KNOWN_MODELS will be empty", exc)
+        return {}
+
+
+KNOWN_MODELS: dict[str, dict[str, Any]] = _load_model_catalog()
 
 DEFAULT_MODEL = os.environ.get("AGENT_MODEL", "laguna-s-2.1")
 
@@ -85,7 +47,6 @@ DEFAULT_OPENCODE_MODEL = os.environ.get(
     "AGENT_OPENCODE_MODEL", "opencode-go/deepseek-v4-flash"
 )
 
-_MODEL_JSON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "model.json")
 CHAT_HISTORY_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "chat_history.json")
 #: Cross-session memory (files read, semantic index, knowledge graph, working
@@ -117,7 +78,7 @@ def resolve_model(explicit: str | None = None) -> str:
     3. Persisted model.json (set by ``model`` command, provider-aware)
     4. ``AGENT_MODEL`` environment variable
     5. What is actually loaded in LM Studio right now (via API) — lmstudio only
-    6. Hardcoded fallback (``laguna-s-2.1``)
+    6. Default fallback (``laguna-s-2.1``)
 
     The persisted choice outranks the live LM Studio poll (multi-shell
     safety): a second ``agent.py`` shell that loads a different model must
