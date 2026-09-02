@@ -1,4 +1,23 @@
 {
+  "_defaults": {
+    "model": "laguna-s-2.1",
+    "opencode_model": "opencode-go/deepseek-v4-flash",
+    "openrouter_model": "openrouter/meta-llama/llama-3.1-8b-instruct:free"
+  },
+  "_routing": {
+    "opencode": "opencode",
+    "zen": "opencode",
+    "openrouter": "openrouter",
+    "llama": "llama",
+    "laguna": "lmstudio",
+    "qwen": "lmstudio",
+    "kwaipilot": "lmstudio",
+    "gemma": "lmstudio",
+    "meta/": "lmstudio",
+    "prism": "lmstudio",
+    "lmstudio": "lmstudio"
+  },
+  "_zen_free_tier_prefixes": ["opencode-zen/", "zen/"],
   "qwen3.6-27b-mtp": {
     "desc": "Qwen 3.6 27B — chat, codegen, large context",
     "max_tokens": 100000,

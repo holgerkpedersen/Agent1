@@ -52,19 +52,14 @@ def provider_for(
     user last persisted in model.json (``model`` command writes it) — this
     keeps LM Studio models on LM Studio even when AGENT_LLM_PROVIDER is
     opencode; finally the configured ``llm_provider`` setting; unknown values
+    from agent_core.constants import ROUTER
+
     fall back to lmstudio.
     """
     m = (model_name or "").lower()
-    if m.startswith("opencode"):
-        return "opencode"
-    if m.startswith("zen"):
-        return "opencode"
-    if m.startswith("openrouter"):
-        return "openrouter"
-    if m.startswith("llama"):
-        return "llama"
-    if m.startswith(("laguna", "qwen", "kwaipilot", "gemma", "meta/", "prism", "lmstudio")):
-        return "lmstudio"
+    for prefix, provider in ROUTER.items():
+        if m.startswith(prefix):
+            return provider
     if persisted_provider in ("lmstudio", "opencode", "llama", "openrouter"):
         return persisted_provider
     # A chain entry may carry a per-entry model override ("opencode:model");
@@ -96,17 +91,11 @@ def _provider_part(entry: str) -> str:
     return entry.split(":", 1)[0].strip()
 
 
-#: Model-name prefixes that select the keyless opencode-zen FREE tier (as
-#: opposed to the keyed opencode-go tier).  Used to decide whether an active
-#: model "matches" a given failover slot so an explicit ``model`` selection is
-#: honored only within its own tier.
-_ZEN_PREFIXES = ("opencode-zen/", "zen/")
-
-
 def _model_mode(model: str | None) -> str:
     """Return ``"zen"`` for free-tier model names, else ``"go"`` (keyed/other)."""
+    from agent_core.constants import _ZEN_TIER_PREFIXES
     m = (model or "").lower()
-    return "zen" if m.startswith(_ZEN_PREFIXES) else "go"
+    return "zen" if m.startswith(_ZEN_TIER_PREFIXES) else "go"
 
 
 def _matches_slot(

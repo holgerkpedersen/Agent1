@@ -36,15 +36,31 @@ def _load_model_catalog() -> dict[str, dict[str, Any]]:
         return {}
 
 
-KNOWN_MODELS: dict[str, dict[str, Any]] = _load_model_catalog()
+KNOWN_MODELS: dict[str, dict[str, Any]] = {
+    k: v for k, v in _load_model_catalog().items() if not k.startswith("_")
+}
 
-DEFAULT_MODEL = os.environ.get("AGENT_MODEL", "laguna-s-2.1")
+#: Provider routing table loaded from ``model_catalog.json`` ``_routing``.
+#: Maps a model-name prefix (lowercase) to the provider that handles it.
+ROUTER: dict[str, str] = {
+    k: v for k, v in _load_model_catalog().get("_routing", {}).items()
+}
+
+#: Default model names loaded from ``model_catalog.json`` ``_defaults``.
+_DEFAULTS: dict[str, str] = _load_model_catalog().get("_defaults", {})
+
+#: Model-name prefixes that select the keyless opencode-zen FREE tier.
+_ZEN_TIER_PREFIXES: tuple[str, ...] = tuple(
+    _load_model_catalog().get("_zen_free_tier_prefixes", ["opencode-zen/", "zen/"])
+)
+
+DEFAULT_MODEL = os.environ.get("AGENT_MODEL", _DEFAULTS.get("model", "laguna-s-2.1"))
 
 #: Default opencode-go model when the opencode provider is active and no
 #: explicit model is configured.  Reads AGENT_OPENCODE_MODEL from .env so
 #: this constant and AgentSettings.opencode_model share one source of truth.
 DEFAULT_OPENCODE_MODEL = os.environ.get(
-    "AGENT_OPENCODE_MODEL", "opencode-go/deepseek-v4-flash"
+    "AGENT_OPENCODE_MODEL", _DEFAULTS.get("opencode_model", "opencode-go/deepseek-v4-flash")
 )
 
 MODEL_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "model.json")
