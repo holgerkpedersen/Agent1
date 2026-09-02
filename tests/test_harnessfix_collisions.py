@@ -11,8 +11,36 @@ from harnessfix import gates
 pytestmark = pytest.mark.harnessfix_self_test
 from harnessfix.loop import run_loop
 from harnessfix.repairs.collisions import find_test_collisions
-from harnessfix.repairs.tool_interface import _NEW, _OLD
+from harnessfix.repairs.tool_interface import (
+    TOOL_INTERFACE_REPAIR_ID,
+    _NEW,
+    _OLD,
+    revert as _revert_tool_interface,
+)
+from harnessfix.repairs.stuck_repeat import revert as _revert_stuck_repeat
+from harnessfix.repairs.abandonment_resume import revert as _revert_abandonment
 from harnessfix.tracing import KIND_LOOP_END, KIND_TOOL_ERROR, TraceWriter
+
+
+def _reset_repairs() -> None:
+    """Revert any repair a prior test left applied to the (redirected temp) tree."""
+    for _r in (_revert_tool_interface, _revert_stuck_repeat, _revert_abandonment):
+        try:
+            _r()
+        except Exception:  # noqa: BLE001 - best-effort cleanup only
+            pass
+
+
+@pytest.fixture(autouse=True)
+def _clean_repair_tree():
+    """Make every harnessfix_self_test order-independent.
+
+    The loop's already-applied guard reads the (redirected temp copy of) source,
+    so these tests must start from a clean tree regardless of test ordering or
+    whether autonomous self-improvement merged a repair into HEAD."""
+    _reset_repairs()
+    yield
+    _reset_repairs()
 
 
 def _write_tool_error_trace(traces_dir: Path, task_id: str) -> None:

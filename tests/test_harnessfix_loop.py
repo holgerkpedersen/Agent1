@@ -33,6 +33,20 @@ def _reset_repairs() -> None:
         except Exception:
             pass
 
+@pytest.fixture(autouse=True)
+def _clean_repair_tree():
+    """Make every harnessfix_self_test order-independent.
+
+    The loop's already-applied guard reads the (possibly redirected temp copy of)
+    source file, so these tests must start from a clean tree regardless of test
+    ordering or whether autonomous self-improvement merged a repair into HEAD.
+    This fixture resets all catalog repairs BEFORE each test and AFTER, on
+    whatever target each module currently points at — never the real committed
+    file (the root conftest redirects targets to temp copies for this suite)."""
+    _reset_repairs()
+    yield
+    _reset_repairs()
+
 _OLD = 'result_str = f"Tool error: {exc}"'
 _NEW = 'result_str = f"Tool error ({type(exc).__name__}): {exc}"'
 
