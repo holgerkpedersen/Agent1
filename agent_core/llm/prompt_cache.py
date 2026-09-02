@@ -20,10 +20,14 @@ class PromptCache:
     ``prompt_templates`` table via :mod:`db_io`.  The cache keeps a local dict
     so repeated reads for the same key avoid further DB hits until explicitly
     evicted.
+
+    Hit/miss counters track template-cache performance (plan CACHE item 1).
     """
 
     def __init__(self) -> None:
         self._store: dict[tuple[str, str], tuple[int, str]] = {}
+        self._hits: int = 0
+        self._misses: int = 0
 
     def get_template(self, task_type: str, profile_type: str) -> str:
         """Return the latest template for *task_type*+*profile_type*.
@@ -33,8 +37,10 @@ class PromptCache:
         key = (task_type, profile_type)
         cached = self._store.get(key)
         if cached is not None:
+            self._hits += 1
             return cached[1]
 
+        self._misses += 1
         version = get_latest_version(task_type, profile_type)
         if version is not None:
             text = load_template(task_type, profile_type, version)
@@ -45,6 +51,22 @@ class PromptCache:
         fallback = _DEFAULT_TEMPLATES.get(key, "Please analyze and respond to the following task: {task}")
         self._store[key] = (-1, fallback)
         return fallback
+
+    def get_stats(self) -> dict[str, float | int]:
+        """Return template-cache hit/miss statistics.
+
+        Returns a dict with keys ``hits``, ``misses``, ``total_lookups``,
+        and ``hit_rate_pct`` (percentage).  When no lookups have been made,
+        *hit_rate_pct* is reported as ``0.0``.
+        """
+        total = self._hits + self._misses
+        hit_rate = round(self._hits / max(total, 1) * 100.0, 2)
+        return {
+            "hits": self._hits,
+            "misses": self._misses,
+            "total_lookups": total,
+            "hit_rate_pct": hit_rate,
+        }
 
     def put_template(
         self,

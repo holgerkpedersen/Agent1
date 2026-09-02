@@ -22,6 +22,64 @@ class MetricsTracker:
         self._token_entries: dict[tuple[str, str], int] = defaultdict(int)
         self._costs: dict[tuple[str, str], float] = defaultdict(float)
         self._cost_entries: dict[tuple[str, str], int] = defaultdict(int)
+        # Cache hit/miss tracking per (task_type, profile_type) key.
+        # Keys map to {"hits": int, "misses": int} for prompt template cache stats.
+        self._cache_stats: dict[tuple[str, str], dict[str, int]] = {}
+
+    def record_cache_hit(self, task_type: str, profile_type: str) -> None:
+        """Record a template-cache hit for the given (task_type, profile_type)."""
+        key = (task_type, profile_type)
+        entry = self._cache_stats.get(key)
+        if entry is None:
+            entry = {"hits": 0, "misses": 0}
+            self._cache_stats[key] = entry
+        entry["hits"] += 1
+
+    def record_cache_miss(self, task_type: str, profile_type: str) -> None:
+        """Record a template-cache miss for the given (task_type, profile_type)."""
+        key = (task_type, profile_type)
+        entry = self._cache_stats.get(key)
+        if entry is None:
+            entry = {"hits": 0, "misses": 0}
+            self._cache_stats[key] = entry
+        entry["misses"] += 1
+
+    def get_cache_metrics(self, task_type: TaskType, profile_type: ProfileType) -> dict[str, float | int]:
+        """Return cache hit/miss stats for a (task_type, profile_type) pair.
+
+        Returns {"hits", "misses", "total_lookups", "hit_rate_pct"} or an empty
+        dict when no data has been recorded yet.
+        """
+        key = (task_type.value, profile_type.value)
+        entry = self._cache_stats.get(key)
+        if entry is None:
+            return {}
+        hits = entry["hits"]
+        misses = entry["misses"]
+        total = hits + misses
+        hit_rate = round(hits / max(total, 1) * 100.0, 2)
+        return {
+            "hits": hits,
+            "misses": misses,
+            "total_lookups": total,
+            "hit_rate_pct": hit_rate,
+        }
+
+    def get_all_cache_metrics(self) -> dict[tuple[str, str], dict[str, float | int]]:
+        """Return cache stats for every (task_type, profile_type) that has data."""
+        result: dict[tuple[str, str], dict[str, float | int]] = {}
+        for key, entry in self._cache_stats.items():
+            hits = entry["hits"]
+            misses = entry["misses"]
+            total = hits + misses
+            hit_rate = round(hits / max(total, 1) * 100.0, 2)
+            result[key] = {
+                "hits": hits,
+                "misses": misses,
+                "total_lookups": total,
+                "hit_rate_pct": hit_rate,
+            }
+        return result
 
     def record_success(self, task_type: TaskType, profile_type: ProfileType, latency_seconds: float) -> None:
         key = (task_type.value, profile_type.value)
@@ -133,3 +191,4 @@ class MetricsTracker:
         self._token_entries.clear()
         self._costs.clear()
         self._cost_entries.clear()
+        self._cache_stats.clear()
