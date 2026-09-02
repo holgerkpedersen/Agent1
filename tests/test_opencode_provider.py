@@ -552,9 +552,9 @@ class TestProviderForZen:
 class TestZenFreeFallback:
     """When a specific opencode-zen free model is down on the backend
     ("Model is unavailable" / 5xx / timeout), chat must transparently fall
-    back to a known-good free model instead of hard-failing the turn. This is
-    the fix for `model opencode-zen/deepseek-v4-flash-free` returning
-    'Model is unavailable' — that model is intermittently offline upstream."""
+    back to another available free model instead of hard-failing the turn.
+    The candidate list comes from the user's .env (AGENT_ZEN_FREE_FALLBACKS)
+    or the live catalog — never from hardcoded model names in code."""
 
     def test_is_backend_down_detects_markers(self):
         assert OpencodeProvider._is_backend_down(
@@ -570,17 +570,29 @@ class TestZenFreeFallback:
 
     def test_falls_back_when_model_unavailable(self, monkeypatch):
         import asyncio
+        from pathlib import Path
+        from agent_core.config import AgentSettings
+
+        primary = "opencode-zen/primary-free"
+        alternate = "opencode-zen/alternate-free"
+        fake_settings = AgentSettings(
+            zen_free_fallbacks=(alternate,),
+            workspace_root=Path("."),
+        )
 
         async def fake_chat_api(self, messages, tools, max_tokens, disable_thinking):
-            if self.model_name == "opencode-zen/deepseek-v4-flash-free":
+            if self.model_name == primary:
                 return ("[Error: opencode API request failed: HTTP Error 400: "
                         '{"error":{"message":"Model is unavailable."}}]')
-            if self.model_name == "opencode-zen/hy3-free":
+            if self.model_name == alternate:
                 return "pong"
             return "[Error: down]"
 
         monkeypatch.setattr(OpencodeProvider, "_chat_api", fake_chat_api)
-        prov = OpencodeProvider("opencode-zen/deepseek-v4-flash-free", read_store=False)
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: fake_settings
+        )
+        prov = OpencodeProvider(primary, read_store=False)
         out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert out == "pong"
 
@@ -591,19 +603,30 @@ class TestZenFreeFallback:
             return "ok"
 
         monkeypatch.setattr(OpencodeProvider, "_chat_api", fake_chat_api)
-        prov = OpencodeProvider("opencode-zen/deepseek-v4-flash-free", read_store=False)
+        prov = OpencodeProvider("opencode-zen/free", read_store=False)
         out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert out == "ok"
 
     def test_clear_error_when_all_free_models_down(self, monkeypatch):
         import asyncio
+        from pathlib import Path
+        from agent_core.config import AgentSettings
+
+        primary = "opencode-zen/primary-free"
+        fake_settings = AgentSettings(
+            zen_free_fallbacks=("opencode-zen/alt1-free", "opencode-zen/alt2-free"),
+            workspace_root=Path("."),
+        )
 
         async def fake_chat_api(self, messages, tools, max_tokens, disable_thinking):
             return ("[Error: opencode API request failed: HTTP Error 400: "
                     '{"error":{"message":"Model is unavailable."}}]')
 
         monkeypatch.setattr(OpencodeProvider, "_chat_api", fake_chat_api)
-        prov = OpencodeProvider("opencode-zen/deepseek-v4-flash-free", read_store=False)
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: fake_settings
+        )
+        prov = OpencodeProvider(primary, read_store=False)
         out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert "unavailable" in out
-        assert "opencode-zen/hy3-free" in out
+        assert "opencode-zen/alt1-free" in out

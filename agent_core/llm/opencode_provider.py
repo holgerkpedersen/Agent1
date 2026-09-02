@@ -58,28 +58,15 @@ def _hosted_model_id(model_name: str) -> str:
             return model_name[len(prefix):]
     return model_name
 
-#: Curated opencode-zen FREE models that are reliably up (verified live).
-#: When the user's chosen free model is temporarily unavailable on opencode's
-#: backend ("Model is unavailable" / 5xx / timeout), chat transparently
-#: retries one of these so a `model opencode-zen/<x>-free` session still works
-#: instead of hard-failing.  Ordered by observed reliability.
-#:
-#: This is the fallback used when AGENT_ZEN_FREE_FALLBACKS is unset or when
-#: settings cannot be loaded.  Prefer :func:`_zen_free_fallbacks` at call
-#: sites so the user's configured list (via .env) takes precedence.
-_DEFAULT_ZEN_FREE_FALLBACKS = [
-    "opencode-zen/hy3-free",
-    "opencode-zen/laguna-s-2.1-free",
-    "opencode-zen/mimo-v2.5-free",
-]
-
-
 def _zen_free_fallbacks() -> list[str]:
-    """Return the configured opencode-zen FREE fallback model list.
+    """Return the opencode-zen FREE fallback model list.
 
-    Reads ``AGENT_ZEN_FREE_FALLBACKS`` from settings (set in .env); falls
-    back to :data:`_DEFAULT_ZEN_FREE_FALLBACKS` when settings can't load or
-    the var is unset, so a broken settings load never breaks chat retries.
+    Reads ``AGENT_ZEN_FREE_FALLBACKS`` from settings (set in .env) when the
+    user configured one; otherwise discovers the currently-available free-tier
+    models live from the keyless ``/models`` catalog so the retry set adapts
+    to whatever the backend actually serves (no model names are hardcoded in
+    code).  Returns ``[]`` on any failure — chat then reports a clear error
+    instead of guessing at models that may not exist on this account.
     """
     try:
         from agent_core.config import load_agent_settings
@@ -90,7 +77,14 @@ def _zen_free_fallbacks() -> list[str]:
             return list(fallbacks)
     except Exception:
         pass
-    return list(_DEFAULT_ZEN_FREE_FALLBACKS)
+    try:
+        # Discover the currently-available free-tier models live from the
+        # keyless /models catalog (no model names hardcoded).  Any zen-prefixed
+        # name keeps the provider in zen mode; GET /models ignores it.
+        prov = OpencodeProvider("opencode-zen/free", read_store=False)
+        return [m for m in prov.list_models() if m.lower().endswith("-free")]
+    except Exception:
+        return []
 
 #: Substrings in a provider error string that mean the backend model itself
 #: is down (as opposed to a bug in our request) — these trigger the free-tier
@@ -573,12 +567,12 @@ class OpencodeProvider:
         max_tokens: int | None,
         disable_thinking: bool,
     ) -> str:
-        """Retry the turn on other known-good free models, then give up clearly.
+        """Retry the turn on other available free models, then give up clearly.
 
         Tries each model from :func:`_zen_free_fallbacks` (skipping the one
-        already in use) once.  If all are down, returns a clear message naming
-        the originally requested model so the user can pick a different free
-        model with `model opencode-zen/<id>-free`.
+        already in use) once.  If none are available, returns a clear message
+        naming the retried free models so the user can pick a different one
+        with `model opencode-zen/<id>-free`.
         """
         fallbacks = _zen_free_fallbacks()
         tried = [self.model_name]
@@ -601,13 +595,12 @@ class OpencodeProvider:
             if not self._is_backend_down(out):
                 return out
             tried.append(fallback)
-        # Suggest the first fallback as an example so the user gets a concrete
-        # model name even if the originally requested one is gone.
-        example = fallbacks[0] if fallbacks else "opencode-zen/hy3-free"
+        # No hardcoded model name is assumed to exist; surface the free-tier
+        # endpoint so the user can list/choose from the live catalog.
         return (
             f"[Error: opencode-zen free model {self.model_name} is currently "
             f"unavailable on the backend. Try another free model with "
-            f"'model opencode-zen/<id>-free' (e.g. {example}). "
+            f"'model opencode-zen/<id>-free'. "
             f"Checked: {', '.join(tried)}.]"
         )
 

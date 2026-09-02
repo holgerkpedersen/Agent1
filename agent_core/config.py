@@ -154,15 +154,17 @@ class AgentSettings:
         )
     )
     #: Default opencode-zen FREE model used for catalog listing / probing
-    #: (keyless tier — no API key needed).  Override with AGENT_ZEN_FREE_DEFAULT.
+    #: (keyless tier — no API key needed).  NO specific model is hardcoded (a
+    #: machine/account may not have it); when unset we construct the keyless
+    #: catalog probe with a generic zen-prefixed placeholder.  Override with
+    #: AGENT_ZEN_FREE_DEFAULT.
     zen_free_default: str = field(
-        default_factory=lambda: os.environ.get(
-            "AGENT_ZEN_FREE_DEFAULT", "opencode-zen/hy3-free"
-        )
+        default_factory=lambda: os.environ.get("AGENT_ZEN_FREE_DEFAULT", "")
     )
     #: Ordered fallback models for the opencode-zen FREE tier, tried in order
     #: when the user's chosen free model is temporarily unavailable on the
-    #: backend.  Comma-separated; override with AGENT_ZEN_FREE_FALLBACKS.
+    #: backend.  Comma-separated; override with AGENT_ZEN_FREE_FALLBACKS.  When
+    #: unset the live catalog is discovered at retry time (no hardcoded list).
     zen_free_fallbacks: tuple[str, ...] = field(
         default_factory=lambda: _parse_zen_fallbacks(
             os.environ.get("AGENT_ZEN_FREE_FALLBACKS")
@@ -199,26 +201,16 @@ def _parse_zen_fallbacks(raw: str | None) -> tuple[str, ...]:
     """Parse a comma-separated opencode-zen FREE fallback list.
 
     Strips whitespace and drops empties so ``"opencode-zen/hy3-free,
-    opencode-zen/laguna-s-2.1-free"`` yields a clean ordered tuple.  Falls
-    back to the default curated list when the input is empty/None.
+    opencode-zen/laguna-s-2.1-free"`` yields a clean ordered tuple.  Returns
+    an empty tuple when the input is empty/None — no model is assumed to
+    exist; the retry path discovers the live catalog instead.
     """
     if not raw:
-        return _DEFAULT_ZEN_FREE_FALLBACKS
+        return ()
     cleaned = tuple(
         part.strip() for part in raw.split(",") if part.strip()
     )
-    return cleaned or _DEFAULT_ZEN_FREE_FALLBACKS
-
-
-#: Curated opencode-zen FREE models that are reliably up (verified live).
-#: Used as the default for AgentSettings.zen_free_fallbacks when the
-#: AGENT_ZEN_FREE_FALLBACKS env var is unset.  Update this tuple when models
-#: are added/removed on the backend.
-_DEFAULT_ZEN_FREE_FALLBACKS: tuple[str, ...] = (
-    "opencode-zen/hy3-free",
-    "opencode-zen/laguna-s-2.1-free",
-    "opencode-zen/mimo-v2.5-free",
-)
+    return cleaned
 
 
 def _store_secret(name: str) -> str:
@@ -257,22 +249,28 @@ def _validate_settings(settings: AgentSettings) -> None:
         )
 
     invalid_providers = tuple(
-        p for p in settings.llm_providers if p not in _LLM_PROVIDERS
+        p.split(":", 1)[0].strip()
+        for p in settings.llm_providers
+        if p.split(":", 1)[0].strip() not in _LLM_PROVIDERS
     )
     if invalid_providers:
         raise ConfigurationError(
-            f"llm_providers must contain only {', '.join(_LLM_PROVIDERS)}, "
+            f"llm_providers must contain only {', '.join(_LLM_PROVIDERS)} "
+            f"(optionally 'provider:model' per entry), "
             f"got {', '.join(settings.llm_providers)} "
             f"(invalid: {', '.join(invalid_providers)})"
         )
 
-    # The single-provider setting must be the first entry in the chain so the
-    # "active" provider and the failover order agree.
-    if settings.llm_providers and settings.llm_provider != settings.llm_providers[0]:
-        raise ConfigurationError(
-            f"llm_provider ('{settings.llm_provider}') must match the first "
-            f"entry of llm_providers ({settings.llm_providers[0]})"
-        )
+    # The single-provider setting must match the first entry in the chain (the
+    # provider part of a possible 'provider:model' entry) so the "active"
+    # provider and the failover order agree.
+    if settings.llm_providers:
+        first_provider = settings.llm_providers[0].split(":", 1)[0].strip()
+        if settings.llm_provider != first_provider:
+            raise ConfigurationError(
+                f"llm_provider ('{settings.llm_provider}') must match the first "
+                f"entry of llm_providers ({settings.llm_providers[0]})"
+            )
 
 
 def _load_env_file(env_path: Path | None = None) -> dict[str, str]:
@@ -374,16 +372,25 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
     # The failover chain drives the active provider: its first entry IS the
     # active provider, so llm_provider is derived from it (never diverges).
     # AGENT_LLM_PROVIDERS wins; otherwise fall back to the single-provider
-    # AGENT_LLM_PROVIDER setting; finally "lmstudio".
+    # AGENT_LLM_PROVIDER setting; finally the default cloud-first / local-
+    # fallback chain (decision #013 variant): opencode-zen free tier (primary
+    # cloud), opencode-go (secondary cloud), LM Studio (primary local), then
+    # llama.cpp (secondary local).  Per-entry "provider:model" overrides let
+    # the same provider appear twice in different modes (zen vs go).
+    DEFAULT_LLM_CHAIN = (
+        "opencode:opencode-zen/hy3-free,"
+        "opencode:opencode-go/deepseek-v4-flash,"
+        "lmstudio,llama"
+    )
     raw_chain = (
         os.environ.get("AGENT_LLM_PROVIDERS")
         or env_vars.get("AGENT_LLM_PROVIDERS")
         or os.environ.get("AGENT_LLM_PROVIDER")
         or env_vars.get("AGENT_LLM_PROVIDER")
-        or "lmstudio"
+        or DEFAULT_LLM_CHAIN
     )
     llm_providers = _parse_provider_chain(raw_chain)
-    llm_provider = llm_providers[0]
+    llm_provider = llm_providers[0].split(":", 1)[0].strip()
 
     settings = AgentSettings(
         workspace_root=workspace_root,
