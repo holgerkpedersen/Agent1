@@ -342,24 +342,21 @@ def _write_abandonment_trace(traces_dir: Path, task_id: str) -> None:
 def test_loop_falls_through_to_next_repair_on_rejection(tmp_path, monkeypatch):
     """When the highest-priority repair is rejected by the gates, the loop must
     try the NEXT catalog repair for the same layer instead of giving up — so a
-    single bad repair does not stall the whole autonomous run."""
-    from harnessfix.repairs.abandonment_resume import (
-        ABANDONMENT_RESUME_REPAIR_ID,
-        revert as revert_abandon,
-    )
+    single bad repair does not stall the whole autonomous run.
+
+    Since decision #052 removed abandonment-resume from the catalog, only one
+    lifecycle repair (stuck-repeat) exists.  We monkeypatch a temporary second
+    lifecycle repair into the catalog to exercise the fall-through path."""
+    from dataclasses import replace
+
+    from harnessfix.repairs import CATALOG, Repair, repairs_for_layer
     from harnessfix.repairs.stuck_repeat import (
         STUCK_REPEAT_REPAIR_ID,
         revert as revert_stuck,
     )
 
-    # The loop's already-applied guard reads the real tree, so reset any
-    # repair a prior test left applied — this test must start from a clean
-    # tree (it asserts the loop applies both candidates in sequence).
-    for _r in (revert_stuck, revert_abandon):
-        try:
-            _r()
-        except Exception:
-            pass
+    # Ensure a clean tree before the test.
+    revert_stuck()
 
     traces_dir = tmp_path / "traces_fb"
     traces_dir.mkdir()
@@ -368,40 +365,68 @@ def test_loop_falls_through_to_next_repair_on_rejection(tmp_path, monkeypatch):
     # The collision guard must not skip these flows: point it at an empty dir.
     (tmp_path / "no_tests_fb").mkdir()
     monkeypatch.setattr(
-        "harnessfix.repaused.collisions.DEFAULT_TESTS_DIR"
-        if False else "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR",
+        "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR",
         tmp_path / "no_tests_fb",
     )
     monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
 
-    # First candidate (stuck-repeat) is rejected; second (abandonment-resume)
-    # is accepted.  The loop should land on the accepted one.
-    states = {"call": 0}
+    # Inject a temporary second lifecycle repair into the catalog so the
+    # fall-through path is exercised (the existing stuck-repeat will be the
+    # first candidate and this stub the second).
+    FAKE_ID = "_test-fallthrough-stub"
+    _fake_applied = {"v": False}
 
-    def _test_gate(*a, **k):
-        states["call"] += 1
-        # Reject the first call (stuck-repeat), accept the second.
-        return (False, "1 failed") if states["call"] == 1 else (True, "passed")
+    def _noop_apply() -> str:
+        _fake_applied["v"] = True
+        return "fake stub applied"
 
-    monkeypatch.setattr(gates, "run_test_gate", _test_gate)
-    monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
-    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+    def _noop_revert() -> None:
+        _fake_applied["v"] = False
 
-    out = tmp_path / "out_fb"
+    def _noop_is_applied() -> bool:
+        return _fake_applied["v"]
+
+    fake_repair = Repair(
+        id=FAKE_ID,
+        layer="lifecycle",
+        description="test stub for fall-through",
+        apply=_noop_apply,
+        revert=_noop_revert,
+        collision_fragments=(),
+        files=(),
+        is_applied_probe=_noop_is_applied,
+    )
+    # Append the fake repair AFTER the real lifecycle repair so the loop
+    # tries stuck-repeat first (rejected) then this stub (accepted).
+    _orig_catalog = dict(CATALOG)
+    CATALOG[FAKE_ID] = fake_repair
     try:
+        # First candidate (stuck-repeat) is rejected; second (fake stub)
+        # is accepted.  The loop should land on the accepted one.
+        states = {"call": 0}
+
+        def _test_gate(*a, **k):
+            states["call"] += 1
+            # Reject the first call (stuck-repeat), accept the second.
+            return (False, "1 failed") if states["call"] == 1 else (True, "passed")
+
+        monkeypatch.setattr(gates, "run_test_gate", _test_gate)
+        monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+        monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+
+        out = tmp_path / "out_fb"
         summary = run_loop(traces_dir, approve=True, model=None, output_dir=out)
         assert summary["verdict"] == "accepted"
         # The first candidate was rejected and the loop fell through to the
-        # second (abandonment-resume), which was accepted.
+        # second (fake stub), which was accepted.
         assert summary["proposed_repair"] == STUCK_REPEAT_REPAIR_ID
-        assert summary["accepted_repair"] == ABANDONMENT_RESUME_REPAIR_ID
+        assert summary["accepted_repair"] == FAKE_ID
         assert summary.get("attempted_repairs") == [STUCK_REPEAT_REPAIR_ID]
     finally:
         revert_stuck()
-        try:
-            revert_abandon()
-        except Exception:
-            pass
+        # Restore the real catalog and clean up the fake repair's state.
+        CATALOG.clear()
+        CATALOG.update(_orig_catalog)
 
 
 def test_loop_accepts_repair_that_adds_no_new_failures(tmp_path, monkeypatch):

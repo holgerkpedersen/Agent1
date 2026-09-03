@@ -119,10 +119,14 @@ def _clean_real_tree():
             pass
 
 
-def test_repair_is_catalogued_on_the_lifecycle_layer():
-    repair = CATALOG[ABANDONMENT_RESUME_REPAIR_ID]
-    assert repair.layer == LIFECYCLE_LAYER
-    assert repair in repairs_for_layer(LIFECYCLE_LAYER)
+def test_repair_is_NOT_catalogued_decision_052():
+    """abandonment-resume-protocol was intentionally removed from the catalog
+    (decision #052).  The resume note is permanent code in tool_loop.py;
+    keeping it in the catalog caused the autonomous self-improve driver to
+    re-apply it every iteration after Holger removed it (infinite tug-of-war).
+    The harnessfix module is retained so tests can exercise apply/revert in
+    isolation."""
+    assert ABANDONMENT_RESUME_REPAIR_ID not in CATALOG
 
 
 def test_apply_and_roundtrip_is_byte_identical(tmp_path, monkeypatch):

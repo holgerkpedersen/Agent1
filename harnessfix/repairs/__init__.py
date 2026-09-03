@@ -22,12 +22,12 @@ from .tool_interface import is_applied as _is_applied_tool_interface
 from .tool_interface import TOOL_INTERFACE_REPAIR_ID
 from .tool_interface import COLLISION_FRAGMENTS
 from .tool_interface import FILES as _TOOL_INTERFACE_FILES
-from .abandonment_resume import apply as _apply_abandonment_resume
-from .abandonment_resume import revert as _revert_abandonment_resume
-from .abandonment_resume import is_applied as _is_applied_abandonment_resume
-from .abandonment_resume import ABANDONMENT_RESUME_REPAIR_ID
-from .abandonment_resume import COLLISION_FRAGMENTS as _ABANDONMENT_RESUME_COLLISIONS
-from .abandonment_resume import FILES as _ABANDONMENT_RESUME_FILES
+# NOTE: abandonment-resume-protocol was intentionally left OUT of this catalog.
+# The resume note is permanent code in tool_loop.py (decision #052).  Keeping
+# it in the catalog caused the autonomous self-improve driver to re-apply it
+# every iteration after Holger removed it, creating an infinite tug-of-war.
+# The harnessfix module is retained so tests can exercise apply/revert in
+# isolation.
 
 #: Harness layers targeted by catalog repairs (must be valid HarnessFix facets).
 TOOL_INTERFACE_LAYER = "tool_interface"
@@ -114,21 +114,6 @@ CATALOG: dict[str, Repair] = {
         collision_fragments=_STUCK_REPEAT_COLLISIONS,
         files=_STUCK_REPEAT_FILES,
         is_applied_probe=_is_applied_stuck_repeat,
-    ),
-    ABANDONMENT_RESUME_REPAIR_ID: Repair(
-        id=ABANDONMENT_RESUME_REPAIR_ID,
-        layer=LIFECYCLE_LAYER,
-        description=(
-            "abandonment-after-mutation resume protocol: when a run ends "
-            "non-completed after mutating files (crash/kill/provider loss, "
-            "decision #052), the next turn is told which files were touched so "
-            "it resumes the task instead of restarting from scratch."
-        ),
-        apply=_apply_abandonment_resume,
-        revert=_revert_abandonment_resume,
-        collision_fragments=_ABANDONMENT_RESUME_COLLISIONS,
-        files=_ABANDONMENT_RESUME_FILES,
-        is_applied_probe=_is_applied_abandonment_resume,
     ),
 }
 
