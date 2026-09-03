@@ -13,6 +13,7 @@ import urllib.error
 import httpx
 
 from .provider import ResponseMetrics
+from .pricing import estimate_cost
 from .retry import RetryPolicy, TRANSIENT_HTTP_STATUSES, TransientHTTPError
 from agent_core.constants import (
     KNOWN_MODELS,
@@ -550,10 +551,13 @@ class LMStudioProvider:
 
                 # Per-turn token/latency/cost accounting (plan ARCH item 17).
                 usage = result.get("usage") if isinstance(result, dict) else None
+                prompt_tokens = int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
+                completion_tokens = int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0
                 self.last_response_metrics = ResponseMetrics(
-                    prompt_tokens=int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0,
-                    completion_tokens=int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
                     latency_ms=elapsed_ms,
+                    cost=estimate_cost(prompt_tokens, completion_tokens, self.model_name, "lmstudio"),
                 )
 
                 # If tools present and model returned tool_calls, return full message

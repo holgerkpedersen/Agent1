@@ -15,8 +15,24 @@ from agent_core.constants import (
     DEFAULT_OPENROUTER_MODEL,
     ROUTER,
 )
+from agent_core.config import _CHEAPEST_CLOUD_KEYWORD
+from .pricing import cheapest_opencode_go_model, cost_per_token
 
 logger = logging.getLogger(__name__)
+
+
+#: Mapping from concrete provider class names to their routing type.
+_PROVIDER_TYPE_BY_CLASS = {
+    "LlamaProvider": "llama",
+    "LMStudioProvider": "lmstudio",
+    "OpencodeProvider": "opencode",
+    "OpenRouterProvider": "openrouter",
+}
+
+
+def _provider_type(provider: Any) -> str:
+    """Best-effort routing type for *provider* (for cost lookups)."""
+    return _PROVIDER_TYPE_BY_CLASS.get(type(provider).__name__, "")
 
 
 @dataclass(frozen=True)
@@ -238,6 +254,24 @@ def build_provider(
     if not chain:
         chain = (getattr(settings, "llm_provider", "lmstudio"),)
 
+    # The ``cheapest-cloud`` keyword resolves at build time to the cheapest
+    # paid ``opencode-go/<id>`` model (see :func:`cheapest_opencode_go_model`),
+    # so a chain entry like ``cheapest-cloud`` becomes
+    # ``opencode:opencode-go/<cheapest>`` and flows through the normal opencode
+    # slot logic below.  Without a priced cloud model it falls back to the
+    # configured opencode default so the chain still builds.
+    resolved_chain = []
+    for entry in chain:
+        if _provider_part(entry) == _CHEAPEST_CLOUD_KEYWORD:
+            cheapest = cheapest_opencode_go_model()
+            if cheapest:
+                resolved_chain.append(f"opencode:{cheapest}")
+            else:
+                resolved_chain.append("opencode")
+        else:
+            resolved_chain.append(entry)
+    chain = tuple(resolved_chain)
+
     # A single configured provider always yields the concrete provider —
     # routing (persisted/prefix/override) selects WHICH one, it never extends
     # the chain.  Only an explicit multi-provider chain builds a FailoverProvider.
@@ -308,7 +342,11 @@ def build_provider(
         )
         for e in ordered_entries
     ]
-    return FailoverProvider(providers, model_name=model_name)
+    return FailoverProvider(
+        providers,
+        model_name=model_name,
+        strategy=getattr(settings, "failover_strategy", "ordered") or "ordered",
+    )
 
 
 # Transport/connectivity failure signals embedded in a provider's returned
@@ -356,10 +394,30 @@ class FailoverProvider:
     their behavior identical to a single provider.
     """
 
-    def __init__(self, providers: list["LLMProvider"], model_name: str) -> None:
+    def __init__(
+        self,
+        providers: list["LLMProvider"],
+        model_name: str,
+        strategy: str = "ordered",
+    ) -> None:
         if not providers:
             raise ValueError("FailoverProvider requires at least one provider")
+        if strategy not in ("ordered", "cheapest"):
+            raise ValueError(f"unknown failover strategy: {strategy!r}")
+        self._strategy = strategy
         self._providers = list(providers)
+        # For the "cheapest" strategy, pre-order the chain by ascending
+        # per-token cost; the user's configured order is still the tie-break.
+        # Each provider is priced by its OWN model id (providers in a chain
+        # often serve different models), falling back to the failover's
+        # model_name when a wrapped provider has none.
+        if strategy == "cheapest":
+            self._providers = sorted(
+                self._providers,
+                key=lambda p: cost_per_token(
+                    getattr(p, "model_name", model_name), _provider_type(p)
+                ),
+            )
         self.model_name = model_name
         self.temperature = providers[0].temperature
         self.max_tokens = providers[0].max_tokens

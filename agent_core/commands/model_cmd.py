@@ -19,6 +19,7 @@ from agent_core.constants import (
 )
 from agent_core.llm import lmstudio as _lms
 from agent_core.llm import model_profiles as _profiles
+from agent_core.llm.pricing import _is_free_tier
 
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
@@ -34,6 +35,17 @@ def _format_size(bytes_val: int) -> str:
     if mb >= 1:
         return f"{mb:.0f} MB"
     return f"{bytes_val} B"
+
+
+def _fmt_money(value: float | None) -> str:
+    """Format a USD-per-1M value, trimming trailing zeros (e.g. 0.5 not 0.50)."""
+    if value is None:
+        return "-"
+    if value == 0:
+        return "0"
+    if value == int(value):
+        return str(int(value))
+    return f"{value:.4g}"
 
 
 def _concrete_llama_provider(provider: Any) -> Any:
@@ -105,6 +117,22 @@ class ModelCommand(Command):
             self._list_models(agent, interactive=True, openrouter_free_only=not show_paid)
             return True
 
+        if sub in ("prices", "price"):
+            # `model prices [--refresh]` — show cloud LLM prices (per 1M tokens).
+            # Offline by default (24h cache TTL); --refresh forces a web fetch.
+            force = any(a in ("--refresh", "-r") for a in rest)
+            self._show_prices(agent, force=force)
+            return True
+
+        if sub.lstrip("-") in ("cheapest", "cheapest-cloud", "cheap"):
+            # `model cheapest [--refresh]` — switch to the cheapest paid
+            # opencode-go/<id> cloud model from the price table (this is the
+            # answer to "why isn't the cheaper model selected?": the chain only
+            # fails over on connectivity failure, it never re-picks by price).
+            force = any(a in ("--refresh", "-r") for a in rest)
+            await self._switch_to_cheapest(agent, force=force)
+            return True
+
         # Subcommand not matched — treat as model name
         await self._switch_model(args, agent)
         return True
@@ -174,9 +202,9 @@ class ModelCommand(Command):
     def _zen_free_catalog(self) -> list[str]:
         """Return the keyless opencode-zen FREE model ids (no API key needed).
 
-        These are fetched live from ZEN_API_BASE; on any failure we return an
-        empty list so listing never crashes (the rest of `model list` still
-        works).  Free models carry a ``-free`` suffix.
+        Fetched live from ZEN_API_BASE; falls back to the official
+        ``ZEN_FREE_MODELS`` list from the docs when the catalog is
+        unreachable.  Free models are prefixed with ``opencode-zen/``.
         """
         try:
             from agent_core.llm.opencode_provider import (
@@ -190,18 +218,18 @@ class ModelCommand(Command):
                 zen_default = settings.zen_free_default
             except Exception:
                 zen_default = ""
-            # The keyless catalog probe needs only a zen-mode provider; the
-            # model name is irrelevant to GET /models (it lists whatever is
-            # available), so use a generic zen placeholder (first catalog
-            # tier prefix + "free") when no specific default model is
-            # configured or available.  No model name is hardcoded here.
             prov = OpencodeProvider(
                 zen_default or ZEN_PREFIXES[0] + "free",
                 read_store=False,
             )
-            return list(prov.list_models())
+            live = list(prov.list_models())
+            if live:
+                return live
         except Exception:
-            return []
+            pass
+        # Official free models from the docs as last resort.
+        from agent_core.llm.opencode_provider import ZEN_FREE_MODELS, ZEN_PREFIXES
+        return [f"{ZEN_PREFIXES[0]}{m}" for m in ZEN_FREE_MODELS]
 
     def _get_vram_display(self, models: list[dict[str, Any]]) -> str:
         """Build a one-line VRAM summary string."""
@@ -424,6 +452,79 @@ class ModelCommand(Command):
                 )
         elif current:
             print(f"\n  [{active_provider}] {current} — no LM Studio sync needed.")
+
+    def _show_prices(self, agent: "Agent", force: bool = False) -> None:
+        """Show cloud LLM prices (per 1M tokens), optionally refreshing from web.
+
+        Offline by default (24h cache TTL).  ``--refresh`` forces a web fetch
+        from the opencode.ai docs price table (allowlisted host) with a DDG
+        snippet fallback.  Local (LM Studio / llama) and opencode-zen FREE
+        tiers are free (0.0) by definition and are not listed here.
+        """
+        from agent_core.llm import pricing
+
+        table = pricing.fetch_cloud_prices(fetch=force, force=force)
+        cloud = {
+            k: v for k, v in table.items()
+            if k.startswith("opencode-go/") and not _is_free_tier(k)
+        }
+        if not cloud:
+            print("\n  No cloud prices available. Run `model prices --refresh`.")
+            return
+
+        print("\n  Cloud LLM prices (USD per 1M tokens)")
+        print("  " + "-" * 72)
+        print(f"  {'model':<34} {'in':>8} {'out':>8} {'cached_r':>9}  source")
+        print("  " + "-" * 72)
+        for key in sorted(cloud):
+            e = cloud[key]
+            p = e.get("prompt_per_1m")
+            c = e.get("completion_per_1m")
+            cr = e.get("cached_read_per_1m")
+            src = e.get("source", "?")
+            print(
+                f"  {key:<34} {(_fmt_money(p)):>8} {(_fmt_money(c)):>8} "
+                f"{(_fmt_money(cr) if cr is not None else '-'):>9}  {src}"
+            )
+        print()
+        print("  Local (LM Studio / llama) and opencode-zen FREE tiers are 0.0 by definition.")
+        if not force:
+            print("  Cached (≤24h). Re-fetch from the web with: model prices --refresh")
+
+    async def _switch_to_cheapest(self, agent: "Agent", force: bool = False) -> None:
+        """Switch to the cheapest paid ``opencode-go/<id>`` cloud model.
+
+        This is the direct answer to "why isn't the cheaper model selected?":
+        the failover chain only re-tries a *different* provider on connectivity
+        failure — it never re-picks by price.  This command reads the price
+        table (optionally refreshed from the web with ``--refresh``) and swaps
+        the active model to the lowest blended-cost opencode-go model.
+        """
+        from agent_core.llm import pricing
+        from agent_core.llm.provider import build_provider
+
+        if force:
+            pricing.fetch_cloud_prices(fetch=True, force=True)
+
+        cheapest = pricing.cheapest_opencode_go_model()
+        if not cheapest:
+            print("\n  No priced opencode-go model available. Run `model cheapest --refresh`.")
+            return
+
+        old = agent.llm.model_name
+        if cheapest == old:
+            print(f"  Already using the cheapest cloud model: {cheapest}")
+            return
+
+        settings = load_agent_settings()
+        agent.llm._provider = build_provider(settings, cheapest, provider_override="opencode")
+        agent.llm.model_name = cheapest
+        persist_model_choice(cheapest, provider="opencode")
+        print(f"  Switched to cheapest cloud model: {old} -> {cheapest}  (provider=opencode)")
+        e = pricing.load_prices().get(cheapest, {})
+        p = e.get("prompt_per_1m")
+        c = e.get("completion_per_1m")
+        print(f"  Price (USD/1M): in={_fmt_money(p)} out={_fmt_money(c)}")
 
     def _list_known_only(self, agent: "Agent") -> None:
         """Fallback: show the catalog from model_catalog.json."""

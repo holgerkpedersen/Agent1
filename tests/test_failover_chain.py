@@ -22,6 +22,7 @@ from agent_core.llm.provider import (
     build_provider,
     is_connection_failure,
 )
+from _helpers import _default_zen_free_model
 
 
 def _settings(llm_providers: tuple[str, ...]) -> AgentSettings:
@@ -33,17 +34,18 @@ def _settings(llm_providers: tuple[str, ...]) -> AgentSettings:
 
 
 DEFAULT_CHAIN = (
-    "opencode:opencode-zen/hy3-free",
+    f"opencode:{_default_zen_free_model()}",
     "opencode:opencode-go/deepseek-v4-flash",
+    "openrouter",
     "lmstudio",
     "llama",
 )
 
 
 def test_split_entry_strips_model_override() -> None:
-    assert _split_entry("opencode:opencode-zen/hy3-free") == (
+    assert _split_entry(f"opencode:{_default_zen_free_model()}") == (
         "opencode",
-        "opencode-zen/hy3-free",
+        _default_zen_free_model(),
     )
     # OpenRouter model ids contain ':' — split on the FIRST colon only.
     assert _split_entry("openrouter:openrouter/meta-llama/llama-3.1-8b:free") == (
@@ -54,14 +56,14 @@ def test_split_entry_strips_model_override() -> None:
 
 
 def test_model_mode_distinguishes_zen_from_go() -> None:
-    assert _model_mode("opencode-zen/hy3-free") == "zen"
+    assert _model_mode(_default_zen_free_model()) == "zen"
     assert _model_mode("zen/laguna-s-2.1-free") == "zen"
     assert _model_mode("opencode-go/deepseek-v4-flash") == "go"
     assert _model_mode("laguna-s-2.1") == "go"
 
 
 def test_config_default_load_chain_is_cloud_first() -> None:
-    """load_agent_settings with no provider env vars uses the 4-entry chain."""
+    """load_agent_settings with no provider env vars uses the 5-entry chain."""
     settings = load_agent_settings()
     assert settings.llm_providers == DEFAULT_CHAIN
     # The active provider (first entry's provider part) is opencode (zen tier).
@@ -69,20 +71,21 @@ def test_config_default_load_chain_is_cloud_first() -> None:
 
 
 def test_build_provider_default_chain_order_and_modes() -> None:
-    """zen -> go -> lmstudio -> llama, with zen in free mode and go in keyed mode."""
+    """zen -> go -> openrouter -> lmstudio -> llama, with zen in free mode."""
     settings = _settings(DEFAULT_CHAIN)
-    provider = build_provider(settings, "opencode-zen/hy3-free")
+    provider = build_provider(settings, _default_zen_free_model())
     assert isinstance(provider, FailoverProvider)
     classes = [type(p).__name__ for p in provider.providers]
     assert classes == [
         "OpencodeProvider",
         "OpencodeProvider",
+        "OpenRouterProvider",
         "LMStudioProvider",
         "LlamaProvider",
     ]
-    zen, go, lm, llama = provider.providers
+    zen, go, _or, lm, llama = provider.providers
     # zen slot uses the free model in keyless mode; go slot uses the keyed model.
-    assert zen.model_name == "opencode-zen/hy3-free"
+    assert zen.model_name == _default_zen_free_model()
     assert zen.zen_mode is True
     assert go.model_name == "opencode-go/deepseek-v4-flash"
     assert go.zen_mode is False
@@ -90,8 +93,8 @@ def test_build_provider_default_chain_order_and_modes() -> None:
 
 def test_build_provider_single_override_is_concrete() -> None:
     """A single 'provider:model' entry yields the concrete provider (no failover)."""
-    settings = _settings(("opencode:opencode-zen/hy3-free",))
-    provider = build_provider(settings, "opencode-zen/hy3-free")
+    settings = _settings((f"opencode:{_default_zen_free_model()}",))
+    provider = build_provider(settings, _default_zen_free_model())
     assert type(provider).__name__ == "OpencodeProvider"
     assert provider.zen_mode is True
 
@@ -113,7 +116,7 @@ def test_active_go_model_drives_go_slot_only() -> None:
     # go slot carries the active selection; the zen slot keeps its default.
     go, zen = provider.providers[0], provider.providers[1]
     assert go.model_name == "opencode-go/gpt-oss"
-    assert zen.model_name == "opencode-zen/hy3-free"
+    assert zen.model_name == _default_zen_free_model()
 
 
 def test_local_selection_drives_only_that_local_slot() -> None:
@@ -135,10 +138,11 @@ def test_provider_override_moves_entry_to_front_preserving_override() -> None:
         "LlamaProvider",
         "OpencodeProvider",
         "OpencodeProvider",
+        "OpenRouterProvider",
         "LMStudioProvider",
     ]
     # The zen slot override is preserved (not collapsed to bare 'opencode').
-    assert provider.providers[1].model_name == "opencode-zen/hy3-free"
+    assert provider.providers[1].model_name == _default_zen_free_model()
 
 
 def test_zen_exhaustion_triggers_failover_to_go() -> None:
@@ -158,10 +162,10 @@ def test_zen_exhaustion_triggers_failover_to_go() -> None:
             self.call_count += 1
             if self.name == "zen":
                 return (
-                    "[Error: opencode-zen free model opencode-zen/hy3-free is "
+                    f"[Error: opencode-zen free model {_default_zen_free_model()} is "
                     "currently unavailable on the backend. Try another free model "
-                    "with 'model opencode-zen/<id>-free' (e.g. opencode-zen/hy3-free). "
-                    "Checked: opencode-zen/hy3-free.]"
+                    f"with 'model opencode-zen/<id>-free' (e.g. {_default_zen_free_model()}). "
+                    f"Checked: {_default_zen_free_model()}.]"
                 )
             return f"ok:{self.name}"
 
@@ -176,7 +180,7 @@ def test_zen_exhaustion_triggers_failover_to_go() -> None:
 
     zen = _Stub("zen", fail=True)
     go = _Stub("go", fail=False)
-    fp = FailoverProvider([zen, go], model_name="opencode-zen/hy3-free")
+    fp = FailoverProvider([zen, go], model_name=_default_zen_free_model())
     import asyncio
 
     out = asyncio.run(fp.chat([{"role": "user", "content": "hi"}]))
@@ -187,10 +191,10 @@ def test_zen_exhaustion_triggers_failover_to_go() -> None:
 
 def test_is_connection_failure_detects_zen_exhaustion() -> None:
     msg = (
-        "[Error: opencode-zen free model opencode-zen/hy3-free is currently "
+        f"[Error: opencode-zen free model {_default_zen_free_model()} is currently "
         "unavailable on the backend. Try another free model with "
-        "'model opencode-zen/<id>-free' (e.g. opencode-zen/hy3-free). "
-        "Checked: opencode-zen/hy3-free.]"
+        f"'model opencode-zen/<id>-free' (e.g. {_default_zen_free_model()}). "
+        f"Checked: {_default_zen_free_model()}.]"
     )
     assert is_connection_failure(msg)
 
@@ -199,5 +203,5 @@ def test_config_rejects_invalid_provider_with_model() -> None:
     with pytest.raises(Exception):
         AgentSettings(
             llm_provider="opencode",
-            llm_providers=("opencode:opencode-zen/hy3-free", "bogus:x"),
+            llm_providers=(f"opencode:{_default_zen_free_model()}", "bogus:x"),
         )

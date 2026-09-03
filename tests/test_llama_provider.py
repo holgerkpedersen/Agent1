@@ -16,6 +16,8 @@ import pytest
 from agent_core.llm.provider import build_provider, provider_for
 from agent_core.llm.llama_provider import LlamaProvider, discover_local_gguf_models
 
+from _helpers import _default_llm
+
 
 def _settings(provider="llama", llama_base_url="http://127.0.0.1:8080/v1"):
     return SimpleNamespace(
@@ -44,7 +46,7 @@ class TestProviderForRouting:
 
     def test_non_llama_name_untouched(self):
         assert provider_for("laguna-s-2.1") == "lmstudio"
-        assert provider_for("opencode-go/hy3") == "opencode"
+        assert provider_for(_default_llm()) == "opencode"
 
 
 # ---------------------------------------------------------------------------

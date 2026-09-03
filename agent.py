@@ -2420,7 +2420,9 @@ _SYSTEM_PROMPT = (
     "Delete scratch scripts (_tmp_*.py) before finishing.\n"
     "- Verify fixes against the REAL code path (import the actual function), "
     "not a copied simulation of it.\n"
-    "- Be concise. Answer in the user's language."
+    "- Be concise. Answer in the user's language.\n"
+    "- IMPORTANT: If the user message is a greeting (hi, hello, hey, etc.) "
+    "or small talk, reply with a short text greeting. Do NOT call any tools."
 )
 
 

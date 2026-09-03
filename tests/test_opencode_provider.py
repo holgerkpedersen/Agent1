@@ -6,10 +6,12 @@ from agent_core.constants import DEFAULT_OPENCODE_MODEL, persist_model_choice
 from agent_core.llm.opencode_provider import OpencodeProvider, _TOOL_MAP
 from agent_core.llm.provider import build_provider, provider_for
 
+from _helpers import _default_llm, _default_llm_short
+
 
 class TestProviderFor:
     def test_opencode_prefix_wins(self):
-        assert provider_for("opencode-go/glm-5.2", "lmstudio") == "opencode"
+        assert provider_for(_default_llm(), "lmstudio") == "opencode"
         assert provider_for("opencode/deepseek-v4-flash", "lmstudio") == "opencode"
 
     def test_lmstudio_prefixes(self):
@@ -40,9 +42,9 @@ class TestBuildProvider:
             "opencode_server_url": "http://127.0.0.1:4096",
             "opencode_password": "pw",
         })()
-        prov = build_provider(settings, "opencode-go/glm-5.2")
+        prov = build_provider(settings, _default_llm())
         assert isinstance(prov, OpencodeProvider)
-        assert prov.model_name == "opencode-go/glm-5.2"
+        assert prov.model_name == _default_llm()
 
     def test_persisted_lmstudio_keeps_lmstudio_provider(self, monkeypatch):
         settings = type("S", (), {"llm_provider": "opencode"})()
@@ -74,7 +76,7 @@ class _FakeHttp:
 class TestOpencodeChat:
     def _provider(self):
         return OpencodeProvider(
-            model_name="opencode-go/glm-5.2",
+            model_name=_default_llm(),
             server_url="http://127.0.0.1:4096",
             read_store=False,
         )
@@ -158,7 +160,7 @@ class TestOpencodeRetry:
 
     def _provider(self, **kw):
         return OpencodeProvider(
-            model_name="opencode-go/glm-5.2",
+            model_name=_default_llm(),
             api_key="sk-test",
             read_store=False,
             **kw,
@@ -258,9 +260,9 @@ class TestPersistProvider:
     def test_persist_model_choice_infers_provider(self, tmp_path, monkeypatch):
         from agent_core import constants as const
         monkeypatch.setattr(const, "MODEL_JSON_PATH", str(tmp_path / "model.json"))
-        persist_model_choice("opencode-go/glm-5.2")
+        persist_model_choice(_default_llm())
         data = const.load_model_json()
-        assert data["model"] == "opencode-go/glm-5.2"
+        assert data["model"] == _default_llm()
         assert data["provider"] == "opencode"
         persist_model_choice("laguna-s-2.1", provider="lmstudio")
         data = const.load_model_json()
@@ -271,11 +273,11 @@ class TestPersistProvider:
         monkeypatch.setattr(const, "MODEL_JSON_PATH", str(tmp_path / "model.json"))
         settings = type("S", (), {
             "llm_provider": "opencode",
-            "opencode_model": "opencode-go/deepseek-v4-flash",
+            "opencode_model": _default_llm(),
         })()
         with patch("agent_core.config.load_agent_settings", return_value=settings):
-            assert const.resolve_model(None) == "opencode-go/deepseek-v4-flash"
-        assert const.resolve_model("opencode-go/glm-5.2") == "opencode-go/glm-5.2"
+            assert const.resolve_model(None) == _default_llm()
+        assert const.resolve_model(_default_llm()) == _default_llm()
         assert DEFAULT_OPENCODE_MODEL.startswith("opencode-go/")
 
 
@@ -295,7 +297,7 @@ class TestDirectApiMode:
 
     def test_chat_api_returns_plain_text(self):
         import asyncio
-        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+        prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
         payload = {"choices": [{"message": {"role": "assistant", "content": "Direkte svar"}}]}
         with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
             out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
@@ -303,7 +305,7 @@ class TestDirectApiMode:
 
     def test_chat_api_returns_tool_calls(self):
         import asyncio
-        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+        prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
         tc = {"id": "c1", "type": "function",
               "function": {"name": "search", "arguments": "{\"query\": \"x\"}"}}
         payload = {"choices": [{"message": {"role": "assistant", "content": "",
@@ -327,7 +329,7 @@ class TestDirectApiMode:
         import asyncio
         import urllib.error
         from io import BytesIO
-        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+        prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
 
         def boom(req, timeout=None):
             body = b'{"error": {"message": "Messages with role \'tool\' must be a response to a preceding message with \'tool_calls\'"}}'
@@ -341,7 +343,7 @@ class TestDirectApiMode:
     def test_chat_api_sends_bearer_and_tools(self):
         import asyncio
         import urllib.request
-        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+        prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
         payload = {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
         seen = {}
 
@@ -359,7 +361,7 @@ class TestDirectApiMode:
         assert seen["auth"] == "Bearer sk-test"
         assert seen["body"]["tools"][0]["function"]["name"] == "x"
         assert seen["body"]["max_tokens"] == 123
-        assert seen["body"]["model"] == "glm-5.2"  # hosted ids are unprefixed
+        assert seen["body"]["model"] == _default_llm_short()  # hosted ids are unprefixed
 
     def test_list_models_via_api(self):
         prov = OpencodeProvider("opencode-go/x", api_key="sk-test", read_store=False)
@@ -418,7 +420,7 @@ class TestNemotronThinkingKnob:
 
     def test_thinking_on_for_other_models_untouched(self):
         import asyncio
-        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+        prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
         seen = {}
 
         def fake_urlopen(req, timeout=None):
@@ -438,7 +440,7 @@ class TestNemotronThinkingKnob:
 
     def test_thinking_mode_rows_through(self):
         import asyncio
-        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+        prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
         payload = {"choices": [{"message": {"role": "assistant", "content": "ok"},
                                 "finish_reason": "stop"}]}
         with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
@@ -499,7 +501,7 @@ class TestZenFreeTier:
         assert prov.zen_mode is True
 
     def test_go_model_is_not_zen(self):
-        prov = OpencodeProvider("opencode-go/hy3", api_key="sk", read_store=False)
+        prov = OpencodeProvider(_default_llm(), api_key="sk", read_store=False)
         assert prov.zen_mode is False
 
     def test_hosted_model_id_strips_zen_prefix(self):
@@ -515,7 +517,7 @@ class TestZenFreeTier:
         assert models == ["opencode-zen/hy3-free", "opencode-zen/nemotron-3.5-lightning-free"]
 
     def test_list_models_go_namespace(self):
-        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk", read_store=False)
+        prov = OpencodeProvider(_default_llm(), api_key="sk", read_store=False)
         payload = {"data": [{"id": "glm-5.2"}, {"id": "deepseek-v4-flash"}]}
         with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
             models = prov.list_models()
@@ -530,6 +532,8 @@ class TestZenFreeTier:
             seen["url"] = req.full_url
             seen["auth"] = req.get_header("Authorization")
             seen["body"] = json.loads(req.data)
+            seen["ua"] = req.get_header("User-agent")
+            seen["x_client"] = req.get_header("X-opencode-client")
             return _FakeHttp({"choices": [{"message": {"role": "assistant", "content": "pong"}}]})
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
@@ -541,6 +545,9 @@ class TestZenFreeTier:
         assert seen["body"]["model"] == "hy3-free"
         # No Authorization header on the keyless free tier.
         assert seen["auth"] is None or seen["auth"] == ""
+        # Zen whitelisted headers present (rate-limit identity).
+        assert seen["ua"] == "opencode"
+        assert seen["x_client"] == "tui"
 
 
 class TestProviderForZen:

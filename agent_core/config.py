@@ -103,6 +103,14 @@ class AgentSettings:
             or "lmstudio"
         )
     )
+    #: Failover ordering strategy for multi-provider chains (decision #013).
+    #: ``"ordered"`` (default) preserves the user's configured chain order;
+    #: ``"cheapest"`` re-orders attempts by ascending per-token cost so free
+    #: and local tiers are tried before paid cloud models.  Set via
+    #: ``AGENT_FAILOVER_STRATEGY``.
+    failover_strategy: str = field(
+        default_factory=lambda: os.environ.get("AGENT_FAILOVER_STRATEGY", "ordered").strip().lower()
+    )
     #: opencode server connection (decision #008 configured provider).
     opencode_server_url: str = field(
         default_factory=lambda: os.environ.get("OPENCODE_SERVER_URL", DEFAULT_OPENCODE_SERVER_URL)
@@ -186,6 +194,24 @@ class AgentSettings:
 
 _LLM_PROVIDERS = ("lmstudio", "opencode", "llama", "openrouter")
 
+#: Special chain keyword: resolves at build time to the cheapest paid
+#: ``opencode-go/<id>`` model from the price table (see
+#: :func:`agent_core.llm.pricing.cheapest_opencode_go_model`).  Lets a user
+#: express "fail over to whatever is currently the cheapest cloud model"
+#: without naming a model.  Accepted in ``llm_providers`` / ``AGENT_LLM_PROVIDERS``.
+_CHEAPEST_CLOUD_KEYWORD = "cheapest-cloud"
+
+
+def _chain_entry_provider(entry: str) -> str:
+    """Resolve a chain entry's provider part.
+
+    Maps the ``cheapest-cloud`` keyword to ``opencode`` (its resolved tier),
+    so validation and the active-provider derivation treat a ``cheapest-cloud``
+    lead entry exactly like an ``opencode`` lead entry.
+    """
+    part = entry.split(":", 1)[0].strip()
+    return "opencode" if part == _CHEAPEST_CLOUD_KEYWORD else part
+
 
 def _parse_provider_chain(raw: str | tuple[str, ...] | None) -> tuple[str, ...]:
     """Parse a provider list into a clean ordered tuple.
@@ -258,23 +284,25 @@ def _validate_settings(settings: AgentSettings) -> None:
         )
 
     invalid_providers = tuple(
-        p.split(":", 1)[0].strip()
+        _chain_entry_provider(p)
         for p in settings.llm_providers
-        if p.split(":", 1)[0].strip() not in _LLM_PROVIDERS
+        if _chain_entry_provider(p) not in _LLM_PROVIDERS
     )
     if invalid_providers:
         raise ConfigurationError(
             f"llm_providers must contain only {', '.join(_LLM_PROVIDERS)} "
-            f"(optionally 'provider:model' per entry), "
+            f"(optionally 'provider:model' per entry; '{_CHEAPEST_CLOUD_KEYWORD}' "
+            f"is also allowed), "
             f"got {', '.join(settings.llm_providers)} "
             f"(invalid: {', '.join(invalid_providers)})"
         )
 
     # The single-provider setting must match the first entry in the chain (the
     # provider part of a possible 'provider:model' entry) so the "active"
-    # provider and the failover order agree.
+    # provider and the failover order agree.  The ``cheapest-cloud`` keyword
+    # resolves to ``opencode`` (its resolved tier).
     if settings.llm_providers:
-        first_provider = settings.llm_providers[0].split(":", 1)[0].strip()
+        first_provider = _chain_entry_provider(settings.llm_providers[0])
         if settings.llm_provider != first_provider:
             raise ConfigurationError(
                 f"llm_provider ('{settings.llm_provider}') must match the first "
@@ -394,7 +422,7 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         or DEFAULT_LLM_CHAIN
     )
     llm_providers = _parse_provider_chain(raw_chain)
-    llm_provider = llm_providers[0].split(":", 1)[0].strip()
+    llm_provider = _chain_entry_provider(llm_providers[0])
 
     settings = AgentSettings(
         workspace_root=workspace_root,
@@ -415,6 +443,7 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         openrouter_api_url=os.environ.get("OPENROUTER_API_URL") or env_vars.get("OPENROUTER_API_URL") or DEFAULT_OPENROUTER_API_BASE,
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or env_vars.get("OPENROUTER_API_KEY") or _store_secret("OPENROUTER_API_KEY"),
         openrouter_model=os.environ.get("AGENT_OPENROUTER_MODEL") or env_vars.get("AGENT_OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL,
+        failover_strategy=os.environ.get("AGENT_FAILOVER_STRATEGY", "ordered").strip().lower(),
     )
 
     _validate_settings(settings)

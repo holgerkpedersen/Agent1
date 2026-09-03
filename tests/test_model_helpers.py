@@ -14,6 +14,8 @@ from agent_core.constants import (
     MODEL_JSON_PATH,
 )
 
+from _helpers import _default_llm, _default_llm_short
+
 
 class TestModelCommandProviderSync:
     """`model list` / `model reload` must never sync an OPENCODE model to the
@@ -24,9 +26,9 @@ class TestModelCommandProviderSync:
     def _opencode_agent():
         from agent_core.llm.opencode_provider import OpencodeProvider
 
-        provider = OpencodeProvider("opencode-go/deepseek-v4-flash", read_store=False)
+        provider = OpencodeProvider(_default_llm(), read_store=False)
         llm = type("L", (), {
-            "model_name": "opencode-go/deepseek-v4-flash",
+            "model_name": _default_llm(),
             "_provider": provider,
         })()
         return type("A", (), {"llm": llm})()
@@ -55,11 +57,11 @@ class TestModelCommandProviderSync:
         monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: self._settings("opencode"))
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
-            lambda: {"model": "opencode-go/deepseek-v4-flash", "provider": "opencode"},
+            lambda: {"model": _default_llm(), "provider": "opencode"},
         )
         monkeypatch.setattr(
             OpencodeProvider, "list_models",
-            lambda self: ["opencode-go/deepseek-v4-flash"],
+            lambda self: [_default_llm()],
         )
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.persist_model_choice",
@@ -69,7 +71,7 @@ class TestModelCommandProviderSync:
         cmd._list_models(agent)
         out = capsys.readouterr().out
         assert "switching" not in out.lower()
-        assert agent.llm.model_name == "opencode-go/deepseek-v4-flash"
+        assert agent.llm.model_name == _default_llm()
 
     def test_reload_skips_sync_for_opencode(self, monkeypatch, capsys):
         cmd = ModelCommand()
@@ -77,13 +79,13 @@ class TestModelCommandProviderSync:
         monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: self._settings("opencode"))
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
-            lambda: {"model": "opencode-go/deepseek-v4-flash", "provider": "opencode"},
+            lambda: {"model": _default_llm(), "provider": "opencode"},
         )
 
         cmd._sync_with_lmstudio(agent)
         out = capsys.readouterr().out
         assert "no LM Studio sync needed" in out
-        assert agent.llm.model_name == "opencode-go/deepseek-v4-flash"
+        assert agent.llm.model_name == _default_llm()
 
     def test_sync_still_switches_when_lmstudio_active(self, monkeypatch, capsys):
         from agent_core.llm.lmstudio import LMStudioProvider
@@ -173,19 +175,19 @@ class TestResolveOpencodeMatch:
     def setup_method(self):
         self.cmd = ModelCommand()
         self.catalog = [
-            "opencode-go/hy3",
-            "opencode-go/nemotron-3.5-lightning-free",
             "opencode-go/deepseek-v4-flash",
+            "opencode-go/nemotron-3.5-lightning-free",
             "opencode-go/glm-5.2",
+            _default_llm(),
         ]
 
     def test_exact_prefixed_match(self):
         assert self.cmd._resolve_opencode_match(
-            "opencode-go/hy3", self.catalog) == "opencode-go/hy3"
+            _default_llm(), self.catalog) == _default_llm()
 
     def test_exact_unprefixed_tail_match(self):
         assert self.cmd._resolve_opencode_match(
-            "hy3", self.catalog) == "opencode-go/hy3"
+            _default_llm_short(), self.catalog) == _default_llm()
 
     def test_partial_free_model_resolves(self):
         # The exact failing query from the user report.
@@ -223,10 +225,10 @@ class TestModelListShowsOpencodeCatalog:
         from agent_core.llm.opencode_provider import OpencodeProvider
 
         provider = OpencodeProvider(
-            "opencode-go/nemotron-3.5-lightning-free", api_key="sk-test", read_store=False,
+            _default_llm(), api_key="sk-test", read_store=False,
         )
         llm = type("L", (), {
-            "model_name": "opencode-go/nemotron-3.5-lightning-free",
+            "model_name": _default_llm(),
             "_provider": provider,
         })()
         return type("A", (), {"llm": llm})()
@@ -256,23 +258,20 @@ class TestModelListShowsOpencodeCatalog:
         monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: self._settings())
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
-            lambda: {"model": "opencode-go/nemotron-3.5-lightning-free", "provider": "opencode"},
+            lambda: {"model": _default_llm(), "provider": "opencode"},
         )
         # The real provider's list_models is hit; mock the HTTP fetch to a
         # catalog that includes the free model the user wanted.
         monkeypatch.setattr(
             type(agent.llm._provider), "list_models",
             lambda self: [
-                "opencode-go/hy3",
-                "opencode-go/nemotron-3.5-lightning-free",
-                "opencode-go/deepseek-v4-flash",
+                _default_llm(),
             ],
         )
 
         cmd._list_models(agent)
         out = capsys.readouterr().out
-        assert "opencode-go/nemotron-3.5-lightning-free" in out
-        assert "opencode-go/hy3" in out
+        assert _default_llm() in out
         # The current model is marked.
         assert "*" in out
 
@@ -285,9 +284,9 @@ class TestSwitchModelPrefersOpencode:
     def _lmstudio_agent_current():
         from agent_core.llm.lmstudio import LMStudioProvider
 
-        provider = LMStudioProvider(model_name="opencode-go/hy3")
+        provider = LMStudioProvider(model_name=_default_llm())
         llm = type("L", (), {
-            "model_name": "opencode-go/hy3",
+            "model_name": _default_llm(),
             "_provider": provider,
             "_profile_name": None,
         })()
@@ -309,7 +308,7 @@ class TestSwitchModelPrefersOpencode:
             "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
         monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: type("S", (), {
             "llm_provider": "opencode",
-            "opencode_model": "opencode-go/deepseek-v4-flash",
+            "opencode_model": _default_llm(),
             "opencode_server_url": "http://127.0.0.1:4096",
             "opencode_password": "",
             "opencode_api_url": "https://opencode.ai/zen/go/v1",
@@ -317,22 +316,22 @@ class TestSwitchModelPrefersOpencode:
         })())
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
-            lambda: {"model": "opencode-go/hy3", "provider": "opencode"},
+            lambda: {"model": _default_llm(), "provider": "opencode"},
         )
         # Build a fresh opencode provider that returns the free model.
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.ModelCommand._opencode_catalog",
-            lambda self, agent: (["opencode-go/nemotron-3.5-lightning-free",
-                                  "opencode-go/hy3"], [], True),
+            lambda self, agent: (["opencode-go/deepseek-v4-flash",
+                                  "opencode-go/nemotron-3.5-lightning-free"], [], True),
         )
         # Capture the provider that gets built for the switch.
         built: dict[str, object] = {}
         import agent_core.llm.provider as prov_mod
         real_build = prov_mod.build_provider
 
-        def fake_build(settings, model_name):
+        def fake_build(settings, model_name, provider_override=None):
             built["model"] = model_name
-            return real_build(settings, model_name)
+            return real_build(settings, model_name, provider_override=provider_override)
 
         monkeypatch.setattr(prov_mod, "build_provider", fake_build)
         persisted: dict[str, str] = {}
@@ -360,10 +359,10 @@ class TestModelListShowsZenFreeTier:
         from agent_core.llm.opencode_provider import OpencodeProvider
 
         provider = OpencodeProvider(
-            "opencode-go/hy3", api_key="sk-test", read_store=False,
+            _default_llm(), api_key="sk-test", read_store=False,
         )
         llm = type("L", (), {
-            "model_name": "opencode-go/hy3",
+            "model_name": _default_llm(),
             "_provider": provider,
         })()
         return type("A", (), {"llm": llm})()
@@ -389,13 +388,13 @@ class TestModelListShowsZenFreeTier:
         })())
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
-            lambda: {"model": "opencode-go/hy3", "provider": "opencode"},
+            lambda: {"model": _default_llm(), "provider": "opencode"},
         )
         # Keyed opencode-go catalog + keyless zen free catalog.
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.ModelCommand._opencode_catalog",
             lambda self, agent: (
-                ["opencode-go/hy3", "opencode-go/glm-5.2"],
+                [_default_llm(), _default_llm()],
                 ["opencode-zen/hy3-free", "opencode-zen/nemotron-3.5-lightning-free",
                  "opencode-zen/laguna-s-2.1-free"],
                 True,
@@ -443,7 +442,7 @@ class TestModelListGoVsZenNoDuplicate:
             "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
         monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: type("S", (), {
             "llm_provider": "opencode",
-            "opencode_model": "opencode-go/deepseek-v4-flash",
+            "opencode_model": _default_llm(),
             "opencode_server_url": "http://127.0.0.1:4096",
             "opencode_password": "",
             "opencode_api_url": "https://opencode.ai/zen/go/v1",
@@ -482,8 +481,8 @@ class TestModelListGoVsZenNoDuplicate:
         # (opencode-go/*), never the keyless zen catalog (opencode-zen/*).  The
         # original bug reused the zen-mode provider's list_models() and printed
         # the same 63 opencode-zen/* ids under BOTH headers.
-        assert "opencode-go/hy3" in go_block
-        assert "opencode-go/deepseek-v4-flash" in go_block
+        assert _default_llm() in go_block
+        assert _default_llm() in go_block
         assert "opencode-zen/" not in go_block
 
         # The zen block must show the free tier (including the active id) and
@@ -501,9 +500,9 @@ class TestSwitchModelPrefersZenFree:
     def _agent():
         from agent_core.llm.lmstudio import LMStudioProvider
 
-        provider = LMStudioProvider(model_name="opencode-go/hy3")
+        provider = LMStudioProvider(model_name=_default_llm())
         llm = type("L", (), {
-            "model_name": "opencode-go/hy3",
+            "model_name": _default_llm(),
             "_provider": provider,
             "_profile_name": None,
         })()
@@ -531,13 +530,13 @@ class TestSwitchModelPrefersZenFree:
         })())
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
-            lambda: {"model": "opencode-go/hy3", "provider": "opencode"},
+            lambda: {"model": _default_llm(), "provider": "opencode"},
         )
         # Keyed tier has NO free model; the free one is only in the zen list.
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.ModelCommand._opencode_catalog",
             lambda self, agent: (
-                ["opencode-go/hy3", "opencode-go/glm-5.2"],
+                [_default_llm(), _default_llm()],
                 ["opencode-zen/hy3-free", "opencode-zen/nemotron-3.5-lightning-free"],
                 True,
             ),
@@ -580,7 +579,7 @@ class TestSwitchModelPrefersZenFree:
         })())
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
-            lambda: {"model": "opencode-go/hy3", "provider": "opencode"},
+            lambda: {"model": _default_llm(), "provider": "opencode"},
         )
         built: dict[str, object] = {}
         real_build = prov_mod.build_provider
@@ -612,9 +611,9 @@ class TestLmstudioSelectionPrecedence:
     def _agent():
         from agent_core.llm.lmstudio import LMStudioProvider
 
-        provider = LMStudioProvider(model_name="opencode-go/hy3")
+        provider = LMStudioProvider(model_name=_default_llm())
         llm = type("L", (), {
-            "model_name": "opencode-go/hy3",
+            "model_name": _default_llm(),
             "_provider": provider,
             "_profile_name": None,
         })()
@@ -665,14 +664,14 @@ class TestLmstudioSelectionPrecedence:
         })())
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
-            lambda: {"model": "opencode-go/hy3", "provider": "opencode"},
+            lambda: {"model": _default_llm(), "provider": "opencode"},
         )
         # Zen catalog contains a model whose name collides with the LM Studio
         # "laguna" substring — this is the hijack the bug enabled.
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.ModelCommand._opencode_catalog",
             lambda self, agent: (
-                ["opencode-go/hy3"],
+                [_default_llm()],
                 ["opencode-zen/laguna-s-2.1-free", "opencode-zen/hy3-free"],
                 True,
             ),
@@ -743,11 +742,11 @@ class TestLmstudioSelectionPrecedence:
         })())
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
-            lambda: {"model": "opencode-go/hy3", "provider": "opencode"},
+            lambda: {"model": _default_llm(), "provider": "opencode"},
         )
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.ModelCommand._opencode_catalog",
-            lambda self, agent: (["opencode-go/hy3"], [], True))
+            lambda self, agent: ([_default_llm()], [], True))
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.persist_model_choice",
             lambda name, provider=None: None)
@@ -770,7 +769,7 @@ class TestLmstudioSelectionPrecedence:
         asyncio.run(cmd._switch_model(["99"], agent))
         # No LM Studio model at index 99, no opencode match → list shown.
         assert captured == ["listed"]
-        assert agent.llm.model_name == "opencode-go/hy3"  # unchanged
+        assert agent.llm.model_name == _default_llm()  # unchanged
 
 
 class TestResolveModel:

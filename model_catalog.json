@@ -6,6 +6,7 @@
     "llm_chain": [
       "opencode:opencode-zen/hy3-free",
       "opencode:opencode-go/deepseek-v4-flash",
+      "openrouter",
       "lmstudio",
       "llama"
     ],

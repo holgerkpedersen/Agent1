@@ -10,6 +10,8 @@ the provider explicitly.  Without the flag, routing is unchanged.
 
 from agent_core.commands.model_cmd import ModelCommand
 
+from _helpers import _default_llm
+
 
 def _settings(provider: str = "lmstudio"):
     return type("S", (), {
@@ -28,7 +30,7 @@ def _lmstudio_agent(model_name: str = "laguna-s-2.1"):
     return type("A", (), {"llm": llm})
 
 
-def _opencode_agent(model_name: str = "opencode-go/deepseek-v4-flash"):
+def _opencode_agent(model_name: str = _default_llm()):
     from agent_core.llm.opencode_provider import OpencodeProvider
     provider = OpencodeProvider(model_name, read_store=False)
     llm = type("L", (), {"model_name": model_name, "_provider": provider})()
@@ -108,12 +110,12 @@ class TestBuildProviderOverride:
         monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
-            lambda: {"model": "opencode-go/hy3", "provider": "opencode"},
+            lambda: {"model": _default_llm(), "provider": "opencode"},
         )
 
-        prov = build_provider(_settings("lmstudio"), "opencode-go/hy3", provider_override="lmstudio")
+        prov = build_provider(_settings("lmstudio"), _default_llm(), provider_override="lmstudio")
         assert isinstance(prov, LMStudioProvider)
-        assert prov.model_name == "opencode-go/hy3"
+        assert prov.model_name == _default_llm()
 
     def test_no_override_keeps_prefix_routing(self, monkeypatch):
         """Without override, prefix-based routing must be unchanged."""
@@ -128,7 +130,7 @@ class TestBuildProviderOverride:
         assert isinstance(prov, LMStudioProvider)
 
         # opencode-go/* → opencode (prefix rule)
-        prov = build_provider(_settings("lmstudio"), "opencode-go/hy3")
+        prov = build_provider(_settings("lmstudio"), _default_llm())
         assert isinstance(prov, OpencodeProvider)
 
     def test_override_none_falls_back_to_normal_routing(self, monkeypatch):
@@ -167,7 +169,7 @@ class TestSwitchModelWithProvider:
             "instance_id": "i1",
         }]
         # Controlled opencode catalogs — no network access.
-        self.go_catalog = ["opencode-go/deepseek-v4-flash", "opencode-go/hy3"]
+        self.go_catalog = [_default_llm(), _default_llm()]
         self.zen_catalog = ["opencode-zen/nemotron-3.5-lightning-free"]
 
     def _patch_opencode_catalog(self, monkeypatch):
@@ -209,10 +211,10 @@ class TestSwitchModelWithProvider:
         though the name could be an opencode catalog member."""
         from agent_core.llm.lmstudio import LMStudioProvider
 
-        agent = _opencode_agent("opencode-go/hy3")
+        agent = _opencode_agent(_default_llm())
         monkeypatch.setattr("agent_core.commands.model_cmd._lms.get_models_status", lambda: self.fake_models)
         monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
-        monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {"model": "opencode-go/hy3", "provider": "opencode"})
+        monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {"model": _default_llm(), "provider": "opencode"})
         monkeypatch.setattr("agent_core.constants.persist_model_choice", lambda *a, **k: None)
         self._patch_opencode_catalog(monkeypatch)
 
@@ -298,7 +300,7 @@ class TestSwitchModelWithProvider:
         )
 
         assert isinstance(agent.llm._provider, OpencodeProvider)
-        assert agent.llm.model_name == "opencode-go/hy3"
+        assert agent.llm.model_name == _default_llm()
         out = capsys.readouterr().out
         assert "provider=opencode" in out
 

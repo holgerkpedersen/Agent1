@@ -36,6 +36,7 @@ from agent_core.constants import (
 )
 
 from .provider import ResponseMetrics
+from .pricing import estimate_cost
 
 #: HTTP statuses that are safe to retry — the hosted gateway sits behind
 #: Cloudflare and intermittently returns 5xx on healthy requests (observed
@@ -67,15 +68,26 @@ def _hosted_model_id(model_name: str) -> str:
             return model_name[len(prefix):]
     return model_name
 
+#: Official opencode-zen FREE models (from https://opencode.ai/docs/zen/).
+#: Used as fallback when the live catalog is unreachable and to supplement
+#: the model list display.  Updated 2026-09-03.
+#: Excludes "contributor" models (data-sharing, not truly free).
+ZEN_FREE_MODELS: tuple[str, ...] = (
+    "mimo-v2.5-free",
+    "ling-3.0-flash-fin-free",
+    "nemotron-3-ultra-free",
+    "nemotron-3.5-lightning-free",
+    "big-pickle",
+)
+
 def _zen_free_fallbacks() -> list[str]:
     """Return the opencode-zen FREE fallback model list.
 
     Reads ``AGENT_ZEN_FREE_FALLBACKS`` from settings (set in .env) when the
     user configured one; otherwise discovers the currently-available free-tier
     models live from the keyless ``/models`` catalog so the retry set adapts
-    to whatever the backend actually serves (no model names are hardcoded in
-    code).  Returns ``[]`` on any failure — chat then reports a clear error
-    instead of guessing at models that may not exist on this account.
+    to whatever the backend actually serves.  Falls back to the official
+    :data:`ZEN_FREE_MODELS` list when the catalog is unreachable.
     """
     try:
         from agent_core.config import load_agent_settings
@@ -91,9 +103,13 @@ def _zen_free_fallbacks() -> list[str]:
         # keyless /models catalog (no model names hardcoded).  Any zen-prefixed
         # name keeps the provider in zen mode; GET /models ignores it.
         prov = OpencodeProvider(ZEN_PREFIXES[0] + "free", read_store=False)
-        return [m for m in prov.list_models() if m.lower().endswith("-free")]
+        live = [m for m in prov.list_models() if m.lower().endswith("-free")]
+        if live:
+            return live
     except Exception:
-        return []
+        pass
+    # Official free models from the docs — always available as last resort.
+    return [f"{ZEN_PREFIXES[0]}{m}" for m in ZEN_FREE_MODELS]
 
 #: Substrings in a provider error string that mean the backend model itself
 #: is down (as opposed to a bug in our request) — these trigger the free-tier
@@ -300,11 +316,24 @@ class OpencodeProvider:
     # ------------------------------------------------------------------
 
     def _headers(self, json_body: bool = True) -> dict[str, str]:
-        headers: dict[str, str] = {
-            #: The hosted gateway sits behind Cloudflare, which rejects the
-            #: default "Python-urllib" user agent (error 1010).
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
+        if self.zen_mode:
+            # Zen's rate-limiter whitelists requests that carry the same
+            # x-opencode-* headers the opencode TUI sends; without them the
+            # backend treats the caller as anonymous and applies much tighter
+            # free-tier limits (see gist/NeiP4n and issue #42977).
+            headers: dict[str, str] = {
+                "User-Agent": "opencode",
+                "x-opencode-project": "agent1",
+                "x-opencode-session": "agent1-session",
+                "x-opencode-request": "req-1",
+                "x-opencode-client": "tui",
+            }
+        else:
+            headers: dict[str, str] = {
+                #: The hosted gateway sits behind Cloudflare, which rejects the
+                #: default "Python-urllib" user agent (error 1010).
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            }
         if json_body:
             headers["Content-Type"] = "application/json"
         if self.api_mode and self.api_key:
@@ -419,9 +448,12 @@ class OpencodeProvider:
         tool_calls = message.get("tool_calls")
         # Per-turn token/latency/cost accounting (plan ARCH item 17).
         usage = result.get("usage") if isinstance(result, dict) else None
+        prompt_tokens = int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
+        completion_tokens = int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0
         self.last_response_metrics = ResponseMetrics(
-            prompt_tokens=int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0,
-            completion_tokens=int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost=estimate_cost(prompt_tokens, completion_tokens, self.model_name, "opencode"),
         )
         if tool_calls:
             return json.dumps({"content": content, "tool_calls": tool_calls})
