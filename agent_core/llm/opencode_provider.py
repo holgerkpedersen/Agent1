@@ -68,17 +68,10 @@ def _hosted_model_id(model_name: str) -> str:
             return model_name[len(prefix):]
     return model_name
 
-#: Official opencode-zen FREE models (from https://opencode.ai/docs/zen/).
-#: Used as fallback when the live catalog is unreachable and to supplement
-#: the model list display.  Updated 2026-09-03.
-#: Excludes "contributor" models (data-sharing, not truly free).
-ZEN_FREE_MODELS: tuple[str, ...] = (
-    "mimo-v2.5-free",
-    "ling-3.0-flash-fin-free",
-    "nemotron-3-ultra-free",
-    "nemotron-3.5-lightning-free",
-    "big-pickle",
-)
+#: Official opencode-zen FREE models are intentionally NOT hardcoded here —
+#: a machine/account may not have them, and the live keyless catalog is the
+#: single source of truth (see _zen_free_fallbacks).  When settings and the
+#: live catalog both fail, the callers return an empty list (no assumptions).
 
 def _zen_free_fallbacks() -> list[str]:
     """Return the opencode-zen FREE fallback model list.
@@ -86,8 +79,8 @@ def _zen_free_fallbacks() -> list[str]:
     Reads ``AGENT_ZEN_FREE_FALLBACKS`` from settings (set in .env) when the
     user configured one; otherwise discovers the currently-available free-tier
     models live from the keyless ``/models`` catalog so the retry set adapts
-    to whatever the backend actually serves.  Falls back to the official
-    :data:`ZEN_FREE_MODELS` list when the catalog is unreachable.
+    to whatever the backend actually serves.  Returns an empty list when
+    settings and discovery both fail — no model names are hardcoded here.
     """
     try:
         from agent_core.config import load_agent_settings
@@ -108,8 +101,9 @@ def _zen_free_fallbacks() -> list[str]:
             return live
     except Exception:
         pass
-    # Official free models from the docs — always available as last resort.
-    return [f"{ZEN_PREFIXES[0]}{m}" for m in ZEN_FREE_MODELS]
+    # No hardcoded fallback: surface the free-tier endpoint so the user can
+    # list/choose from the live catalog instead of assuming a model exists.
+    return []
 
 #: Substrings in a provider error string that mean the backend model itself
 #: is down (as opposed to a bug in our request) — these trigger the free-tier

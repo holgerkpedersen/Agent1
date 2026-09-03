@@ -202,9 +202,10 @@ class ModelCommand(Command):
     def _zen_free_catalog(self) -> list[str]:
         """Return the keyless opencode-zen FREE model ids (no API key needed).
 
-        Fetched live from ZEN_API_BASE; falls back to the official
-        ``ZEN_FREE_MODELS`` list from the docs when the catalog is
-        unreachable.  Free models are prefixed with ``opencode-zen/``.
+        Fetched live from ZEN_API_BASE using the configurable
+        ``settings.zen_free_default`` (or a generic zen-prefixed placeholder
+        when settings fail).  Returns an empty list when the catalog is
+        unreachable — no model names are hardcoded here.
         """
         try:
             from agent_core.llm.opencode_provider import (
@@ -227,9 +228,9 @@ class ModelCommand(Command):
                 return live
         except Exception:
             pass
-        # Official free models from the docs as last resort.
-        from agent_core.llm.opencode_provider import ZEN_FREE_MODELS, ZEN_PREFIXES
-        return [f"{ZEN_PREFIXES[0]}{m}" for m in ZEN_FREE_MODELS]
+        # No hardcoded fallback: surface nothing rather than assume a model
+        # exists (the live catalog is the single source of truth).
+        return []
 
     def _get_vram_display(self, models: list[dict[str, Any]]) -> str:
         """Build a one-line VRAM summary string."""
