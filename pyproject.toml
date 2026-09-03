@@ -84,7 +84,7 @@ follow_imports = "normal"
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]
-addopts = "-v --cov=agent_core --cov-report=term-missing --basetemp=.pytest_tmp"
+addopts = "-v --cov=agent_core --cov-report=term-missing"
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

@@ -315,21 +315,24 @@ class LLMClient:
             if not api_url:
                 return
             print(f"  [llama] ensuring '{self._model_name}' is served by llama-server...")
+            # list_served_models returns bare server IDs (e.g. "Bonsai-27B-Q1_0")
+            # while self._model_name may carry the routing prefix ("llama/…").
+            bare_name = self._model_name.removeprefix("llama/")
             served = llama_server.list_served_models(api_url)
             if served:
                 current_served_model = served[0]
-                if current_served_model == self._model_name:
-                    print(f"  [llama] Model '{self._model_name}' already served by server.")
+                if current_served_model == bare_name:
+                    print(f"  [llama] Model '{bare_name}' already served by server.")
                     provider._cached_server_model_id = current_served_model
                 else:
-                    print(f"  [llama] Server serving '{current_served_model}', attempting to ensure '{self._model_name}' is served...")
+                    print(f"  [llama] Server serving '{current_served_model}', attempting to ensure '{bare_name}' is served...")
                     ok, msg = llama_server.ensure_model_served(api_url, self._model_name)
                     if ok:
                         # Re-check after ensuring it's served
                         served_after = llama_server.list_served_models(api_url)
-                        if served_after and served_after[0] == self._model_name:
-                            provider._cached_server_model_id = self._model_name
-                            print(f"  [llama] Successfully ensured '{self._model_name}' is served.")
+                        if served_after and served_after[0] == bare_name:
+                            provider._cached_server_model_id = served_after[0]
+                            print(f"  [llama] Successfully ensured '{bare_name}' is served.")
                         else:
                             print(f"  [llama] WARNING: ensure_model_served reported success, but model not found in list: {msg}")
                     else:

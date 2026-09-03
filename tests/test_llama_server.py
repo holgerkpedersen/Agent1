@@ -224,9 +224,16 @@ class TestAgentReconcileHook:
             mod, "ensure_model_served",
             lambda api_url, model_name: called.update(api_url=api_url, model=model_name) or (True, "ok"),
         )
-        monkeypatch.setattr(
-            mod, "list_served_models", lambda api_url: ["Bonsai-27B-Q1_0"],
-        )
+        # Server is serving a DIFFERENT model so the reconcile hook calls
+        # ensure_model_served to switch it.  After the switch, the re-check
+        # returns the correct model.
+        call_count = {"n": 0}
+        def _list_served(api_url):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return ["OldModel"]
+            return ["Bonsai-27B-Q1_0"]
+        monkeypatch.setattr(mod, "list_served_models", _list_served)
 
         # Build a real LLMClient but stub out the heavy init pieces so we only
         # exercise the reconcile hook against the in-memory server manager.

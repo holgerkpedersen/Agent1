@@ -14,6 +14,30 @@ import pytest
 os.environ.setdefault("AGENT_NO_TRACE", "1")
 
 
+# ---------------------------------------------------------------------------
+# Suppress the noisy ``PermissionError: [WinError 5]`` traceback that pytest
+# emits at exit on Windows.  During teardown pytest's ``cleanup_numbered_dir``
+# → ``cleanup_dead_symlinks`` tries to ``stat()`` the ``pytest-current``
+# symlink inside ``%TEMP%/pytest-of-<user>/``; this fails when another process
+# still holds a handle on that directory.  We monkey-patch the cleanup
+# function so it silently ignores ``PermissionError`` / ``OSError``.
+# ---------------------------------------------------------------------------
+try:
+    import _pytest.pathlib as _ptplib
+
+    _orig_cleanup = _ptplib.cleanup_dead_symlinks
+
+    def _safe_cleanup_dead_symlinks(directory: Path) -> None:  # type: ignore[override]
+        try:
+            _orig_cleanup(directory)
+        except (PermissionError, OSError):
+            pass
+
+    _ptplib.cleanup_dead_symlinks = _safe_cleanup_dead_symlinks  # type: ignore[assignment]
+except Exception:  # noqa: BLE001
+    pass
+
+
 @pytest.fixture(autouse=True)
 def _isolate_from_real_tree_and_beacons(
     tmp_path: Path,
