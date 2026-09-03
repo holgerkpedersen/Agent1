@@ -45,6 +45,7 @@ class ToolDefinition:
     name: str
     description: str
     parameters_schema: dict[str, Any]
+    intents: list[str] = field(default_factory=list)
 
     def to_openai_format(self) -> dict[str, Any]:
         return {
@@ -100,11 +101,13 @@ DEFAULT_TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="read_file",
         description="Reads the content of a file within the workspace sandbox.",
         parameters_schema=ReadFileArgs.model_json_schema(),
+        intents=["read", "open", "view", "show", "cat", "less", "display"],
     ),
     ToolDefinition(
         name="write_file",
         description="Writes or overwrites content in a workspace file.",
         parameters_schema=WriteFileArgs.model_json_schema(),
+        intents=["write", "save", "create", "overwrite", "append", "store"],
     ),
     ToolDefinition(
         name="search_files",
@@ -113,6 +116,7 @@ DEFAULT_TOOL_DEFINITIONS: list[ToolDefinition] = [
             "grep/findstr."
         ),
         parameters_schema=SearchFilesArgs.model_json_schema(),
+        intents=["search", "find", "grep", "look", "locate", "query"],
     ),
     ToolDefinition(
         name="run_command",
@@ -120,11 +124,27 @@ DEFAULT_TOOL_DEFINITIONS: list[ToolDefinition] = [
             "Executes a sanitized shell command within the workspace environment."
         ),
         parameters_schema=ShellCommandArgs.model_json_schema(),
+        intents=["run", "execute", "shell", "bash", "cmd", "terminal", "command"],
     ),
     ToolDefinition(
         name="get_current_datetime",
         description="Returns the current date and time as an ISO 8601 string.",
         parameters_schema=GetCurrentDatetimeArgs.model_json_schema(),
+        intents=[
+            # English
+            "time", "date", "datetime", "clock", "hour", "today",
+            "now", "current", "day", "timestamp", "when",
+            # Danish
+            "tid", "dag", "dato", "klokke", "klokken", "idag", "nu",
+            # German
+            "uhr", "zeit", "datum", "heute",
+            # French
+            "heure", "date", "aujourd", "maintenant",
+            # Spanish
+            "hora", "fecha", "ahora", "hoy", "tiempo",
+            # Portuguese
+            "hora", "data", "agora", "hoje",
+        ],
     ),
 ]
 
@@ -233,6 +253,23 @@ def _handle_get_current_datetime(args: GetCurrentDatetimeArgs | dict) -> dict[st
 
 
 # ---------------------------------------------------------------------------
+# Natural language regex fallback patterns (for tools needing arg extraction)
+# ---------------------------------------------------------------------------
+
+_NL_PATTERNS: dict[str, str] = {
+    r"\b(read|open|view)\s+(?:the\s+)?file[:\s]+(?P<path>\S+)": "read_file",
+    (
+        r"\b(write|save|create|overwrite)\s+(?:to\s+)?(?:the\s+)?file"
+        r"[:\s]+(?P<path>\S+)(?:\s*with\s*(?P<content>.+))?$"
+    ): "write_file",
+    (
+        r"\b(search|find|grep)\s+(?:for\s+)?['\"]?(?P<query>[^'\"]+)['\"]?"
+        r"\s*(?:in\s+file[:\s]+(?P<file_pattern>\S+))?"
+    ): "search_files",
+}
+
+
+# ---------------------------------------------------------------------------
 # Router Implementation
 # ---------------------------------------------------------------------------
 
@@ -311,26 +348,17 @@ class ToolRouter:
         return matched_name, self._validate_args(matched_name, args_dict)
 
     def parse_natural_language(self, prompt: str) -> tuple[str, BaseModel]:
-        """Regex-backed fallback for varied natural language phrasing."""
-        patterns: dict[str, str] = {
-            r"\b(read|open|view)\s+(?:the\s+)?file[:\s]+(?P<path>\S+)": "read_file",
-            (
-                r"\b(write|save|create|overwrite)\s+(?:to\s+)?(?:the\s+)?file"
-                r"[:\s]+(?P<path>\S+)(?:\s*with\s*(?P<content>.+))?$"
-            ): "write_file",
-            (
-                r"\b(search|find|grep)\s+(?:for\s+)?['\"]?(?P<query>[^'\"]+)['\"]?"
-                r"\s*(?:in\s+file[:\s]+(?P<file_pattern>\S+))?"
-            ): "search_files",
-            (
-                r"(?:what|hvad)\s+(?:day|date|time|dag|dato)\b"
-                r"|current\s+time|current\s+datetime"
-                r"|hvad\s+dag\s+er\s+det"
-                r"|what\s+time\s+is\s+it"
-            ): "get_current_datetime",
-        }
+        """Two-phase routing: intents for zero-arg tools, regex for arg extraction.
 
-        for pattern, tool_name in patterns.items():
+        Phase 1 — regex patterns that extract structured arguments (files,
+        search queries, etc.) are tried first so required args are captured.
+
+        Phase 2 — intent keyword matching (language-agnostic) is used only as
+        a fallback for tools whose required args are all optional, so a simple
+        keyword hit is sufficient to route.
+        """
+        # Phase 1 — regex fallback for tools that need arg extraction
+        for pattern, tool_name in _NL_PATTERNS.items():
             match = re.search(pattern, prompt, re.IGNORECASE)
             if match:
                 args_dict = {
@@ -338,6 +366,30 @@ class ToolRouter:
                 }
                 matched_name = self._resolve_tool_name(tool_name)
                 return matched_name, self._validate_args(matched_name, args_dict)
+
+        # Phase 2 — intent keyword matching (language-agnostic, zero-arg tools)
+        prompt_lower = prompt.lower()
+        prompt_words = set(re.findall(r"\w+", prompt_lower))
+
+        best_tool: str | None = None
+        best_score = 0
+        for tool_def in self._tools.values():
+            if not tool_def.intents:
+                continue
+            # Only match intents for tools with no required args
+            required_args = set(
+                tool_def.parameters_schema.get("required", [])
+            )
+            if required_args:
+                continue  # skip — needs regex arg extraction, not just keywords
+            score = sum(1 for intent in tool_def.intents if intent in prompt_words)
+            if score > best_score:
+                best_score = score
+                best_tool = tool_def.name
+
+        if best_tool and best_score > 0:
+            matched_name = self._resolve_tool_name(best_tool)
+            return matched_name, self._validate_args(matched_name, {})
 
         raise RoutingError(
             "Could not route natural language prompt to any registered tool"
