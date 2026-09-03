@@ -14,54 +14,136 @@ _MODEL_JSON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MODEL_CATALOG_PATH = os.path.join(_MODEL_JSON_DIR, "model_catalog.json")
 
 
-def _load_model_catalog() -> dict[str, dict[str, Any]]:
-    """Load model metadata from ``model_catalog.json``.
+def _load_model_catalog() -> dict[str, Any]:
+    """Load the model catalog from ``model_catalog.json``.
 
-    Returns a plain dict keyed by model name.  If the file is missing or
-    corrupt, logs a warning and returns ``{}`` — the payload builders
-    already handle unknown models via the safe minimal fallback.
+    The catalog is the single source of truth for model names, provider
+    routing, tier prefixes, and default models.  A missing, malformed, or
+    incomplete catalog is a hard error at import time: the agent must never
+    silently fall back to a hardcoded model name.
     """
     try:
         with open(_MODEL_CATALOG_PATH, "r", encoding="utf-8") as f:
             data: Any = _json.load(f)
-        if not isinstance(data, dict):
-            logger.warning("model_catalog.json root is not a dict — ignoring")
-            return {}
-        return data
     except FileNotFoundError:
-        logger.warning("model_catalog.json not found — KNOWN_MODELS will be empty")
-        return {}
+        raise RuntimeError(
+            f"model catalog not found at {_MODEL_CATALOG_PATH} — all model "
+            "names, provider routing, and defaults must come from this file"
+        ) from None
     except _json.JSONDecodeError as exc:
-        logger.warning("model_catalog.json malformed (%s) — KNOWN_MODELS will be empty", exc)
-        return {}
+        raise RuntimeError(
+            f"model catalog {_MODEL_CATALOG_PATH} is malformed: {exc}"
+        ) from None
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"model catalog {_MODEL_CATALOG_PATH} root must be a JSON object"
+        )
 
+    routing = data.get("_routing")
+    if not isinstance(routing, dict) or not routing:
+        raise RuntimeError(
+            "model catalog must define a non-empty '_routing' table "
+            "(model-name prefix -> provider)"
+        )
+    defaults = data.get("_defaults")
+    if not isinstance(defaults, dict):
+        raise RuntimeError("model catalog must define a '_defaults' object")
+    for key in ("model", "opencode_model", "openrouter_model"):
+        if not str(defaults.get(key) or "").strip():
+            raise RuntimeError(f"model catalog must define '_defaults.{key}'")
+    llm_chain = defaults.get("llm_chain")
+    if not isinstance(llm_chain, list) or not llm_chain:
+        raise RuntimeError(
+            "model catalog must define a non-empty '_defaults.llm_chain' list "
+            "(ordered provider failover chain, entries may be 'provider:model')"
+        )
+    for key in (
+        "opencode_server_url", "opencode_api_base", "opencode_zen_api_base",
+        "llama_base_url", "openrouter_api_base",
+    ):
+        if not str(defaults.get(key) or "").strip():
+            raise RuntimeError(f"model catalog must define '_defaults.{key}'")
+    zen_prefixes = data.get("_zen_free_tier_prefixes")
+    if not isinstance(zen_prefixes, list) or not zen_prefixes:
+        raise RuntimeError(
+            "model catalog must define a non-empty '_zen_free_tier_prefixes' list"
+        )
+    thinking_gates = data.get("_thinking_gates", {})
+    if not isinstance(thinking_gates, dict):
+        raise RuntimeError(
+            "model catalog '_thinking_gates' must be an object mapping "
+            "model-name substrings to {/think, /no_think} directive pairs"
+        )
+    for token, pair in thinking_gates.items():
+        if not isinstance(pair, dict) or not str(pair.get("/think") or "").strip() \
+                or not str(pair.get("/no_think") or "").strip():
+            raise RuntimeError(
+                f"model catalog '_thinking_gates.{token}' must define both "
+                "'/think' and '/no_think' directives"
+            )
+    return data
+
+
+_CATALOG: dict[str, Any] = _load_model_catalog()
 
 KNOWN_MODELS: dict[str, dict[str, Any]] = {
-    k: v for k, v in _load_model_catalog().items() if not k.startswith("_")
+    k: v for k, v in _CATALOG.items() if not k.startswith("_")
 }
 
-#: Provider routing table loaded from ``model_catalog.json`` ``_routing``.
+#: Provider routing table from ``model_catalog.json`` ``_routing``.
 #: Maps a model-name prefix (lowercase) to the provider that handles it.
-ROUTER: dict[str, str] = {
-    k: v for k, v in _load_model_catalog().get("_routing", {}).items()
-}
+ROUTER: dict[str, str] = {str(k): str(v) for k, v in _CATALOG["_routing"].items()}
 
-#: Default model names loaded from ``model_catalog.json`` ``_defaults``.
-_DEFAULTS: dict[str, str] = _load_model_catalog().get("_defaults", {})
+#: Default model names from ``model_catalog.json`` ``_defaults``.
+_DEFAULTS: dict[str, str] = {str(k): str(v) for k, v in _CATALOG["_defaults"].items()}
 
-#: Model-name prefixes that select the keyless opencode-zen FREE tier.
+#: Model-name prefixes that select the keyless opencode-zen FREE tier
+#: (from the catalog — no concrete names in code).
 _ZEN_TIER_PREFIXES: tuple[str, ...] = tuple(
-    _load_model_catalog().get("_zen_free_tier_prefixes", ["opencode-zen/", "zen/"])
+    str(p) for p in _CATALOG["_zen_free_tier_prefixes"]
 )
 
-DEFAULT_MODEL = os.environ.get("AGENT_MODEL", _DEFAULTS.get("model", "laguna-s-2.1"))
+#: Reasoning-gate directives per model family, from ``model_catalog.json``
+#: ``_thinking_gates``: maps a lowercase model-name substring (e.g. the
+#: Nemotron-3 family token) to its {"/think", "/no_think"} system-prompt
+#: directive pair.  Providers consult this table instead of hardcoding
+#: concrete model names.
+THINKING_GATES: dict[str, dict[str, str]] = {
+    str(token): {str(k): str(v) for k, v in pair.items()}
+    for token, pair in _CATALOG.get("_thinking_gates", {}).items()
+}
+
+#: Default local model (LM Studio family) when nothing else is configured.
+#: Env override first, then the catalog — no hardcoded model name.
+DEFAULT_MODEL = os.environ.get("AGENT_MODEL") or _DEFAULTS["model"]
 
 #: Default opencode-go model when the opencode provider is active and no
 #: explicit model is configured.  Reads AGENT_OPENCODE_MODEL from .env so
 #: this constant and AgentSettings.opencode_model share one source of truth.
-DEFAULT_OPENCODE_MODEL = os.environ.get(
-    "AGENT_OPENCODE_MODEL", _DEFAULTS.get("opencode_model", "opencode-go/deepseek-v4-flash")
+DEFAULT_OPENCODE_MODEL = (
+    os.environ.get("AGENT_OPENCODE_MODEL") or _DEFAULTS["opencode_model"]
 )
+
+#: Default openrouter model (env override first, then the catalog).
+DEFAULT_OPENROUTER_MODEL = (
+    os.environ.get("AGENT_OPENROUTER_MODEL") or _DEFAULTS["openrouter_model"]
+)
+
+#: Default ordered provider failover chain from ``model_catalog.json``
+#: ``_defaults.llm_chain`` (entries may be "provider:model" overrides).
+#: No concrete provider/model names in code.
+DEFAULT_LLM_CHAIN: tuple[str, ...] = tuple(
+    str(e) for e in _CATALOG["_defaults"]["llm_chain"]
+)
+
+#: Default endpoint URLs from ``model_catalog.json`` ``_defaults`` — the
+#: provider endpoints are catalog data, not code (env overrides happen in
+#: agent_core.config where the user's environment is read).
+DEFAULT_OPENCODE_SERVER_URL = _DEFAULTS["opencode_server_url"]
+DEFAULT_OPENCODE_API_BASE = _DEFAULTS["opencode_api_base"]
+DEFAULT_OPENCODE_ZEN_API_BASE = _DEFAULTS["opencode_zen_api_base"]
+DEFAULT_LLAMA_BASE_URL = _DEFAULTS["llama_base_url"]
+DEFAULT_OPENROUTER_API_BASE = _DEFAULTS["openrouter_api_base"]
 
 MODEL_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "model.json")
 CHAT_HISTORY_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "chat_history.json")
@@ -94,7 +176,7 @@ def resolve_model(explicit: str | None = None) -> str:
     3. Persisted model.json (set by ``model`` command, provider-aware)
     4. ``AGENT_MODEL`` environment variable
     5. What is actually loaded in LM Studio right now (via API) — lmstudio only
-    6. Default fallback (``laguna-s-2.1``)
+    6. Catalog default (``model_catalog.json`` ``_defaults.model``)
 
     The persisted choice outranks the live LM Studio poll (multi-shell
     safety): a second ``agent.py`` shell that loads a different model must

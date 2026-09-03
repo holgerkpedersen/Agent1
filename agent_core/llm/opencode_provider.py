@@ -27,6 +27,14 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
+from agent_core.constants import (
+    DEFAULT_OPENCODE_API_BASE,
+    DEFAULT_OPENCODE_SERVER_URL,
+    DEFAULT_OPENCODE_ZEN_API_BASE,
+    THINKING_GATES,
+    _ZEN_TIER_PREFIXES,
+)
+
 from .provider import ResponseMetrics
 
 #: HTTP statuses that are safe to retry — the hosted gateway sits behind
@@ -37,17 +45,18 @@ _TRANSIENT_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
 #: OpenAI-compatible hosted endpoint for opencode-go (verified live: the
 #: embedded base URL in the opencode CLI binary, /models returns the
 #: opencode-go catalog with UNPREFIXED ids like "deepseek-v4-flash").
-DEFAULT_API_BASE = "https://opencode.ai/zen/go/v1"
+DEFAULT_API_BASE = DEFAULT_OPENCODE_API_BASE
 
 #: Keyless OpenAI-compatible hosted endpoint for the opencode-zen FREE tier
 #: (no API key required — verified live: GET /models returns 63 models with
 #: UNPREFIXED ids, free ones suffixed "-free", e.g. "hy3-free",
 #: "nemotron-3.5-lightning-free", "laguna-s-2.1-free").  The agent names these
 #: "opencode-zen/<id>" so provider_for() routes them to this provider.
-ZEN_API_BASE = "https://opencode.ai/zen/v1"
+ZEN_API_BASE = DEFAULT_OPENCODE_ZEN_API_BASE
 
-#: Model id prefixes that map to the keyless opencode-zen free tier.
-ZEN_PREFIXES = ("opencode-zen/", "zen/")
+#: Model id prefixes that map to the keyless opencode-zen free tier
+#: (loaded from the model catalog — no concrete names in code).
+ZEN_PREFIXES: tuple[str, ...] = _ZEN_TIER_PREFIXES
 
 #: Model ids on the hosted API are unprefixed; this agent's persisted names
 #: keep the "opencode-go/..." / "opencode-zen/..." prefix for provider
@@ -81,7 +90,7 @@ def _zen_free_fallbacks() -> list[str]:
         # Discover the currently-available free-tier models live from the
         # keyless /models catalog (no model names hardcoded).  Any zen-prefixed
         # name keeps the provider in zen mode; GET /models ignores it.
-        prov = OpencodeProvider("opencode-zen/free", read_store=False)
+        prov = OpencodeProvider(ZEN_PREFIXES[0] + "free", read_store=False)
         return [m for m in prov.list_models() if m.lower().endswith("-free")]
     except Exception:
         return []
@@ -101,7 +110,7 @@ _BACKEND_DOWN_MARKERS = (
 )
 
 #: Default port for ``opencode serve``.
-DEFAULT_SERVER_URL = "http://127.0.0.1:4096"
+DEFAULT_SERVER_URL = DEFAULT_OPENCODE_SERVER_URL
 
 #: Map opencode's built-in tool names to this agent's NLP tools (server mode).
 #: Only tools with overlapping semantics are mapped; anything else is reported
@@ -115,6 +124,23 @@ _TOOL_MAP: dict[str, str] = {
     "grep": "search",
     "webfetch": "web_search",
 }
+
+
+def _thinking_gate_directive(model_name: str) -> str | None:
+    """Return the ``/no_think`` directive for *model_name* when the model
+    catalog declares a reasoning gate for its family (``_thinking_gates``:
+    lowercase model-name substring -> {"/think", "/no_think"} pair).
+
+    No concrete model name is hardcoded here — the catalog is the single
+    source of truth for which model families gate reasoning through the
+    system prompt (e.g. the Nemotron-3 family, per NVIDIA docs).  Returns
+    ``None`` when no gate applies so the payload stays untouched.
+    """
+    low = model_name.lower()
+    for token, pair in THINKING_GATES.items():
+        if token in low:
+            return pair["/no_think"]
+    return None
 
 
 def _apply_thinking_knob(
@@ -350,10 +376,11 @@ class OpencodeProvider:
     ) -> str:
         from .lmstudio import sanitize_message_roles
 
-        # Nemotron-3 models gate reasoning through /think vs /no_think in the
-        # system prompt (NVIDIA docs). Honor disable_thinking for them — no
-        # other model responds to the directive, so the payload stays as-is.
-        if disable_thinking and "nemotron" in self.model_name.lower():
+        # Models whose family declares a reasoning gate in the catalog
+        # (_thinking_gates) control /think vs /no_think in the system
+        # prompt. Honor disable_thinking for them — no other model
+        # responds to the directive, so the payload stays as-is.
+        if disable_thinking and _thinking_gate_directive(self.model_name):
             messages = _apply_thinking_knob(messages, enabled=False)
         payload: dict[str, Any] = {
             "model": _hosted_model_id(self.model_name),
@@ -493,8 +520,9 @@ class OpencodeProvider:
         if session.startswith("[Error"):
             return session
         system, parts = self._messages_to_parts(messages)
-        if disable_thinking and "nemotron" in self.model_name.lower():
-            system = "/no_think\n\n" + system
+        gate = _thinking_gate_directive(self.model_name) if disable_thinking else None
+        if gate:
+            system = f"{gate}\n\n" + system
         body: dict[str, Any] = {
             "model": self.model_name,
             "system": system,

@@ -6,6 +6,16 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from agent_core.constants import (
+    DEFAULT_LLAMA_BASE_URL,
+    DEFAULT_OPENCODE_API_BASE,
+    DEFAULT_OPENCODE_MODEL,
+    DEFAULT_OPENCODE_SERVER_URL,
+    DEFAULT_OPENROUTER_API_BASE,
+    DEFAULT_OPENROUTER_MODEL,
+    ROUTER,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,8 +62,6 @@ def provider_for(
     user last persisted in model.json (``model`` command writes it) — this
     keeps LM Studio models on LM Studio even when AGENT_LLM_PROVIDER is
     opencode; finally the configured ``llm_provider`` setting; unknown values
-    from agent_core.constants import ROUTER
-
     fall back to lmstudio.
     """
     m = (model_name or "").lower()
@@ -195,12 +203,12 @@ def build_provider(
         if provider_name == "opencode":
             from .opencode_provider import OpencodeProvider
 
-            opencode_model: str = str(eff or getattr(settings, "opencode_model", "opencode-go/deepseek-v4-flash"))
+            opencode_model: str = str(eff or getattr(settings, "opencode_model", DEFAULT_OPENCODE_MODEL))
             return OpencodeProvider(
                 model_name=opencode_model,
-                server_url=getattr(settings, "opencode_server_url", "http://127.0.0.1:4096"),
+                server_url=getattr(settings, "opencode_server_url", DEFAULT_OPENCODE_SERVER_URL),
                 password=getattr(settings, "opencode_password", ""),
-                api_url=getattr(settings, "opencode_api_url", "https://opencode.ai/zen/go/v1"),
+                api_url=getattr(settings, "opencode_api_url", DEFAULT_OPENCODE_API_BASE),
                 api_key=getattr(settings, "opencode_api_key", ""),
             )
         # llama.cpp (llama-server) OpenAI-compatible provider.
@@ -208,16 +216,16 @@ def build_provider(
             from .llama_provider import LlamaProvider
             return LlamaProvider(
                 model_name=eff,
-                api_url=getattr(settings, "llama_base_url", "http://127.0.0.1:8080/v1"),
+                api_url=getattr(settings, "llama_base_url", DEFAULT_LLAMA_BASE_URL),
             )
 
         # OpenRouter hosted gateway (OpenAI-compatible, native tool calling).
         if provider_name == "openrouter":
             from .openrouter_provider import OpenRouterProvider
-            openrouter_model: str = str(eff or getattr(settings, "openrouter_model", "openrouter/meta-llama/llama-3.1-8b-instruct:free"))
+            openrouter_model: str = str(eff or getattr(settings, "openrouter_model", DEFAULT_OPENROUTER_MODEL))
             return OpenRouterProvider(
                 model_name=openrouter_model,
-                api_url=getattr(settings, "openrouter_api_url", "https://openrouter.ai/api/v1"),
+                api_url=getattr(settings, "openrouter_api_url", DEFAULT_OPENROUTER_API_BASE),
                 api_key=getattr(settings, "openrouter_api_key", ""),
             )
 

@@ -30,7 +30,7 @@ import urllib.error
 
 from .provider import ResponseMetrics
 from .retry import RetryPolicy, TRANSIENT_HTTP_STATUSES, TransientHTTPError
-from agent_core.constants import KNOWN_MODELS, resolve_model
+from agent_core.constants import DEFAULT_LLAMA_BASE_URL, KNOWN_MODELS, resolve_model
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +162,7 @@ class LlamaProvider:
         self.model_name = name if name.startswith("llama/") else f"llama/{name}"
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self.api_url = (api_url or os.environ.get("AGENT_LLAMA_URL")
-                        or "http://127.0.0.1:8080/v1").rstrip("/")
+                        or DEFAULT_LLAMA_BASE_URL).rstrip("/")
         self.retry_policy = retry_policy or RetryPolicy(max_retries=3, base_delay=2.0)
         self.temperature: float = 0.7
         self.max_tokens: int = 50000

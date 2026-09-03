@@ -34,6 +34,7 @@ import urllib.request
 from typing import Any, Callable
 
 from .provider import ResponseMetrics
+from agent_core.constants import DEFAULT_OPENROUTER_API_BASE, DEFAULT_OPENROUTER_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ _CREDITS_AFFORD_RE = re.compile(
     r"can only afford\s+(\d+)", re.IGNORECASE
 )
 
-DEFAULT_API_BASE = "https://openrouter.ai/api/v1"
+DEFAULT_API_BASE = DEFAULT_OPENROUTER_API_BASE
 
 
 def _http_model_id(model_name: str) -> str:
@@ -221,7 +222,7 @@ class OpenRouterProvider:
         max_retries: int | None = None,
         retry_base_delay: float = 2.0,
     ) -> None:
-        name = model_name or "openrouter/deepseek/deepseek-chat-v3-0324"
+        name = model_name or DEFAULT_OPENROUTER_MODEL
         # Keep the routing prefix so provider detection / persistence agree
         # (the bare id is only added back at the HTTP boundary).
         self.model_name = (
@@ -560,4 +561,4 @@ class OpenRouterProvider:
         out to be restricted (403) or rate-limited (429).  ``None`` when no
         suggestion is known (callers then just print the raw error).
         """
-        return "openrouter/meta-llama/llama-3.1-8b-instruct:free"
+        return DEFAULT_OPENROUTER_MODEL

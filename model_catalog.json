@@ -2,7 +2,18 @@
   "_defaults": {
     "model": "laguna-s-2.1",
     "opencode_model": "opencode-go/deepseek-v4-flash",
-    "openrouter_model": "openrouter/meta-llama/llama-3.1-8b-instruct:free"
+    "openrouter_model": "openrouter/meta-llama/llama-3.1-8b-instruct:free",
+    "llm_chain": [
+      "opencode:opencode-zen/hy3-free",
+      "opencode:opencode-go/deepseek-v4-flash",
+      "lmstudio",
+      "llama"
+    ],
+    "opencode_server_url": "http://127.0.0.1:4096",
+    "opencode_api_base": "https://opencode.ai/zen/go/v1",
+    "opencode_zen_api_base": "https://opencode.ai/zen/v1",
+    "llama_base_url": "http://127.0.0.1:8080/v1",
+    "openrouter_api_base": "https://openrouter.ai/api/v1"
   },
   "_routing": {
     "opencode": "opencode",
@@ -18,6 +29,9 @@
     "lmstudio": "lmstudio"
   },
   "_zen_free_tier_prefixes": ["opencode-zen/", "zen/"],
+  "_thinking_gates": {
+    "nemotron": {"/think": "/think", "/no_think": "/no_think"}
+  },
   "qwen3.6-27b-mtp": {
     "desc": "Qwen 3.6 27B — chat, codegen, large context",
     "max_tokens": 100000,

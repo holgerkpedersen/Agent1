@@ -7,7 +7,16 @@ import re
 
 from .base import Command
 from agent_core.config import lmstudio_base_url, load_agent_settings
-from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, persist_model_choice
+from agent_core.constants import (
+    DEFAULT_LLAMA_BASE_URL,
+    DEFAULT_MODEL,
+    DEFAULT_OPENCODE_API_BASE,
+    DEFAULT_OPENCODE_SERVER_URL,
+    DEFAULT_OPENROUTER_API_BASE,
+    DEFAULT_OPENROUTER_MODEL,
+    KNOWN_MODELS,
+    persist_model_choice,
+)
 from agent_core.llm import lmstudio as _lms
 from agent_core.llm import model_profiles as _profiles
 
@@ -148,9 +157,9 @@ class ModelCommand(Command):
                 # active model is a keyless opencode-zen free model.
                 oc = OpencodeProvider(
                     model_name=s.opencode_model,
-                    server_url=getattr(s, "opencode_server_url", "http://127.0.0.1:4096"),
+                    server_url=getattr(s, "opencode_server_url", DEFAULT_OPENCODE_SERVER_URL),
                     password=getattr(s, "opencode_password", ""),
-                    api_url=getattr(s, "opencode_api_url", "https://opencode.ai/zen/go/v1"),
+                    api_url=getattr(s, "opencode_api_url", DEFAULT_OPENCODE_API_BASE),
                     api_key=getattr(s, "opencode_api_key", ""),
                 )
                 go_models = list(oc.list_models())
@@ -170,7 +179,10 @@ class ModelCommand(Command):
         works).  Free models carry a ``-free`` suffix.
         """
         try:
-            from agent_core.llm.opencode_provider import OpencodeProvider
+            from agent_core.llm.opencode_provider import (
+                OpencodeProvider,
+                ZEN_PREFIXES,
+            )
             from agent_core.config import load_agent_settings
 
             try:
@@ -180,11 +192,11 @@ class ModelCommand(Command):
                 zen_default = ""
             # The keyless catalog probe needs only a zen-mode provider; the
             # model name is irrelevant to GET /models (it lists whatever is
-            # available), so use a generic zen placeholder when no specific
-            # default model is configured or available.  No model name is
-            # hardcoded here.
+            # available), so use a generic zen placeholder (first catalog
+            # tier prefix + "free") when no specific default model is
+            # configured or available.  No model name is hardcoded here.
             prov = OpencodeProvider(
-                zen_default or "opencode-zen/free",
+                zen_default or ZEN_PREFIXES[0] + "free",
                 read_store=False,
             )
             return list(prov.list_models())
@@ -223,7 +235,7 @@ class ModelCommand(Command):
             from agent_core.config import load_agent_settings
             s = load_agent_settings()
             return list(LlamaProvider(
-                api_url=getattr(s, "llama_base_url", "http://127.0.0.1:8080/v1")
+                api_url=getattr(s, "llama_base_url", DEFAULT_LLAMA_BASE_URL)
             ).list_models())
         except Exception:
             return []
@@ -251,8 +263,8 @@ class ModelCommand(Command):
             from agent_core.config import load_agent_settings
             s = load_agent_settings()
             return list(OpenRouterProvider(
-                model_name=getattr(s, "openrouter_model", "openrouter/meta-llama/llama-3.1-8b-instruct:free"),
-                api_url=getattr(s, "openrouter_api_url", "https://openrouter.ai/api/v1"),
+                model_name=getattr(s, "openrouter_model", DEFAULT_OPENROUTER_MODEL),
+                api_url=getattr(s, "openrouter_api_url", DEFAULT_OPENROUTER_API_BASE),
                 api_key=getattr(s, "openrouter_api_key", ""),
             ).list_models(free_only=free_only))
         except Exception:
@@ -331,7 +343,7 @@ class ModelCommand(Command):
                 from agent_core.config import load_agent_settings
                 _lurl = load_agent_settings().llama_base_url
             except Exception:
-                _lurl = "http://127.0.0.1:8080/v1"
+                _lurl = DEFAULT_LLAMA_BASE_URL
             print(f"\n  [llama] llama.cpp server unreachable at {_lurl} - start llama-server")
 
         # ---- OpenRouter hosted gateway models (FREE tier by default) ----
