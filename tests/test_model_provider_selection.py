@@ -10,7 +10,7 @@ the provider explicitly.  Without the flag, routing is unchanged.
 
 from agent_core.commands.model_cmd import ModelCommand
 
-from _helpers import _default_llm
+from _helpers import _default_llm, _default_llm_short
 
 
 def _settings(provider: str = "lmstudio"):
@@ -168,7 +168,10 @@ class TestSwitchModelWithProvider:
             "loaded": True,
             "instance_id": "i1",
         }]
-        # Controlled opencode catalogs — no network access.
+        # Controlled opencode catalogs — no network access.  Built from the
+        # _default_llm() helper so no specific model name is hardcoded; the
+        # catalog-match test queries with _default_llm_short() and asserts
+        # against _default_llm().
         self.go_catalog = [_default_llm(), _default_llm()]
         self.zen_catalog = ["opencode-zen/nemotron-3.5-lightning-free"]
 
@@ -283,8 +286,8 @@ class TestSwitchModelWithProvider:
         assert agent.llm.model_name == "opencode-go/laguna-s-2.1-ud"
 
     def test_opencode_catalog_match_with_flag(self, monkeypatch, capsys):
-        """`model hy3 --provider opencode` resolves to the opencode-go catalog
-        match, not a bare-name prefix."""
+        """`model <short-name> --provider opencode` resolves to the opencode-go
+        catalog match (the default LLM), not a bare-name prefix."""
         from agent_core.llm.opencode_provider import OpencodeProvider
 
         agent = _lmstudio_agent("qwen3.5-9b")
@@ -296,7 +299,7 @@ class TestSwitchModelWithProvider:
 
         import asyncio
         asyncio.run(
-            self.cmd._switch_model(["hy3", "--provider", "opencode"], agent)
+            self.cmd._switch_model([_default_llm_short(), "--provider", "opencode"], agent)
         )
 
         assert isinstance(agent.llm._provider, OpencodeProvider)
