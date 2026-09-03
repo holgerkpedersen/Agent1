@@ -7,7 +7,16 @@ import re
 
 from .base import Command
 from agent_core.config import lmstudio_base_url, load_agent_settings
-from agent_core.constants import KNOWN_MODELS, DEFAULT_MODEL, persist_model_choice
+from agent_core.constants import (
+    DEFAULT_LLAMA_BASE_URL,
+    DEFAULT_MODEL,
+    DEFAULT_OPENCODE_API_BASE,
+    DEFAULT_OPENCODE_SERVER_URL,
+    DEFAULT_OPENROUTER_API_BASE,
+    DEFAULT_OPENROUTER_MODEL,
+    KNOWN_MODELS,
+    persist_model_choice,
+)
 from agent_core.llm import lmstudio as _lms
 from agent_core.llm import model_profiles as _profiles
 
@@ -148,9 +157,9 @@ class ModelCommand(Command):
                 # active model is a keyless opencode-zen free model.
                 oc = OpencodeProvider(
                     model_name=s.opencode_model,
-                    server_url=getattr(s, "opencode_server_url", "http://127.0.0.1:4096"),
+                    server_url=getattr(s, "opencode_server_url", DEFAULT_OPENCODE_SERVER_URL),
                     password=getattr(s, "opencode_password", ""),
-                    api_url=getattr(s, "opencode_api_url", "https://opencode.ai/zen/go/v1"),
+                    api_url=getattr(s, "opencode_api_url", DEFAULT_OPENCODE_API_BASE),
                     api_key=getattr(s, "opencode_api_key", ""),
                 )
                 go_models = list(oc.list_models())
@@ -170,15 +179,26 @@ class ModelCommand(Command):
         works).  Free models carry a ``-free`` suffix.
         """
         try:
-            from agent_core.llm.opencode_provider import OpencodeProvider
+            from agent_core.llm.opencode_provider import (
+                OpencodeProvider,
+                ZEN_PREFIXES,
+            )
             from agent_core.config import load_agent_settings
 
             try:
                 settings = load_agent_settings()
                 zen_default = settings.zen_free_default
             except Exception:
-                zen_default = "opencode-zen/hy3-free"
-            prov = OpencodeProvider(zen_default, read_store=False)
+                zen_default = ""
+            # The keyless catalog probe needs only a zen-mode provider; the
+            # model name is irrelevant to GET /models (it lists whatever is
+            # available), so use a generic zen placeholder (first catalog
+            # tier prefix + "free") when no specific default model is
+            # configured or available.  No model name is hardcoded here.
+            prov = OpencodeProvider(
+                zen_default or ZEN_PREFIXES[0] + "free",
+                read_store=False,
+            )
             return list(prov.list_models())
         except Exception:
             return []
@@ -215,7 +235,7 @@ class ModelCommand(Command):
             from agent_core.config import load_agent_settings
             s = load_agent_settings()
             return list(LlamaProvider(
-                api_url=getattr(s, "llama_base_url", "http://127.0.0.1:8080/v1")
+                api_url=getattr(s, "llama_base_url", DEFAULT_LLAMA_BASE_URL)
             ).list_models())
         except Exception:
             return []
@@ -243,8 +263,8 @@ class ModelCommand(Command):
             from agent_core.config import load_agent_settings
             s = load_agent_settings()
             return list(OpenRouterProvider(
-                model_name=getattr(s, "openrouter_model", "openrouter/meta-llama/llama-3.1-8b-instruct:free"),
-                api_url=getattr(s, "openrouter_api_url", "https://openrouter.ai/api/v1"),
+                model_name=getattr(s, "openrouter_model", DEFAULT_OPENROUTER_MODEL),
+                api_url=getattr(s, "openrouter_api_url", DEFAULT_OPENROUTER_API_BASE),
                 api_key=getattr(s, "openrouter_api_key", ""),
             ).list_models(free_only=free_only))
         except Exception:
@@ -323,7 +343,7 @@ class ModelCommand(Command):
                 from agent_core.config import load_agent_settings
                 _lurl = load_agent_settings().llama_base_url
             except Exception:
-                _lurl = "http://127.0.0.1:8080/v1"
+                _lurl = DEFAULT_LLAMA_BASE_URL
             print(f"\n  [llama] llama.cpp server unreachable at {_lurl} - start llama-server")
 
         # ---- OpenRouter hosted gateway models (FREE tier by default) ----
@@ -406,7 +426,7 @@ class ModelCommand(Command):
             print(f"\n  [{active_provider}] {current} — no LM Studio sync needed.")
 
     def _list_known_only(self, agent: "Agent") -> None:
-        """Fallback: show the hardcoded KNOWN_MODELS."""
+        """Fallback: show the catalog from model_catalog.json."""
         current = agent.llm.model_name
         for name, info in sorted(KNOWN_MODELS.items()):
             marker = " <- current" if name == current else ""
@@ -548,7 +568,7 @@ class ModelCommand(Command):
         lmstudio_match = self._resolve_lmstudio(query, models)
 
         if lmstudio_match is None and not models:
-            print("  LM Studio not reachable — trying hardcoded list.")
+            print("  LM Studio not reachable — trying catalog list.")
             await self._switch_known(query, agent)
             return
 
@@ -573,8 +593,9 @@ class ModelCommand(Command):
             persist_model_choice(lmstudio_match, provider="lmstudio")
             # Rebuild the provider: a previously selected opencode provider must
             # not keep receiving LM Studio models (it would 401 on the hosted
-            # API).
-            self._rebuild_provider(agent, lmstudio_match)
+            # API).  Pass the override so chain defaults don't clobber the
+            # user's explicit LM Studio selection.
+            self._rebuild_provider(agent, lmstudio_match, provider_override="lmstudio")
             print(f"  Switched: {old} -> {lmstudio_match}  ({info.get('desc', '')})")
             return
 
@@ -631,7 +652,7 @@ class ModelCommand(Command):
             old = agent.llm.model_name
             agent.llm.model_name = lmstudio_fuzzy
             persist_model_choice(lmstudio_fuzzy, provider="lmstudio")
-            self._rebuild_provider(agent, lmstudio_fuzzy)
+            self._rebuild_provider(agent, lmstudio_fuzzy, provider_override="lmstudio")
             print(f"  Switched: {old} -> {lmstudio_fuzzy}  ({info.get('desc', '')})")
             return
 
@@ -726,7 +747,7 @@ class ModelCommand(Command):
                 if zen_match == old:
                     print(f"  Already using: {zen_match}")
                     return
-                agent.llm._provider = build_provider(settings, zen_match)
+                agent.llm._provider = build_provider(settings, zen_match, provider_override="opencode")
                 agent.llm.model_name = zen_match
                 persist_model_choice(zen_match, provider="opencode")
                 print(f"  Switched: {old} -> {zen_match}  (provider=opencode-zen, free)")
@@ -737,7 +758,7 @@ class ModelCommand(Command):
                 if oc_match == old:
                     print(f"  Already using: {oc_match}")
                     return
-                agent.llm._provider = build_provider(settings, oc_match)
+                agent.llm._provider = build_provider(settings, oc_match, provider_override="opencode")
                 agent.llm.model_name = oc_match
                 persist_model_choice(oc_match, provider="opencode")
                 print(f"  Switched: {old} -> {oc_match}  (provider=opencode)")
@@ -822,16 +843,26 @@ class ModelCommand(Command):
         old = agent.llm.model_name
         agent.llm.model_name = lmstudio_match
         persist_model_choice(lmstudio_match, provider="lmstudio")
-        self._rebuild_provider(agent, lmstudio_match)
+        self._rebuild_provider(agent, lmstudio_match, provider_override="lmstudio")
         print(f"  Switched: {old} -> {lmstudio_match}  ({info.get('desc', '')})")
         return
 
-    def _rebuild_provider(self, agent: "Agent", model_name: str) -> None:
-        """Rebuild the agent's LLM provider for *model_name* (provider-aware)."""
+    def _rebuild_provider(
+        self, agent: "Agent", model_name: str, provider_override: str | None = None,
+    ) -> None:
+        """Rebuild the agent's LLM provider for *model_name* (provider-aware).
+
+        When *provider_override* is given it is forwarded to
+        :func:`~agent_core.llm.provider.build_provider` so the user's explicit
+        ``-p <provider>`` selection (or catalog-path routing) is preserved
+        instead of being overwritten by chain defaults.
+        """
         from agent_core.config import load_agent_settings
         from agent_core.llm.provider import build_provider
 
-        agent.llm._provider = build_provider(load_agent_settings(), model_name)
+        agent.llm._provider = build_provider(
+            load_agent_settings(), model_name, provider_override=provider_override,
+        )
 
     def _resolve_llama_server_model(
         self, provider: Any, routing_label: str
@@ -897,7 +928,7 @@ class ModelCommand(Command):
             if model.startswith("opencode") or model.startswith("openrouter"):
                 model = DEFAULT_MODEL
 
-        agent.llm._provider = build_provider(settings, model)
+        agent.llm._provider = build_provider(settings, model, provider_override=target)
         agent.llm.model_name = model
         persist_model_choice(model, provider=target)
         print(f"  Provider switched: {current} -> {target}  (model: {model})")
@@ -911,7 +942,7 @@ class ModelCommand(Command):
         if query in KNOWN_MODELS:
             agent.llm.model_name = query
             self._persist_model(query)
-            self._rebuild_provider(agent, query)
+            self._rebuild_provider(agent, query, provider_override="lmstudio")
             print(f"  Switched: {current} -> {query}")
             return
         sub_matches = [m for m in KNOWN_MODELS if query.lower() in m.lower()]
@@ -919,14 +950,14 @@ class ModelCommand(Command):
             best = sub_matches[0]
             agent.llm.model_name = best
             self._persist_model(best)
-            self._rebuild_provider(agent, best)
+            self._rebuild_provider(agent, best, provider_override="lmstudio")
             print(f"  Switched: {current} -> {best}")
             return
         close = difflib.get_close_matches(query, KNOWN_MODELS.keys(), n=1, cutoff=0.3)
         if close:
             agent.llm.model_name = close[0]
             self._persist_model(close[0])
-            self._rebuild_provider(agent, close[0])
+            self._rebuild_provider(agent, close[0], provider_override="lmstudio")
             print(f"  Switched: {current} -> {close[0]}")
             return
         print(f"  No match for '{query}'")
@@ -979,7 +1010,7 @@ class ModelCommand(Command):
             print("  Syncing agent to match LM Studio...")
             agent.llm.model_name = active_key
             self._persist_model(active_key)
-            self._rebuild_provider(agent, active_key)
+            self._rebuild_provider(agent, active_key, provider_override="lmstudio")
             print(f"  Done: {active_key}")
 
     def _persist_model(self, model_name: str) -> None:
@@ -1036,6 +1067,7 @@ class ModelCommand(Command):
             print(f"  Already loaded: {resolved}")
             agent.llm.model_name = resolved
             self._persist_model(resolved)
+            self._rebuild_provider(agent, resolved, provider_override="lmstudio")
             print(f"  Switched to: {resolved}")
             return
 
@@ -1046,6 +1078,7 @@ class ModelCommand(Command):
             # Auto-switch to the loaded model
             agent.llm.model_name = resolved
             self._persist_model(resolved)
+            self._rebuild_provider(agent, resolved, provider_override="lmstudio")
             print(f"  Switched to: {resolved}")
         else:
             print(f"  Error: {msg}")

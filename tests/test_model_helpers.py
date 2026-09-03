@@ -309,6 +309,7 @@ class TestSwitchModelPrefersOpencode:
             "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
         monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: type("S", (), {
             "llm_provider": "opencode",
+            "opencode_model": "opencode-go/deepseek-v4-flash",
             "opencode_server_url": "http://127.0.0.1:4096",
             "opencode_password": "",
             "opencode_api_url": "https://opencode.ai/zen/go/v1",
@@ -442,6 +443,7 @@ class TestModelListGoVsZenNoDuplicate:
             "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
         monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: type("S", (), {
             "llm_provider": "opencode",
+            "opencode_model": "opencode-go/deepseek-v4-flash",
             "opencode_server_url": "http://127.0.0.1:4096",
             "opencode_password": "",
             "opencode_api_url": "https://opencode.ai/zen/go/v1",

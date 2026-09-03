@@ -190,8 +190,7 @@ class MultiLlmCommand(Command):
             models = _default_models(agent)
         if len(models) < 2:
             self.error(
-                "multillm needs at least two models — pass --models "
-                "laguna-s-2.1,opencode-go/..."
+                "multillm needs at least two models — pass --models m1,m2"
             )
             return True
 

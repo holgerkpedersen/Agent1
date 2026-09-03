@@ -58,6 +58,33 @@ from harnessfix.tracing import (
     TraceWriter,
 )
 
+@pytest.fixture(autouse=True)
+def _clean_real_tree_stuck():
+    """Belt-and-braces guard against real-tree leakage.
+
+    The ``applied_stuck_repair`` fixture applies to the REAL file for runtime
+    subprocess tests and owns its own revert in teardown.  This autouse fixture
+    only reverts on redirected temp copies (never the real file) so a test that
+    errors before reaching its own cleanup still leaves no modified state in a
+    sibling's temp dir."""
+    yield
+    import harnessfix.repairs.stuck_repeat as stuck_mod
+    import harnessfix.repairs.abandonment_resume as abandon_mod
+
+    for _mod in (stuck_mod, abandon_mod):
+        # Skip the real file — applied_stuck_repair's teardown owns it.
+        try:
+            resolved = Path(_mod._TARGET).resolve() if _mod._TARGET else None
+        except Exception:  # noqa: BLE001 - defensive
+            resolved = None
+        if resolved == _REAL_TOOL_LOOP:
+            continue
+        try:
+            _mod.revert()
+        except Exception:  # noqa: BLE001 - best-effort cleanup only
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Fixtures/helpers
 # ---------------------------------------------------------------------------
@@ -213,22 +240,29 @@ def _run_scenario(scenario: str) -> dict:
 def applied_stuck_repair(monkeypatch):
     """Ensure the repair is applied to the real tree for subprocess tests.
 
-    The real ``tool_loop.py`` may already carry the repair (committed in the
-    tree).  When that is the case the fixture is a no-op — the subprocess
-    will import the already-repaired source.  When the repair is NOT yet
-    present, it is applied here and reverted in the teardown."""
+    Overrides the root conftest ``_TARGET`` redirect (which routes other tests
+    to a temp copy) so the scenario subprocess -- which imports the real
+    ``agent_core.llm.tool_loop`` -- actually exercises the repaired source.
+    This module is marked ``harnessfix_self_test`` so the autonomous gate
+    excludes it and the real tree is never mutated mid-loop.
+
+    If autonomous self-improvement already merged this repair into the committed
+    source, apply() returns "already applied (no-op)" — we leave that state as-is
+    (don't revert) so the fixture never undoes a legitimately-merged code change.
+    Only reverts when it actually performed a fresh apply."""
     import harnessfix.repairs.stuck_repeat as mod
 
     real = _REAL_TOOL_LOOP  # real file, captured at import time
     mod._TARGET = real
-    already = mod.is_applied()
-    if not already:
-        summary = mod.apply()
-        assert "_REPEAT_HINTS" in summary
+    summary = mod.apply()
+    freshly_applied = "already applied" not in summary
+    assert "_REPEAT_HINTS" in summary or "already applied" in summary
     try:
         yield
     finally:
-        if not already:
+        if freshly_applied:
+            # We changed the tree — restore it.  If already applied on HEAD,
+            # leave the committed state untouched (don't revert a merged repair).
             mod.revert()
         mod._TARGET = real
 
@@ -303,6 +337,34 @@ def test_repair_is_catalogued_on_the_lifecycle_layer():
     repair = CATALOG[STUCK_REPEAT_REPAIR_ID]
     assert repair.layer == LIFECYCLE_LAYER
     assert repair in repairs_for_layer(LIFECYCLE_LAYER)
+
+
+def _original_source() -> str:
+    """The reverted (pre-repair) source of tool_loop.py.
+
+    Autonomous self-improvement may have already merged BOTH catalog repairs
+    into the real tree, so reading it directly yields an *applied* snapshot
+    rather than the original bytes these roundtrip tests need to start from.
+    We read on a throwaway temp copy and revert there (best-effort) so the
+    returned source is always the un-repaired baseline regardless of what's
+    committed or left by a prior test run — keeping unit tests independent of
+    tree state.  NOTE: this never touches the real file."""
+    import harnessfix.repairs.stuck_repeat as mod
+
+    real = Path("agent_core/llm/tool_loop.py")
+    local = Path(tempfile.mkdtemp()) / "tool_loop.py"
+    local.write_text(real.read_text(encoding="utf-8"), encoding="utf-8")
+    saved_target = mod._TARGET
+    try:
+        mod._TARGET = local
+        for _r in (mod.revert, revert_stuck):
+            try:
+                _r()
+            except Exception:  # noqa: BLE001 - best-effort only
+                pass
+    finally:
+        mod._TARGET = saved_target
+    return local.read_text(encoding="utf-8")
 
 
 def test_apply_and_roundtrip(tmp_path, monkeypatch):
@@ -433,6 +495,17 @@ def test_loop_now_proposes_a_lifecycle_repair_for_stuck_traces(tmp_path, monkeyp
     """Before this change a stuck-only corpus proposed NOTHING (no lifecycle
     repair existed); now choose_repair finds stuck-repeat-tool-hints and the
     full gate path runs with it."""
+    import harnessfix.repairs.stuck_repeat as mod
+
+    # The root conftest redirects ``_TARGET`` to a session-scoped temp copy of
+    # the real tree (which has this repair already merged by autonomous self-
+    # improvement).  Revert that redirected target so is_applied() returns False
+    # and the loop actually exercises apply+accept instead of skipping.
+    try:
+        mod.revert()
+    except Exception:
+        pass
+
     traces_dir = tmp_path / "traces"
     traces_dir.mkdir()
     _write_stuck_trace(traces_dir, "stuck1")

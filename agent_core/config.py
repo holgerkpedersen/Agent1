@@ -6,6 +6,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
+from .constants import (
+    DEFAULT_LLM_CHAIN,
+    DEFAULT_LLAMA_BASE_URL,
+    DEFAULT_OPENCODE_API_BASE,
+    DEFAULT_OPENCODE_MODEL,
+    DEFAULT_OPENCODE_SERVER_URL,
+    DEFAULT_OPENROUTER_API_BASE,
+    DEFAULT_OPENROUTER_MODEL,
+)
 from .exceptions import ConfigurationError
 
 logger = logging.getLogger(__name__)
@@ -96,22 +105,20 @@ class AgentSettings:
     )
     #: opencode server connection (decision #008 configured provider).
     opencode_server_url: str = field(
-        default_factory=lambda: os.environ.get("OPENCODE_SERVER_URL", "http://127.0.0.1:4096")
+        default_factory=lambda: os.environ.get("OPENCODE_SERVER_URL", DEFAULT_OPENCODE_SERVER_URL)
     )
     opencode_password: str = field(
         default_factory=lambda: os.environ.get("OPENCODE_SERVER_PASSWORD", "")
     )
     opencode_model: str = field(
-        default_factory=lambda: os.environ.get(
-            "AGENT_OPENCODE_MODEL", "opencode-go/deepseek-v4-flash"
-        )
+        default_factory=lambda: DEFAULT_OPENCODE_MODEL
     )
     #: Direct hosted API mode (OpenAI-compatible, the opencode-go gateway).
     #: When a key is available (OPENCODE_API_KEY or opencode's auth.json
     #: store) the provider uses direct API mode with NATIVE tool calling
     #: instead of a local opencode server.
     opencode_api_url: str = field(
-        default_factory=lambda: os.environ.get("OPENCODE_API_URL", "https://opencode.ai/zen/go/v1")
+        default_factory=lambda: os.environ.get("OPENCODE_API_URL", DEFAULT_OPENCODE_API_BASE)
     )
     opencode_api_key: str = field(
         default_factory=lambda: os.environ.get("OPENCODE_API_KEY", "")
@@ -121,7 +128,7 @@ class AgentSettings:
     #: ``llama-server`` over the standard /v1/chat/completions protocol
     #: instead of LM Studio.  Override with AGENT_LLAMA_URL.
     llama_base_url: str = field(
-        default_factory=lambda: os.environ.get("AGENT_LLAMA_URL", "http://127.0.0.1:8080/v1")
+        default_factory=lambda: os.environ.get("AGENT_LLAMA_URL", DEFAULT_LLAMA_BASE_URL)
     )
     #: Extra CLI args passed to ``llama-server`` when the agent auto-launches
     #: or relaunches it (e.g. "--gpu-layers 999 --ctx-size 262144").  These are
@@ -138,7 +145,7 @@ class AgentSettings:
     #: URL with OPENROUTER_API_URL (e.g. a proxy); the key resolves from
     #: OPENROUTER_API_KEY first, then the secure store.
     openrouter_api_url: str = field(
-        default_factory=lambda: os.environ.get("OPENROUTER_API_URL", "https://openrouter.ai/api/v1")
+        default_factory=lambda: os.environ.get("OPENROUTER_API_URL", DEFAULT_OPENROUTER_API_BASE)
     )
     openrouter_api_key: str = field(
         default_factory=lambda: os.environ.get("OPENROUTER_API_KEY", "") or _store_secret("OPENROUTER_API_KEY")
@@ -150,19 +157,21 @@ class AgentSettings:
     #: `model list` only shows free models by default.)
     openrouter_model: str = field(
         default_factory=lambda: os.environ.get(
-            "AGENT_OPENROUTER_MODEL", "openrouter/meta-llama/llama-3.1-8b-instruct:free"
+            "AGENT_OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL
         )
     )
     #: Default opencode-zen FREE model used for catalog listing / probing
-    #: (keyless tier — no API key needed).  Override with AGENT_ZEN_FREE_DEFAULT.
+    #: (keyless tier — no API key needed).  NO specific model is hardcoded (a
+    #: machine/account may not have it); when unset we construct the keyless
+    #: catalog probe with a generic zen-prefixed placeholder.  Override with
+    #: AGENT_ZEN_FREE_DEFAULT.
     zen_free_default: str = field(
-        default_factory=lambda: os.environ.get(
-            "AGENT_ZEN_FREE_DEFAULT", "opencode-zen/hy3-free"
-        )
+        default_factory=lambda: os.environ.get("AGENT_ZEN_FREE_DEFAULT", "")
     )
     #: Ordered fallback models for the opencode-zen FREE tier, tried in order
     #: when the user's chosen free model is temporarily unavailable on the
-    #: backend.  Comma-separated; override with AGENT_ZEN_FREE_FALLBACKS.
+    #: backend.  Comma-separated; override with AGENT_ZEN_FREE_FALLBACKS.  When
+    #: unset the live catalog is discovered at retry time (no hardcoded list).
     zen_free_fallbacks: tuple[str, ...] = field(
         default_factory=lambda: _parse_zen_fallbacks(
             os.environ.get("AGENT_ZEN_FREE_FALLBACKS")
@@ -178,19 +187,21 @@ class AgentSettings:
 _LLM_PROVIDERS = ("lmstudio", "opencode", "llama", "openrouter")
 
 
-def _parse_provider_chain(raw: str | None) -> tuple[str, ...]:
-    """Parse a comma-separated provider list into a clean ordered tuple.
+def _parse_provider_chain(raw: str | tuple[str, ...] | None) -> tuple[str, ...]:
+    """Parse a provider list into a clean ordered tuple.
 
-    Strips whitespace, lowercases each entry, and drops empties so
-    ``"lmstudio, opencode"`` and ``"lmstudio,,opencode,"`` both yield
-    ``("lmstudio", "opencode")``.  Falls back to ``("lmstudio",)`` when the
-    input is empty/None.  Validation against :data:`_LLM_PROVIDERS` happens
-    later in :func:`_validate_settings`.
+    Accepts either a comma-separated string (env vars) or a pre-parsed tuple
+    (the catalog default chain).  Strips whitespace, lowercases each entry,
+    and drops empties so ``"lmstudio, opencode"`` and ``"lmstudio,,opencode,"``
+    both yield ``("lmstudio", "opencode")``.  Falls back to ``("lmstudio",)``
+    when the input is empty/None.  Validation against :data:`_LLM_PROVIDERS`
+    happens later in :func:`_validate_settings`.
     """
     if not raw:
         return ("lmstudio",)
+    parts = raw if isinstance(raw, tuple) else raw.split(",")
     cleaned = tuple(
-        part.strip().lower() for part in raw.split(",") if part.strip()
+        part.strip().lower() for part in parts if part.strip()
     )
     return cleaned or ("lmstudio",)
 
@@ -199,26 +210,16 @@ def _parse_zen_fallbacks(raw: str | None) -> tuple[str, ...]:
     """Parse a comma-separated opencode-zen FREE fallback list.
 
     Strips whitespace and drops empties so ``"opencode-zen/hy3-free,
-    opencode-zen/laguna-s-2.1-free"`` yields a clean ordered tuple.  Falls
-    back to the default curated list when the input is empty/None.
+    opencode-zen/laguna-s-2.1-free"`` yields a clean ordered tuple.  Returns
+    an empty tuple when the input is empty/None — no model is assumed to
+    exist; the retry path discovers the live catalog instead.
     """
     if not raw:
-        return _DEFAULT_ZEN_FREE_FALLBACKS
+        return ()
     cleaned = tuple(
         part.strip() for part in raw.split(",") if part.strip()
     )
-    return cleaned or _DEFAULT_ZEN_FREE_FALLBACKS
-
-
-#: Curated opencode-zen FREE models that are reliably up (verified live).
-#: Used as the default for AgentSettings.zen_free_fallbacks when the
-#: AGENT_ZEN_FREE_FALLBACKS env var is unset.  Update this tuple when models
-#: are added/removed on the backend.
-_DEFAULT_ZEN_FREE_FALLBACKS: tuple[str, ...] = (
-    "opencode-zen/hy3-free",
-    "opencode-zen/laguna-s-2.1-free",
-    "opencode-zen/mimo-v2.5-free",
-)
+    return cleaned
 
 
 def _store_secret(name: str) -> str:
@@ -257,22 +258,28 @@ def _validate_settings(settings: AgentSettings) -> None:
         )
 
     invalid_providers = tuple(
-        p for p in settings.llm_providers if p not in _LLM_PROVIDERS
+        p.split(":", 1)[0].strip()
+        for p in settings.llm_providers
+        if p.split(":", 1)[0].strip() not in _LLM_PROVIDERS
     )
     if invalid_providers:
         raise ConfigurationError(
-            f"llm_providers must contain only {', '.join(_LLM_PROVIDERS)}, "
+            f"llm_providers must contain only {', '.join(_LLM_PROVIDERS)} "
+            f"(optionally 'provider:model' per entry), "
             f"got {', '.join(settings.llm_providers)} "
             f"(invalid: {', '.join(invalid_providers)})"
         )
 
-    # The single-provider setting must be the first entry in the chain so the
-    # "active" provider and the failover order agree.
-    if settings.llm_providers and settings.llm_provider != settings.llm_providers[0]:
-        raise ConfigurationError(
-            f"llm_provider ('{settings.llm_provider}') must match the first "
-            f"entry of llm_providers ({settings.llm_providers[0]})"
-        )
+    # The single-provider setting must match the first entry in the chain (the
+    # provider part of a possible 'provider:model' entry) so the "active"
+    # provider and the failover order agree.
+    if settings.llm_providers:
+        first_provider = settings.llm_providers[0].split(":", 1)[0].strip()
+        if settings.llm_provider != first_provider:
+            raise ConfigurationError(
+                f"llm_provider ('{settings.llm_provider}') must match the first "
+                f"entry of llm_providers ({settings.llm_providers[0]})"
+            )
 
 
 def _load_env_file(env_path: Path | None = None) -> dict[str, str]:
@@ -374,16 +381,20 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
     # The failover chain drives the active provider: its first entry IS the
     # active provider, so llm_provider is derived from it (never diverges).
     # AGENT_LLM_PROVIDERS wins; otherwise fall back to the single-provider
-    # AGENT_LLM_PROVIDER setting; finally "lmstudio".
+    # AGENT_LLM_PROVIDER setting; finally the default cloud-first / local-
+    # fallback chain (decision #013 variant) — loaded from
+    # model_catalog.json ``_defaults.llm_chain`` (no model names in code).
+    # Per-entry "provider:model" overrides let the same provider appear
+    # twice in different modes (zen vs go).
     raw_chain = (
         os.environ.get("AGENT_LLM_PROVIDERS")
         or env_vars.get("AGENT_LLM_PROVIDERS")
         or os.environ.get("AGENT_LLM_PROVIDER")
         or env_vars.get("AGENT_LLM_PROVIDER")
-        or "lmstudio"
+        or DEFAULT_LLM_CHAIN
     )
     llm_providers = _parse_provider_chain(raw_chain)
-    llm_provider = llm_providers[0]
+    llm_provider = llm_providers[0].split(":", 1)[0].strip()
 
     settings = AgentSettings(
         workspace_root=workspace_root,
@@ -394,16 +405,16 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         display_mode=_parse_display_mode(display_mode_raw, AgentDisplayMode.VERBOSE),
         llm_provider=llm_provider,
         llm_providers=llm_providers,
-        opencode_server_url=os.environ.get("OPENCODE_SERVER_URL") or env_vars.get("OPENCODE_SERVER_URL") or "http://127.0.0.1:4096",
+        opencode_server_url=os.environ.get("OPENCODE_SERVER_URL") or env_vars.get("OPENCODE_SERVER_URL") or DEFAULT_OPENCODE_SERVER_URL,
         opencode_password=os.environ.get("OPENCODE_SERVER_PASSWORD") or env_vars.get("OPENCODE_SERVER_PASSWORD") or _store_secret("OPENCODE_SERVER_PASSWORD"),
-        opencode_model=os.environ.get("AGENT_OPENCODE_MODEL") or env_vars.get("AGENT_OPENCODE_MODEL") or "opencode-go/deepseek-v4-flash",
-        opencode_api_url=os.environ.get("OPENCODE_API_URL") or env_vars.get("OPENCODE_API_URL") or "https://opencode.ai/zen/go/v1",
+        opencode_model=os.environ.get("AGENT_OPENCODE_MODEL") or env_vars.get("AGENT_OPENCODE_MODEL") or DEFAULT_OPENCODE_MODEL,
+        opencode_api_url=os.environ.get("OPENCODE_API_URL") or env_vars.get("OPENCODE_API_URL") or DEFAULT_OPENCODE_API_BASE,
         opencode_api_key=os.environ.get("OPENCODE_API_KEY") or env_vars.get("OPENCODE_API_KEY") or _store_secret("OPENCODE_API_KEY"),
-        llama_base_url=os.environ.get("AGENT_LLAMA_URL") or env_vars.get("AGENT_LLAMA_URL") or "http://127.0.0.1:8080/v1",
+        llama_base_url=os.environ.get("AGENT_LLAMA_URL") or env_vars.get("AGENT_LLAMA_URL") or DEFAULT_LLAMA_BASE_URL,
         llama_extra_args=os.environ.get("AGENT_LLAMA_EXTRA_ARGS") or env_vars.get("AGENT_LLAMA_EXTRA_ARGS") or "",
-        openrouter_api_url=os.environ.get("OPENROUTER_API_URL") or env_vars.get("OPENROUTER_API_URL") or "https://openrouter.ai/api/v1",
+        openrouter_api_url=os.environ.get("OPENROUTER_API_URL") or env_vars.get("OPENROUTER_API_URL") or DEFAULT_OPENROUTER_API_BASE,
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or env_vars.get("OPENROUTER_API_KEY") or _store_secret("OPENROUTER_API_KEY"),
-        openrouter_model=os.environ.get("AGENT_OPENROUTER_MODEL") or env_vars.get("AGENT_OPENROUTER_MODEL") or "openrouter/meta-llama/llama-3.1-8b-instruct:free",
+        openrouter_model=os.environ.get("AGENT_OPENROUTER_MODEL") or env_vars.get("AGENT_OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL,
     )
 
     _validate_settings(settings)

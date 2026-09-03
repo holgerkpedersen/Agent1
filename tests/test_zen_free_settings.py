@@ -7,7 +7,8 @@ for the opencode-zen FREE tier:
 2. ``AgentSettings.zen_free_fallbacks`` reads/parses
    ``AGENT_ZEN_FREE_FALLBACKS`` (comma-separated).
 3. ``_zen_free_fallbacks()`` in opencode_provider reads from settings and
-   falls back to the hardcoded default tuple on settings load failure.
+   discovers the live catalog when no list is configured (no hardcoded
+   models).
 4. ``_zen_free_catalog()`` in model_cmd uses the configurable default.
 5. ``DEFAULT_OPENCODE_MODEL`` reads ``AGENT_OPENCODE_MODEL`` from .env.
 """
@@ -44,10 +45,10 @@ def test_zen_free_default_reads_env(
 def test_zen_free_default_fallback(
     monkeypatch: pytest.MonkeyPatch, workspace: Path
 ) -> None:
-    """When AGENT_ZEN_FREE_DEFAULT is unset, defaults to hy3-free."""
+    """When AGENT_ZEN_FREE_DEFAULT is unset, defaults to empty (not a model)."""
     monkeypatch.delenv("AGENT_ZEN_FREE_DEFAULT", raising=False)
     settings = AgentSettings(workspace_root=workspace)
-    assert settings.zen_free_default == "opencode-zen/hy3-free"
+    assert settings.zen_free_default == ""
 
 
 def test_zen_free_fallbacks_reads_env(
@@ -69,14 +70,10 @@ def test_zen_free_fallbacks_reads_env(
 def test_zen_free_fallbacks_default(
     monkeypatch: pytest.MonkeyPatch, workspace: Path
 ) -> None:
-    """When AGENT_ZEN_FREE_FALLBACKS is unset, defaults to the 3-entry tuple."""
+    """When AGENT_ZEN_FREE_FALLBACKS is unset, defaults to empty (no model list)."""
     monkeypatch.delenv("AGENT_ZEN_FREE_FALLBACKS", raising=False)
     settings = AgentSettings(workspace_root=workspace)
-    assert settings.zen_free_fallbacks == (
-        "opencode-zen/hy3-free",
-        "opencode-zen/laguna-s-2.1-free",
-        "opencode-zen/mimo-v2.5-free",
-    )
+    assert settings.zen_free_fallbacks == ()
 
 
 def test_zen_free_fallbacks_strips_empties(
@@ -120,19 +117,15 @@ def test_zen_free_fallbacks_reads_settings(
 def test_zen_free_fallbacks_fallback_on_settings_error(
     monkeypatch: pytest.MonkeyPatch, workspace: Path
 ) -> None:
-    """_zen_free_fallbacks() falls back to hardcoded defaults when settings fail."""
-    from agent_core.llm.opencode_provider import _zen_free_fallbacks
+    """_zen_free_fallbacks() returns an empty list when settings and discovery fail."""
+    from agent_core.llm.opencode_provider import _zen_free_fallbacks, OpencodeProvider
 
     with patch(
         "agent_core.config.load_agent_settings",
         side_effect=RuntimeError("settings broken"),
-    ):
+    ), patch.object(OpencodeProvider, "list_models", return_value=[]):
         result = _zen_free_fallbacks()
-    assert result == [
-        "opencode-zen/hy3-free",
-        "opencode-zen/laguna-s-2.1-free",
-        "opencode-zen/mimo-v2.5-free",
-    ]
+    assert result == []
 
 
 # --- _zen_free_catalog() uses configurable default -------------------------
@@ -176,7 +169,7 @@ def test_zen_free_catalog_uses_configurable_default(
 def test_zen_free_catalog_falls_back_on_settings_error(
     monkeypatch: pytest.MonkeyPatch, workspace: Path
 ) -> None:
-    """model_cmd._zen_free_catalog() falls back to hardcoded default when settings fail."""
+    """model_cmd._zen_free_catalog() uses a generic placeholder when settings fail."""
     from agent_core.commands.model_cmd import ModelCommand
 
     cmd = ModelCommand.__new__(ModelCommand)
@@ -199,7 +192,7 @@ def test_zen_free_catalog_falls_back_on_settings_error(
         result = cmd._zen_free_catalog()
 
     assert result == []
-    assert captured["model_name"] == "opencode-zen/hy3-free"
+    assert captured["model_name"] == "opencode-zen/free"
 
 
 # --- DEFAULT_OPENCODE_MODEL reads env --------------------------------------

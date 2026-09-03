@@ -27,6 +27,14 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
+from agent_core.constants import (
+    DEFAULT_OPENCODE_API_BASE,
+    DEFAULT_OPENCODE_SERVER_URL,
+    DEFAULT_OPENCODE_ZEN_API_BASE,
+    THINKING_GATES,
+    _ZEN_TIER_PREFIXES,
+)
+
 from .provider import ResponseMetrics
 
 #: HTTP statuses that are safe to retry — the hosted gateway sits behind
@@ -37,17 +45,18 @@ _TRANSIENT_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
 #: OpenAI-compatible hosted endpoint for opencode-go (verified live: the
 #: embedded base URL in the opencode CLI binary, /models returns the
 #: opencode-go catalog with UNPREFIXED ids like "deepseek-v4-flash").
-DEFAULT_API_BASE = "https://opencode.ai/zen/go/v1"
+DEFAULT_API_BASE = DEFAULT_OPENCODE_API_BASE
 
 #: Keyless OpenAI-compatible hosted endpoint for the opencode-zen FREE tier
 #: (no API key required — verified live: GET /models returns 63 models with
 #: UNPREFIXED ids, free ones suffixed "-free", e.g. "hy3-free",
 #: "nemotron-3.5-lightning-free", "laguna-s-2.1-free").  The agent names these
 #: "opencode-zen/<id>" so provider_for() routes them to this provider.
-ZEN_API_BASE = "https://opencode.ai/zen/v1"
+ZEN_API_BASE = DEFAULT_OPENCODE_ZEN_API_BASE
 
-#: Model id prefixes that map to the keyless opencode-zen free tier.
-ZEN_PREFIXES = ("opencode-zen/", "zen/")
+#: Model id prefixes that map to the keyless opencode-zen free tier
+#: (loaded from the model catalog — no concrete names in code).
+ZEN_PREFIXES: tuple[str, ...] = _ZEN_TIER_PREFIXES
 
 #: Model ids on the hosted API are unprefixed; this agent's persisted names
 #: keep the "opencode-go/..." / "opencode-zen/..." prefix for provider
@@ -58,28 +67,15 @@ def _hosted_model_id(model_name: str) -> str:
             return model_name[len(prefix):]
     return model_name
 
-#: Curated opencode-zen FREE models that are reliably up (verified live).
-#: When the user's chosen free model is temporarily unavailable on opencode's
-#: backend ("Model is unavailable" / 5xx / timeout), chat transparently
-#: retries one of these so a `model opencode-zen/<x>-free` session still works
-#: instead of hard-failing.  Ordered by observed reliability.
-#:
-#: This is the fallback used when AGENT_ZEN_FREE_FALLBACKS is unset or when
-#: settings cannot be loaded.  Prefer :func:`_zen_free_fallbacks` at call
-#: sites so the user's configured list (via .env) takes precedence.
-_DEFAULT_ZEN_FREE_FALLBACKS = [
-    "opencode-zen/hy3-free",
-    "opencode-zen/laguna-s-2.1-free",
-    "opencode-zen/mimo-v2.5-free",
-]
-
-
 def _zen_free_fallbacks() -> list[str]:
-    """Return the configured opencode-zen FREE fallback model list.
+    """Return the opencode-zen FREE fallback model list.
 
-    Reads ``AGENT_ZEN_FREE_FALLBACKS`` from settings (set in .env); falls
-    back to :data:`_DEFAULT_ZEN_FREE_FALLBACKS` when settings can't load or
-    the var is unset, so a broken settings load never breaks chat retries.
+    Reads ``AGENT_ZEN_FREE_FALLBACKS`` from settings (set in .env) when the
+    user configured one; otherwise discovers the currently-available free-tier
+    models live from the keyless ``/models`` catalog so the retry set adapts
+    to whatever the backend actually serves (no model names are hardcoded in
+    code).  Returns ``[]`` on any failure — chat then reports a clear error
+    instead of guessing at models that may not exist on this account.
     """
     try:
         from agent_core.config import load_agent_settings
@@ -90,7 +86,14 @@ def _zen_free_fallbacks() -> list[str]:
             return list(fallbacks)
     except Exception:
         pass
-    return list(_DEFAULT_ZEN_FREE_FALLBACKS)
+    try:
+        # Discover the currently-available free-tier models live from the
+        # keyless /models catalog (no model names hardcoded).  Any zen-prefixed
+        # name keeps the provider in zen mode; GET /models ignores it.
+        prov = OpencodeProvider(ZEN_PREFIXES[0] + "free", read_store=False)
+        return [m for m in prov.list_models() if m.lower().endswith("-free")]
+    except Exception:
+        return []
 
 #: Substrings in a provider error string that mean the backend model itself
 #: is down (as opposed to a bug in our request) — these trigger the free-tier
@@ -107,7 +110,7 @@ _BACKEND_DOWN_MARKERS = (
 )
 
 #: Default port for ``opencode serve``.
-DEFAULT_SERVER_URL = "http://127.0.0.1:4096"
+DEFAULT_SERVER_URL = DEFAULT_OPENCODE_SERVER_URL
 
 #: Map opencode's built-in tool names to this agent's NLP tools (server mode).
 #: Only tools with overlapping semantics are mapped; anything else is reported
@@ -121,6 +124,23 @@ _TOOL_MAP: dict[str, str] = {
     "grep": "search",
     "webfetch": "web_search",
 }
+
+
+def _thinking_gate_directive(model_name: str) -> str | None:
+    """Return the ``/no_think`` directive for *model_name* when the model
+    catalog declares a reasoning gate for its family (``_thinking_gates``:
+    lowercase model-name substring -> {"/think", "/no_think"} pair).
+
+    No concrete model name is hardcoded here — the catalog is the single
+    source of truth for which model families gate reasoning through the
+    system prompt (e.g. the Nemotron-3 family, per NVIDIA docs).  Returns
+    ``None`` when no gate applies so the payload stays untouched.
+    """
+    low = model_name.lower()
+    for token, pair in THINKING_GATES.items():
+        if token in low:
+            return pair["/no_think"]
+    return None
 
 
 def _apply_thinking_knob(
@@ -356,10 +376,11 @@ class OpencodeProvider:
     ) -> str:
         from .lmstudio import sanitize_message_roles
 
-        # Nemotron-3 models gate reasoning through /think vs /no_think in the
-        # system prompt (NVIDIA docs). Honor disable_thinking for them — no
-        # other model responds to the directive, so the payload stays as-is.
-        if disable_thinking and "nemotron" in self.model_name.lower():
+        # Models whose family declares a reasoning gate in the catalog
+        # (_thinking_gates) control /think vs /no_think in the system
+        # prompt. Honor disable_thinking for them — no other model
+        # responds to the directive, so the payload stays as-is.
+        if disable_thinking and _thinking_gate_directive(self.model_name):
             messages = _apply_thinking_knob(messages, enabled=False)
         payload: dict[str, Any] = {
             "model": _hosted_model_id(self.model_name),
@@ -499,8 +520,9 @@ class OpencodeProvider:
         if session.startswith("[Error"):
             return session
         system, parts = self._messages_to_parts(messages)
-        if disable_thinking and "nemotron" in self.model_name.lower():
-            system = "/no_think\n\n" + system
+        gate = _thinking_gate_directive(self.model_name) if disable_thinking else None
+        if gate:
+            system = f"{gate}\n\n" + system
         body: dict[str, Any] = {
             "model": self.model_name,
             "system": system,
@@ -573,12 +595,12 @@ class OpencodeProvider:
         max_tokens: int | None,
         disable_thinking: bool,
     ) -> str:
-        """Retry the turn on other known-good free models, then give up clearly.
+        """Retry the turn on other available free models, then give up clearly.
 
         Tries each model from :func:`_zen_free_fallbacks` (skipping the one
-        already in use) once.  If all are down, returns a clear message naming
-        the originally requested model so the user can pick a different free
-        model with `model opencode-zen/<id>-free`.
+        already in use) once.  If none are available, returns a clear message
+        naming the retried free models so the user can pick a different one
+        with `model opencode-zen/<id>-free`.
         """
         fallbacks = _zen_free_fallbacks()
         tried = [self.model_name]
@@ -601,13 +623,12 @@ class OpencodeProvider:
             if not self._is_backend_down(out):
                 return out
             tried.append(fallback)
-        # Suggest the first fallback as an example so the user gets a concrete
-        # model name even if the originally requested one is gone.
-        example = fallbacks[0] if fallbacks else "opencode-zen/hy3-free"
+        # No hardcoded model name is assumed to exist; surface the free-tier
+        # endpoint so the user can list/choose from the live catalog.
         return (
             f"[Error: opencode-zen free model {self.model_name} is currently "
             f"unavailable on the backend. Try another free model with "
-            f"'model opencode-zen/<id>-free' (e.g. {example}). "
+            f"'model opencode-zen/<id>-free'. "
             f"Checked: {', '.join(tried)}.]"
         )
 

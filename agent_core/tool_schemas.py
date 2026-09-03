@@ -113,7 +113,10 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "name": "run",
             "description": (
                 "Run a shell command in the workspace. Use for tests, scripts, "
-                "or build steps. Output is truncated to 5000 chars."
+                "or build steps. Output is truncated to 5000 chars. Non-zero "
+                "exit codes are shown as [EXIT CODE: N] at the end of the "
+                "output — do NOT try to capture them via shell pipelines or "
+                "Python (sys.exitcode is only set at interpreter exit)."
             ),
             "parameters": {
                 "type": "object",
