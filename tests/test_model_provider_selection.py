@@ -171,8 +171,10 @@ class TestSwitchModelWithProvider:
         # Controlled opencode catalogs — no network access.  Built from the
         # _default_llm() helper so no specific model name is hardcoded; the
         # catalog-match test queries with _default_llm_short() and asserts
-        # against _default_llm().
-        self.go_catalog = [_default_llm(), _default_llm()]
+        # against _default_llm().  A single helper-derived entry is enough:
+        # it lets the exact-tail match succeed without risking a second,
+        # arbitrary id fuzzy-hijacking unrelated queries via difflib.
+        self.go_catalog = [_default_llm()]
         self.zen_catalog = ["opencode-zen/nemotron-3.5-lightning-free"]
 
     def _patch_opencode_catalog(self, monkeypatch):
