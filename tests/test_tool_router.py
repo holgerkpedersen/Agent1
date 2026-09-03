@@ -183,20 +183,6 @@ class TestToolRouter:
         assert tool_name == "get_current_datetime"
         assert isinstance(args, GetCurrentDatetimeArgs)
 
-    def test_natural_language_datetime_danish(self, router: ToolRouter) -> None:
-        """'hvad dag er det idag?' should route to get_current_datetime via intents."""
-        from tool_router import GetCurrentDatetimeArgs
-        tool_name, args = router.parse_natural_language("hvad dag er det idag?")
-        assert tool_name == "get_current_datetime"
-        assert isinstance(args, GetCurrentDatetimeArgs)
-
-    def test_natural_language_datetime_french(self, router: ToolRouter) -> None:
-        """'quelle heure est-il?' should route to get_current_datetime via intents."""
-        from tool_router import GetCurrentDatetimeArgs
-        tool_name, args = router.parse_natural_language("quelle heure est-il?")
-        assert tool_name == "get_current_datetime"
-        assert isinstance(args, GetCurrentDatetimeArgs)
-
     def test_natural_language_datetime_current(self, router: ToolRouter) -> None:
         """'what is the current datetime' should route to get_current_datetime."""
         from tool_router import GetCurrentDatetimeArgs
@@ -204,15 +190,11 @@ class TestToolRouter:
         assert tool_name == "get_current_datetime"
         assert isinstance(args, GetCurrentDatetimeArgs)
 
-    def test_natural_language_search_intents(self, router: ToolRouter) -> None:
-        """'find all references to AgentRunner' should route via intents."""
-        from tool_router import SearchFilesArgs
-        tool_name, args = router.parse_natural_language(
-            "find all references to AgentRunner"
-        )
-        assert tool_name == "search_files"
-        assert isinstance(args, SearchFilesArgs)
-        assert args.query == "all references to AgentRunner"
+    def test_natural_language_non_english_fails(self, router: ToolRouter) -> None:
+        """Non-English NL should fail — the LLM is expected to translate first."""
+        from tool_router import RoutingError
+        with pytest.raises(RoutingError):
+            router.parse_natural_language("hvad dag er det idag?")
 
     def test_execute_with_empty_dict_args(self, router: ToolRouter) -> None:
         """execute() should accept a plain dict for all-optional tools."""
@@ -241,15 +223,6 @@ class TestToolRouter:
         """route_and_execute with natural language datetime query end-to-end."""
         tool_name, args, result = router.route_and_execute(
             "what time is it?"
-        )
-        assert tool_name == "get_current_datetime"
-        assert isinstance(result, dict)
-        assert "datetime" in result
-
-    def test_route_and_execute_datetime_multilingual(self, router: ToolRouter) -> None:
-        """route_and_execute with Spanish datetime query end-to-end."""
-        tool_name, args, result = router.route_and_execute(
-            "dime la fecha y hora actual"
         )
         assert tool_name == "get_current_datetime"
         assert isinstance(result, dict)

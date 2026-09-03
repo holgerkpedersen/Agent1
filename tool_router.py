@@ -131,19 +131,8 @@ DEFAULT_TOOL_DEFINITIONS: list[ToolDefinition] = [
         description="Returns the current date and time as an ISO 8601 string.",
         parameters_schema=GetCurrentDatetimeArgs.model_json_schema(),
         intents=[
-            # English
             "time", "date", "datetime", "clock", "hour", "today",
             "now", "current", "day", "timestamp", "when",
-            # Danish
-            "tid", "dag", "dato", "klokke", "klokken", "idag", "nu",
-            # German
-            "uhr", "zeit", "datum", "heute",
-            # French
-            "heure", "date", "aujourd", "maintenant",
-            # Spanish
-            "hora", "fecha", "ahora", "hoy", "tiempo",
-            # Portuguese
-            "hora", "data", "agora", "hoje",
         ],
     ),
 ]
