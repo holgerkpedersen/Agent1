@@ -75,18 +75,19 @@ class TestToolRouter:
         return r
 
     def test_router_init_with_defaults(self, router: ToolRouter) -> None:
-        assert len(router._tools) == 4
+        assert len(router._tools) == 5
         assert "read_file" in router._tools
         assert "write_file" in router._tools
         assert "search_files" in router._tools
         assert "run_command" in router._tools
+        assert "get_current_datetime" in router._tools
 
     def test_run_command_handler_registered(self, router: ToolRouter) -> None:
         assert "run_command" in router._handlers
 
     def test_get_schemas(self, router: ToolRouter) -> None:
         schemas = router.get_schemas()
-        assert len(schemas) == 4
+        assert len(schemas) == 5
         for s in schemas:
             assert "name" in s
             assert "description" in s
@@ -160,3 +161,70 @@ class TestToolRouter:
     def test_router_rejects_unknown_tool(self, router: ToolRouter) -> None:
         with pytest.raises(KeyError):
             router._validate_args("nonexistent", {"x": 1})
+
+    # ------------------------------------------------------------------
+    # get_current_datetime — zero-arg / NL / dict-args tests
+    # ------------------------------------------------------------------
+
+    def test_parse_explicit_command_no_args(self, router: ToolRouter) -> None:
+        """/tool:get_current_datetime without arguments should route cleanly."""
+        from tool_router import GetCurrentDatetimeArgs
+        tool_name, args = router.parse_explicit_command(
+            "/tool:get_current_datetime"
+        )
+        assert tool_name == "get_current_datetime"
+        assert isinstance(args, GetCurrentDatetimeArgs)
+        assert args.timezone is None
+
+    def test_natural_language_datetime_english(self, router: ToolRouter) -> None:
+        """'what time is it?' should route to get_current_datetime."""
+        from tool_router import GetCurrentDatetimeArgs
+        tool_name, args = router.parse_natural_language("what time is it?")
+        assert tool_name == "get_current_datetime"
+        assert isinstance(args, GetCurrentDatetimeArgs)
+
+    def test_natural_language_datetime_danish(self, router: ToolRouter) -> None:
+        """'hvad dag er det idag?' should route to get_current_datetime."""
+        from tool_router import GetCurrentDatetimeArgs
+        tool_name, args = router.parse_natural_language("hvad dag er det idag?")
+        assert tool_name == "get_current_datetime"
+        assert isinstance(args, GetCurrentDatetimeArgs)
+
+    def test_natural_language_datetime_current(self, router: ToolRouter) -> None:
+        """'what is the current datetime' should route to get_current_datetime."""
+        from tool_router import GetCurrentDatetimeArgs
+        tool_name, args = router.parse_natural_language("what is the current datetime")
+        assert tool_name == "get_current_datetime"
+        assert isinstance(args, GetCurrentDatetimeArgs)
+
+    def test_execute_with_empty_dict_args(self, router: ToolRouter) -> None:
+        """execute() should accept a plain dict for all-optional tools."""
+        result = router.execute("get_current_datetime", {})
+        assert isinstance(result, dict)
+        assert "datetime" in result
+        assert result["timezone"] == "local"
+
+    def test_execute_with_dict_args_and_timezone(self, router: ToolRouter) -> None:
+        """execute() with {'timezone': 'UTC'} should produce UTC output."""
+        result = router.execute("get_current_datetime", {"timezone": "UTC"})
+        assert isinstance(result, dict)
+        assert result["timezone"] == "UTC"
+        assert "+00:00" in result["datetime"]
+
+    def test_route_and_execute_datetime_no_args(self, router: ToolRouter) -> None:
+        """route_and_execute with bare /tool: command end-to-end."""
+        tool_name, args, result = router.route_and_execute(
+            "/tool:get_current_datetime"
+        )
+        assert tool_name == "get_current_datetime"
+        assert isinstance(result, dict)
+        assert "datetime" in result
+
+    def test_route_and_execute_datetime_natural(self, router: ToolRouter) -> None:
+        """route_and_execute with natural language datetime query end-to-end."""
+        tool_name, args, result = router.route_and_execute(
+            "what time is it?"
+        )
+        assert tool_name == "get_current_datetime"
+        assert isinstance(result, dict)
+        assert "datetime" in result

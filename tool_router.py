@@ -78,12 +78,20 @@ class ShellCommandArgs(BaseModel):
     )
 
 
+class GetCurrentDatetimeArgs(BaseModel):
+    timezone: str | None = Field(
+        None,
+        description="IANA timezone name (e.g. 'UTC', 'America/New_York'). Defaults to local time.",
+    )
+
+
 # Registry mapping tool names -> Pydantic models for runtime validation
 _VALIDATION_REGISTRY: dict[str, type[BaseModel]] = {
     "read_file": ReadFileArgs,
     "write_file": WriteFileArgs,
     "search_files": SearchFilesArgs,
     "run_command": ShellCommandArgs,
+    "get_current_datetime": GetCurrentDatetimeArgs,
 }
 
 # Default tool schemas aligned with OpenAI function calling spec
@@ -112,6 +120,11 @@ DEFAULT_TOOL_DEFINITIONS: list[ToolDefinition] = [
             "Executes a sanitized shell command within the workspace environment."
         ),
         parameters_schema=ShellCommandArgs.model_json_schema(),
+    ),
+    ToolDefinition(
+        name="get_current_datetime",
+        description="Returns the current date and time as an ISO 8601 string.",
+        parameters_schema=GetCurrentDatetimeArgs.model_json_schema(),
     ),
 ]
 
@@ -196,6 +209,30 @@ class ShellCommandHandler:
 
 
 # ---------------------------------------------------------------------------
+# Datetime Tool Handler
+# ---------------------------------------------------------------------------
+
+def _handle_get_current_datetime(args: GetCurrentDatetimeArgs | dict) -> dict[str, str]:
+    """Return the current date/time as an ISO 8601 string."""
+    from datetime import datetime, timezone as _tz_mod
+
+    if isinstance(args, dict):
+        args = GetCurrentDatetimeArgs(**args)
+
+    if args.timezone:
+        try:
+            import zoneinfo
+
+            tz = zoneinfo.ZoneInfo(args.timezone)
+            now = datetime.now(tz=tz)
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+            now = datetime.now()
+    else:
+        now = datetime.now()
+    return {"datetime": now.isoformat(), "timezone": str(now.tzinfo or "local")}
+
+
+# ---------------------------------------------------------------------------
 # Router Implementation
 # ---------------------------------------------------------------------------
 
@@ -211,6 +248,7 @@ class ToolRouter:
         # Register built-in handlers
         shell_handler = ShellCommandHandler()
         self.register_handler("run_command", lambda args: shell_handler.execute(args))  # type: ignore[arg-type]
+        self.register_handler("get_current_datetime", _handle_get_current_datetime)  # type: ignore[arg-type]
 
     def register_tool(self, definition: ToolDefinition) -> None:
         """Register a new tool definition with the router."""
@@ -255,17 +293,21 @@ class ToolRouter:
     def parse_explicit_command(self, prompt: str) -> tuple[str, BaseModel]:
         """Parse deterministic ``/tool:name key=value`` style commands."""
         match = re.match(
-            r"^/tool:(\w+)\s+(.+)$", prompt.strip(), re.IGNORECASE
+            r"^/tool:(\w+)(?:\s+(.+))?$", prompt.strip(), re.IGNORECASE
         )
         if not match:
             raise RoutingError(
-                "Invalid explicit command format. Expected: /tool:<name> <args>"
+                "Invalid explicit command format. Expected: /tool:<name> [<args>]"
             )
 
-        tool_name, args_str = match.group(1), match.group(2)
+        tool_name = match.group(1)
+        args_str = match.group(2)
         matched_name = self._resolve_tool_name(tool_name.lower())
 
-        args_dict = self._parse_kv_string(args_str)
+        if args_str:
+            args_dict = self._parse_kv_string(args_str)
+        else:
+            args_dict = {}
         return matched_name, self._validate_args(matched_name, args_dict)
 
     def parse_natural_language(self, prompt: str) -> tuple[str, BaseModel]:
@@ -280,6 +322,12 @@ class ToolRouter:
                 r"\b(search|find|grep)\s+(?:for\s+)?['\"]?(?P<query>[^'\"]+)['\"]?"
                 r"\s*(?:in\s+file[:\s]+(?P<file_pattern>\S+))?"
             ): "search_files",
+            (
+                r"(?:what|hvad)\s+(?:day|date|time|dag|dato)\b"
+                r"|current\s+time|current\s+datetime"
+                r"|hvad\s+dag\s+er\s+det"
+                r"|what\s+time\s+is\s+it"
+            ): "get_current_datetime",
         }
 
         for pattern, tool_name in patterns.items():
