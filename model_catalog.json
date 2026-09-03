@@ -4,7 +4,7 @@
     "opencode_model": "opencode-go/deepseek-v4-flash",
     "openrouter_model": "openrouter/meta-llama/llama-3.1-8b-instruct:free",
     "llm_chain": [
-      "opencode:opencode-zen/hy3-free",
+      "opencode:opencode-zen/mimo-v2.5-free",
       "opencode:opencode-go/deepseek-v4-flash",
       "openrouter",
       "lmstudio",

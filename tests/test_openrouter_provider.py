@@ -458,7 +458,8 @@ def _boom_429(req, timeout=None):
 @pytest.mark.anyio
 async def test_chat_403_agentic_harness_is_actionable_not_raw_json():
     """Regression: a restricted free model (\"only available on agentic
-    harnesses\") must produce an actionable message, not the raw upstream JSON."""
+    harnesses\") must produce an actionable message, not the raw upstream JSON.
+    Also triggers failover so the FailoverProvider can try the next chain entry."""
     prov = _provider(max_retries=0)
     with patch("urllib.request.urlopen", side_effect=_boom_403_harness):
         out = await prov.chat([{"role": "user", "content": "hi"}])
@@ -466,8 +467,9 @@ async def test_chat_403_agentic_harness_is_actionable_not_raw_json():
     # Actionable guidance — not a raw JSON blob.
     assert "agentic harnesses" in out.lower() or "restricted" in out.lower()
     assert '{"error"' not in out
-    # 403 is permanent (not a connectivity outage) — must NOT trigger failover.
-    assert not is_connection_failure(out)
+    # Restricted models are failover-worthy — the FailoverProvider should try
+    # the next chain entry instead of giving up.
+    assert is_connection_failure(out)
 
 
 @pytest.mark.anyio

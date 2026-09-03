@@ -17,7 +17,7 @@ _DEFAULT_OPENCODE_MODEL = "opencode-go/mimo-v2.5"
 # Concrete fixture model for the opencode-zen FREE tier (keyless).  This is a
 # *different* model from _default_llm() (which is the go-mode keyed model), so
 # it is pinned separately rather than derived from _default_llm().
-_DEFAULT_ZEN_FREE_MODEL = "opencode-zen/hy3-free"
+_DEFAULT_ZEN_FREE_MODEL = "opencode-zen/mimo-v2.5-free"
 
 
 def _default_llm() -> str:

@@ -359,6 +359,9 @@ _CONNECTION_FAILURE_RE = re.compile(
     r"timeout|timed out|urlerror|nameresolutionerror|failed to resolve|"
     r"getaddrinfo|http error 5\d\d|"
     r"opencode-zen free model \S+ is currently unavailable|"
+    r"openrouter free-tier model is rate-limited|"
+    r"openrouter.*only available on agentic harness|"
+    r"openrouter.*no endpoints found that support tool|"
     r"model\s+[^\"\]]*\bnot supported)"
     r")",
     re.IGNORECASE,
