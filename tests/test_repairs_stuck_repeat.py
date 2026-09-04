@@ -339,14 +339,42 @@ def test_repair_is_catalogued_on_the_lifecycle_layer():
     assert repair in repairs_for_layer(LIFECYCLE_LAYER)
 
 
+def _original_source() -> str:
+    """The reverted (pre-repair) source of tool_loop.py.
+
+    Autonomous self-improvement may have already merged BOTH catalog repairs
+    into the real tree, so reading it directly yields an *applied* snapshot
+    rather than the original bytes these roundtrip tests need to start from.
+    We read on a throwaway temp copy and revert there (best-effort) so the
+    returned source is always the un-repaired baseline regardless of what's
+    committed or left by a prior test run — keeping unit tests independent of
+    tree state.  NOTE: this never touches the real file."""
+    import harnessfix.repairs.stuck_repeat as mod
+
+    real = Path("agent_core/llm/tool_loop.py")
+    local = Path(tempfile.mkdtemp()) / "tool_loop.py"
+    local.write_text(real.read_text(encoding="utf-8"), encoding="utf-8")
+    saved_target = mod._TARGET
+    try:
+        mod._TARGET = local
+        for _r in (mod.revert, revert_stuck):
+            try:
+                _r()
+            except Exception:  # noqa: BLE001 - best-effort only
+                pass
+    finally:
+        mod._TARGET = saved_target
+    return local.read_text(encoding="utf-8")
+
+
 def test_apply_and_roundtrip(tmp_path, monkeypatch):
     """Apply rewrites the second-strike suffix + inserts the hint table;
     revert restores the original bytes exactly."""
     import harnessfix.repairs.stuck_repeat as mod
 
-    # Read from mod._TARGET (the conftest's reverted sandbox copy) rather
-    # than the real file, which may already have the repair committed.
-    original = mod._TARGET.read_text(encoding="utf-8")
+    # Reverted baseline so this passes regardless of whether autonomous
+    # self-improvement already merged the repair into source.
+    original = _original_source()
     local = tmp_path / "agent_core" / "llm" / "tool_loop.py"
     local.parent.mkdir(parents=True)
     local.write_text(original, encoding="utf-8")
@@ -365,9 +393,9 @@ def test_apply_and_roundtrip(tmp_path, monkeypatch):
 def test_apply_twice_is_noop_and_revert_without_apply_is_clean(tmp_path, monkeypatch):
     import harnessfix.repairs.stuck_repeat as mod
 
-    # Read from mod._TARGET (the conftest's reverted sandbox copy) rather
-    # than the real file, which may already have the repair committed.
-    original = mod._TARGET.read_text(encoding="utf-8")
+    # Reverted baseline so the second apply is genuinely a no-op (not masked
+    # by an already-applied tree).
+    original = _original_source()
     local = tmp_path / "agent_core" / "llm" / "tool_loop.py"
     local.parent.mkdir(parents=True)
     local.write_text(original, encoding="utf-8")

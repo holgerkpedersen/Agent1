@@ -79,10 +79,14 @@ def provider_for(
     keeps LM Studio models on LM Studio even when AGENT_LLM_PROVIDER is
     opencode; finally the configured ``llm_provider`` setting; unknown values
     fall back to lmstudio.
+
+    ROUTER keys are matched as substrings (not just prefixes) so that names
+    like ``google/gemma-4-26b-a4b`` still route to LM Studio via the "gemma"
+    entry instead of falling through to the persisted provider.
     """
     m = (model_name or "").lower()
     for prefix, provider in ROUTER.items():
-        if m.startswith(prefix):
+        if prefix in m:
             return provider
     if persisted_provider in ("lmstudio", "opencode", "llama", "openrouter"):
         return persisted_provider
