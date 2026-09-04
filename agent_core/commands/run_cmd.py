@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from agent import Agent
 
 #: The run tool's own default is 120s — far too short for repair loops.
-_DEFAULT_TIMEOUT = 600
+_DEFAULT_TIMEOUT = 900
 
 
 class RunCommand(Command):

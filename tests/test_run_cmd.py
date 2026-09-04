@@ -28,14 +28,14 @@ class TestRunCommand:
         printed = " ".join(str(c.args) for c in p.call_args_list)
         assert "hello world" in printed
 
-    def test_default_timeout_is_600(self):
-        assert _DEFAULT_TIMEOUT == 600
+    def test_default_timeout_is_900(self):
+        assert _DEFAULT_TIMEOUT == 900
         agent = _FakeAgent()
         cmd = RunCommand()
         with patch("builtins.print"):
             asyncio.run(cmd.execute(["python", "-m", "x"], agent))
         agent._execute_tool_call.assert_awaited_once_with(
-            "run", {"command": "python -m x", "timeout": 600}
+            "run", {"command": "python -m x", "timeout": 900}
         )
 
     def test_timeout_flag_parsed(self):
