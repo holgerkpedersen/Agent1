@@ -360,7 +360,7 @@ _CONNECTION_FAILURE_RE = re.compile(
     r"getaddrinfo|http error 5\d\d|"
     r"opencode-zen free model \S+ is currently unavailable|"
     r"openrouter free-tier model is rate-limited|"
-    r"openrouter.*only available on agentic harness|"
+    r"openrouter.*only available on agentic harnesses|"
     r"openrouter.*no endpoints found that support tool|"
     r"model\s+[^\"\]]*\bnot supported)"
     r")",
@@ -471,6 +471,20 @@ class FailoverProvider:
                         len(self._providers),
                         index,
                     )
+                    # Persist the working model so subsequent turns start
+                    # with the provider that actually answered, instead of
+                    # re-promoting the broken one every turn.
+                    working_model = getattr(provider, "model_name", None)
+                    if working_model:
+                        self.model_name = working_model
+                        try:
+                            from agent_core.constants import persist_model_choice
+                            persist_model_choice(
+                                working_model,
+                                provider=provider_for(working_model, "lmstudio"),
+                            )
+                        except Exception:
+                            pass
                 return result
             last_error = result
             logger.warning(

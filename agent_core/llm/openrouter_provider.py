@@ -469,6 +469,29 @@ class OpenRouterProvider:
                     except Exception as exc2:  # noqa: BLE001 - defensive per-turn
                         return f"[Error: openrouter API request failed: {exc2}]"
 
+            # --- Fix C: model doesn't support tool use — strip tools and retry. ---
+            if not repaired and exc.code == 404 and "support tool" in (detail or "").lower():
+                payload.pop("tools", None)
+                try:
+                    result = await self._with_retry(
+                        lambda: self._request(
+                            "POST", f"{self.api_url}/chat/completions", payload,
+                            timeout=self._api_timeout,
+                        ),
+                        label="openrouter chat/completions (no tools)",
+                    )
+                    repaired = True
+                except urllib.error.HTTPError as exc2:
+                    detail = _read_http_error_detail(exc2)
+                    return _format_http_error(exc2.code, detail)
+                except (urllib.error.URLError, TimeoutError, OSError) as exc2:
+                    return (
+                        f"[Error: openrouter API request failed (connection "
+                        f"error): {exc2}]"
+                    )
+                except Exception as exc2:  # noqa: BLE001 - defensive per-turn
+                    return f"[Error: openrouter API request failed: {exc2}]"
+
             if not repaired:
                 return _format_http_error(exc.code, detail)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
