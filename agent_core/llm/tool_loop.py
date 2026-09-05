@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import enum
 import json
+import os
 import sys
 import time
 from typing import Any, Awaitable, Callable
@@ -332,6 +333,17 @@ def _compact_messages(
 def _is_path_miss(result_str: str) -> bool:
     """True when *result_str* reports that the requested path does not exist."""
     return any(result_str.startswith(p) for p in _PATH_MISS_PREFIXES)
+
+
+def _norm_progress_path(path: str) -> str:
+    """Normalize a file/dir path so different representations of the same
+    location map to the same progress key (forward/back slash, relative/absolute).
+    Without this the model can loop on ``read(path=".docs/x")`` then
+    ``read(path=".docs\\x")`` then ``read(path="D:\\...\\.docs\\x")`` and each
+    counts as "new progress", defeating the no-progress guard."""
+    if not path:
+        return path
+    return os.path.normpath(os.path.abspath(path))
 
 
 def _parent_dir_of(args: dict[str, Any]) -> str:
@@ -1079,11 +1091,11 @@ class ToolLoopRunner:
         if tool_name in MUTATING_TOOLS:
             return True
         if tool_name == "read":
-            key: Any = (str(args.get("path", "")), int(args.get("offset") or 0))
+            key: Any = (_norm_progress_path(str(args.get("path", ""))), int(args.get("offset") or 0))
         elif tool_name == "search":
-            key = (str(args.get("query", "")), str(args.get("path", "")))
+            key = (str(args.get("query", "")), _norm_progress_path(str(args.get("path", ""))))
         elif tool_name == "list_files":
-            key = str(args.get("path", ""))
+            key = _norm_progress_path(str(args.get("path", "")))
         else:
             key = json.dumps(args, sort_keys=True, default=str)
         if key in self._seen_progress_keys:

@@ -1008,6 +1008,7 @@ class Agent:
         if (
             _CONTEXT_AST_THRESHOLD_KB > 0
             and path.endswith(".py")
+            and os.path.isfile(path)
             and os.path.getsize(path) > _CONTEXT_AST_THRESHOLD_KB * 1024
         ):
             content = await self.read_file(path, track_read=False)
