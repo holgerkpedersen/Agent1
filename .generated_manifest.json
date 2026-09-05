@@ -658,5 +658,9 @@
   "agent_core/tests/test_agent_core_components.py": {
     "date": "2026-08-18 23:18:44.521550",
     "size": 5404
+  },
+  "agent_core/tests/test_plan_workflow.py": {
+    "date": "2026-09-05 22:58:52.013486",
+    "size": 5995
   }
 }

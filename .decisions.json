@@ -45,7 +45,7 @@
     "affected_files": [
       "agent.py",
       "agent_core/tool_schemas.py",
-      ".docs/2026-08-15_12-06-06/project_spec.md"
+      ".docs/2026-09-05_22-37-36/project_spec.md"
     ],
     "tags": [
       "feature",
@@ -66,7 +66,7 @@
     "affected_files": [
       "agent_core/tool_schemas.py",
       "agent.py",
-      ".docs/2026-08-15_12-06-06/project_spec.md"
+      ".docs/2026-09-05_22-37-36/project_spec.md"
     ],
     "tags": [
       "api",
@@ -104,7 +104,7 @@
     "affected_files": [
       "agent.py",
       "agent_core/llm/lmstudio.py",
-      ".docs/2026-08-15_12-06-06/project_spec.md"
+      ".docs/2026-09-05_22-37-36/project_spec.md"
     ],
     "tags": [
       "security",
@@ -124,7 +124,6 @@
     "rationale": "A single contract prevents duplicated behavior, config loss, and tool-loop breakage when adding providers.",
     "affected_files": [
       "agent_core/llm/provider.py",
-      "agent1/providers/async_llm.py",
       "agent_core/llm_client.py",
       "agent.py"
     ],
@@ -145,7 +144,6 @@
     "rationale": "Enables runtime provider selection without hardcoding and avoids silently dropping provider configuration.",
     "affected_files": [
       "agent.py",
-      "agent1/providers/async_llm.py",
       "agent_core/config.py",
       "agent_core/llm/provider.py"
     ],
@@ -1517,7 +1515,8 @@
     "related_decisions": [
       "077",
       "035"
-    ]
+    ],
+    "date": "2026-08-24T10:43:00.306892+00:00"
   },
   {
     "id": "079",
@@ -1539,6 +1538,321 @@
       "policy",
       "encoding",
       "audit"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "080",
+    "date": "2026-09-05T20:46:43+00:00",
+    "title": "Plan Markdown schema definition",
+    "context": "The specification mentions establishing a strict Markdown template for plan_proposed.md but provides no actual template, field list, or validation rules. Implementation cannot proceed without this.",
+    "decision": "Define the required fields and structure for plan_proposed.md, including at minimum title, steps, affected files, and verification criteria.",
+    "rationale": "A formal schema is essential for deterministic parsing, validation via plan_verifier.py, and ensuring all necessary information is captured in plan proposals.",
+    "affected_files": [
+      "agent_core/commands/plan_cmd.py",
+      "agent_core/commands/plan_verifier.py",
+      "agent_core/plan_execution/parser.py"
+    ],
+    "tags": [
+      "schema",
+      "planning",
+      "validation",
+      "documentation"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "meta_warnings": [
+      "Repeats unverified claim reference: plan_proposed.md"
+    ]
+  },
+  {
+    "id": "081",
+    "date": "2026-09-05T20:46:43+00:00",
+    "title": "Dry-run mode enforcement contract",
+    "context": "The specification describes a dry-run verification mode but doesn't specify whether this means: (a) no tool calls at all, (b) tool calls through a mock executor, or (c) only read-only tools. This directly affects safety architecture.",
+    "decision": "Define dry-run to block all mutating tool calls including write, edit, fix, delete_file, run, git, delegate, and delegate_batch. Enforcement must occur at the _execute_tool_call choke point and the subagent spawn path.",
+    "rationale": "The most dangerous gap is assuming dry-run only blocks file-mutation tools. Shell commands via run/git and subagent delegation could still mutate the workspace. A comprehensive block is necessary for safety.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/modes.py",
+      "agent_core/subagent.py",
+      "agent_core/plan_execution/runner.py"
+    ],
+    "tags": [
+      "security",
+      "dry-run",
+      "execution",
+      "safety",
+      "tool-dispatch"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "082",
+    "date": "2026-09-05T20:46:43+00:00",
+    "title": "Concurrent plan execution strategy",
+    "context": "Two sessions can propose/execute plans simultaneously; .plans.json and file renames are not atomic. A TOCTOU race between checking a plan and renaming it could produce duplicate or lost records.",
+    "decision": "Implement atomic operations for .plans.json updates and plan file renames using temporary files with os.replace (following the existing pattern in _save_chat_history and _save_memory). Consider file locking for concurrent session coordination.",
+    "rationale": "Atomic operations prevent corruption and race conditions. The existing tmp+replace pattern in the codebase demonstrates this approach for consistent state transitions.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/file_protection.py",
+      "agent_core/path_utils.py"
+    ],
+    "tags": [
+      "concurrency",
+      "atomicity",
+      "race-condition",
+      "file-operations"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "meta_warnings": [
+      "Repeats unverified claim reference: .plans.json"
+    ]
+  },
+  {
+    "id": "083",
+    "date": "2026-09-05T20:46:43+00:00",
+    "title": "Decision-gate integration method",
+    "context": "Integrating decisions.json gating is only as reliable as the check's placement; if it happens only in the LLM prompt (via _decision_constraints_block) and not as a hard gate in the executor, an LLM can ignore it.",
+    "decision": "Implement decision-gate as a hard executor rejection in _execute_tool_call rather than just a prompt-level advisory. Check proposed edits against decisions.json before allowing execution.",
+    "rationale": "Prompt injection is advisory and can be ignored by the LLM. A hard gate in the executor provides enforceable security and prevents unauthorized modifications.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/decisions.py"
+    ],
+    "tags": [
+      "security",
+      "enforcement",
+      "decisions",
+      "tool-dispatch",
+      "gate"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "meta_warnings": [
+      "Repeats unverified claim reference: decisions.json"
+    ]
+  },
+  {
+    "id": "084",
+    "date": "2026-09-05T20:46:44+00:00",
+    "title": ".plans.json log protection",
+    "context": "The analysis notes .plans.json is an append-only audit log that could be corrupted or deleted. The audit trail completeness depends on protecting this file from tampering.",
+    "decision": "Add .plans.json to the protected files list in file_protection.py to prevent deletion via the delete_file tool. Implement append-only semantics with atomic updates.",
+    "rationale": "The audit trail is essential for tracking plan execution history. Protecting the file from deletion and corruption maintains system integrity and accountability.",
+    "affected_files": [
+      "agent_core/file_protection.py"
+    ],
+    "tags": [
+      "audit",
+      "protection",
+      "integrity",
+      "file-security",
+      "logging"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "meta_warnings": [
+      "Affected file does not exist in workspace: .plans.json",
+      "Repeats unverified claim reference: .plans.json"
+    ]
+  },
+  {
+    "id": "085",
+    "date": "2026-09-05T20:46:44+00:00",
+    "title": "Self-modification oversight",
+    "context": "Implementing plan-tracking changes via a plan is a self-referential act. The agent must not validate its own plan for correctness in the same run it proposes—no separation between plan author and plan auditor.",
+    "decision": "Require changes to plan-tracking code to be implemented outside the agent (e.g., manual edits or a separate CI process) or go through a meta-plan reviewed by a different agent instance.",
+    "rationale": "Self-referential validation creates circular dependencies and potential errors. External oversight ensures objectivity and prevents the agent from validating its own modifications.",
+    "affected_files": [
+      "agent_core/commands/plan_cmd.py",
+      "agent_core/commands/plan_verifier.py"
+    ],
+    "tags": [
+      "self-modification",
+      "oversight",
+      "separation-of-concerns",
+      "audit",
+      "safety"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "086",
+    "date": "2026-09-05T20:46:44+00:00",
+    "title": "Path traversal prevention in plan file names",
+    "context": "The threat model mentions path-traversal risk in plan file names but doesn't cite the actual enforcement point. The agent constructs plan_executed_...md names from LLM output.",
+    "decision": "Apply path validation from agent_core/security/path_utils.py and agent_core/path_utils.py to all plan file names and paths, including those generated from LLM output.",
+    "rationale": "LLM-generated file names could contain malicious path components. Using the existing security path utilities prevents directory traversal and unauthorized file access.",
+    "affected_files": [
+      "agent_core/security/path_utils.py",
+      "agent_core/path_utils.py",
+      "agent_core/plan_execution/runner.py"
+    ],
+    "tags": [
+      "security",
+      "path-traversal",
+      "sanitization",
+      "file-security",
+      "validation"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "meta_warnings": [
+      "Repeats unverified claim reference: plan_executed_...md"
+    ]
+  },
+  {
+    "id": "087",
+    "date": "2026-09-05T20:46:44+00:00",
+    "title": "Plan file rename atomicity",
+    "context": "The rename from plan_proposed.md to plan_executed_...md is presumably done via os.rename or os.replace. The analysis notes the codebase already demonstrates atomic tmp+replace patterns.",
+    "decision": "Implement plan file renames using atomic temporary-file-then-replace pattern (following the _save_chat_history and _save_memory implementations) to prevent data loss during crashes.",
+    "rationale": "Non-atomic renames can result in lost or corrupted plan files if interrupted mid-operation. The existing pattern provides a proven approach for consistent state transitions.",
+    "affected_files": [
+      "agent_core/commands/plan_cmd.py",
+      "agent_core/commands/doc_paths.py"
+    ],
+    "tags": [
+      "atomicity",
+      "file-operations",
+      "crash-safety",
+      "reliability",
+      "state-transitions"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "meta_warnings": [
+      "Repeats unverified claim reference: plan_executed_...md",
+      "Repeats unverified claim reference: plan_proposed.md"
+    ]
+  },
+  {
+    "id": "088",
+    "date": "2026-09-05T20:46:44+00:00",
+    "title": "Signal-handler plan state cleanup",
+    "context": "The analysis notes that signal-handler memory loss could cause inconsistent audit state if SIGBREAK arrives between writing .plans.json and renaming the plan file.",
+    "decision": "Extend the _signal_break_with_cleanup handler to include plan state transitions, ensuring consistent audit trail on shutdown.",
+    "rationale": "Incomplete cleanup on shutdown could leave the system in an inconsistent state where the audit log doesn't match the actual plan file status. Including plan transitions ensures recovery consistency.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/security/shutdown.py"
+    ],
+    "tags": [
+      "signal-handling",
+      "cleanup",
+      "crash-recovery",
+      "audit",
+      "consistency"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "meta_warnings": [
+      "Repeats unverified claim reference: .plans.json"
+    ]
+  },
+  {
+    "id": "089",
+    "date": "2026-09-05T20:59:28+00:00",
+    "title": "Atomic plan state transitions via state machine pattern",
+    "context": "The system needs to manage plan lifecycle through distinct states (proposed, executing, executed) with controlled transitions between them. Alternatives included a simple flag-based approach, event sourcing, or direct status field updates without transition rules.",
+    "decision": "A PlanLifecycleManager class with explicit PlanTransition enum defining valid state changes (PROPOSED_TO_EXECUTING, EXECUTING_TO_EXECUTED) and atomic file operations for state persistence.",
+    "rationale": "Explicit state machine prevents illegal transitions (e.g., jumping from proposed to executed without executing), provides auditability, and makes the workflow predictable. Atomic file operations prevent partial writes from corrupting plan state.",
+    "affected_files": [],
+    "tags": [
+      "state-machine",
+      "atomic-operations",
+      "plan-lifecycle"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "090",
+    "date": "2026-09-05T20:59:28+00:00",
+    "title": "JSONL format for audit logging",
+    "context": "Plan state transitions need to be logged for audit trails. Alternatives included plain text logs, CSV, structured database storage, or binary formats.",
+    "decision": "JSONL (one JSON object per line) format for plan audit logs, with each entry being a PlanLogEntry dataclass serialized to JSON.",
+    "rationale": "JSONL is append-only friendly, line-by-line parseable without loading entire file, human-readable when inspected manually, and structured enough for programmatic querying. Avoids the complexity of a database while being more structured than plain text.",
+    "affected_files": [],
+    "tags": [
+      "logging",
+      "jsonl",
+      "audit-trail",
+      "append-only"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "091",
+    "date": "2026-09-05T20:59:29+00:00",
+    "title": "Protected file constants for plan artifacts",
+    "context": "Plan files (plan_proposed.md, plan_executed_*.md, .plan directory) need protection from accidental modification/deletion during execution. Alternatives included runtime checks in every write path, filesystem permissions, or convention-based protection.",
+    "decision": "Centralized protected-file constants in plan_schema.py with integration into the existing file_protection.py module, defining exact filename patterns that require special handling.",
+    "rationale": "Centralizing protection rules in one place avoids scattered if-checks throughout the codebase, makes it easy to add new protected patterns, and leverages existing file protection infrastructure rather than duplicating it.",
+    "affected_files": [
+      "agent_core/file_protection.py"
+    ],
+    "tags": [
+      "file-protection",
+      "constants",
+      "defense-in-depth"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "092",
+    "date": "2026-09-05T20:59:29+00:00",
+    "title": "Dataclasses for schema types over TypedDict or Pydantic models",
+    "context": "Plan-related data structures (PlanMetadata, DryRunResult, DecisionGateResult, PlanLogEntry) needed definition. Alternatives included TypedDict (lighter, dict-compatible), Pydantic models (validation, serialization), or plain dicts with manual typing.",
+    "decision": "Python dataclasses with enum types for fixed-value fields (PlanStatus, PlanTransition).",
+    "rationale": "Dataclasses provide immutability options, are stdlib (no dependency), have good IDE support, are lighter than Pydantic for internal types that don't need complex validation, and are more structured than TypedDict with better runtime behavior. Appropriate balance of structure and simplicity for internal API types.",
+    "affected_files": [],
+    "tags": [
+      "dataclass",
+      "schema-design",
+      "stdlib",
+      "type-safety"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "093",
+    "date": "2026-09-05T20:59:29+00:00",
+    "title": "Markdown validation for plan content",
+    "context": "Plan files are markdown but need structural validation beyond plain text. Alternatives included accepting any markdown, using a full AST parser, regex-based checks, or schema validation against a formal spec.",
+    "decision": "A dedicated markdown validation function that checks plan files have expected structure (e.g., required sections, proper formatting) without requiring full AST parsing.",
+    "rationale": "Full AST parsing is overkill and introduces dependencies; regex is fragile; accepting any markdown defeats the purpose of structured plans. A focused validator catches common mistakes without adding heavy dependencies, keeping the system lightweight while still enforcing enough structure for the workflow to function.",
+    "affected_files": [],
+    "tags": [
+      "validation",
+      "markdown",
+      "lightweight",
+      "structured-content"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "094",
+    "date": "2026-09-05T20:59:29+00:00",
+    "title": "Separation of schema definitions from lifecycle logic",
+    "context": "Plan-related code spans type definitions and behavioral logic. Alternatives included a single monolithic module or tightly coupling schema with business logic.",
+    "decision": "Split into plan_schema.py (enums, dataclasses, constants, validation) and plan_lifecycle.py (state transitions, file operations, logging) as separate modules.",
+    "rationale": "Separation of concerns allows schema types to be imported without pulling in lifecycle logic, makes testing easier (mock lifecycle without schema redefinition), and keeps each file focused and maintainable. Schema is stable; lifecycle logic may change more frequently.",
+    "affected_files": [],
+    "tags": [
+      "separation-of-concerns",
+      "module-organization",
+      "testability"
     ],
     "contradictions": [],
     "resolved_by": null
