@@ -50,7 +50,6 @@ from agent_core.subagent_roles import get_role, role_names
 from agent_core.llm.provider import is_connection_failure
 from agent_core.llm.tool_loop import ToolLoopRunner
 from agent_core.context_management import CorrelationIdContext
-from agent_core.symbol_intel import collect_definitions
 try:
     from harnessfix.tracing import TraceWriter, trace_enabled
 except Exception:  # pragma: no cover - tracing degrades gracefully if unavailable
