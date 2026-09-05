@@ -189,12 +189,22 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
                     idx += 1
                     continue  # Skip out-of-range context
                 actual = original_lines[idx].rstrip('\r\n')
-                if actual.strip() != text.strip():
-                    # Skip mismatched context line — LLM hallucinated it
+                # Normalize for comparison: strip trailing whitespace
+                actual_norm = actual.rstrip()
+                text_norm = text.rstrip()
+                if actual_norm == text_norm:
+                    # Exact match (after trailing-ws normalization)
+                    filtered_chunks.append((' ', actual))  # Use file's version
+                    idx += 1
+                elif actual_norm.lstrip() == text_norm.lstrip():
+                    # Indentation-only difference (LLM indentation drift):
+                    # use the file's actual line to preserve correct indentation
+                    filtered_chunks.append((' ', actual))
+                    idx += 1
+                else:
+                    # Content mismatch — skip mismatched context line
                     idx += 1
                     continue
-                filtered_chunks.append((op, text))
-                idx += 1
             else:
                 filtered_chunks.append((op, text))
         chunks[:] = filtered_chunks
@@ -248,6 +258,30 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
         return False, f"Patch breaks syntax: {e.msg} (line {e.lineno})"
 
     return True, ''.join(result)
+
+
+def compute_diff(old_text: str, new_text: str, filename: str = "<file>") -> str:
+    """Compute a unified diff between old and new text.
+
+    Fallback for when the LLM can't generate correct patches: let the model
+    generate the full file content, then compute the diff programmatically.
+    The result is a standard unified diff that can be applied with
+    :func:`apply_patch`.
+    """
+    old_lines = old_text.splitlines(keepends=True)
+    new_lines = new_text.splitlines(keepends=True)
+    diff = difflib.unified_diff(
+        old_lines, new_lines,
+        fromfile=f"a/{filename}",
+        tofile=f"b/{filename}",
+        lineterm="",
+    )
+    return "\n".join(diff)
+
+
+def normalize_ctx(text: str) -> str:
+    """Normalize a context line for comparison: strip trailing whitespace."""
+    return text.rstrip()
 
 
 def split_source_lines(text: str) -> list[str]:
