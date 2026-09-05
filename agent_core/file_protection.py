@@ -26,12 +26,15 @@ from pathlib import Path
 from .entities import SecurityViolationError
 
 
-#: Filename (no path) treated as protected wherever it appears in the workspace.
-PROTECTED_FILENAMES: frozenset[str] = frozenset({".env"})
+#: Filenames (no path) treated as protected wherever they appear in the workspace.
+PROTECTED_FILENAMES: frozenset[str] = frozenset({".env", ".plans.json", "plan_proposed.md", "plan_executing.md"})
 
 #: Path prefixes, matched case-insensitively against forward-slash rel paths,
 #: that are recursively protected under the workspace root.
 PROTECTED_PREFIXES: tuple[str, ...] = ("reports/",)
+
+#: Plan file prefixes requiring protection (e.g. plan_executed_*.md)
+_PLAN_FILE_PREFIXES = ("plan_executed_", "plan_executing_")
 
 
 def _rel_posix(path: os.PathLike[str] | str, workspace_root: os.PathLike[str] | str) -> str:
@@ -69,24 +72,29 @@ def _rel_posix(path: os.PathLike[str] | str, workspace_root: os.PathLike[str] | 
 def is_protected(path: os.PathLike[str] | str, workspace_root: os.PathLike[str] | str) -> bool:
     """True if ``path`` (relative to ``workspace_root``) must never be deleted.
 
-    Matches the two protected categories:
-      * a file literally named ``.env``;
-      * anything under the ``reports/`` directory tree.
-
-    A path that escapes ``workspace_root`` raises ``SecurityViolationError``
-    rather than returning False — out-of-tree targets are not "unprotected",
-    they're invalid inputs for an in-workspace sweep.
+    Matches protected categories:
+      * .env, .plans.json, plan_proposed.md (filename match);
+      * anything under the ``reports/`` directory tree;
+      * plan_executed_*.md or plan_executing_*.md files.
     """
     rel = _rel_posix(path, workspace_root)
-    # .env anywhere in the tree (filename match, case-sensitive on POSIX).
-    if Path(rel).name == ".env":
+    filename = Path(rel).name
+    
+    # Exact filename matches
+    if filename in PROTECTED_FILENAMES:
         return True
-    # reports/ recursive prefix: protect the directory itself AND everything
-    # under it.  Match "reports" exactly or any path starting with "reports/".
+        
+    # Plan file prefixes (pattern matching)
+    for prefix in _PLAN_FILE_PREFIXES:
+        if filename.startswith(prefix):
+            return True
+            
+    # reports/ recursive prefix
     lowered = rel.lower()
     for prefix in PROTECTED_PREFIXES:
         if lowered == prefix.rstrip("/") or lowered.startswith(prefix):
             return True
+            
     return False
 
 

@@ -163,6 +163,37 @@ def _duplicate_definitions(paths: list[str], ws: Path) -> list[str]:
     return problems
 
 
+class PlanVerifier:
+    """Comprehensive plan verification class with schema and safety checks."""
+
+    def __init__(self, workspace: Path):
+        self.workspace = workspace
+
+    def verify_schema_compliance(self, content: str) -> tuple[bool, list[str]]:
+        """Validate the markdown plan against required schema structure."""
+        from .plan_schema import validate_plan_markdown
+        return validate_plan_markdown(content)
+
+    def verify_affected_files_exist(self, content: str) -> PlanCheckResult:
+        """Check that all referenced files in the plan exist or are marked [NEW]."""
+        return verify_plan_doc(content, self.workspace)
+
+    def verify_no_unsupported_operations(self, content: str) -> tuple[bool, list[str]]:
+        """Block plans containing dangerous operations like 'rm -rf' or 'git reset --hard'."""
+        dangerous_patterns = [
+            r"rm\s+-rf",
+            r"git\s+reset\s+--hard",
+            r"git\s+clean\s+-f",
+            r"del\s+/[sq]",
+            r"format\s+[a-zA-Z]:",
+        ]
+        violations = []
+        for line in content.splitlines():
+            for pattern in dangerous_patterns:
+                if re.search(pattern, line, re.IGNORECASE):
+                    violations.append(f"Unsupported operation found: {line.strip()}")
+        return len(violations) == 0, violations
+
 def verify_plan_doc(text: str, ws: str | Path) -> PlanCheckResult:
     """Regression-check backticked path references in a generated plan."""
     ws_path = Path(ws)

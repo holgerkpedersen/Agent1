@@ -33,6 +33,12 @@ from .plan_cmd import PlanCommand
 from .entities_cmd import EntitiesCommand
 from .taskplan_cmd import TaskplanCommand
 
+# Plan workflow components
+from . import plan_schema
+from . import plan_lifecycle
+from . import plan_dry_run
+from . import plan_decision_gate
+
 __all__ = [
     "Command",
     "CommandRegistry",
@@ -45,4 +51,8 @@ __all__ = [
     "PlanCommand",
     "EntitiesCommand",
     "TaskplanCommand",
+    "plan_schema",
+    "plan_lifecycle",
+    "plan_dry_run",
+    "plan_decision_gate",
 ]

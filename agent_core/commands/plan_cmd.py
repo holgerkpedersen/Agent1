@@ -13,7 +13,11 @@ Two subcommands:
 """
 from .base import Command, auto_choice, stop_requested
 from .doc_paths import find_input, resolve_output, new_run_dir
-from .plan_verifier import check_doc, apply_report, summarize
+from .plan_verifier import check_doc, apply_report, summarize, PlanVerifier
+from .plan_schema import validate_plan_markdown
+from .plan_lifecycle import PlanLifecycleManager
+from .plan_dry_run import PlanDryRunner
+from .plan_decision_gate import PlanDecisionGate
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -105,6 +109,17 @@ class PlanCommand(Command):
                 print("[plan] Halted — regenerate with corrected paths "
                       "(or rerun with --force).")
                 return True
+        # Schema validation on proposal.
+        ok, errs = validate_plan_markdown(content)
+        if not ok and not force:
+            self.error("Plan schema validation failed:\n" + "\n".join(f"  - {e}" for e in errs))
+            answer = auto_choice(
+                "  Write anyway? (y/N): ", default="n", auto_default="n",
+            )
+            if answer.strip().lower() not in ("y", "yes"):
+                print("[plan] Halted — fix schema issues and regenerate.")
+                return True
+
         content = apply_report(content, result)
 
         with open(plan_file, "w", encoding="utf-8") as f:
@@ -194,9 +209,47 @@ class PlanCommand(Command):
             deps = f" (deps: {', '.join(t.depends_on)})" if t and t.depends_on else ""
             print(f"  {i}. [{tid}] {t.role if t else '?'}: {t.description if t else ''}{deps}")
 
+        # ── Pre-execution gates ───────────────────────────────────────
+        # Dry-run safety gate
+        dry_runner = PlanDryRunner()
+        dry_result = dry_runner.validate(plan_text)
+        if not dry_result.valid:
+            print("[plan exec] Dry-run safety gate FAILED:")
+            for err in dry_result.errors:
+                print(f"  ✗ {err}")
+            return True
+        if dry_result.warnings:
+            print(f"[plan exec] Dry-run warnings ({len(dry_result.warnings)}):")
+            for w in dry_result.warnings[:5]:
+                print(f"  ⚠ {w}")
+            if len(dry_result.warnings) > 5:
+                print(f"  ... and {len(dry_result.warnings) - 5} more")
+
+        # Decision gate
+        decision_gate = PlanDecisionGate(agent.workspace)
+        gate_result = decision_gate.validate(plan_text)
+        if not gate_result.passed:
+            print("[plan exec] Decision gate FAILED — plan violates architectural constraints:")
+            for v in gate_result.violations:
+                print(f"  ✗ {v}")
+            if not force:
+                return True
+            print("[plan exec] Proceeding anyway (--force).")
+
         if dry_run:
             print("[plan exec] --dry-run: no subagents spawned.")
             return True
+
+        # Lifecycle: transition proposed → executing
+        from .doc_paths import latest_run_dir
+        run_dir = latest_run_dir(agent.workspace)
+        lifecycle = None
+        if run_dir is not None:
+            try:
+                lifecycle = PlanLifecycleManager(run_dir, agent.workspace)
+                lifecycle.start_plan()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[plan exec] (lifecycle start note: {exc})")
 
         if not yes:
             answer = auto_choice(
@@ -240,4 +293,12 @@ class PlanCommand(Command):
             )
         else:
             print("[plan exec] All tasks completed.")
+
+        # Lifecycle: transition executing → executed
+        if lifecycle is not None:
+            try:
+                lifecycle.finish_plan()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[plan exec] (lifecycle finish note: {exc})")
+
         return True
