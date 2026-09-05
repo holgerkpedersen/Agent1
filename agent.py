@@ -2362,6 +2362,27 @@ def _detect_shell() -> str:
     return "cmd.exe (Windows Command Prompt)"
 
 
+def _shell_name_token() -> str:
+    """Return a short machine-readable shell identifier for SHELL_NAME.
+
+    One of ``bash``, ``cmd``, or ``powershell`` — the canonical names used in
+    environment variables and system-prompt instructions so the LLM gets an
+    unambiguous statement of its execution environment.
+    """
+    if os.name != "nt":
+        return "bash"
+    comspec = os.environ.get("COMSPEC", "").lower()
+    if comspec.endswith(("powershell.exe", "pwsh.exe")):
+        return "powershell"
+    return "cmd"
+
+
+#: Explicit shell identity propagated to subprocesses and the LLM system prompt.
+#: Set at import time via setdefault so an external launcher can override it,
+#: but defaults to what _detect_shell() reports for this process.
+_SHELL_NAME: str = os.environ.setdefault("SHELL_NAME", _shell_name_token())
+
+
 #: System prompt for the NLP tool loop, built once at import time (the only
 #: dynamic piece is the detected shell name).  Kept as a module constant so
 #: chat_nlp stays focused on the loop itself and the prompt lives in one
@@ -2382,8 +2403,12 @@ _SYSTEM_PROMPT = (
     "4. Finish with a short report: what you changed, where, and the "
     "verification/test evidence.\n\n"
     "RULES:\n"
+    f"You are running inside SHELL_NAME={_SHELL_NAME} ({_detect_shell()}). "
+    "This is a hard constraint: on Windows (cmd/PowerShell) there is NO "
+    "tail/grep/ls/find; on POSIX, no PowerShell cmdlets. Use Python one-liners "
+    "(python -c \"...\") or the built-in tools instead of shell pipes — never "
+    "construct commands that mix Unix and Windows syntax in a single invocation.\n"
     f"- The shell for the run tool is: {_detect_shell()}. On Windows there "
-    "is NO tail/grep/ls/find. Never pipe with '2>&1 | tail -40' — use Python "
     "one-liners (python -c \"...\") or the built-in tools; run output is "
     "truncated to 5000 chars automatically. The run tool reports non-zero "
     "exit codes as [EXIT CODE: N] at the end of its output — read it from "

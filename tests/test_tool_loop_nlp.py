@@ -845,6 +845,22 @@ class TestRunToolShellAwareness:
         else:
             assert "bash" in shell
 
+    def test_shell_name_env_var_is_set_and_matches_detect(self):
+        """SHELL_NAME must be set in os.environ and match _detect_shell()."""
+        import os
+        from agent import _shell_name_token, _SHELL_NAME
+        assert "SHELL_NAME" in os.environ
+        token = _shell_name_token()
+        assert os.environ["SHELL_NAME"] == token
+        assert _SHELL_NAME == token
+
+    def test_system_prompt_contains_shell_name(self):
+        """The system prompt must explicitly state SHELL_NAME so the LLM knows
+        its execution environment and avoids mixing Unix/Windows commands."""
+        import os
+        from agent import Agent, _SYSTEM_PROMPT
+        assert f"SHELL_NAME={os.environ['SHELL_NAME']}" in _SYSTEM_PROMPT
+
     def test_unknown_command_gets_shell_hint(self):
         import asyncio
         from agent import Agent
