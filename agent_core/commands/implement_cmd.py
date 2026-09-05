@@ -1908,7 +1908,12 @@ class ImplementCommand(Command):
                     "  ```python\n"
                     "  # complete code\n"
                     "  ```\n\n"
-                    "Only change lines that need modification. Do NOT rewrite entire existing files."
+                    "PATCH RULES:\n"
+                    "- PRESERVE all docstrings, comments, and blank lines exactly as they are.\n"
+                    "- Do NOT modify docstring content or formatting — only add/remove code lines.\n"
+                    "- Keep existing import order; add new imports at the end of the import block.\n"
+                    "- Context lines (space-prefixed) MUST match the file exactly — count spaces.\n"
+                    "- Only change lines that need modification. Do NOT rewrite entire existing files."
                 )
             else:
                 system_prompt = (
@@ -1963,13 +1968,17 @@ class ImplementCommand(Command):
             file_patterns = [
                 r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```\s*$',
                 r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```',
-                r'\[FILE:\s*([^\]]+)\]\s*\n+(.*?)(?=\[FILE:|\[PATCH:|$)',
+                r'\[FILE:\s*([^\]]+)\]\s*\n+(.*?)(?=\[FILE:|\[PATCH:|\[COMPUTE_DIFF:|$)',
+            ]
+            compute_diff_patterns = [
+                r'\[COMPUTE_DIFF:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```\s*$',
+                r'\[COMPUTE_DIFF:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```',
             ]
             patch_patterns = [
-                r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|$)',
+                r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\[COMPUTE_DIFF:|$)',
             ]
 
-            # Try [FILE:] blocks first, then [PATCH:] blocks
+            # Try [FILE:] blocks first, then [PATCH:] blocks, then [COMPUTE_DIFF:]
             matches = []
             for pattern in file_patterns:
                 matches = list(re.findall(pattern, impl_response, re.DOTALL))
@@ -1982,6 +1991,14 @@ class ImplementCommand(Command):
                 for pattern in patch_patterns:
                     patch_matches = list(re.findall(pattern, impl_response, re.DOTALL))
                     if patch_matches:
+                        break
+
+            # Also try [COMPUTE_DIFF:] blocks (full file, we compute diff)
+            compute_diff_matches = []
+            if not matches and not patch_matches:
+                for pattern in compute_diff_patterns:
+                    compute_diff_matches = list(re.findall(pattern, impl_response, re.DOTALL))
+                    if compute_diff_matches:
                         break
 
             if not matches and not patch_matches and ("<tool_call" in impl_response or "<tool_call>" in impl_response):
@@ -2001,10 +2018,10 @@ class ImplementCommand(Command):
             # Transient/empty LLM responses: re-ask for the batch instead of
             # silently dropping the file. Give up only after extra retries.
             parse_retries = 0
-            while not matches and not patch_matches and parse_retries < 2:
-                print(f"  No [FILE:] or [PATCH:] blocks parsed — retry {parse_retries + 1}/2...")
+            while not matches and not patch_matches and not compute_diff_matches and parse_retries < 2:
+                print(f"  No [FILE:], [PATCH:], or [COMPUTE_DIFF:] blocks parsed — retry {parse_retries + 1}/2...")
                 impl_messages.append(
-                    {"role": "user", "content": f"Output exactly one block for {batch[0]}: [PATCH: {batch[0]}] with diff hunks (for existing files) or [FILE: {batch[0]}] with complete code (for new files). No preamble, no prose, no tool calls."}
+                    {"role": "user", "content": f"Output exactly one block for {batch[0]}: [PATCH: {batch[0]}] with diff hunks (for existing files), [COMPUTE_DIFF: {batch[0]}] with complete code (we compute diff), or [FILE: {batch[0]}] with complete code (for new files). No preamble, no prose, no tool calls."}
                 )
                 try:
                     impl_response = await agent.llm.chat(impl_messages, max_tokens=12000, disable_thinking=True)
@@ -2027,6 +2044,55 @@ class ImplementCommand(Command):
                 print(f"  Raw response: {str(impl_response)[:500]}")
                 continue
 
+            # Process [COMPUTE_DIFF:] blocks (full file, we compute diff)
+            for filename, content in compute_diff_matches:
+                content = content.strip()
+                if filename not in batch:
+                    print(f"  WARNING: [COMPUTE_DIFF: {filename}] is not in the planned batch {batch} — ignored")
+                    continue
+                if not modify_mode:
+                    print(f"  WARNING: [COMPUTE_DIFF: {filename}] — only valid in modify mode, treating as FILE:")
+                    generated_content[filename] = content
+                    print(f"  Generated: {filename} ({len(content)} bytes)")
+                    continue
+                # Compute diff for existing file
+                ws_path = Path(workspace_path(target_workspace))
+                filepath = ws_path / filename
+                if not filepath.exists():
+                    print(f"  WARNING: [COMPUTE_DIFF: {filename}] — file does not exist, treating as new FILE:")
+                    generated_content[filename] = content
+                    print(f"  Generated: {filename} ({len(content)} bytes)")
+                    continue
+                try:
+                    existing_text = filepath.read_text(encoding="utf-8")
+                except OSError as exc:
+                    print(f"  WARNING: [COMPUTE_DIFF: {filename}] — cannot read file: {exc}")
+                    continue
+                try:
+                    compile(content, filename, "exec")
+                except SyntaxError as exc:
+                    print(f"  WARNING: [COMPUTE_DIFF: {filename}] — content has syntax errors: {exc}")
+                    continue
+                from agent_core.patch_utils import compute_diff, apply_patch, split_source_lines
+                computed = compute_diff(existing_text, content, filename)
+                if computed.strip():
+                    ok, patched = apply_patch(computed, split_source_lines(existing_text))
+                    if ok:
+                        patched_text = str(patched)
+                        try:
+                            compile(patched_text, filename, "exec")
+                            generated_content[filename] = patched_text
+                            print(f"  Generated (computed diff): {filename} ({len(patched_text)} bytes)")
+                            sigs = extract_signatures(patched_text)
+                            if sigs:
+                                export_map[filename] = sigs
+                        except SyntaxError as exc:
+                            print(f"  WARNING: [COMPUTE_DIFF: {filename}] — computed diff fails syntax: {exc}")
+                    else:
+                        print(f"  WARNING: [COMPUTE_DIFF: {filename}] — computed diff failed to apply: {str(patched)[:200]}")
+                else:
+                    print(f"  [COMPUTE_DIFF: {filename}] — no changes needed")
+
             # Process [FILE:] blocks (new files or full rewrites)
             for filename, content in matches:
                 content = content.strip()
@@ -2039,6 +2105,46 @@ class ImplementCommand(Command):
                     # it as a parse failure for the planned file instead.
                     print(f"  WARNING: [FILE: {filename}] is not in the planned batch {batch} — ignored")
                     continue
+                # For existing files in modify mode, compute diff instead of
+                # wholesale rewrite — this is the generate-then-diff fallback
+                # that lets the model do what it's good at (generating code)
+                # while we handle what it's bad at (formatting diffs).
+                if modify_mode and filename in existing_files:
+                    ws_path = Path(workspace_path(target_workspace))
+                    filepath = ws_path / filename
+                    try:
+                        existing_text = filepath.read_text(encoding="utf-8")
+                    except OSError:
+                        existing_text = ""
+                    if existing_text.strip():
+                        try:
+                            compile(content, filename, "exec")
+                        except SyntaxError:
+                            print(f"  WARNING: [FILE: {filename}] — generated content has syntax errors, skipping")
+                            continue
+                        from agent_core.patch_utils import compute_diff, apply_patch, split_source_lines
+                        computed = compute_diff(existing_text, content, filename)
+                        if computed.strip():
+                            ok, patched = apply_patch(computed, split_source_lines(existing_text))
+                            if ok:
+                                patched_text = str(patched)
+                                try:
+                                    compile(patched_text, filename, "exec")
+                                    generated_content[filename] = patched_text
+                                    print(f"  Generated (computed diff): {filename} ({len(patched_text)} bytes)")
+                                    sigs = extract_signatures(patched_text)
+                                    if sigs:
+                                        export_map[filename] = sigs
+                                    continue
+                                except SyntaxError as exc:
+                                    print(f"  WARNING: [FILE: {filename}] — computed diff fails syntax: {exc}")
+                                    # Fall through to store raw content
+                            else:
+                                print(f"  WARNING: [FILE: {filename}] — computed diff failed to apply: {str(patched)[:200]}")
+                        else:
+                            # No diff means files are identical
+                            print(f"  [FILE: {filename}] — no changes needed")
+                            continue
                 generated_content[filename] = content
                 print(f"  Generated: {filename} ({len(content)} bytes)")
 
@@ -2066,7 +2172,201 @@ class ImplementCommand(Command):
                 from agent_core.patch_utils import apply_patch, split_source_lines
                 ok, patched = apply_patch(patch_text, split_source_lines(existing_text))
                 if not ok:
-                    print(f"  WARNING: [PATCH: {filename}] — patch did not apply: {str(patched)[:200]}")
+                    # Self-correction retry: send the error back to the model
+                    err_msg = str(patched)[:200]
+                    print(f"  WARNING: [PATCH: {filename}] — patch did not apply: {err_msg}")
+                    print(f"  Attempting self-correction retry for {filename}...")
+                    retry_msgs = [
+                        {"role": "system", "content": (
+                            "Your patch for this file FAILED to apply. Here is the error:\n"
+                            f"{err_msg}\n\n"
+                            "The existing file content is:\n"
+                            f"--- {filename} ---\n"
+                            f"{existing_text[:4000]}\n"
+                            f"--- end ---\n\n"
+                            "You have THREE options — pick whichever you can do correctly:\n\n"
+                            "Option A — Corrected PATCH (preferred):\n"
+                            "[PATCH: filename.py]\n"
+                            "@@ -line,count +line,count @@\n"
+                            " context line\n"
+                            "-removed\n"
+                            "+added\n\n"
+                            "Option B — Full file with diff computed automatically:\n"
+                            "[COMPUTE_DIFF: filename.py]\n"
+                            "```python\n"
+                            "# complete corrected file — we compute the diff for you\n"
+                            "```\n\n"
+                            "Option C — Full file rewrite (if all else fails):\n"
+                            "[FILE: filename.py]\n"
+                            "```python\n"
+                            "# complete corrected file\n"
+                            "```\n\n"
+                            "Rules:\n"
+                            "- PRESERVE all docstrings, comments, and blank lines.\n"
+                            "- Option B is EASIEST: just write the complete corrected file.\n"
+                            "- Output ONLY one block, no prose."
+                        )},
+                        {"role": "user", "content": f"Fix {filename} using Option A, B, or C."},
+                    ]
+                    try:
+                        retry_resp = await agent.llm.chat(retry_msgs, max_tokens=10000, disable_thinking=True)
+                        # Try Option A: corrected PATCH
+                        retry_patch = ""
+                        m = re.search(r'\[PATCH:\s*[^\]]+\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\[COMPUTE_DIFF:|$)', retry_resp, re.DOTALL)
+                        if m:
+                            retry_patch = m.group(1).strip()
+                        if retry_patch:
+                            ok2, patched2 = apply_patch(retry_patch, split_source_lines(existing_text))
+                            if ok2:
+                                patched_text2 = str(patched2)
+                                try:
+                                    compile(patched_text2, filename, "exec")
+                                    patched = patched2
+                                    ok = True
+                                    patched_text = patched_text2
+                                    print(f"  Self-correction succeeded (PATCH) for {filename}")
+                                except SyntaxError as exc2:
+                                    print(f"  WARNING: [PATCH: {filename}] — retry PATCH also fails syntax: {exc2}")
+                                    # Fall through to try Option B
+                                    retry_patch = ""
+                        # Try Option B: COMPUTE_DIFF (full file, we compute diff)
+                        if not retry_patch or not ok:
+                            m2 = re.search(r'\[COMPUTE_DIFF:\s*[^\]]+\]\s*\n*(?:```\w*\n)?(.*?)\n```', retry_resp, re.DOTALL)
+                            if m2:
+                                retry_content = m2.group(1).strip()
+                                if retry_content:
+                                    try:
+                                        compile(retry_content, filename, "exec")
+                                        # Compute diff programmatically
+                                        from agent_core.patch_utils import compute_diff
+                                        computed = compute_diff(existing_text, retry_content, filename)
+                                        if computed.strip():
+                                            ok3, patched3 = apply_patch(computed, split_source_lines(existing_text))
+                                            if ok3:
+                                                patched_text3 = str(patched3)
+                                                try:
+                                                    compile(patched_text3, filename, "exec")
+                                                    patched = patched3
+                                                    ok = True
+                                                    patched_text = patched_text3
+                                                    print(f"  Self-correction succeeded (COMPUTE_DIFF) for {filename}")
+                                                except SyntaxError as exc3:
+                                                    print(f"  WARNING: [PATCH: {filename}] — computed diff fails syntax: {exc3}")
+                                                    # Fall through to Option C
+                                        else:
+                                            # No diff means files are identical — skip
+                                            print(f"  [PATCH: {filename}] — COMPUTE_DIFF: no changes needed")
+                                            continue
+                                    except SyntaxError as exc4:
+                                        print(f"  WARNING: [PATCH: {filename}] — COMPUTE_DIFF content fails syntax: {exc4}")
+                        # Try Option C: full file rewrite (wholesale)
+                        if not retry_patch or not ok:
+                            m3 = re.search(r'\[FILE:\s*[^\]]+\]\s*\n*(?:```\w*\n)?(.*?)\n```', retry_resp, re.DOTALL)
+                            if m3:
+                                retry_content = m3.group(1).strip()
+                                if retry_content:
+                                    try:
+                                        compile(retry_content, filename, "exec")
+                                        patched_text = retry_content
+                                        ok = True
+                                        print(f"  Self-correction succeeded (FILE rewrite) for {filename}")
+                                    except SyntaxError as exc5:
+                                        print(f"  WARNING: [PATCH: {filename}] — retry FILE also fails syntax: {exc5}")
+                                        continue
+                        # Fallback D: Extract any ```python...``` code block from prose
+                        if not ok:
+                            m4 = re.search(r'```python\s*\n(.*?)\n```', retry_resp, re.DOTALL)
+                            if m4:
+                                fallback_content = m4.group(1).strip()
+                                if fallback_content:
+                                    try:
+                                        compile(fallback_content, filename, "exec")
+                                        # Compute diff for existing file
+                                        from agent_core.patch_utils import compute_diff
+                                        computed = compute_diff(existing_text, fallback_content, filename)
+                                        if computed.strip():
+                                            ok4, patched4 = apply_patch(computed, split_source_lines(existing_text))
+                                            if ok4:
+                                                patched_text4 = str(patched4)
+                                                try:
+                                                    compile(patched_text4, filename, "exec")
+                                                    patched = patched4
+                                                    ok = True
+                                                    patched_text = patched_text4
+                                                    print(f"  Self-correction succeeded (code block fallback) for {filename}")
+                                                except SyntaxError:
+                                                    pass
+                                        if not ok:
+                                            # Use raw content if diff fails
+                                            patched_text = fallback_content
+                                            ok = True
+                                            print(f"  Self-correction succeeded (code block fallback, raw) for {filename}")
+                                    except SyntaxError:
+                                        pass
+                        if not ok:
+                            print(f"  WARNING: [PATCH: {filename}] — retry produced no usable content")
+                            continue
+                    except Exception as exc:
+                        print(f"  WARNING: [PATCH: {filename}] — retry failed: {exc}")
+                        continue
+                # Last resort: generate the file directly with a focused prompt
+                if not ok:
+                    print(f"  Attempting direct generation for {filename}...")
+                    try:
+                        # Read the task context for this file
+                        task_line = _extract_task_line(taskplan_content, filename)
+                        direct_msgs = [
+                            {"role": "system", "content": (
+                                f"Generate the COMPLETE Python file: {filename}\n\n"
+                                "The file must:\n"
+                                "- Be valid Python (pass py_compile)\n"
+                                "- Preserve all existing docstrings and comments\n"
+                                "- Add the new functionality described below\n\n"
+                                "Output format:\n"
+                                f"[FILE: {filename}]\n"
+                                "```python\n"
+                                "# complete file\n"
+                                "```"
+                            )},
+                            {"role": "user", "content": (
+                                f"Existing file content:\n{existing_text[:3000]}\n\n"
+                                f"Task: {task_line}\n\n"
+                                f"Generate the complete corrected {filename}."
+                            )},
+                        ]
+                        direct_resp = await agent.llm.chat(direct_msgs, max_tokens=10000, disable_thinking=True)
+                        # Extract FILE: block
+                        m5 = re.search(r'\[FILE:\s*[^\]]+\]\s*\n*(?:```\w*\n)?(.*?)\n```', direct_resp, re.DOTALL)
+                        if m5:
+                            direct_content = m5.group(1).strip()
+                            if direct_content:
+                                try:
+                                    compile(direct_content, filename, "exec")
+                                    # Compute diff for existing file
+                                    from agent_core.patch_utils import compute_diff
+                                    computed = compute_diff(existing_text, direct_content, filename)
+                                    if computed.strip():
+                                        ok5, patched5 = apply_patch(computed, split_source_lines(existing_text))
+                                        if ok5:
+                                            patched_text5 = str(patched5)
+                                            try:
+                                                compile(patched_text5, filename, "exec")
+                                                patched = patched5
+                                                ok = True
+                                                patched_text = patched_text5
+                                                print(f"  Direct generation succeeded for {filename}")
+                                            except SyntaxError:
+                                                pass
+                                    if not ok:
+                                        # Use raw content
+                                        patched_text = direct_content
+                                        ok = True
+                                        print(f"  Direct generation succeeded (raw) for {filename}")
+                                except SyntaxError:
+                                    print(f"  WARNING: [PATCH: {filename}] — direct generation has syntax errors")
+                    except Exception as exc:
+                        print(f"  WARNING: [PATCH: {filename}] — direct generation failed: {exc}")
+                if not ok:
                     continue
                 patched_text = str(patched)
                 if patched_text == existing_text:
