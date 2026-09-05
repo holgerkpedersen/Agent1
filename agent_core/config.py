@@ -185,6 +185,13 @@ class AgentSettings:
             os.environ.get("AGENT_ZEN_FREE_FALLBACKS")
         )
     )
+    #: File-size threshold (KB) above which .py files get an AST-based
+    #: definition summary instead of full content when read via the NLP
+    #: ``read`` tool.  Set via ``USE_CONTEXT_AST_STRATEGY`` (default 50).
+    #: Unset or 0 disables the strategy (all files sent as-is).
+    context_ast_strategy_kb: int = field(
+        default_factory=lambda: int(os.environ.get("USE_CONTEXT_AST_STRATEGY", "50"))
+    )
 
     def __post_init__(self) -> None:
         # Enforce the invariant on every construction (not just at the two

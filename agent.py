@@ -50,6 +50,7 @@ from agent_core.subagent_roles import get_role, role_names
 from agent_core.llm.provider import is_connection_failure
 from agent_core.llm.tool_loop import ToolLoopRunner
 from agent_core.context_management import CorrelationIdContext
+from agent_core.symbol_intel import collect_definitions
 try:
     from harnessfix.tracing import TraceWriter, trace_enabled
 except Exception:  # pragma: no cover - tracing degrades gracefully if unavailable
@@ -1003,6 +1004,18 @@ class Agent:
             limit = max(1, min(int(args.get("limit") or 100), _MAX_READ_LINES))
         except (TypeError, ValueError):
             return "Read error: offset/limit must be integers."
+        # AST strategy: for .py files exceeding the size threshold, return a
+        # definition summary instead of full content (saves context tokens).
+        if (
+            _CONTEXT_AST_THRESHOLD_KB > 0
+            and path.endswith(".py")
+            and os.path.getsize(path) > _CONTEXT_AST_THRESHOLD_KB * 1024
+        ):
+            content = await self.read_file(path, track_read=False)
+            if content.startswith("File not found") or content.startswith("Error"):
+                return content
+            self._note_effect(path)
+            return collect_definitions(content, filename=path)
         content = await self.read_file(path, track_read=False)
         if content.startswith("File not found") or content.startswith("Error"):
             return content
@@ -2149,6 +2162,11 @@ _MAX_RUN_TIMEOUT_S = 600
 
 #: Hard ceiling for the NLP ``read`` tool's per-call line limit.
 _MAX_READ_LINES = 500
+
+#: File-size threshold (KB) above which .py files get an AST-based definition
+#: summary instead of full content.  Set via USE_CONTEXT_AST_STRATEGY env var
+#: (default 50).  0 disables the strategy.
+_CONTEXT_AST_THRESHOLD_KB = int(os.environ.get("USE_CONTEXT_AST_STRATEGY", "50"))
 
 #: Consecutive ``read`` calls allowed within one turn before the read-loop
 #: guard starts appending a steering note.  Traces from the 2026-08-25
