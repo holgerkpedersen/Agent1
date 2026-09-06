@@ -1,5 +1,7 @@
 """LLM metrics contract tests (plan ARCH items 14, 16, 17): ResponseMetrics,
 MetricsTracker token/cost accounting, and provider-side capture."""
+import json
+
 import pytest
 
 from agent_core.llm.llm_types import ProfileType, TaskType
@@ -75,6 +77,23 @@ class TestMetricsTrackerAccounting:
         assert metrics["total_tokens"] == 0
 
 
+class _FakeHttp:
+    """Stub urllib.request.urlopen returning a canned JSON response."""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.requests = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return json.dumps(self.payload).encode()
+
+
 class TestProviderCapture:
     def test_lmstudio_captures_usage(self):
         import asyncio
@@ -82,7 +101,6 @@ class TestProviderCapture:
         from unittest.mock import patch
         from agent_core.llm.lmstudio import LMStudioProvider
         from agent_core.llm.provider import ResponseMetrics
-        from tests.test_opencode_provider import _FakeHttp
 
         prov = LMStudioProvider(model_name="laguna-s-2.1", api_key="fake")
 
@@ -105,7 +123,6 @@ class TestProviderCapture:
         from unittest.mock import patch
         from agent_core.llm.opencode_provider import OpencodeProvider
         from agent_core.llm.provider import ResponseMetrics
-        from tests.test_opencode_provider import _FakeHttp
 
         prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
 
