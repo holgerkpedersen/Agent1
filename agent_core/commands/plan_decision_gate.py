@@ -25,9 +25,9 @@ class PlanDecisionGate:
                 print(v)
     """
 
-    def __init__(self, workspace_root: Path):
-        self.workspace_root = workspace_root
-        self.decisions_path = workspace_root / ".decisions.json"
+    def __init__(self, workspace_root: Path | str):
+        self.workspace_root = Path(workspace_root)
+        self.decisions_path = self.workspace_root / ".decisions.json"
         self._decisions: Optional[List[dict]] = None
 
     def _load_decisions(self) -> List[dict]:
