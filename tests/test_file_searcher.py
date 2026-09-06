@@ -156,3 +156,30 @@ class TestSearchToolHandler:
         result = asyncio.run(run())
         assert "chat_history" not in result
         assert "src.py" in result
+
+    def test_search_tool_scopes_to_workspace_not_cwd(self, tmp_path):
+        """_tool_search('query', path='.') must search the agent's workspace,
+        not the process CWD.  Before the fix, a bare '.' resolved to the repo
+        root (C:\\Dev\\Agent1) and leaked matches from unrelated files."""
+        import os as _os
+
+        from agent import Agent
+        # A file *outside* the workspace that also contains the needle — it must
+        # never appear in results when path='.'.
+        outside = _os.path.join(_os.getcwd(), "needle_marker_outside.py")
+        with open(outside, "w", encoding="utf-8") as f:
+            f.write("NEEDLE_MARKER_OUTSIDE\n")
+
+        try:
+            (tmp_path / "src.py").write_text(
+                "def target_fn():\n    return 1\n", encoding="utf-8"
+            )
+            agent = Agent(workspace=str(tmp_path))
+            result = asyncio.run(agent._tool_search("target_fn", path="."))
+
+            assert str(tmp_path / "src.py") in result
+            # The outside file must not leak into workspace-scoped search.
+            assert "needle_marker_outside" not in result
+        finally:
+            if _os.path.exists(outside):
+                _os.remove(outside)

@@ -1297,7 +1297,8 @@ class Agent:
         return await self.fs.edit(path, content)
 
     async def _tool_search(self, query: str, path: str = ".", **kwargs: Any) -> str:
-        return await self.searcher.search(query, path)
+        search_path = self._resolve_nlp_path(path or ".")
+        return await self.searcher.search(query, search_path)
 
     async def _tool_list_files(
         self, path: str = ".", pattern: str = "*", **kwargs: Any,
