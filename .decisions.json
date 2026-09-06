@@ -44,8 +44,7 @@
     "rationale": "This is the core requested capability and fits the existing ToolLoopRunner and NLP tool pattern.",
     "affected_files": [
       "agent.py",
-      "agent_core/tool_schemas.py",
-      ".docs/2026-09-05_22-37-36/project_spec.md"
+      "agent_core/tool_schemas.py"
     ],
     "tags": [
       "feature",
@@ -65,8 +64,7 @@
     "rationale": "A clear contract is needed for the NLP schema, handler, tests, and predictable model behavior.",
     "affected_files": [
       "agent_core/tool_schemas.py",
-      "agent.py",
-      ".docs/2026-09-05_22-37-36/project_spec.md"
+      "agent.py"
     ],
     "tags": [
       "api",
@@ -103,8 +101,7 @@
     "rationale": "URL fetch expands the attack surface through SSRF, exfiltration, and possible authenticated actions.",
     "affected_files": [
       "agent.py",
-      "agent_core/llm/lmstudio.py",
-      ".docs/2026-09-05_22-37-36/project_spec.md"
+      "agent_core/llm/lmstudio.py"
     ],
     "tags": [
       "security",
@@ -1856,5 +1853,249 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "095",
+    "date": "2026-09-06T18:00:52+00:00",
+    "title": "Define refactoring scope and goals",
+    "context": "The spec says only 'make a refactor agent.py' with no stated goal, constraints, or acceptance criteria. The analysis identifies this as the primary blocker (Section 6, Item 1). Without knowing whether the refactor targets security, DRY, performance, or readability, any changes risk breaking behavior or introducing regressions.",
+    "decision": "Determine the specific refactoring goal (security hardening, DRY extraction, performance, readability, or all) and document acceptance criteria before proceeding.",
+    "rationale": "The spec is explicitly vague. The analysis's own critique confirms the spec is insufficient and the project is BLOCKED pending clarification. Proceeding without a defined goal violates the 'no direction' risk flagged in Section 3.",
+    "affected_files": [
+      "agent.py",
+      "tests/test_agent_dry_refactor.py",
+      ".pytest_tmp"
+    ],
+    "tags": [
+      "spec",
+      "scope",
+      "blocked"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "096",
+    "date": "2026-09-06T18:00:52+00:00",
+    "title": "Preserve security invariants during refactor",
+    "context": "The analysis identifies multiple security-critical components in agent.py: _DANGEROUS_SHELL_PATTERNS, _blocked_shell_command, _safe_path, _resolve_nlp_path, _strip_dynamic_system_blocks, and _execute_tool_call (plan-mode enforcement). The success metrics in Section 8 explicitly require these to remain functional post-refactor.",
+    "decision": "Ensure all security primitives (_DANGEROUS_SHELL_PATTERNS, _blocked_shell_command, _safe_path, _strip_dynamic_system_blocks, _execute_tool_call plan-mode enforcement) are preserved unchanged or with equivalent behavior after refactoring.",
+    "rationale": "The analysis's threat model (Section 5) maps shell injection, path traversal, prompt injection, and tool-call bypass as the highest-risk attack surfaces. Section 8's success metrics explicitly require security invariants to be preserved. Any change to these mechanisms could introduce vulnerabilities.",
+    "affected_files": [
+      "agent.py",
+      "tests/test_agent_dry_refactor.py",
+      ".pytest_tmp"
+    ],
+    "tags": [
+      "security",
+      "shell-injection",
+      "path-traversal",
+      "prompt-injection",
+      "plan-mode"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "097",
+    "date": "2026-09-06T18:00:52+00:00",
+    "title": "Analyze and harden shell command injection bypasses",
+    "context": "The analysis's critique (Section 2.2a) identifies that _DANGEROUS_SHELL_PATTERNS uses word-boundary regex \\b patterns that can be bypassed via argument splitting (e.g., 'rm' '-rf' '/'), variable expansion, Unicode homoglyphs, or base64-encoded commands. The _blocked_shell_command function is the single defense against model-supplied shell commands.",
+    "decision": "Review _DANGEROUS_SHELL_PATTERNS for completeness against known bypass techniques (argument splitting, variable expansion, encoding). Consider adding patterns for 'curl | sh', 'wget -O- | sh', 'python -c', 'powershell -Command', 'base64 -d | sh', and other remote execution vectors.",
+    "rationale": "The critique explicitly identifies these bypass techniques as missed by the current analysis. The workspace listing shows agent_core/security/allowlist.py exists as a safe shell command allow-list, suggesting a dual approach (blocklist + allowlist) may be warranted.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/security/allowlist.py"
+    ],
+    "tags": [
+      "security",
+      "shell-injection",
+      "regex",
+      "bypass"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "098",
+    "date": "2026-09-06T18:00:52+00:00",
+    "title": "Verify .git/HEAD reading safety in _current_git_branch",
+    "context": "The analysis critique (Section 2.2b) identifies that _current_git_branch reads .git/HEAD via open() without validating file integrity. An attacker who can write to .git/HEAD could inject false branch information into _SYSTEM_PROMPT, creating a prompt-injection vector.",
+    "decision": "Add integrity validation or sanitization to _current_git_branch to prevent manipulated .git/HEAD content from being embedded in the system prompt. Consider validating the branch name format or capping its length.",
+    "rationale": "The critique explicitly identifies this as an unanalyzed prompt-injection vector. The workspace listing confirms .git/HEAD exists as a file in the project. The _SYSTEM_PROMPT embeds _git_branch() output, making this a direct injection path.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "security",
+      "prompt-injection",
+      "git",
+      "path-traversal"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "099",
+    "date": "2026-09-06T18:00:52+00:00",
+    "title": "Address _signal_break os._exit(1) cleanup gap",
+    "context": "The analysis critique (Section 2.2c) identifies that _signal_break calls os._exit(1) unconditionally, bypassing all cleanup handlers (memory save, trace flush). While _signal_break_with_cleanup replaces this when an agent instance exists, the fallback handler still exists and could be registered in edge cases.",
+    "decision": "Remove or guard the bare os._exit(1) in _signal_break to ensure cleanup handlers always run. If os._exit is required for safety, ensure it is only registered when no agent instance exists and document the trade-off.",
+    "rationale": "The critique explicitly identifies this as a cleanup gap. The analysis notes that _signal_break_with_cleanup exists as the proper replacement, suggesting the bare os._exit(1) is a legacy code path that should be eliminated.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "security",
+      "cleanup",
+      "signal-handling"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "100",
+    "date": "2026-09-06T18:00:52+00:00",
+    "title": "Analyze _pytest_tmp verification fixtures for constraints",
+    "context": "The analysis mentions .pytest_tmp/ verification fixtures but does not analyze their implications. The critique (Section 2.5) identifies that test_absence_claim_confirmed_c0 and test_absence_claim_contradicte0 both contain _FORBIDDEN_PATTERNS = ('eval(',) — suggesting the verification tests check that eval( does not appear in agent.py. Other fixtures test path resolution methods and symbol consistency.",
+    "decision": "Analyze all .pytest_tmp/ verification fixtures to determine what code properties they enforce. Ensure the refactor does not introduce eval( or other forbidden patterns, and that path resolution methods (_resolve_nlp_path, _normalize_path, _safe_path) remain consistent.",
+    "rationale": "The critique explicitly identifies these fixtures as defining acceptance criteria that the analysis failed to examine. The workspace listing confirms these fixture directories exist with agent.py copies and test files.",
+    "affected_files": [
+      ".pytest_tmp/test_absence_claim_confirmed_c0",
+      ".pytest_tmp/test_absence_claim_contradicte0",
+      ".pytest_tmp/test_multi_file_segment_symbol0",
+      ".pytest_tmp/test_symbol_line_does_not_blee0",
+      ".pytest_tmp/test_symbol_line_match_not_fla0"
+    ],
+    "tags": [
+      "testing",
+      "verification",
+      "eval",
+      "forbidden-patterns"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "101",
+    "date": "2026-09-06T18:00:52+00:00",
+    "title": "Clarify scope of agent_core/agent.py",
+    "context": "The analysis leaves ambiguous whether agent_core/agent.py (the smaller Protocol-based LLMAgent) is in scope. The workspace listing shows it as a distinct file with its own LLMAgent class. The root agent.py imports extensively from agent_core, so changes to agent_core could break the root agent.py.",
+    "decision": "Explicitly determine whether agent_core/agent.py is in scope for the refactor. If yes, analyze its security implications (_detect_file_keywords, _insert_temp_system_messages, _pending_temp_systems). If no, ensure the refactor does not break its imports.",
+    "rationale": "The critique (Section 2.4a, Section 4.6) explicitly identifies this as an overlooked scope issue. The workspace listing confirms agent_core/agent.py exists as a separate module. The analysis's own critique notes that the scope must be explicitly defined.",
+    "affected_files": [
+      "agent_core/agent.py",
+      "agent.py"
+    ],
+    "tags": [
+      "architecture",
+      "scope",
+      "imports"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "102",
+    "date": "2026-09-06T18:00:52+00:00",
+    "title": "Analyze _run_chained_tool_loop LLM JSON parsing",
+    "context": "The analysis critique (Section 2.4b) identifies that _run_chained_tool_loop calls json.loads(raw) on LLM output. If the LLM returns malformed JSON, the except block sets parsed = None, but the subsequent isinstance check means the LLM could return arbitrary text appended as a message without validation.",
+    "decision": "Add validation for LLM JSON output in _run_chained_tool_loop. Ensure unexpected JSON keys or malformed responses do not result in unvalidated content being appended to the conversation.",
+    "rationale": "The critique explicitly identifies this as an unanalyzed vulnerability. The analysis's threat model (Section 5) lists 'LLM output trust' as a risk vector. The workspace listing confirms _run_chained_tool_loop exists in agent.py.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "security",
+      "LLM-trust",
+      "JSON-parsing"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "103",
+    "date": "2026-09-06T18:00:52+00:00",
+    "title": "Analyze _nlp_mcp_call TOCTOU and require_exposed",
+    "context": "The analysis critique (Section 2.4c) notes the TOCTOU window is closed by require_exposed=True but does not verify that manager.call_tool actually re-validates under the lock. If the manager's lock is released between the catalog check and the call, the gate is ineffective.",
+    "decision": "Verify that manager.call_tool re-validates server exposure under the same lock as the catalog check. If not, add re-validation or document the residual TOCTOU risk.",
+    "rationale": "The critique explicitly identifies this as an unverified assumption. The workspace listing confirms agent_core/mcp/client.py exists, which likely contains the manager implementation.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/mcp/client.py"
+    ],
+    "tags": [
+      "security",
+      "TOCTOU",
+      "MCP",
+      "concurrency"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "104",
+    "date": "2026-09-06T18:00:52+00:00",
+    "title": "Analyze save_file_py security for NLP write/edit tools",
+    "context": "The analysis critique (Section 2.4d) identifies that _save_verify_note is imported from agent_core.commands.base but never examined. It is the gatekeeper for file writes via the NLP write and edit tools. If save_file_py has path-traversal or overwrite vulnerabilities, the entire NLP write/edit toolset is compromised.",
+    "decision": "Examine agent_core/commands/base.py and the save_file_py function for path-traversal and overwrite vulnerabilities. Ensure the NLP write/edit tools are sandboxed to the workspace.",
+    "rationale": "The critique explicitly identifies this as an unexamined security-critical function. The workspace listing confirms agent_core/commands/ directory exists with multiple command modules.",
+    "affected_files": [
+      "agent_core/commands/base.py",
+      "agent.py"
+    ],
+    "tags": [
+      "security",
+      "path-traversal",
+      "file-write",
+      "NLP-tools"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "105",
+    "date": "2026-09-06T18:00:52+00:00",
+    "title": "Define measurable success metrics",
+    "context": "The analysis's own critique (Section 3.3) identifies that the analysis defines zero measurable security or quality metrics. No count of _DANGEROUS_SHELL_PATTERNS coverage, no path-traversal test coverage, no code-quality targets, no test-coverage thresholds, and no performance benchmarks are defined.",
+    "decision": "Define measurable metrics for the refactor: (1) _DANGEROUS_SHELL_PATTERNS coverage percentage against known injection techniques, (2) path-traversal test coverage, (3) cyclomatic complexity or duplication reduction targets, (4) test-coverage threshold for refactored code, (5) performance benchmarks for _trim_chat_history and other hot paths.",
+    "rationale": "The critique explicitly identifies the absence of metrics as a gap. The analysis's Section 8 mentions success metrics but does not define them quantitatively. Without measurable targets, the refactor's success cannot be verified.",
+    "affected_files": [
+      "agent.py",
+      "tests/test_agent_dry_refactor.py"
+    ],
+    "tags": [
+      "metrics",
+      "testing",
+      "quality",
+      "coverage"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "meta_warnings": [
+      "Negative existence claim without a file reference — cannot be verified against the workspace."
+    ]
+  },
+  {
+    "id": "106",
+    "date": "2026-09-06T18:00:52+00:00",
+    "title": "Preserve atomic write and quarantine mechanisms",
+    "context": "The analysis's success metrics (Section 8) explicitly require that the atomic write pattern (_save_chat_history, _save_memory) and quarantine mechanism (_read_json_quarantining) remain intact for recovery. The critique (Section 2.2g) identifies that _read_json_quarantining uses os.replace which can fail with EXDEV if path and quarantine are on different filesystems.",
+    "decision": "Ensure atomic write and quarantine mechanisms remain unchanged post-refactor. Add EXDEV handling to _read_json_quarantining by falling back to copy-then-delete when os.replace raises OSError with errno.EXDEV.",
+    "rationale": "The analysis's Section 8 explicitly requires these mechanisms to remain intact. The critique identifies a specific failure mode (cross-filesystem os.replace) that could corrupt persistent state. The workspace listing confirms _save_chat_history and _save_memory exist in agent.py.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "security",
+      "atomic-write",
+      "quarantine",
+      "data-integrity"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "meta_warnings": [
+      "Repeats unverified claim reference: EXDEV"
+    ]
   }
 ]
