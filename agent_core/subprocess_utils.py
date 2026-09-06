@@ -6,6 +6,11 @@ import os
 import shlex
 import sys
 
+try:
+    import psutil as _psutil
+except ImportError:  # pragma: no cover – psutil is optional at import time
+    _psutil = None  # type: ignore[assignment]
+
 from .exceptions import ToolExecutionError
 
 logger = logging.getLogger(__name__)
@@ -117,6 +122,87 @@ async def _run_via_shell(
         ) from e
 
 
+_PSHELL_NAMES = frozenset({"powershell.exe", "pwsh.exe"})
+
+
+def _walk_for_powershell() -> bool:
+    """Return True if ``powershell.exe`` or ``pwsh.exe`` appears anywhere in
+    the ancestor process chain of the current process.
+
+    Uses :mod:`psutil` to walk up from the direct parent.  If *psutil* is not
+    installed the check is silently skipped (returns ``False``).
+    """
+    if _psutil is None:  # pragma: no cover
+        return False
+    try:
+        proc = _psutil.Process(os.getppid())
+    except (_psutil.NoSuchProcess, _psutil.AccessDenied):  # pragma: no cover
+        return False
+    while proc is not None:
+        if proc.name().lower() in _PSHELL_NAMES:
+            return True
+        try:
+            proc = proc.parent()
+        except (_psutil.NoSuchProcess, _psutil.AccessDenied):  # pragma: no cover
+            break
+    return False
+
+
+def shell_info() -> dict[str, str]:
+    """Return shell metadata for inclusion in LLM system prompts.
+
+    Detects the *actual* shell the agent runs in by inspecting the ``SHELL``
+    environment variable first, then falling back to platform defaults.
+
+    Returns a dictionary with ``name`` (e.g. ``cmd.exe`` or ``/bin/bash``),
+    ``flag`` (the flag used to pass a command string, e.g. ``/c`` or ``-c``),
+    ``separator`` (e.g. ``&`` or ``&&``), and ``guidance`` (a short human
+    sentence the LLM can use).
+    """
+    shell_env = os.environ.get("SHELL", "")
+    shell_name = os.path.splitext(os.path.basename(shell_env))[0].lower() if shell_env else ""
+
+    # POSIX-like shell detected (bash, zsh, sh, fish, …) – even on Windows
+    # when Git Bash / MSYS2 / WSL is in use.
+    if shell_name in ("bash", "sh", "zsh", "fish", "dash", "ash", "ksh"):
+        return {
+            "name": shell_name,
+            "flag": "-c",
+            "separator": "&&",
+            "guidance": f"Use {shell_name} syntax. Path separators use forward slash.",
+        }
+
+    # Windows: detect PowerShell by walking the process tree.  The run-tool
+    # injects cmd.exe as the direct parent, but the *user's* shell lives
+    # higher up in the chain (e.g. Python → cmd.exe → powershell.exe → …).
+    # Walking ancestors with psutil is the only reliable way to tell them
+    # apart, because environment variables like PSModulePath are persistent
+    # and inherited even in plain cmd.exe sessions.
+    if sys.platform == "win32":
+        ps_parent = _walk_for_powershell()
+        if ps_parent:
+            return {
+                "name": "powershell.exe",
+                "flag": "-Command",
+                "separator": ";",
+                "guidance": "Use PowerShell syntax. Path separators use backslash.",
+            }
+        return {
+            "name": "cmd.exe",
+            "flag": "/c",
+            "separator": "&",
+            "guidance": "Use cmd.exe syntax. Path separators use backslash.",
+        }
+
+    # POSIX default
+    return {
+        "name": "/bin/bash",
+        "flag": "-c",
+        "separator": "&&",
+        "guidance": "Use bash/sh syntax. Path separators use forward slash.",
+    }
+
+
 def _join_for_cmd(cmd: list[str]) -> str:
     """Join builtin arguments for cmd.exe without introducing metacharacters.
 
@@ -129,4 +215,4 @@ def _join_for_cmd(cmd: list[str]) -> str:
 # Type alias for consistent subprocess result handling
 SubprocessResult = tuple[int, bytes, bytes]  # (returncode, stdout, stderr)
 
-__all__: list[str] = ["run_subprocess_with_timeout", "SubprocessResult"]
+__all__: list[str] = ["run_subprocess_with_timeout", "shell_info", "SubprocessResult"]

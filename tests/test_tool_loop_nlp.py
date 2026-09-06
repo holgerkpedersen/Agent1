@@ -836,30 +836,24 @@ class TestRunToolShellAwareness:
     when a Unix-ism like tail/grep is not available (cmd.exe on Windows)."""
 
     def test_detect_shell_returns_something_sensible(self):
-        import os
         from agent import _detect_shell
         shell = _detect_shell()
         assert isinstance(shell, str) and shell
-        if os.name == "nt":
-            assert shell.startswith("cmd.exe") or shell.startswith("PowerShell")
-        else:
-            assert "bash" in shell
+        lower = shell.lower()
+        assert any(k in lower for k in ("bash", "cmd", "powershell", "posix"))
 
-    def test_shell_name_env_var_is_set_and_matches_detect(self):
-        """SHELL_NAME must be set in os.environ and match _detect_shell()."""
-        import os
+    def test_shell_name_consistency(self):
+        """_SHELL_NAME must match _shell_name_token() (process-tree detection)."""
         from agent import _shell_name_token, _SHELL_NAME
-        assert "SHELL_NAME" in os.environ
         token = _shell_name_token()
-        assert os.environ["SHELL_NAME"] == token
         assert _SHELL_NAME == token
+        assert token in ("cmd", "powershell", "bash")
 
     def test_system_prompt_contains_shell_name(self):
         """The system prompt must explicitly state SHELL_NAME so the LLM knows
         its execution environment and avoids mixing Unix/Windows commands."""
-        import os
-        from agent import Agent, _SYSTEM_PROMPT
-        assert f"SHELL_NAME={os.environ['SHELL_NAME']}" in _SYSTEM_PROMPT
+        from agent import _SYSTEM_PROMPT, _SHELL_NAME
+        assert f"SHELL_NAME={_SHELL_NAME}" in _SYSTEM_PROMPT
 
     def test_unknown_command_gets_shell_hint(self):
         import asyncio

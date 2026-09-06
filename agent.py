@@ -889,6 +889,7 @@ class Agent:
             "delegate_batch": self._nlp_delegate_batch,
             "mcp_tools": self._nlp_mcp_tools,
             "mcp_call": self._nlp_mcp_call,
+            "get_current_datetime": self._nlp_get_current_datetime,
         }
 
     async def _nlp_mcp_tools(self, args: dict[str, Any]) -> str:
@@ -1259,6 +1260,19 @@ class Agent:
             return output[:5000]
         except Exception as e:
             return f"Web search error: {e}"
+
+    async def _nlp_get_current_datetime(self, args: dict[str, Any]) -> str:
+        """Return the current date/time, optionally in a given timezone."""
+        from datetime import datetime, timezone
+        import zoneinfo
+        tz_name = args.get("timezone")
+        if tz_name:
+            try:
+                tz = zoneinfo.ZoneInfo(str(tz_name))
+            except (ValueError, zoneinfo.ZoneInfoNotFoundError):
+                return f"Error: unknown timezone '{tz_name}'. Use IANA names like 'UTC' or 'America/New_York'."
+            return datetime.now(tz).isoformat()
+        return datetime.now().isoformat()
 
     async def _tool_read_file(self, path: str, **kwargs: Any) -> str:
         result = await self.fs.read(path)
@@ -2369,36 +2383,43 @@ def _strip_dynamic_system_blocks(text: str) -> str:
 def _detect_shell() -> str:
     """Return a human-readable name for the shell the run tool will use.
 
-    The run tool executes via ``subprocess.run(..., shell=True)``, which on
-    Windows means %COMSPEC% (cmd.exe by default, PowerShell if configured).
+    Delegates to :func:`agent_core.subprocess_utils.shell_info` which walks
+    the process tree to find the *actual* user shell, even when the run-tool
+    injects ``cmd.exe`` as an intermediary.
     """
-    if os.name != "nt":
-        return "bash (or the default POSIX shell)"
-    comspec = os.environ.get("COMSPEC", "").lower()
-    if comspec.endswith(("powershell.exe", "pwsh.exe")):
+    from agent_core.subprocess_utils import shell_info
+    info = shell_info()
+    name = info["name"].lower()
+    if name in ("powershell", "powershell.exe", "pwsh.exe"):
         return "PowerShell"
-    return "cmd.exe (Windows Command Prompt)"
+    if name in ("cmd", "cmd.exe"):
+        return "cmd.exe (Windows Command Prompt)"
+    if name in ("bash", "sh", "zsh", "fish", "dash", "ash", "ksh"):
+        return f"{name} (or the default POSIX shell)"
+    return info["name"]
 
 
 def _shell_name_token() -> str:
-    """Return a short machine-readable shell identifier for SHELL_NAME.
+    """Return a short machine-readable shell identifier.
 
     One of ``bash``, ``cmd``, or ``powershell`` — the canonical names used in
-    environment variables and system-prompt instructions so the LLM gets an
-    unambiguous statement of its execution environment.
+    system-prompt instructions so the LLM gets an unambiguous statement of its
+    execution environment.  Derived from the real detected shell, not from
+    environment variables.
     """
-    if os.name != "nt":
-        return "bash"
-    comspec = os.environ.get("COMSPEC", "").lower()
-    if comspec.endswith(("powershell.exe", "pwsh.exe")):
+    from agent_core.subprocess_utils import shell_info
+    info = shell_info()
+    name = info["name"].lower()
+    if name in ("powershell", "powershell.exe", "pwsh.exe"):
         return "powershell"
-    return "cmd"
+    if name in ("cmd", "cmd.exe"):
+        return "cmd"
+    return "bash"
 
 
-#: Explicit shell identity propagated to subprocesses and the LLM system prompt.
-#: Set at import time via setdefault so an external launcher can override it,
-#: but defaults to what _detect_shell() reports for this process.
-_SHELL_NAME: str = os.environ.setdefault("SHELL_NAME", _shell_name_token())
+#: Explicit shell identity propagated to the LLM system prompt.
+#: Derived from the real detected shell via shell_info() — no env var needed.
+_SHELL_NAME: str = _shell_name_token()
 
 
 #: System prompt for the NLP tool loop, built once at import time (the only

@@ -15,6 +15,7 @@ from .base import Command, auto_choice, show_file_diff, read_input, stop_request
 from .doc_paths import find_input
 from agent_core import to_windows_path, workspace_path
 from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
+from agent_core.subprocess_utils import shell_info as _shell_info
 
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
@@ -1933,6 +1934,10 @@ class ImplementCommand(Command):
                     "# code\n"
                     "```"
                 )
+            _si = _shell_info()
+            system_prompt += (
+                f"\n\nSHELL: {_si['name']}. {_si['guidance']}"
+            )
             impl_messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_context}

@@ -1,5 +1,6 @@
 """Unit tests for agent_core.subprocess_utils timeout handling verification."""
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -141,3 +142,74 @@ def test_tool_execution_error_inherits_agent_base_error() -> None:
                 ["python", "-c", "import time; time.sleep(10)"], timeout_sec=2.0
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# shell_info() tests
+# ---------------------------------------------------------------------------
+import sys
+from agent_core.subprocess_utils import shell_info
+
+
+def test_shell_info_returns_dict() -> None:
+    """shell_info() must return a dict with required keys."""
+    info = shell_info()
+    assert isinstance(info, dict)
+    for key in ("name", "flag", "separator", "guidance"):
+        assert key in info, f"missing key {key!r}"
+
+
+def test_shell_info_current_platform() -> None:
+    """On this platform shell_info() should match the actual shell."""
+    import agent_core.subprocess_utils as _mod
+
+    info = shell_info()
+    shell_env = os.environ.get("SHELL", "")
+    shell_name = os.path.splitext(os.path.basename(shell_env))[0].lower() if shell_env else ""
+    if shell_name in ("bash", "sh", "zsh", "fish", "dash", "ash", "ksh"):
+        # SHELL env var set to a known POSIX shell (e.g. Git Bash on Windows)
+        assert info["name"] == shell_name
+        assert info["flag"] == "-c"
+    elif sys.platform == "win32":
+        if _mod._walk_for_powershell():
+            assert info["name"] == "powershell.exe"
+            assert info["flag"] == "-Command"
+            assert info["separator"] == ";"
+        else:
+            assert info["name"] == "cmd.exe"
+            assert info["flag"] == "/c"
+    else:
+        assert info["name"] == "/bin/bash"
+        assert info["flag"] == "-c"
+
+
+def test_shell_info_values_are_strings() -> None:
+    """All shell_info() values must be non-empty strings."""
+    for v in shell_info().values():
+        assert isinstance(v, str)
+        assert len(v) > 0
+
+
+def test_shell_info_powershell_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When powershell.exe appears in the process tree, detect PowerShell."""
+    import agent_core.subprocess_utils as _mod
+
+    monkeypatch.setattr(_mod, "_walk_for_powershell", lambda: True)
+    monkeypatch.delenv("SHELL", raising=False)
+    info = shell_info()
+    assert info["name"] == "powershell.exe"
+    assert info["flag"] == "-Command"
+    assert info["separator"] == ";"
+    assert "PowerShell" in info["guidance"]
+
+
+def test_shell_info_cmd_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without PowerShell in the process tree, fall back to cmd.exe."""
+    import agent_core.subprocess_utils as _mod
+
+    monkeypatch.setattr(_mod, "_walk_for_powershell", lambda: False)
+    monkeypatch.delenv("SHELL", raising=False)
+    info = shell_info()
+    assert info["name"] == "cmd.exe"
+    assert info["flag"] == "/c"
+    assert info["separator"] == "&"

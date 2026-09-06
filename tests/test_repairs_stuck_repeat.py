@@ -246,24 +246,23 @@ def applied_stuck_repair(monkeypatch):
     This module is marked ``harnessfix_self_test`` so the autonomous gate
     excludes it and the real tree is never mutated mid-loop.
 
-    If autonomous self-improvement already merged this repair into the committed
-    source, apply() returns "already applied (no-op)" — we leave that state as-is
-    (don't revert) so the fixture never undoes a legitimately-merged code change.
-    Only reverts when it actually performed a fresh apply."""
+    Always snapshots the original file content and restores it in teardown,
+    regardless of whether the repair was freshly applied or already present.
+    This prevents the autonomous driver's ``git stash pop`` from conflicting
+    with a file that was left in a different state by the gate run."""
     import harnessfix.repairs.stuck_repeat as mod
 
     real = _REAL_TOOL_LOOP  # real file, captured at import time
+    original_content = real.read_text(encoding="utf-8")
     mod._TARGET = real
     summary = mod.apply()
-    freshly_applied = "already applied" not in summary
     assert "_REPEAT_HINTS" in summary or "already applied" in summary
     try:
         yield
     finally:
-        if freshly_applied:
-            # We changed the tree — restore it.  If already applied on HEAD,
-            # leave the committed state untouched (don't revert a merged repair).
-            mod.revert()
+        # Always restore the exact pre-test content so the autonomous
+        # driver's stash pop never sees a conflicting working tree.
+        real.write_text(original_content, encoding="utf-8")
         mod._TARGET = real
 
 
@@ -342,14 +341,17 @@ def test_repair_is_catalogued_on_the_lifecycle_layer():
 def _original_source() -> str:
     """The reverted (pre-repair) source of tool_loop.py.
 
-    Autonomous self-improvement may have already merged BOTH catalog repairs
-    into the real tree, so reading it directly yields an *applied* snapshot
-    rather than the original bytes these roundtrip tests need to start from.
-    We read on a throwaway temp copy and revert there (best-effort) so the
-    returned source is always the un-repaired baseline regardless of what's
-    committed or left by a prior test run — keeping unit tests independent of
-    tree state.  NOTE: this never touches the real file."""
+    Autonomous self-improvement may have already merged this repair into the
+    real tree, so reading it directly can yield an *applied* snapshot rather
+    than the original bytes the roundtrip tests need to start from.  We read
+    on a temp copy and revert there (best-effort) so the returned source is
+    always the un-repaired baseline regardless of what's committed or left by
+    a prior test run — keeping these unit tests independent of tree state.
+
+    NOTE: this operates on its own throwaway target, never the real file.
+    """
     import harnessfix.repairs.stuck_repeat as mod
+    from harnessfix.repairs.abandonment_resume import revert as _revert_abandon
 
     real = Path("agent_core/llm/tool_loop.py")
     local = Path(tempfile.mkdtemp()) / "tool_loop.py"
@@ -357,10 +359,12 @@ def _original_source() -> str:
     saved_target = mod._TARGET
     try:
         mod._TARGET = local
-        for _r in (mod.revert, revert_stuck):
+        # Best-effort revert of BOTH catalog repairs so we get the true
+        # original baseline even if autonomous self-improve left them merged.
+        for _r in (mod.revert, _revert_abandon):
             try:
                 _r()
-            except Exception:  # noqa: BLE001 - best-effort only
+            except Exception:
                 pass
     finally:
         mod._TARGET = saved_target
@@ -372,8 +376,8 @@ def test_apply_and_roundtrip(tmp_path, monkeypatch):
     revert restores the original bytes exactly."""
     import harnessfix.repairs.stuck_repeat as mod
 
-    # Reverted baseline so this passes regardless of whether autonomous
-    # self-improvement already merged the repair into source.
+    # Start from the reverted baseline so this passes regardless of whether
+    # autonomous self-improvement already merged the repair into the tree.
     original = _original_source()
     local = tmp_path / "agent_core" / "llm" / "tool_loop.py"
     local.parent.mkdir(parents=True)
@@ -383,7 +387,11 @@ def test_apply_and_roundtrip(tmp_path, monkeypatch):
     summary = mod.apply()
     applied = local.read_text(encoding="utf-8")
     assert "_REPEAT_HINTS.get(tool_name, _REPEAT_HINT_DEFAULT)" in applied
-    assert "Take a different action or " + "answer in text." not in applied
+    # The old second-strike suffix must be gone (replaced by _REPEAT_HINTS lookup).
+    # Build the fragment dynamically to avoid a literal that would self-block the
+    # collision guard.
+    old_suffix = "Take a different action or " + "answer in text."
+    assert old_suffix not in applied
     assert "_REPEAT_HINTS" in summary
 
     mod.revert()
@@ -497,18 +505,20 @@ def test_loop_now_proposes_a_lifecycle_repair_for_stuck_traces(tmp_path, monkeyp
     full gate path runs with it."""
     import harnessfix.repairs.stuck_repeat as mod
 
-    # The root conftest redirects ``_TARGET`` to a session-scoped temp copy of
-    # the real tree (which has this repair already merged by autonomous self-
-    # improvement).  Revert that redirected target so is_applied() returns False
-    # and the loop actually exercises apply+accept instead of skipping.
-    try:
-        mod.revert()
-    except Exception:
-        pass
 
     traces_dir = tmp_path / "traces"
     traces_dir.mkdir()
     _write_stuck_trace(traces_dir, "stuck1")
+
+    # The root conftest redirects ``_TARGET`` to a temp copy derived from the
+    # real tree.  If autonomous self-improvement already merged this repair into
+    # source, that temp copy starts in the *applied* state and the loop's
+    # already-applied guard would skip it (verdict=no_repair_catalogued).
+    # Revert the redirected target so the proposal+apply path is exercised.
+    try:
+        mod.revert()
+    except Exception:
+        pass
 
     monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
     monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))

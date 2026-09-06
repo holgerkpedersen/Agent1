@@ -10,7 +10,13 @@ Handlers live on the ``Agent`` instance (``agent_core`` namespace stays
 import-free of ``agent``); each handler is ``async def name(args: dict) -> str``.
 """
 
+from __future__ import annotations
+
 from typing import Any
+
+from agent_core.subprocess_utils import shell_info as _shell_info
+
+_SHELL = _shell_info()
 
 # ---------------------------------------------------------------------------
 # OpenAI-format tool schemas for the conversational agent.
@@ -112,8 +118,10 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "run",
             "description": (
+                f"The shell for the run tool is: {_SHELL['name']}. "
                 "Run a shell command in the workspace. Use for tests, scripts, "
-                "or build steps. Output is truncated to 5000 chars. Non-zero "
+                f"or build steps. {_SHELL['guidance']} "
+                "Output is truncated to 5000 chars. Non-zero "
                 "exit codes are shown as [EXIT CODE: N] at the end of the "
                 "output — do NOT try to capture them via shell pipelines or "
                 "Python (sys.exitcode is only set at interpreter exit)."
@@ -348,6 +356,28 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["server", "tool"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_current_datetime",
+            "description": (
+                "Get the current date and time, optionally in a specific "
+                "timezone. Returns ISO 8601 formatted string."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "timezone": {
+                        "type": "string",
+                        "description": (
+                            "IANA timezone name (e.g. 'UTC', "
+                            "'America/New_York'). Defaults to local time."
+                        ),
+                    },
+                },
             },
         },
     },

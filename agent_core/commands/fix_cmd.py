@@ -42,6 +42,7 @@ from pathlib import Path
 from .base import Command, show_file_diff, save_file_py, read_choice, stop_requested
 from .doc_paths import find_doc
 from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
+from agent_core.subprocess_utils import shell_info as _shell_info
 from .implement_cmd import (
     _apply_patch as _impl_apply_patch,
     _classify_error,
@@ -1840,6 +1841,11 @@ class FixCommand(Command):
                 constraints = _decision_constraints_for(full)
                 if constraints:
                     system_prompt += constraints
+                _si = _shell_info()
+                system_prompt += (
+                    "\n\nIMPORTANT: The shell for the run tool is "
+                    f"{_si['name']}. {_si['guidance']}"
+                )
                 msgs = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": "\n".join(user_sections) + f"\n\nOutput format:\n[PATCH: {rel_file}]\n@@ -line,count +line,count @@\n unchanged line\n-removed line\n+added line\n\nOR if a larger rewrite is needed:\n[FILE: {rel_file}]\n```python\n# complete corrected file\n```"},
