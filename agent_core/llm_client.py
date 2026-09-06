@@ -23,10 +23,17 @@ class LLMClient:
     async def chat(self, prompt: str) -> LlmResponse:
         """Send message to LLM and return structured response."""
         try:
+            headers = {
+                "x-opencode-project": "agent1",
+                "x-opencode-session": "agent1-session",
+                "x-opencode-request": "req-1",
+                "x-opencode-client": "tui",
+            }
             async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
                 resp = await client.post(
                     self.api_url + "/chat/completions",
                     json={"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}]},
+                    headers=headers,
                 )
             if resp.status_code != 200:
                 logger.warning("LLM returned HTTP %s", resp.status_code)

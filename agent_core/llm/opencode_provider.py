@@ -310,24 +310,19 @@ class OpencodeProvider:
     # ------------------------------------------------------------------
 
     def _headers(self, json_body: bool = True) -> dict[str, str]:
-        if self.zen_mode:
-            # Zen's rate-limiter whitelists requests that carry the same
-            # x-opencode-* headers the opencode TUI sends; without them the
-            # backend treats the caller as anonymous and applies much tighter
-            # free-tier limits (see gist/NeiP4n and issue #42977).
-            headers: dict[str, str] = {
-                "User-Agent": "opencode",
-                "x-opencode-project": "agent1",
-                "x-opencode-session": "agent1-session",
-                "x-opencode-request": "req-1",
-                "x-opencode-client": "tui",
-            }
-        else:
-            headers: dict[str, str] = {
-                #: The hosted gateway sits behind Cloudflare, which rejects the
-                #: default "Python-urllib" user agent (error 1010).
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            }
+        # x-opencode-session header is required by the OpenCode Go API for
+        # proper request tracking. Without it, requests may error.
+        headers: dict[str, str] = {
+            "User-Agent": "opencode",
+            "x-opencode-project": "agent1",
+            "x-opencode-session": "agent1-session",
+            "x-opencode-request": "req-1",
+            "x-opencode-client": "tui",
+        }
+        if not self.zen_mode:
+            # Standard opencode-go mode: use the browser-like user agent
+            # (Cloudflare rejects the default Python-urllib user agent).
+            headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         if json_body:
             headers["Content-Type"] = "application/json"
         if self.api_mode and self.api_key:
