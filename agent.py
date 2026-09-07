@@ -1491,13 +1491,41 @@ class Agent:
                 f"{', '.join(unmet)}"
             )
 
+        # Collect upstream dependency results so the subagent can use them.
+        dep_results: dict[str, Any] = {}
+        for dep_id in next_task.depends_on:
+            dep_path = Path(state["plan_dir"]) / f"dep_{dep_id}_result.json"
+            if dep_path.exists():
+                try:
+                    dep_results[dep_id] = json.loads(
+                        dep_path.read_text(encoding="utf-8")
+                    )
+                except Exception:
+                    pass
+
         sub = self.spawn_subagent(
             name=f"exec-{next_task.id}", role=next_task.role
         )
-        result = await sub.respond(next_task.description)
+        desc = next_task.description
+        if dep_results:
+            parts = []
+            for dep_id, res in dep_results.items():
+                summary = (
+                    res.get("summary") or res.get("result") or ""
+                ) if isinstance(res, dict) else str(res)
+                parts.append(f"- {dep_id}: {summary}")
+            desc += "\n\nUpstream results from dependencies:\n" + "\n".join(parts)
+        result = await sub.respond(desc)
 
+        # Determine whether the subagent actually succeeded.
+        _TURN_CAP_SENTINEL = "turn cap reached"
+        task_failed = (
+            _TURN_CAP_SENTINEL in result
+            or not result.strip()
+        )
+        status_label = "failed" if task_failed else "completed"
         report_entry = (
-            f"- [{next_task.id}] completed (role: {next_task.role})"
+            f"- [{next_task.id}] {status_label} (role: {next_task.role})"
         )
         try:
             with open(report_path, "a", encoding="utf-8") as f:
@@ -1512,7 +1540,7 @@ class Agent:
 
         preview = result[:200] + ("..." if len(result) > 200 else "")
         lines = [
-            f"Task [{next_task.id}] completed (role: {next_task.role}).",
+            f"Task [{next_task.id}] {status_label} (role: {next_task.role}).",
             f"Result preview: {preview}",
         ]
         if remaining:
