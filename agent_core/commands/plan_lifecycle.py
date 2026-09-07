@@ -39,7 +39,7 @@ class PlanLifecycleManager:
             raise FileNotFoundError(f"No proposed plan found at {src}")
             
         shutil.move(str(src), str(dst))
-        self._log_transition(src, PlanTransition.START, PlanStatus.EXECUTING)
+        self._log_transition(dst, PlanTransition.START, PlanStatus.EXECUTING)
         return dst
         
     def finish_plan(self) -> Path:
