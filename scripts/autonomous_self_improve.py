@@ -11,8 +11,9 @@ improves itself without human clicks:
    records the outcome to ``harnessfix/history`` for feedback.
 3. Repeats until a stop condition is met (no repair catalogued, a rejected
    round, diminishing returns, or the kill-switch fires).
-4. Leaves a git checkpoint before each iteration so ``git revert`` is a
-   one-step rollback of any autonomous change.
+4. Snapshots the repair's target file(s) before each iteration so a
+   rejected/crashed iteration can be restored in-place (accepted repairs
+   are committed and rolled back via ``git revert``).
 
 Safety rails
 ------------
@@ -69,7 +70,7 @@ def _git(args: list[str], check: bool = True) -> subprocess.CompletedProcess[str
     except FileNotFoundError as exc:
         # git is not on PATH for this process.  Surface a clear, actionable
         # error instead of a bare FileNotFoundError pointing at the _git() call
-        # site (e.g. the per-iteration `git stash push` on line 146).
+        # site (e.g. the per-iteration `git status` or `git add`).
         raise RuntimeError(
             "git executable not found on PATH; the autonomous driver requires "
             "git to be installed and reachable.  Add git to PATH and retry."
@@ -402,6 +403,46 @@ def _repair_files(repair_id: str | None) -> tuple[str, ...]:
     return CATALOG[repair_id].files if repair_id in CATALOG else ()
 
 
+def _catalog_target_files() -> list[Path]:
+    """Tracked file(s) any catalog repair can modify (union of CATALOG files).
+
+    Currently just ``agent_core/llm/tool_loop.py``; derived from the catalog
+    (not hardcoded) so a future repair targeting a new file is covered
+    automatically.
+    """
+    from harnessfix.repairs import CATALOG
+
+    files: set[Path] = set()
+    for repair in CATALOG.values():
+        for rel in repair.files:
+            files.add(REPO_ROOT / rel)
+    return sorted(files)
+
+
+def _snapshot_files(files: list[Path]) -> dict[Path, bytes | None]:
+    """Capture the pre-iteration bytes of ``files`` (None if absent)."""
+    snap: dict[Path, bytes | None] = {}
+    for f in files:
+        try:
+            snap[f] = f.read_bytes() if f.exists() else None
+        except OSError:
+            snap[f] = None
+    return snap
+
+
+def _restore_snapshot(snap: dict[Path, bytes | None]) -> None:
+    """Best-effort restore of snapshotted files to their pre-iteration state."""
+    for f, data in snap.items():
+        try:
+            if data is None:
+                if f.exists():
+                    f.unlink()
+            else:
+                f.write_bytes(data)
+        except OSError:
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="autonomous_self_improve",
@@ -457,18 +498,16 @@ def main(argv: list[str] | None = None) -> int:
                   f"{iteration}.")
             return 0
 
-        # Git checkpoint so any autonomous change is a one-step revert.
-        # Track whether the checkpoint was actually created: a `git stash push`
-        # can be a no-op (nothing to stash) or fail outright (e.g. no initial
-        # commit), and blindly popping afterwards would pop an *unrelated*
-        # stash and corrupt state.
-        checkpoint = f"autonomous-checkpoint-iter-{iteration}"
-        pushed = _git(["stash", "push", "-u", "-m", checkpoint], check=False)
-        have_checkpoint = pushed.returncode == 0
-        if not have_checkpoint:
-            print(f"[autonomous] WARNING: git stash push failed "
-                  f"(rc={pushed.returncode}); continuing without a checkpoint: "
-                  f"{pushed.stderr.strip()}")
+        # Scoped checkpoint: snapshot ONLY the file(s) a catalog repair can
+        # touch, not the whole tree.  The old whole-tree `git stash` was a
+        # corruption source: a no-op `stash push` on a clean tree returned
+        # rc=0 (so have_checkpoint was True with no stash created), and a later
+        # `stash pop` then popped an *unrelated stale* stash, leaving conflict
+        # markers in the working tree (tests/test_repairs_stuck_repeat.py).
+        # A scoped byte snapshot has no stale-stash failure mode and never
+        # sweeps unrelated uncommitted work.  Accepted repairs are committed
+        # (below); rejected/crashed iterations restore the snapshot.
+        snapshot = _snapshot_files(_catalog_target_files())
 
         print(f"\n[autonomous] === iteration {iteration}/{args.max_iterations} ===")
         print(
@@ -494,8 +533,7 @@ def main(argv: list[str] | None = None) -> int:
         except SystemExit as exc:
             # run_loop raises SystemExit when no traces exist — a clean stop.
             print(f"[autonomous] Loop stopped: {exc}")
-            if have_checkpoint:
-                _git(["stash", "pop"], check=False)
+            _restore_snapshot(snapshot)
             clear_progress()
             return 0
         except KeyboardInterrupt:
@@ -504,15 +542,13 @@ def main(argv: list[str] | None = None) -> int:
             # so the tree is not left dirty, then re-raise to actually stop.
             print("[autonomous] Interrupted (KeyboardInterrupt) — restoring "
                   "checkpoint and halting.")
-            if have_checkpoint:
-                _git(["stash", "pop"], check=False)
+            _restore_snapshot(snapshot)
             raise
         except Exception as exc:  # noqa: BLE001 - never let one bad iteration
             # crash the whole driver with a dirty tree.  Log, restore the
             # checkpoint, and stop so the human can inspect.
             print(f"[autonomous] Iteration {iteration} raised {type(exc).__name__}: {exc}")
-            if have_checkpoint:
-                _git(["stash", "pop"], check=False)
+            _restore_snapshot(snapshot)
             clear_progress()
             return 1
 
@@ -555,13 +591,10 @@ def main(argv: list[str] | None = None) -> int:
                     "committable change (tree was clean at commit time). "
                     "Stopping to avoid spinning on a phantom repair."
                 )
-                if have_checkpoint:
-                    _git(["stash", "pop"], check=False)
+                _restore_snapshot(snapshot)
                 clear_progress()
                 return 1
-            # Restore the stash (nothing should remain uncommitted after commit).
-            if have_checkpoint:
-                _git(["stash", "drop"], check=False)
+            # Accepted + committed: repair is in git; snapshot discarded.
             continue
 
         # Any non-accepted verdict (review_required_fail_closed,
@@ -569,8 +602,7 @@ def main(argv: list[str] | None = None) -> int:
         # apply_failed, revert_failed) ends the loop: there is no improvement
         # to keep, and re-running would only repeat the same dead end.
         print(f"[autonomous] No accepted repair this round ({verdict}) — stopping.")
-        if have_checkpoint:
-            _git(["stash", "pop"], check=False)
+        _restore_snapshot(snapshot)
         clear_progress()
         return 0
 

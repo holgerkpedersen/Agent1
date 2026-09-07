@@ -172,8 +172,8 @@ def test_stops_on_rejected_verdict(monkeypatch, tmp_path):
 
 def test_iteration_exception_is_caught_and_stops(monkeypatch, tmp_path):
     """A non-SystemExit exception in an iteration must NOT crash the driver
-    with a traceback; it should be logged, the checkpoint restored, and the
-    loop should stop (return 1)."""
+    with a traceback; it should be logged, the scoped checkpoint restored, and
+    the loop should stop (return 1)."""
     monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)
     git_calls: list[list[str]] = []
 
@@ -181,21 +181,28 @@ def test_iteration_exception_is_caught_and_stops(monkeypatch, tmp_path):
         git_calls.append(args)
         return subprocess.CompletedProcess(args, 0, "", "")
 
+    target = tmp_path / "tool_loop.py"
+    target.write_text("original\n", encoding="utf-8")
+    monkeypatch.setattr(drv, "_catalog_target_files", lambda: [target])
+
     def boom(iteration, **k):
+        target.write_text("corrupted\n", encoding="utf-8")
         raise RuntimeError("boom in iteration")
 
     with mock.patch.object(drv, "_stop_requested", lambda: False), \
          mock.patch.object(drv, "_git", spy_git), \
          mock.patch.object(drv, "run_iteration", boom):
-        rc = drv.main(["--auto", "--max-iterations", "5"])
+        rc = drv.main(["--auto", "--source", "catalog", "--max-iterations", "5"])
     assert rc == 1
-    # The checkpoint stash was popped so the tree is not left dirty.
-    assert any(c[:2] == ["stash", "pop"] for c in git_calls)
+    # The catalog loop no longer uses git stash (no stale-stash pops).
+    assert not any(c[:1] == ["stash"] for c in git_calls)
+    # The scoped checkpoint was restored: the file is back to its original bytes.
+    assert target.read_text(encoding="utf-8") == "original\n"
 
 
-def test_keyboard_interrupt_restores_checkpoint_and_reraises(monkeypatch):
+def test_keyboard_interrupt_restores_checkpoint_and_reraises(monkeypatch, tmp_path):
     """A Ctrl+C (KeyboardInterrupt, a BaseException) during an iteration must
-    restore the checkpoint so the tree is not left dirty, and must still
+    restore the scoped checkpoint so the tree is not left dirty, and must still
     propagate so the process actually stops."""
     monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)
     git_calls: list[list[str]] = []
@@ -204,16 +211,50 @@ def test_keyboard_interrupt_restores_checkpoint_and_reraises(monkeypatch):
         git_calls.append(args)
         return subprocess.CompletedProcess(args, 0, "", "")
 
+    target = tmp_path / "tool_loop.py"
+    target.write_text("original\n", encoding="utf-8")
+    monkeypatch.setattr(drv, "_catalog_target_files", lambda: [target])
+
     def interrupt(iteration, **k):
+        target.write_text("corrupted\n", encoding="utf-8")
         raise KeyboardInterrupt()
 
     with mock.patch.object(drv, "_stop_requested", lambda: False), \
          mock.patch.object(drv, "_git", spy_git), \
          mock.patch.object(drv, "run_iteration", interrupt):
         with pytest.raises(KeyboardInterrupt):
-            drv.main(["--auto", "--max-iterations", "5"])
-    # The checkpoint stash was popped before re-raising.
-    assert any(c[:2] == ["stash", "pop"] for c in git_calls)
+            drv.main(["--auto", "--source", "catalog", "--max-iterations", "5"])
+    # The catalog loop no longer uses git stash.
+    assert not any(c[:1] == ["stash"] for c in git_calls)
+    assert target.read_text(encoding="utf-8") == "original\n"
+
+
+def test_catalog_loop_never_uses_git_stash(monkeypatch, tmp_path):
+    """Root-cause regression: the catalog loop must NOT use ``git stash`` for
+    its per-iteration checkpoint.  A whole-tree ``git stash`` on a clean tree
+    was a no-op (rc=0) yet set ``have_checkpoint=True``, so a later
+    ``git stash pop`` popped an unrelated stale stash and corrupted the working
+    tree with conflict markers (tests/test_repairs_stuck_repeat.py).  The catalog
+    loop now snapshots only its target file(s), so no stash command is ever
+    issued."""
+    monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)
+    git_calls: list[list[str]] = []
+
+    def spy_git(args, check=True):
+        git_calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    target = tmp_path / "tool_loop.py"
+    target.write_text("original\n", encoding="utf-8")
+    monkeypatch.setattr(drv, "_catalog_target_files", lambda: [target])
+
+    with mock.patch.object(drv, "_stop_requested", lambda: False), \
+         mock.patch.object(drv, "_git", spy_git), \
+         mock.patch.object(drv, "run_iteration", lambda *a, **k: _fake_summary("no_repair_catalogued")):
+        rc = drv.main(["--auto", "--source", "catalog", "--max-iterations", "3"])
+    assert rc == 0
+    # No stash command of any kind is issued by the catalog loop.
+    assert not any(c[:1] == ["stash"] for c in git_calls)
 
 
 def test_git_missing_raises_clear_error(monkeypatch):
