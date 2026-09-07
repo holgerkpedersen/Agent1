@@ -30,6 +30,9 @@ from agent_core.commands.plan_dry_run import PlanDryRunner, MUTATING_TOOLS
 from agent_core.commands.plan_decision_gate import PlanDecisionGate
 from agent_core.file_protection import is_protected
 
+import asyncio
+from agent import Agent
+
 
 # ── plan_schema ──────────────────────────────────────────────────────────
 
@@ -358,3 +361,111 @@ class TestPlanNlpToolsRegistration:
         handlers = agent._nlp_tool_handlers()
         for tool in ("plan_status", "plan_start", "plan_step", "plan_finish"):
             assert tool in handlers, f"{tool} handler not registered"
+
+
+# ── Regression tests for bug fixes ─────────────────────────────────────
+
+class TestLifecycleRegression:
+    """Regression: start_plan must log the *destination* path, not source."""
+
+    def test_start_plan_logs_executing_path(self, tmp_path: Path):
+        """Bug fix: _log_transition used `src` (proposed) instead of `dst`
+        (executing) after the file had already been moved."""
+        plan_dir = tmp_path / "docs"
+        plan_dir.mkdir()
+        (plan_dir / "plan_proposed.md").write_text("# Plan\n")
+
+        lm = PlanLifecycleManager(plan_dir, tmp_path)
+        lm.start_plan()
+
+        log_file = plan_dir / ".plans.jsonl"
+        assert log_file.exists()
+        lines = log_file.read_text().strip().splitlines()
+        entry = json.loads(lines[0])
+        # The logged plan_id must be the executing file, not the proposed one
+        assert "plan_executing" in entry["plan_id"]
+        assert "plan_proposed" not in entry["plan_id"]
+
+
+class TestPlanStepRegression:
+    """Regression: plan_step must pass dependency results and detect failures.
+
+    ``plan_step`` (``agent._nlp_plan_step``) is filesystem-driven: it reads the
+    plan from ``.docs/<stamp>/plan_executing.md``, completed task ids from
+    ``plan_execution_report.md``, and dependency results from
+    ``dep_<id>_result.json``.  The plan must use the ``## Tasks`` block format
+    that ``parse_plan_tasks`` expects (see ``plan exec`` in plan_cmd.py).
+    """
+
+    def _make_run(self, tmp_path: Path) -> Path:
+        """Create ``.docs/<stamp>/plan_executing.md`` with T1 and T2 (T2 deps T1)."""
+        from agent_core.commands.doc_paths import run_stamp
+
+        run_dir = tmp_path / ".docs" / run_stamp()
+        run_dir.mkdir(parents=True)
+        (run_dir / "plan_executing.md").write_text(
+            "# Plan\n\n"
+            "## Tasks\n"
+            "- [T1] task one (role: implementer)\n"
+            "- [T2] task two (role: implementer), deps: T1\n",
+            encoding="utf-8",
+        )
+        return run_dir
+
+    @staticmethod
+    def _agent(tmp_path: Path):
+        agent = Agent.__new__(Agent)
+        agent.mode = "build"
+        agent.workspace = str(tmp_path)
+        return agent
+
+    def test_step_rejects_unmet_dependency(self, tmp_path: Path):
+        """T2 depends on T1 — executing T2 before T1 completed must fail."""
+        self._make_run(tmp_path)
+        agent = self._agent(tmp_path)
+
+        result = asyncio.run(agent._nlp_plan_step({"task_id": "T2"}))
+        assert "unmet" in result.lower()
+
+    def test_step_reports_executor_failure(self, tmp_path: Path):
+        """An empty subagent result must mark the task failed, not completed."""
+        run_dir = self._make_run(tmp_path)
+        agent = self._agent(tmp_path)
+
+        class EmptySub:
+            async def respond(self, desc):
+                return ""  # empty => executor failure
+
+        agent.spawn_subagent = lambda **kw: EmptySub()
+
+        result = asyncio.run(agent._nlp_plan_step({"task_id": "T1"}))
+        assert "failed" in result.lower()
+        report = (run_dir / "plan_execution_report.md").read_text(encoding="utf-8")
+        assert "[T1] failed" in report
+
+    def test_step_passes_dep_results(self, tmp_path: Path):
+        """Dependency results from completed tasks must be forwarded to the subagent."""
+        run_dir = self._make_run(tmp_path)
+        # T1 is completed and produced a result.
+        (run_dir / "plan_execution_report.md").write_text(
+            "- [T1] completed (role: implementer)\n", encoding="utf-8"
+        )
+        (run_dir / "dep_T1_result.json").write_text(
+            json.dumps({"summary": "T1 done"}), encoding="utf-8"
+        )
+        agent = self._agent(tmp_path)
+
+        captured: dict[str, str] = {}
+
+        class FakeSub:
+            async def respond(self, desc):
+                captured["desc"] = desc
+                return "ok"
+
+        agent.spawn_subagent = lambda **kw: FakeSub()
+
+        result = asyncio.run(agent._nlp_plan_step({"task_id": "T2"}))
+        assert "completed" in result.lower()
+        # The description passed to the subagent must contain the upstream result.
+        assert "T1" in captured.get("desc", "")
+        assert "T1 done" in captured.get("desc", "")
