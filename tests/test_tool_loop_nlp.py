@@ -199,6 +199,33 @@ class TestToolLoopExecution:
         assert len(notes) == 2
         assert "NOTE: This exact call has now been executed" in notes[1]
 
+    def test_idempotent_tool_repeats_without_stuck_note(self):
+        """Idempotent/read-only tools (get_current_datetime, git, etc.) should
+        re-execute freely on duplicate calls without triggering the stuck-repeat
+        NOTE — the result is identical by design and there is no better action."""
+        fake = _ScriptedLLM([
+            ("get_current_datetime", {}),
+            ("get_current_datetime", {}),
+            ("get_current_datetime", {}),
+            "The time is noted.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return "2026-09-07T11:00:00"
+
+        runner = ToolLoopRunner(max_iterations=20)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        # All three calls were executed (not blocked).
+        assert executed == ["get_current_datetime", "get_current_datetime", "get_current_datetime"]
+        assert final_text == "The time is noted."
+        # No stuck-repeat NOTE was injected into the tool messages.
+        tool_msgs = [m["content"] for m in messages if m["role"] == "tool"]
+        assert not any("NOTE: This exact call" in m for m in tool_msgs)
+        assert not any("three times" in m for m in tool_msgs)
+
     def test_non_consecutive_identical_call_still_executes(self):
         """A legit re-read (read -> edit -> read) must still work."""
         fake = _ScriptedLLM([

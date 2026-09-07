@@ -148,6 +148,15 @@ _REPEAT_HINT_DEFAULT = (
 
 _PATH_MISS_PREFIXES = ("File not found:", "Error reading file:")
 
+#: Tools that are purely idempotent/read-only — repeating them with the same
+#: arguments always yields the same result (by design).  The stuck-repeat NOTE
+#: should not fire for these: the model legitimately wants to re-check the same
+#: value and there is no "different action" to take.
+_IDEMPOTENT_TOOLS: frozenset[str] = frozenset({
+    "get_current_datetime",
+    "git",
+})
+
 #: Steering note injected with a parent-directory listing when a tool result shows
 #: a missing path — supplies the simple existence check the model lacks so it can
 #: progress instead of getting stuck on the same non-existent path (decision #035).
@@ -885,7 +894,13 @@ class ToolLoopRunner:
                 _seen_this_iter.add(call_key)
                 total_runs = _run_seen_calls.get(call_key, 0) + 1
                 _run_seen_calls[call_key] = total_runs
-                if call_key == prev_call_key or is_dup_this_iter:
+                # Idempotent/read-only tools (get_current_datetime, git): the
+                # result CAN change between calls (time advances, git state
+                # shifts).  Repeating is legitimate — skip the entire duplicate
+                # detection so the tool re-executes normally with a fresh result,
+                # no NOTE and no hard-stop.
+                if (call_key == prev_call_key or is_dup_this_iter) and \
+                        tool_name not in _IDEMPOTENT_TOOLS:
                     #: Total executions of this exact call across ALL chained
                     #: runs (shared registry), so a repeated probe is flagged as
                     #: a known dead-end even after an auto-continue restart.
