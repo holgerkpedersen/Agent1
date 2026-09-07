@@ -62,6 +62,25 @@ class PlanLifecycleManager:
         self._log_transition(dst, PlanTransition.FINISH, PlanStatus.EXECUTED)
         return dst
         
+    def fail_plan(self) -> Path:
+        """Transition a plan from EXECUTING to FAILED.
+
+        Renames plan_executing.md to plan_failed_<timestamp>.md.
+        Returns the new path.
+        """
+        src = self.plan_dir / "plan_executing.md"
+        if not src.exists():
+            src = self.plan_dir / "plan_proposed.md"
+            if not src.exists():
+                raise FileNotFoundError(f"No executing plan found in {self.plan_dir}")
+
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        dst = self.plan_dir / f"plan_failed_{ts}.md"
+
+        shutil.move(str(src), str(dst))
+        self._log_transition(dst, PlanTransition.ERROR, PlanStatus.FAILED)
+        return dst
+
     def _log_transition(self, path: Path, transition: PlanTransition, status: PlanStatus):
         entry = PlanLogEntry(
             plan_id=path.name,

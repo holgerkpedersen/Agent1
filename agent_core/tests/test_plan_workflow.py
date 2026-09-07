@@ -154,6 +154,41 @@ class TestPlanLifecycle:
         with pytest.raises(FileNotFoundError):
             lm.start_plan()
 
+    def test_fail_plan_renames_to_failed(self, tmp_path: Path):
+        plan_dir = tmp_path / "docs"
+        plan_dir.mkdir()
+        (plan_dir / "plan_executing.md").write_text("# Plan\n")
+
+        lm = PlanLifecycleManager(plan_dir, tmp_path)
+        result = lm.fail_plan()
+
+        assert result.name.startswith("plan_failed_")
+        assert result.exists()
+        assert not (plan_dir / "plan_executing.md").exists()
+
+    def test_fail_plan_logs_error_transition(self, tmp_path: Path):
+        plan_dir = tmp_path / "docs"
+        plan_dir.mkdir()
+        (plan_dir / "plan_executing.md").write_text("# Plan\n")
+
+        lm = PlanLifecycleManager(plan_dir, tmp_path)
+        lm.fail_plan()
+
+        log_file = plan_dir / ".plans.jsonl"
+        assert log_file.exists()
+        lines = log_file.read_text().strip().splitlines()
+        assert len(lines) == 1
+        entry = json.loads(lines[0])
+        assert entry["transition"] == "error"
+        assert entry["status"] == "failed"
+
+    def test_fail_plan_raises_if_no_file(self, tmp_path: Path):
+        plan_dir = tmp_path / "docs"
+        plan_dir.mkdir()
+        lm = PlanLifecycleManager(plan_dir, tmp_path)
+        with pytest.raises(FileNotFoundError):
+            lm.fail_plan()
+
     def test_append_log_creates_file(self, tmp_path: Path):
         log_file = tmp_path / "test.jsonl"
         entry = PlanLogEntry(
@@ -298,3 +333,28 @@ class TestPlanDecisionGate:
         result = gate.validate(content)
         assert result.passed is False
         assert any("resolved" in v.lower() for v in result.violations)
+
+
+# ── NLP plan tools registration ─────────────────────────────────────────
+
+class TestPlanNlpToolsRegistration:
+    """Verify plan tools appear in schemas and handler dict."""
+
+    def test_plan_tools_in_nlp_tool_schemas(self):
+        from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
+        names = {t["function"]["name"] for t in NLP_TOOL_SCHEMAS}
+        for tool in ("plan_status", "plan_start", "plan_step", "plan_finish"):
+            assert tool in names, f"{tool} missing from NLP_TOOL_SCHEMAS"
+
+    def test_plan_tools_in_nlp_tool_names(self):
+        from agent_core.tool_schemas import NLP_TOOL_NAMES
+        for tool in ("plan_status", "plan_start", "plan_step", "plan_finish"):
+            assert tool in NLP_TOOL_NAMES, f"{tool} missing from NLP_TOOL_NAMES"
+
+    def test_plan_handlers_registered(self):
+        from agent import Agent
+        agent = Agent.__new__(Agent)
+        agent.workspace = tempfile.mkdtemp()
+        handlers = agent._nlp_tool_handlers()
+        for tool in ("plan_status", "plan_start", "plan_step", "plan_finish"):
+            assert tool in handlers, f"{tool} handler not registered"

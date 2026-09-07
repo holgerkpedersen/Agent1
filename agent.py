@@ -890,6 +890,10 @@ class Agent:
             "mcp_tools": self._nlp_mcp_tools,
             "mcp_call": self._nlp_mcp_call,
             "get_current_datetime": self._nlp_get_current_datetime,
+            "plan_status": self._nlp_plan_status,
+            "plan_start": self._nlp_plan_start,
+            "plan_step": self._nlp_plan_step,
+            "plan_finish": self._nlp_plan_finish,
         }
 
     async def _nlp_mcp_tools(self, args: dict[str, Any]) -> str:
@@ -1273,6 +1277,283 @@ class Agent:
                 return f"Error: unknown timezone '{tz_name}'. Use IANA names like 'UTC' or 'America/New_York'."
             return datetime.now(tz).isoformat()
         return datetime.now().isoformat()
+
+    # ── Plan workflow NLP tools ─────────────────────────────────────
+
+    async def _get_plan_state(self) -> dict[str, Any]:
+        """Detect current plan status + tasks from the filesystem."""
+        from pathlib import Path
+        from agent_core.commands.doc_paths import latest_run_dir
+        from agent_core.plan_execution.parser import parse_plan_tasks
+
+        plan_dir = latest_run_dir(self.workspace)
+        if plan_dir is None:
+            return {"status": "none", "error": "No .docs run directory found"}
+
+        plan_file = None
+        status = "none"
+        for candidate, st in [
+            (plan_dir / "plan_executing.md", "executing"),
+            (plan_dir / "plan_proposed.md", "proposed"),
+        ]:
+            if candidate.is_file():
+                plan_file = candidate
+                status = st
+                break
+
+        if plan_file is None:
+            for f in plan_dir.iterdir():
+                if f.name.startswith("plan_executed_"):
+                    status = "executed"
+                    plan_file = f
+                    break
+                elif f.name.startswith("plan_failed_"):
+                    status = "failed"
+                    plan_file = f
+                    break
+
+        if plan_file is None:
+            return {"status": "none", "error": f"No plan file in {plan_dir}"}
+
+        plan_text = plan_file.read_text(encoding="utf-8")
+        tasks = parse_plan_tasks(plan_text, fmt="md")
+
+        return {
+            "status": status,
+            "plan_dir": str(plan_dir),
+            "plan_path": str(plan_file),
+            "plan_text": plan_text,
+            "tasks": tasks,
+        }
+
+    async def _nlp_plan_status(self, args: dict[str, Any]) -> str:
+        """Query the current plan's lifecycle status and parsed task list."""
+        state = await self._get_plan_state()
+        if state.get("error"):
+            return f"Plan status: {state['status']}. {state.get('error', '')}"
+
+        tasks = state.get("tasks", [])
+        lines = [
+            f"Plan status: {state['status']}",
+            f"Plan file: {state['plan_path']}",
+            f"Tasks: {len(tasks)}",
+        ]
+        for t in tasks:
+            dep_str = f"  deps: {t.depends_on}" if t.depends_on else ""
+            lines.append(f"  - [{t.id}] ({t.role}) {t.description}{dep_str}")
+        if state["status"] == "executing":
+            lines.append("\nUse plan_step to advance, or plan_finish to complete.")
+        elif state["status"] == "proposed":
+            lines.append("\nUse plan_start to begin execution.")
+        return "\n".join(lines)
+
+    async def _nlp_plan_start(self, args: dict[str, Any]) -> str:
+        """Start plan execution: proposed -> executing, validate, run tasks."""
+        if self.is_plan_mode():
+            return "Error: plan mode is read-only. Run 'mode build' first."
+
+        state = await self._get_plan_state()
+        if state.get("error"):
+            return f"Error: {state['error']}"
+        if state["status"] not in ("proposed",):
+            return f"Error: plan is already '{state['status']}', cannot start."
+        if not state["tasks"]:
+            return "Error: no tasks found in the plan."
+
+        from agent_core.plan_execution.runner import build_and_validate_graph
+        from agent_core.orchestration.dependency_graph import CycleError
+        from agent_core.subagent_roles import get_role
+        from agent_core.commands.plan_lifecycle import PlanLifecycleManager
+        from agent_core.commands.plan_dry_run import PlanDryRunner
+        from agent_core.commands.plan_decision_gate import PlanDecisionGate
+
+        tasks = state["tasks"]
+
+        for t in tasks:
+            if get_role(t.role) is None:
+                return f"Error: unknown role '{t.role}' for task '{t.id}'"
+
+        try:
+            graph, order = build_and_validate_graph(tasks)
+        except CycleError as exc:
+            return f"Error: dependency cycle detected: {exc.cycle}"
+        except ValueError as exc:
+            return f"Error: {exc}"
+
+        dry_runner = PlanDryRunner()
+        dry_result = dry_runner.validate(state["plan_text"])
+        if not dry_result.valid:
+            return "Dry-run safety gate failed:\n" + "\n".join(
+                f"  - {e}" for e in dry_result.errors
+            )
+
+        decision_gate = PlanDecisionGate(Path(self.workspace))
+        gate_result = decision_gate.validate(state["plan_text"])
+        if not gate_result.passed:
+            return "Decision gate failed - plan violates constraints:\n" + "\n".join(
+                f"  - {v}" for v in gate_result.violations
+            )
+
+        dry_run = args.get("dry_run", False)
+
+        plan_dir = Path(state["plan_dir"])
+        lifecycle = PlanLifecycleManager(plan_dir, Path(self.workspace))
+        try:
+            lifecycle.start_plan()
+        except Exception as exc:
+            return f"Error during lifecycle transition: {exc}"
+
+        if dry_run:
+            return (
+                f"Plan transitioned to executing (dry-run mode). "
+                f"{len(tasks)} tasks validated."
+            )
+
+        from agent_core.plan_execution.runner import run_plan
+
+        snapshot = await run_plan(self, tasks)
+
+        report_lines = [f"Plan execution complete ({len(tasks)} tasks):"]
+        failed = []
+        for t in snapshot["tasks"]:
+            icon = "+" if t["status"] == "completed" else "X"
+            report_lines.append(f"  {icon} [{t['task_id']}] {t['status']}")
+            if t["status"] != "completed":
+                failed.append(t["task_id"])
+
+        if failed:
+            report_lines.append(
+                f"\n{len(failed)} task(s) failed: {', '.join(failed)}"
+            )
+            report_lines.append(
+                "Use plan_finish with success=false to mark the plan as failed."
+            )
+        else:
+            report_lines.append("\nAll tasks completed. Use plan_finish to finalize.")
+
+        return "\n".join(report_lines)
+
+    async def _nlp_plan_step(self, args: dict[str, Any]) -> str:
+        """Advance the plan by executing the next uncompleted task."""
+        if self.is_plan_mode():
+            return "Error: plan mode is read-only. Run 'mode build' first."
+
+        state = await self._get_plan_state()
+        if state.get("error"):
+            return f"Error: {state['error']}"
+        if state["status"] == "proposed":
+            return (
+                "Error: plan not yet started. "
+                "Use plan_start first."
+            )
+        if state["status"] != "executing":
+            return f"Error: plan is '{state['status']}', cannot step."
+
+        tasks = state["tasks"]
+        if not tasks:
+            return "Error: no tasks in plan."
+
+        from agent_core.plan_execution.runner import build_and_validate_graph
+        from agent_core.orchestration.dependency_graph import CycleError
+
+        try:
+            graph, order = build_and_validate_graph(tasks)
+        except (CycleError, ValueError) as exc:
+            return f"Error: {exc}"
+
+        import re
+        from pathlib import Path
+
+        completed_ids: set[str] = set()
+        report_path = Path(state["plan_dir"]) / "plan_execution_report.md"
+        if report_path.exists():
+            report_text = report_path.read_text(encoding="utf-8")
+            for m in re.finditer(r"\[(\S+)\]\s+completed", report_text):
+                completed_ids.add(m.group(1))
+
+        target_id = args.get("task_id")
+        next_task = None
+        for tid in order:
+            if tid in completed_ids:
+                continue
+            if target_id and tid != target_id:
+                continue
+            next_task = next(t for t in tasks if t.id == tid)
+            break
+
+        if next_task is None:
+            return "No uncompleted tasks remaining. Use plan_finish to finalize."
+
+        unmet = [d for d in next_task.depends_on if d not in completed_ids]
+        if unmet:
+            return (
+                f"Error: task '{next_task.id}' has unmet dependencies: "
+                f"{', '.join(unmet)}"
+            )
+
+        sub = self.spawn_subagent(
+            name=f"exec-{next_task.id}", role=next_task.role
+        )
+        result = await sub.respond(next_task.description)
+
+        report_entry = (
+            f"- [{next_task.id}] completed (role: {next_task.role})"
+        )
+        try:
+            with open(report_path, "a", encoding="utf-8") as f:
+                f.write(report_entry + "\n")
+        except Exception:
+            pass
+
+        remaining = [
+            tid for tid in order
+            if tid not in completed_ids and tid != next_task.id
+        ]
+
+        preview = result[:200] + ("..." if len(result) > 200 else "")
+        lines = [
+            f"Task [{next_task.id}] completed (role: {next_task.role}).",
+            f"Result preview: {preview}",
+        ]
+        if remaining:
+            lines.append(f"\n{len(remaining)} task(s) remaining: {', '.join(remaining)}")
+            lines.append("Call plan_step again for the next task.")
+        else:
+            lines.append("\nAll tasks done. Call plan_finish to finalize.")
+
+        return "\n".join(lines)
+
+    async def _nlp_plan_finish(self, args: dict[str, Any]) -> str:
+        """Complete or fail the current plan."""
+        state = await self._get_plan_state()
+        if state.get("error"):
+            return f"Error: {state['error']}"
+        if state["status"] != "executing":
+            return (
+                f"Error: plan is '{state['status']}', "
+                f"can only finish an executing plan."
+            )
+
+        success = args.get("success", True)
+        reason = args.get("reason", "")
+        plan_dir = Path(state["plan_dir"])
+        lifecycle = PlanLifecycleManager(plan_dir, Path(self.workspace))
+
+        try:
+            if success:
+                dst = lifecycle.finish_plan()
+            else:
+                dst = lifecycle.fail_plan()
+        except Exception as exc:
+            return f"Error during lifecycle transition: {exc}"
+
+        final_status = "executed" if success else "failed"
+        lines = [f"Plan marked as {final_status}.", f"File: {dst}"]
+        if reason:
+            lines.append(f"Reason: {reason}")
+        return "\n".join(lines)
+
+    # ── Internal file-operation helpers ──────────────────────────────
 
     async def _tool_read_file(self, path: str, **kwargs: Any) -> str:
         result = await self.fs.read(path)

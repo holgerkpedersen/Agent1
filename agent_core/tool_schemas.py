@@ -381,6 +381,93 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
+    # ── Plan workflow tools ─────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "plan_status",
+            "description": (
+                "Query the current plan's lifecycle status, parsed task list, "
+                "and execution progress. Returns the plan status (proposed / "
+                "executing / executed / failed), each task's id, description, "
+                "role, and dependencies."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "plan_start",
+            "description": (
+                "Start plan execution: transitions the plan from proposed to "
+                "executing, validates tasks and dependencies, runs dry-run "
+                "and decision gates, then executes ALL tasks via subagents. "
+                "Use dry_run=true to validate without executing. "
+                "Requires build mode."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "If true, validate only — do not run subagents (default false)",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "plan_step",
+            "description": (
+                "Advance the plan by executing the NEXT uncompleted task via an "
+                "isolated subagent. Returns the task result and updated progress. "
+                "The plan must already be in 'executing' status."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "Specific task id to execute (default: next uncompleted in topological order)",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "plan_finish",
+            "description": (
+                "Complete or fail the current plan. Transitions from 'executing' "
+                "to 'executed' (success) or 'failed' (error). Renames the plan "
+                "file and logs the transition."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "description": "True to mark executed, false to mark failed (default true)",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Optional reason/note for the transition",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 NLP_TOOL_NAMES: frozenset[str] = frozenset(
