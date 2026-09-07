@@ -30,7 +30,10 @@ import agent
 @pytest.fixture(autouse=True)
 def _reset_shared_collector(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each test gets a pristine process-wide collector."""
+    import agent_dashboard
+
     monkeypatch.setattr(agent, "_shared_metrics_collector", None)
+    monkeypatch.setattr(agent_dashboard, "_shared_metrics_collector", None)
 
 
 def _make_agent() -> "agent.Agent":
