@@ -468,6 +468,47 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
+    # -- Subagent management tools ----------------------------------------------
+    {
+        "type": "function",
+        "function": {
+            "name": "create_subagent",
+            "description": (
+                "Create a persistent subagent for a specific role. "
+                "The subagent keeps its own conversation history and can "
+                "be reused for multiple tasks. Use run_subagent_task to "
+                "send work to it afterward."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Unique identifier for this subagent"},
+                    "role": {"type": "string", "description": "Role name (planner, implementer, tester, debugger, reviewer, integrator, researcher, security, documenter)"},
+                    "workspace": {"type": "string", "description": "Optional workspace path override"},
+                },
+                "required": ["name", "role"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_subagent_task",
+            "description": (
+                "Send a task to an existing named subagent and wait for "
+                "the result. The subagent processes the task with its "
+                "role-specific tools and returns the answer."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Name of the existing subagent"},
+                    "task": {"type": "string", "description": "Task description to execute"},
+                },
+                "required": ["name", "task"],
+            },
+        },
+    },
 ]
 
 NLP_TOOL_NAMES: frozenset[str] = frozenset(
