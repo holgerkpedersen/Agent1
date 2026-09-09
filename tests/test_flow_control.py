@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -168,10 +171,48 @@ class TestApplyFixBlocksContext:
 
 class TestShowPatchVerdict:
     """The pre-prompt verdict verifies a candidate patch against mypy so the
-    y/N decision is informed (fixes N/M targeted, introduces K new)."""
+    y/N decision is informed (fixes N/M targeted, introduces K new).
 
-    def test_verdict_printed_before_prompt(self, tmp_path, capsys):
+    These tests stub ``_run_capped`` with deterministic fake mypy output so
+    they work regardless of whether mypy is installed on the host.
+    """
+
+    @staticmethod
+    def _make_fake_run(*per_call_outputs):
+        """Return a ``_run_capped`` replacement that yields controlled output.
+
+        Each positional arg is either a string (mypy stdout) or a list of
+        error-line templates.  ``__TMPFILE__`` is replaced at call time with
+        the actual temp-file basename so the output matches what
+        ``_show_patch_verdict`` expects.
+        """
+        call_idx = [0]
+
+        def _fake_run(cmd, cwd=None, timeout_s=60):
+            tmpfile = None
+            for a in cmd:
+                if a.endswith(".py"):
+                    tmpfile = os.path.basename(a)
+                    break
+            if tmpfile is None or call_idx[0] >= len(per_call_outputs):
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            raw = per_call_outputs[call_idx[0]]
+            call_idx[0] += 1
+            if isinstance(raw, list):
+                raw = "\n".join(raw)
+            stdout = raw.replace("__TMPFILE__", tmpfile)
+            rc = 1 if stdout.strip() else 0
+            return subprocess.CompletedProcess(cmd, returncode=rc, stdout=stdout, stderr="")
+
+        return _fake_run
+
+    def test_verdict_printed_before_prompt(self, tmp_path, capsys, monkeypatch):
+        """The verdict line must appear with [verify] even when mypy is absent."""
+        import agent_core.commands.fix_cmd as _mod
         from agent_core.commands.fix_cmd import FixCommand
+
+        # Patched file is mypy-clean → verdict says "mypy-clean"
+        monkeypatch.setattr(_mod, "_run_capped", self._make_fake_run(""))
         target = tmp_path / "t.py"
         target.write_text("x: int = 'not an int'\n", encoding="utf-8")
         fc = FixCommand()
@@ -187,10 +228,16 @@ class TestShowPatchVerdict:
         assert "targeted error" in out
         assert "→" in out
 
-    def test_verdict_detects_new_errors(self, tmp_path, capsys):
+    def test_verdict_detects_new_errors(self, tmp_path, capsys, monkeypatch):
         """A patch that merely silences one error but breaks another must be
         flagged as introducing new errors."""
+        import agent_core.commands.fix_cmd as _mod
         from agent_core.commands.fix_cmd import FixCommand
+
+        # Patched file has a NEW error the original didn't have
+        monkeypatch.setattr(_mod, "_run_capped", self._make_fake_run(
+            ["__TMPFILE__:1: error: Incompatible types in assignment  [assignment]"],
+        ))
         target = tmp_path / "t.py"
         target.write_text("x: int = 'bad'\n", encoding="utf-8")
         fc = FixCommand()
@@ -204,10 +251,21 @@ class TestShowPatchVerdict:
         out = capsys.readouterr().out
         assert "introduces" in out or "→ y" in out
 
-    def test_verdict_ignores_pre_existing_errors(self, tmp_path, capsys):
+    def test_verdict_ignores_pre_existing_errors(self, tmp_path, capsys, monkeypatch):
         """A patch that fixes the targeted error but leaves OTHER pre-existing
         errors in the file must NOT be flagged as introducing them."""
+        import agent_core.commands.fix_cmd as _mod
         from agent_core.commands.fix_cmd import FixCommand
+
+        # Call 1 (patched file): operator error gone, but name-defined remains
+        # Call 2 (original baseline): both operator AND name-defined present
+        monkeypatch.setattr(_mod, "_run_capped", self._make_fake_run(
+            ["__TMPFILE__:5: error: Name \"nonexistent_attr\" is not defined  [name-defined]"],
+            [
+                "__TMPFILE__:2: error: Unsupported operand types for - (\"None\" and \"int\")  [operator]",
+                "__TMPFILE__:5: error: Name \"nonexistent_attr\" is not defined  [name-defined]",
+            ],
+        ))
         target = tmp_path / "t.py"
         target.write_text(
             "def f(a: int | None) -> int:\n"
