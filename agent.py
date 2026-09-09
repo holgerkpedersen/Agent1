@@ -2852,13 +2852,18 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _truncate_output(output: str, limit: int = 5000) -> str:
+def _truncate_output(output: str | None, limit: int = 5000) -> str:
     """Cap shell output for the model's context: head + tail around a marker.
 
     Shared by the ``run``, ``git``, ``diff`` and ``tests`` NLP tools so every
     subprocess result is bounded identically (the system prompt promises
     "run output is truncated to 5000 chars automatically").
+
+    ``output`` may be ``None`` when a subprocess produced no stdout; it is
+    treated as an empty string in that case.
     """
+    if output is None:
+        output = ""
     if len(output) > limit:
         half = limit // 2
         return output[:half] + "\n... [truncated] ...\n" + output[-half:]
@@ -2889,7 +2894,7 @@ def _run_subprocess_captured(
     return _truncate_output(output), None
 
 
-def _shape_run_stderr(err: str, output: str, returncode: int | None) -> str:
+def _shape_run_stderr(err: str | None, output: str | None, returncode: int | None) -> str:
     """Append stderr (plus Unix-ism hints) to ``run``-tool output.
 
     Shared by the ``run`` NLP tool so its stderr handling lives in one
@@ -2898,7 +2903,12 @@ def _shape_run_stderr(err: str, output: str, returncode: int | None) -> str:
     When the command returns a non-zero exit code, the code is appended so
     the model can observe it directly — no need to capture it via shell
     pipelines (which often fail on Windows).
+
+    ``output`` may be ``None`` when a subprocess produced no stdout; it is
+    normalised to ``""`` up front.
     """
+    if output is None:
+        output = ""
     if not err:
         # cmd.exe silently fails whole pipelines (rc 255, no output)
         # when a pipe element or command does not exist.

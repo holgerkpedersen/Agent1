@@ -188,6 +188,12 @@ def test_truncate_output_empty_becomes_placeholder() -> None:
     assert _truncate_output("") == "(no output)"
 
 
+def test_truncate_output_none_becomes_placeholder() -> None:
+    # Regression: a subprocess that produces no stdout yields None from
+    # communicate(); _truncate_output must not crash on len(None).
+    assert _truncate_output(None) == "(no output)"
+
+
 def test_truncate_output_bounds_long_output() -> None:
     out = "A" * 3000 + "\n" + "B" * 3000
     truncated = _truncate_output(out)

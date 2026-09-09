@@ -49,6 +49,21 @@ class TestExitCodeReporting:
         # an exit-code marker.
         assert "unix" in out.lower() or "[EXIT CODE" in out
 
+    def test_none_output_no_stderr_returns_empty(self) -> None:
+        # Regression: communicate() returns None stdout when a process
+        # writes nothing; _shape_run_stderr must not crash on None.
+        out = _shape_run_stderr(None, None, 0)
+        assert out == ""
+
+    def test_none_output_with_exit_code_appends_marker(self) -> None:
+        out = _shape_run_stderr(None, None, 1)
+        assert out == "\n[EXIT CODE: 1]"
+
+    def test_none_output_with_stderr_appends_both(self) -> None:
+        out = _shape_run_stderr("bad", None, 2)
+        assert "bad" in out
+        assert "[EXIT CODE: 2]" in out
+
 
 class TestExitCodeEndToEnd:
     def _run(self, tmp_path, code: str) -> str:
