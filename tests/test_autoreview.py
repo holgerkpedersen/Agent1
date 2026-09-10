@@ -245,13 +245,23 @@ def test_real_corpus_matches_pre050_labels():
     if not corpus.is_dir():
         pytest.skip("trace corpus not present (reports/ is gitignored)")
 
-    import json
-
     expected = {
         "bug": ["0f7793", "536848", "9acf2d", "b5b264"],
         "noise": ["17131c", "9c89a2", "demo-h", "demo-s",
                   "e0b03b", "f00b30", "f1b432", "fc5199"],
     }
+
+    # Skip if the specific expected trace files are not present
+    # (the corpus may have been regenerated with different task IDs).
+    all_prefixes = [p for prefixes in expected.values() for p in prefixes]
+    existing_stems = [p.stem for p in corpus.glob("*.jsonl")]
+    matched = any(
+        any(stem.startswith(prefix) for prefix in all_prefixes)
+        for stem in existing_stems
+    )
+    if not matched:
+        pytest.skip("expected pre-#050 trace files not present in corpus")
+
     actual: dict[str, list[str]] = {"bug": [], "noise": []}
     for p in corpus.glob("*.jsonl"):
         found = False
