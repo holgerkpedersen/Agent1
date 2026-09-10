@@ -9,6 +9,7 @@ reports exactly which signal fired and with what evidence.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -75,9 +76,20 @@ def _walk_production_py(ws: str) -> list[tuple[str, str]]:
     return out
 
 
-#: Corpus cache keyed by workspace; valid while the max mtime of the corpus
-#: files is unchanged — deterministic reuse, identical precision.
-_CORPUS_CACHE: dict[str, tuple[float, "_Corpus"]] = {}
+def _file_hash(path: str) -> str:
+    """Cheap content hash for cache invalidation (first 4 KiB, xxhash-free)."""
+    try:
+        with open(path, "rb") as f:
+            return hashlib.md5(f.read(4096)).digest()[:4].hex()
+    except OSError:
+        return ""
+
+
+#: Corpus cache keyed by workspace; valid while the content stamp of the
+#: corpus files is unchanged — deterministic reuse, identical precision.
+#: The stamp is (max_mtime, per-file size+hash tuple) so that content changes
+#: invalidate the cache even on filesystems with coarse mtime resolution.
+_CORPUS_CACHE: dict[str, tuple[tuple[float, tuple], "_Corpus"]] = {}
 
 _STOPWORDS = frozenset({
     "the", "a", "an", "and", "or", "of", "to", "in", "for", "on", "with",
@@ -260,7 +272,16 @@ class ModuleSimilarity:
     def __init__(self, ws: str) -> None:
         self.ws = ws
         files = _walk_production_py(ws)
-        stamp = max((os.path.getmtime(fp) for _, fp in files), default=0.0)
+        # Content-aware stamp: (max_mtime, per-file size+hash tuples).
+        # mtime alone is unreliable on filesystems with coarse resolution
+        # (e.g. two rapid writes yield the same mtime), so we also compare
+        # file sizes and a cheap content hash for invalidation.
+        max_mtime = max((os.path.getmtime(fp) for _, fp in files), default=0.0)
+        content_stamp = tuple(
+            (fp, os.path.getsize(fp), _file_hash(fp))
+            for _, fp in sorted(files, key=lambda t: t[1])
+        )
+        stamp = (max_mtime, content_stamp)
         cached = _CORPUS_CACHE.get(ws)
         if cached is not None and cached[0] == stamp:
             self.corpus = cached[1]

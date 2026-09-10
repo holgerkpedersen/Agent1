@@ -117,6 +117,36 @@ class TestFalsePairs:
         assert findings == []
 
 
+class TestCacheInvalidation:
+    def test_same_mtime_different_content_rebuilds(self, ws):
+        """Regression: on filesystems with coarse mtime resolution, a content
+        change with an unchanged mtime must still invalidate the corpus cache
+        (content-hash stamp, not mtime alone)."""
+        import os as _os
+
+        from agent_core.utils.module_similarity import _CORPUS_CACHE
+
+        target = ws / "agent_core" / "security" / "allowlist.py"
+        original = target.read_text(encoding="utf-8")
+        sim1 = ModuleSimilarity(str(ws))
+
+        # Change content, then force mtime back to the pre-write value so
+        # mtime-based stamps match exactly (simulates a coarse-filesystem
+        # rapid rewrite where two writes yield the same mtime).
+        pre_mtime_ns = target.stat().st_mtime_ns
+        target.write_text(original + "# v2\n", encoding="utf-8")
+        st = target.stat()
+        _os.utime(str(target), ns=(st.st_atime_ns, pre_mtime_ns))
+
+        sim2 = ModuleSimilarity(str(ws))
+        assert sim1.corpus is not sim2.corpus, \
+            "corpus cache not invalidated on content change with same mtime"
+
+        # Restore (keeps other tests' fixtures independent).
+        target.write_text(original, encoding="utf-8")
+        _CORPUS_CACHE.clear()
+
+
 class TestProductionFilter:
     def test_is_production_module(self):
         assert _is_production_module("agent_core/security/allowlist.py")
