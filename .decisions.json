@@ -23,9 +23,12 @@
     "date": "2026-08-15T07:18:50+00:00",
     "title": "Self-modification guard to prevent agent tampering with its own security modules",
     "context": "No mechanism existed to detect or block the agent from modifying files within its own `agent_core/security/` directory, which could allow a compromised agent to disable containment, shell allowlists, schema validation, or sanitizers.",
-    "decision": "",
+    "decision": "Block all write operations targeting paths under `agent_core/security/` at the file-system tool layer. Any write, edit, or patch touching that directory tree is rejected before execution, regardless of the caller's intent.",
     "rationale": "Protecting security-critical source paths is essential for defense-in-depth: if an attacker can alter the guardrails themselves, all other protections become meaningless. This guard acts as a final barrier ensuring the integrity of the enforcement layer cannot be subverted from within.",
-    "affected_files": [],
+    "affected_files": [
+      "agent_core/security/allowlist.py",
+      "agent_core/file_system.py"
+    ],
     "tags": [
       "self-modification-prevention",
       "integrity-protection",
@@ -97,11 +100,11 @@
     "date": "2026-08-15T11:03:28+00:00",
     "title": "Decide whether web_search may fetch URLs",
     "context": "The scope says no arbitrary URL fetch unless specified, and the analysis lists URL follow-up as an open question.",
-    "decision": "Decide whether web_search returns snippets only or also fetches page content; if URL fetch is allowed, require URL validation, domain allowlisting, and SSRF protections.",
-    "rationale": "URL fetch expands the attack surface through SSRF, exfiltration, and possible authenticated actions.",
+    "decision": "web_search returns DuckDuckGo snippets only — titles, URLs, and short text excerpts. No page-content fetching, no URL follow-up. The handler does not make HTTP requests to result URLs.",
+    "rationale": "URL fetching introduces SSRF, authenticated-action leakage, and content-size amplification for marginal benefit. Snippets provide sufficient context for the agent to decide whether to read a file or ask the user. This also aligns with Decision 005 (untrusted results) by keeping the attack surface to text-only input.",
     "affected_files": [
       "agent.py",
-      "agent_core/llm/lmstudio.py"
+      "agent_core/tool_schemas.py"
     ],
     "tags": [
       "security",
@@ -275,16 +278,18 @@
     "date": "2026-08-15T22:38:48+00:00",
     "title": "Require a human review gate before merging repairs",
     "context": "Threat model and boundaries say no auto-merge without a human review gate, while the loop section describes automated accept/reject.",
-    "decision": "Add an explicit human approval step before any accepted repair is merged; decide whether it fires per-repair or after the summary batch.",
-    "rationale": "A fully automated loop could accept subtle security regressions; human oversight is required to catch what tests miss.",
-    "affected_files": [],
+    "decision": "The human gate fires **post-batch only** — after the summary is produced, not per-repair. The loop presents the full batch of proposed repairs with rationale and test results; the human approves or rejects the batch as a whole. In headless/CI environments with no human approver, the loop defaults to fail-closed (no repairs merged).",
+    "rationale": "Per-repair gating creates N blocking interactions for N repairs, defeating the loop's purpose and making large batches impractical. A human reviewing a structured summary of all proposed changes is the natural workflow and matches how code review actually works. Fail-closed in headless mode prevents silent auto-merge of potentially harmful changes.",
+    "affected_files": [
+      "agent_core/llm/tool_loop.py"
+    ],
     "tags": [
       "human-in-loop",
       "security",
       "merge"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": "031"
   },
   {
     "id": "016",
@@ -325,11 +330,11 @@
     "date": "2026-08-15T22:38:48+00:00",
     "title": "Select a single canonical CorrelationIdContext",
     "context": "Risk: both agent_core/context_management.py and logging_config.py define CorrelationIdContext with different defaults; the tracer must not add a third.",
-    "decision": "Make agent_core/context_management.py the canonical source and adapt logging_config.py to use it, or explicitly prefer one for tracing.",
-    "rationale": "Avoids conflicting defaults and ensures every trace event can share one correlation ID source.",
+    "decision": "`agent_core/context_management.py` is the sole canonical source for CorrelationIdContext. `agent_core/logging_config.py` imports from it and does not define its own. The two modules serve different scopes: context_management handles correlation ID lifecycle (narrow), logging_config handles log formatting, redaction, and transport (broad). No conflict when layered correctly.",
+    "rationale": "A single source of truth for correlation IDs prevents divergent defaults and ensures every trace event shares one ID. Keeping logging_config as a consumer (not a definer) of CorrelationIdContext avoids the duplicate-definition problem while preserving each module's distinct responsibility.",
     "affected_files": [
       "agent_core/context_management.py",
-      "logging_config.py"
+      "agent_core/logging_config.py"
     ],
     "tags": [
       "architecture",
@@ -559,15 +564,15 @@
     "date": "2026-08-15T22:38:49+00:00",
     "title": "Place the human review gate at a defined point in the loop",
     "context": "Clarifying question: does the gate pause after each accepted repair or review the whole repair set after summary.json; behavior in headless/CI is also unspecified.",
-    "decision": "Define whether approval is per-repair or post-batch and specify headless/CI behavior, such as fail-closed if no human approver is available.",
-    "rationale": "Resolves conflicting specs and ensures no auto-merge occurs without explicit human approval.",
+    "decision": "Resolved by Decision 015: post-batch review, fail-closed in headless/CI.",
+    "rationale": "Duplicate of Decision 015's open question; no separate decision needed.",
     "affected_files": [],
     "tags": [
       "human-in-loop",
       "workflow"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": "015"
   },
   {
     "id": "032",
@@ -625,11 +630,12 @@
     "date": "2026-08-16T15:44:31+00:00",
     "title": "Consolidate duplicate LLMClient and logging configs",
     "context": "Duplicate `LLMClient` definitions (agent.py, agent_core/llm_client.py) and two diverging `logging_config` modules create drift risk; three overlapping LLM client abstractions and duplicate CorrelationIdContext make module boundaries unclear.",
-    "decision": "Create one shared LLM client abstraction and one logging configuration/correlation-context module to be used across all components.",
-    "rationale": "Eliminates duplicated code, prevents drift, and clarifies module boundaries.",
+    "decision": "Remove duplicate `LLMClient` in `agent.py` and `agent_core/llm_client.py`; all LLM access goes through the `LLMProvider` Protocol defined in `agent_core/llm/provider.py` (Decision 007). CorrelationIdContext is imported from `agent_core/context_management.py` (Decision 018). This is the cleanup action for 007, not a separate architectural choice.",
+    "rationale": "Eliminates duplicated code, prevents drift, and clarifies module boundaries. The Protocol is the contract; these files are redundant copies that must be removed.",
     "affected_files": [
       "agent.py",
-      "agent_core/llm_client.py"
+      "agent_core/llm_client.py",
+      "agent_core/llm/provider.py"
     ],
     "tags": [
       "architecture",
@@ -638,7 +644,7 @@
       "logging"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": "007"
   },
   {
     "id": "036",
@@ -762,11 +768,11 @@
     "date": "2026-08-16T20:00:38+00:00",
     "title": "Unified logging configuration with security-sensitive redaction policy",
     "context": "Logging was configured inconsistently across modules and could capture sensitive data. Alternatives: (a) per-module loggers with no filtering, (b) global filter redacting known secret patterns via regex, (c) structured logger with explicit allow-list of loggable fields and automatic scrubbing of paths/secrets.",
-    "decision": "Consolidated logging into `agent_core/logging_config.py` using a structured logger that scrubs resolved secrets, normalized workspace-relative paths, and shell tokens before emission; only declared safe metadata fields are logged by default.",
+    "decision": "Consolidated logging into `agent_core/logging_config.py` using a structured logger that scrubs resolved secrets, normalized workspace-relative paths, and shell tokens before emission; only declared safe metadata fields are logged by default. CorrelationIdContext is imported from `agent_core/context_management.py` (Decision 018), not defined locally.",
     "rationale": "Structured redaction prevents accidental leakage of credentials or absolute filesystem locations in logs while preserving operational observability. Allow-listing loggable fields shifts from 'filter known bad' to 'emit known good', rejecting raw per-module logging that could expose secrets through unanticipated debug statements.",
     "affected_files": [
       "agent_core/logging_config.py",
-      "logging_config.py",
+      "agent_core/context_management.py",
       "agent_core/security/path_utils.py"
     ],
     "tags": [

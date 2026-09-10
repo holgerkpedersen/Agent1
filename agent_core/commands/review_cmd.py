@@ -146,7 +146,16 @@ class ReviewCommand(Command):
                     "disposition", "note", "review_date", "source"):
             val = getattr(rec, key)
             if isinstance(val, list):
-                val = ", ".join(val)
+                # Deduplicate guards while preserving order; show repeat count
+                if key == "guards" and val:
+                    from collections import Counter
+                    counts = Counter(val)
+                    val = ", ".join(
+                        f"{g} x{n}" if n > 1 else g
+                        for g, n in counts.items()
+                    )
+                else:
+                    val = ", ".join(val)
             print(f"  {key}: {val if val else '-'}")
         return True
 
