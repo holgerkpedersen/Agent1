@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .base import Command
+from agent_core.colors import cyan, green, magenta, blue, yellow
 
 if TYPE_CHECKING:
     from agent import Agent
@@ -78,7 +79,7 @@ class SubAgentCommand(Command):
         }
         handler = handlers.get(cmd)
         if handler is None:
-            print(f"Unknown subagent command '{cmd}'. Try 'subagent' alone for help.")
+            print(f"Unknown subagent command '{cyan(cmd)}'. Try 'subagent' alone for help.")
             return True
         await handler(rest, agent)
         return True
@@ -93,17 +94,17 @@ class SubAgentCommand(Command):
             for p in problems:
                 print(f"  ! {p}")
             return
-        print("Available subagent roles:")
+        print(cyan("Available subagent roles:"))
         for role in ROLES.values():
             ro = " [read-only]" if role.read_only else ""
-            print(f"  {role.name:<12} {role.title}{ro} — tools: "
+            print(f"  {cyan(role.name):<12} {role.title}{ro} — tools: "
                   f"{', '.join(sorted(role.tools_allowed))}")
 
     async def _cmd_create(self, args: list[str], agent: "Agent") -> None:
         from agent_core.subagent_roles import get_role, role_names
 
         if not args:
-            print("Usage: subagent create <name> [--role <role>|--role auto] [--workspace <path>]")
+            print(f"Usage: subagent create {cyan('<name>')} [--role <role>|--role auto] [--workspace <path>]")
             return
 
         name = args[0]
@@ -127,7 +128,7 @@ class SubAgentCommand(Command):
         elif role.lower() == "auto":
             # Auto-routing needs the task; without one, triage is the safe default.
             role = "planner"
-            print("No task given for auto-routing — using 'planner' (triage).")
+            print(f"No task given for auto-routing — using '{cyan('planner')}' (triage).")
         if role is not None and get_role(role) is None:
             print(f"Unknown role '{role}'. Available: {', '.join(role_names())}")
             return
@@ -136,7 +137,7 @@ class SubAgentCommand(Command):
         agent._subagents[name] = sub
         ws_note = f", workspace={workspace}" if workspace else ""
         role_note = f", role={sub.role_name} ({sub.mode} mode)" if sub.role_name else ""
-        print(f"Created SubAgent '{name}'{ws_note}{role_note}.")
+        print(green(f"Created SubAgent '{cyan(name)}'{ws_note}{role_note}."))
         if sub.role_name:
             print(f"  Tools: {', '.join(sorted(sub._tools_allowed))}")
 
@@ -151,10 +152,10 @@ class SubAgentCommand(Command):
         from agent_core.subagent_roles import get_role
         spec = get_role(role_name)
         title = spec.title if spec else role_name
-        print(f"Suggested role: {role_name} ({title}) — score {score}")
+        print(f"Suggested role: {cyan(role_name)} ({title}) — score {score}")
         if score == 0:
             print("  (no keyword hits — ambiguous issue; planner/triage is the safe default)")
-        print(f"  next: subagent create w1 --role {role_name}")
+        print(f"  next: subagent create w1 --role {cyan(role_name)}")
 
     async def _cmd_run(self, args: list[str], agent: "Agent") -> None:
         if len(args) < 2:
@@ -163,24 +164,24 @@ class SubAgentCommand(Command):
         name, task = args[0], " ".join(args[1:])
         sub = agent._subagents.get(name)
         if sub is None:
-            print(f"SubAgent '{name}' not found. Create it with 'subagent create {name}'.")
+            print(f"SubAgent '{cyan(name)}' not found. Create it with 'subagent create {name}'.")
             return
-        print(f"[{name}] working ...")
+        print(magenta(f"[{name}] working ..."))
         # THE FIX: actually await the coroutine (was returned un-awaited).
         result = await sub.respond(task)
-        print(f"[{name}] {result}")
+        print(green(f"[{name}] {result}"))
 
     async def _cmd_list(self, args: list[str], agent: "Agent") -> None:
         subs = getattr(agent, "_subagents", {})
         if not subs:
             print("No subagents created yet. Use 'subagent create <name>'.")
             return
-        print("Active subagents:")
+        print(cyan("Active subagents:"))
         for sname, sub in subs.items():
             conv_len = len(sub.get_conversation())
             summary = f"{conv_len // 2} turns" if conv_len else "empty"
             role_part = f", role={sub.role_name}" if sub.role_name else ""
-            print(f"  - {sname}{role_part}: {summary}")
+            print(f"  - {cyan(sname)}{role_part}: {summary}")
 
     async def _cmd_summary(self, args: list[str], agent: "Agent") -> None:
         if not args:
@@ -190,18 +191,32 @@ class SubAgentCommand(Command):
         if sub is None:
             print(f"SubAgent '{args[0]}' not found.")
             return
-        print(sub.get_context_summary(max_messages=5))
+        raw_lines = sub.get_context_summary(max_messages=5).splitlines()
+        for i, line in enumerate(raw_lines):
+            if i == 0:
+                # Header line — color it cyan
+                print(cyan(line))
+            elif line.startswith("  > "):
+                # User message prefix — green
+                print(green(line))
+            elif line.startswith("  < "):
+                # Assistant response prefix — blue
+                print(blue(line))
+            else:
+                # Fallback
+                print(line)
 
     async def _cmd_reset(self, args: list[str], agent: "Agent") -> None:
         if not args:
             print("Usage: subagent reset <name>")
             return
-        sub = agent._subagents.get(args[0])
+        name = args[0]
+        sub = agent._subagents.get(name)
         if sub is None:
-            print(f"SubAgent '{args[0]}' not found.")
+            print(f"SubAgent '{cyan(name)}' not found.")
             return
         sub.reset()
-        print(f"Reset SubAgent '{args[0]}'.")
+        print(green(f"Reset SubAgent '{cyan(name)}'."))
 
 
 __all__ = ["SubAgentCommand"]

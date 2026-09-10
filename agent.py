@@ -860,6 +860,51 @@ class Agent:
             ws_dir = self.workspace
         return ws_dir
 
+    async def _nlp_create_subagent(self, args: dict[str, Any]) -> str:
+        """Create a persistent subagent for the LLM to reuse."""
+        from agent_core.subagent_roles import get_role, role_names
+        name = str(args.get("name", "")).strip().strip('"').strip("'")
+        role = str(args.get("role", "")).strip().strip('"').strip("'")
+        workspace = args.get("workspace")
+        if not name or not role:
+            return "Error: create_subagent requires 'name' and 'role'."
+        spec = get_role(role)
+        if spec is None:
+            return (
+                f"Error: unknown role '{role}'. "
+                f"Available: {', '.join(role_names())}"
+            )
+        if not hasattr(self, "_subagents"):
+            self._subagents: dict[str, object] = {}
+        if name in self._subagents:
+            return (
+                f"Error: subagent '{name}' already exists. "
+                "Use a different name or reset it first."
+            )
+        sub = self.spawn_subagent(name, workspace=workspace, role=role)
+        self._subagents[name] = sub
+        return (
+            f"Created subagent '{name}' with role '{spec.name}' "
+            f"({spec.title})."
+        )
+
+    async def _nlp_run_subagent_task(self, args: dict[str, Any]) -> str:
+        """Send a task to an existing named subagent."""
+        name = str(args.get("name", "")).strip().strip('"').strip("'")
+        task = str(args.get("task", "")).strip()
+        if not name or not task:
+            return "Error: run_subagent_task requires 'name' and 'task'."
+        subs = getattr(self, "_subagents", {})
+        sub = subs.get(name)
+        if sub is None:
+            return (
+                f"Error: subagent '{name}' not found. "
+                "Create it with create_subagent first."
+            )
+        result = await sub.respond(task)
+        summary = sub.get_context_summary(max_messages=3)
+        return f"{result}\n\n{summary}"
+
     def _nlp_tool_handlers(self) -> dict[str, NlpToolHandler]:
         """Name → handler map for every entry in :data:`NLP_TOOL_NAMES`.
 
@@ -883,6 +928,8 @@ class Agent:
             "write": self._nlp_write,
             "delegate": self._nlp_delegate,
             "delegate_batch": self._nlp_delegate_batch,
+            "create_subagent": self._nlp_create_subagent,
+            "run_subagent_task": self._nlp_run_subagent_task,
             "mcp_tools": self._nlp_mcp_tools,
             "mcp_call": self._nlp_mcp_call,
             "get_current_datetime": self._nlp_get_current_datetime,
@@ -1356,6 +1403,8 @@ class Agent:
         if not state["tasks"]:
             return "Error: no tasks found in the plan."
 
+        from pathlib import Path
+
         from agent_core.plan_execution.runner import build_and_validate_graph
         from agent_core.orchestration.dependency_graph import CycleError
         from agent_core.subagent_roles import get_role
@@ -1560,6 +1609,8 @@ class Agent:
 
         success = args.get("success", True)
         reason = args.get("reason", "")
+        from pathlib import Path
+        from agent_core.commands.plan_lifecycle import PlanLifecycleManager
         plan_dir = Path(state["plan_dir"])
         lifecycle = PlanLifecycleManager(plan_dir, Path(self.workspace))
 
@@ -2793,6 +2844,11 @@ _SYSTEM_PROMPT = (
     "- Be concise. Answer in the user's language.\n"
     "- IMPORTANT: If the user message is a greeting (hi, hello, hey, etc.) "
     "or small talk, reply with a short text greeting. Do NOT call any tools."
+    "\n\nMANAGER WORKFLOW (for complex tasks):\n"
+    "1. Analyze if the task benefits from parallel specialists.\n"
+    "2. Use create_subagent to spawn specialists (e.g. one for research, one for coding).\n"
+    "3. Use run_subagent_task to assign work to each.\n"
+    "4. Collect results and synthesize the final answer."
 )
 
 

@@ -676,9 +676,17 @@ class OpencodeProvider:
         suffix); for the keyed opencode-go tier they are ``opencode-go/...``.
         Server mode: /config/providers (model ids of every provider, grouped
         as ``provider/model``).
+
+        The hosted /models endpoint is public (no API key required for
+        listing), so we always try it first in API or go mode before
+        falling back to the local server endpoint.
         """
         try:
-            if self.api_mode:
+            if self.api_mode or not self.zen_mode:
+                # The opencode-go /models catalog is public — reachable
+                # without an API key.  This lets `model list` show the
+                # hosted catalog even when the key is missing (the key
+                # is only needed for /chat/completions).
                 prefix = "opencode-zen" if self.zen_mode else "opencode-go"
                 data = self._request("GET", f"{self.api_url}/models", timeout=15)
                 items = data.get("data") if isinstance(data, dict) else []
