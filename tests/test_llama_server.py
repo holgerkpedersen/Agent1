@@ -138,6 +138,56 @@ class TestEnsureModelServed:
         assert "shutdown" in msg or launched, "server should have been relaunched"
 
 
+class TestToolCallParserRestart:
+    """ensure_model_served restarts a server that lacks --tool-call-parser."""
+
+    def test_restart_when_parser_missing(self, patch_http, monkeypatch):
+        """Server serves Qwen3 but was launched without --tool-call-parser."""
+        # Server is up, serves the right model.
+        fake = _FakeHTTP(_router_props(), ["Qwen3.8-Flash-Next"])
+        patch_http(fake)
+
+        # Patch _server_has_tool_call_parser to return False (missing parser).
+        monkeypatch.setattr(mod, "_server_has_tool_call_parser",
+                            lambda api_url: False)
+        # Prevent real shutdown/launch.
+        monkeypatch.setattr(mod, "shutdown_server",
+                            lambda api_url: (True, "stopped"))
+        launched = {}
+        def _fake_launch(api_url, bare, extra_args=None):
+            launched["bare"] = bare
+            return True, f"relaunched with parser for '{bare}'"
+        monkeypatch.setattr(mod, "_launch_server", _fake_launch)
+
+        ok, msg = mod.ensure_model_served(
+            "http://x/v1", "llama/Qwen3.8-Flash-Next")
+        assert ok is True
+        assert launched.get("bare") == "Qwen3.8-Flash-Next"
+        assert "relaunched" in msg.lower() or "parser" in msg.lower()
+
+    def test_no_restart_when_parser_present(self, patch_http, monkeypatch):
+        """Server serves Qwen3 and already has --tool-call-parser."""
+        fake = _FakeHTTP(_router_props(), ["Qwen3.8-Flash-Next"])
+        patch_http(fake)
+        monkeypatch.setattr(mod, "_server_has_tool_call_parser",
+                            lambda api_url: True)
+        ok, msg = mod.ensure_model_served(
+            "http://x/v1", "llama/Qwen3.8-Flash-Next")
+        assert ok is True
+        assert "already serves" in msg
+
+    def test_no_restart_when_model_unknown(self, patch_http, monkeypatch):
+        """Unknown model family — no parser needed, no restart."""
+        fake = _FakeHTTP(_router_props(), ["some-random-model"])
+        patch_http(fake)
+        monkeypatch.setattr(mod, "_server_has_tool_call_parser",
+                            lambda api_url: False)
+        ok, msg = mod.ensure_model_served(
+            "http://x/v1", "llama/some-random-model")
+        assert ok is True
+        assert "already serves" in msg
+
+
 class TestResolveLocalGguf:
     def test_maps_routing_label_to_local_file(self, monkeypatch):
         # Point the llama models dir (NOT the LM Studio dir) at a temp tree.
@@ -267,3 +317,109 @@ class TestAgentReconcileHook:
                             lambda api_url, model_name: called.update(x=1) or (True, "ok"))
         client = LLMClient("laguna-s-2.1")
         assert "x" not in called  # llama manager must NOT be invoked
+
+
+class TestToolCallParserDetection:
+    """_tool_call_parser_for_model returns the right --tool-call-parser value."""
+
+    def test_qwen3_flash_next(self):
+        assert mod._tool_call_parser_for_model(
+            "Qwen/Qwen3.8-Flash-Next") == "qwen3_coder"
+
+    def test_qwen3_variant_paths(self):
+        assert mod._tool_call_parser_for_model(
+            "llama//home/holger/.huggingface/Qwen3.8-Flash-Next-UD-IQ3_XXS.gguf"
+        ) == "qwen3_coder"
+
+    def test_qwen4_experimental(self):
+        assert mod._tool_call_parser_for_model(
+            "Qwen/Qwen4-Experimental-Next") == "qwen3_coder"
+
+    def test_qwen2(self):
+        assert mod._tool_call_parser_for_model(
+            "Qwen/Qwen2.5-7B-Instruct") == "qwen2"
+
+    def test_llama3(self):
+        assert mod._tool_call_parser_for_model(
+            "meta-llama/Meta-Llama-3-8B-Instruct") == "llama3"
+
+    def test_llama4(self):
+        assert mod._tool_call_parser_for_model(
+            "meta-llama/Llama-4-Scout-17B-16E-Instruct") == "llama3"
+
+    def test_mistral(self):
+        assert mod._tool_call_parser_for_model(
+            "mistralai/Mistral-7B-Instruct-v0.3") == "mistral"
+
+    def test_mixtral(self):
+        assert mod._tool_call_parser_for_model(
+            "mistralai/Mixtral-8x7B-Instruct-v0.1") == "mistral"
+
+    def test_command_r(self):
+        assert mod._tool_call_parser_for_model(
+            "CohereForAI/c4ai-command-r-v01") == "command-r"
+
+    def test_unknown_model_returns_none(self):
+        assert mod._tool_call_parser_for_model("gpt-4o") is None
+        assert mod._tool_call_parser_for_model("some-random-model") is None
+
+
+class TestLaunchServerAutoParser:
+    """_launch_server injects --tool-call-parser when model family is known."""
+
+    def test_qwen3_gets_parser(self, monkeypatch):
+        launched = {}
+        monkeypatch.setattr(mod, "server_binary_path", lambda api_url: "llama-server.exe")
+        monkeypatch.setattr(mod, "_wait_until_up", lambda api_url, timeout=0: True)
+        monkeypatch.setattr(mod, "_resolve_local_gguf", lambda bare: None)
+        monkeypatch.setattr(mod, "_models_dir_for_launch", lambda: r"C:\models")
+        monkeypatch.setattr(mod, "_dynamic_load", lambda api_url, bare, served: (True, "ok"))
+        def _fake_popen(cmd, **kw):
+            launched["cmd"] = list(cmd)
+            return None
+        monkeypatch.setattr(mod.subprocess, "Popen", _fake_popen)
+        ok, msg = mod._launch_server(
+            "http://127.0.0.1:8080/v1",
+            "Qwen/Qwen3.8-Flash-Next")
+        assert ok is True
+        assert "--tool-call-parser" in launched["cmd"]
+        idx = launched["cmd"].index("--tool-call-parser")
+        assert launched["cmd"][idx + 1] == "qwen3_coder"
+
+    def test_user_extra_args_override_not_duplicated(self, monkeypatch):
+        """If the user already supplies --tool-call-parser in llama_extra_args,
+        we must NOT add a second one."""
+        launched = {}
+        monkeypatch.setattr(mod, "server_binary_path", lambda api_url: "llama-server.exe")
+        monkeypatch.setattr(mod, "_wait_until_up", lambda api_url, timeout=0: True)
+        monkeypatch.setattr(mod, "_resolve_local_gguf", lambda bare: None)
+        monkeypatch.setattr(mod, "_models_dir_for_launch", lambda: r"C:\models")
+        monkeypatch.setattr(mod, "_dynamic_load", lambda api_url, bare, served: (True, "ok"))
+        monkeypatch.setattr(mod, "_llama_extra_args",
+                            lambda: ["--tool-call-parser", "llama3"])
+        def _fake_popen(cmd, **kw):
+            launched["cmd"] = list(cmd)
+            return None
+        monkeypatch.setattr(mod.subprocess, "Popen", _fake_popen)
+        ok, msg = mod._launch_server(
+            "http://127.0.0.1:8080/v1",
+            "Qwen/Qwen3.8-Flash-Next")
+        assert ok is True
+        assert launched["cmd"].count("--tool-call-parser") == 1
+
+    def test_unknown_model_no_parser(self, monkeypatch):
+        launched = {}
+        monkeypatch.setattr(mod, "server_binary_path", lambda api_url: "llama-server.exe")
+        monkeypatch.setattr(mod, "_wait_until_up", lambda api_url, timeout=0: True)
+        monkeypatch.setattr(mod, "_resolve_local_gguf", lambda bare: None)
+        monkeypatch.setattr(mod, "_models_dir_for_launch", lambda: r"C:\models")
+        monkeypatch.setattr(mod, "_dynamic_load", lambda api_url, bare, served: (True, "ok"))
+        def _fake_popen(cmd, **kw):
+            launched["cmd"] = list(cmd)
+            return None
+        monkeypatch.setattr(mod.subprocess, "Popen", _fake_popen)
+        ok, msg = mod._launch_server(
+            "http://127.0.0.1:8080/v1",
+            "some-unknown-model")
+        assert ok is True
+        assert "--tool-call-parser" not in launched["cmd"]

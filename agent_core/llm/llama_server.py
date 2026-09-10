@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 import urllib.error
@@ -60,6 +61,53 @@ def _llama_extra_args() -> list[str]:
         return shlex.split(raw)
     except Exception:
         return raw.split()
+
+
+# --- Tool-call parser auto-detection ------------------------------------------------
+# llama-server requires --tool-call-parser <name> to translate model-native tool
+# calls into the OpenAI tool_calls format.  Without it the server silently drops
+# tool calls and the agent sees plain text.  The mapping below covers the most
+# common open-source model families; unknown models get no parser (the user can
+# supply one via llama_extra_args).
+
+_TOOL_CALL_PARSERS: list[tuple[re.Pattern[str], str]] = [
+    # Qwen4.x / Qwen3.x / Qwen3.8-Flash-Next → qwen3_coder
+    (re.compile(r"qwen[34]", re.IGNORECASE), "qwen3_coder"),
+    # Qwen2.5 / Qwen2 → qwen2
+    (re.compile(r"qwen2", re.IGNORECASE), "qwen2"),
+    # Llama 3.x / 4 → llama3
+    (re.compile(r"llama[-_.]?3|llama[-_.]?4", re.IGNORECASE), "llama3"),
+    # Mistral / Mixtral → mistral
+    (re.compile(r"mistral|mixtral", re.IGNORECASE), "mistral"),
+    # Command-R → command-r
+    (re.compile(r"command[-_.]?r", re.IGNORECASE), "command-r"),
+]
+
+
+def _tool_call_parser_for_model(bare: str) -> str | None:
+    """Return the llama-server ``--tool-call-parser`` value for *bare*, or None."""
+    for pattern, parser in _TOOL_CALL_PARSERS:
+        if pattern.search(bare):
+            return parser
+    return None
+
+
+def _server_has_tool_call_parser(api_url: str) -> bool:
+    """Check if the running llama-server was launched with --tool-call-parser.
+
+    Reads the server's argv from ``GET /v1/models`` → ``status.args``.
+    Returns True if the flag is present, False if absent or on any error
+    (conservative: never restart a working server when we can't tell).
+    """
+    status, body = _http_json("GET", f"{api_url}/models", timeout=8.0)
+    if status != 200 or not isinstance(body, dict):
+        return True  # can't tell — assume OK
+    for m in (body.get("data") or []):
+        if isinstance(m, dict):
+            args = (m.get("status") or {}).get("args")
+            if isinstance(args, list) and "--tool-call-parser" in args:
+                return True
+    return False
 
 
 # How long to wait for a freshly (re)started server to begin answering.
@@ -228,6 +276,17 @@ def ensure_model_served(
     if is_server_up(api_url):
         served = list_served_models(api_url)
         if bare in served:
+            # Server serves the right model — but check if it was launched
+            # with --tool-call-parser.  Without it the server silently drops
+            # tool calls and the agent sees plain text.  Restart with the
+            # parser flag if missing (best-effort: only when we know the
+            # parser for this model family).
+            if (_tool_call_parser_for_model(bare)
+                    and not _server_has_tool_call_parser(api_url)):
+                print(f"  [llama] server serves '{bare}' but lacks --tool-call-parser; "
+                      "relaunching with tool-call support")
+                shutdown_server(api_url)
+                return _launch_server(api_url, bare, extra_args=extra_args)
             return True, f"llama-server already serves '{bare}'"
         role = get_role(api_url)
         if role == "router":
@@ -445,6 +504,14 @@ def _launch_server(api_url: str, bare: str | None,
                "--models-dir", _models_dir_for_launch()]
     if extra_args:
         cmd.extend(extra_args)
+
+    # Auto-inject --tool-call-parser when the model family is known and the
+    # user hasn't supplied one via llama_extra_args.  Without this flag
+    # llama-server silently drops tool calls and the agent sees plain text.
+    if bare and "--tool-call-parser" not in cmd:
+        parser = _tool_call_parser_for_model(bare)
+        if parser:
+            cmd.extend(["--tool-call-parser", parser])
 
     print(f"  [llama] launching server: {' '.join(cmd)}")
     try:

@@ -2156,6 +2156,11 @@ class Agent:
         self._refresh_system_message()
         self._read_streak = 0
         self._append_user_turn(user_input, images)
+        # Pre-trim: bound the history BEFORE the first LLM call so a large
+        # restored session (e.g. 60 messages from chat_history.json) does not
+        # blow the model's prefill budget and trigger an HTTP 500.  The
+        # post-turn trim in _finish_turn still runs for incremental cleanup.
+        self._chat_history = _trim_chat_history(self._chat_history)
         # Snapshot history right after the user turn so a transient LLM failure
         # can be retried from a clean slate — the failed run's tool messages are
         # discarded on retry (otherwise the retry would re-feed them and
@@ -2494,10 +2499,11 @@ def _read_json_quarantining(path: str, label: str) -> Any:
 _MAX_CHAT_MESSAGES = 60
 
 #: Rough character budget for the chat-history BODY (system prompt excluded;
-#: ~4 chars per token, so ~75k chars ≈ 19k tokens — a conservative slice of a
-#: 32k context that also leaves room for tool schemas and the answer).  When
-#: the body exceeds it, oldest messages are dropped (see _trim_chat_history).
-_HISTORY_CHAR_BUDGET = 75000
+#: ~4 chars per token, so ~15k chars ≈ 4k tokens — conservative enough for
+#: small local models (bonsai-27b@4.4GB) that choke on large prefill, while
+#: still leaving room for tool schemas and the answer).  When the body
+#: exceeds it, oldest messages are dropped (see _trim_chat_history).
+_HISTORY_CHAR_BUDGET = 15000
 
 _HISTORY_TRIM_NOTE = (
     "[context compaction] {dropped} earlier message(s) were dropped to fit "
@@ -2955,6 +2961,33 @@ def _drop_orphan_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str,
     ]
 
 
+def _strip_tool_args(m: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of *m* with large tool-call arguments truncated.
+
+    The LLM only needs to know WHICH tool was called (function name) and
+    the tool result — not the full multi-KB argument payload (e.g. a
+    ``write`` call with 10KB of markdown).  Stripping these before sending
+    history to the LLM dramatically cuts prefill time and avoids HTTP 500
+    on small local models.
+    """
+    tcs = m.get("tool_calls")
+    if not tcs or not isinstance(tcs, list):
+        return m
+    stripped = []
+    for tc in tcs:
+        if not isinstance(tc, dict):
+            stripped.append(tc)
+            continue
+        func = tc.get("function") or {}
+        args = func.get("arguments") or ""
+        if isinstance(args, str) and len(args) > 500:
+            func = {**func, "arguments": args[:200] + "... [truncated]"}
+            stripped.append({**tc, "function": func})
+        else:
+            stripped.append(tc)
+    return {**m, "tool_calls": stripped}
+
+
 def _message_size(m: dict[str, Any]) -> int:
     """Approximate character size of one message (4 chars ≈ 1 token).
 
@@ -2996,6 +3029,12 @@ def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     else:
         head = messages[:1]
         body = list(messages[-(_MAX_CHAT_MESSAGES - 1):])
+
+    # Strip large tool-call arguments from assistant messages in the body:
+    # the LLM only needs to know WHICH tool was called, not the full payload
+    # (e.g. a 10KB write() call).  This keeps the char-budget accurate for
+    # prefill without losing conversation structure.
+    body = [_strip_tool_args(m) for m in body]
 
     # Char-budget trim: walk from the NEWEST body message backwards until the
     # budget is exhausted.  A candidate is only accepted when it is not an
