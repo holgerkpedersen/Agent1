@@ -568,7 +568,7 @@ class ModelCommand(Command):
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
             settings = load_agent_settings()
-            agent.llm._provider = build_provider(settings, query)
+            agent.llm._provider = build_provider(settings, query, provider_override="opencode")
             agent.llm.model_name = query
             persist_model_choice(query, provider="opencode")
             print(f"  Switched: {old} -> {query}  (provider=opencode)")
@@ -585,7 +585,7 @@ class ModelCommand(Command):
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
             settings = load_agent_settings()
-            agent.llm._provider = build_provider(settings, q)
+            agent.llm._provider = build_provider(settings, q, provider_override="opencode")
             agent.llm.model_name = q
             persist_model_choice(q, provider="opencode")
             print(f"  Switched: {old} -> {q}  (provider=opencode-zen, free)")
@@ -641,7 +641,7 @@ class ModelCommand(Command):
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
             settings = load_agent_settings()
-            agent.llm._provider = build_provider(settings, q)
+            agent.llm._provider = build_provider(settings, q, provider_override="openrouter")
             agent.llm.model_name = q
             persist_model_choice(q, provider="openrouter")
             print(f"  Switched: {old} -> {q}  (provider=openrouter)")
@@ -715,7 +715,7 @@ class ModelCommand(Command):
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
             settings = load_agent_settings()
-            agent.llm._provider = build_provider(settings, zen_match)
+            agent.llm._provider = build_provider(settings, zen_match, provider_override="opencode")
             agent.llm.model_name = zen_match
             persist_model_choice(zen_match, provider="opencode")
             print(f"  Switched: {old} -> {zen_match}  (provider=opencode-zen, free)")
@@ -729,7 +729,7 @@ class ModelCommand(Command):
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
             settings = load_agent_settings()
-            agent.llm._provider = build_provider(settings, oc_match)
+            agent.llm._provider = build_provider(settings, oc_match, provider_override="opencode")
             agent.llm.model_name = oc_match
             persist_model_choice(oc_match, provider="opencode")
             print(f"  Switched: {old} -> {oc_match}  (provider=opencode)")

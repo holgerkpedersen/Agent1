@@ -544,9 +544,9 @@ class TestSwitchModelPrefersZenFree:
         built: dict[str, object] = {}
         real_build = prov_mod.build_provider
 
-        def fake_build(settings, model_name):
+        def fake_build(settings, model_name, provider_override=None):
             built["model"] = model_name
-            return real_build(settings, model_name)
+            return real_build(settings, model_name, provider_override=provider_override)
 
         monkeypatch.setattr(prov_mod, "build_provider", fake_build)
         persisted: dict[str, str] = {}
@@ -584,9 +584,9 @@ class TestSwitchModelPrefersZenFree:
         built: dict[str, object] = {}
         real_build = prov_mod.build_provider
 
-        def fake_build(settings, model_name):
+        def fake_build(settings, model_name, provider_override=None):
             built["model"] = model_name
-            return real_build(settings, model_name)
+            return real_build(settings, model_name, provider_override=provider_override)
 
         monkeypatch.setattr(prov_mod, "build_provider", fake_build)
         persisted: dict[str, str] = {}
