@@ -1,0 +1,4 @@
+export PATH=/opt/rocm/bin:$PATH
+export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+export HSA_ENABLE_DXG_DETECTION=1
+export ROCR_LIB_PATH=/opt/rocm/lib

@@ -94,6 +94,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# Generated files
+*.png
+*.db
+
 # Spyder
 .spyproject
 
