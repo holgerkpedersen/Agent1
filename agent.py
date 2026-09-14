@@ -1922,6 +1922,23 @@ class Agent:
                 parsed = None
             if isinstance(parsed, dict) and parsed.get("tool_calls"):
                 parsed.pop("role", None)
+                for tc in parsed["tool_calls"]:
+                    func = tc.get("function") or {}
+                    args_str = func.get("arguments", "{}")
+                    try:
+                        json.loads(args_str)
+                    except (json.JSONDecodeError, TypeError):
+                        # LM Studio sometimes emits literal newlines or
+                        # unescaped chars inside JSON string values; try to
+                        # repair by re-encoding through Python.
+                        try:
+                            fixed = json.loads(
+                                args_str.replace("\n", "\\n").replace(
+                                    "\r", "\\r"))
+                            func["arguments"] = json.dumps(
+                                fixed, ensure_ascii=False)
+                        except (json.JSONDecodeError, TypeError):
+                            func["arguments"] = "{}"
                 updated = list(msgs)
                 updated.append(
                     {"role": "assistant",
@@ -2376,6 +2393,18 @@ class Agent:
             # Loop-internal tags never belong in a restored conversation.
             and _CONTINUE_NOTE_TAG_KEY not in m
         ]
+        # Sanitize corrupt tool_call arguments from previous sessions
+        # (truncated JSON, literal newlines, etc.) so the API never sees them.
+        for m in messages:
+            for tc in m.get("tool_calls", []):
+                func = tc.get("function") or {}
+                args_str = func.get("arguments", "{}")
+                try:
+                    parsed = json.loads(args_str)
+                    if not isinstance(parsed, dict):
+                        func["arguments"] = "{}"
+                except (json.JSONDecodeError, TypeError):
+                    func["arguments"] = "{}"
         return _project_chat_history(_strip_image_blocks(messages))
 
     def _save_chat_history(self) -> None:
