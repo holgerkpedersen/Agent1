@@ -2103,5 +2103,17 @@
     "meta_warnings": [
       "Repeats unverified claim reference: EXDEV"
     ]
+  },
+  {
+    "id": "107",
+    "date": "2026-09-13T22:24:25+00:00",
+    "title": "\"Keep codebase DRY\"",
+    "context": "\"We need to keep everything DRY (Don't Repeat Yourself)\"",
+    "decision": "\"All py files in the repo must be DRY\"",
+    "rationale": "",
+    "affected_files": [],
+    "tags": [],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]
