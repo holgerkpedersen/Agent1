@@ -996,7 +996,15 @@ class TestPersistentChatHistory:
             async def chat(self, messages, tools=None, **kwargs):
                 return "done"
 
-        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+        # Redirect BOTH persisted-state files to tmp_path: chat_nlp persists
+        # agent memory too (_save_memory in _finish_turn), and a real
+        # agent_memory.json whose files_read contains a decision-referenced
+        # path would make _refresh_system_message append the constraints block
+        # to "SYS", breaking the exact-content assertions below (see
+        # test_quickwins_2026_08_25.py for the same isolation rule).
+        memory_file = tmp_path / "agent_memory.json"
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)), \
+             patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)):
             agent = Agent(workspace=".")
             agent._chat_history = list(messages)
             agent.llm = FakeLLM()
