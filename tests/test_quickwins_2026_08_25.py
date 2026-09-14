@@ -195,6 +195,44 @@ class TestHistoryCharBudgetTrim:
                 prev_role, prev_has_calls = roles[i - 1]
                 assert prev_role == "assistant" and prev_has_calls
 
+    def test_stripped_tool_args_stay_valid_json(self) -> None:
+        """Regression: a >500-char tool argument must stay VALID JSON.
+
+        The old code truncated to ``args[:200] + "... [truncated]"``, cutting
+        the string mid-value.  That invalid JSON was then persisted and the
+        gateway rejected the next turn with HTTP 400 "Assistant tool call
+        function.arguments must be valid JSON".
+        """
+        import json as _json
+
+        big_args = _json.dumps({"content": "x" * 1000})
+        msgs = [
+            _msg("system", "sys"),
+            _msg("user", "q"),
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "write", "arguments": big_args},
+                }],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+        ]
+        out = _trim_chat_history(msgs)
+        seen = 0
+        for m in out:
+            for tc in m.get("tool_calls", []):
+                arg = tc["function"]["arguments"]
+                parsed = _json.loads(arg)  # must not raise
+                assert isinstance(parsed, dict)
+                seen += 1
+        assert seen == 1
+        # The call is still identifiable (name preserved) even though the
+        # bulky payload was dropped.
+        assert out[2]["tool_calls"][0]["function"]["name"] == "write"
+
 
 # ---------------------------------------------------------------------------
 # #15 — multillm --synthesize

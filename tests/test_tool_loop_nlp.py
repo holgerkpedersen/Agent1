@@ -376,6 +376,50 @@ class TestToolLoopExecution:
         dup_notes = [c for c in tool_contents if "NOTE: This exact call" in c]
         assert len(dup_notes) == 2
 
+    def test_stuck_batch_backfills_unanswered_tool_calls(self):
+        """Regression: a mid-batch ``stuck`` break must not leave later
+        tool_calls of the same assistant message without a result.
+
+        Strict gateways reject that with HTTP 400 ("An assistant message with
+        'tool_calls' must be followed by tool messages responding to each
+        'tool_call_id'").  Previously the batch [repeat, write] executed only
+        the repeat and silently dropped the write's result.
+        """
+        fake = _ScriptedLLM([
+            ("read", {"path": "a.py"}),
+            ("read", {"path": "a.py"}),
+            # Third repeat triggers `stuck`; the write follows it in the batch.
+            (
+                [("read", {"path": "a.py"}), ("write", {"path": "b.py", "content": "x"})],
+                [],
+            ),
+            "Done.",
+        ])
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return f"result-of-{name}"
+
+        runner = ToolLoopRunner(max_iterations=10)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert final_text == "Done."
+        # Every assistant tool_calls message must be followed by a tool result
+        # for EACH announced id (no "insufficient tool messages").
+        for i, m in enumerate(messages):
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                ids = [str(tc.get("id")) for tc in m["tool_calls"]]
+                following = []
+                for j in range(i + 1, len(messages)):
+                    if messages[j].get("role") == "tool":
+                        following.append(str(messages[j].get("tool_call_id")))
+                    else:
+                        break
+                assert all(x in following for x in ids), (
+                    f"unanswered tool_calls {ids} (following={following})"
+                )
+
 
 def _loop_runner_sync(runner, fake_llm, execute_tool, **kwargs):
     import asyncio

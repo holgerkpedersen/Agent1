@@ -3010,7 +3010,16 @@ def _strip_tool_args(m: dict[str, Any]) -> dict[str, Any]:
         func = tc.get("function") or {}
         args = func.get("arguments") or ""
         if isinstance(args, str) and len(args) > 500:
-            func = {**func, "arguments": args[:200] + "... [truncated]"}
+            # Must remain VALID JSON: the gateway validates function.arguments
+            # and rejects a "[truncated]" fragment with HTTP 400 ("Assistant
+            # tool call function.arguments must be valid JSON").  A compact
+            # placeholder keeps the call identifiable without a half-cut string.
+            func = {
+                **func,
+                "arguments": json.dumps(
+                    {"_truncated": True, "_original_len": len(args)}
+                ),
+            }
             stripped.append({**tc, "function": func})
         else:
             stripped.append(tc)

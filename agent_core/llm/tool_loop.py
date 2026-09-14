@@ -1015,6 +1015,54 @@ class ToolLoopRunner:
             # gather-completion order, to satisfy the chat-template contract.
             for msg in tool_msgs:
                 current_messages.append(msg)
+            # A mid-batch ``stuck`` break (a 3rd identical call, or the
+            # sequential-loop break) can leave later tool_calls of THIS
+            # assistant message without a result.  Strict gateways reject that
+            # with HTTP 400 ("An assistant message with 'tool_calls' must be
+            # followed by tool messages responding to each 'tool_call_id'").
+            # Backfill a synthetic result for every announced id that has none.
+            # Scope the "answered" set to the results immediately following the
+            # most recent assistant tool_calls message — a global set would be
+            # fooled by repeated ids across batches.
+            _announced: list[str] = []
+            _answered: set[str] = set()
+            for _idx in range(len(current_messages) - 1, -1, -1):
+                _m = current_messages[_idx]
+                if _m.get("role") == "assistant" and _m.get("tool_calls"):
+                    _announced = [
+                        str(tc.get("id") or "")
+                        for tc in _m["tool_calls"]
+                        if isinstance(tc, dict)
+                    ]
+                    for _nxt in current_messages[_idx + 1:]:
+                        if _nxt.get("role") == "tool":
+                            _answered.add(str(_nxt.get("tool_call_id") or ""))
+                        else:
+                            break
+                    break
+            for _tid in _announced:
+                if _tid and _tid not in _answered:
+                    _skip = (
+                        "NOTE: Not executed — the loop stopped after a "
+                        "repeated call. Take a different action or give your "
+                        "final answer."
+                    )
+                    current_messages.append(
+                        {"role": "tool", "tool_call_id": _tid, "content": _skip}
+                    )
+                    if self.display_mode != DisplayMode.QUIET:
+                        print(
+                            f"  {yellow('[tool]')} "
+                            f"{gray('(skipped — loop stopping)')}"
+                        )
+                    self._emit(
+                        KIND_TOOL_RESULT,
+                        LAYER_TOOL_INTERFACE,
+                        iteration=iteration,
+                        tool="",
+                        tc_id=_tid,
+                        result=_skip,
+                    )
             _prev_batch_keys = _executed_this_batch
 
             if stuck:
