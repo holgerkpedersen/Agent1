@@ -22,6 +22,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -313,16 +314,15 @@ class OpencodeProvider:
         # x-opencode-session header is required by the OpenCode Go API for
         # proper request tracking. Without it, requests may error.
         headers: dict[str, str] = {
-            "User-Agent": "opencode",
+            # Cloudflare's Browser Integrity Check (error 1010) blocks
+            # requests with non-browser User-Agents.  Use a real browser
+            # signature for ALL modes (zen AND go).
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "x-opencode-project": "agent1",
             "x-opencode-session": "agent1-session",
             "x-opencode-request": "req-1",
             "x-opencode-client": "tui",
         }
-        if not self.zen_mode:
-            # Standard opencode-go mode: use the browser-like user agent
-            # (Cloudflare rejects the default Python-urllib user agent).
-            headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         if json_body:
             headers["Content-Type"] = "application/json"
         if self.api_mode and self.api_key:
@@ -603,10 +603,21 @@ class OpencodeProvider:
 
     @staticmethod
     def _is_backend_down(result: str) -> bool:
-        """True when *result* indicates the free backend model is down."""
+        """True when *result* indicates the free backend model is down.
+
+        A 4xx upstream error (e.g. "[400] Provider returned error") means
+        the *request* is bad — retrying a different model won't help.
+        Only 5xx / timeout / "model is unavailable" are backend-down.
+        """
         if not isinstance(result, str) or not result.startswith("[Error:"):
             return False
         low = result.lower()
+        # "upstream request failed" with a 4xx code is a bad-request, not
+        # backend-down — skip it so we don't waste time retrying models.
+        if "upstream request failed" in low:
+            m = re.search(r"\[(\d{3})\]", result)
+            if m and m.group(1).startswith("4"):
+                return False
         return any(marker in low for marker in _BACKEND_DOWN_MARKERS)
 
     async def _zen_free_fallback(

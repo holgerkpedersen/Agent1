@@ -545,8 +545,10 @@ class TestZenFreeTier:
         assert seen["body"]["model"] == "hy3-free"
         # No Authorization header on the keyless free tier.
         assert seen["auth"] is None or seen["auth"] == ""
-        # Zen whitelisted headers present (rate-limit identity).
-        assert seen["ua"] == "opencode"
+        # Zen whitelisted headers present (rate-limit identity).  The UA is a
+        # real browser signature in ALL modes: Cloudflare's Browser Integrity
+        # Check (error 1010) blocks non-browser User-Agents.
+        assert seen["ua"].startswith("Mozilla/5.0")
         assert seen["x_client"] == "tui"
 
 
