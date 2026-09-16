@@ -65,6 +65,28 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "read_skill",
+            "description": (
+                "Load a workspace skill (a runbook under skills/<name>/SKILL.md) "
+                "whose name is listed in the SKILLS block of the system prompt. "
+                "Call this BEFORE starting work a skill covers: it returns the "
+                "step-by-step body. Paging is LINE-BASED like read (offset is "
+                "the 1-based first line, limit the line count)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Skill name as listed in the SKILLS block (e.g. 'repo-runbook')"},
+                    "offset": {"type": "integer", "description": "1-based starting line of the body (default 1)"},
+                    "limit": {"type": "integer", "description": "Maximum number of body lines to return (default 200, max 400)"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_files",
             "description": "List the entries of a directory (subdirectories marked with /).",
             "parameters": {

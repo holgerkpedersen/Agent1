@@ -43,6 +43,10 @@ MODE_PLAN = "plan"
 PLAN_MODE_TOOLS: frozenset[str] = frozenset({
     "search", "read", "list_files", "diff", "web_search",
     "definitions", "references",
+    # ``read_skill`` is a pure reader — it only opens skills/<name>/SKILL.md
+    # read-only and returns one page of text; the SKILLS index in the system
+    # prompt tells the model to call it, so plan mode must allow it.
+    "read_skill",
     # ``delegate`` is safe in plan mode: the parent's mode caps every child
     # to read-only (SubAgent.__init__), so delegation cannot mutate files.
     "delegate",
