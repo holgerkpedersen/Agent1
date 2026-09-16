@@ -420,6 +420,109 @@ class TestToolLoopExecution:
                     f"unanswered tool_calls {ids} (following={following})"
                 )
 
+    def test_no_duplicate_tool_results_for_an_assistant_batch(self, monkeypatch):
+        """Regression: the backfill must not emit a second result for an id
+        already answered.  Extras are rejected by strict gateways with HTTP
+        400 ("Messages with role 'tool' must be a response to a preceding
+        message with 'tool_calls'")."""
+        import asyncio
+        import agent_core.llm.tool_loop as tl
+
+        monkeypatch.setattr(tl, "_TOOL_CONSECUTIVE_FAILURE_LIMIT", 2)
+
+        fake = _ScriptedLLM([
+            # Batch 1: two failing calls (different args -> not duplicates).
+            ([("run", {"command": "a"}), ("run", {"command": "b"})], []),
+            # Batch 2: same two again -> become duplicates.
+            ([("run", {"command": "a"}), ("run", {"command": "b"})], []),
+            # Batch 3: first call is a 3rd consecutive repeat -> stuck break
+            # before the second call runs, so the second needs a backfill.
+            ([("run", {"command": "a"}), ("run", {"command": "c"})], []),
+            "done",
+        ])
+
+        async def execute_tool(name, args):
+            return "Tool error: boom"
+
+        runner = ToolLoopRunner(max_iterations=10)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert final_text == "done"
+        # For every assistant tool_calls batch, the following tool results
+        # (up to the next assistant message) must cover each announced id
+        # EXACTLY once — no missing, no duplicates.
+        for i, m in enumerate(messages):
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                ids = [str(tc.get("id")) for tc in m["tool_calls"]]
+                following = []
+                for j in range(i + 1, len(messages)):
+                    if messages[j].get("role") == "assistant":
+                        break
+                    if messages[j].get("role") == "tool":
+                        following.append(str(messages[j].get("tool_call_id")))
+                assert sorted(following) == sorted(ids), (
+                    f"tool results do not match announced ids: "
+                    f"announced={ids} results={following}"
+                )
+
+    def test_consecutive_failure_note_does_not_split_tool_pair(self, monkeypatch):
+        """Regression: the tool consecutive-failure note must be appended
+        AFTER the batch's tool results — never between an assistant
+        tool_calls message and its results.
+
+        It used to be appended inline (user role) while the tool executed, so
+        the next LLM call saw ``assistant(tool_calls)`` followed by a user
+        note instead of the tool result.  The gateway then rejected the turn
+        with HTTP 400 "An assistant message with 'tool_calls' must be followed
+        by tool messages responding to each 'tool_call_id'".
+        """
+        import asyncio
+        import agent_core.llm.tool_loop as tl
+
+        monkeypatch.setattr(tl, "_TOOL_CONSECUTIVE_FAILURE_LIMIT", 2)
+
+        fake = _ScriptedLLM([
+            ("run", {"command": "cmd1"}),
+            ("run", {"command": "cmd2"}),   # 2nd failure -> note queued
+            ("run", {"command": "cmd3"}),   # next call must see a clean pair
+            "done",
+        ])
+        sent_batches = []
+
+        async def execute_tool(name, args):
+            return "Tool error: boom"
+
+        inner = _make_llm_chat_fn(fake)
+
+        async def capturing_fn(messages, tools):
+            sent_batches.append([dict(m) for m in messages])
+            return await inner(messages, tools)
+
+        runner = ToolLoopRunner(max_iterations=10)
+        final_text, _ = asyncio.run(runner.run(
+            messages=[{"role": "user", "content": "go"}],
+            llm_chat_fn=capturing_fn,
+            execute_tool_fn=execute_tool,
+            tools=list(NLP_TOOL_SCHEMAS),
+        ))
+
+        assert final_text == "done"
+        assert sent_batches, "the loop never called the LLM"
+        for batch in sent_batches:
+            for i, m in enumerate(batch):
+                if m.get("role") == "assistant" and m.get("tool_calls"):
+                    ids = [str(tc.get("id")) for tc in m["tool_calls"]]
+                    following = []
+                    for j in range(i + 1, len(batch)):
+                        if batch[j].get("role") == "tool":
+                            following.append(str(batch[j].get("tool_call_id")))
+                        else:
+                            break
+                    assert all(x in following for x in ids), (
+                        f"tool pair split for the LLM: ids={ids} "
+                        f"following={following}"
+                    )
+
 
 def _loop_runner_sync(runner, fake_llm, execute_tool, **kwargs):
     import asyncio
@@ -1119,6 +1222,32 @@ class TestPersistentChatHistory:
         cleaned = _drop_orphan_tool_messages(messages)
         assert [m["role"] for m in cleaned] == ["system", "user", "assistant", "tool", "user"]
         assert [m.get("tool_call_id") for m in cleaned if m.get("role") == "tool"] == ["c1"]
+
+    def test_duplicate_tool_responses_dropped_within_run(self):
+        """A second tool response for an id already answered in the same run
+        must be dropped — strict gateways reject extras with HTTP 400
+        ("Messages with role 'tool' must be a response to a preceding message
+        with 'tool_calls'").  A later turn may reuse the id legitimately, so
+        the dedupe must be run-scoped, not global."""
+        from agent import _drop_orphan_tool_messages
+        messages = [
+            {"role": "system", "content": "SYS"},
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "c1", "type": "function",
+                             "function": {"name": "read", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "real result"},
+            # duplicate response for the same run -> must be dropped
+            {"role": "tool", "tool_call_id": "c1", "content": "NOTE: Not executed"},
+            # a LATER turn reusing the same id -> must be kept
+            {"role": "user", "content": "again"},
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "c1", "type": "function",
+                             "function": {"name": "read", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "second turn result"},
+        ]
+        cleaned = _drop_orphan_tool_messages(messages)
+        tool_msgs = [m["content"] for m in cleaned if m["role"] == "tool"]
+        assert tool_msgs == ["real result", "second turn result"]
 
     def test_trim_boundary_orphan_dropped(self):
         """When trimming cuts between an assistant tool_calls message and its

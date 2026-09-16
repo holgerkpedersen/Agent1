@@ -9,6 +9,7 @@ import sys
 import time
 from typing import Any, Awaitable, Callable
 
+from agent_core.constants import LOOP_NOTE_TAG_KEY
 from harnessfix.tracing import (
     GUARD_BUDGET,
     GUARD_DEADLINE,
@@ -231,6 +232,14 @@ _COMPACT_NOTE = (
     "not ask to re-read what was compacted."
 )
 
+#: Tag value marking the compaction-note message so it is filtered BY TAG when
+#: a second compaction replaces it — never by content prefix, which would also
+#: drop a legitimate user prompt or tool result that happens to start with
+#: "CONTEXT NOTE:".  The key is LOOP_NOTE_TAG_KEY: sanitize_message_roles pops
+#: it at the provider payload boundary (the tag never reaches a gateway), and
+#: the run-end strip still matches on content via ``injected_notes``.
+_COMPACT_NOTE_TAG = "compact"
+
 _SUMMARIZE_INSTRUCTION = (
     "Condense the following tool-call exchange history into a single dense "
     "working-memory note (key files touched, findings, decisions, open "
@@ -324,19 +333,28 @@ def _compact_messages(
     *note* is the new note text (or ``None`` when nothing was dropped — i.e.
     the list already fit within ``max_messages`` / ``char_budget``).
 
-    Any CONTEXT NOTE already present in *messages* (from a previous compaction
-    in this run) is replaced rather than stacked, so the note does not grow
-    stale and is not double-counted.
+    Any compaction note already present in *messages* (from a previous
+    compaction in this run, recognised by its LOOP_NOTE_TAG_KEY tag — NOT by
+    content prefix, so a real message that merely starts with "CONTEXT NOTE:"
+    survives) is replaced rather than stacked, so the note does not grow stale
+    and is not double-counted.
     """
     dropped, kept_full = _split_for_compaction(messages, max_messages, char_budget)
     if dropped is None:
         return messages, None
     kept_full = [
         m for m in kept_full
-        if not str(m.get("content", "")).startswith("CONTEXT NOTE:")
+        if m.get(LOOP_NOTE_TAG_KEY) != _COMPACT_NOTE_TAG
     ]
     note = _COMPACT_NOTE.format(dropped=len(dropped), summary=summary)
-    return kept_full + [{"role": "user", "content": note}], note
+    return (
+        kept_full + [{
+            "role": "user",
+            "content": note,
+            LOOP_NOTE_TAG_KEY: _COMPACT_NOTE_TAG,
+        }],
+        note,
+    )
 
 
 def _is_path_miss(result_str: str) -> bool:
@@ -577,6 +595,16 @@ class ToolLoopRunner:
             tools = []
         # Discovery tracking is per-run: a fresh run has a fresh "known" set.
         self._seen_progress_keys.clear()
+        #: Per-run observability/mutation state must NOT leak across run() calls
+        #: on a reused runner: stats, termination reason and the mutated-file
+        #: record all describe THIS run (the previous run's loop_end event was
+        #: already emitted with its own values before this one started).
+        self.termination_reason = "answer"
+        self.tool_calls_made = 0
+        self.tools_used = {}
+        self.last_tool_call = ""
+        self.iterations_used = 0
+        self._mutated_files.clear()
 
         all_text_parts = []
         current_messages = [dict(m) for m in messages]
@@ -625,6 +653,11 @@ class ToolLoopRunner:
         #: arguments).  Breaks variant-repeat loops like grep with slightly
         #: different patterns that all fail (decision #061).
         _tool_consec_failures: dict[str, int] = {}
+        #: Steering notes that must be appended AFTER a batch's tool results —
+        #: inserting them mid-batch would split an assistant tool_calls message
+        #: from its tool results (strict gateways reject that with HTTP 400
+        #: "insufficient tool messages following tool_calls message").
+        deferred_notes: list[str] = []
 
         for iteration in range(self.max_iterations):
             self._emit(
@@ -740,6 +773,13 @@ class ToolLoopRunner:
             _run_seen_calls.clear()
             #: Keys actually EXECUTED in this batch (duplicates excluded).
             _executed_this_batch: set[tuple[str, str]] = set()
+            #: Tool messages for calls handled as DUPLICATES during pre-check.
+            #: Collected here instead of appended inline so that, after the
+            #: pending calls execute, ALL tool messages can be appended in
+            #: original announcement order (an inline dup append used to land
+            #: BEFORE earlier pending calls' results — out-of-order tool
+            #: responses are rejected by strict chat templates).
+            dup_tool_msgs: list[dict[str, Any]] = []
 
             # Inner executor: runs ONE prepared (non-duplicate) tool call —
             # execution, path-miss recovery, trace emit, display, and all
@@ -792,6 +832,10 @@ class ToolLoopRunner:
                 if _is_path_miss(result_str) and tool_name in _PATH_SENSITIVE_TOOLS:
                     result_str, discovered = await _recover_path_miss(
                         execute_tool_fn, args, result_str)
+                    #: The recovery's hidden list_files records its own effect;
+                    #: discard it so the parent dir is not attributed to this or
+                    #: a later tool event (it was only listed, never touched).
+                    self._collect_effects(tool_name, args)
                     if discovered:
                         calls_without_progress = 0
                     self._emit(
@@ -840,7 +884,13 @@ class ToolLoopRunner:
                 if tool_consec_failures.get(tool_name, 0) >= _TOOL_CONSECUTIVE_FAILURE_LIMIT:
                     note = _TOOL_CONSECUTIVE_FAILURE_NOTE.format(
                         tool=tool_name, count=tool_consec_failures[tool_name])
-                    current_messages.append({"role": "user", "content": note})
+                    # Queue, don't append: a user message inserted HERE would
+                    # land between the assistant tool_calls message and its
+                    # tool results, and strict gateways reject that with HTTP
+                    # 400 "insufficient tool messages following tool_calls
+                    # message".  The caller appends queued notes AFTER the
+                    # batch's results.
+                    deferred_notes.append(note)
                     injected_notes.append(note)
                     tool_consec_failures[tool_name] = 0
                     self._emit(
@@ -912,6 +962,9 @@ class ToolLoopRunner:
                         result_str, discovered = await _recover_path_miss(
                             execute_tool_fn, args, prev_result
                         )
+                        #: Discard the hidden list_files' self-recorded effect —
+                        #: same reason as in _run_one (see above).
+                        self._collect_effects(tool_name, args)
                         calls_without_progress = 0 if discovered else calls_without_progress + 1
                         self._emit(
                             KIND_GUARD_TRIGGERED,
@@ -966,7 +1019,10 @@ class ToolLoopRunner:
                             if "note:" in shown.lower():
                                 shown = magenta(shown)
                             print(f"  {yellow('[result]')} {shown}")
-                    current_messages.append({
+                    #: Defer the append (see dup_tool_msgs): this call sits in
+                    #: the same assistant batch as pending calls that execute
+                    #: LATER — appending now would put its tool message first.
+                    dup_tool_msgs.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
                         "content": result_str,
@@ -1011,19 +1067,32 @@ class ToolLoopRunner:
                     _executed_this_batch, _dup_streak, _tool_consec_failures))
                 if stuck:
                     break
-            # Append tool messages in ORIGINAL batch (tool_call_id) order, not
-            # gather-completion order, to satisfy the chat-template contract.
-            for msg in tool_msgs:
-                current_messages.append(msg)
+            # Append tool messages in ORIGINAL batch (tool_call_id) order — not
+            # gather-completion order and not pre-check-handling order — merging
+            # executed results with duplicate-handled ones collected above, so
+            # every tool message follows its assistant message in announced
+            # order (chat-template contract).  Ids still without a message
+            # (a mid-batch ``stuck`` break) are backfilled below.
+            _by_tc_id = {m["tool_call_id"]: m for m in [*dup_tool_msgs, *tool_msgs]}
+            for _tc in tool_calls:
+                if not isinstance(_tc, dict):
+                    continue
+                _msg = _by_tc_id.pop(str(_tc.get("id") or ""), None)
+                if _msg is not None:
+                    current_messages.append(_msg)
             # A mid-batch ``stuck`` break (a 3rd identical call, or the
             # sequential-loop break) can leave later tool_calls of THIS
             # assistant message without a result.  Strict gateways reject that
             # with HTTP 400 ("An assistant message with 'tool_calls' must be
             # followed by tool messages responding to each 'tool_call_id'").
             # Backfill a synthetic result for every announced id that has none.
-            # Scope the "answered" set to the results immediately following the
-            # most recent assistant tool_calls message — a global set would be
-            # fooled by repeated ids across batches.
+            # Scope the "answered" set to the results that follow the most
+            # recent assistant tool_calls message, up to the NEXT assistant
+            # message.  Stopping at the first non-tool message would treat
+            # results separated by a steering note as unanswered and emit
+            # DUPLICATE tool responses (rejected with HTTP 400 "Messages with
+            # role 'tool' must be a response to a preceding message with
+            # 'tool_calls'").
             _announced: list[str] = []
             _answered: set[str] = set()
             for _idx in range(len(current_messages) - 1, -1, -1):
@@ -1035,10 +1104,10 @@ class ToolLoopRunner:
                         if isinstance(tc, dict)
                     ]
                     for _nxt in current_messages[_idx + 1:]:
+                        if _nxt.get("role") == "assistant":
+                            break
                         if _nxt.get("role") == "tool":
                             _answered.add(str(_nxt.get("tool_call_id") or ""))
-                        else:
-                            break
                     break
             for _tid in _announced:
                 if _tid and _tid not in _answered:
@@ -1063,6 +1132,11 @@ class ToolLoopRunner:
                         tc_id=_tid,
                         result=_skip,
                     )
+            # Flush queued steering notes AFTER the batch's tool results so the
+            # assistant tool_calls message stays adjacent to its results.
+            for _note in deferred_notes:
+                current_messages.append({"role": "user", "content": _note})
+            deferred_notes.clear()
             _prev_batch_keys = _executed_this_batch
 
             if stuck:

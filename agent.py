@@ -61,6 +61,14 @@ from agent_core.commands.base import (
 )
 from agent_core.commands.registry import CommandRegistry
 from agent_core.decisions import decisions_as_system_prompt
+from agent_core.skills import (
+    DEFAULT_PAGE_LINES,
+    SKILL_INDEX_MARKER,
+    SkillError,
+    format_skill_page,
+    load_skill_index,
+    read_skill,
+)
 from agent_core.symbol_intel import collect_definitions, collect_references
 from agent_core.commands.read_cmd import ReadCommand
 from agent_core.commands.write_cmd import WriteCommand
@@ -111,6 +119,68 @@ for _stream in (sys.stdout, sys.stderr):
             pass
 
 logger = logging.getLogger(__name__)
+
+
+def _escape_json_string_controls(text: str) -> str:
+    """Escape raw control characters that appear INSIDE JSON string literals.
+
+    A whole-text ``str.replace("\\n", "\\\\n")`` cannot repair these payloads:
+    pretty-printed model output has legitimate newlines BETWEEN tokens, and the
+    same blind replace mangles those (or still leaves an unescaped newline in a
+    value), so the parse fails and the call's arguments get wiped to ``{}``.
+    A small state machine escapes only where control chars are actually illegal
+    — inside string values — leaving inter-token whitespace untouched.
+    """
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    for ch in text:
+        if not in_string:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+            continue
+        if escaped:
+            out.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = False
+            out.append(ch)
+            continue
+        code = ord(ch)
+        if code < 0x20:
+            out.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(ch, f"\\u{code:04x}"))
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
+def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
+    """Parse a tool-call ``arguments`` string, repairing common model typos.
+
+    Models (LM Studio in particular) occasionally emit raw control characters —
+    unescaped newlines/tabs inside JSON string values.  We escape those ONLY
+    inside string literals and retry; anything still unparseable degrades to
+    ``{}`` so a malformed payload never aborts the loop (the model sees an
+    empty-args result note instead of a crash).
+    """
+    if not isinstance(args_str, str) or not args_str.strip():
+        return {}
+    try:
+        parsed = json.loads(args_str)
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        pass
+    try:
+        parsed = json.loads(_escape_json_string_controls(args_str))
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
 
 
 @contextlib.contextmanager
@@ -920,6 +990,7 @@ class Agent:
             "git": self._nlp_git,
             "list_files": self._nlp_list_files,
             "read": self._nlp_read,
+            "read_skill": self._nlp_read_skill,
             "references": self._nlp_references,
             "run": self._nlp_run,
             "search": self._nlp_search,
@@ -1084,6 +1155,33 @@ class Agent:
         if self._read_streak >= _MAX_CONSECUTIVE_READS:
             result += _READ_LOOP_NOTE.format(n=self._read_streak)
         return result
+
+    async def _nlp_read_skill(self, args: dict[str, Any]) -> str:
+        """Load one page of a workspace skill body (``read_skill`` tool).
+
+        Reads ``skills/<name>/SKILL.md`` from the effective workspace for a
+        name listed in the system-prompt SKILLS index.  Paging mirrors
+        ``read`` (1-based ``offset``, ``limit`` lines).  Every failure mode —
+        bad/unknown name, unreadable or invalid file, out-of-range offset — is
+        returned as a plain string so a bad call can never break the loop.
+        """
+        name = str(args.get("name", "")).strip()
+        try:
+            offset = max(1, int(args.get("offset") or 1))
+            limit = int(args.get("limit") or DEFAULT_PAGE_LINES)
+        except (TypeError, ValueError):
+            return "Skill error: offset/limit must be integers."
+        try:
+            page = read_skill(
+                self._effective_ws_dir(), name, offset=offset, limit=limit,
+            )
+        except SkillError as exc:
+            return f"Skill error: {exc}"
+        except Exception:
+            logger.exception('read_skill failed:\n')
+            return f"Skill error: could not load skill {name!r}."
+        self._note_effect(str(page.skill.path))
+        return format_skill_page(page)
 
     async def _nlp_list_files(self, args: dict[str, Any]) -> str:
         """List up to 50 directory entries, directories marked with ``/``."""
@@ -1813,13 +1911,14 @@ class Agent:
 
     def _refresh_system_message(self) -> None:
         """Ensure history starts with a system message and rebuild its dynamic
-        blocks (decision-constraints / plan-mode suffix).
+        blocks (decision-constraints / skill index / plan-mode suffix).
 
         The stored BASE prompt (position 0 minus previously injected dynamic
         blocks) is preserved — only the dynamic blocks are rebuilt, so nothing
         accumulates and a restored session's prompt is never clobbered.  A
-        long-lived session must see the CURRENT decision ledger, not the
-        snapshot taken on the first turn.
+        long-lived session must see the CURRENT decision ledger and the CURRENT
+        skill index (a runbook added to ``skills/`` mid-session is advertised on
+        the next turn), not the snapshot taken on the first turn.
         """
         if not self._chat_history:
             self._chat_history.append({
@@ -1834,6 +1933,7 @@ class Agent:
                 str(self._chat_history[0].get("content") or _SYSTEM_PROMPT)
             )
             + self._decision_constraints_block()
+            + self._skill_index_block()
             + (plan_mode_system_suffix() if self.is_plan_mode() else ""),
         }
 
@@ -1928,17 +2028,14 @@ class Agent:
                     try:
                         json.loads(args_str)
                     except (json.JSONDecodeError, TypeError):
-                        # LM Studio sometimes emits literal newlines or
-                        # unescaped chars inside JSON string values; try to
-                        # repair by re-encoding through Python.
-                        try:
-                            fixed = json.loads(
-                                args_str.replace("\n", "\\n").replace(
-                                    "\r", "\\r"))
-                            func["arguments"] = json.dumps(
-                                fixed, ensure_ascii=False)
-                        except (json.JSONDecodeError, TypeError):
-                            func["arguments"] = "{}"
+                        # LM Studio sometimes emits literal newlines or unescaped
+                        # chars inside JSON string values; repair by escaping
+                        # control characters where they are actually illegal —
+                        # inside string literals only.  A whole-text replace would
+                        # also mangle the whitespace between tokens of pretty-
+                        # printed output and wipe a valid multi-line payload to {}.
+                        func["arguments"] = json.dumps(
+                            _repair_tool_arguments(args_str), ensure_ascii=False)
                 updated = list(msgs)
                 updated.append(
                     {"role": "assistant",
@@ -2368,6 +2465,23 @@ class Agent:
             logger.exception('Decision constraints unavailable:\n')
             return ""
 
+    def _skill_index_block(self) -> str:
+        """Compact index of workspace skills for the chat system prompt.
+
+        Only ``- name — description`` lines are injected (see
+        :func:`agent_core.skills.skill_index_block`); the runbook BODY is read
+        on demand via the ``read_skill`` tool.  Rebuilt every turn so a skill
+        added to ``skills/`` mid-session is advertised on the next turn.
+        Empty string when the workspace has no skills — the prompt then stays
+        byte-identical to before.  Never raises: a broken ``SKILL.md`` must not
+        kill a chat turn (same rule as :meth:`_decision_constraints_block`).
+        """
+        try:
+            return load_skill_index(self._effective_ws_dir())
+        except Exception:
+            logger.exception('Skill index unavailable:\n')
+            return ""
+
     # ------------------------------------------------------------------
     #  Persistent NLP chat history (chat_history.json)
     # ------------------------------------------------------------------
@@ -2762,6 +2876,7 @@ def _strip_dynamic_system_blocks(text: str) -> str:
     """
     markers = (
         "\n\nCRITICAL DESIGN CONSTRAINTS",
+        SKILL_INDEX_MARKER,
         "\n\nSESSION MODE: PLAN",
     )
     cut = len(text)
@@ -2970,13 +3085,17 @@ def _blocked_shell_command(command: str) -> str | None:
 
 
 def _drop_orphan_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop ``tool`` messages whose ``tool_call_id`` has no matching assistant
-    ``tool_calls`` message.
+    """Drop ``tool`` messages that are orphans or duplicate responses.
+
+    - **Orphan**: a ``tool`` message whose ``tool_call_id`` has no matching
+      assistant ``tool_calls`` message.
+    - **Duplicate**: a second (or later) ``tool`` message for a
+      ``tool_call_id`` already answered — strict gateways reject extras with
+      HTTP 400 ("Messages with role 'tool' must be a response to a preceding
+      message with 'tool_calls'").
 
     Trimming can cut between an assistant tool_calls message and its tool
-    result, leaving an orphan — strict gateways (opencode Console Go) reject
-    those with HTTP 400 ("Messages with role 'tool' must be a response to a
-    preceding message with 'tool_calls'").
+    result, leaving an orphan; a backfill/sanitizer bug can leave duplicates.
     """
     valid_ids: set[str] = set()
     for m in messages:
@@ -2984,10 +3103,22 @@ def _drop_orphan_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str,
             for tc in m.get("tool_calls") or []:
                 if isinstance(tc, dict) and tc.get("id"):
                     valid_ids.add(str(tc["id"]))
-    return [
-        m for m in messages
-        if not (m.get("role") == "tool" and m.get("tool_call_id") not in valid_ids)
-    ]
+    # Dedupe WITHIN a contiguous run of tool results (reset on any non-tool
+    # message): a later turn may legitimately reuse an id, so a global set
+    # would wrongly drop a valid response.
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        if m.get("role") == "tool":
+            tid = str(m.get("tool_call_id") or "")
+            if tid not in valid_ids or tid in seen:
+                continue
+            seen.add(tid)
+            out.append(m)
+        else:
+            seen = set()
+            out.append(m)
+    return out
 
 
 def _strip_tool_args(m: dict[str, Any]) -> dict[str, Any]:
