@@ -51,10 +51,20 @@ class _ScriptedLLM:
 
     async def chat(self, messages, tools=None, **kwargs):
         step = self.script.pop(0)
-        # Parallel batch
-        if isinstance(step, tuple) and len(step) == 2 and isinstance(step[0], list):
+        # Parallel batch.  Accept BOTH spellings: the bare list documented
+        # above and used by these scripts (``[(tool, args), ...]``), and the
+        # ``([(tool, args), ...], None)`` tuple used by test_tool_loop_fanout.py.
+        # Without the bare-list branch the step fell through to ``return step``,
+        # handing a *list* back as ``response_text`` and crashing the loop's
+        # final-text scan with ``'list' object has no attribute 'strip'``.
+        batch = None
+        if isinstance(step, list):
+            batch = step
+        elif isinstance(step, tuple) and len(step) == 2 and isinstance(step[0], list):
+            batch = step[0]
+        if batch is not None:
             tool_calls = []
-            for i, item in enumerate(step[0]):
+            for i, item in enumerate(batch):
                 if isinstance(item, tuple):
                     tool_name, args = item
                 else:

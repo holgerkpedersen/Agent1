@@ -227,8 +227,8 @@ _IN_LOOP_CHAR_BUDGET = 150_000
 #: Appended to ``injected_notes`` so it is stripped from the persisted history
 #: at run end (consistent with the other steering notes).
 _COMPACT_NOTE = (
-    "CONTEXT NOTE: {dropped} older exchange(s) were compacted to save context "
-    "(working summary: {summary}). Continue from the most recent messages — do "
+    "CONTEXT NOTE: {dropped} older exchange(s) were compacted to save context"
+    "{summary_clause}. Continue from the most recent messages — do "
     "not ask to re-read what was compacted."
 )
 
@@ -245,6 +245,11 @@ _SUMMARIZE_INSTRUCTION = (
     "working-memory note (key files touched, findings, decisions, open "
     "questions). Be factual and concise; output only the note:\n"
 )
+#: Bound on the serialised dropped-prefix sent to the summarizer.  Without it
+#: the summarize call re-sends the very history we are evicting, so a 400KB
+#: tool result produced a 400KB summarize prompt (the timeout this feature
+#: exists to prevent).
+_SUMMARIZE_MAX_CHARS = 20_000
 
 
 def _message_size(message: dict[str, Any]) -> int:
@@ -268,6 +273,21 @@ def _total_chars(messages: list[dict[str, Any]]) -> int:
     return sum(_message_size(m) for m in messages)
 
 
+def _summarize_payload(dropped: list[dict[str, Any]]) -> str:
+    """Serialise the dropped prefix for the summarizer prompt, bounded.
+
+    The summarize strategy exists to keep prompts small, so the payload that
+    drives it must itself be small: an unbounded
+    ``json.dumps(dropped)`` re-sent the entire evicted history (hundreds of KB)
+    on every compaction, re-introducing the very timeout the compaction
+    guards against.  Truncation is marked so the model knows the note is lossy.
+    """
+    payload = json.dumps(dropped, default=str)
+    if len(payload) > _SUMMARIZE_MAX_CHARS:
+        payload = payload[:_SUMMARIZE_MAX_CHARS] + "...[truncated]"
+    return payload
+
+
 def _split_for_compaction(
     messages: list[dict[str, Any]], max_messages: int, char_budget: int,
 ) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]]]:
@@ -282,7 +302,7 @@ def _split_for_compaction(
     be an orphan with no owning assistant in the kept list), so the
     chat-template contract is preserved.
     """
-    if len(messages) <= max_messages:
+    if len(messages) <= max_messages and _total_chars(messages) <= char_budget:
         return None, None
     # ``messages[0]`` is treated as the (preserved) system prompt only when it
     # actually is one; otherwise the whole list is eligible body to trim.
@@ -323,7 +343,8 @@ def _split_for_compaction(
 
 
 def _compact_messages(
-    messages: list[dict[str, Any]], max_messages: int, char_budget: int, summary: str,
+    messages: list[dict[str, Any]], max_messages: int, char_budget: int,
+    summary: str | None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Compact *messages* to a bounded working set.
 
@@ -346,7 +367,9 @@ def _compact_messages(
         m for m in kept_full
         if m.get(LOOP_NOTE_TAG_KEY) != _COMPACT_NOTE_TAG
     ]
-    note = _COMPACT_NOTE.format(dropped=len(dropped), summary=summary)
+    stripped = (summary or "").strip()
+    summary_clause = f" (working summary: {stripped})" if stripped else ""
+    note = _COMPACT_NOTE.format(dropped=len(dropped), summary_clause=summary_clause)
     return (
         kept_full + [{
             "role": "user",
@@ -709,8 +732,15 @@ class ToolLoopRunner:
             # prompt processing grows linearly with history and eventually trips
             # the LM Studio ``LMSTUDIO_CHAT_TIMEOUT`` socket cap (the disconnect
             # symptom you saw).
-            if self.in_loop_compact and len(current_messages) > self.compact_max_messages:
-                summary = "dropped to save context"
+            if self.in_loop_compact and (
+                len(current_messages) > self.compact_max_messages
+                or _total_chars(current_messages) > self.compact_char_budget
+            ):
+                #: ``None`` = no summary was produced.  Never default this to a
+                #: literal: the note then advertised "working summary: dropped
+                #: to save context", sending the model looking for memory that
+                #: was never written.
+                summary: str | None = None
                 if self.compact_strategy == "summarize":
                     dropped, _ = _split_for_compaction(
                         current_messages, self.compact_max_messages, self.compact_char_budget)
@@ -719,13 +749,13 @@ class ToolLoopRunner:
                             raw_summary, _ = await llm_chat_fn(
                                 [{"role": "system", "content": "Summarize the tool-call history."},
                                  {"role": "user", "content": _SUMMARIZE_INSTRUCTION
-                                  + "\n" + json.dumps(dropped, default=str)}],
+                                  + "\n" + _summarize_payload(dropped)}],
                                 [],
                             )
                             if raw_summary and raw_summary.strip():
                                 summary = raw_summary.strip()
                         except Exception:  # pragma: no cover - fail-open to note
-                            summary = "dropped to save context"
+                            summary = None
                 compacted, note = _compact_messages(
                     current_messages, self.compact_max_messages, self.compact_char_budget, summary)
                 if note is not None:
