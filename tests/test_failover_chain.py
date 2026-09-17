@@ -29,13 +29,13 @@ def _settings(llm_providers: tuple[str, ...]) -> AgentSettings:
     return AgentSettings(
         llm_provider=llm_providers[0].split(":", 1)[0].strip(),
         llm_providers=llm_providers,
-        opencode_model="opencode-go/deepseek-v4-flash",
+        opencode_model="opencode-go/deepseek-v4.1-flash",
     )
 
 
 DEFAULT_CHAIN = (
     f"opencode:{_default_zen_free_model()}",
-    "opencode:opencode-go/deepseek-v4-flash",
+    "opencode:opencode-go/deepseek-v4.1-flash",
     "openrouter",
     "lmstudio",
     "llama",
@@ -60,6 +60,8 @@ def test_model_mode_distinguishes_zen_from_go() -> None:
     assert _model_mode("zen/laguna-s-2.1-free") == "zen"
     assert _model_mode("opencode-go/deepseek-v4-flash") == "go"
     assert _model_mode("laguna-s-2.1") == "go"
+    # The active go model (v4.1) is still routed as a 'go'-mode keyed model.
+    assert _model_mode("opencode-go/deepseek-v4.1-flash") == "go"
 
 
 def test_config_default_load_chain_is_cloud_first() -> None:
@@ -87,7 +89,7 @@ def test_build_provider_default_chain_order_and_modes() -> None:
     # zen slot uses the free model in keyless mode; go slot uses the keyed model.
     assert zen.model_name == _default_zen_free_model()
     assert zen.zen_mode is True
-    assert go.model_name == "opencode-go/deepseek-v4-flash"
+    assert go.model_name == "opencode-go/deepseek-v4.1-flash"
     assert go.zen_mode is False
 
 
@@ -106,7 +108,7 @@ def test_active_zen_model_drives_zen_slot_only() -> None:
     zen, go = provider.providers[0], provider.providers[1]
     assert zen.model_name == "opencode-zen/laguna-s-2.1-free"
     # go slot keeps its configured default — the override isn't clobbered.
-    assert go.model_name == "opencode-go/deepseek-v4-flash"
+    assert go.model_name == "opencode-go/deepseek-v4.1-flash"
 
 
 def test_active_go_model_drives_go_slot_only() -> None:
