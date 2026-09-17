@@ -1423,7 +1423,18 @@ class Agent:
         return datetime.now().isoformat()
 
     async def _nlp_hue_control(self, args: dict[str, Any]) -> str:
-        """Handle hue_control NLP tool: list/get/set Hue lights."""
+        """Handle hue_control NLP tool with V1 and V2 API support.
+
+        Supports:
+          - list_lights: List all lights (V1)
+          - get_light: Get detailed info for a light (V1)  
+          - set_light: Set on/off/brightness/CT (V1)
+          - color_capabilities: Get RGB capabilities via V2 API
+          - set_color: Set RGB/HSV/XY colors via V2 API
+          - set_color_named: Set color by name (red, blue, etc.) or HSV spec
+
+        For V2 API actions, at least one of r/g/b/x/y/h/s/v must be provided.
+        """
         action = args.get("action", "list_lights")
         try:
             bridge = HueBridge.from_env()
@@ -1437,15 +1448,17 @@ class Agent:
                 lines = []
                 for l in lights:
                     state = "ON" if l.get("on") else "OFF"
-                    bri = l.get("brightness", "?")
-                    lines.append(f"  [{l['id']}] {l['name']} -- {state}, brightness={bri}%")
+                    bri = f"{l.get('brightness'):.1f}%" if l.get("brightness") is not None else "?"
+                    lines.append(f"  [{l['id']}] {l['name']} -- {state}, brightness={bri}")
                 return f"Found {len(lights)} light(s):\n" + "\n".join(lines)
+
             elif action == "get_light":
                 light_id = args.get("light_id", "")
                 if not light_id:
                     return "Error: light_id is required for get_light."
                 info = await bridge.get_light(light_id)
                 return json.dumps(info, indent=2, default=str)
+
             elif action == "set_light":
                 light_id = args.get("light_id", "")
                 if not light_id:
@@ -1461,8 +1474,63 @@ class Agent:
                     return "Error: no state changes specified (on, brightness, mirek)."
                 await bridge.set_light(light_id, **state)
                 return f"Light {light_id} updated: {state}"
+
+            elif action == "color_capabilities":
+                light_id = args.get("light_id", "")
+                if not light_id:
+                    return "Error: light_id is required for color_capabilities."
+                caps = await bridge.get_color_capabilities(light_id)
+                return json.dumps(caps, indent=2, default=str)
+
+            elif action == "set_color":
+                light_id = args.get("light_id", "")
+                if not light_id:
+                    return "Error: light_id is required for set_color."
+                
+                # Check that at least one RGB/HSV/XY parameter is provided  
+                has_rgb = "r" in args and "g" in args and "b" in args
+                has_xy = "x" in args or "y" in args
+                has_hsv = "h" in args or "s" in args or "v" in args
+                
+                if not has_rgb and not has_xy and not has_hsv:
+                    return "Error: set_color requires at least one color parameter (r/g/b, x/y, or h/s/v)."
+
+                kwargs: dict[str, Any] = {}
+                if "r" in args:
+                    kwargs["r"] = int(args["r"])
+                if "g" in args:
+                    kwargs["g"] = int(args["g"])
+                if "b" in args:
+                    kwargs["b"] = int(args["b"])
+                if "x" in args:
+                    kwargs["x"] = float(args["x"])
+                if "y" in args:
+                    kwargs["y"] = float(args["y"])
+                if "h" in args:
+                    kwargs["h"] = int(args["h"])
+                if "s" in args:
+                    kwargs["s"] = float(args["s"])
+                if "v" in args:
+                    kwargs["v"] = float(args["v"])
+
+                await bridge.set_light_color(light_id, **kwargs)
+                return f"Light {light_id} color updated."
+
+            elif action == "set_color_named":
+                light_id = args.get("light_id", "")
+                if not light_id:
+                    return "Error: light_id is required for set_color_named."
+                
+                name = args.get("name", "")
+                brightness_val = float(args.get("brightness", 100.0))
+
+                await bridge.set_light_color_named(light_id, name, brightness=brightness_val)
+                return f"Light {light_id} color set to '{name}' at {brightness_val}%."
+
             else:
-                return f"Error: unknown action '{action}'. Use list_lights, get_light, or set_light."
+                return f"Error: unknown action '{action}'. Use list_lights, get_light, " \
+                       f"set_light (V1), or color_capabilities/set_color/set_color_named (V2)."
+
         except HueBridgeError as exc:
             return f"Hue Bridge error: {exc}"
 

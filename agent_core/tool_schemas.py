@@ -536,22 +536,26 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "hue_control",
             "description": (
-                "Control Philips Hue smart lights via the Hue Bridge. "
-                "List lights, get status, or set on/off/brightness/color temperature. "
-                "Requires HUE_BRIDGE_IP and HUE_API_KEY env vars."
+                "Control Philips Hue smart lights via the Hue Bridge. Supports both V1 API "
+                "(white+color temperature) and V2 API (full RGB colors). List lights, get status, "
+                "set on/off/brightness/color temperature, or set arbitrary RGB colors."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["list_lights", "get_light", "set_light"],
-                        "description": "Action: list_lights, get_light, or set_light",
+                        "enum": ["list_lights", "get_light", "set_light", "color_capabilities", "set_color", "set_color_named"],
+                        "description": (
+                            "Action to perform: list_lights, get_light, set_light (V1 API), "
+                            "color_capabilities, set_color (RGB/HSV/XY), or set_color_named."
+                        ),
                     },
                     "light_id": {
                         "type": "string",
-                        "description": "Light ID (required for get_light, set_light). Use list_lights to discover IDs.",
+                        "description": "Light ID from list_lights. Required for get_light, set_light, color_capabilities, set_color.",
                     },
+                    # V1 API parameters (for white+CT bulbs)
                     "on": {"type": "boolean", "description": "Turn light on or off"},
                     "brightness": {
                         "type": "number",
@@ -560,6 +564,39 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "mirek": {
                         "type": "integer",
                         "description": "Color temperature in mirek (153=cool/blue, 500=warm/orange). Omit to leave unchanged.",
+                    },
+                    # RGB/HSV/XY parameters (for full color bulbs) - used with set_color action
+                    "r": {
+                        "type": "integer",
+                        "description": "Red channel 0-255. Used with 'set_color' action.",
+                    },
+                    "g": {
+                        "type": "integer", 
+                        "description": "Green channel 0-255. Used with 'set_color' action.",
+                    },
+                    "b": {
+                        "type": "integer",
+                        "description": "Blue channel 0-255. Used with 'set_color' action.",
+                    },
+                    "x": {
+                        "type": "number",
+                        "description": "CIE xy chromaticity x coordinate (0-1). Used with 'set_color' action.",
+                    },
+                    "y": {
+                        "type": "number",
+                        "description": "CIE xy chromaticity y coordinate (0-1). Used with 'set_color' action.",
+                    },
+                    "h": {
+                        "type": "integer",
+                        "description": "HSV hue in degrees 0-360. Used with 'set_color' action.",
+                    },
+                    "s": {
+                        "type": "number",
+                        "description": "HSV saturation percentage 0-100. Used with 'set_color' action.",
+                    },
+                    "v": {
+                        "type": "number",
+                        "description": "HSV value/brightness percentage 0-100. Used with 'set_color' action.",
                     },
                 },
                 "required": ["action"],
