@@ -531,6 +531,41 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "hue_control",
+            "description": (
+                "Control Philips Hue smart lights via the Hue Bridge. "
+                "List lights, get status, or set on/off/brightness/color temperature. "
+                "Requires HUE_BRIDGE_IP and HUE_API_KEY env vars."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list_lights", "get_light", "set_light"],
+                        "description": "Action: list_lights, get_light, or set_light",
+                    },
+                    "light_id": {
+                        "type": "string",
+                        "description": "Light ID (required for get_light, set_light). Use list_lights to discover IDs.",
+                    },
+                    "on": {"type": "boolean", "description": "Turn light on or off"},
+                    "brightness": {
+                        "type": "number",
+                        "description": "Brightness percentage 0-100 (0=off, 100=max)",
+                    },
+                    "mirek": {
+                        "type": "integer",
+                        "description": "Color temperature in mirek (153=cool/blue, 500=warm/orange). Omit to leave unchanged.",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
 ]
 
 NLP_TOOL_NAMES: frozenset[str] = frozenset(

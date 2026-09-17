@@ -49,6 +49,7 @@ from agent_core.subagent_roles import get_role, role_names
 from agent_core.llm.provider import is_connection_failure
 from agent_core.llm.tool_loop import ToolLoopRunner
 from agent_core.context_management import CorrelationIdContext
+from agent_core.hue.bridge import HueBridge, HueBridgeError
 try:
     from harnessfix.tracing import TraceWriter, trace_enabled
 except Exception:  # pragma: no cover - tracing degrades gracefully if unavailable
@@ -56,6 +57,7 @@ except Exception:  # pragma: no cover - tracing degrades gracefully if unavailab
 
     def trace_enabled() -> bool:
         return False
+
 from agent_core.commands.base import (
     Command, FlowStopped, chat_stoppable, clear_stop, save_file_py
 )
@@ -1004,6 +1006,7 @@ class Agent:
             "mcp_tools": self._nlp_mcp_tools,
             "mcp_call": self._nlp_mcp_call,
             "get_current_datetime": self._nlp_get_current_datetime,
+            "hue_control": self._nlp_hue_control,
             "plan_status": self._nlp_plan_status,
             "plan_start": self._nlp_plan_start,
             "plan_step": self._nlp_plan_step,
@@ -1418,6 +1421,50 @@ class Agent:
                 return f"Error: unknown timezone '{tz_name}'. Use IANA names like 'UTC' or 'America/New_York'."
             return datetime.now(tz).isoformat()
         return datetime.now().isoformat()
+
+    async def _nlp_hue_control(self, args: dict[str, Any]) -> str:
+        """Handle hue_control NLP tool: list/get/set Hue lights."""
+        action = args.get("action", "list_lights")
+        try:
+            bridge = HueBridge.from_env()
+        except HueBridgeError as exc:
+            return f"Hue Bridge error: {exc}"
+        try:
+            if action == "list_lights":
+                lights = await bridge.list_lights()
+                if not lights:
+                    return "No lights found on the Hue Bridge."
+                lines = []
+                for l in lights:
+                    state = "ON" if l.get("on") else "OFF"
+                    bri = l.get("brightness", "?")
+                    lines.append(f"  [{l['id']}] {l['name']} -- {state}, brightness={bri}%")
+                return f"Found {len(lights)} light(s):\n" + "\n".join(lines)
+            elif action == "get_light":
+                light_id = args.get("light_id", "")
+                if not light_id:
+                    return "Error: light_id is required for get_light."
+                info = await bridge.get_light(light_id)
+                return json.dumps(info, indent=2, default=str)
+            elif action == "set_light":
+                light_id = args.get("light_id", "")
+                if not light_id:
+                    return "Error: light_id is required for set_light."
+                state: dict[str, Any] = {}
+                if "on" in args:
+                    state["on"] = bool(args["on"])
+                if "brightness" in args:
+                    state["brightness"] = float(args["brightness"])
+                if "mirek" in args:
+                    state["mirek"] = int(args["mirek"])
+                if not state:
+                    return "Error: no state changes specified (on, brightness, mirek)."
+                await bridge.set_light(light_id, **state)
+                return f"Light {light_id} updated: {state}"
+            else:
+                return f"Error: unknown action '{action}'. Use list_lights, get_light, or set_light."
+        except HueBridgeError as exc:
+            return f"Hue Bridge error: {exc}"
 
     # ── Plan workflow NLP tools ─────────────────────────────────────
 
