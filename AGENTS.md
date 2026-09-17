@@ -108,6 +108,9 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
 ## Verification commands
 
 - Full suite: `python -m pytest -q --no-cov` (~3.5 min; use `--no-cov` for speed).
+  The NLP `run`/`tests` tools auto-inject `PYTEST_FULL_SUITE_TIMEOUT` (from `.env`)
+  as the timeout for a detected full-suite invocation, so the model no longer needs
+  to guess it (and a guessed 600s can no longer kill the suite).
 - Targeted: `python -m pytest tests/test_implement_safety.py tests/test_tool_loop_nlp.py -q --no-cov`.
 - mypy: `python -m mypy <file>`. **Known baseline: 22 pre-existing errors in 6 files**
   (implement_cmd.py 14; reconstruct_cmd.py 2; self_heal_cmd.py 2;

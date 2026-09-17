@@ -1243,6 +1243,11 @@ class Agent:
         timeout = max(1, min(int(args.get("timeout") or 120), _MAX_RUN_TIMEOUT_S))
         if not cmd_to_run:
             return "Error: run requires a command."
+        if _is_full_pytest_command(cmd_to_run):
+            # The suite's own budget (PYTEST_FULL_SUITE_TIMEOUT) is the source
+            # of truth here; a model-guessed 600s would kill the run mid-suite.
+            # This escape hatch is deliberately NOT capped by _MAX_RUN_TIMEOUT_S.
+            timeout = max(timeout, int(_pytest_full_suite_timeout()))
         blocked = _blocked_shell_command(cmd_to_run)
         if blocked:
             return f"Error: Dangerous command blocked ({blocked}): {cmd_to_run}"
@@ -1364,6 +1369,9 @@ class Agent:
         #: The full suite takes ~2.5 minutes, so 120s is too short and made
         #: the agent split runs into subsets. 300s covers whole-suite runs.
         timeout = 300
+        if os.path.abspath(test_path) == os.path.abspath(self._effective_ws_dir()):
+            # Whole-workspace run: honour the same budget as the watchdog.
+            timeout = max(timeout, int(_pytest_full_suite_timeout()))
         if framework == "pytest":
             cmd = [sys.executable, "-m", "pytest", test_path, "-v"]
         else:
@@ -3197,6 +3205,87 @@ def _blocked_shell_command(command: str) -> str | None:
         if pattern.search(command):
             return desc
     return None
+
+
+#: Repo-root .env consulted for the full-pytest budget (conftest reads it too).
+_ENV_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+_PYTEST_FULL_SUITE_TIMEOUT_KEY = "PYTEST_FULL_SUITE_TIMEOUT"
+_PYTEST_LAST_FULL_RUN_KEY = "PYTEST_LAST_FULL_RUN_SECONDS"
+#: Must match conftest._FULL_SUITE_MARGIN so tool and watchdog agree.
+_FULL_SUITE_MARGIN = 0.20
+
+
+def _read_env_value(key: str) -> str:
+    """Budget value for *key*: process env wins, else the repo .env."""
+    if key in os.environ:
+        return os.environ[key].strip()
+    try:
+        with open(_ENV_FILE_PATH, "r", encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                env_key, _, val = stripped.partition("=")
+                if env_key.strip() == key:
+                    return val.strip()
+    except OSError:
+        pass
+    return ""
+
+
+def _pytest_full_suite_timeout() -> float:
+    """Timeout (seconds) to grant a full pytest run.
+
+    The model regularly guesses a timeout (often 600s) for
+    ``python -m pytest -q --no-cov``, which is below the suite's real budget on
+    slower machines — the run tool then killed it mid-suite and the whole run
+    was wasted.  Reuse the SAME budget conftest's watchdog enforces:
+    ``max(PYTEST_FULL_SUITE_TIMEOUT, PYTEST_LAST_FULL_RUN_SECONDS * 1.2)``,
+    read from the process env then the repo ``.env``.  Falling back to
+    ``_MAX_RUN_TIMEOUT_S`` keeps behaviour identical on a bare checkout.
+    """
+    try:
+        floor = float(
+            _read_env_value(_PYTEST_FULL_SUITE_TIMEOUT_KEY) or _MAX_RUN_TIMEOUT_S
+        )
+    except ValueError:
+        floor = float(_MAX_RUN_TIMEOUT_S)
+    try:
+        last = float(_read_env_value(_PYTEST_LAST_FULL_RUN_KEY) or 0.0)
+    except ValueError:
+        last = 0.0
+    return max(floor, last * (1.0 + _FULL_SUITE_MARGIN))
+
+
+#: Tokens that are part of the interpreter/pytest invocation itself, not a path.
+_PYTEST_BARE_TOKENS = {
+    "python", "python2", "python3", "py", "pytest", "py.test", "m", "set",
+    "call", "&", "&&", "|", "||", ";",
+}
+
+
+def _is_full_pytest_command(command: str) -> bool:
+    """True when *command* invokes pytest with no explicit test path.
+
+    Mirrors conftest's definition of a full run (no non-option positional
+    argument), so the run tool's timeout agrees with the in-suite watchdog.
+    Segments without pytest, ``K=V`` assignments and redirections (``2>&1``,
+    ``>nul``) are ignored; any other positional token marks a targeted run.
+    """
+    for segment in re.split(r"&&|\|\||[;|]", command):
+        tokens = segment.split()
+        if not any(t in ("pytest", "py.test") for t in tokens):
+            continue
+        for token in tokens:
+            if token.startswith("-"):
+                continue
+            if token in _PYTEST_BARE_TOKENS or "=" in token:
+                continue
+            if re.match(r"^\d*>&?\S*$", token):
+                continue
+            return False
+        return True
+    return False
 
 
 def _drop_orphan_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
