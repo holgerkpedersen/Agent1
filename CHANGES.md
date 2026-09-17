@@ -1,3 +1,11 @@
+## 2026-09-17 - fix: CI red on full-suite collection - undeclared optional psutil
+
+**Change**: pyproject.toml (`[dev]` now declares `psutil>=5.9` — CI installs `.[dev]`, and the comment already promises "everything"), tests/integration/test_llama_server_live.py (module-scope `import psutil` replaced by `psutil = pytest.importorskip("psutil")` so a checkout without psutil skips the module instead of erroring during collection; removed a pre-existing unused `subprocess` import).
+
+**Reason**: The "Run test suite" CI step (`pytest -q --no-cov`, no `continue-on-error`) died in 6s with `ModuleNotFoundError: No module named 'psutil'` while collecting `tests/integration/test_llama_server_live.py` — an error, not a skip, so error-ing collection aborted the whole run before any test executed. psutil is optional everywhere it is used in production (`agent_core/subprocess_utils.py` guards the import); only this test assumed a dev machine. The file already self-skips when no llama-server binary exists (always the case on GitHub runners), so it just needs psutil to be either installed or gracefully absent.
+
+**Files**: pyproject.toml, tests/integration/test_llama_server_live.py. Verified: with psutil present the module collects and its 4 tests skip cleanly (no binary); with psutil force-absent the module is reported as 1 skipped / 0 errors.
+
 ## 2026-09-17 - fix: run/tests tools honour PYTEST_FULL_SUITE_TIMEOUT for full-suite runs
 
 **Change**: `agent.py` gains `_is_full_pytest_command()` (mirrors conftest's full-run definition: a pytest segment with no non-option positional arg; assignments and redirections ignored) and `_pytest_full_suite_timeout()` (reads `PYTEST_FULL_SUITE_TIMEOUT` and `PYTEST_LAST_FULL_RUN_SECONDS` from the process env then the repo `.env`, and returns the SAME budget conftest's watchdog enforces: `max(floor, last * 1.2)`). `_nlp_run` now raises a detected full-pytest invocation's timeout to that budget — deliberately NOT capped by `_MAX_RUN_TIMEOUT_S` — so a model-guessed 600s can no longer kill the suite mid-run; targeted pytest invocations keep the existing 600s cap. `_nlp_tests` does the same when its path resolves to the workspace root.

@@ -23,13 +23,15 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import time
 
-import psutil
 import pytest
 
-from agent_core.llm import llama_server as mod
+#: psutil is an optional dependency (see agent_core/subprocess_utils.py); skip
+#: this module instead of erroring during collection on installs without it.
+psutil = pytest.importorskip("psutil")
+
+from agent_core.llm import llama_server as mod  # noqa: E402
 
 # Isolated port so we never touch a server the user may run on 8080.
 LIVE_API = "http://127.0.0.1:8099/v1"

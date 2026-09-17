@@ -48,6 +48,9 @@ dev = [
     "pillow>=10.0",
     "cryptography>=41.0",
     "keyring>=24.0",
+    # Optional at runtime (agent_core/subprocess_utils.py); the llama-server
+    # integration tests use it for PID bookkeeping.
+    "psutil>=5.9",
 ]
 
 [project.urls]
