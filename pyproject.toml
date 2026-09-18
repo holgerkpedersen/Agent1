@@ -25,6 +25,10 @@ dependencies = [
     "numpy>=1.24",
     "networkx>=3.1",
     "openai>=1.0",
+    # IANA timezone database for zoneinfo.  Linux/macOS read the OS copy;
+    # Windows has none, so ZoneInfo('UTC') / ('America/New_York') raise
+    # ZoneInfoNotFoundError unless this first-party package is installed.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

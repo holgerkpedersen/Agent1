@@ -1,3 +1,11 @@
+## 2026-09-17 - fix: Windows CI timezone test needs the tzdata package
+
+**Change**: pyproject.toml (`tzdata>=2024.1` added to `[project].dependencies` with a comment explaining that Linux/macOS read the OS IANA database while Windows has none).
+
+**Reason**: `tests/test_tool_router.py::test_execute_with_dict_args_and_timezone` failed on the Windows runner with `result["timezone"] == "local"` instead of `"UTC"`. `tool_router._handle_get_current_datetime` resolves names with `zoneinfo.ZoneInfo`, which raises `ZoneInfoNotFoundError` on Windows unless the first-party `tzdata` package is installed — so the code fell back to local time. Locally the test passed only because pandas/tzlocal happened to pull `tzdata` in; neither is a declared dev dependency, so CI never had it. Declaring `tzdata` makes `zoneinfo` work on Windows for `UTC` and for every named zone both the router and `agent._nlp_get_current_datetime` advertise.
+
+**Files**: pyproject.toml. Verified: `tests/test_tool_router.py` passes (32) and `pip install -e .[dev]` now resolves tzdata on Windows runners.
+
 ## 2026-09-17 - fix: four cross-platform CI failures on the Linux runner
 
 **Change**: tests/test_failover_chain.py (the expected chain is now derived from `agent_core.constants.DEFAULT_LLM_CHAIN` instead of a hardcoded `deepseek-v4.1-flash` literal; `test_config_default_load_chain_is_cloud_first` is hermetic — it deletes `AGENT_LLM_*` and passes an explicit non-existent `env_path` so the repo `.env` walk-up can no longer leak a developer's local override; dropped a now-unused `ConfigurationError` import), agent_core/commands/workflow_cmd.py (`_scan_workspace_context` sorts `all_py` before prioritising — `os.walk` order is unspecified — and now budgets the EMITTED lines, headers and blank separators included, so the returned context can never exceed the 6000-line `max_lines`), tests/unit/test_subprocess_utils.py (`test_shell_info_powershell_detection` and `test_shell_info_cmd_fallback` are `skipif(sys.platform != "win32")` — they exercise the Windows-only cmd/PowerShell branch; the POSIX contract stays covered by `test_shell_info_current_platform`).
