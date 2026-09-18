@@ -12,9 +12,9 @@ import pytest
 
 from agent_core.config import (
     AgentSettings,
-    ConfigurationError,
     load_agent_settings,
 )
+from agent_core.constants import DEFAULT_LLM_CHAIN
 from agent_core.llm.provider import (
     FailoverProvider,
     _model_mode,
@@ -25,21 +25,20 @@ from agent_core.llm.provider import (
 from _helpers import _default_zen_free_model
 
 
+#: The catalog default chain is the single source of truth for the default
+#: provider order AND the pinned go model.  Deriving the expectation from it
+#: (instead of a duplicated literal) keeps this test from drifting out of sync
+#: whenever a new opencode-go model becomes the default.
+DEFAULT_CHAIN = tuple(DEFAULT_LLM_CHAIN)
+_GO_MODEL = DEFAULT_CHAIN[1].split(":", 1)[1]
+
+
 def _settings(llm_providers: tuple[str, ...]) -> AgentSettings:
     return AgentSettings(
         llm_provider=llm_providers[0].split(":", 1)[0].strip(),
         llm_providers=llm_providers,
-        opencode_model="opencode-go/deepseek-v4.1-flash",
+        opencode_model=_GO_MODEL,
     )
-
-
-DEFAULT_CHAIN = (
-    f"opencode:{_default_zen_free_model()}",
-    "opencode:opencode-go/deepseek-v4.1-flash",
-    "openrouter",
-    "lmstudio",
-    "llama",
-)
 
 
 def test_split_entry_strips_model_override() -> None:
@@ -64,9 +63,18 @@ def test_model_mode_distinguishes_zen_from_go() -> None:
     assert _model_mode("opencode-go/deepseek-v4.1-flash") == "go"
 
 
-def test_config_default_load_chain_is_cloud_first() -> None:
-    """load_agent_settings with no provider env vars uses the 5-entry chain."""
-    settings = load_agent_settings()
+def test_config_default_load_chain_is_cloud_first(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """load_agent_settings with no provider env vars uses the catalog chain.
+
+    Hermetic: an explicit non-existent ``env_path`` stops the repo ``.env``
+    walk-up, so a developer's local chain override (kept out of CI) can no
+    longer change what "default" means between machines.
+    """
+    monkeypatch.delenv("AGENT_LLM_PROVIDERS", raising=False)
+    monkeypatch.delenv("AGENT_LLM_PROVIDER", raising=False)
+    settings = load_agent_settings(env_path=tmp_path / "no-such.env")
     assert settings.llm_providers == DEFAULT_CHAIN
     # The active provider (first entry's provider part) is opencode (zen tier).
     assert settings.llm_provider == "opencode"
@@ -89,7 +97,7 @@ def test_build_provider_default_chain_order_and_modes() -> None:
     # zen slot uses the free model in keyless mode; go slot uses the keyed model.
     assert zen.model_name == _default_zen_free_model()
     assert zen.zen_mode is True
-    assert go.model_name == "opencode-go/deepseek-v4.1-flash"
+    assert go.model_name == _GO_MODEL
     assert go.zen_mode is False
 
 
@@ -108,7 +116,7 @@ def test_active_zen_model_drives_zen_slot_only() -> None:
     zen, go = provider.providers[0], provider.providers[1]
     assert zen.model_name == "opencode-zen/laguna-s-2.1-free"
     # go slot keeps its configured default — the override isn't clobbered.
-    assert go.model_name == "opencode-go/deepseek-v4.1-flash"
+    assert go.model_name == _GO_MODEL
 
 
 def test_active_go_model_drives_go_slot_only() -> None:

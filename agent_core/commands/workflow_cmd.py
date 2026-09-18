@@ -336,6 +336,9 @@ def _scan_workspace_context(ws_path: Path, spec_content: str) -> tuple[bool, str
         for fn in filenames:
             if fn.endswith(".py"):
                 all_py.append(os.path.join(dp, fn))
+    # Sort so the context is byte-identical across OSes/filesystems: os.walk
+    # order is unspecified and previously decided which file won the budget.
+    all_py.sort()
 
     # Prioritise LLM-layer files first (they're most relevant to self-improvement)
     prioritised: list[str] = []
@@ -358,15 +361,17 @@ def _scan_workspace_context(ws_path: Path, spec_content: str) -> tuple[bool, str
         except Exception:
             continue
         rel = os.path.relpath(fp, ws).replace("\\", "/")
-        entry = f"\n\n# ---- {rel} ----\n{content}"
-        if lines_used + len(entry.splitlines()) > max_lines:
-            remaining = max_lines - lines_used
-            if remaining <= 0:
-                break
-            combined = "".join([combined, "\n".join(entry.splitlines()[:remaining])])
+        entry_lines = f"\n\n# ---- {rel} ----\n{content}".splitlines()
+        remaining = max_lines - lines_used
+        if remaining <= 0:
             break
-        combined += entry
-        lines_used += len(content.splitlines())
+        if len(entry_lines) > remaining:
+            # Budget the EMITTED lines (headers and separators included), so
+            # the returned context can never exceed ``max_lines``.
+            combined += "\n".join(entry_lines[:remaining])
+            break
+        combined += "\n".join(entry_lines)
+        lines_used += len(entry_lines)
     return bool(combined), combined
 
 

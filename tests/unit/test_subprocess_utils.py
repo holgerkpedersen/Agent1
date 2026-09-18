@@ -190,6 +190,9 @@ def test_shell_info_values_are_strings() -> None:
         assert len(v) > 0
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="PowerShell/cmd detection is Windows-only"
+)
 def test_shell_info_powershell_detection(monkeypatch: pytest.MonkeyPatch) -> None:
     """When powershell.exe appears in the process tree, detect PowerShell."""
     import agent_core.subprocess_utils as _mod
@@ -203,6 +206,9 @@ def test_shell_info_powershell_detection(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "PowerShell" in info["guidance"]
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="PowerShell/cmd detection is Windows-only"
+)
 def test_shell_info_cmd_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     """Without PowerShell in the process tree, fall back to cmd.exe."""
     import agent_core.subprocess_utils as _mod
