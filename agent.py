@@ -2222,6 +2222,23 @@ class Agent:
                 if trace_writer is not None:
                     trace_writer.close()
                 reason = loop.termination_reason
+                #: Record this run's LLM outcome as an experience for the
+                #: self-improvement harness (decision #049/#014): a direct,
+                #: never-raising SQLite write that mirrors MCP record_experience.
+                _run_outcome = 1.0 if not llm_error else 0.0
+                _run_success = bool(not llm_error and reason in ("answer", "cap"))
+                self._record_llm_experience(
+                    action="llm_decision",
+                    outcome=_run_outcome,
+                    context={
+                        "model": self.model_name,
+                        "profile": getattr(self.llm, "_profile_name", None) or "",
+                        "verdict": reason,
+                        "continuations": continuations,
+                        "final_text_len": len(final_text),
+                    },
+                    success=_run_success,
+                )
                 # A provider-level failure is not an answer: never auto-continue —
                 # chaining would only re-burn the same broken LLM call.
                 if llm_error:
@@ -2732,6 +2749,58 @@ class Agent:
             os.replace(tmp_path, AGENT_MEMORY_JSON_PATH)
         except OSError:
             logger.warning("Failed to save agent memory:\n%s", traceback.format_exc())
+
+    def _record_llm_experience(
+        self, action: str, outcome: float, context: dict[str, Any] | None = None,
+        success: bool | None = None,
+    ) -> int | None:
+        """Record an LLM decision/outcome into agent_memory.db (experiences).
+
+        Mirrors the MCP ``record_experience`` schema so a direct write is
+        reconcilable with the memory server's own inserts.  outcome must be in
+        [0.0, 1.0]; success defaults to ``outcome >= 0.5``.
+
+        This is harness-layer only (decision #014): it never alters model or
+        prompt behavior — it only persists observability of decisions for the
+        self-improvement loop.  It must NEVER raise: if agent_memory.db is
+        absent, unwritable, or the table missing, we silently no-op so untraced
+        / non-memory runs stay byte-identical (decisions #048/#049).
+        """
+        try:
+            outcome = float(outcome)
+            if not 0.0 <= outcome <= 1.0:
+                return None
+            if success is None:
+                success = 1 if outcome >= 0.5 else 0
+            ctx_str = json.dumps(context or {}, ensure_ascii=False, sort_keys=True)
+            ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            import sqlite3
+            db_path = AGENT_MEMORY_JSON_PATH.replace(".json", ".db")
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            try:
+                #: Ensure the schema exists.  No other in-repo code path
+                #: creates this table (the MCP memory server only reads/writes
+                #: it), so without this a fresh workspace would silently no-op
+                #: forever.  Idempotent, and the DDL is byte-compatible with
+                #: the table the memory server expects (same columns/order).
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS experiences ("
+                    "timestamp TEXT, action TEXT, outcome REAL, "
+                    "context TEXT, success INTEGER)"
+                )
+                cur = conn.execute(
+                    "INSERT INTO experiences (timestamp, action, outcome, context, success) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (ts, action, outcome, ctx_str, 1 if success else 0),
+                )
+                conn.commit()
+                return int(cur.lastrowid)
+            finally:
+                conn.close()
+        except Exception as exc:  # noqa: BLE001 - must never raise per contract
+            logger.debug("Could not record LLM experience (no-op): %s", exc)
+            return None
+
 
 
 def _read_json_quarantining(path: str, label: str) -> Any:

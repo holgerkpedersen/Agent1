@@ -48,7 +48,7 @@ def _isolate_from_real_tree_and_beacons(
 ) -> None:
     """Keep every test from mutating tracked source or the live beacons.
 
-    Two classes of test previously touched the real repo / live dashboard:
+    Three classes of test previously touched the real repo / live dashboard:
 
     * The harnessfix repair modules (``stuck_repeat``, ``tool_interface``,
       ``abandonment_resume``) apply/revert via a module-level
@@ -64,8 +64,15 @@ def _isolate_from_real_tree_and_beacons(
       that call ``main()`` (e.g. ``test_autonomous_driver.py``) and the
       issue-loop test therefore pollute those live files, corrupting the
       dashboard during a real run.
+    * ``Agent._finish_turn`` persists cross-session memory
+      (``agent_memory.json``) and ``Agent._record_llm_experience`` appends to
+      the SQLite ``experiences`` table in ``agent_memory.db`` that the Memory
+      MCP server reads.  ``chat_nlp`` tests that isolate only
+      ``CHAT_HISTORY_JSON_PATH`` therefore rewrote the LIVE
+      ``agent_memory.json`` and appended phantom ``llm_decision`` rows to the
+      LIVE ``agent_memory.db`` (21 rows observed from a single run).
 
-    Both are redirected to a per-test temp dir here, once, for the whole
+    All are redirected to a per-test temp dir here, once, for the whole
     suite.  Tests that already sandbox their own edits (e.g.
     ``test_repairs_stuck_repeat.py``) stay compatible: their own monkeypatch
     simply overrides this one for the duration of the test.
@@ -115,6 +122,35 @@ def _isolate_from_real_tree_and_beacons(
     monkeypatch.setattr(progress, "OUTPUT_DIR", beacon_dir)
     monkeypatch.setattr(progress, "STATUS_PATH", beacon_dir / "run_status.json")
     monkeypatch.setattr(progress, "HISTORY_PATH", beacon_dir / "run_history.jsonl")
+
+    # Redirect the live RUNTIME-STATE files to temp: the chat history, the
+    # cross-session memory (agent_memory.json) and the SQLite ``experiences``
+    # table (agent_memory.db) that the Memory MCP server reads.  Tests that
+    # isolated only ``CHAT_HISTORY_JSON_PATH`` still rewrote the LIVE
+    # agent_memory.json and appended phantom ``llm_decision`` rows to the LIVE
+    # agent_memory.db (21 rows observed from a single run, all timestamped
+    # within the same second) — those rows skew ``evolution_summary`` for a
+    # real user and are indistinguishable from genuine telemetry afterwards.
+    #
+    # ``agent.py`` resolves both paths as module globals at CALL time (and
+    # ``_record_llm_experience`` derives the DB from AGENT_MEMORY_JSON_PATH),
+    # so patching the agent module redirects the JSON file and the DB
+    # together.  Tests that sandbox these paths themselves simply override
+    # this monkeypatch for their duration.
+    import agent as agent_module
+
+    runtime_dir = tmp_path / "runtime_state"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        agent_module,
+        "CHAT_HISTORY_JSON_PATH",
+        str(runtime_dir / "chat_history.json"),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "AGENT_MEMORY_JSON_PATH",
+        str(runtime_dir / "agent_memory.json"),
+    )
 
 
 # ---------------------------------------------------------------------------
