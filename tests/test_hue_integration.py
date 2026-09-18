@@ -5,6 +5,8 @@ All HTTP calls are mocked — no real Bridge required.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -326,3 +328,336 @@ async def test_put_error_in_body_with_http_200(monkeypatch: pytest.MonkeyPatch) 
         mock_cls.return_value = inst
         with pytest.raises(HueBridgeError, match="not available"):
             await bridge.set_light("3", on=True)
+
+
+# ── set_light_color / set_light_color_named ─────────────────────────────
+
+
+def _bridge_with_mocked_io(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    current_bri: int | None = 100,
+) -> HueBridge:
+    """A bridge whose HTTP layer is mocked; returns the bridge for assertions."""
+    _mock_env(monkeypatch)
+    bridge = HueBridge.from_env()
+    state = {} if current_bri is None else {"bri": current_bri}
+    bridge._get = AsyncMock(return_value={"state": state})  # type: ignore[attr-defined]
+    bridge._put = AsyncMock(return_value={})  # type: ignore[attr-defined]
+    return bridge
+
+
+def _sent_payload(bridge: HueBridge) -> tuple[str, dict]:
+    """Extract the (path, payload) of the single PUT a bridge issued."""
+    assert bridge._put.await_count == 1  # type: ignore[attr-defined]
+    path, payload = bridge._put.await_args.args  # type: ignore[attr-defined]
+    return path, payload
+
+
+@pytest.mark.anyio
+async def test_set_light_color_named_does_not_typeerror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: `set_light_color_named` passed `brightness` to `set_light_color`.
+
+    `set_light_color` had no `brightness` parameter, so every named-colour call
+    raised `TypeError` *before* contacting the Bridge. The NLP `set_color_named`
+    action was therefore completely non-functional: it never changed a light.
+    """
+    bridge = _bridge_with_mocked_io(monkeypatch)
+
+    await bridge.set_light_color_named("3", "red")
+
+    path, payload = _sent_payload(bridge)
+    assert path == "/lights/3/state"
+    assert payload["xy"] == [0.64, 0.33]
+    assert payload["bri"] == 254
+    assert payload["on"] is True
+
+
+@pytest.mark.anyio
+async def test_set_light_color_named_default_is_full_brightness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The documented default (100%) must reach the Bridge as bri=254."""
+    bridge = _bridge_with_mocked_io(monkeypatch)
+    await bridge.set_light_color_named("3", "blue")
+    _, payload = _sent_payload(bridge)
+    assert payload["xy"] == [0.15, 0.06]
+    assert payload["bri"] == 254
+
+
+@pytest.mark.anyio
+async def test_set_light_color_named_zero_brightness_is_honoured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`brightness=0` means "off" and must not be coerced to full brightness.
+
+    A `brightness or 100.0` default silently upgraded an explicit 0 to 100%.
+    """
+    bridge = _bridge_with_mocked_io(monkeypatch)
+
+    await bridge.set_light_color_named("3", "red", brightness=0)
+
+    _, payload = _sent_payload(bridge)
+    assert payload["bri"] == 0
+    assert payload["on"] is False
+
+
+@pytest.mark.anyio
+async def test_set_light_color_named_none_brightness_keeps_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`brightness=None` must leave the light's current brightness alone."""
+    bridge = _bridge_with_mocked_io(monkeypatch, current_bri=77)
+
+    await bridge.set_light_color_named("3", "red", brightness=None)
+
+    _, payload = _sent_payload(bridge)
+    assert payload["bri"] == 77
+    assert payload["on"] is True
+
+
+@pytest.mark.anyio
+async def test_set_light_color_named_partial_brightness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mid-range brightness is converted to the 0-254 V1 scale."""
+    bridge = _bridge_with_mocked_io(monkeypatch)
+    await bridge.set_light_color_named("3", "red", brightness=50)
+    _, payload = _sent_payload(bridge)
+    assert payload["bri"] == 127
+
+
+@pytest.mark.anyio
+async def test_set_light_color_named_unknown_name_raises_bridge_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown colour name must surface as HueBridgeError, not ValueError.
+
+    `_rgb_from_named_color` raises ValueError, which used to escape
+    `set_light_color_named` and bypass the agent's HueBridgeError handler.
+    """
+    bridge = _bridge_with_mocked_io(monkeypatch)
+
+    with pytest.raises(HueBridgeError, match="Invalid color name"):
+        await bridge.set_light_color_named("3", "chartreuse")
+
+    assert bridge._put.await_count == 0  # type: ignore[attr-defined]
+
+
+@pytest.mark.anyio
+async def test_set_light_color_named_non_string_name_raises_bridge_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-string name is a usage error, reported as HueBridgeError."""
+    bridge = _bridge_with_mocked_io(monkeypatch)
+
+    with pytest.raises(HueBridgeError, match="Invalid color name"):
+        await bridge.set_light_color_named("3", 123)  # type: ignore[arg-type]
+
+
+@pytest.mark.anyio
+async def test_set_light_color_explicit_brightness_overrides_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """set_light_color accepts an explicit brightness (RGB path)."""
+    bridge = _bridge_with_mocked_io(monkeypatch, current_bri=10)
+
+    await bridge.set_light_color("3", r=255, g=0, b=0, brightness=80)
+
+    _, payload = _sent_payload(bridge)
+    assert payload["bri"] == 203
+    assert payload["xy"] == [0.64, 0.33]
+
+
+@pytest.mark.anyio
+async def test_set_light_color_without_brightness_keeps_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitting brightness preserves the pre-existing behaviour."""
+    bridge = _bridge_with_mocked_io(monkeypatch, current_bri=42)
+
+    await bridge.set_light_color("3", r=255, g=0, b=0)
+
+    _, payload = _sent_payload(bridge)
+    assert payload["bri"] == 42
+
+
+@pytest.mark.anyio
+async def test_set_light_color_rejects_no_color_specification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Calling set_light_color with no colour at all is an error."""
+    bridge = _bridge_with_mocked_io(monkeypatch)
+
+    with pytest.raises(HueBridgeError, match="No color specification"):
+        await bridge.set_light_color("3", brightness=50)
+
+    assert bridge._put.await_count == 0  # type: ignore[attr-defined]
+
+
+# ── agent-level entry point: _nlp_hue_control ────────────────────────────
+
+
+def _agent_with_mocked_hue(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    current_bri: int = 100,
+) -> tuple["Any", HueBridge]:
+    """Return (agent, bridge) with the Bridge fully mocked.
+
+    `agent.py` resolves ``HueBridge`` as a module-level name, so patching
+    ``agent.HueBridge.from_env`` is enough to intercept the real entry point.
+    """
+    import agent as agent_mod
+
+    bridge = HueBridge("1.2.3.4", "k")
+    bridge._get = AsyncMock(return_value={"state": {"bri": current_bri}})  # type: ignore[attr-defined]
+    bridge._put = AsyncMock(return_value={})  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        agent_mod.HueBridge, "from_env", staticmethod(lambda: bridge)
+    )
+    return agent_mod.Agent(workspace="."), bridge
+
+
+@pytest.mark.anyio
+async def test_nlp_hue_control_set_color_named_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the `set_color_named` action never worked via the tool loop.
+
+    `HueBridge.set_light_color_named` raised TypeError because it forwarded an
+    unsupported `brightness` kwarg to `set_light_color`. This exercises the real
+    entry point (`Agent._nlp_hue_control`) rather than the bridge in isolation.
+    """
+    bot, bridge = _agent_with_mocked_hue(monkeypatch)
+
+    out = await bot._nlp_hue_control(
+        {"action": "set_color_named", "light_id": "3", "name": "red"}
+    )
+
+    assert "color set to 'red'" in out
+    path, payload = bridge._put.await_args.args  # type: ignore[attr-defined]
+    assert path == "/lights/3/state"
+    assert payload["xy"] == [0.64, 0.33]
+    assert payload["bri"] == 254
+
+
+@pytest.mark.anyio
+async def test_nlp_hue_control_set_color_named_unknown_colour_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown colour yields a readable error string, not an exception.
+
+    The ValueError used to escape the handler's `except HueBridgeError`.
+    """
+    bot, bridge = _agent_with_mocked_hue(monkeypatch)
+
+    out = await bot._nlp_hue_control(
+        {"action": "set_color_named", "light_id": "3", "name": "chartreuse"}
+    )
+
+    assert out.startswith("Hue Bridge error:")
+    assert "Invalid color name" in out
+    assert bridge._put.await_count == 0  # type: ignore[attr-defined]
+
+
+@pytest.mark.anyio
+async def test_nlp_hue_control_set_light_brightness_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """V1 brightness=0 reaches the Bridge as bri=0 through the real handler.
+
+    Note: the bridge sends only ``bri`` (no ``on`` key) — Hue itself treats
+    ``bri=0`` as off, so the handler must not swallow the zero value.
+    """
+    bot, bridge = _agent_with_mocked_hue(monkeypatch)
+
+    out = await bot._nlp_hue_control(
+        {"action": "set_light", "light_id": "3", "brightness": 0}
+    )
+
+    assert "updated" in out
+    path, payload = bridge._put.await_args.args  # type: ignore[attr-defined]
+    assert path == "/lights/3/state"
+    assert payload["bri"] == 0
+    assert "on" not in payload
+
+
+# ── schema reachability ──────────────────────────────────────────────────
+
+
+def test_hue_control_schema_exposes_name_property() -> None:
+    """Regression: `set_color_named` was advertised but had no `name` property.
+
+    The `action` enum listed `set_color_named`, yet the parameters object
+    defined no `name` field, so the model could never supply a colour name and
+    the action was unreachable through the advertised tool contract.
+    """
+    from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
+
+    hue = next(
+        t for t in NLP_TOOL_SCHEMAS if t["function"]["name"] == "hue_control"
+    )
+    params = hue["function"]["parameters"]
+    props = params["properties"]
+
+    assert "set_color_named" in props["action"]["enum"]
+    assert "name" in props, "set_color_named needs a 'name' parameter"
+    assert props["name"]["type"] == "string"
+    assert params["required"] == ["action"]
+
+
+def test_hue_schema_advertised_colours_all_resolve() -> None:
+    """Every colour the schema advertises must be accepted by the bridge.
+
+    Guards against drift: an earlier revision of the schema description
+    advertised 'warm white' in its ``e.g.`` examples, which
+    ``_rgb_from_named_color`` rejects with ValueError. Anything mentioned in
+    the tool contract must actually work, otherwise the model is guided into a
+    guaranteed failure.
+
+    Two independent checks, because the original bug hid in the *examples*
+    rather than the ``Supported:`` list:
+      1. each colour in ``Supported:`` is accepted by the bridge;
+      2. each example in the ``e.g.`` clause is one of the supported colours.
+    """
+    import re
+
+    from agent_core.hue.bridge import _rgb_from_named_color
+    from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
+
+    hue = next(
+        t for t in NLP_TOOL_SCHEMAS if t["function"]["name"] == "hue_control"
+    )
+    desc = hue["function"]["parameters"]["properties"]["name"]["description"]
+
+    supported_match = re.search(r"Supported:\s*([^.]+)\.", desc)
+    assert supported_match, f"schema lost its 'Supported:' list: {desc!r}"
+    supported = [n.strip() for n in supported_match.group(1).split(",") if n.strip()]
+    assert supported, "no colour names advertised"
+
+    # 1. every advertised colour must actually resolve.
+    unsupported = []
+    for colour in supported:
+        try:
+            _rgb_from_named_color(colour)
+        except ValueError:
+            unsupported.append(colour)
+    assert not unsupported, (
+        f"schema 'Supported:' advertises colour(s) the bridge rejects: {unsupported}"
+    )
+
+    # 2. every example must be drawn from the supported set (this is the check
+    #    that catches the original 'warm white' defect).
+    example_match = re.search(r"e\.g\.\s*(.+?)\.", desc)
+    assert example_match, f"schema lost its 'e.g.' examples: {desc!r}"
+    examples = re.findall(r"'([^']+)'", example_match.group(1))
+    assert examples, f"no examples parsed from: {example_match.group(1)!r}"
+
+    not_supported = [e for e in examples if e not in supported]
+    assert not not_supported, (
+        f"schema examples advertise colour(s) absent from 'Supported:' "
+        f"(and rejected by the bridge): {not_supported}"
+    )

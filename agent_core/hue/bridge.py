@@ -549,6 +549,7 @@ class HueBridge:
         r: int | None = None, g: int | None = None, b: int | None = None,
         x: float | None = None, y: float | None = None,
         h: float | None = None, s: float | None = None, v: float | None = None,
+        brightness: float | None = None,
     ) -> None:
         """Set the color of a light via V2 API.
 
@@ -565,6 +566,9 @@ class HueBridge:
             x, y: CIE xy chromaticity coordinates (0-1). None = leave unchanged.
             h, s, v: HSV values. h in 0-360 degrees, s/v in 0-100%.
                       None = leave unchanged.
+            brightness: Brightness percentage 0-100. None (default) keeps the
+                      light's current brightness. Note that 0 is a real value
+                      (light off) and is honoured rather than treated as unset.
 
         Raises:
             HueBridgeError: If no color parameters are specified or if the light is invalid.
@@ -597,11 +601,18 @@ class HueBridge:
         if "xy" not in payload:
             raise HueBridgeError("No color specification provided for set_light_color.")
 
-        # Also update brightness based on current state
-        v1_data = await self._get(f"/lights/{light_id}")
-        bri_raw: int | None = v1_data.get("state", {}).get("bri")
-        if bri_raw is not None and "xy" in payload:
-            payload["bri"] = bri_raw
+        if brightness is not None:
+            # Explicit brightness wins over the light's current level. 0 is a
+            # real value (light off), so it must not be treated as "unset".
+            clamped = max(0.0, min(100.0, float(brightness)))
+            payload["bri"] = int(round((clamped / 100.0) * 254))
+            payload["on"] = clamped > 0
+        else:
+            # Keep the light at its current brightness, as before.
+            v1_data = await self._get(f"/lights/{light_id}")
+            bri_raw: int | None = v1_data.get("state", {}).get("bri")
+            if bri_raw is not None:
+                payload["bri"] = bri_raw
 
         await self._put(f"/lights/{light_id}/state", payload)
         logger.info("Set light %s (V1 color): %s", light_id, payload)
@@ -629,14 +640,20 @@ class HueBridge:
         Raises:
             HueBridgeError: If color name is invalid or light is not found.
         """
-        # Parse named color or HSV specification
-        rgb = _rgb_from_named_color(name) if isinstance(name, str) else None
+        # Parse named colour. _rgb_from_named_color raises ValueError for an
+        # unknown name; translate it so callers only have to catch HueBridgeError.
+        try:
+            rgb = _rgb_from_named_color(name) if isinstance(name, str) else None
+        except ValueError as exc:
+            raise HueBridgeError(f"Invalid color name: {name}") from exc
 
         if not rgb:
             raise HueBridgeError(f"Invalid color name: {name}")
 
         x, y = _rgb_to_xy(*rgb)
-        await self.set_light_color(light_id, x=x, y=y, brightness=brightness or 100.0)
+        # Pass brightness through verbatim: `or` would turn an explicit 0
+        # (light off) into full brightness.
+        await self.set_light_color(light_id, x=x, y=y, brightness=brightness)
 
 
     async def set_light_brightness(self, light_id: str, percentage: float | None = None):

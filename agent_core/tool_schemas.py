@@ -553,7 +553,15 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                     },
                     "light_id": {
                         "type": "string",
-                        "description": "Light ID from list_lights. Required for get_light, set_light, color_capabilities, set_color.",
+                        "description": "Light ID from list_lights. Required for get_light, set_light, color_capabilities, set_color, set_color_named.",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": (
+                            "Colour name for the 'set_color_named' action, e.g. 'red', 'blue'. "
+                            "Supported: red, green, blue, yellow, cyan, magenta, black, white, "
+                            "orange, purple, pink, lime, navy, teal, gray, grey."
+                        ),
                     },
                     # V1 API parameters (for white+CT bulbs)
                     "on": {"type": "boolean", "description": "Turn light on or off"},
