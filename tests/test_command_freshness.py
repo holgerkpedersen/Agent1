@@ -4,18 +4,23 @@ A paste-session fix to ``workflow_cmd.py`` landed on disk at 10:13:57 but
 the running REPL kept executing the old in-memory module — the 10:15:40
 run still showed the duplicated ``## 7.`` sections. The REPL loop now warns
 when loaded module files change on disk; these tests pin the helpers.
+
+Staleness is content-based (SHA-1), NOT mtime-based: a repair apply/revert
+cycle (harnessfix rewrites ``tool_loop.py`` with identical bytes) or any
+no-op save bumps the mtime and must NOT be reported as stale.
 """
 import os
 import sys
 
 from agent_core.commands.freshness import (
     diff_snapshots,
+    fingerprint_file,
     format_stale_warning,
-    loaded_module_mtimes,
+    loaded_module_fingerprints,
 )
 
 
-class TestLoadedModuleMtimes:
+class TestLoadedModuleFingerprints:
     def test_collects_watched_module_files_only(self, monkeypatch, tmp_path):
         watched = tmp_path / "agent_core" / "commands" / "demo_cmd.py"
         watched.parent.mkdir(parents=True)
@@ -35,7 +40,7 @@ class TestLoadedModuleMtimes:
              "agent_core.commands.demo_cmd": _M(str(watched)),
              "other.mod": _M(str(outside))},
         )
-        m = loaded_module_mtimes()
+        m = loaded_module_fingerprints()
         assert any(p.endswith("demo_cmd.py") for p in m)
         assert not any("other" in p.replace("\\", "/").split("/") for p in m)
 
@@ -48,7 +53,7 @@ class TestLoadedModuleMtimes:
             __file__ = str(src) + "c"  # "compiled.pyc" -> source "compiled.py"
 
         monkeypatch.setattr(sys, "modules", {**sys.modules, "agent_core.compiled": _M()})
-        m = loaded_module_mtimes()
+        m = loaded_module_fingerprints()
         assert any(p.endswith("compiled.py") and not p.endswith(".pyc") for p in m)
 
     def test_missing_files_skipped(self, monkeypatch):
@@ -56,14 +61,14 @@ class TestLoadedModuleMtimes:
             __file__ = "Z:\\agent_core\\does_not_exist.py"
 
         monkeypatch.setattr(sys, "modules", {**sys.modules, "agent_core.missing": _M()})
-        m = loaded_module_mtimes()
+        m = loaded_module_fingerprints()
         assert not any("does_not_exist" in p for p in m)
 
     def test_entry_script_included(self, monkeypatch, tmp_path):
         entry = tmp_path / "agent.py"
         entry.write_text("x = 1", encoding="utf-8")
         monkeypatch.setattr(sys, "modules", {**sys.modules})
-        m = loaded_module_mtimes(entry_script=str(entry))
+        m = loaded_module_fingerprints(entry_script=str(entry))
         assert any(p.endswith("agent.py") for p in m)
 
 
@@ -72,23 +77,51 @@ class TestDiffSnapshots:
         f = tmp_path / "agent_core" / "stable.py"
         f.parent.mkdir(parents=True)
         f.write_text("x = 1", encoding="utf-8")
-        snap = {str(f): os.path.getmtime(str(f))}
+        snap = {str(f): fingerprint_file(str(f))}
         assert diff_snapshots(snap) == []
 
     def test_changed_file_reported(self, tmp_path):
         f = tmp_path / "agent_core" / "edited.py"
         f.parent.mkdir(parents=True)
         f.write_text("x = 1", encoding="utf-8")
-        snap = {str(f): os.path.getmtime(str(f))}
+        snap = {str(f): fingerprint_file(str(f))}
         f.write_text("x = 2", encoding="utf-8")
-        os.utime(f, (snap[str(f)] + 10, snap[str(f)] + 10))
+        assert diff_snapshots(snap) == [str(f)]
+
+    def test_noop_rewrite_with_new_mtime_not_reported(self, tmp_path):
+        """Regression: a harnessfix repair apply/revert (or any no-op save)
+        rewrites identical bytes and bumps the mtime.  The running code is
+        byte-identical, so it must NOT be reported stale — the old
+        mtime-based guard did, nagging the user to restart for nothing."""
+        f = tmp_path / "agent_core" / "noop.py"
+        f.parent.mkdir(parents=True)
+        f.write_text("x = 1\n", encoding="utf-8")
+        before = os.path.getmtime(str(f))
+        snap = {str(f): fingerprint_file(str(f))}
+        # Same bytes, explicitly newer mtime.
+        f.write_text("x = 1\n", encoding="utf-8")
+        new_mtime = before + 10
+        os.utime(f, (new_mtime, new_mtime))
+        assert os.path.getmtime(str(f)) == new_mtime  # mtime really changed
+        assert diff_snapshots(snap) == []
+
+    def test_same_size_content_change_reported(self, tmp_path):
+        """Content, not stat, is authoritative: a same-length edit with a
+        preserved mtime is still a real change."""
+        f = tmp_path / "agent_core" / "samesize.py"
+        f.parent.mkdir(parents=True)
+        f.write_text("x = 1\n", encoding="utf-8")
+        before = os.path.getmtime(str(f))
+        snap = {str(f): fingerprint_file(str(f))}
+        f.write_text("x = 2\n", encoding="utf-8")  # identical byte length
+        os.utime(f, (before, before))  # hide the change from mtime
         assert diff_snapshots(snap) == [str(f)]
 
     def test_deleted_file_reported(self, tmp_path):
         f = tmp_path / "agent_core" / "gone.py"
         f.parent.mkdir(parents=True)
         f.write_text("x = 1", encoding="utf-8")
-        snap = {str(f): os.path.getmtime(str(f))}
+        snap = {str(f): fingerprint_file(str(f))}
         f.unlink()
         assert diff_snapshots(snap) == [str(f)]
 
@@ -96,7 +129,7 @@ class TestDiffSnapshots:
         f = tmp_path / "agent_core" / "old.py"
         f.parent.mkdir(parents=True)
         f.write_text("x = 1", encoding="utf-8")
-        snap = {str(f): os.path.getmtime(str(f))}
+        snap = {str(f): fingerprint_file(str(f))}
         g = tmp_path / "agent_core" / "brand_new.py"
         g.write_text("x = 2", encoding="utf-8")
         assert diff_snapshots(snap) == []

@@ -6,15 +6,40 @@ process — Python keeps imported modules in memory. These helpers let the
 REPL warn the user instead of silently executing stale code (2026-08-19
 incident: a paste-session fix to ``workflow_cmd.py`` never took effect in
 the running REPL).
+
+Staleness is judged by CONTENT (a SHA-1 fingerprint), never by mtime alone.
+An mtime bump is not a code change: the harnessfix repairs rewrite
+``agent_core/llm/tool_loop.py`` with identical bytes during an apply/revert
+cycle, editors touch files on save, and ``git`` operations can refresh
+timestamps. Warning on those was a false positive — the running code was
+byte-identical, so the REPL nagged the user to restart for nothing.
 """
 
 from __future__ import annotations
+
+import hashlib
 import os
 import sys
 
 #: Package prefixes whose loaded module files are watched. Only modules
 #: ALREADY imported matter — those are the code the process executes.
 _WATCHED_PREFIXES = ("agent_core", "harnessfix")
+
+#: Read size when hashing, so a large module is never slurped in one go.
+_HASH_CHUNK = 1 << 20
+
+
+def fingerprint_file(path: str) -> str:
+    """SHA-1 hex digest of *path*'s bytes — the content authority for staleness.
+
+    Deliberately ignores size and mtime: the same bytes rewritten (repair
+    apply/revert, no-op save) yield the same fingerprint and are NOT stale.
+    """
+    h = hashlib.sha1()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(_HASH_CHUNK), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _is_watched(path: str) -> bool:
@@ -23,8 +48,8 @@ def _is_watched(path: str) -> bool:
     return any(norm.startswith(f"{pkg}/") or f"/{pkg}/" in norm for pkg in _WATCHED_PREFIXES)
 
 
-def loaded_module_mtimes(entry_script: str | None = None) -> dict[str, float]:
-    """Path -> mtime for every loaded watched module file.
+def loaded_module_fingerprints(entry_script: str | None = None) -> dict[str, str]:
+    """Path -> content fingerprint for every loaded watched module file.
 
     ``entry_script`` (the agent.py path) is included explicitly because the
     main script lives in ``__main__``, not under a watched package.
@@ -39,27 +64,30 @@ def loaded_module_mtimes(entry_script: str | None = None) -> dict[str, float]:
         src = f[:-4] + ".py" if f.endswith(".pyc") else f
         if _is_watched(src):
             paths.append(src)
-    mtimes: dict[str, float] = {}
+    fingerprints: dict[str, str] = {}
     for p in paths:
         if not os.path.isfile(p):
             continue
         try:
-            mtimes[os.path.abspath(p)] = os.path.getmtime(p)
+            fingerprints[os.path.abspath(p)] = fingerprint_file(p)
         except OSError:
             continue
-    return mtimes
+    return fingerprints
 
 
-def diff_snapshots(snapshot: dict[str, float]) -> list[str]:
-    """Paths in ``snapshot`` whose on-disk mtime differs or whose file is gone."""
+def diff_snapshots(snapshot: dict[str, str]) -> list[str]:
+    """Paths whose CONTENT differs from ``snapshot`` or whose file is gone.
+
+    An mtime-only touch (identical bytes) is intentionally NOT reported.
+    """
     stale: list[str] = []
-    for path in snapshot:
+    for path, digest in snapshot.items():
         try:
-            current = os.path.getmtime(path)
+            current = fingerprint_file(path)
         except OSError:
             stale.append(path)
             continue
-        if current != snapshot[path]:
+        if current != digest:
             stale.append(path)
     return sorted(stale)
 

@@ -198,3 +198,14 @@ Remaining quick wins: none — remaining items are [S]-scale.
   NOT fire on a clean completed run or a read-only cap. Tests:
   `tests/test_repairs_abandonment_resume.py` (10). Full suite: 1595 passed,
   2 skipped.
+
+## Deferred / open work (do not lose)
+
+- 2026-09-18 �?" **DONE: content-based staleness guard**. `freshness.py` now
+  fingerprints module CONTENT (SHA-1) and reports stale only when the digest
+  differs, so a harnessfix repair apply/revert on `tool_loop.py` (identical
+  bytes, new mtime) no longer produces a false "STALE" warning. API renamed
+  `loaded_module_mtimes` -> `loaded_module_fingerprints`; `agent.py` and
+  `tests/test_command_freshness.py` updated, with regressions for the no-op
+  rewrite and for a same-length content change. Implemented after the live
+  Agent1 REPL was stopped (no concurrent writer).

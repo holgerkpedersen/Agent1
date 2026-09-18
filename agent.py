@@ -3666,9 +3666,9 @@ async def run_interactive() -> None:
     from agent_core.commands.freshness import (
         diff_snapshots,
         format_stale_warning,
-        loaded_module_mtimes,
+        loaded_module_fingerprints,
     )
-    _code_snapshot = loaded_module_mtimes(__file__)
+    _code_snapshot = loaded_module_fingerprints(__file__)
     _install_signal_handlers(agent)
 
     while True:
@@ -3698,7 +3698,7 @@ async def run_interactive() -> None:
             _stale_files = diff_snapshots(_code_snapshot)
             if _stale_files:
                 print(yellow(format_stale_warning(_stale_files)))
-                _code_snapshot = loaded_module_mtimes(__file__)
+                _code_snapshot = loaded_module_fingerprints(__file__)
 
             # Parse and execute commands
             try:

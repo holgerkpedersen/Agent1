@@ -1,3 +1,11 @@
+## 2026-09-18 - fix: stale-code guard is content-based, not mtime-based
+
+**Change**: `agent_core/commands/freshness.py` now fingerprints file CONTENT (`fingerprint_file`, SHA-1) instead of recording mtimes. `loaded_module_mtimes` is renamed to `loaded_module_fingerprints` (path -> digest, type `dict[str, str]`); `diff_snapshots` re-hashes each path and reports it stale only when the digest actually differs (or the file is gone). `agent.py` (import + the two call sites in `run_interactive`) updated to the new name. Tests: `tests/test_command_freshness.py` rebuilt on the new API, plus two regressions — `test_noop_rewrite_with_new_mtime_not_reported` (identical bytes + a newer mtime must NOT warn) and `test_same_size_content_change_reported` (a same-length edit with a preserved mtime IS a real change).
+
+**Reason**: The guard warned on any mtime bump, so every HarnessFix run flagged `agent_core/llm/tool_loop.py` as STALE: the repairs rewrite that file during an apply/revert cycle, leaving byte-identical content (`abandonment_resume.revert()` does an unconditional `write_text`). A user hit this twice and restarted the REPL for nothing. Content is the only correct criterion — `git status` already showed the file unchanged while the REPL cried stale. Hashing the watched set (~2 MB, once per user turn) is negligible next to an LLM call.
+
+**Files**: agent_core/commands/freshness.py, agent.py, tests/test_command_freshness.py (13 passed), docs/AGENTIC_IMPROVEMENT_PLAN.md (deferred item closed).
+
 ## 2026-09-17 - fix: Windows CI timezone test needs the tzdata package
 
 **Change**: pyproject.toml (`tzdata>=2024.1` added to `[project].dependencies` with a comment explaining that Linux/macOS read the OS IANA database while Windows has none).
