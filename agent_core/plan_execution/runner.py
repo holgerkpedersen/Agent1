@@ -10,6 +10,8 @@ role-gated tools).  A plan-mode parent still caps every child read-only, so
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from agent_core.orchestration import DependencyGraph
@@ -69,11 +71,23 @@ async def run_plan(
     *,
     executor_factory: Optional[Callable[[PlanTask], TaskExecutor]] = None,
     dry_run: bool = False,
+    plan_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Schedule and execute *tasks* through isolated subagents.
 
     *executor_factory* lets tests inject fake executors (no LLM).  Returns the
     scheduler :meth:`~agent_core.orchestration.task_scheduler.TaskScheduler.snapshot`.
+
+    When *plan_dir* is provided, task completion state and dependency results are
+    persisted to disk so a subsequent session can resume via ``plan_step``:
+      - ``dep_<id>_result.json`` — written after each completed/failed task,
+        consumed by downstream tasks' ``input_data``.
+      - ``plan_execution_report.md`` — appended with one line per terminal task::
+
+            - [<task_id>] <completed|failed> (role: <role>)
+
+    This mirrors the filesystem contract that ``_nlp_plan_step`` already reads,
+    making batch execution (``plan_start``) resumable across sessions (#108).
     """
     scheduler = TaskScheduler()
     for t in tasks:
@@ -104,6 +118,41 @@ async def run_plan(
         scheduler.register_executor(t.id, _factory(t))
     for t in tasks:
         scheduler.schedule_task(t.id)
+
+    # ── Persistence: write dep results + execution report per terminal task (#108) ──
+    plan_dir_path = Path(plan_dir) if plan_dir else None
+    if plan_dir_path is not None:
+        def _persist_handler(msg: Any) -> None:
+            """Subscribe to scheduler status updates; persist on completion/failure."""
+            content = msg.content or {}
+            tid = content.get("task_id")
+            result = content.get("result", {}) or {}
+            node_status = content.get("status")  # 'completed' | 'failed' | ...
+            if not tid or node_status not in ("completed", "failed"):
+                return
+
+            task_obj = next((t for t in tasks if t.id == tid), None)
+            role = task_obj.role if task_obj else ""
+
+            # Write dependency result so downstream plan_step can consume it.
+            dep_path = plan_dir_path / f"dep_{tid}_result.json"
+            try:
+                dep_path.write_text(
+                    json.dumps(result, default=str), encoding="utf-8",
+                )
+            except Exception:
+                pass
+
+            # Append one line to the execution report (mirrors _nlp_plan_step).
+            status_label = "completed" if node_status == "completed" else "failed"
+            entry = f"- [{tid}] {status_label} (role: {role})\n"
+            try:
+                with open(plan_dir_path / "plan_execution_report.md", "a", encoding="utf-8") as f:
+                    f.write(entry)
+            except Exception:
+                pass
+
+        scheduler.subscribe(_persist_handler)
 
     if dry_run:
         snap = scheduler.snapshot()

@@ -28,7 +28,9 @@ from agent_core.commands.plan_schema import (
 from agent_core.commands.plan_lifecycle import PlanLifecycleManager, append_log
 from agent_core.commands.plan_dry_run import PlanDryRunner, MUTATING_TOOLS
 from agent_core.commands.plan_decision_gate import PlanDecisionGate
+from agent_core.commands.plan_lifecycle import PlanLifecycleManager
 from agent_core.file_protection import is_protected
+from agent_core.plan_execution.runner import run_plan, build_and_validate_graph
 
 import asyncio
 from agent import Agent
@@ -469,3 +471,115 @@ class TestPlanStepRegression:
         # The description passed to the subagent must contain the upstream result.
         assert "T1" in captured.get("desc", "")
         assert "T1 done" in captured.get("desc", "")
+
+
+class TestRunPlanPersistence:
+    """Regression for issue #108: run_plan must persist task completion state and
+    dependency results to disk so a subsequent session can resume via plan_step.
+
+    Previously, ``plan_start`` ran all tasks through ``run_plan()`` but never wrote
+    ``dep_<id>_result.json`` or ``plan_execution_report.md``, leaving no filesystem
+    trace for cross-session resumption (``_nlp_plan_step`` reads both).  This test
+    verifies the persistence contract is now honoured.
+    """
+
+    @staticmethod
+    def _tasks():
+        from agent_core.plan_execution.parser import parse_plan_tasks, PlanTask
+        return [
+            PlanTask(id="T1", description="task one", role="implementer"),
+            PlanTask(
+                id="T2", description="task two", role="implementer", depends_on=["T1"],
+            ),
+        ]
+
+    def test_run_plan_writes_dep_results_and_report(self, tmp_path: Path):
+        """After batch execution with plan_dir set, dep results + report must exist."""
+        run_dir = tmp_path / ".docs" / "run_001"
+        run_dir.mkdir(parents=True)
+
+        captured_desc: dict[str, str] = {}
+
+        class FakeSub:
+            async def respond(self, desc):
+                captured_desc["desc"] = desc
+                return f"done for {desc[:20]}"  # non-empty => completed
+
+            def get_context_summary(self, max_messages=3):
+                return "summary"
+
+        agent = Agent.__new__(Agent)
+        agent.mode = "build"
+        agent.workspace = str(tmp_path)
+        agent.spawn_subagent = lambda **kw: FakeSub()
+
+        tasks = self._tasks()
+        asyncio.run(run_plan(agent, tasks, plan_dir=str(run_dir)))
+
+        # T1 completed -> dep_T1_result.json must exist with the executor result.
+        dep_t1 = run_dir / "dep_T1_result.json"
+        assert dep_t1.exists(), f"Expected {dep_t1} to be written by run_plan"
+        t1_data = json.loads(dep_t1.read_text(encoding="utf-8"))
+        assert t1_data.get("success") is True
+
+        # T2 completed -> dep_T2_result.json must exist.
+        dep_t2 = run_dir / "dep_T2_result.json"
+        assert dep_t2.exists(), f"Expected {dep_t2} to be written by run_plan"
+
+        # Execution report must contain one line per terminal task.
+        report = (run_dir / "plan_execution_report.md").read_text(encoding="utf-8")
+        assert "[T1] completed" in report
+        assert "[T2] completed" in report
+
+    def test_run_plan_passes_dep_results_to_downstream(self, tmp_path: Path):
+        """Dependency results written by T1 must flow into T2's input_data."""
+        run_dir = tmp_path / ".docs" / "run_002"
+        run_dir.mkdir(parents=True)
+
+        captured_desc: dict[str, str] = {}
+
+        class FakeSub:
+            async def respond(self, desc):
+                captured_desc["desc"] = desc
+                return "ok"
+
+            def get_context_summary(self, max_messages=3):
+                return "summary"
+
+        agent = Agent.__new__(Agent)
+        agent.mode = "build"
+        agent.workspace = str(tmp_path)
+        agent.spawn_subagent = lambda **kw: FakeSub()
+
+        tasks = self._tasks()
+        snap = asyncio.run(run_plan(agent, tasks, plan_dir=str(run_dir)))
+
+        # T2's input_data must contain the upstream result from T1.
+        t2_rec = next(r for r in snap["tasks"] if r["task_id"] == "T2")
+        assert "input_data" in t2_rec
+        assert "T1" in t2_rec["input_data"], f"Expected T1 in input_data: {t2_rec['input_data']}"
+
+    def test_run_plan_no_persistence_when_dir_none(self, tmp_path: Path):
+        """When plan_dir is None (default), no files should be written."""
+        class FakeSub:
+            async def respond(self, desc):
+                return "ok"
+
+            def get_context_summary(self, max_messages=3):
+                return "summary"
+
+        agent = Agent.__new__(Agent)
+        agent.mode = "build"
+        agent.workspace = str(tmp_path)
+        agent.spawn_subagent = lambda **kw: FakeSub()
+
+        tasks = self._tasks()
+        asyncio.run(run_plan(agent, tasks))  # no plan_dir
+
+        run_dir = tmp_path / ".docs"
+        if run_dir.exists():
+            for f in run_dir.iterdir():
+                assert not f.name.startswith("dep_"), \
+                    f"dep result should not be written without plan_dir: {f}"
+                assert f.name != "plan_execution_report.md", \
+                    "execution report should not be written without plan_dir"

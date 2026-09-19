@@ -2115,5 +2115,96 @@
     "tags": [],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "108",
+    "date": "2026-09-18T20:16:42+00:00",
+    "title": "Persist plan execution task completion state for cross-session resumption",
+    "context": "Interrupted multi-step plans cannot resume because completed-task state is not persisted; persisting into agent_memory.json would allow a restarted session to skip already-finished tasks.",
+    "decision": "After each task in the plan completes, record its completion status into agent_memory.json so a subsequent run can resume from the last unfinished step.",
+    "rationale": "Persisted state avoids redundant re-execution of completed work and makes long-running plans resilient to interruption/restarts.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "persistence",
+      "innovation",
+      "planning"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "109",
+    "date": "2026-09-18T20:16:43+00:00",
+    "title": "Replace ad-hoc string logging with structured JSON logs including trace IDs",
+    "context": "All log calls in agent.py use ad-hoc string formatting; production deployments need JSON-structured logs with trace IDs for correlation across subprocess boundaries and dashboard metrics.",
+    "decision": "Migrate logging to a structured logger emitting JSON records with trace/span IDs, routed through the existing logging_config/logging infrastructure.",
+    "rationale": "Structured logs enable automated parsing, cross-subprocess correlation via trace IDs, and integration with monitoring dashboards for production observability.",
+    "affected_files": [
+      "agent.py",
+      "logging_config.py"
+    ],
+    "tags": [
+      "logging",
+      "monitoring",
+      "production"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "110",
+    "date": "2026-09-18T20:16:43+00:00",
+    "title": "Inconsistent null handling of subprocess return tuple across git/diff/test paths",
+    "context": "_run_subprocess_captured in agent.py returns (output, error) but callers like _nlp_git treat the second element inconsistently regarding None vs truthiness.",
+    "decision": "Standardize _run_subprocess_captured's contract so the error value is always a string (empty when none), and update all _nlp_* callers to rely on that single convention.",
+    "rationale": "A consistent tuple contract eliminates ambiguous null checks, reducing bugs in git/diff/test code paths and simplifying caller logic.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "type-safety",
+      "error-handling",
+      "dry"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "111",
+    "date": "2026-09-18T20:16:43+00:00",
+    "title": "benchmark.py query_model uses deprecated asyncio.get_event_loop()",
+    "context": "query_model in benchmark.py calls asyncio.get_event_loop(), which is deprecated and can fail on Python 3.12+ when no running loop exists.",
+    "decision": "Use asyncio.get_running_loop() (or create a new loop via asyncio.new_event_loop()) inside query_model instead of the deprecated get_event_loop().",
+    "rationale": "get_running_loop is safe within coroutines and avoids deprecation warnings/crashes in modern Python; falling back to an explicitly created loop handles non-async entry points.",
+    "affected_files": [
+      "benchmark.py"
+    ],
+    "tags": [
+      "asyncio",
+      "compatibility",
+      "python-3.12"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "112",
+    "date": "2026-09-18T20:16:43+00:00",
+    "title": "SIGBREAK handler calls os._exit(1) unconditionally before cleanup",
+    "context": "_signal_break in agent.py kills the process with os._exit(1) on SIGBREAK before any installed cleanup handler can run, even when a handler with cleanup is registered.",
+    "decision": "Replace unconditional os._exit(1) in _signal_break with logic that first invokes an installed cleanup handler (if present), then exits only if no handler defers shutdown.",
+    "rationale": "Unconditional hard exit prevents resource flushing, file-handle closure, and graceful subprocess termination; allowing a registered handler to run ensures orderly teardown while still guaranteeing exit on SIGBREAK when needed.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "signal-handling",
+      "error-handling",
+      "production"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]

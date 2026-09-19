@@ -1677,7 +1677,7 @@ class Agent:
 
         from agent_core.plan_execution.runner import run_plan
 
-        snapshot = await run_plan(self, tasks)
+        snapshot = await run_plan(self, tasks, plan_dir=str(plan_dir))
 
         report_lines = [f"Plan execution complete ({len(tasks)} tasks):"]
         failed = []
