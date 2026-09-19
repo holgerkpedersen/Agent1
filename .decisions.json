@@ -1866,8 +1866,7 @@
     "rationale": "The spec is explicitly vague. The analysis's own critique confirms the spec is insufficient and the project is BLOCKED pending clarification. Proceeding without a defined goal violates the 'no direction' risk flagged in Section 3.",
     "affected_files": [
       "agent.py",
-      "tests/test_agent_dry_refactor.py",
-      ".pytest_tmp"
+      "tests/test_agent_dry_refactor.py"
     ],
     "tags": [
       "spec",
@@ -1886,8 +1885,7 @@
     "rationale": "The analysis's threat model (Section 5) maps shell injection, path traversal, prompt injection, and tool-call bypass as the highest-risk attack surfaces. Section 8's success metrics explicitly require security invariants to be preserved. Any change to these mechanisms could introduce vulnerabilities.",
     "affected_files": [
       "agent.py",
-      "tests/test_agent_dry_refactor.py",
-      ".pytest_tmp"
+      "tests/test_agent_dry_refactor.py"
     ],
     "tags": [
       "security",
@@ -1963,13 +1961,7 @@
     "context": "The analysis mentions .pytest_tmp/ verification fixtures but does not analyze their implications. The critique (Section 2.5) identifies that test_absence_claim_confirmed_c0 and test_absence_claim_contradicte0 both contain _FORBIDDEN_PATTERNS = ('eval(',) — suggesting the verification tests check that eval( does not appear in agent.py. Other fixtures test path resolution methods and symbol consistency.",
     "decision": "Analyze all .pytest_tmp/ verification fixtures to determine what code properties they enforce. Ensure the refactor does not introduce eval( or other forbidden patterns, and that path resolution methods (_resolve_nlp_path, _normalize_path, _safe_path) remain consistent.",
     "rationale": "The critique explicitly identifies these fixtures as defining acceptance criteria that the analysis failed to examine. The workspace listing confirms these fixture directories exist with agent.py copies and test files.",
-    "affected_files": [
-      ".pytest_tmp/test_absence_claim_confirmed_c0",
-      ".pytest_tmp/test_absence_claim_contradicte0",
-      ".pytest_tmp/test_multi_file_segment_symbol0",
-      ".pytest_tmp/test_symbol_line_does_not_blee0",
-      ".pytest_tmp/test_symbol_line_match_not_fla0"
-    ],
+    "affected_files": [],
     "tags": [
       "testing",
       "verification",

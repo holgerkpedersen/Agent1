@@ -6,6 +6,14 @@
 
 **Files**: agent.py, conftest.py, tests/test_experience_recording.py (18 passed), CHANGES.md.
 
+## 2026-09-19 - fix: CI audit must not flag gitignored scratch paths as stale decisions
+
+**Change**: `agent_core/decisions.py` (`find_stale_decisions` now ignores references under generated/machine-local trees — `.pytest_tmp`, `.docs`, `reports`, `backups`, `checkpoints`, caches, `.git` — via `_is_transient_ref`; such paths cannot be verified against the repo, so a checkout that lacks them is not told the decision is stale). `.decisions.json` (#095, #096, #100 had `.pytest_tmp/...` test-scratch paths in `affected_files`; those references were removed). Tests: `tests/test_decisions_review.py` (+2 — transient paths not flagged; a lookalike real file like `reports_keep.py` is still checked).
+
+**Reason**: `tests/test_text_policy.py::test_real_repo_is_emoji_free` runs `scripts/audit_invariants.py` and asserts exit 0, but on CI the audit failed with `ERROR: stale affected_files in 3 decision(s): #095 (.pytest_tmp), #096 (.pytest_tmp), #100 (.pytest_tmp/...)`. `.pytest_tmp/` is gitignored and machine-local — it exists on the developer box but not on a fresh CI checkout — so decisions recorded against transient test fixtures looked "deleted". The fix is at the source (a stale check must only consider repo files) plus ledger hygiene.
+
+**Files**: agent_core/decisions.py, .decisions.json, tests/test_decisions_review.py, CHANGES.md. Verified: `python scripts/audit_invariants.py` exits 0; `tests/test_decisions_review.py tests/test_text_policy.py agent_core/tests/test_plan_workflow.py` → 86 passed.
+
 ## 2026-09-19 - fix: instruct the model how to stage with git (no more bare '-')
 
 **Change**: `agent_core/tool_schemas.py` (the `git` tool description now says to run `status` FIRST, to stage everything with `subcommand='add', args='-A'`, and that a bare `-` is not a pathspec; the `args`/`subcommand` descriptions carry concrete per-subcommand examples). `agent.py` (a `_SYSTEM_PROMPT` bullet states the same, so the rule is in context before the first tool call; `_nlp_git` gains a backstop that answers `add` with no args or a bare `-` with the correct form instead of forwarding an invalid pathspec). Tests: `tests/test_git_tool_guidance.py` (7 — schema self-describes, prompt names status-first/`-A`, handler never forwards bare/empty `add`).

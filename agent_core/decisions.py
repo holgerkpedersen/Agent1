@@ -146,6 +146,23 @@ def save_decisions(workspace: str | Path, decisions: list[dict[str, Any]]) -> No
     )
 
 
+#: Top-level trees that are generated or machine-local (gitignored, see
+#: .gitignore).  A decision referencing one of these — e.g. a test scratch
+#: file under ``.pytest_tmp/`` — cannot be verified against the repository, so
+#: the reference must NOT be reported stale just because another checkout (CI)
+#: does not happen to have that directory.
+_TRANSIENT_TOP_DIRS = frozenset({
+    ".git", "__pycache__", ".pytest_cache", ".pytest_tmp", ".mypy_cache",
+    ".ruff_cache", ".docs", "backups", "reports", "checkpoints", "generated",
+})
+
+
+def _is_transient_ref(path: str) -> bool:
+    """True for a workspace-relative path under a generated/machine-local tree."""
+    parts = Path(str(path).replace("\\", "/")).parts
+    return bool(parts) and parts[0] in _TRANSIENT_TOP_DIRS
+
+
 def find_stale_decisions(
     workspace: str | Path, decisions: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -155,12 +172,17 @@ def find_stale_decisions(
     a candidate for verification or supersession, not a broken ledger.  The
     decision ledger is a living document; the human gate decides what to do
     with it (decision #054).
+
+    References under a gitignored/transient tree (``.pytest_tmp``, ``reports``,
+    ...) are ignored: they are machine-local artifacts, not repo files, so a
+    checkout that lacks them must not be told the decision is stale.
     """
     stale: list[dict[str, Any]] = []
     for d in decisions:
         missing = [
             f for f in d.get("affected_files", [])
-            if not (Path(str(workspace)) / f).exists()
+            if not _is_transient_ref(f)
+            and not (Path(str(workspace)) / f).exists()
         ]
         if missing:
             d = dict(d)

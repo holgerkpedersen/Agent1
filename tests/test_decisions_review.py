@@ -47,6 +47,27 @@ def test_decisions_without_files_are_never_stale(tmp_path):
     assert find_stale_decisions(tmp_path, decisions) == []
 
 
+def test_transient_paths_are_not_flagged_stale(tmp_path):
+    """Regression (CI): a reference under a gitignored/machine-local tree is not
+    a stale file.  Decisions #095/#096/#100 referenced ``.pytest_tmp/...`` test
+    scratch paths that exist locally but not on a fresh checkout, which failed
+    ``scripts/audit_invariants.py`` on every CI run."""
+    decisions = [
+        _decision("095", [".pytest_tmp/scratch.py"]),
+        _decision("096", ["reports/traces/x.jsonl"]),
+        _decision("100", [".docs/2026/x/plan.md", "backups/agent.py"]),
+    ]
+    assert find_stale_decisions(tmp_path, decisions) == []
+
+
+def test_transient_lookalike_dir_is_still_checked(tmp_path):
+    """Only the exact transient directory names are exempt — a real top-level
+    file whose name merely starts with one is still verified."""
+    decisions = [_decision("001", ["reports_keep.py"])]
+    stale = find_stale_decisions(tmp_path, decisions)
+    assert [d["id"] for d in stale] == ["001"]
+
+
 def test_stale_marks_do_not_mutate_ledger_records(tmp_path):
     (tmp_path / "gone.py").write_text("", encoding="utf-8")
     (tmp_path / "gone.py").unlink()
