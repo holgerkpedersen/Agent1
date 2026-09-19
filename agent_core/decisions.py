@@ -25,6 +25,21 @@ logger = logging.getLogger(__name__)
 
 _DECISIONS_FILE = ".decisions.json"
 
+# ── Status constants ────────────────────────────────────────────────────────
+
+STATUS_ACTIVE = "active"
+STATUS_SUPERSEDED = "superseded"
+STATUS_ARCHIVED = "archived"
+_STATUSES = {STATUS_ACTIVE, STATUS_SUPERSEDED, STATUS_ARCHIVED}
+
+# ── Category set (curated from tag inventory) ──────────────────────────────
+
+CATEGORIES = {
+    "security", "architecture", "testing", "tracing",
+    "workflow", "quality", "provider", "concurrency",
+    "documentation", "planning", "git", "ops", "ux",
+}
+
 #: Negative-existence phrasings ("no test coverage for X", "untested", ...) —
 #: used by :func:`annotate_candidates` to mechanically check coverage claims.
 _NEGATIVE_CLAIM_RE = re.compile(
@@ -117,6 +132,11 @@ def load_decisions(workspace: str | Path) -> list[dict[str, Any]]:
         d["tags"] = tags if isinstance(tags, list) else []
         if not d.get("date"):
             d["date"] = d.get("created_at") or ""
+        # Normalize status: unknown or missing → active
+        status = d.get("status", "")
+        d["status"] = status if status in _STATUSES else STATUS_ACTIVE
+        # Ensure category key exists for legacy records
+        d.setdefault("category", "")
     return decisions
 
 
@@ -149,6 +169,75 @@ def find_stale_decisions(
     return stale
 
 
+def find_open_contradictions(
+    decisions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Decisions carrying unresolved contradictions.
+
+    A contradiction entry is *open* when its ``status`` field is neither
+    ``"resolved"`` nor ``"superseded"``.  Returns a shallow copy of each
+    matching decision annotated with ``_open_contradiction_ids`` (the list
+    of unresolved contradiction IDs).
+
+    Decision #054: the human gate decides what to do with open
+    contradictions.
+    """
+    open_list: list[dict[str, Any]] = []
+    for d in decisions:
+        contradictions = d.get("contradictions", [])
+        if not contradictions:
+            continue
+        open_ids = [
+            c["id"] for c in contradictions
+            if isinstance(c, dict)
+            and c.get("status") not in ("resolved", "superseded")
+        ]
+        if open_ids:
+            d = dict(d)
+            d["_open_contradiction_ids"] = open_ids
+            open_list.append(d)
+    return open_list
+
+
+def find_meta_warnings(
+    decisions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Decisions carrying meta_warnings (unverified claims, stale refs, etc.).
+
+    Meta-warnings are rendered into LLM prompts (decisions_as_system_prompt)
+    but are also surfaced here for audit-time visibility so they are not
+    invisible to humans running ``decide review`` or ``audit_invariants``.
+
+    Decision #080, #082, #084, #086, #087: unverified-claim warnings.
+    """
+    flagged: list[dict[str, Any]] = []
+    for d in decisions:
+        warnings = d.get("meta_warnings")
+        if warnings:
+            d = dict(d)
+            d["_meta_warnings"] = list(warnings)
+            flagged.append(d)
+    return flagged
+
+
+def ledger_health(
+    workspace: str | Path,
+    decisions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Combined health report for the decision ledger.
+
+    Returns a dict with keys ``stale``, ``open_contradictions``, and
+    ``meta_warnings``, each a list of annotated decision dicts.
+    """
+    if decisions is None:
+        decisions = load_decisions(workspace)
+    return {
+        "stale": find_stale_decisions(workspace, decisions),
+        "open_contradictions": find_open_contradictions(decisions),
+        "meta_warnings": find_meta_warnings(decisions),
+    }
+
+
 def _next_id(decisions: list[dict[str, Any]]) -> str:
     max_id = 0
     for d in decisions:
@@ -168,6 +257,7 @@ def add_decision(
     affected_files: list[str] | None = None,
     tags: list[str] | None = None,
     warnings: list[str] | None = None,
+    category: str | None = None,
 ) -> dict[str, Any]:
     decisions = load_decisions(workspace)
     record = {
@@ -181,6 +271,8 @@ def add_decision(
         "tags": tags or [],
         "contradictions": [],
         "resolved_by": None,
+        "status": STATUS_ACTIVE,
+        "category": category or "",
     }
     if warnings:
         record["meta_warnings"] = warnings
@@ -198,6 +290,8 @@ def find_decisions(
     tags: list[str] | None = None,
     files: list[str] | None = None,
     keyword: str = "",
+    status: str | None = None,
+    category: str | None = None,
 ) -> list[dict[str, Any]]:
     decisions = load_decisions(workspace)
     result = []
@@ -212,8 +306,30 @@ def find_decisions(
             text = json.dumps(d).lower()
             if keyword.lower() not in text:
                 continue
+        if status and d.get("status", STATUS_ACTIVE) != status:
+            continue
+        if category and d.get("category") != category:
+            continue
         result.append(d)
     return result
+
+
+def count_by_status(decisions: list[dict[str, Any]]) -> dict[str, int]:
+    """Count decisions grouped by status."""
+    counts: dict[str, int] = {}
+    for d in decisions:
+        s = d.get("status", STATUS_ACTIVE)
+        counts[s] = counts.get(s, 0) + 1
+    return counts
+
+
+def count_by_category(decisions: list[dict[str, Any]]) -> dict[str, int]:
+    """Count decisions grouped by category (uncategorized last)."""
+    counts: dict[str, int] = {}
+    for d in decisions:
+        c = d.get("category") or "(uncategorized)"
+        counts[c] = counts.get(c, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 # ── Simple overlap check (instant, no LLM) ──────────────────────────────────

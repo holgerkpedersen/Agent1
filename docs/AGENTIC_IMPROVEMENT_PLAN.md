@@ -201,7 +201,7 @@ Remaining quick wins: none — remaining items are [S]-scale.
 
 ## Deferred / open work (do not lose)
 
-- 2026-09-18 �?" **DONE: content-based staleness guard**. `freshness.py` now
+- 2026-09-18 -- **DONE: content-based staleness guard**. `freshness.py` now
   fingerprints module CONTENT (SHA-1) and reports stale only when the digest
   differs, so a harnessfix repair apply/revert on `tool_loop.py` (identical
   bytes, new mtime) no longer produces a false "STALE" warning. API renamed

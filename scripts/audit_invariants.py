@@ -17,6 +17,11 @@ Checks:
   5. backups/ exists (implement's pre-run safety copies).
   6. Emoji policy (decision #079): no emojis/pictographs in repo text files
      (`agent_core/text_policy.py`); monochrome CLI glyphs are allowed.
+  7. Stale affected_files and open contradictions (decision #054):
+     decisions referencing deleted/renamed files are ERROR; unresolved
+     contradictions are WARN.
+  8. Meta-warnings in decisions (decisions #080, #082, #084, #086, #087):
+     unverified-claim warnings surfaced at audit time.
 
 Exit code 0 = all good; 1 = errors found (warnings never fail the audit).
 """
@@ -173,6 +178,59 @@ def main() -> int:
             "(decision #079 — no emojis in files): "
             f"{summarize_findings(emoji_findings)}"
         )
+
+    # Check 7: stale affected_files and open contradictions (decision #054)
+    # Use ROOT-relative path so monkeypatched ROOT in tests is respected.
+    decision_file = ROOT / ".decisions.json"
+    if decision_file.is_file():
+        try:
+            from agent_core.decisions import (
+                find_stale_decisions,
+                find_open_contradictions,
+            )
+            ledger = json.loads(decision_file.read_text(encoding="utf-8"))
+            if isinstance(ledger, list):
+                stale = find_stale_decisions(ROOT, ledger)
+                if stale:
+                    errors.append(
+                        f"stale affected_files in {len(stale)} decision(s) "
+                        f"(files deleted/renamed): "
+                        + ", ".join(
+                            f"#{d['id']} ({', '.join(d['_missing_files'])})"
+                            for d in stale[:5]
+                        )
+                    )
+                open_contras = find_open_contradictions(ledger)
+                if open_contras:
+                    warnings.append(
+                        f"{len(open_contras)} decision(s) with open "
+                        "contradictions (not resolved/superseded): "
+                        + ", ".join(
+                            f"#{d['id']}"
+                            for d in open_contras[:5]
+                        )
+                    )
+        except (json.JSONDecodeError, OSError):
+            pass  # already reported in check 2
+
+    # Check 8: meta_warnings in decisions (decisions #080, #082, #084, #086, #087)
+    if decision_file.is_file():
+        try:
+            from agent_core.decisions import find_meta_warnings as _find_mw
+            ledger2 = json.loads(decision_file.read_text(encoding="utf-8"))
+            if isinstance(ledger2, list):
+                mw = _find_mw(ledger2)
+                if mw:
+                    warnings.append(
+                        f"{len(mw)} decision(s) carry meta_warnings "
+                        "(unverified claims / stale refs): "
+                        + "; ".join(
+                            f"#{d['id']}: {', '.join(d['_meta_warnings'][:2])}"
+                            for d in mw[:5]
+                        )
+                    )
+        except (json.JSONDecodeError, OSError):
+            pass  # already reported in check 2
 
     for w in warnings:
         print(f"WARN: {w}")

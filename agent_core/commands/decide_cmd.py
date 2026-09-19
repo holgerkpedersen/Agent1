@@ -17,13 +17,21 @@ from .base import Command, auto_choice, read_input, stop_requested
 from .doc_paths import find_input
 from .workflow_cmd import _module_inventory
 from agent_core.decisions import (
+    CATEGORIES,
+    STATUS_ACTIVE,
+    _STATUSES,
     add_decision,
     annotate_candidates,
     check_contradictions,
+    count_by_category,
+    count_by_status,
     extract_from_analysis,
     find_decisions,
+    find_meta_warnings,
+    find_open_contradictions,
     find_overlaps,
     find_stale_decisions,
+    ledger_health,
     load_decisions,
     resolve_contradictions,
     save_decisions,
@@ -33,12 +41,14 @@ if TYPE_CHECKING:
     from agent import Agent
 
 
-_DECIDE_HELP = """decide [add|list|show|check|resolve|link|extract|review] - Track design decisions for this workspace
+_DECIDE_HELP = """decide [add|list|show|check|resolve|link|extract|review|set-status|categories] - Track design decisions for this workspace
 
-  decide "title" --why "..." --what "..." [--tags t1,t2] [--files f1.py]
+  decide "title" --why "..." --what "..." [--tags t1,t2] [--files f1.py] [--category cat]
       Record a new decision
 
   decide list [--tag t] [--file f.py] [--search "keyword"]
+              [--status active|superseded|archived] [--category cat]
+              [--open] [--summary]
       List matching decisions
 
   decide show <id>
@@ -56,9 +66,16 @@ _DECIDE_HELP = """decide [add|list|show|check|resolve|link|extract|review] - Tra
   decide extract [--from analysis.md]
       Auto-extract decision candidates from a project analysis file
 
-  decide review
-      Health check on the ledger: stale affected_files, unlinked
-      contradictions, unresolved candidates"""
+  decide review [--strict]
+      Health check on the ledger: stale affected_files, open
+      contradictions, meta_warnings (unverified claims).  --strict exits
+      non-zero when stale or open-contradiction issues are found.
+
+  decide set-status <id> <status>
+      Change a decision's status (active/superseded/archived)
+
+  decide categories
+      Show decision counts by category"""
 
 
 class DecideCommand(Command):
@@ -92,6 +109,10 @@ class DecideCommand(Command):
             return await self._cmd_extract(args[1:], agent)
         elif sub == "review":
             return await self._cmd_review(args[1:], agent)
+        elif sub == "set-status":
+            return await self._cmd_set_status(args[1:], agent)
+        elif sub == "categories":
+            return await self._cmd_categories(args[1:], agent)
         else:
             return await self._cmd_add(args, agent)
 
@@ -103,6 +124,7 @@ class DecideCommand(Command):
         decision = _extract_flag(args, "--what", "--decision")
         tags = _extract_list(args, "--tags")
         files = _extract_list(args, "--files")
+        category = _extract_flag(args, "--category") or None
 
         if not title:
             self.error("Title required: decide \"title\" --why \"...\" --what \"...\"")
@@ -115,6 +137,7 @@ class DecideCommand(Command):
             decision=decision,
             affected_files=files,
             tags=tags,
+            category=category,
         )
         print(f"Recorded decision #{record['id']}: {record['title']}")
         return True
@@ -126,24 +149,53 @@ class DecideCommand(Command):
         tag = _extract_flag(args, "--tag")
         file = _extract_flag(args, "--file")
         keyword = _extract_flag(args, "--search")
+        status = _extract_flag(args, "--status") or None
+        category = _extract_flag(args, "--category") or None
+        show_summary = "--summary" in args
+        show_open = "--open" in args
         tags = [tag] if tag else None
         files = [file] if file else None
 
-        results = find_decisions(ws, tags=tags, files=files, keyword=keyword)
+        results = find_decisions(ws, tags=tags, files=files, keyword=keyword,
+                                 status=status, category=category)
         if not results:
             print("No decisions found.")
             return True
 
+        # Summary header
+        if show_summary:
+            all_decisions = load_decisions(ws)
+            by_status = count_by_status(all_decisions)
+            by_cat = count_by_category(all_decisions)
+            print(f"Total: {len(all_decisions)} decisions")
+            print(f"  by status: {', '.join(f'{k}={v}' for k, v in by_status.items())}")
+            print(f"  by category: {', '.join(f'{k}={v}' for k, v in by_cat.items())}")
+            print()
+
+        # --open: active decisions with unresolved contradictions
+        if show_open:
+            results = [d for d in results
+                       if d.get("status", STATUS_ACTIVE) == STATUS_ACTIVE
+                       and any(c.get("status") not in ("resolved", "superseded")
+                               for c in d.get("contradictions", []))]
+
         print(f"{len(results)} decision(s):")
         print("-" * 60)
         for d in results:
-            files = d.get("affected_files") or []
-            tags = d.get("tags") or []
-            files_str = ", ".join(files[:3])
-            tags_str = ", ".join(tags[:5])
+            dfiles = d.get("affected_files") or []
+            dtags = d.get("tags") or []
+            files_str = ", ".join(dfiles[:3])
+            tags_str = ", ".join(dtags[:5])
             date_str = (d.get("date") or "")[:10]
+            status_str = d.get("status", STATUS_ACTIVE)
+            cat_str = d.get("category") or ""
+            extra = ""
+            if status_str != STATUS_ACTIVE:
+                extra += f"  [{status_str}]"
+            if cat_str:
+                extra += f"  {{{cat_str}}}"
             print(
-                f"  #{d['id']}  {date_str}  {d['title']}\n"
+                f"  #{d['id']}  {date_str}  {d['title']}{extra}\n"
                 f"         files: {files_str or '-'}\n"
                 f"         tags:  {tags_str or '-'}"
             )
@@ -163,7 +215,8 @@ class DecideCommand(Command):
             print(f"Decision #{decision_id} not found.")
             return True
         for key in ["id", "date", "title", "context", "decision", "rationale",
-                     "affected_files", "tags", "contradictions", "resolved_by"]:
+                     "affected_files", "tags", "contradictions", "resolved_by",
+                     "status", "category"]:
             val = record.get(key, "")
             if isinstance(val, list):
                 val = ", ".join(val)
@@ -353,24 +406,24 @@ class DecideCommand(Command):
 # ── review ───────────────────────────────────────────────────────────
 
     async def _cmd_review(self, args: list[str], agent: "Agent") -> bool:
-        """Ledger health check: stale affected_files, contradictions that
-        were never resolved, unresolved candidate decisions (decision #054)."""
+        """Ledger health check: stale affected_files, open contradictions,
+        meta_warnings (unverified claims), and unresolved candidates
+        (decision #054, #080, #082, #084, #086, #087)."""
+        strict = "--strict" in args
         ws = str(Path(agent.workspace).resolve())
         decisions = load_decisions(ws)
         if not decisions:
             print("No decisions recorded.")
             return True
 
-        stale = find_stale_decisions(ws, decisions)
-        unresolved = [
-            d for d in decisions
-            if d.get("contradictions")
-            and any(
-                c.get("status") not in ("resolved", "superseded")
-                for c in d["contradictions"]
-            )
-        ]
+        report = ledger_health(ws, decisions)
+        stale = report["stale"]
+        open_contras = report["open_contradictions"]
+        meta_flags = report["meta_warnings"]
+
         print(f"{len(decisions)} decision(s) recorded.")
+
+        error_count = 0
 
         if stale:
             print(f"\n{len(stale)} decision(s) reference missing files:")
@@ -379,22 +432,77 @@ class DecideCommand(Command):
                     f"  #{d['id']}  {d['title']}\n"
                     f"         missing: {', '.join(d['_missing_files'])}"
                 )
+            error_count += len(stale)
         else:
             print("\nAll recorded affected_files exist on disk.")
 
-        if unresolved:
-            print(f"\n{len(unresolved)} decision(s) with open contradictions:")
-            for d in unresolved:
-                open_ids = [
-                    c["id"] for c in d["contradictions"]
-                    if c.get("status") not in ("resolved", "superseded")
-                ]
-                print(f"  #{d['id']}  {d['title']}  -> open vs {', '.join(open_ids)}")
+        if open_contras:
+            print(f"\n{len(open_contras)} decision(s) with open contradictions:")
+            for d in open_contras:
+                print(
+                    f"  #{d['id']}  {d['title']}"
+                    f"  -> open vs {', '.join(d['_open_contradiction_ids'])}"
+                )
+            error_count += len(open_contras)
         else:
             print("No open contradictions.")
 
-        print("\nTip: `decide show <id>` for details; `decide resolve <id1> <id2>` "
-              "for open contradictions.")
+        if meta_flags:
+            print(f"\n{len(meta_flags)} decision(s) carry meta_warnings:")
+            for d in meta_flags:
+                for w in d["_meta_warnings"]:
+                    print(f"  #{d['id']}  {d['title']}\n         {w}")
+        else:
+            print("No meta_warnings.")
+
+        if strict and error_count:
+            print(f"\nFAIL: {error_count} issue(s) found (stale + open contradictions).")
+            return True
+
+        if strict and not error_count and not meta_flags:
+            print("\nOK (strict mode, all checks passed).")
+        elif not strict:
+            print(
+                "\nTip: `decide show <id>` for details; "
+                "`decide resolve <id1> <id2>` for open contradictions."
+            )
+        return True
+
+    # ── set-status ──────────────────────────────────────────────────────────
+
+    async def _cmd_set_status(self, args: list[str], agent: "Agent") -> bool:
+        if len(args) < 2:
+            self.error("Usage: decide set-status <id> <status>")
+            return True
+        decision_id, new_status = args[0], args[1]
+        if new_status not in _STATUSES:
+            self.error(f"Invalid status '{new_status}'. Use: active, superseded, archived")
+            return True
+        ws = str(Path(agent.workspace).resolve())
+        decisions = load_decisions(ws)
+        record = next((d for d in decisions if d["id"] == decision_id), None)
+        if not record:
+            print(f"Decision #{decision_id} not found.")
+            return True
+        old_status = record.get("status", STATUS_ACTIVE)
+        record["status"] = new_status
+        save_decisions(ws, decisions)
+        print(f"Decision #{decision_id}: {old_status} -> {new_status}")
+        return True
+
+    # ── categories ──────────────────────────────────────────────────────────
+
+    async def _cmd_categories(self, args: list[str], agent: "Agent") -> bool:
+        ws = str(Path(agent.workspace).resolve())
+        decisions = load_decisions(ws)
+        if not decisions:
+            print("No decisions recorded.")
+            return True
+        by_cat = count_by_category(decisions)
+        print(f"{len(decisions)} decision(s) across {len(by_cat)} categories:")
+        print("-" * 40)
+        for cat, count in by_cat.items():
+            print(f"  {cat:25s} {count}")
         return True
 
     # ── helpers ──────────────────────────────────────────────────────────────
