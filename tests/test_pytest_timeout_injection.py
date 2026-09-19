@@ -145,9 +145,10 @@ class TestBudgetResolution:
         assert agent._pytest_full_suite_timeout() == float(agent._MAX_RUN_TIMEOUT_S)
 
     def test_garbage_value_falls_back_to_cap(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "not-a-number")
+        monkeypatch.setattr(agent, "_ENV_FILE_PATH", str(tmp_path / "absent.env"))
         assert agent._pytest_full_suite_timeout() == float(agent._MAX_RUN_TIMEOUT_S)
 
 
