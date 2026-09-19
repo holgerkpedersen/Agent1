@@ -124,7 +124,6 @@
     "rationale": "A single contract prevents duplicated behavior, config loss, and tool-loop breakage when adding providers.",
     "affected_files": [
       "agent_core/llm/provider.py",
-      "agent_core/llm_client.py",
       "agent.py"
     ],
     "tags": [
@@ -634,7 +633,6 @@
     "rationale": "Eliminates duplicated code, prevents drift, and clarifies module boundaries. The Protocol is the contract; these files are redundant copies that must be removed.",
     "affected_files": [
       "agent.py",
-      "agent_core/llm_client.py",
       "agent_core/llm/provider.py"
     ],
     "tags": [
@@ -1184,8 +1182,7 @@
     "decision": "Introduce one model-resolution service (likely in agent_core/llm/) that owns load_model_json + get_profile, consumed by both LLMClient and Agent.",
     "rationale": "A shared resolver eliminates divergent profile-loading code and guarantees consistent provider selection across the client and agent entry points.",
     "affected_files": [
-      "agent.py",
-      "agent_core/llm_client.py"
+      "agent.py"
     ],
     "tags": [
       "architecture",
@@ -2203,6 +2200,26 @@
       "signal-handling",
       "error-handling",
       "production"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "113",
+    "date": "2026-09-19T09:22:40+00:00",
+    "title": "CI must be green before any push to GitHub",
+    "context": "Repeated pushes to master landed red CI: an undeclared optional dependency (psutil) aborted collection, zoneinfo needed the tzdata package on the Windows runner, and two tests assumed Windows/mtime semantics. Each red push burns a full remote test cycle (~10 min on Windows) and leaves master unverified for other sessions.",
+    "decision": "A push to the GitHub remote requires a green CI gate FIRST. Before `git push`, run the full suite (`python -m pytest -q --no-cov`) and the blocking lint gate (`ruff check ... --select F821`) locally; if either fails, fix it and re-run before pushing. Treat the remote CI result as confirmation, never as the first place a failure is found.",
+    "rationale": "A push is the point of no return for shared history. Verifying locally is far cheaper than a red remote run, keeps master always green, and makes CI signal trustworthy for downstream work and other agent sessions that branch from it.",
+    "affected_files": [
+      ".github/workflows/ci.yml",
+      ".githooks/pre-commit",
+      "AGENTS.md"
+    ],
+    "tags": [
+      "ci",
+      "git",
+      "process"
     ],
     "contradictions": [],
     "resolved_by": null

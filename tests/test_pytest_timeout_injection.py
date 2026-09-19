@@ -57,6 +57,14 @@ class TestFullPytestDetection:
             "set PYTHONPATH=. && python -m pytest -q --no-cov",
             "python -m pytest -q >nul",
             "python -m pytest --ignore=tests/test_x.py -q",
+            # The whole suite spelled out explicitly is STILL a full run — this
+            # was the reported bug: `pytest tests/` got the 120s default and
+            # was killed mid-suite.
+            "python -m pytest tests/ -q --no-cov",
+            "python -m pytest tests -q",
+            "pytest tests/",
+            "python -m pytest . -q",
+            "python -m pytest tests/ -q --no-cov 2>&1 | python -c \"print(1)\"",
         ],
     )
     def test_full_runs_detected(self, command: str) -> None:
@@ -66,7 +74,7 @@ class TestFullPytestDetection:
         "command",
         [
             "python -m pytest tests/test_hue_integration.py -q --no-cov",
-            "python -m pytest tests -q",
+            "python -m pytest tests/unit -q",
             "pytest agent_core/tests -q",
             "python -m pytest tests/a.py tests/b.py",
             "echo pytest rules",
@@ -102,7 +110,7 @@ class TestBudgetResolution:
     def test_last_run_margin_matches_watchdog(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Budget mirrors conftest: max(floor, last * 1.2)."""
+        """Budget mirrors conftest: max(floor, last * 1.5)."""
         monkeypatch.delenv("PYTEST_FULL_SUITE_TIMEOUT", raising=False)
         monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
         env = tmp_path / ".env"
@@ -111,7 +119,14 @@ class TestBudgetResolution:
             encoding="utf-8",
         )
         monkeypatch.setattr(agent, "_ENV_FILE_PATH", str(env))
-        assert agent._pytest_full_suite_timeout() == 1200.0
+        assert agent._pytest_full_suite_timeout() == 1500.0
+
+    def test_margin_matches_conftest_watchdog(self) -> None:
+        """Tool timeout and in-suite watchdog must use the SAME margin, or the
+        tool can kill a run the watchdog would have allowed."""
+        import conftest
+
+        assert agent._FULL_SUITE_MARGIN == conftest._FULL_SUITE_MARGIN
 
     def test_process_env_wins_over_repo_env(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch,

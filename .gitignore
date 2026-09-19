@@ -164,6 +164,8 @@ reports/benchmark_*.json
 .ruff_cache/
 .pytest_cache/
 .pytest_tmp/
+.testmondata
+.testmondata.*
 mcp.json
 reports/mcp/
 

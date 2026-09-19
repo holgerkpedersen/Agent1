@@ -156,19 +156,24 @@ def _isolate_from_real_tree_and_beacons(
 # ---------------------------------------------------------------------------
 # Full-suite time budget.
 #
-# The real elapsed time of a FULL pytest run (bare `pytest`, no explicit test
-# paths) is recorded in the repo `.env` as PYTEST_LAST_FULL_RUN_SECONDS.  The
-# NEXT full run enforces a ceiling of max(PYTEST_FULL_SUITE_TIMEOUT, last
-# recorded duration * (1 + margin)) — i.e. the saved time is reused with 20%
-# headroom.  Targeted runs (`pytest tests/test_x.py`) are never measured or
-# killed, so single-file debugging is safe.
+# The real elapsed time of a FULL pytest run is recorded in the repo `.env` as
+# PYTEST_LAST_FULL_RUN_SECONDS.  The NEXT full run enforces a ceiling of
+# max(PYTEST_FULL_SUITE_TIMEOUT, last recorded duration * (1 + margin)) — i.e.
+# the saved time is reused with 50% headroom, so a run that fit once is very
+# unlikely to be killed next time.  A run that DOES overrun records its abort
+# time too (see ``_watchdog_loop``), so the budget grows instead of repeating.
+#
+# A full run is `pytest` with no positional path, or with the whole test tree
+# spelled out (`tests` / `tests/` / `.` — the configured ``testpaths``).  Only
+# real targets (`pytest tests/test_x.py`, `pytest tests/unit`) are "targeted":
+# they are never measured or killed, so single-file debugging stays safe.
 # ---------------------------------------------------------------------------
 
 _ENV_FILE = Path(__file__).resolve().parent / ".env"
 _FULL_SUITE_TIMEOUT_KEY = "PYTEST_FULL_SUITE_TIMEOUT"
 _LAST_FULL_RUN_KEY = "PYTEST_LAST_FULL_RUN_SECONDS"
 _DEFAULT_FULL_SUITE_TIMEOUT = 600.0
-_FULL_SUITE_MARGIN = 0.20  # 20% headroom over the last recorded duration
+_FULL_SUITE_MARGIN = 0.50  # 50% headroom over the last recorded duration
 
 _watchdog_stop = threading.Event()
 
@@ -211,11 +216,32 @@ def _save_env(updates: dict[str, str]) -> None:
     _ENV_FILE.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
+def _normalize_path_arg(arg: str) -> str:
+    """Normalize a positional path for full-run comparison (``tests/`` -> ``tests``)."""
+    return arg.replace("\\", "/").rstrip("/")
+
+
 def _is_full_run(config: pytest.Config) -> bool:
-    """A full run = no explicit test paths on the command line."""
+    """True when the invocation runs the WHOLE suite.
+
+    No positional arg, or exactly one that is the whole test tree spelled out
+    (a configured ``testpaths`` entry or ``.``).  A real target such as
+    ``tests/test_x.py`` or ``tests/unit`` is NOT a full run.
+    """
     raw = getattr(config, "invocation_params", None)
     args = list(getattr(raw, "args", None) or [])
-    return not any(a for a in args if not a.startswith("-"))
+    positionals = [a for a in args if not a.startswith("-")]
+    if not positionals:
+        return True
+    if len(positionals) > 1:
+        return False
+    try:
+        testpaths = list(config.getini("testpaths") or [])
+    except Exception:  # noqa: BLE001 - a stub config in a unit test
+        testpaths = []
+    whole_suite = {_normalize_path_arg(p) for p in testpaths if p}
+    whole_suite.add(".")
+    return _normalize_path_arg(positionals[0]) in whole_suite
 
 
 def _get_env_value(key: str) -> str:
@@ -241,12 +267,21 @@ def _resolve_budget() -> float:
 def _watchdog_loop(started: float, budget: float, stop: threading.Event) -> None:
     """Abort the process (exit 124) once `budget` seconds have elapsed."""
     while not stop.wait(1.0):
-        if time.monotonic() - started > budget:
+        elapsed = time.monotonic() - started
+        if elapsed > budget:
             print(
                 f"\n[conftest] full pytest run exceeded {budget:.0f}s budget — aborting "
                 f"(see PYTEST_FULL_SUITE_TIMEOUT / PYTEST_LAST_FULL_RUN_SECONDS in .env).",
                 flush=True,
             )
+            # os._exit skips pytest_sessionfinish, so without this the next run
+            # would reuse the SAME too-small budget and overrun again forever.
+            # Recording the abort time makes the next budget elapsed * 1.5, so
+            # repeated overruns converge upward instead of repeating.
+            try:
+                _save_env({_LAST_FULL_RUN_KEY: f"{elapsed:.1f}"})
+            except Exception:  # noqa: BLE001 - a failed write must not block the abort
+                pass
             os._exit(124)  # 124 = timeout, same convention as `timeout(1)`
 
 

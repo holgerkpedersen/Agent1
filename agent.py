@@ -3281,7 +3281,7 @@ _ENV_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"
 _PYTEST_FULL_SUITE_TIMEOUT_KEY = "PYTEST_FULL_SUITE_TIMEOUT"
 _PYTEST_LAST_FULL_RUN_KEY = "PYTEST_LAST_FULL_RUN_SECONDS"
 #: Must match conftest._FULL_SUITE_MARGIN so tool and watchdog agree.
-_FULL_SUITE_MARGIN = 0.20
+_FULL_SUITE_MARGIN = 0.50
 
 
 def _read_env_value(key: str) -> str:
@@ -3309,7 +3309,7 @@ def _pytest_full_suite_timeout() -> float:
     ``python -m pytest -q --no-cov``, which is below the suite's real budget on
     slower machines — the run tool then killed it mid-suite and the whole run
     was wasted.  Reuse the SAME budget conftest's watchdog enforces:
-    ``max(PYTEST_FULL_SUITE_TIMEOUT, PYTEST_LAST_FULL_RUN_SECONDS * 1.2)``,
+    ``max(PYTEST_FULL_SUITE_TIMEOUT, PYTEST_LAST_FULL_RUN_SECONDS * 1.5)``,
     read from the process env then the repo ``.env``.  Falling back to
     ``_MAX_RUN_TIMEOUT_S`` keeps behaviour identical on a bare checkout.
     """
@@ -3336,10 +3336,13 @@ _PYTEST_BARE_TOKENS = {
 def _is_full_pytest_command(command: str) -> bool:
     """True when *command* invokes pytest with no explicit test path.
 
-    Mirrors conftest's definition of a full run (no non-option positional
-    argument), so the run tool's timeout agrees with the in-suite watchdog.
-    Segments without pytest, ``K=V`` assignments and redirections (``2>&1``,
-    ``>nul``) are ignored; any other positional token marks a targeted run.
+    Mirrors conftest's definition of a full run: no positional path at all, or
+    the whole test tree spelled out (``tests`` / ``tests/`` / ``.`` — the
+    configured ``testpaths``).  Spelling the suite explicitly (``pytest
+    tests/``) used to be misread as a targeted run, so it got the 120s default
+    instead of the suite budget and was killed mid-run.  Segments without
+    pytest, ``K=V`` assignments and redirections (``2>&1``, ``>nul``) are
+    ignored; any other positional token marks a targeted run.
     """
     for segment in re.split(r"&&|\|\||[;|]", command):
         tokens = segment.split()
@@ -3352,6 +3355,8 @@ def _is_full_pytest_command(command: str) -> bool:
                 continue
             if re.match(r"^\d*>&?\S*$", token):
                 continue
+            if token.replace("\\", "/").rstrip("/") in ("tests", "."):
+                continue  # the whole test tree spelled out is still a full run
             return False
         return True
     return False

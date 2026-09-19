@@ -45,6 +45,9 @@ dev = [
     "mypy>=1.0",
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    # `pytest --testmon` re-runs only tests affected by changed files, so an
+    # iterative edit loop does not pay for the full suite every time.
+    "pytest-testmon>=2.0",
     "ruff>=0.4",
     "types-networkx>=3.0",
     "types-pyyaml>=6.0",

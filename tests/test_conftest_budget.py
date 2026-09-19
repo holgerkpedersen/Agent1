@@ -30,7 +30,7 @@ class TestResolveBudget:
     def test_last_run_with_margin_wins_when_larger(self, monkeypatch):
         monkeypatch.setenv(conftest._FULL_SUITE_TIMEOUT_KEY, "600")
         monkeypatch.setenv(conftest._LAST_FULL_RUN_KEY, "1000")
-        assert conftest._resolve_budget() == 1200.0  # 1000 * 1.20
+        assert conftest._resolve_budget() == 1500.0  # 1000 * 1.50
 
     def test_invalid_values_fall_back_to_default(self, monkeypatch):
         monkeypatch.delenv(conftest._FULL_SUITE_TIMEOUT_KEY, raising=False)
@@ -71,9 +71,12 @@ class TestGetEnvValue:
 
 class TestIsFullRun:
     @staticmethod
-    def _config(args):
+    def _config(args, testpaths=("tests",)):
         return type(
-            "C", (), {"invocation_params": type("P", (), {"args": args})}
+            "C", (), {
+                "invocation_params": type("P", (), {"args": args})(),
+                "getini": lambda self, name: list(testpaths),
+            },
         )()
 
     def test_bare_pytest_is_full_run(self):
@@ -87,6 +90,23 @@ class TestIsFullRun:
 
     def test_path_with_flags_is_not_full_run(self):
         assert conftest._is_full_run(self._config(["-q", "tests/test_x.py"])) is False
+
+    def test_testpath_subdir_is_not_full_run(self):
+        assert conftest._is_full_run(self._config(["tests/unit"])) is False
+
+    def test_whole_tree_spelled_out_is_full_run(self):
+        """`pytest tests/` is the full suite, not a targeted run — the bug that
+        let it be killed at the model's 120s/300s guess."""
+        assert conftest._is_full_run(self._config(["tests"])) is True
+        assert conftest._is_full_run(self._config(["tests/"])) is True
+        assert conftest._is_full_run(self._config(["tests\\"])) is True
+        assert conftest._is_full_run(self._config(["-q", "tests/"])) is True
+
+    def test_dot_is_full_run(self):
+        assert conftest._is_full_run(self._config(["."])) is True
+
+    def test_multiple_positionals_is_not_full_run(self):
+        assert conftest._is_full_run(self._config(["tests", "tests/unit"])) is False
 
 
 class TestEnvRoundTrip:
@@ -124,12 +144,16 @@ class TestEnvRoundTrip:
 
 
 class TestWatchdogAborts:
-    def test_over_budget_exits_124(self):
+    def test_over_budget_exits_124_and_records_abort(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("", encoding="utf-8")
         code = textwrap.dedent(
             """
             import sys, threading, time
+            from pathlib import Path
             sys.path.insert(0, {root!r})
             import conftest
+            conftest._ENV_FILE = Path({env!r})
             stop = threading.Event()
             # started 5s in the past, budget 1s -> elapsed already exceeds it.
             threading.Thread(
@@ -140,12 +164,18 @@ class TestWatchdogAborts:
             time.sleep(2.0)
             print("SURVIVED")
             """
-        ).format(root=str(_REPO_ROOT))
+        ).format(root=str(_REPO_ROOT), env=str(env_file))
         proc = subprocess.run(
             [sys.executable, "-c", code], capture_output=True, text=True, timeout=30
         )
         assert proc.returncode == 124  # timeout convention, same as `timeout(1)`
         assert "exceeded" in proc.stdout
+        # The abort elapsed time is recorded so the NEXT budget grows
+        # (abort * 1.5) instead of repeating the same too-small value.
+        content = env_file.read_text(encoding="utf-8")
+        assert "PYTEST_LAST_FULL_RUN_SECONDS=" in content
+        value = float(content.split("PYTEST_LAST_FULL_RUN_SECONDS=")[1].splitlines()[0])
+        assert value >= 5.0
 
     def test_within_budget_stays_alive(self):
         code = textwrap.dedent(

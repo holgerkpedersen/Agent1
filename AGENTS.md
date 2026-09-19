@@ -107,10 +107,18 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
 
 ## Verification commands
 
-- Full suite: `python -m pytest -q --no-cov` (~3.5 min; use `--no-cov` for speed).
-  The NLP `run`/`tests` tools auto-inject `PYTEST_FULL_SUITE_TIMEOUT` (from `.env`)
-  as the timeout for a detected full-suite invocation, so the model no longer needs
-  to guess it (and a guessed 600s can no longer kill the suite).
+- **Test efficiently — never pay for the whole suite twice.**
+  - Full suite (only before commit/push): `python -m pytest -q --no-cov`.
+    Bare `pytest` and the whole tree spelled out (`pytest tests/`, `pytest .`)
+    are all treated as full runs: they record their elapsed time and get a
+    budget of `max(PYTEST_FULL_SUITE_TIMEOUT, last * 1.50)`. An overrunning run
+    records its abort time, so the next budget grows instead of repeating.
+    The NLP `run`/`tests` tools inject that same budget, so `pytest tests/`
+    can no longer be killed at a guessed 120/300s.
+  - Re-run only what failed: `python -m pytest --lf -q --no-cov`.
+  - Only what changed: `python -m pytest --testmon -q --no-cov` (affected
+    tests only; first run builds the map).
+  - Fast lane: `python -m pytest -q --no-cov -x -m "not integration and not harnessfix_self_test" --ignore=tests/performance --ignore=tests/integration`.
 - Targeted: `python -m pytest tests/test_implement_safety.py tests/test_tool_loop_nlp.py -q --no-cov`.
 - mypy: `python -m mypy <file>`. **Known baseline: 22 pre-existing errors in 6 files**
   (implement_cmd.py 14; reconstruct_cmd.py 2; self_heal_cmd.py 2;
