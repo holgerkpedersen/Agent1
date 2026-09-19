@@ -6,6 +6,14 @@
 
 **Files**: agent.py, conftest.py, tests/test_experience_recording.py (18 passed), CHANGES.md.
 
+## 2026-09-19 - fix: instruct the model how to stage with git (no more bare '-')
+
+**Change**: `agent_core/tool_schemas.py` (the `git` tool description now says to run `status` FIRST, to stage everything with `subcommand='add', args='-A'`, and that a bare `-` is not a pathspec; the `args`/`subcommand` descriptions carry concrete per-subcommand examples). `agent.py` (a `_SYSTEM_PROMPT` bullet states the same, so the rule is in context before the first tool call; `_nlp_git` gains a backstop that answers `add` with no args or a bare `-` with the correct form instead of forwarding an invalid pathspec). Tests: `tests/test_git_tool_guidance.py` (7 — schema self-describes, prompt names status-first/`-A`, handler never forwards bare/empty `add`).
+
+**Reason**: Told "push", a live run called `git(subcommand="add", args="-")` and got `fatal: pathspec '-' did not match any files`. A bare `-` is not a valid git pathspec; the model guessed a staging shorthand because the tool description gave no examples and the system prompt never stated the correct form. The right fix is instruction-first (teach the correct invocation before the call), with the handler backstop so a slip still yields guidance rather than a raw git error. The model recovered on its own via `status` -> `push`, but the guess cost a turn.
+
+**Files**: agent_core/tool_schemas.py, agent.py, tests/test_git_tool_guidance.py, CHANGES.md.
+
 ## 2026-09-18 - fix: stop wasting full test runs to timeouts (whole-tree detection, 50% headroom, abort recording)
 
 **Change**: conftest.py (`_FULL_SUITE_MARGIN` 0.20 -> 0.50; `_is_full_run` now treats the whole tree spelled out — a configured `testpaths` entry (`tests`, `tests/`) or `.` — as a full run while real targets (`tests/test_x.py`, `tests/unit`) stay targeted; `_watchdog_loop` records the abort elapsed time into `PYTEST_LAST_FULL_RUN_SECONDS` before `os._exit(124)`, so an overrun raises the next budget instead of repeating). agent.py (`_FULL_SUITE_MARGIN` 0.20 -> 0.50, kept in lockstep with conftest; `_is_full_pytest_command` recognizes `tests`/`tests/`/`.` positionals as a full run so the `run`/`tests` tools inject the suite budget). Docs: `.env.example`, AGENTS.md verification section (fast lane + `--lf` + `--testmon`). pyproject.toml adds `pytest-testmon` to `[dev]`; `.gitignore` ignores `.testmondata`. Tests: `tests/test_conftest_budget.py` (margin 1500, whole-tree spellings, `getini`-aware `_config`, watchdog abort now asserts the recorded time), `tests/test_pytest_timeout_injection.py` (margin 1500, `tests/`/`.` detection cases, lockstep-margin assertion).

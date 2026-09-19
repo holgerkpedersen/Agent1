@@ -1310,6 +1310,14 @@ class Agent:
             extra = shlex.split(git_args)
         except ValueError as e:
             return f"Git error: invalid arguments: {e}"
+        # `git add` needs real paths: a bare "-" (or no args) is a pathspec
+        # error that wastes a call, so answer with the correct form instead.
+        if subcmd == "add" and (not extra or extra == ["-"]):
+            return (
+                "Git error: `git add` needs paths. Use args=\"-A\" to stage all "
+                "changes, or args=\"<path>\" for specific files (a bare '-' is "
+                "not a valid pathspec)."
+            )
         # Arg-list execution (no shell): shell metacharacters in
         # model-supplied args become literal git arguments.
         output, error = _run_subprocess_captured(
@@ -3172,6 +3180,10 @@ _SYSTEM_PROMPT = (
     "tool. project_plan.md / project_tasks.md are HISTORICAL phase docs and "
     "may be outdated — verify claims against the actual code.\n"
     f"- You are currently on Git branch: {_git_branch()}.\n"
+    "- Git: call the git tool with subcommand='status' FIRST, before staging or "
+    "committing. Stage everything with subcommand='add', args='-A' — a bare "
+    "'-' is NOT a pathspec and will fail. Commit with subcommand='commit', "
+    "args='-m \"message\"'. Never invent flags.\n"
     "- Verify numbers (e.g. how many tests exist) with the tests tool or git "
     "log before claiming them.\n"
     "- If a search finds nothing in source files, state that the symbol does "

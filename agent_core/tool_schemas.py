@@ -162,12 +162,36 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "git",
-            "description": "Run a git command in the workspace (status, diff, log, add, commit, ...).",
+            "description": (
+                "Run a git command in the workspace. Call `status` FIRST to see "
+                "what changed before staging or committing. Stage EVERYTHING "
+                "with subcommand='add', args='-A' (a bare '-' is NOT a valid "
+                "git pathspec); stage one path with args='<path>'. Commit with "
+                "subcommand='commit', args='-m \"message\"'. Push with "
+                "subcommand='push'. Use only the forms shown here or a real "
+                "git flag — do not invent flags."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "subcommand": {"type": "string", "description": "git subcommand (status, diff, log, add, commit, ...)"},
-                    "args": {"type": "string", "description": "Extra arguments as a single string"},
+                    "subcommand": {
+                        "type": "string",
+                        "description": (
+                            "One of: status, diff, log, add, commit, push, "
+                            "pull, branch, checkout, stash, show, blame, "
+                            "remote, branches"
+                        ),
+                    },
+                    "args": {
+                        "type": "string",
+                        "description": (
+                            "Extra arguments as one string, e.g. "
+                            "add='-A' or add='path/to/file'; "
+                            "commit='-m \"fix: subject\"'; log='--oneline -20'; "
+                            "checkout='-b feature'. '-A' stages all changes; a "
+                            "bare '-' is invalid."
+                        ),
+                    },
                 },
                 "required": ["subcommand"],
             },
