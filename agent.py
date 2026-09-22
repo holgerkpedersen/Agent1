@@ -993,6 +993,7 @@ class Agent:
             "fix": self._nlp_fix,
             "git": self._nlp_git,
             "list_files": self._nlp_list_files,
+            "merge": self._nlp_merge,
             "read": self._nlp_read,
             "read_skill": self._nlp_read_skill,
             "references": self._nlp_references,
@@ -1326,6 +1327,22 @@ class Agent:
             ["git"] + base + extra, self._effective_ws_dir(), 30, "Git",
         )
         return error or output
+
+    async def _nlp_merge(self, args: dict[str, Any]) -> str:
+        """Run a merge through the state-machine module (never interactive).
+
+        ``git merge --continue`` blocks forever on an editor when no
+        ``GIT_EDITOR`` is set, and rejects every argument
+        (``--continue expects no arguments``), so merges are NOT routed
+        through the generic ``git`` tool: :mod:`agent_core.tools.git_merge`
+        owns the state machine, disables the editor, and answers no-op
+        requests with guidance instead of a wasted git call.
+        """
+        from agent_core.tools import git_merge
+
+        return await asyncio.to_thread(
+            git_merge.run_merge, self._effective_ws_dir(), args,
+        )
 
     async def _nlp_diff(self, args: dict[str, Any]) -> str:
         """Show ``git diff --no-color`` for one file (optionally against another)."""

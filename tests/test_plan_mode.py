@@ -65,7 +65,7 @@ def test_unknown_mode_fails_safe_to_full_toolset() -> None:
 # Executor-level rejection (the choke point)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("tool", ["write", "edit", "run", "git", "tests", "fix", "analyze"])
+@pytest.mark.parametrize("tool", ["write", "edit", "run", "git", "tests", "fix", "analyze", "merge"])
 def test_plan_mode_blocks_mutating_tools(tool: str) -> None:
     rejection = check_tool_allowed(tool, MODE_PLAN)
     assert rejection is not None
@@ -115,6 +115,22 @@ def test_plan_mode_executor_rejects_write_end_to_end(
     ))
     assert result.startswith("[plan mode]")
     assert not target.exists()
+
+
+def test_plan_mode_executor_rejects_merge_end_to_end(
+    agent: Agent, tmp_path: Path
+) -> None:
+    """`merge` mutates the repo, so the choke point must block it in plan mode.
+
+    Regression: the merge tool was added to the full toolset; without this the
+    plan-mode read-only guarantee would silently regress.
+    """
+    agent.set_mode(MODE_PLAN)
+    result = asyncio.run(agent._execute_tool_call(
+        "merge", {"action": "abort"}
+    ))
+    assert result.startswith("[plan mode]")
+    assert "merge" in result
 
 
 def test_plan_mode_executor_still_executes_reads(

@@ -200,6 +200,104 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "merge",
+            "description": (
+                "Merge a branch into the current one — non-interactively, so it "
+                "can never hang on an editor. Call action='status' FIRST to see "
+                "whether a merge is already in progress. Start one with "
+                "action='start', branch='<name>' (this is the ONLY action that "
+                "takes a branch). After a conflict: resolve the files, stage "
+                "them with git(subcommand='add', args='-A'), then call "
+                "action='continue' — 'continue', 'abort' and 'quit' take NO "
+                "arguments (git rejects `merge --continue --no-edit` with "
+                "'--continue expects no arguments'), and this tool ignores any "
+                "branch/args you pass to them. Use action='abort' to back out "
+                "and restore the pre-merge state. Prefer this over "
+                "git(subcommand=...) for merges."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": (
+                            "One of: status, start, continue, abort, quit. "
+                            "'status' (default) reports whether a merge is in "
+                            "progress and lists unresolved conflicts; 'start' "
+                            "begins a merge and needs 'branch'; 'continue' "
+                            "commits a resolved merge (no arguments); 'abort' "
+                            "restores the pre-merge state; 'quit' forgets the "
+                            "merge state but keeps the working tree."
+                        ),
+                    },
+                    "branch": {
+                        "type": "string",
+                        "description": (
+                            "The branch or commit to merge INTO the current "
+                            "branch. Required for action='start' only; ignored "
+                            "by every other action."
+                        ),
+                    },
+                    "strategy": {
+                        "type": "string",
+                        "description": (
+                            "Merge strategy (-s). One of: ort, recursive, "
+                            "resolve, octopus, subtree, ours. Optional."
+                        ),
+                    },
+                    "strategy_option": {
+                        "type": "string",
+                        "description": (
+                            "Strategy option (-X), e.g. 'theirs' or 'ours' to "
+                            "auto-resolve conflicting hunks in favour of one "
+                            "side. Optional."
+                        ),
+                    },
+                    "ff": {
+                        "type": "string",
+                        "description": (
+                            "'auto' (default), 'only' (--ff-only: refuse when "
+                            "the histories diverged) or 'no' (--no-ff: always "
+                            "create a merge commit)."
+                        ),
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": (
+                            "Commit message for the merge (-m). Optional; "
+                            "without it git's default merge message is used "
+                            "and no editor is opened."
+                        ),
+                    },
+                    "squash": {
+                        "type": "boolean",
+                        "description": (
+                            "Stage the merged changes without committing and "
+                            "without recording a merge (--squash). Optional."
+                        ),
+                    },
+                    "no_commit": {
+                        "type": "boolean",
+                        "description": (
+                            "Stop before creating the merge commit, leaving "
+                            "the result staged (--no-commit). Optional."
+                        ),
+                    },
+                    "allow_unrelated": {
+                        "type": "boolean",
+                        "description": (
+                            "Allow merging a history with no common ancestor "
+                            "(--allow-unrelated-histories). Optional."
+                        ),
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "diff",
             "description": "Show the diff of one file (git diff) or between two files.",
             "parameters": {

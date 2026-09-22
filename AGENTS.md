@@ -25,6 +25,15 @@ is being extended to audit its own file effects (self-improvement).
 - `agent_core/symbol_intel.py` — pure-AST code intelligence backing the NLP
   `definitions`/`references` tools (signatures + line spans; capped whole-word
   reference search); both are read-only and allowed in plan mode.
+- `agent_core/tools/git_merge.py` — the NLP `merge` tool's state machine
+  (`status`/`start`/`continue`/`abort`/`quit`). Owns merges instead of
+  forwarding a string to the generic `git` tool because `git merge --continue`
+  blocks forever on an editor with no `GIT_EDITOR`, and rejects every argument
+  (`--continue expects no arguments`). Always runs non-interactively
+  (`GIT_EDITOR` no-op + `GIT_MERGE_AUTOEDIT=no` + `stdin=DEVNULL` + hard
+  timeout), inspects real state (`MERGE_HEAD`, unmerged paths) so no-op calls
+  answer with guidance rather than a wasted git call, and is mutating — so
+  plan mode blocks it.
 - `agent_core/modes.py` — session modes (`build` default, `plan` read-only);
   enforced at schema level AND in `_execute_tool_call` (decision #077).
 - `agent_core/llm/tool_loop.py` — `ToolLoopRunner`: NLP tool-call execution loop.
@@ -58,7 +67,7 @@ is being extended to audit its own file effects (self-improvement).
   on ambiguity). Requires `AGENT_AUTONOMOUS=1` (or `--auto`) to engage; halts on a
   `STOP_AUTONOMOUS` file/env kill-switch; leaves a git checkpoint before each
   iteration so any change is a one-step `git revert`.
-- `tests/` — pytest, **1503 collected** (~2 min full run with `--no-cov`;
+- `tests/` — pytest, **2572 collected** (~2 min full run with `--no-cov`;
   `testpaths=["tests"]`).
 - `agent_core/tests/` — entry-point/component test package (31 tests, runs only when
   targeted: `python -m pytest agent_core/tests -q --no-cov`); reconstructed 2026-08-19
