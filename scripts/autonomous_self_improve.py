@@ -65,7 +65,8 @@ SUMMARY_PATH = REPO_ROOT / "reports" / "harnessfix" / "summary.json"
 def _git(args: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
-            ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=check
+            ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", check=check,
         )
     except FileNotFoundError as exc:
         # git is not on PATH for this process.  Surface a clear, actionable

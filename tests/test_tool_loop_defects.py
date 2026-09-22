@@ -273,6 +273,42 @@ def test_compact_note_tag_never_reaches_provider_payload():
     assert all(LOOP_NOTE_TAG_KEY not in m for m in payload)  # ...never externally
 
 
+def test_sanitize_message_roles_repairs_unanswered_tool_calls():
+    """Regression (2026-09-21): an assistant ``tool_calls`` batch whose results
+    are missing (projection dropped steering NOTE results, or a trim/abort cut
+    them) must not reach a strict gateway — HTTP 400 "An assistant message with
+    'tool_calls' must be followed by tool messages responding to each
+    'tool_call_id'".  The assistant's text is kept, only the calls dropped."""
+    msgs = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "u"},
+        {"role": "assistant", "content": "text survives",
+         "tool_calls": [{"id": "c1", "type": "function",
+                         "function": {"name": "web_search", "arguments": "{}"}},
+                        {"id": "c2", "type": "function",
+                         "function": {"name": "read", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "ghost", "type": "function",
+                         "function": {"name": "read", "arguments": "{}"}}]},
+    ]
+    out = sanitize_message_roles(msgs)
+    announced = {
+        str(tc["id"])
+        for m in out if m.get("role") == "assistant"
+        for tc in (m.get("tool_calls") or [])
+    }
+    answered = {
+        str(m.get("tool_call_id")) for m in out if m.get("role") == "tool"
+    }
+    assert announced <= answered
+    assert announced == {"c1"}
+    # Text preserved; the empty orphan assistant is gone.
+    assert any(m.get("content") == "text survives" for m in out)
+    assert not any(m.get("role") == "assistant" and not m.get("content")
+                   and not m.get("tool_calls") for m in out)
+
+
 # ---------------------------------------------------------------------------
 # D. Path-miss recovery must not leak listing effects (tool_loop.py)
 # ---------------------------------------------------------------------------

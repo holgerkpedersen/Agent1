@@ -171,6 +171,12 @@ class TestOpencodeRetry:
         import urllib.error
         return urllib.error.HTTPError("http://x", code, "boom", {}, None)
 
+    @staticmethod
+    def _http_error_with_body(code: int, body: bytes):
+        import urllib.error
+        from io import BytesIO
+        return urllib.error.HTTPError("http://x", code, "boom", {}, BytesIO(body))
+
     def test_http_500_retried_then_succeeds(self):
         import asyncio
         calls = {"n": 0}
@@ -228,6 +234,73 @@ class TestOpencodeRetry:
             out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert out == "recovered"
         assert calls["n"] == 2
+
+
+    def test_http_403_server_error_body_retried_then_succeeds(self):
+        """Regression (2026-09-21): the gateway wraps an upstream outage in a
+        4xx status carrying a ``server_error`` body ("Upstream response was not
+        valid JSON").  A 403 must still be retried when its BODY says
+        server_error, even though 403 is not in the status set."""
+        import asyncio
+        calls = {"n": 0}
+        body = (
+            b'{"error":{"type":"server_error","code":"server_error",'
+            b'"message":"Upstream request failed: Upstream response was not valid JSON"}}'
+        )
+
+        def fake_urlopen(req, timeout=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise self._http_error_with_body(403, body)
+            return _FakeHttp({"choices": [{"message": {"content": "recovered"}}]})
+
+        prov = self._provider(max_retries=2, retry_base_delay=0.01)
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out == "recovered"
+        assert calls["n"] == 2
+
+    def test_http_403_server_error_exhausted_surfaces_body(self):
+        """The retried server_error body must survive to the error string (the
+        classifier caches it; the formatter reads the same bytes)."""
+        import asyncio
+        calls = {"n": 0}
+        body = (
+            b'{"error":{"type":"server_error","code":"server_error",'
+            b'"message":"Upstream response was not valid JSON"}}'
+        )
+
+        def fake_urlopen(req, timeout=None):
+            calls["n"] += 1
+            raise self._http_error_with_body(403, body)
+
+        prov = self._provider(max_retries=2, retry_base_delay=0.01)
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert calls["n"] == 3  # original + 2 retries
+        assert out.startswith("[Error: opencode API request failed")
+        assert "403" in out
+        assert "not valid JSON" in out
+
+    def test_http_400_invalid_request_body_not_retried(self):
+        """A genuine client error must fail fast even though its message also
+        contains "Upstream request failed" — only ``server_error`` retries."""
+        import asyncio
+        calls = {"n": 0}
+        body = (
+            b'{"error":{"type":"invalid_request_error",'
+            b'"code":"invalid_request_error","message":"Upstream request failed: bad"}}'
+        )
+
+        def fake_urlopen(req, timeout=None):
+            calls["n"] += 1
+            raise self._http_error_with_body(400, body)
+
+        prov = self._provider(max_retries=3, retry_base_delay=0.01)
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert calls["n"] == 1  # no retry
+        assert "invalid_request_error" in out
 
 
     def test_tool_map_covers_expected_names(self):

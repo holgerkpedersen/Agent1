@@ -48,7 +48,8 @@ def _git_status_porcelain() -> str:
     try:
         proc = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=ROOT, capture_output=True, text=True, timeout=30,
+            cwd=ROOT, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
         )
         return proc.stdout if proc.returncode == 0 else ""
     except (OSError, subprocess.TimeoutExpired):

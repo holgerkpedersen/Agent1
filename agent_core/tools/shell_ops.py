@@ -56,6 +56,7 @@ def run_command(workspace_root: Path, cmd_str: str) -> Tuple[int, str, str]:
             cwd=workspace_root,
             capture_output=True,
             text=True,
+            encoding="utf-8", errors="replace",
             timeout=30,
         )
     except FileNotFoundError as exc:

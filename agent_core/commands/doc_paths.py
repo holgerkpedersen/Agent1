@@ -11,10 +11,17 @@ copy: latest run folder first, workspace root second (legacy files).
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
 DOCS_DIR_NAME = ".docs"
+
+#: Run folder names are ``YYYY-MM-DD_HH-MM-SS`` (plus an optional ``_N``
+#: suffix from same-second collisions in :func:`new_run_dir`).  Anything else
+#: under .docs/ — e.g. a stray ``__pycache__`` — is NOT a run folder, and
+#: lexicographic max() would otherwise pick it as the "latest" run.
+_RUN_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(_\d+)?$")
 
 #: Document names produced by the workflow pipeline (used by readers).
 WORKFLOW_DOC_NAMES = (
@@ -63,7 +70,9 @@ def latest_run_dir(workspace: str | Path) -> Path | None:
     root = Path(workspace) / DOCS_DIR_NAME
     if not root.is_dir():
         return None
-    runs = [d for d in root.iterdir() if d.is_dir()]
+    # Only timestamp-named folders are run folders — a stray directory such
+    # as __pycache__ sorts after every real stamp and would otherwise win.
+    runs = [d for d in root.iterdir() if d.is_dir() and _RUN_DIR_RE.match(d.name)]
     if not runs:
         return None
     return max(runs, key=lambda d: d.name)

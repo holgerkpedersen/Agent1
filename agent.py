@@ -666,7 +666,9 @@ class Agent:
                 cwd = self.workspace
             r = subprocess.run(
                 [sys.executable, "-m", "py_compile", path],
-                capture_output=True, text=True, cwd=cwd,
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+                cwd=cwd,
             )
         except OSError as e:
             return f"[verify] py_compile could not run: {e}"
@@ -3055,6 +3057,7 @@ def _git_branch() -> str:
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
+            encoding="utf-8", errors="replace",
             timeout=5,
             check=False,
         )
@@ -3236,7 +3239,9 @@ def _run_subprocess_captured(
     """
     try:
         r = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout,
+            cmd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            cwd=cwd, timeout=timeout,
         )
     except subprocess.TimeoutExpired:
         return f"{label} timed out after {int(timeout)}s", None
@@ -3344,6 +3349,21 @@ _PYTEST_BARE_TOKENS = {
     "call", "&", "&&", "|", "||", ";",
 }
 
+#: pytest options that consume the FOLLOWING token as their value.  Without
+#: this the value (``no:cacheprovider`` in ``-p no:cacheprovider``, ``not slow``
+#: in ``-m "not slow"``, ``4`` in ``-n 4``) is mistaken for a test path, the
+#: command is misclassified as TARGETED, and a full run is killed at the 600s
+#: default instead of the suite budget.  Values attached with ``=`` are handled
+#: by the generic flag check.
+_PYTEST_VALUE_FLAGS = {
+    "-p", "-k", "-m", "-o", "-c", "-n", "-W", "-r",
+    "--deselect", "--ignore", "--ignore-glob", "--maxfail", "--tb",
+    "--durations", "--rootdir", "--confcutdir", "--basetemp", "--junitxml",
+    "--junit-prefix", "--log-level", "--log-file", "--log-format", "--dist",
+    "--import-mode", "--cache-dir", "--override-ini", "--numprocesses",
+    "--lfnf", "--last-failed-no-failures",
+}
+
 
 def _is_full_pytest_command(command: str) -> bool:
     """True when *command* invokes pytest with no explicit test path.
@@ -3354,13 +3374,24 @@ def _is_full_pytest_command(command: str) -> bool:
     tests/``) used to be misread as a targeted run, so it got the 120s default
     instead of the suite budget and was killed mid-run.  Segments without
     pytest, ``K=V`` assignments and redirections (``2>&1``, ``>nul``) are
-    ignored; any other positional token marks a targeted run.
+    ignored; values consumed by :data:`_PYTEST_VALUE_FLAGS` are not paths;
+    any other positional token marks a targeted run.
     """
     for segment in re.split(r"&&|\|\||[;|]", command):
-        tokens = segment.split()
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = segment.split()
         if not any(t in ("pytest", "py.test") for t in tokens):
             continue
+        skip_next = False
         for token in tokens:
+            if skip_next:
+                skip_next = False
+                continue
+            if token in _PYTEST_VALUE_FLAGS:
+                skip_next = True
+                continue
             if token.startswith("-"):
                 continue
             if token in _PYTEST_BARE_TOKENS or "=" in token:
@@ -3408,6 +3439,46 @@ def _drop_orphan_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str,
         else:
             seen = set()
             out.append(m)
+    return out
+
+
+def _repair_unanswered_tool_calls(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Strip assistant ``tool_calls`` that have no matching tool response.
+
+    The inverse of :func:`_drop_orphan_tool_messages`: an assistant message
+    can announce a ``tool_calls`` batch whose results never arrive.  The
+    projection removes loop-steering results ("NOTE: This ...") as cross-session
+    noise, which orphans the assistant call that requested them; trimming a
+    restored window can also cut the results.  Strict gateways reject the
+    payload with HTTP 400 ("An assistant message with 'tool_calls' must be
+    followed by tool messages responding to each 'tool_call_id'").
+
+    The assistant's text content is preserved — only the unanswered calls are
+    removed.  A message left with neither content nor calls is dropped.
+    """
+    answered = {
+        str(m.get("tool_call_id") or "")
+        for m in messages
+        if m.get("role") == "tool"
+    }
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        calls = m.get("tool_calls")
+        if m.get("role") == "assistant" and calls:
+            kept = [
+                tc for tc in calls
+                if isinstance(tc, dict) and str(tc.get("id") or "") in answered
+            ]
+            if len(kept) != len(calls):
+                if kept:
+                    m = {**m, "tool_calls": kept}
+                else:
+                    m = {k: v for k, v in m.items() if k != "tool_calls"}
+                    if not str(m.get("content") or ""):
+                        continue
+        out.append(m)
     return out
 
 
@@ -3479,7 +3550,9 @@ def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     Orphan tool messages are dropped both before and after the cut (see
     :func:`_drop_orphan_tool_messages`): a count-based slice can cut between
     an assistant tool_calls message and its tool result, and strict gateways
-    reject those orphans with HTTP 400.
+    reject those orphans with HTTP 400.  The reverse case — an assistant
+    ``tool_calls`` message whose results were dropped — is repaired by
+    :func:`_repair_unanswered_tool_calls`.
     """
     messages = _drop_orphan_tool_messages(messages)
     if len(messages) <= _MAX_CHAT_MESSAGES:
@@ -3502,7 +3575,9 @@ def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # following tool result.
     total = sum(_message_size(m) for m in body)
     if total <= _HISTORY_CHAR_BUDGET:
-        return _drop_orphan_tool_messages(head + body)
+        return _repair_unanswered_tool_calls(
+            _drop_orphan_tool_messages(head + body)
+        )
     keep_from = 0
     running = total
     for i, m in enumerate(body):
@@ -3522,7 +3597,9 @@ def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "role": "user",
         "content": _HISTORY_TRIM_NOTE.format(dropped=keep_from),
     }
-    return _drop_orphan_tool_messages(head + [note] + trimmed)
+    return _repair_unanswered_tool_calls(
+        _drop_orphan_tool_messages(head + [note] + trimmed)
+    )
 
 
 def _strip_image_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3663,7 +3740,9 @@ def _warn_uncommitted(agent: "Agent") -> None:
     try:
         r = subprocess.run(
             ["git", "status", "--porcelain"],
-            capture_output=True, text=True, cwd=agent.workspace, timeout=10,
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            cwd=agent.workspace, timeout=10,
         )
         if r.returncode != 0:
             return  # not a git repo (or git missing) — nothing to say

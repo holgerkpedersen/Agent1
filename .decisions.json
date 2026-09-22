@@ -2215,5 +2215,36 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "114",
+    "date": "2026-09-22T16:18:31+00:00",
+    "title": "Every subprocess.run(text=True) call must pin encoding='utf-8', errors='replace'",
+    "context": "The git REPL command (and sibling git/mypy/py_compile/pytest child calls across agent.py, agent_core/, harnessfix/, scripts/, tool_router.py) used text=True without an explicit encoding. On Windows the locale codepage (cp1252) then decoded git's always-UTF-8 output: CJK/emoji in commit messages or filenames came back as mojibake, and any byte the codepage cannot map (e.g. 0x81) crashed the command handler with a hard UnicodeDecodeError. The crash was reproduced in a regression test before the fix.",
+    "decision": "All subprocess.run(text=True) call sites pass encoding='utf-8', errors='replace' explicitly (31 sites this session, all children are git/python/pytest which emit UTF-8). tests/test_subprocess_utf8_encoding.py enforces the invariant two ways: behavioural tests that drive the real decode path with a fake git emitting raw bytes (a copy of python.exe named git.exe plus a subcommand script, because Windows CreateProcess lets a real git.exe beat a .bat/.cmd shim in an earlier PATH dir), and a source-level guard that fails collection on any future text=True call without an explicit encoding.",
+    "rationale": "Child output encoding is a property of the child (git/python/pytest always UTF-8), not of the host locale. Pinning it makes behaviour identical on Windows, Linux and CI, turns undecodable bytes into U+FFFD instead of an exception, and the guard test keeps the invariant alive without relying on a cp1252 machine to catch regressions.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/commands/git_cmd.py",
+      "agent_core/commands/fix_cmd.py",
+      "agent_core/commands/implement_cmd.py",
+      "agent_core/commands/proposal_core.py",
+      "agent_core/monitoring/dashboard_api.py",
+      "agent_core/tools/shell_ops.py",
+      "harnessfix/gates.py",
+      "harnessfix/issue_loop.py",
+      "scripts/audit_invariants.py",
+      "scripts/autonomous_self_improve.py",
+      "tool_router.py",
+      "tests/test_subprocess_utf8_encoding.py"
+    ],
+    "tags": [
+      "encoding",
+      "windows",
+      "subprocess",
+      "testing"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]

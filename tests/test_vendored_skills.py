@@ -70,3 +70,84 @@ def test_skill_body_pages_cleanly(skill_name: str) -> None:
     # Bodies are kept within one page so a single read_skill call gets the runbook.
     assert not page.body_truncated
     assert page.next_offset is None
+
+
+# ---------------------------------------------------------------------------
+# The index must actually reach the chat system prompt
+# ---------------------------------------------------------------------------
+#
+# Regression guard.  ``Agent._refresh_system_message`` rebuilds the dynamic
+# system blocks FROM THE WORKSPACE on every turn, and the skill index is one of
+# them (``Agent._skill_index_block`` -> ``load_skill_index``).  Vendoring these
+# runbooks therefore changed the chat system prompt of any agent whose
+# workspace is the repo -- which is what surfaced a previously passing test
+# (``test_tool_loop_nlp.py`` trimmed history, asserted an exact "SYS" system
+# message while running ``Agent(workspace=".")``).  The prompt change is
+# CORRECT and the intent of the feature; these tests pin it through the real
+# path so it can neither silently regress nor break unnoticed again.
+
+def _system_prompt_for(workspace: Path, tmp_path: Path, monkeypatch) -> str:
+    """Build an agent on *workspace* and return its refreshed system message.
+
+    Both persisted-state files are redirected into ``tmp_path`` so the test
+    never reads or writes the developer's real ``chat_history.json`` /
+    ``agent_memory.json`` (a restored session's messages must not leak in).
+    """
+    import agent as agent_mod
+
+    monkeypatch.setattr(
+        agent_mod, "CHAT_HISTORY_JSON_PATH", str(tmp_path / "chat_history.json")
+    )
+    monkeypatch.setattr(
+        agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
+    )
+    bot = agent_mod.Agent(workspace=str(workspace))
+    bot._refresh_system_message()
+    return bot._chat_history[0]["content"]
+
+
+def test_skill_index_reaches_chat_system_prompt(tmp_path, monkeypatch) -> None:
+    """The vendored index is injected into the real chat system prompt."""
+    from agent_core.skills import SKILL_INDEX_MARKER
+
+    content = _system_prompt_for(WORKSPACE, tmp_path, monkeypatch)
+    assert SKILL_INDEX_MARKER in content, "skill index missing from system prompt"
+    for name in sorted(VENDORED_SKILLS):
+        assert f"- {name} — " in content, f"{name} missing from the system prompt"
+
+
+def test_skill_index_is_rebuilt_not_accumulated(tmp_path, monkeypatch) -> None:
+    """Refreshing twice must not stack a second stale index block."""
+    import agent as agent_mod
+    from agent_core.skills import SKILL_INDEX_MARKER
+
+    monkeypatch.setattr(
+        agent_mod, "CHAT_HISTORY_JSON_PATH", str(tmp_path / "chat_history.json")
+    )
+    monkeypatch.setattr(
+        agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
+    )
+    bot = agent_mod.Agent(workspace=str(WORKSPACE))
+    bot._refresh_system_message()
+    first = bot._chat_history[0]["content"]
+    bot._refresh_system_message()
+    second = bot._chat_history[0]["content"]
+    assert second == first, "dynamic blocks accumulated across refreshes"
+    assert second.count(SKILL_INDEX_MARKER) == 1
+    # The BASE prompt is what survives stripping -- nothing else leaks in.
+    assert agent_mod._strip_dynamic_system_blocks(second) == agent_mod._SYSTEM_PROMPT
+
+
+def test_workspace_without_skills_gets_no_index(tmp_path, monkeypatch) -> None:
+    """The injection is workspace-derived -- the reason workspace="." broke.
+
+    A workspace with no ``skills/`` directory must yield the untouched base
+    prompt, byte for byte (empty string block, same rule as the decision
+    constraints block).
+    """
+    from agent_core.skills import SKILL_INDEX_MARKER
+    import agent as agent_mod
+
+    content = _system_prompt_for(tmp_path, tmp_path, monkeypatch)
+    assert SKILL_INDEX_MARKER not in content
+    assert content == agent_mod._SYSTEM_PROMPT

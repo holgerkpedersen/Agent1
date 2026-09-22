@@ -69,15 +69,15 @@ Skipping any step is lying, not verifying.
 ## Key Patterns
 
 ```
-✅ [run pytest] [see: 214 passed, 0 failed] → "All tests pass (214/214)."
-❌ "Should pass now." / "Looks correct."
+✓ [run pytest] [see: 214 passed, 0 failed] → "All tests pass (214/214)."
+✗ "Should pass now." / "Looks correct."
 
-✅ Regression test: write → run (pass) → revert fix → run (MUST FAIL) → restore → run (pass).
-❌ "I've written a regression test." (without red-green verification)
+✓ Regression test: write → run (pass) → revert fix → run (MUST FAIL) → restore → run (pass).
+✗ "I've written a regression test." (without red-green verification)
 
-✅ Subagent reports done → git diff shows the claimed changes → fresh full suite green → report actual state.
-❌ Trust the subagent's summary and move on.
+✓ Subagent reports done → git diff shows the claimed changes → fresh full suite green → report actual state.
+✗ Trust the subagent's summary and move on.
 
-✅ Requirements: re-read the request → checklist → verify each item → report gaps or completion.
-❌ "Tests pass, so it's complete."
+✓ Requirements: re-read the request → checklist → verify each item → report gaps or completion.
+✗ "Tests pass, so it's complete."
 ```

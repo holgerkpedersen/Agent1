@@ -26,7 +26,8 @@ def _git_head() -> str | None:
     try:
         proc = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
         )
         if proc.returncode == 0:
             return proc.stdout.strip()
@@ -65,6 +66,7 @@ def collect_test_failures() -> tuple[bool, frozenset[str], str]:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8", errors="replace",
             timeout=_GATE_TIMEOUT,
         )
     except subprocess.TimeoutExpired as exc:
@@ -190,6 +192,7 @@ def run_benchmark_gate(
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8", errors="replace",
             timeout=_GATE_TIMEOUT,
         )
         if proc.returncode != 0:

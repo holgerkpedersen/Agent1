@@ -71,7 +71,9 @@ def _run_capped(
     """Run *cmd* capturing output; never blocks forever."""
     try:
         return subprocess.run(
-            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout_s,
+            cmd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            cwd=cwd, timeout=timeout_s,
         )
     except subprocess.TimeoutExpired:
         print(

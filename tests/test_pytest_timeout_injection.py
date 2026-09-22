@@ -65,6 +65,15 @@ class TestFullPytestDetection:
             "pytest tests/",
             "python -m pytest . -q",
             "python -m pytest tests/ -q --no-cov 2>&1 | python -c \"print(1)\"",
+            # 2026-09-21 regression: pytest options with a SEPARATE value were
+            # read as positional paths, misclassifying a full run as targeted
+            # so it was killed at the 600s cap (the run tool) / lost its
+            # watchdog + recording (conftest).
+            "python -m pytest -q -p no:cacheprovider --no-cov",
+            "cd /d C:\\Dev\\Agent1 && python -m pytest -q -p no:cacheprovider --no-cov 2>&1 | findstr /r /c:\"passed\" /c:\"failed\"",
+            "python -m pytest -m \"not slow\" tests/ -q",
+            "python -m pytest -n 4 --no-cov",
+            "python -m pytest -k \"foo or bar\" -q --no-cov",
         ],
     )
     def test_full_runs_detected(self, command: str) -> None:
@@ -79,6 +88,9 @@ class TestFullPytestDetection:
             "python -m pytest tests/a.py tests/b.py",
             "echo pytest rules",
             "python -c \"print('pytest')\"",
+            # A real path AFTER a value-taking option is still targeted.
+            "python -m pytest -m \"not slow\" tests/test_x.py",
+            "python -m pytest -p no:cacheprovider tests/test_x.py",
         ],
     )
     def test_targeted_runs_not_misdetected(self, command: str) -> None:

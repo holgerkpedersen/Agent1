@@ -37,7 +37,9 @@ class GitCommand(Command):
         try:
             r = subprocess.run(
                 ["git", *args],
-                capture_output=True, text=True, cwd=agent.workspace, timeout=60,
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+                cwd=agent.workspace, timeout=60,
             )
         except FileNotFoundError:
             print("Error: git executable not found on PATH.")

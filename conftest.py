@@ -175,6 +175,20 @@ _LAST_FULL_RUN_KEY = "PYTEST_LAST_FULL_RUN_SECONDS"
 _DEFAULT_FULL_SUITE_TIMEOUT = 600.0
 _FULL_SUITE_MARGIN = 0.50  # 50% headroom over the last recorded duration
 
+#: pytest options whose FOLLOWING token is their value, not a test path
+#: (``-p no:cacheprovider``, ``-m "not slow"``, ``-n 4``).  Without this the
+#: value looks like a positional target, `_is_full_run` returns False, and a
+#: full run loses BOTH its watchdog and its elapsed-time recording — so the
+#: budget never grows past the floor.  Mirrors ``agent._PYTEST_VALUE_FLAGS``.
+_VALUE_FLAGS = {
+    "-p", "-k", "-m", "-o", "-c", "-n", "-W", "-r",
+    "--deselect", "--ignore", "--ignore-glob", "--maxfail", "--tb",
+    "--durations", "--rootdir", "--confcutdir", "--basetemp", "--junitxml",
+    "--junit-prefix", "--log-level", "--log-file", "--log-format", "--dist",
+    "--import-mode", "--cache-dir", "--override-ini", "--numprocesses",
+    "--lfnf", "--last-failed-no-failures",
+}
+
 _watchdog_stop = threading.Event()
 
 
@@ -230,7 +244,18 @@ def _is_full_run(config: pytest.Config) -> bool:
     """
     raw = getattr(config, "invocation_params", None)
     args = list(getattr(raw, "args", None) or [])
-    positionals = [a for a in args if not a.startswith("-")]
+    positionals: list[str] = []
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in _VALUE_FLAGS:
+            skip_next = True  # the next token is this option's value, not a path
+            continue
+        if arg.startswith("-"):
+            continue
+        positionals.append(arg)
     if not positionals:
         return True
     if len(positionals) > 1:

@@ -119,3 +119,34 @@ class TestResolveOutput:
     def test_explicit_absolute_path_respected(self, tmp_path):
         target = tmp_path / "elsewhere.md"
         assert resolve_output(tmp_path, str(target)) == str(target)
+
+
+class TestRunDirFiltering:
+    """Regression: a stray non-timestamp directory under .docs/ (e.g.
+    __pycache__) sorted after every real stamp and lexicographic max()
+    picked it as the "latest" run — find_doc then missed docs that were in
+    the actual newest run folder."""
+
+    def test_latest_run_dir_ignores_non_timestamp_dirs(self, tmp_path):
+        run = new_run_dir(tmp_path, now=datetime(2026, 9, 22, 3, 28, 31))
+        (tmp_path / DOCS_DIR_NAME / "__pycache__").mkdir()
+
+        assert latest_run_dir(tmp_path) == run
+
+    def test_find_doc_finds_doc_despite_pycache_in_docs(self, tmp_path):
+        run = new_run_dir(tmp_path, now=datetime(2026, 9, 22, 3, 28, 31))
+        doc = run / "project_tasks.md"
+        doc.write_text("tasks", encoding="utf-8")
+        (tmp_path / DOCS_DIR_NAME / "__pycache__").mkdir()
+
+        assert find_doc(tmp_path, "project_tasks.md") == str(doc)
+
+    def test_only_non_run_dirs_means_no_latest(self, tmp_path):
+        (tmp_path / DOCS_DIR_NAME).mkdir()
+        (tmp_path / DOCS_DIR_NAME / "__pycache__").mkdir()
+        legacy = tmp_path / "project_tasks.md"
+        legacy.write_text("legacy", encoding="utf-8")
+
+        assert latest_run_dir(tmp_path) is None
+        # find_doc must fall back to the root copy, not fail.
+        assert find_doc(tmp_path, "project_tasks.md") == str(legacy)

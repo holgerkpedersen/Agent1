@@ -49,7 +49,8 @@ from agent_core.patch_utils import apply_anchored_patch, apply_patch, split_sour
 def _git(args: list[str], cwd: str) -> tuple[int, str]:
     try:
         r = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=30
+            ["git", *args], cwd=cwd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
         )
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     except Exception as exc:  # pragma: no cover - defensive
@@ -250,6 +251,7 @@ def run_proposal_tests(
             ["python", "-m", "pytest", tmp, "-q", "--no-header", "-p", "no:cacheprovider"],
             capture_output=True,
             text=True,
+            encoding="utf-8", errors="replace",
             timeout=300,
         )
         tail = (r.stdout or "") + (r.stderr or "")

@@ -1149,10 +1149,18 @@ class TestPersistentChatHistory:
         # path would make _refresh_system_message append the constraints block
         # to "SYS", breaking the exact-content assertions below (see
         # test_quickwins_2026_08_25.py for the same isolation rule).
+        # The agent also runs in an ISOLATED WORKSPACE (tmp_path), not ".":
+        # _refresh_system_message rebuilds its dynamic blocks FROM THE
+        # WORKSPACE, and the skill index (agent_core.skills) is workspace-
+        # derived.  Vendoring runbooks into skills/ therefore made
+        # Agent(workspace=".") append the index to "SYS" and broke the
+        # exact-content assertions below -- which are about trimming, not
+        # about dynamic blocks.  An empty workspace keeps them exact; the
+        # skills-in-prompt contract is covered by test_vendored_skills.py.
         memory_file = tmp_path / "agent_memory.json"
         with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)), \
              patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)):
-            agent = Agent(workspace=".")
+            agent = Agent(workspace=str(tmp_path))
             agent._chat_history = list(messages)
             agent.llm = FakeLLM()
 
@@ -1164,7 +1172,10 @@ class TestPersistentChatHistory:
             # plus the last 59 messages (msg-23..msg-79, hello, done).
             saved = json.loads(history_file.read_text(encoding="utf-8"))
             assert len(saved) == 60
-            assert saved[0]["content"] == "SYS"
+            # The system message is the base prompt PLUS workspace-derived
+            # dynamic blocks (the skill index — ``Agent(workspace=".")`` scans
+            # the repo's skills/).  Assert the base survives, not byte-equality.
+            assert saved[0]["content"].startswith("SYS")
             assert saved[1]["content"] == "msg-23"
             assert saved[-2]["content"] == "hello"
             assert saved[-1]["content"] == "done"
@@ -1222,6 +1233,87 @@ class TestPersistentChatHistory:
         cleaned = _drop_orphan_tool_messages(messages)
         assert [m["role"] for m in cleaned] == ["system", "user", "assistant", "tool", "user"]
         assert [m.get("tool_call_id") for m in cleaned if m.get("role") == "tool"] == ["c1"]
+
+    def test_projection_repairs_unanswered_tool_calls(self):
+        """Regression (2026-09-21): the projection drops loop-steering results
+        ("NOTE: This ...") as cross-session noise, which orphaned the assistant
+        ``tool_calls`` that requested them.  Restoring that history and sending
+        it to the opencode gateway returned HTTP 400 ("An assistant message
+        with 'tool_calls' must be followed by tool messages responding to each
+        'tool_call_id'. (insufficient tool messages following tool_calls
+        message)").  The unanswered calls must be stripped; the assistant text
+        stays."""
+        from agent import _project_chat_history
+        messages = [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "searching",
+             "tool_calls": [{"id": "c1", "type": "function",
+                             "function": {"name": "web_search", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "real result"},
+            # duplicate web_search whose result was a steering NOTE -> projected away
+            {"role": "assistant", "content": "that search was unnecessary",
+             "tool_calls": [{"id": "c2", "type": "function",
+                             "function": {"name": "web_search", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c2",
+             "content": "NOTE: This exact call has now been executed 2 time(s)"},
+            {"role": "assistant", "content": "done",
+             "tool_calls": [{"id": "c3", "type": "function",
+                             "function": {"name": "web_search", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c3",
+             "content": "NOTE: This exact call has now been executed 3 time(s)"},
+        ]
+        projected = _project_chat_history(messages)
+        # Every surviving assistant tool_call is answered by a tool message.
+        announced = {
+            str(tc["id"])
+            for m in projected if m.get("role") == "assistant"
+            for tc in (m.get("tool_calls") or [])
+        }
+        answered = {
+            str(m.get("tool_call_id")) for m in projected if m.get("role") == "tool"
+        }
+        assert announced <= answered
+        assert announced == {"c1"}
+        # The assistant narration survives as plain text (no orphaned call).
+        assert "that search was unnecessary" in [
+            m.get("content") for m in projected
+        ]
+
+    def test_repair_keeps_answered_calls_and_drops_empty_orphan(self):
+        """A partially answered batch keeps its answered calls; an orphan with
+        neither content nor calls is dropped entirely."""
+        from agent import _repair_unanswered_tool_calls
+        messages = [
+            {"role": "system", "content": "SYS"},
+            {"role": "assistant", "content": "mixed",
+             "tool_calls": [{"id": "a"}, {"id": "b"}]},
+            {"role": "tool", "tool_call_id": "a", "content": "ok"},
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "gone"}]},
+            {"role": "assistant", "content": "tail"},
+        ]
+        out = _repair_unanswered_tool_calls(messages)
+        assert [m.get("content") for m in out] == ["SYS", "mixed", "ok", "tail"]
+        assert out[1]["tool_calls"] == [{"id": "a"}]
+
+    def test_trim_repairs_unanswered_tool_calls(self):
+        """The repair also runs inside _trim_chat_history (the live-session
+        bound path), not just the projection."""
+        from agent import _trim_chat_history
+        messages = [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "orphan",
+             "tool_calls": [{"id": "nope",
+                             "function": {"name": "read", "arguments": "{}"}}]},
+            {"role": "user", "content": "next"},
+        ]
+        trimmed = _trim_chat_history(messages)
+        assert not any(
+            m.get("role") == "assistant" and "tool_calls" in m for m in trimmed
+        )
+        assert trimmed[2]["content"] == "orphan"
 
     def test_duplicate_tool_responses_dropped_within_run(self):
         """A second tool response for an id already answered in the same run

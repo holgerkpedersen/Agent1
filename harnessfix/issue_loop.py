@@ -258,6 +258,7 @@ def _tree_changed(files: list[Any]) -> bool:
                 ["git", "status", "--porcelain", "--", str(f)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8", errors="replace",
             )
         except Exception:
             return False

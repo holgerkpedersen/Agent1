@@ -779,7 +779,7 @@ def _apply_file_block(raw_code: str, fpath: str, backup: str) -> tuple[bool, str
         return False, "content is not valid Python code"
     with open(fpath, "w", encoding="utf-8") as f:
         f.write(new_code)
-    r = subprocess.run(["python", "-m", "py_compile", fpath], capture_output=True, text=True)
+    r = subprocess.run(["python", "-m", "py_compile", fpath], capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode == 0:
         return True, f"{len(new_code)} bytes"
     tail = r.stderr.strip().splitlines()[-1][:150] if r.stderr.strip() else ""
@@ -1005,6 +1005,7 @@ async def _wire_in_modules(agent: "Agent", files: list[str], suggestions: dict[s
                 verify = subprocess.run(
                     ["python", "-m", "py_compile", str(target)],
                     capture_output=True, text=True,
+                    encoding="utf-8", errors="replace",
                 )
                 if verify.returncode == 0:
                     print(f"    Wired: {patch_file} (imports {fname})")
@@ -1148,7 +1149,7 @@ def _run_python_snippet(ws: str, extra_paths: list[str], code_lines: list[str]) 
         for line in code_lines:
             tf.write(line + "\n")
         tfpath = tf.name
-    r = subprocess.run(["python", tfpath], capture_output=True, text=True, cwd=str(Path(ws)))
+    r = subprocess.run(["python", tfpath], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(Path(ws)))
     os.unlink(tfpath)
     return r
 
@@ -1278,6 +1279,7 @@ class ImplementCommand(Command):
                 result = subprocess.run(
                     ["python", "-m", "py_compile", os.path.realpath(fpath)],
                     capture_output=True, text=True,
+                    encoding="utf-8", errors="replace",
                 )
                 if result.returncode != 0:
                     tail = result.stderr.strip().splitlines()[-1][:120] if result.stderr.strip() else ""
@@ -1565,7 +1567,8 @@ class ImplementCommand(Command):
                 result = subprocess.run(
                     ["python", "-m", "py_compile", os.path.realpath(fpath)],
                     capture_output=True,
-                    text=True
+                    text=True,
+                    encoding="utf-8", errors="replace",
                 )
                 if result.returncode != 0:
                     return True, f"compile failed: {result.stderr.strip()}"
@@ -1731,7 +1734,8 @@ class ImplementCommand(Command):
                     continue
                 r = subprocess.run(
                     ["python", "-c", f"import py_compile; py_compile.compile(r'{os.path.realpath(fp)}', doraise=True)"],
-                    capture_output=True, text=True, cwd=str(Path(ws))
+                    capture_output=True, text=True, cwd=str(Path(ws)),
+                    encoding="utf-8", errors="replace",
                 )
                 if r.returncode != 0:
                     broken_existing.append((fname, r.stderr.strip()[-150:]))
@@ -2540,7 +2544,8 @@ class ImplementCommand(Command):
                     result = subprocess.run(
                         ["python", "-m", "py_compile", filepath_str],
                         capture_output=True,
-                        text=True
+                        text=True,
+                        encoding="utf-8", errors="replace",
                     )
                     if result.returncode == 0:
                         if modify_mode:
@@ -2655,7 +2660,8 @@ class ImplementCommand(Command):
             if filename.endswith(".py"):
                 r = subprocess.run(
                     ["python", "-m", "py_compile", tmp_path],
-                    capture_output=True, text=True
+                    capture_output=True, text=True,
+                    encoding="utf-8", errors="replace",
                 )
 
                 if r.returncode != 0:
@@ -2726,7 +2732,8 @@ class ImplementCommand(Command):
                                     filepath_str = os.path.realpath(filepath)
                                     r = subprocess.run(
                                         ["python", "-m", "py_compile", filepath_str],
-                                        capture_output=True, text=True
+                                        capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace",
                                     )
 
                     if r.returncode != 0:
@@ -2795,7 +2802,8 @@ class ImplementCommand(Command):
                 result = subprocess.run(
                     ["python", "-m", "py_compile", filepath_str],
                     capture_output=True,
-                    text=True
+                    text=True,
+                    encoding="utf-8", errors="replace",
                 )
                 if result.returncode != 0:
                     errors.append(f"{filename}: {result.stderr}")
@@ -3013,7 +3021,7 @@ class ImplementCommand(Command):
                     fp = Path(ws) / fname
                     fpath_str = os.path.realpath(fp)
 
-                    r = subprocess.run(["python", "-m", "py_compile", fpath_str], capture_output=True, text=True)
+                    r = subprocess.run(["python", "-m", "py_compile", fpath_str], capture_output=True, text=True, encoding="utf-8", errors="replace")
                     if r.returncode != 0:
                         errors_found.append((fname, fpath_str, f"COMPILE: {r.stderr.strip()}"))
                         continue
@@ -3041,7 +3049,8 @@ class ImplementCommand(Command):
 
                     r = subprocess.run(
                         ["python", "-m", "mypy", fpath_str, "--ignore-missing-imports"],
-                        capture_output=True, text=True, cwd=str(Path(ws))
+                        capture_output=True, text=True, cwd=str(Path(ws)),
+                        encoding="utf-8", errors="replace",
                     )
                     if r.returncode != 0 and "No module named" not in r.stderr:
                         norm_fname = fname.replace("\\", "/")

@@ -108,6 +108,22 @@ class TestIsFullRun:
     def test_multiple_positionals_is_not_full_run(self):
         assert conftest._is_full_run(self._config(["tests", "tests/unit"])) is False
 
+    def test_option_values_are_not_positionals(self):
+        """Regression (2026-09-21): ``-p no:cacheprovider`` was read as a test
+        path, so a full run lost its watchdog AND its elapsed-time recording
+        (the budget could never grow).  Option values must be skipped."""
+        assert conftest._is_full_run(
+            self._config(["-q", "--no-cov", "-p", "no:cacheprovider"])
+        ) is True
+        assert conftest._is_full_run(
+            self._config(["-m", "not slow", "tests"])
+        ) is True
+        assert conftest._is_full_run(self._config(["-n", "4"])) is True
+        # A real path after a value flag is still targeted.
+        assert conftest._is_full_run(
+            self._config(["-p", "no:cacheprovider", "tests/test_x.py"])
+        ) is False
+
 
 class TestEnvRoundTrip:
     def test_save_preserves_comments_and_other_keys(self, tmp_path, monkeypatch):

@@ -44,6 +44,49 @@ from .pricing import estimate_cost
 #: live: a single HTTP 500 that succeeded on the immediate retry).
 _TRANSIENT_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
 
+#: Body markers that reclassify a gateway 4xx as an UPSTREAM failure (and thus
+#: retryable).  The opencode gateway wraps an upstream outage in a 4xx status
+#: while its JSON body reports ``"type": "server_error"`` — observed live
+#: 2026-09-21: HTTP 403 "Upstream response was not valid JSON".  A genuine bad
+#: request carries ``invalid_request_error`` and must still fail fast.
+_SERVER_ERROR_BODY_MARKERS = ('"type":"server_error"', '"code":"server_error"')
+
+
+def _http_error_body(exc: urllib.error.HTTPError) -> str:
+    """Read (and cache) an ``HTTPError`` response body.
+
+    ``urllib`` consumes ``exc.fp`` on the first ``read()``; caching the decoded
+    body lets both the transient classifier and the caller's error formatter
+    see it.  Returns ``""`` when no body is available.
+    """
+    cached: str | None = getattr(exc, "_agent_body", None)
+    if cached is not None:
+        return cached
+    try:
+        cached = exc.read().decode("utf-8", "replace").strip()
+    except Exception:
+        cached = ""
+    try:
+        exc._agent_body = cached  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    return cached
+
+
+def _is_transient_http_error(exc: urllib.error.HTTPError) -> bool:
+    """True when *exc* is worth retrying.
+
+    Transient statuses (429/5xx) are retryable regardless of body.  The gateway
+    also surfaces upstream outages as a 4xx whose body carries ``server_error``;
+    those are retried too, while a genuine client error (``invalid_request_error``,
+    auth failures, ...) fails fast.
+    """
+    if exc.code in _TRANSIENT_HTTP_STATUSES:
+        return True
+    body = re.sub(r"\s+", "", _http_error_body(exc)).lower()
+    return any(marker in body for marker in _SERVER_ERROR_BODY_MARKERS)
+
+
 #: OpenAI-compatible hosted endpoint for opencode-go (verified live: the
 #: embedded base URL in the opencode CLI binary, /models returns the
 #: opencode-go catalog with UNPREFIXED ids like "deepseek-v4-flash").
@@ -348,10 +391,10 @@ class OpencodeProvider:
     ) -> Any:
         """Run *factory* with exponential backoff on transient failures.
 
-        Retries HTTP 429/5xx responses and network timeouts — the hosted
-        gateway intermittently returns HTTP 500 on healthy requests
-        (observed live). Permanent client errors (4xx other than 429)
-        propagate immediately. Raises the last error after retries are
+        Retries HTTP 429/5xx responses — and gateway 4xx responses whose body
+        reports an upstream ``server_error`` (see :func:`_is_transient_http_error`)
+        — plus network timeouts.  Genuine client errors (4xx other than those)
+        propagate immediately.  Raises the last error after retries are
         exhausted so callers can format it as an ``[Error ...]`` string.
 
         The factory performs a BLOCKING urllib call — it is dispatched to a
@@ -365,7 +408,7 @@ class OpencodeProvider:
             try:
                 return await asyncio.to_thread(factory)
             except urllib.error.HTTPError as exc:
-                if exc.code not in _TRANSIENT_HTTP_STATUSES:
+                if not _is_transient_http_error(exc):
                     raise
                 last_error = exc
             except (TimeoutError, OSError) as exc:
@@ -421,7 +464,7 @@ class OpencodeProvider:
             # Surface the gateway's explanation (e.g. "Messages with role
             # 'tool' must be a response to a preceding message with
             # 'tool_calls'") — the bare "400: Bad Request" is useless.
-            body = exc.read().decode("utf-8", "replace").strip()
+            body = _http_error_body(exc)
             detail = body or str(exc.reason)
             return f"[Error: opencode API request failed: HTTP Error {exc.code}: {detail}]"
         except Exception as exc:

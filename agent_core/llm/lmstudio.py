@@ -66,10 +66,38 @@ def sanitize_message_roles(messages: list[dict[str, Any]]) -> list[dict[str, Any
             for tc in message.get("tool_calls") or []:
                 if isinstance(tc, dict) and tc.get("id"):
                     valid_ids.add(str(tc["id"]))
-    return [
+    out = [
         m for m in out
         if not (m.get("role") == "tool" and m.get("tool_call_id") not in valid_ids)
     ]
+    # The reverse orphan: an assistant ``tool_calls`` batch whose results are
+    # missing (projection dropped loop-steering "NOTE: This ..." results, a trim
+    # cut them, or a prior run aborted).  Strict gateways reject the payload
+    # with HTTP 400 ("An assistant message with 'tool_calls' must be followed by
+    # tool messages responding to each 'tool_call_id'").  Keep the assistant's
+    # text, drop only the unanswered calls.
+    answered = {
+        str(m.get("tool_call_id") or "")
+        for m in out
+        if m.get("role") == "tool"
+    }
+    repaired: list[dict[str, Any]] = []
+    for message in out:
+        calls = message.get("tool_calls")
+        if message.get("role") == "assistant" and calls:
+            kept = [
+                tc for tc in calls
+                if isinstance(tc, dict) and str(tc.get("id") or "") in answered
+            ]
+            if len(kept) != len(calls):
+                if kept:
+                    message = {**message, "tool_calls": kept}
+                else:
+                    message = {k: v for k, v in message.items() if k != "tool_calls"}
+                    if not str(message.get("content") or ""):
+                        continue
+        repaired.append(message)
+    return repaired
 
 
 def _model_load_hint(detail: str) -> bool:
