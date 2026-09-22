@@ -10,9 +10,10 @@ used by this repo's terminal output and ASCII diagrams (check/cross/warning
 marks, box drawing, flow arrows) are explicitly ALLOWED: they are
 load-bearing output, not decoration.
 
-Detection is stdlib-only: Unicode general-category So/Sk (symbol, other /
-symbol, modifier) plus the dedicated emoji code-point ranges. Typography
-(em dash, ≤, accented letters, CJK) is never flagged.
+Detection is stdlib-only: Unicode general-category So (symbol, other) plus
+the dedicated emoji code-point ranges. Category Sk (symbol, modifier) is
+deliberately NOT used — see ``is_emoji_char``. Typography (em dash, ≤,
+accents, CJK) is never flagged.
 """
 
 from __future__ import annotations
@@ -83,7 +84,15 @@ def is_emoji_char(ch: str) -> bool:
     for lo, hi in _EMOJI_RANGES:
         if lo <= cp <= hi:
             return True
-    return unicodedata.category(ch) in ("So", "Sk")
+    # Category So only — NEVER Sk.  Every Sk code point that is genuinely an
+    # emoji (the five Fitzpatrick skin-tone modifiers U+1F3FB..U+1F3FF) already
+    # lives inside _EMOJI_RANGES above, so an Sk fallback adds zero emoji
+    # detection while flagging 118 pure-typography characters (U+00B8 CEDILLA,
+    # U+00A8 DIAERESIS, U+00AF MACRON, U+00B4 ACUTE ACCENT, the tone bars ...).
+    # That contradicted this module's contract ("typography is never flagged")
+    # and decision #079 ("accents ... never flagged"), and broke the repo-wide
+    # audit on a docstring that illustrates cp1252 mojibake.
+    return unicodedata.category(ch) == "So"
 
 
 def find_emoji_chars(text: str) -> list[str]:

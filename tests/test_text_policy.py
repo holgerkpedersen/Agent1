@@ -32,6 +32,40 @@ class TestIsEmojiChar:
         for ch in ("\u2014", "\u2264", "é", "\u4e2d", "a", "-", "?"):
             assert not tp.is_emoji_char(ch)
 
+    @pytest.mark.parametrize(
+        "ch",
+        ["\u00b8", "\u00a8", "\u00af", "\u00b4", "\u02d8", "\u02dc", "\u0384"],
+    )
+    def test_typography_modifier_symbols_never_flagged(self, ch):
+        """Sk-category accents are typography, not pictographs.
+
+        Regression: the blanket ``category == "Sk"`` fallback flagged 118
+        pure-typography characters (U+00B8 CEDILLA, U+00A8 DIAERESIS,
+        U+00AF MACRON, U+00B4 ACUTE ACCENT, the tone bars, ...), so the
+        docstring in tests/test_subprocess_utf8_encoding.py that illustrates
+        cp1252 mojibake was reported as an emoji finding and the repo-wide
+        audit failed.  Decision #079 exempts accents explicitly.
+        """
+        assert not tp.is_emoji_char(ch), f"U+{ord(ch):04X} is typography, not emoji"
+
+    def test_emoji_skin_tone_modifiers_still_flagged(self):
+        """The only genuinely-emoji Sk characters must keep being flagged.
+
+        Fitzpatrick skin-tone modifiers are the sole Sk code points that are
+        emoji; they live inside _EMOJI_RANGES, so narrowing the fallback must
+        not lose them.
+        """
+        for cp in range(0x1F3FB, 0x1F400):
+            assert tp.is_emoji_char(chr(cp)), f"U+{cp:04X} is an emoji modifier"
+
+    def test_so_fallback_still_catches_emoji_outside_ranges(self):
+        """Narrowing Sk must not narrow the So fallback.
+
+        U+231A WATCH is a true emoji that sits outside every _EMOJI_RANGES
+        span and is only reachable through the So category check.
+        """
+        assert tp.is_emoji_char("\u231a")
+
     def test_replacement_char_is_not_allowed(self):
         # U+FFFD marks corruption and must be reported, never silently allowed
         assert tp.is_emoji_char("\ufffd")
