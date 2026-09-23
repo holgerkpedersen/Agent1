@@ -275,7 +275,7 @@ def export_regression_test(
 from pathlib import Path
 
 from harnessfix.diagnose import diagnose_graph
-from harnessfix.reader import compile_trace
+from harnessfix.htir import compile_trace
 
 TRACE = Path(r"{safe_trace}")
 

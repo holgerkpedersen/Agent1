@@ -200,3 +200,32 @@ def test_export_regression_test_pins_diagnosis(tmp_path):
     diag = diagnose_graph(graph)
     assert diag.root_layer == rec.root_layer == "execution_environment"
     assert rec.mechanism[:80] in diag.mechanism
+
+
+def test_export_regression_test_pin_imports_compile_trace_from_htir(tmp_path):
+    """Regression (PRE-EXISTING-TEST-FAILURES.md #1): the pin template once
+    emitted ``from harnessfix.reader import compile_trace``, but
+    compile_trace lives in harnessfix.htir — so every regenerated pin died
+    at collection with ImportError.  The exported pin must pull
+    compile_trace from harnessfix.htir and import cleanly."""
+    import importlib.util
+
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    failed = TraceWriter(task_id="tfail", directory=traces)
+    _failed_trace(failed)
+    failed.close()
+
+    rec = build_reviews(traces)["tfail"]
+    out = export_regression_test(rec, traces / "tfail.jsonl", tmp_path / "gen")
+
+    text = out.read_text(encoding="utf-8")
+    assert "from harnessfix.htir import compile_trace" in text
+    assert "harnessfix.reader" not in text
+
+    # Executing the module is the real gate: a stale import raises
+    # ImportError here, exactly as pytest collection would.
+    spec = importlib.util.spec_from_file_location("pin_tfail", out)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.compile_trace.__module__ == "harnessfix.htir"

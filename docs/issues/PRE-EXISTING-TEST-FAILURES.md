@@ -1,6 +1,7 @@
 # Pre-existing test failures (tracked separately from the OpenRouter fix)
 
-**Status:** Open — needs human triage / separate PR
+**Status:** Resolved (2026-09-23) — all three failures are fixed on master; see the
+resolution log at the bottom of this document.
 **Author:** agent (during OpenRouter `SyntaxError` fix, see `agent_core/llm/openrouter_provider.py`)
 **Scope note:** These failures exist on an **unmodified** `master` (verified via
 `git stash` of the OpenRouter fix: 4 failed, 443 passed — identical failure set
@@ -131,3 +132,36 @@ not patched around.
   mocked unit tests cover those paths.
 - `gh` CLI is not installed and no `GH_TOKEN` is configured, so no GitHub issue
   was opened automatically; this document is the local tracking record.
+
+---
+
+## Resolution log (2026-09-23)
+
+All three failures were re-verified against current `master` and are resolved:
+
+1. **Stale generated pin / stale generator template — FIXED.** The generated
+   artifact on this machine had already been regenerated with the correct
+   import, but `harnessfix/review.py::export_regression_test()` still emitted
+   `from harnessfix.reader import compile_trace` in its template, so any
+   regeneration would have re-produced the broken pin. The template now emits
+   `from harnessfix.htir import compile_trace`, pinned by the regression test
+   `tests/test_harnessfix_review.py::test_export_regression_test_pin_imports_compile_trace_from_htir`
+   (which also `exec_module`s the generated pin, so a stale import fails
+   exactly as pytest collection would). `norecursedirs` was not added:
+   `testpaths = ["tests"]` already keeps a bare `pytest` run out of
+   `reports/`, and the generated pins are gitignored.
+2. **`_reconcile_llama_model` pinning — FIXED.**
+   `tests/test_llama_server.py::TestAgentReconcileHook` passes on current
+   master (2 passed, verified 2026-09-23); the fix landed in a later commit.
+3. **Stale pin diagnosis (`context` vs `lifecycle`) — RESOLVED by
+   regeneration.** The pin now asserts `root_layer == "lifecycle"`, matching
+   both the stored diagnosis
+   (`reports/harnessfix/diagnoses/7b31b6434d1840bc8e809f4e43335d16.json`) and
+   the live `diagnose_graph()` output, i.e. the stored `review.json` entry was
+   the outdated side and the pin was regenerated from the authoritative
+   diagnosis. The pin runs green standalone
+   (`pytest reports/harnessfix/generated/test_review_7b31b6434d1840bc8e809f4e43335d16.py`
+   → 1 passed).
+
+Verification: full suite `python -m pytest -q --no-cov` → 2575 passed,
+7 skipped, 0 failed (0:16:04).
