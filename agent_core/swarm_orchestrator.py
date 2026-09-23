@@ -1,12 +1,13 @@
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future, wait
-from typing import List, Any, Callable, Dict, Optional
+from typing import List, Any, Callable, Dict, Optional, Union
 
 
 class Orchestrator:
     """
     Manages a swarm of agents and coordinates task execution across them.
+    Supports parallel deliberation via speculative reasoning branches.
     """
 
     def __init__(self, agents: List[Any], max_workers: int = 20) -> None:
@@ -37,6 +38,35 @@ class Orchestrator:
         self._tasks[task_id] = future
         self._logger.debug("Dispatched task %d", task_id)
         return task_id
+
+    def dispatch_speculative(
+        self, 
+        reasoning_func: Callable[[int, Any], Any], 
+        context: Any, 
+        num_branches: int = 3
+    ) -> List[int]:
+        """
+        Dispatches multiple speculative reasoning branches in parallel.
+        Each branch receives a unique task ID and the shared context.
+        The caller is responsible for evaluating the results of these branches.
+
+        Args:
+            reasoning_func: A function that takes (task_id, context) and returns a result.
+            context: The shared data/state to provide to each branch.
+            num_branches: Number of parallel paths to explore.
+
+        Returns:
+            A list of task IDs for the dispatched branches.
+        """
+        self._logger.info("Dispatching %d speculative reasoning branches", num_branches)
+        task_ids = []
+        for i in range(num_branches):
+            # We pass 'i' as part of context or just let reasoning_func handle it if needed
+            # For simplicity, we wrap the call to include a branch index in the context if possible
+            # or just pass the same context. Let's assume reasoning_func can handle branching logic.
+            tid = self.dispatch(reasoning_func, i, context)
+            task_ids.append(tid)
+        return task_ids
 
     def get_result(self, task_id: int) -> Optional[Dict[str, Any]]:
         """
