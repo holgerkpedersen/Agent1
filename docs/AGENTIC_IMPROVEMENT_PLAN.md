@@ -97,15 +97,20 @@ per decision #079 — no emojis in files.)
     Add `--synthesize` (merge answers through one model) and print per-model
     `ResponseMetrics` token/latency in the REPL summary.
 16. **Unify shell policy** — NLP `run` uses a destructive-*blocklist* +
-    `shell=True`; `tool_router.py`/`tools/shell_ops.py` use the
-    `security/allowlist.py` allowlist. Converge on allowlist-with-fallbacks.
+    `shell=True`; `tool_router.py`/`tools/shell_ops.py` use an allowlist.
+    Converge on allowlist-with-fallbacks.
 
 ## E. Code health
 
-17. [Q] **Dead duplicate modules** — STATUS: **PARTIALLY DONE 2026-08-25**.
+17. [Q] **Dead duplicate modules** — STATUS: **DONE 2026-09-24**.
     `agent_core/tool_executor.py` and `agent_core/secure_file_retriever.py`
     deleted (zero references anywhere; the secure retriever was superseded by
     the live `agent_core/file_context_retriever.py` that `agent.py` imports).
+    `tools/file_ops.py` + `tools/shell_ops.py` stay: consumed by
+    `benchmarks/security_benchmarks.py` and `tests/test_security_hardening.py`.
+    Also removed orphaned prototype `agent_core/commands/_implement_raw.py`
+    (unregistered command, helpers superseded).
+    `agent_core/commands/_implement_raw.py` deleted (dead prototype, unregistered command, helpers superseded by `implement_cmd.py`/`fix_cmd.py`).
     `tools/file_ops.py` + `tools/shell_ops.py` stay: consumed by
     `benchmarks/security_benchmarks.py` and `tests/test_security_hardening.py`.
 18. [Q] **Fix duplicated imports / enum drift** — `db_io.py` has
@@ -126,6 +131,7 @@ Remaining quick wins: none — remaining items are [S]-scale.
 
 ## Progress log
 
+- 2026-09-24 — **#17 DONE**: removed dead duplicate modules `agent_core/tool_executor.py` and `agent_core/secure_file_retriever.py`, plus orphaned prototype `agent_core/commands/_implement_raw.py`.
 - 2026-08-25 — **#10 started**: second catalog repair
   `stuck-repeat-tool-hints` (`harnessfix/repairs/stuck_repeat.py`,
   lifecycle layer). Trace evidence: stuck loops reach THREE identical calls
@@ -142,8 +148,7 @@ Remaining quick wins: none — remaining items are [S]-scale.
   new repair. Also #17 partially done: dead duplicates
   `agent_core/tool_executor.py` and `agent_core/secure_file_retriever.py`
   deleted (zero references anywhere; secure retriever superseded by live
-  `agent_core/file_context_retriever.py`). `tools/file_ops.py` +
-  `tools/shell_ops.py` stay: consumed by benchmarks/security_benchmarks.py
+  `agent_core/file_context_retriever.py`). `tools/file_ops.py` + `tools/shell_ops.py` stay: consumed by benchmarks/security_benchmarks.py
   and tests. Tests: `tests/test_repairs_stuck_repeat.py` (12; runtime
   behaviour verified in a fresh interpreter against the applied source),
   updated `tests/test_harnessfix_diagnose.py` (17). Full suite 1578 passed,
@@ -159,9 +164,8 @@ Remaining quick wins: none — remaining items are [S]-scale.
   `chat_nlp` prints one `[self-review]` nudge listing the changed files
   (`_mutating_files_this_turn` + `_print_self_review_note`) — py_compile
   proves syntax only, so the user is pointed at `tests`/`git diff`.
-- 2026-08-25 — **#19 DONE**: `_warn_uncommitted` runs on every REPL
-  shutdown path (quit / stdin end / EOF): lists up to 5 uncommitted paths
-  with an invariant-#4 reminder when `git status --porcelain` is non-empty;
+- 2026-08-25 — **#19 DONE**: `_warn_uncommitted` runs on every REPL shutdown path (quit / stdin end /
+  EOF): lists up to 5 uncommitted paths with the invariant-#4 reminder when `git status --porcelain` is non-empty;
   silent on clean repos and outside git; never blocks exit.
 - 2026-08-25 — **#1 DONE**: decisions block injected into the chat_nlp
   system message (`Agent._decision_constraints_block`, rebuilt per turn).
@@ -198,14 +202,3 @@ Remaining quick wins: none — remaining items are [S]-scale.
   NOT fire on a clean completed run or a read-only cap. Tests:
   `tests/test_repairs_abandonment_resume.py` (10). Full suite: 1595 passed,
   2 skipped.
-
-## Deferred / open work (do not lose)
-
-- 2026-09-18 -- **DONE: content-based staleness guard**. `freshness.py` now
-  fingerprints module CONTENT (SHA-1) and reports stale only when the digest
-  differs, so a harnessfix repair apply/revert on `tool_loop.py` (identical
-  bytes, new mtime) no longer produces a false "STALE" warning. API renamed
-  `loaded_module_mtimes` -> `loaded_module_fingerprints`; `agent.py` and
-  `tests/test_command_freshness.py` updated, with regressions for the no-op
-  rewrite and for a same-length content change. Implemented after the live
-  Agent1 REPL was stopped (no concurrent writer).
