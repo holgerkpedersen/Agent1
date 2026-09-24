@@ -1128,10 +1128,17 @@ class Agent:
             limit = max(1, min(int(args.get("limit") or 100), _MAX_READ_LINES))
         except (TypeError, ValueError):
             return "Read error: offset/limit must be integers."
-        # AST strategy: for .py files exceeding the size threshold, return a
-        # definition summary instead of full content (saves context tokens).
+        # AST strategy: a BARE read (no explicit offset/limit) of a large .py
+        # file returns a definition summary instead of full content (saves
+        # context tokens).  An explicit page is ALWAYS honoured — the summary
+        # used to be returned for every offset too, so paging a large file
+        # yielded the same definitions each time and the model looped forever.
+        page_requested = (
+            args.get("offset") is not None or args.get("limit") is not None
+        )
         if (
-            _CONTEXT_AST_THRESHOLD_KB > 0
+            not page_requested
+            and _CONTEXT_AST_THRESHOLD_KB > 0
             and path.endswith(".py")
             and os.path.isfile(path)
             and os.path.getsize(path) > _CONTEXT_AST_THRESHOLD_KB * 1024
@@ -1140,7 +1147,10 @@ class Agent:
             if content.startswith("File not found") or content.startswith("Error"):
                 return content
             self._note_effect(path)
-            return collect_definitions(content, filename=path)
+            return collect_definitions(content, filename=path) + (
+                "\n\n[Large file: showing a definitions summary. "
+                "Call read with offset=<line> to fetch source lines.]"
+            )
         content = await self.read_file(path, track_read=False)
         if content.startswith("File not found") or content.startswith("Error"):
             return content

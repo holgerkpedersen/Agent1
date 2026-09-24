@@ -152,7 +152,16 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "The shell command to run"},
-                    "timeout": {"type": "integer", "description": "Timeout in seconds (default 120)"},
+                    "timeout": {
+                        "type": "integer",
+                        "description": (
+                            "Timeout in seconds (default 120; max 600). "
+                            "Ignored for a whole-suite `python -m pytest` run: "
+                            "it always uses the configured suite budget "
+                            "(PYTEST_FULL_SUITE_TIMEOUT), so omit `timeout` on "
+                            "full test-suite runs."
+                        ),
+                    },
                 },
                 "required": ["command"],
             },

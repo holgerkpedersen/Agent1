@@ -181,6 +181,31 @@ class TestToolArgumentCaps:
         out = asyncio.run(bot._nlp_read({"path": str(f), "offset": 999}))
         assert "999" in out and "2 lines" in out
 
+    def test_read_pages_large_py_files_instead_of_returning_the_summary(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        """Regression: a >threshold .py file returned its definitions summary
+        for EVERY offset — the model paged to fresh offsets, saw identical
+        output, and looped forever.  An explicit page must return the source
+        lines; only a bare read gets the definitions summary."""
+        monkeypatch.setattr(agent, "_CONTEXT_AST_THRESHOLD_KB", 50)
+        big = tmp_path / "big.py"
+        big.write_text(
+            "".join(f"def f{i}():\n    return {i}\n" for i in range(4000)),
+            encoding="utf-8",
+        )
+        assert big.stat().st_size > 50 * 1024  # over the AST threshold
+        bot = Agent(workspace=str(tmp_path))
+
+        paged = asyncio.run(
+            bot._nlp_read({"path": str(big), "offset": 1, "limit": 3})
+        )
+        assert "def f0" in paged and "Definitions in" not in paged
+
+        overview = asyncio.run(bot._nlp_read({"path": str(big)}))
+        assert overview.startswith("Definitions in")
+        assert "offset=<line>" in overview  # tells the model how to page
+
 
 # ---------------------------------------------------------------------------
 # C2 — tagged continue-note stripping
