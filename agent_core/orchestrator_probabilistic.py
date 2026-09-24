@@ -6,7 +6,7 @@ to COMMIT to the best candidate or REFUSE (and broaden/re-evaluate).
 """
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from agent_core.scoring import CandidateSelector, ScoredCandidate
 
@@ -51,3 +51,50 @@ class ProbabilisticOrchestrator:
         if best.score >= threshold:  # boundary is inclusive
             return CommitmentResult(kind=Decision.COMMIT, best=best)
         return CommitmentResult(kind=Decision.REFUSE, best=None)
+
+    def run_speculative(
+        self,
+        reasoning_func: Callable[[int, Any], Any],
+        context: Any,
+        threshold: float,
+        scorer: Callable[[Any], float],
+        num_branches: int = 3,
+        timeout: Optional[float] = 5.0,
+    ) -> CommitmentResult:
+        """Run the full deliberation loop against the base orchestrator.
+
+        Dispatches speculative branches, waits for them, scores each result,
+        and commits to the best candidate only if it meets the threshold.
+
+        Returns:
+            COMMIT with the best candidate, or REFUSE when nothing qualifies
+            (no branches, all branches failed, or all scores below threshold).
+
+        Raises:
+            ValueError: if no base orchestrator is set, or threshold is
+                outside [0, 1] (validated before any branch is dispatched).
+            RuntimeError: if the branches do not finish within ``timeout``.
+        """
+        if self.base_orchestrator is None:
+            raise ValueError("base_orchestrator is required to run speculative deliberation")
+        if not 0.0 <= threshold <= 1.0:
+            raise ValueError("threshold must be within [0.0, 1.0]")
+
+        task_ids = self.base_orchestrator.dispatch_speculative(
+            reasoning_func, context, num_branches=num_branches
+        )
+        if not self.base_orchestrator.wait_for_completion(timeout=timeout):
+            raise RuntimeError("speculative deliberation timed out after %ss" % timeout)
+
+        candidates: List[ScoredCandidate] = []
+        for task_id in task_ids:
+            result = self.base_orchestrator.get_result(task_id)
+            # Failed branches are reported as {"error": ...} by get_result;
+            # they are not committable candidates.
+            if result is None or "error" in result:
+                continue
+            candidates.append(ScoredCandidate(result=result, score=float(scorer(result))))
+
+        if not candidates:
+            return CommitmentResult(kind=Decision.REFUSE, best=None)
+        return self.decide_commitment(candidates, threshold)

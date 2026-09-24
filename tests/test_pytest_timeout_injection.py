@@ -103,8 +103,15 @@ class TestFullPytestDetection:
 
 
 class TestBudgetResolution:
-    def test_env_var_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_env_var_wins(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Budget is max(floor, last_run * 1.5), so the recorded last-run value
+        # must be neutralized: with the repo .env holding a full run > 822.7s
+        # this assertion (1234) was silently overridden by last*1.5 and the
+        # test failed depending on machine history. Isolation only; the
+        # assertion below is unchanged.
         monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "1234")
+        monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
+        monkeypatch.setattr(agent, "_ENV_FILE_PATH", str(tmp_path / "absent.env"))
         assert agent._pytest_full_suite_timeout() == 1234.0
 
     def test_repo_env_file_fallback(
@@ -144,6 +151,7 @@ class TestBudgetResolution:
         self, tmp_path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "777")
+        monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
         env = tmp_path / ".env"
         env.write_text("PYTEST_FULL_SUITE_TIMEOUT=100\n", encoding="utf-8")
         monkeypatch.setattr(agent, "_ENV_FILE_PATH", str(env))
@@ -153,6 +161,7 @@ class TestBudgetResolution:
         self, tmp_path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("PYTEST_FULL_SUITE_TIMEOUT", raising=False)
+        monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
         monkeypatch.setattr(agent, "_ENV_FILE_PATH", str(tmp_path / "absent.env"))
         assert agent._pytest_full_suite_timeout() == float(agent._MAX_RUN_TIMEOUT_S)
 
@@ -160,6 +169,7 @@ class TestBudgetResolution:
         self, tmp_path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "not-a-number")
+        monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
         monkeypatch.setattr(agent, "_ENV_FILE_PATH", str(tmp_path / "absent.env"))
         assert agent._pytest_full_suite_timeout() == float(agent._MAX_RUN_TIMEOUT_S)
 
