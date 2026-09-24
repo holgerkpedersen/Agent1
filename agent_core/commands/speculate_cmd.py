@@ -92,6 +92,36 @@ def _branch_tool_schemas() -> list[dict[str, Any]]:
     ]
 
 
+#: Textual markers of a model's TOOL-CALL syntax leaking through as plain
+#: text instead of a structured ``tool_calls`` payload — e.g. gemma's
+#: ``<|tool_call>call:run{command:"…"}<tool_call|>``.  Such a reply is not an
+#: answer and must never be committed (it once scored 1.0 and COMMITted).
+_TOOL_CALL_MARKERS = (
+    "<|tool_call", "<tool_call", "<|tool_response", "<tool_response",
+)
+
+#: Inline call syntax without angle brackets: ``call:name{...}`` / ``call_name(...)``.
+_INLINE_TOOL_CALL_RE = re.compile(r"^call[:_]\w+\s*[{(]", re.IGNORECASE)
+
+
+def _looks_like_tool_call(text: str) -> bool:
+    """True when *text* is a raw tool call rather than a prose answer."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+    low = stripped.lower()
+    if any(marker in low for marker in _TOOL_CALL_MARKERS):
+        return True
+    if _INLINE_TOOL_CALL_RE.match(stripped):
+        return True
+    # A bare JSON tool-call object that slipped past the JSON fast-path.
+    if stripped.startswith("{") and '"tool_calls"' in stripped:
+        return True
+    if '"function"' in stripped and '"arguments"' in stripped:
+        return True
+    return False
+
+
 class SpeculateCommand(Command):
     """Run speculative LLM branches and probabilistically commit or refuse."""
 
@@ -215,7 +245,12 @@ class SpeculateCommand(Command):
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": (
-                f"Speculative branch {branch_id}. {question}"
+                f"Speculative branch {branch_id}. {question}\n\n"
+                "Answer the question directly in prose — that text is the "
+                "final answer shown to the user, so never reply with a tool "
+                "call. You may call ONLY these read-only tools if you must "
+                "check the workspace: "
+                f"{', '.join(sorted(_BRANCH_TOOLS))}. Do not call any other tool."
             )})
             answer = ""
             for _ in range(_BRANCH_MAX_ITERS):
@@ -249,15 +284,30 @@ class SpeculateCommand(Command):
                 # Still calling tools at the cap: force a final text answer
                 # with tools withheld so the branch always returns prose.
                 answer = str(asyncio.run(llm.chat(messages)))
+            if _looks_like_tool_call(answer):
+                return {
+                    "branch": branch_id,
+                    "error": "branch emitted a raw tool call instead of an answer",
+                }
             return {"branch": branch_id, "answer": answer}
 
         def scorer(result: dict[str, Any]) -> float:
-            """Judge-score one candidate 0.0-1.0 via an LLM call."""
-            answer = str(result.get("answer", ""))
+            """Judge-score one candidate 0.0-1.0.
+
+            A non-answer (empty, or a raw tool call) scores 0.0 WITHOUT asking
+            the judge — the judge once rated a leaked tool call 1.0 and it was
+            committed.
+            """
+            answer = str(result.get("answer", "")).strip()
+            if not answer or _looks_like_tool_call(answer):
+                return 0.0
             prompt = (
-                "Quality judge: rate how good this answer is on a scale from "
-                "0.0 to 1.0. Reply with only the number.\n"
-                f"Answer: {answer}"
+                "Quality judge: score how well the ANSWER answers the QUESTION, "
+                "0.0 to 1.0. 1.0 = directly and correctly answers it; 0.0 = "
+                "off-topic, empty, evasive, or a tool call / raw command "
+                "instead of an answer. Reply with ONLY the number.\n"
+                f"QUESTION: {question}\n"
+                f"ANSWER: {answer}"
             )
             reply = asyncio.run(llm.chat([{"role": "user", "content": prompt}]))
             return _parse_score(str(reply))

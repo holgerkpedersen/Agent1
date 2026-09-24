@@ -182,3 +182,36 @@ def test_speculate_branch_refuses_mutating_tools():
     agent = _ToolAgent("write")
     asyncio.run(SpeculateCommand().execute(['"q"'], agent))
     assert agent.executed == []  # allowlist blocked it before the executor
+
+
+def test_looks_like_tool_call_detects_leaked_syntax():
+    from agent_core.commands.speculate_cmd import _looks_like_tool_call
+
+    assert _looks_like_tool_call('<|tool_call>call:run{command:"x"}<tool_call|>')
+    assert _looks_like_tool_call('call:read{path:"a.py"}')
+    assert _looks_like_tool_call('{"tool_calls": [{"id": "1"}]}')
+    assert not _looks_like_tool_call("The repo is doing well - about 80/100.")
+    assert not _looks_like_tool_call("")
+
+
+def test_speculate_rejects_branch_that_emits_a_tool_call_as_text(capsys):
+    """Regression: a model whose tool-call syntax leaks through as TEXT
+    (observed with gemma: '<|tool_call>call:run{...}<tool_call|>') was scored
+    1.0 by the judge and COMMITted as the final answer."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    class LeakyLLM:
+        model_name = "fake-model"
+
+        async def chat(self, messages, tools=None, **kwargs):
+            content = str(messages[-1].get("content") or "")
+            if content.startswith("Quality judge:"):
+                return "1.0"  # even a perfect judge score must not save it
+            return '<|tool_call>call:run{command:"pytest tests/"}<tool_call|>'
+
+    agent = type("A", (), {"llm": LeakyLLM(), "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(SpeculateCommand().execute(['"q"'], agent)) is True
+    out = capsys.readouterr().out
+    assert "REFUSE" in out
+    assert "COMMIT" not in out
+    assert "<|tool_call>" not in out  # never presented as the answer

@@ -21,6 +21,7 @@ Run: `python agent.py`
 | `cleanup`                    | Find orphaned files                 |
 | `optimize <file>`            | Find speed/memory/quality issues    |
 | `perf`                       | Command performance dashboard       |
+| `speculate "question"`       | Speculative branches, judge-scored, COMMIT/REFUSE |
 | `quit` / `exit` / `q`        | Exit the REPL                       |
 
 Any text not matching a command is sent to the LLM as **natural language** with full conversation history. The conversation **persists across sessions** in `chat_history.json` (project root, git-ignored), so a new REPL run continues where the last one left off — use `clear` to reset it. The agent uses **native tool calling** — it receives schemas for `search`, `read`, `list_files`, `write`, `edit`, `run`, `git`, `diff`, `tests`, `fix`, and `analyze`, and must call a tool to act:
@@ -152,6 +153,33 @@ In natural language turns the model can delegate on its own via the
 so delegation can never mutate files while researching. Results come back
 as compact summaries; a child that hits its turn cap or times out reports
 `stopped early: <reason>` instead of holding the turn.
+
+---
+
+## Speculative deliberation (`speculate`)
+
+`speculate` asks several independent, parallel branches the same question, has
+a judge score each answer 0.0-1.0, and **COMMITs** the best only when it meets
+the threshold — otherwise it **REFUSEs** instead of committing a weak answer.
+
+Each branch runs **as the agent** (it carries the live system prompt, so it
+knows the persona and environment) and may use the **read-only** tools
+(`search`, `read`, `list_files`, `definitions`, `references`, `web_search`) to
+ground its answer from the workspace. Mutating tools are refused, so parallel
+branches can never change files.
+
+```
+> speculate "Is the retry policy shared between providers?"
+  [speculate] 3 branch(es), threshold=0.7
+  [speculate] COMMIT score=0.92 threshold=0.7
+  ... committed answer ...
+
+> speculate "Should we refactor tool_loop.py?" --branches 5 --threshold 0.8
+> speculate "…" --timeout 300      # branch-dispatch wait (default 300s; host latency)
+```
+
+`--timeout` bounds only the branch dispatch; the judge and commit run after the
+branches finish.
 
 ---
 

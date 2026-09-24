@@ -36,6 +36,21 @@ is being extended to audit its own file effects (self-improvement).
   plan mode blocks it.
 - `agent_core/modes.py` — session modes (`build` default, `plan` read-only);
   enforced at schema level AND in `_execute_tool_call` (decision #077).
+- `agent_core/commands/speculate_cmd.py` — REPL `speculate`: N independent
+  speculative branches run on the thread pool, each carrying the agent's LIVE
+  system prompt (`_chat_history[0]` after `_refresh_system_message`) and a
+  bounded READ-ONLY tool loop (`_BRANCH_TOOLS` = search/read/list_files/
+  definitions/references/web_search; any other name is refused BEFORE the
+  executor, so parallel branches cannot mutate) to ground its answer; a judge
+  LLM scores each and `ProbabilisticOrchestrator.run_speculative` COMMITs the
+  best at `--threshold` or REFUSEs. Branch-dispatch timeout default 300s.
+  A branch whose tool-call syntax leaks through as TEXT (e.g. gemma's
+  `<|tool_call>call:run{...}`) is failed, not committed, and the judge scores a
+  non-answer 0.0 without asking the model.
+- `_nlp_read` (in `agent.py`) — paging is line-based and ALWAYS honored: the
+  AST `definitions` summary is returned only for a BARE read (no `offset`/
+  `limit`) of a `.py` file over `_CONTEXT_AST_THRESHOLD_KB` (50); returning it
+  for every offset made the model loop forever on large files.
 - `agent_core/llm/tool_loop.py` — `ToolLoopRunner`: NLP tool-call execution loop.
 - `agent_core/security/` — sanitizers, command allowlist, secrets store (OS keyring
   + encrypted-file fallback); `agent_core/file_system.py`, `path_utils.py` — real
@@ -332,9 +347,15 @@ incrementally as its capability grows — human stays in control.
   scanned restored history from previous sessions — fixed with a per-turn boundary
   (`Agent._turn_start_index`). Tests: `tests/test_text_policy.py` (26),
   `tests/test_quickwins_batch2.py::TestTurnBoundaryAfterRestart` (3).
+- **read paging + speculative tool loop (DONE, 2026-09-24)**: `read` on a
+  >50 KB `.py` file honours an explicit `offset`/`limit` (returns lines); only a
+  BARE read yields the AST `definitions` summary (now with a how-to-page note).
+  Regression: `tests/test_agent_robustness.py`. `speculate` branches now carry
+  the agent's system prompt and run a read-only tool loop (hard allowlist;
+  mutating tools refused before the executor); branch-dispatch timeout
+  60 -> 300s. Tests: `tests/test_speculate_cmd.py` (8).
 
 ## Git / remote auth (non-interactive)
-
 `git push`/`ls-remote` must NOT prompt for credentials (no human at the keyboard).
 Auth is supplied by a local credential helper that reads `GITHUB_TOKEN` from the
 gitignored `.env` — the token is never written into `.git/config` or the remote URL.
