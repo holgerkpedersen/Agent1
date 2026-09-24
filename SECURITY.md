@@ -4,7 +4,7 @@
 
 | Version | Supported |
 |---|---|
-| 0.1.0 (Alpha) | ✅ Yes |
+| 0.1.0 (Alpha) | Yes |
 
 Agent1 is currently in **early alpha**. Security features are being actively developed. Expect limitations and report issues generously.
 
