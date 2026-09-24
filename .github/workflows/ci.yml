@@ -37,6 +37,10 @@ jobs:
           performance_dashboard
         continue-on-error: true
 
+      - name: mypy (strict, advisory — tighten once errors are cleaned up)
+        run: mypy agent_core --strict
+        continue-on-error: true
+
       - name: Run test suite
         env:
           AGENT_NO_TRACE: "1"

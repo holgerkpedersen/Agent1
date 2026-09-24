@@ -107,3 +107,8 @@ class FileSearcher:
                 except OSError:
                     continue
         return matches
+
+
+__all__: list[str] = [
+    "FileSearcher",
+]

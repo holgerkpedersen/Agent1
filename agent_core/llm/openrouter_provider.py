@@ -36,6 +36,7 @@ from typing import Any, Callable
 from .provider import ResponseMetrics
 from .pricing import estimate_cost
 from agent_core.constants import DEFAULT_OPENROUTER_API_BASE, DEFAULT_OPENROUTER_MODEL
+from agent_core.timeout import DEFAULT_CHAT_TIMEOUT, MODEL_REFRESH_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +239,7 @@ class OpenRouterProvider:
         self._last_label: str | None = None
         #: Long reads are normal for big prompts (workflow plan steps); 600s
         #: matches the other hosted providers. Override via OPENROUTER_TIMEOUT.
-        self._api_timeout = float(os.environ.get("OPENROUTER_TIMEOUT", "600"))
+        self._api_timeout = float(os.environ.get("OPENROUTER_TIMEOUT", str(DEFAULT_CHAT_TIMEOUT)))
         #: Transient-failure retry (default 3 attempts, exponential backoff).
         #: A single intermittent gateway/upstream 5xx must not abort a run.
         self._max_retries = (
@@ -589,3 +590,9 @@ class OpenRouterProvider:
         suggestion is known (callers then just print the raw error).
         """
         return DEFAULT_OPENROUTER_MODEL
+
+
+__all__: list[str] = [
+    "DEFAULT_API_BASE",
+    "OpenRouterProvider",
+]

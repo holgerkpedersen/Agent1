@@ -61,8 +61,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://example.com/agent-framework"
-Repository = "https://example.com/agent-framework/repo"
+Homepage = "https://github.com/agent-framework/agent-framework"
+Repository = "https://github.com/agent-framework/agent-framework"
 
 [tool.setuptools.packages.find]
 include = ["agent_core*"]
@@ -105,7 +105,7 @@ markers = [
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 extend-exclude = ["backups", ".docs", "reports", "checkpoints"]
 
 [tool.ruff.lint]

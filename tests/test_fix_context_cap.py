@@ -222,7 +222,7 @@ def test_default_generate_false_when_no_tree_change() -> None:
         "title": "do nothing",
         # An existing, tracked file: the no-op generator leaves it unchanged, so
         # git status stays clean and _tree_changed must return False.
-        "locations": ["agent_core/llm/retry.py"],
+        "locations": ["agent_core/entities.py"],
         "autonomy_level": 1,
         "suggested_approach": "no-op",
     }

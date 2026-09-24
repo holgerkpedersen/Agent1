@@ -16,6 +16,7 @@ from .constants import (
     DEFAULT_OPENROUTER_MODEL,
 )
 from .exceptions import ConfigurationError
+from .timeout import COMPILATION_CHECK_TIMEOUT, SEARCH_COMMAND_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +80,8 @@ class AgentSettings:
     workspace_root: Path = field(default_factory=lambda: Path.cwd())
     llm_api_url: str = field(default_factory=lmstudio_base_url)
     max_concurrent_tools: int = 5
-    search_command_timeout_sec: float = 30.0
-    compilation_check_timeout_sec: float = 30.0
+    search_command_timeout_sec: float = SEARCH_COMMAND_TIMEOUT
+    compilation_check_timeout_sec: float = COMPILATION_CHECK_TIMEOUT
     display_mode: AgentDisplayMode = field(
         default_factory=lambda: _parse_display_mode(os.environ.get("AGENT_DISPLAY_MODE"))
     )
@@ -435,8 +436,8 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         workspace_root=workspace_root,
         llm_api_url=merged.get("AGENT_LLM_API_URL") or lmstudio_base_url(),
         max_concurrent_tools=_parse_int(merged.get("AGENT_MAX_CONCURRENT_TOOLS"), 5),
-        search_command_timeout_sec=_parse_float(merged.get("AGENT_SEARCH_COMMAND_TIMEOUT_SEC"), 30.0),
-        compilation_check_timeout_sec=_parse_float(merged.get("AGENT_COMPILATION_CHECK_TIMEOUT_SEC"), 30.0),
+        search_command_timeout_sec=_parse_float(merged.get("AGENT_SEARCH_COMMAND_TIMEOUT_SEC"), SEARCH_COMMAND_TIMEOUT),
+        compilation_check_timeout_sec=_parse_float(merged.get("AGENT_COMPILATION_CHECK_TIMEOUT_SEC"), COMPILATION_CHECK_TIMEOUT),
         display_mode=_parse_display_mode(display_mode_raw, AgentDisplayMode.VERBOSE),
         llm_provider=llm_provider,
         llm_providers=llm_providers,
@@ -464,3 +465,14 @@ try:
 except ConfigurationError as exc:
     logger.error("Default agent settings validation failed: %s", exc)
     raise
+
+
+__all__: list[str] = [
+    "AgentDisplayMode",
+    "AgentSettings",
+    "DEFAULT_LMSTUDIO_PORT",
+    "DEFAULT_SETTINGS",
+    "load_agent_settings",
+    "lmstudio_base_url",
+    "lmstudio_port",
+]

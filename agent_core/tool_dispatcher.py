@@ -59,3 +59,8 @@ class ToolDispatcher:
     def available_tools(self) -> list[str]:
         """Return list of registered tool names."""
         return list(self._handlers.keys())
+
+
+__all__: list[str] = [
+    "ToolDispatcher",
+]

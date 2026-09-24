@@ -32,6 +32,7 @@ from .provider import ResponseMetrics
 from .pricing import estimate_cost
 from .retry import RetryPolicy, TRANSIENT_HTTP_STATUSES, TransientHTTPError
 from agent_core.constants import DEFAULT_LLAMA_BASE_URL, KNOWN_MODELS, resolve_model
+from agent_core.timeout import DEFAULT_CHAT_TIMEOUT, HEALTH_CHECK_TIMEOUT, MODEL_REFRESH_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -139,11 +140,11 @@ def _shard_stem(stem: str) -> str:
 def _chat_timeout() -> int:
     """Per-request socket-inactivity timeout (seconds). Override with
     ``LLAMA_CHAT_TIMEOUT``; floor 30s, default 600s."""
-    raw = os.environ.get("LLAMA_CHAT_TIMEOUT", "600")
+    raw = os.environ.get("LLAMA_CHAT_TIMEOUT", str(DEFAULT_CHAT_TIMEOUT))
     try:
         return max(30, int(raw))
     except ValueError:
-        return 600
+        return int(DEFAULT_CHAT_TIMEOUT)
 
 
 class LlamaProvider:
@@ -217,7 +218,7 @@ class LlamaProvider:
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 method="GET",
             )
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=MODEL_REFRESH_TIMEOUT) as resp:
                 data = json.loads(resp.read().decode())
             items = data.get("data") if isinstance(data, dict) else []
             ids = [m.get("id") for m in (items or []) if isinstance(m, dict) and m.get("id")]
@@ -552,3 +553,9 @@ class LlamaProvider:
             return True, "llama-server already stopped (nothing to unload)"
         except Exception as exc:  # noqa: BLE001
             return False, f"shutdown failed: {exc}"
+
+
+__all__: list[str] = [
+    "LlamaProvider",
+    "discover_local_gguf_models",
+]

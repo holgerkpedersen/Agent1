@@ -21,6 +21,7 @@ from agent_core.constants import (
     LOOP_NOTE_TAG_KEY,
 )
 from agent_core.config import lmstudio_base_url
+from agent_core.timeout import DEFAULT_CHAT_TIMEOUT, HEALTH_CHECK_TIMEOUT, HTTP_READ_TIMEOUT, MODEL_LOAD_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -135,14 +136,14 @@ def chat_timeout() -> int:
     engine surfaces as a timeout error that the existing retry policy treats
     as transient.  Override with ``LMSTUDIO_CHAT_TIMEOUT``.
     """
-    raw = os.environ.get("LMSTUDIO_CHAT_TIMEOUT", "600")
+    raw = os.environ.get("LMSTUDIO_CHAT_TIMEOUT", str(DEFAULT_CHAT_TIMEOUT))
     try:
         return max(30, int(raw))
     except ValueError:
-        return 600
+        return int(DEFAULT_CHAT_TIMEOUT)
 
 
-def _http_get_json(url: str, timeout: int = 10) -> dict[str, Any] | None:
+def _http_get_json(url: str, timeout: int = HEALTH_CHECK_TIMEOUT) -> dict[str, Any] | None:
     """Synchronous HTTP GET that returns parsed JSON, or None on failure."""
     try:
         resp = httpx.get(url, timeout=timeout)
@@ -158,7 +159,7 @@ def _http_get_json(url: str, timeout: int = 10) -> dict[str, Any] | None:
         return None
 
 
-def _http_post_json(url: str, body: dict[str, Any], timeout: int = 30) -> dict[str, Any] | None:
+def _http_post_json(url: str, body: dict[str, Any], timeout: int = HTTP_READ_TIMEOUT) -> dict[str, Any] | None:
     """Synchronous HTTP POST that returns parsed JSON, or None on connection failure.
 
     HTTP error responses (4xx, 5xx) are returned as-is so callers can inspect
@@ -230,7 +231,7 @@ def load_model(model_key: str, eval_batch_size: int = 4096) -> tuple[bool, str]:
     resp = _http_post_json(f"{base}/models/load", {
         "model": model_key,
         "eval_batch_size": eval_batch_size,
-    }, timeout=300)  # Load can take a while (5 min)
+    }, timeout=MODEL_LOAD_TIMEOUT)  # Load can take a while (5 min)
     if resp and resp.get("status") == "loaded":
         return True, f"loaded ({resp.get('load_time_seconds', '?')}s) — {resp.get('instance_id', model_key)}"
     if resp:
@@ -247,7 +248,7 @@ def load_model(model_key: str, eval_batch_size: int = 4096) -> tuple[bool, str]:
         try:
             r = subprocess.run(
                 [str(lms), "load", model_key, "--yes"],
-                capture_output=True, text=True, timeout=300,
+                capture_output=True, text=True, timeout=MODEL_LOAD_TIMEOUT,
                 encoding="utf-8", errors="replace",
             )
             if r.returncode == 0:
@@ -701,3 +702,15 @@ Code:
         ]
         
         return await self.chat(messages)
+
+
+__all__: list[str] = [
+    "LMStudioProvider",
+    "chat_timeout",
+    "get_models_status",
+    "get_vram_info",
+    "load_model",
+    "resolve_model_name",
+    "sanitize_message_roles",
+    "unload_model",
+]

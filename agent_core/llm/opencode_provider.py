@@ -36,6 +36,8 @@ from agent_core.constants import (
     _ZEN_TIER_PREFIXES,
 )
 
+from agent_core.timeout import DEFAULT_CHAT_TIMEOUT, MODEL_REFRESH_TIMEOUT
+
 from .provider import ResponseMetrics
 from .pricing import estimate_cost
 
@@ -312,10 +314,10 @@ class OpencodeProvider:
         self.last_response_metrics: ResponseMetrics | None = None
         self._session_id: str | None = None
         self._last_label: str | None = None
-        self._server_timeout = float(os.environ.get("OPENCODE_SERVER_TIMEOUT", "600"))
+        self._server_timeout = float(os.environ.get("OPENCODE_SERVER_TIMEOUT", str(DEFAULT_CHAT_TIMEOUT)))
         #: Long reads are normal for big prompts (workflow plan steps); 600s
         #: matches the server-mode default. Override via OPENCODE_TIMEOUT.
-        self._api_timeout = float(os.environ.get("OPENCODE_TIMEOUT", "600"))
+        self._api_timeout = float(os.environ.get("OPENCODE_TIMEOUT", str(DEFAULT_CHAT_TIMEOUT)))
         #: Transient-failure retry (default 3 attempts, exponential backoff).
         #: A single intermittent gateway 5xx must not abort a workflow run.
         self._max_retries = (
@@ -770,3 +772,10 @@ class OpencodeProvider:
             )
         except Exception:
             return []
+
+
+__all__: list[str] = [
+    "OpencodeProvider",
+    "ZEN_API_BASE",
+    "ZEN_PREFIXES",
+]

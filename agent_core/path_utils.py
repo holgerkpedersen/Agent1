@@ -157,3 +157,13 @@ class WorkspaceSandbox:
                  exc_tb: object) -> None:
         # Declarative scoping complete; pure validation sandbox requires no cleanup
         pass
+
+
+__all__: list[str] = [
+    "WorkspaceSandbox",
+    "normalize_path",
+    "resolve_path",
+    "safe_path",
+    "to_windows_path",
+    "workspace_path",
+]

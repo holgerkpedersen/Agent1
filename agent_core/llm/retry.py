@@ -92,3 +92,10 @@ class RetryPolicy:
         if last_error is not None:
             raise last_error
         raise RuntimeError("all retries exhausted")
+
+
+__all__: list[str] = [
+    "RetryPolicy",
+    "TRANSIENT_HTTP_STATUSES",
+    "TransientHTTPError",
+]

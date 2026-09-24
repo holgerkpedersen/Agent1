@@ -284,3 +284,29 @@ def persist_model_choice(model_name: str, provider: str | None = None) -> None:
             ef.write(f"\nAGENT_MODEL={model_name}\n")
 
 
+__all__: list[str] = [
+    "AGENT_MEMORY_JSON_PATH",
+    "AGENT_MEMORY_TMP_PATH",
+    "CHAT_HISTORY_JSON_PATH",
+    "CHAT_HISTORY_TMP_PATH",
+    "DEFAULT_LLM_CHAIN",
+    "DEFAULT_MODEL",
+    "DEFAULT_OPENCODE_API_BASE",
+    "DEFAULT_OPENCODE_MODEL",
+    "DEFAULT_OPENCODE_SERVER_URL",
+    "DEFAULT_OPENCODE_ZEN_API_BASE",
+    "DEFAULT_LLAMA_BASE_URL",
+    "DEFAULT_OPENROUTER_API_BASE",
+    "DEFAULT_OPENROUTER_MODEL",
+    "KNOWN_MODELS",
+    "LOOP_NOTE_TAG_KEY",
+    "MODEL_JSON_PATH",
+    "ROUTER",
+    "THINKING_GATES",
+    "load_model_json",
+    "persist_model_choice",
+    "resolve_model",
+    "save_model_json",
+]
+
+
