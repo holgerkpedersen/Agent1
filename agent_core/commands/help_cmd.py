@@ -53,6 +53,7 @@ class HelpCommand(Command):
         from .subagent_cmd import SubAgentCommand
         from .mcp_cmd import MCPCommand
         from .propose_cmd import ProposeCommand
+        from .speculate_cmd import SpeculateCommand
         
         for cmd_cls in (ReadCommand, WriteCommand, SearchCommand, ClearCommand,
                         ModelCommand, AnalyzeCommand, PlanCommand, EntitiesCommand,
@@ -61,7 +62,7 @@ class HelpCommand(Command):
                         PasteCommand, PasteImageCommand, DisplayCommand, DecideCommand,
                         ReviewCommand, RunCommand, SelfHealCommand, ReconstructCommand,
                         MultiLlmCommand, DemoDataCommand, ModeCommand, SubAgentCommand,
-                        MCPCommand, ProposeCommand, HelpCommand):
+                        MCPCommand, ProposeCommand, SpeculateCommand, HelpCommand):
             registry.register(cmd_cls())
 
         if not args:

@@ -3734,6 +3734,8 @@ def _register_commands(registry: CommandRegistry) -> None:
     registry.register(MCPCommand())
     from agent_core.commands.propose_cmd import ProposeCommand
     registry.register(ProposeCommand())
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+    registry.register(SpeculateCommand())
     from agent_core.commands.help_cmd import HelpCommand
     registry.register(HelpCommand())
 
