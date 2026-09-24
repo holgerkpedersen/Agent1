@@ -217,37 +217,52 @@ class TestSanitizeMessageRoles:
 
 
 class TestScaledTimeout:
-    """Regression for the autonomous-agent timeout spiral (2026-08-28): a
-    single best-effort-except issue pulled ~575KB of full source into one
-    non-streaming POST; on a local 27B model the prefill couldn't finish
-    inside the 600s socket floor, so RetryPolicy resent the same giant
-    prompt 4x (~40min) before failing over. Timeout must scale with payload
-    and stay bounded."""
+    """LM Studio emits nothing until prompt processing finishes, so a fixed
+    socket cap aborts the request mid-prefill ("Client disconnected. Stopping
+    generation...").  The timeout must be sized to the estimated PREFILL
+    (tokens), not bytes, and stay bounded."""
 
     def _prov(self, monkeypatch, floor="600"):
         monkeypatch.setenv("LMSTUDIO_CHAT_TIMEOUT", floor)
+        monkeypatch.delenv("LMSTUDIO_PREFILL_TOKENS_PER_SEC", raising=False)
         return _provider("qwen/qwen3.8-27b")
 
-    def test_small_payload_uses_floor(self, monkeypatch):
+    @staticmethod
+    def _payload(chars: int) -> dict:
+        return {"messages": [{"role": "user", "content": "x" * chars}]}
+
+    def test_small_prompt_uses_floor(self, monkeypatch):
         p = self._prov(monkeypatch)
-        assert p._scaled_timeout(100) == 600
+        assert p._scaled_timeout(self._payload(200)) == 600
 
     def test_floor_respects_env(self, monkeypatch):
         p = self._prov(monkeypatch, "120")
-        assert p._scaled_timeout(100) == 120
+        assert p._scaled_timeout(self._payload(200)) == 120
 
-    def test_scales_with_size(self, monkeypatch):
+    def test_timeout_scales_with_prefill_tokens(self, monkeypatch):
         p = self._prov(monkeypatch)
-        small = p._scaled_timeout(50_000)
-        big = p._scaled_timeout(575_000)
-        assert small == 601            # 600 + 1 (per 50KB)
-        assert big == 600 + (575_000 // 50_000)
-        assert big > small
+        small = p._scaled_timeout(self._payload(1_000))    # ~285 tokens -> floor
+        big = p._scaled_timeout(self._payload(100_000))    # ~28.5k tokens -> minutes
+        assert small == 600
+        assert big > 600
+        assert big <= 3600
 
     def test_scaling_capped_at_3600(self, monkeypatch):
         p = self._prov(monkeypatch)
-        # ~500MB -> +3000 (the per-call cap) -> 600 + 3000 = 3600
-        assert p._scaled_timeout(500_000_000) == 3600
+        assert p._scaled_timeout(self._payload(5_000_000)) == 3600
+
+    def test_estimate_counts_message_and_tool_schemas(self, monkeypatch):
+        p = self._prov(monkeypatch)
+        empty = {"messages": [{"role": "user", "content": ""}]}
+        with_tools = {
+            "messages": [{"role": "user", "content": ""}],
+            "tools": [{
+                "type": "function",
+                "function": {"name": "x", "description": "y" * 10_000},
+            }],
+        }
+        assert p._estimate_prompt_tokens(with_tools) > \
+            p._estimate_prompt_tokens(empty) + 1_000
 
     def test_chat_passes_scaled_timeout_to_request(self, monkeypatch):
         import json
@@ -255,6 +270,7 @@ class TestScaledTimeout:
         captured = {}
 
         def fake_make_request(payload, timeout=None):
+            captured["payload"] = payload
             captured["timeout"] = timeout
             captured["payload_bytes"] = len(json.dumps(payload).encode("utf-8"))
             return {"choices": [{"message": {"content": "ok"}}]}
@@ -264,7 +280,7 @@ class TestScaledTimeout:
         out = asyncio.run(p.chat([{"role": "user", "content": "x" * 300_000}]))
         assert out == "ok"
         assert captured["timeout"] is not None
-        assert captured["timeout"] == p._scaled_timeout(captured["payload_bytes"])
-        # 300KB payload -> 600 + 6 = 606, and retries are bounded for it.
-        assert captured["timeout"] == 606
+        assert captured["timeout"] == p._scaled_timeout(captured["payload"])
+        # A huge prompt estimates a multi-minute prefill -> capped at 3600.
+        assert captured["timeout"] == 3600
 

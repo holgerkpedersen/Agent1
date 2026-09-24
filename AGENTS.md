@@ -354,6 +354,12 @@ incrementally as its capability grows — human stays in control.
   the agent's system prompt and run a read-only tool loop (hard allowlist;
   mutating tools refused before the executor); branch-dispatch timeout
   60 -> 300s. Tests: `tests/test_speculate_cmd.py` (8).
+- **LM Studio prefill-aware socket timeout (DONE, 2026-09-24)**: `_scaled_timeout`
+  sizes the socket timeout to the estimated prompt PREFILL (tokens, ~3.5
+  chars/token; `LMSTUDIO_PREFILL_TOKENS_PER_SEC` default 15, pessimistic)
+  instead of ~1s per 50 KB, so a >600s prefill no longer trips LM Studio's
+  "Client disconnected. Stopping generation...". Floor `LMSTUDIO_CHAT_TIMEOUT`
+  (600), cap 3600s. Tests: `tests/test_lmstudio_payload.py`.
 
 ## Git / remote auth (non-interactive)
 `git push`/`ls-remote` must NOT prompt for credentials (no human at the keyboard).

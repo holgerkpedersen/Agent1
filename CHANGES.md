@@ -1,3 +1,11 @@
+## 2026-09-24 - fix: size the LM Studio socket timeout to the prompt prefill
+
+**Change**: `agent_core/llm/lmstudio.py` — `_scaled_timeout()` now estimates the prompt tokens (`_estimate_prompt_tokens`: ~3.5 chars/token over messages + tool-call arguments + tool schemas) and sets the socket timeout to `max(floor, tokens / rate * 1.5 + 60)`, capped at 3600s, where `rate` is `LMSTUDIO_PREFILL_TOKENS_PER_SEC` (default 15, deliberately pessimistic). The streaming path uses the same sizing. The previous rule added ~1s per 50 KB — roughly 400x too small.
+
+**Reason**: LM Studio emits nothing until prompt processing finishes, so the client's read (socket-inactivity) timeout must exceed the WHOLE prefill. A ~20k-token prefill (a 78-message conversation) was granted ~601s, and LM Studio logged "Client disconnected. Stopping generation..." at ~602s, returning an empty completion. The bytes rule under-sized it ~400x; the token estimate gives ~2060s for that prompt.
+
+**Files**: agent_core/llm/lmstudio.py, tests/test_lmstudio_payload.py. Verified: `test_lmstudio_payload.py` (23), `test_anti_stuck_guard.py` (11), `test_llm_retry_policy.py` green.
+
 ## 2026-09-24 - fix: speculate never commits a leaked tool call
 
 **Change**: `agent_core/commands/speculate_cmd.py` — new `_looks_like_tool_call()` detects a model's tool-call syntax leaking through as plain text (`<|tool_call>…`, `call:name{…}`, bare `{"tool_calls": …}`). A branch that ends on such text is failed (`{"error": …}`) so it is never a candidate; the judge rubric now includes the question and scores a non-answer (empty or tool-call-shaped) 0.0 without calling the model; the branch prompt names the read-only tools and asks for a prose answer.

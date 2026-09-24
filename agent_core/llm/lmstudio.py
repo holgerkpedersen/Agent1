@@ -125,6 +125,18 @@ def _management_url() -> str:
     return f"{base}/api/v1"
 
 
+#: Prefill sizing for the socket timeout.  LM Studio emits NOTHING until prompt
+#: processing finishes, so the read timeout must exceed the whole prefill or
+#: the client aborts it ("Client disconnected. Stopping generation...").  The
+#: throughput is deliberately pessimistic: glm-4.7-flash was observed
+#: degrading from 75 to 29 tokens/s as the context grew.
+_PREFILL_TOKENS_PER_SEC = 15.0
+_CHARS_PER_TOKEN = 3.5
+_PREFILL_MARGIN = 1.5
+_PREFILL_SLACK_S = 60.0
+_MAX_SCALED_TIMEOUT_S = 3600
+
+
 def chat_timeout() -> int:
     """Socket cap (seconds) for one chat request to LM Studio.
 
@@ -521,17 +533,48 @@ class LMStudioProvider:
         except Exception:
             return 0
 
-    def _scaled_timeout(self, payload_bytes: int) -> int:
-        """Socket timeout (s) that scales with request size.
+    def _estimate_prompt_tokens(self, payload: dict[str, Any]) -> int:
+        """Rough prompt size in tokens (messages + tool args + tool schemas).
 
-        The base cap (:func:`chat_timeout`, env ``LMSTUDIO_CHAT_TIMEOUT``,
-        default 600) is a floor. Large prompts need more prefill time on
-        local models, so add ~1s per 50KB and cap at 3600s. This stops a
-        575KB prompt from dying at the 600s floor and then being retried
-        4x (~40min) by :class:`RetryPolicy`.
+        LM Studio prefills the WHOLE prompt before emitting a byte, so this is
+        what determines how long the client must stay silent-but-connected.
+        ~3.5 chars/token (code and tool JSON tokenise denser than prose).
+        """
+        chars = 0
+        for message in payload.get("messages") or []:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            chars += len(content) if isinstance(content, str) else len(str(content or ""))
+            for call in message.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                fn = call.get("function") or {}
+                if isinstance(fn, dict):
+                    chars += len(str(fn.get("name") or ""))
+                    chars += len(str(fn.get("arguments") or ""))
+        chars += len(json.dumps(payload.get("tools") or []))
+        return int(chars / _CHARS_PER_TOKEN)
+
+    def _scaled_timeout(self, payload: dict[str, Any]) -> int:
+        """Socket timeout (s) sized to cover the prompt prefill.
+
+        LM Studio sends nothing until prompt processing completes, so a fixed
+        inactivity cap aborts the connection mid-prefill.  Estimate the prefill
+        from the prompt size at a pessimistic throughput and take the larger of
+        that and the configured floor (:func:`chat_timeout`).  The old version
+        added ~1s per 50 KB — roughly 400x too small, so a 20k-token prefill
+        still died at ~600s.
         """
         base = chat_timeout()
-        return min(base + min(payload_bytes // 50_000, 3000), 3600)
+        try:
+            rate = max(1.0, float(os.environ.get(
+                "LMSTUDIO_PREFILL_TOKENS_PER_SEC", str(_PREFILL_TOKENS_PER_SEC))))
+        except ValueError:
+            rate = _PREFILL_TOKENS_PER_SEC
+        tokens = self._estimate_prompt_tokens(payload)
+        prefill_s = (tokens / rate) * _PREFILL_MARGIN + _PREFILL_SLACK_S
+        return int(min(max(base, prefill_s), _MAX_SCALED_TIMEOUT_S))
 
     async def chat(
         self, 
@@ -546,7 +589,7 @@ class LMStudioProvider:
             disable_thinking=disable_thinking,
         )
         pbytes = self._payload_bytes(payload)
-        timeout = self._scaled_timeout(pbytes)
+        timeout = self._scaled_timeout(payload)
         # A request that times out because it is genuinely too large for the
         # local model will just time out again on retry — bound retries for
         # oversized payloads so we fail fast instead of stalling ~40min.
@@ -638,7 +681,7 @@ class LMStudioProvider:
             # _open_chat (not raw urlopen): a 400 "model is not loaded" here
             # means another shell evicted our pinned model — reload + retry
             # once, same recovery as the non-streaming path.
-            with self._open_chat(req, timeout=chat_timeout()) as response:
+            with self._open_chat(req, timeout=self._scaled_timeout(payload)) as response:
                 for line_bytes in response:
                     line = line_bytes.decode('utf-8').strip()
                     if not line.startswith('data: '):
