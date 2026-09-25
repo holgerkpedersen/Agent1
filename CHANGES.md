@@ -1,3 +1,11 @@
+## 2026-09-26 - fix: jev choice accepts a positional option list
+
+**Change**: `agent_core/commands/jev_cmd.py` — `jev choice "A|B|C" "<question>"` now works: when `--options` is absent, the first positional token containing pipes is taken as the option list. The usage/error text and the module docstring show both forms.
+
+**Reason**: the natural first guess (`jev choice "morning|afternoon|evening|night" "is it not morning?"`) failed with "a choice question needs --options", forcing the flag form.
+
+**Files**: agent_core/commands/jev_cmd.py, tests/test_jev_cmd.py. Verified live: the exact command yields `P(morning)=0.04 P(afternoon)=0.05 P(evening)=0.03 P(night)=0.88 -> night`. Tests: 24 jev-cmd green.
+
 ## 2026-09-25 - feat: Jev prompts carry the current local time (time of day)
 
 **Change**: `agent_core/jev_engine.py` — `_now_context()` / `_time_of_day()` prepend a CONTEXT line to every Jev prompt (`_build_messages`): `current local date and time is 2026-09-25 23:52 (Friday, UTC+0200); time of day: night`. The named bucket (morning/afternoon/evening/night) is handed to the model so a 1.5B need not derive it from a 24-hour clock.

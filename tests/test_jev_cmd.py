@@ -92,6 +92,17 @@ def test_jev_choice_needs_options(monkeypatch, capsys):
     assert "--options" in capsys.readouterr().out
 
 
+def test_jev_choice_accepts_positional_options(monkeypatch, capsys):
+    """`jev choice "A|B|C" "<question>"` — the positional list is the natural
+    form (regression: it used to demand --options)."""
+    _patch_engine(monkeypatch, ["A", "A", "B"])
+    assert _run(["choice", '"red|green|blue"', '"pick one"']) is True
+    out = capsys.readouterr().out
+    assert "P(red)" in out
+    assert "P(green)" in out
+    assert "P(blue)" in out
+
+
 def test_jev_choice_distribution(monkeypatch, capsys):
     _patch_engine(monkeypatch, ["A", "A", "B", "A", "B"])
     assert _run(

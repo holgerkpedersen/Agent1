@@ -3,8 +3,11 @@
 Usage::
 
     jev yesno  "<statement>"                [state/threshold/... flags]
-    jev choice --options "A|B|C" "<question>" [state/threshold/... flags]
+    jev choice "A|B|C" "<question>"         [state/threshold/... flags]
     jev score  --rubric "<rubric>" "<subject>" [state/threshold/... flags]
+
+``jev choice`` accepts the option list positionally (``"A|B|C"``) or via
+``--options "A|B|C"`` — the positional form is the natural first guess.
 
 Shared flags::
 
@@ -54,7 +57,7 @@ class JevCommand(Command):
     @property
     def help_text(self) -> str:
         return (
-            'jev yesno "<statement>" | jev choice --options "A|B|C" "<q>" | '
+            'jev yesno "<statement>" | jev choice "A|B|C" "<q>" | '
             'jev score --rubric "<rubric>" "<subject>" | jev stats '
             '[--last N] [--json] | jev label <id> correct|incorrect '
             "[--note \"...\"] [--state \"<text>\" | --file <path>] "
@@ -80,7 +83,8 @@ class JevCommand(Command):
         if not parts or parts[0].strip('"').lower() not in _KINDS:
             self.error(
                 'Usage: jev yesno|choice|score "<question>" '
-                '[--options "A|B|C"] [--rubric "<r>"] [--state "<text>"] '
+                '[--options "A|B|C" (or a positional "A|B|C")] '
+                '[--rubric "<r>"] [--state "<text>"] '
                 "[--file <path>] [--samples N] [--threshold X] [--json]"
             )
             return True
@@ -168,13 +172,24 @@ class JevCommand(Command):
             and not token.startswith("--")
             and token not in flag_values
         ]
+        # Convenience: `jev choice "A|B|C" "<question>"` — the first positional
+        # token carrying pipes IS the option list (the documented form is
+        # `--options "A|B|C"`, but the positional list is the natural guess).
+        if kind == KIND_CHOICE and not options and question_words:
+            first = question_words[0].strip('"').strip("'")
+            if "|" in first:
+                options = [o.strip() for o in first.split("|") if o.strip()]
+                question_words = question_words[1:]
         question_text = " ".join(question_words).strip().strip('"')
 
         if not question_text:
             self.error("jev needs a question/proposition.")
             return True
         if kind == KIND_CHOICE and len(options) < 2:
-            self.error('a choice question needs --options "A|B|C" (at least two).')
+            self.error(
+                'a choice question needs options: --options "A|B|C" or a '
+                'positional "A|B|C".'
+            )
             return True
 
         state = state_text
