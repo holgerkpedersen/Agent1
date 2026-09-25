@@ -75,7 +75,7 @@ class ModelCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "model [list|load|unload|reload|provider|profile] - Manage LLM models and providers"
+        return "model [list|load|unload|reload|provider|profile|jev] - Manage LLM models and providers (jev = the dedicated Jev decision model)"
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         sub = args[0].strip().lower() if args else ""
@@ -108,6 +108,13 @@ class ModelCommand(Command):
         if sub == "reload":
             # Resolve what is actually loaded and sync
             self._sync_with_lmstudio(agent)
+            return True
+
+        if sub == "jev":
+            # `model jev [<name>]` — show/set the DEDICATED Jev decision model.
+            # It is independent of the selected chat model: jev / jev_decide /
+            # speculate --judge jev always use it.
+            await self._handle_jev(rest, agent)
             return True
 
         if sub == "openrouter":
@@ -1034,6 +1041,80 @@ class ModelCommand(Command):
         agent.llm.model_name = model
         persist_model_choice(model, provider=target)
         print(f"  Provider switched: {current} -> {target}  (model: {model})")
+
+    async def _handle_jev(self, rest: list[str], agent: "Agent") -> None:
+        """``model jev [<name>]`` — show or set the dedicated Jev model.
+
+        The Jev model is INDEPENDENT of the selected chat model: ``jev``,
+        ``jev_decide`` and ``speculate --judge jev`` resolve it from
+        ``AGENT_JEV_MODEL`` / model.json ``jev_model`` / the catalog, never
+        from ``agent.llm``.  Setting it persists to model.json and .env so
+        every future session auto-selects it.
+        """
+        from agent_core.config import load_agent_settings
+        from agent_core.constants import persist_jev_model
+        from agent_core.jev_engine import build_jev_engine
+
+        if not rest:
+            settings = load_agent_settings()
+            try:
+                engine = build_jev_engine(settings=settings)
+            except Exception as exc:  # noqa: BLE001 - show the error, don't crash
+                print(f"  Jev model: {settings.jev_model or '(none configured)'}")
+                print(f"  Error building the Jev engine: {exc}")
+                return
+            provider = type(engine.provider).__name__
+            print(f"  Jev model: {engine.model_name}  (provider={provider})")
+            print("  Independent of the selected chat model.")
+            if provider == "LMStudioProvider":
+                from agent_core.llm.lmstudio import get_models_status
+
+                status = get_models_status()
+                if not status:
+                    print("  Status: LM Studio unreachable.")
+                else:
+                    match = next(
+                        (m for m in status if str(m.get("key")) == engine.model_name),
+                        None,
+                    )
+                    if match is None:
+                        print(
+                            f"  Status: '{engine.model_name}' is NOT in LM Studio — "
+                            "download/load it there."
+                        )
+                    elif match.get("loaded"):
+                        print("  Status: loaded in LM Studio.")
+                    else:
+                        print(
+                            "  Status: available in LM Studio "
+                            "(auto-loads on first use)."
+                        )
+            print("  Set a different one with: model jev <name>")
+            return
+
+        name = " ".join(rest).strip().strip('"').strip("'")
+        if not name:
+            print("  Usage: model jev <model-name>")
+            return
+        try:
+            engine = build_jev_engine(model_name=name)
+        except Exception as exc:  # noqa: BLE001 - a bad name must not crash
+            print(f"  Could not configure Jev model '{name}': {exc}")
+            return
+        persist_jev_model(name)
+        print(f"  Jev model set: {engine.model_name} "
+              f"(provider={type(engine.provider).__name__})")
+        print("  Persisted to model.json + .env (AGENT_JEV_MODEL); it is used "
+              "by jev / jev_decide / speculate --judge jev automatically.")
+        if type(engine.provider).__name__ == "LMStudioProvider":
+            from agent_core.llm.lmstudio import get_models_status
+
+            status = get_models_status()
+            if status and not any(
+                str(m.get("key")) == engine.model_name for m in status
+            ):
+                print(f"  Warning: '{engine.model_name}' is not in LM Studio — "
+                      "download/load it there or the Jev calls will abstain.")
 
     async def _switch_known(self, query: str, agent: "Agent") -> None:
         """Fallback switch using hardcoded KNOWN_MODELS."""

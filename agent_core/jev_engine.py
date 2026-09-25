@@ -475,6 +475,15 @@ class JevEngine:
         if not ok:
             print(f"  [jev] could not select model {self.model_name}: {message}")
 
+    async def ensure_ready(self) -> None:
+        """Public wrapper for :meth:`_ensure_ready`.
+
+        Consumers that use the engine's provider for their own work (e.g.
+        ``speculate`` branches) call this so the dedicated model is selected
+        before they run, not only when the first ``decide`` fires.
+        """
+        await self._ensure_ready()
+
     # -- aggregation --------------------------------------------------------
 
     def _result_from_replies(

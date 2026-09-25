@@ -333,6 +333,7 @@ class TestPersistProvider:
     def test_persist_model_choice_infers_provider(self, tmp_path, monkeypatch):
         from agent_core import constants as const
         monkeypatch.setattr(const, "MODEL_JSON_PATH", str(tmp_path / "model.json"))
+        monkeypatch.chdir(tmp_path)  # .env writes go to tmp, not the repo
         persist_model_choice(_default_llm())
         data = const.load_model_json()
         assert data["model"] == _default_llm()

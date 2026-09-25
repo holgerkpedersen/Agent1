@@ -294,6 +294,36 @@ def persist_model_choice(model_name: str, provider: str | None = None) -> None:
             ef.write(f"\nAGENT_MODEL={model_name}\n")
 
 
+def persist_jev_model(model_name: str) -> None:
+    """Write the dedicated Jev model to model.json and .env.
+
+    The Jev model is INDEPENDENT of the selected chat model: ``jev``,
+    ``jev_decide`` and ``speculate --judge jev`` always resolve it from
+    ``AGENT_JEV_MODEL`` / model.json ``jev_model`` / the catalog, never from
+    the active agent model.  Persisting here means every future session picks
+    it up automatically.
+    """
+    data = load_model_json()
+    data["jev_model"] = model_name
+    save_model_json(data)
+
+    env_path = ".env"
+    lines: list[str] = []
+    found = False
+    if os.path.exists(env_path):
+        with open(env_path, "r") as ef:
+            lines = ef.readlines()
+    with open(env_path, "w") as ef:
+        for line in lines:
+            if line.startswith("AGENT_JEV_MODEL="):
+                ef.write(f"AGENT_JEV_MODEL={model_name}\n")
+                found = True
+            else:
+                ef.write(line)
+        if not found:
+            ef.write(f"\nAGENT_JEV_MODEL={model_name}\n")
+
+
 __all__: list[str] = [
     "AGENT_MEMORY_JSON_PATH",
     "AGENT_MEMORY_TMP_PATH",
@@ -315,6 +345,7 @@ __all__: list[str] = [
     "ROUTER",
     "THINKING_GATES",
     "load_model_json",
+    "persist_jev_model",
     "persist_model_choice",
     "resolve_model",
     "save_model_json",

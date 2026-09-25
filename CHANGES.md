@@ -1,3 +1,51 @@
+## 2026-09-25 - fix: --judge jev keeps chat branches; --branch-model jev for pure Jev
+
+**Change**: new `speculate --branch-model chat|jev` (default `chat`). `--judge jev` now scores with the dedicated small model while the reasoning model generates the branches — the smart split (big model thinks, small model decides). `--branch-model jev` runs the branches on the Jev model too (cheap/offline). The header prints `branch_model=chat|jev`; the Jev engine is built when either role needs it and degrades gracefully per role.
+
+**Reason**: making `--judge jev` run the branches on a 1.5B made the small model *think* — it fabricated tool output and could not ground a repo question, so every repo question REFUSEd (correctly, but uselessly). Jev's value is the decision, not generation.
+
+**Files**: agent_core/commands/speculate_cmd.py, tests/test_speculate_cmd.py. Verified: 32 speculate tests green (new: `--judge jev` uses chat branches + Jev judge; pure-Jev via `--branch-model jev`).
+
+## 2026-09-25 - feat: speculate grounding guard + deterministic claim verification
+
+**Change**: `agent_core/commands/speculate_cmd.py` — (1) `_is_repo_question()` detects workspace/code questions (path tokens or repo hints); when true, `require_grounding` (default ON, `--no-grounding` disables) makes every branch call at least one tool before its answer is a candidate — an ungrounded branch is failed with `repo question answered without calling any tool`. (2) `_verify_claims()` checks every `file[:line]` claim in a COMMIT candidate against the real workspace before printing it (missing file, line past EOF; bare basenames are resolved anywhere in the workspace) and REFUSEs with the mismatch list instead of committing. The header now shows `grounding=on|off`.
+
+**Reason**: a live run answered a repo question from memory with a confident but stale/incorrect description of `speculate_cmd.py`, and the same-model LLM judge scored it 1.00 → COMMIT. Ungrounded code claims and nonexistent files must not be committed as verified fact. Both guards are deterministic and cost no judge call.
+
+**Files**: agent_core/commands/speculate_cmd.py, tests/test_speculate_cmd.py. Verified live: `grounding=on` on a repo question → REFUSE (pure-Jev branches did not ground); with `--no-grounding` the answer cited `project/main.py` → REFUSE `unverified file/line claim(s): project/main.py does not exist`. Tests: 30 speculate tests green (new: repo-question detection, grounding required/allowed, verified-claim commit, unverified-claim refusal, claim checker incl. bare basenames).
+
+## 2026-09-25 - fix: speculate rejects fabricated tool output
+
+**Change**: `agent_core/commands/speculate_cmd.py` gains `_looks_like_fabricated_output()` — pseudo-tool XML with attributes (`<definitions path="…">`, `<references symbol="…">`, `<search query="…">`, `<web_search …>`) and placeholder markers (`path/to/`, `example.com`, `your_file`) are non-answers. It is applied to every branch (a fabricating branch is failed, never a candidate) AND in the scorer (score 0.0), so a fabricated answer can never be COMMITted even if a judge rates it highly. The branch prompt now explicitly forbids inventing tool output.
+
+**Reason**: live pure-Jev run (2026-09-25): qwen2.5-coder-1.5b wrote `<definitions path="path/to/jev_integration.py">`, `<references …>`, `<search …>` blocks with placeholder paths, called NO tool, and its own 1.5B judge scored the hallucination 0.83 — it was COMMITted as the answer.
+
+**Files**: agent_core/commands/speculate_cmd.py, tests/test_speculate_cmd.py. Verified: 23 speculate tests green (new: fabrication detector + `test_speculate_rejects_fabricated_branch_answer` + `test_speculate_jev_mode_rejects_fabricated_answer`); live re-run produces a prose answer, no fabricated XML, and the selected chat model is still never called.
+
+## 2026-09-25 - feat: speculate --judge jev runs the whole command on the Jev model
+
+**Change**: `speculate --judge jev` now uses the dedicated Jev model for the BRANCHES as well as the judge — the selected chat model is not touched at all. `branch_llm` is the Jev engine's pinned provider; branch calls pass an explicit `max_tokens=1024` so the Jev profile's 512-token sample cap cannot truncate them; `JevEngine.ensure_ready()` (new public wrapper) selects/loads the small model BEFORE the branches run; the header prints `branch_model=<name>, jev_model=<name>, low=0.3, escalate=off`. The gray-band escalation to the chat-model judge is now opt-in via `--escalate` (default off), and `--judge both` still keeps chat-model branches and averages the two judges.
+
+**Reason**: `--judge jev` still dispatched its three branches on the selected chat model (the 27B), so a Jev-specific command visibly ran on llama/27B and could time out there — the opposite of "the Jev model is used every time, independent of the currently selected model". The user's requirement is now enforced: a Jev command never calls the chat model unless `--escalate` is given.
+
+**Files**: agent_core/commands/speculate_cmd.py, agent_core/jev_engine.py, tests/test_speculate_cmd.py. Verified live: ran `--judge jev` with an agent whose chat model RAISES if called — header `branch_model=qwen2.5-coder-1.5b-instruct, jev_model=qwen2.5-coder-1.5b-instruct, escalate=off`, no exception, `COMMIT score=0.88`. Tests: 20 speculate tests green (new: pure-Jev runs everything on Jev, `--escalate` gray-band, gray-band stays pure without it).
+
+## 2026-09-25 - fix: failover tests must not clobber the real model.json/.env
+
+**Change**: `tests/test_failover_chain.py` and `tests/test_failover_provider.py` gain an autouse `_no_model_persist` fixture that stubs `agent_core.constants.persist_model_choice`; `test_model_helpers.py::test_save_and_load_roundtrip` and `test_opencode_provider.py::test_persist_model_choice_infers_provider` now sandbox `MODEL_JSON_PATH`/cwd instead of touching the real files; new `tests/test_model_state_isolation.py` proves a real failover persists only in the sandbox and leaves the real `model.json` byte-for-byte unchanged.
+
+**Reason**: `FailoverProvider.chat` persists the model that actually answered (so the next turn starts on it). A failover test whose second stub was named `go` therefore rewrote the developer's real `model.json` and `.env` (`AGENT_MODEL=go`), silently changing the session's selected model.
+
+**Files**: tests/test_failover_chain.py, tests/test_failover_provider.py, tests/test_model_helpers.py, tests/test_opencode_provider.py, tests/test_model_state_isolation.py (new). Verified: the previously-polluting batch (119 tests) leaves `AGENT_MODEL`/model.json unchanged; new isolation test green.
+
+## 2026-09-25 - feat: model jev setup, visible judge model, longer speculate timeout
+
+**Change**: `model jev [<name>]` (new subcommand of `model`) shows the dedicated Jev model with its resolved provider and LM Studio status, and `model jev <name>` persists it (`persist_jev_model` -> model.json `jev_model` + .env `AGENT_JEV_MODEL`). `load_agent_settings` now reads model.json's `jev_model` as a tier between env/.env and the catalog default, so a one-time choice survives restarts. `speculate` prints the judge model in its header (`judge=jev, jev_model=<name>, low=0.3`) and its default branch-dispatch timeout is 300s -> 600s.
+
+**Reason**: the Jev model was already independent of the chat model (`build_jev_engine` + `single=True`), but it was invisible and not user-settable. A `speculate --judge jev` run on a local 27B timed out in the BRANCH phase at 300s, so the judge never ran and the only model on screen was the branch model — which reads as "Jev is running on the default model". Setup is now explicit, the judge model is visible before any branch runs, and the default timeout fits a local reasoning model.
+
+**Files**: agent_core/commands/model_cmd.py, agent_core/constants.py, agent_core/config.py, agent_core/commands/speculate_cmd.py, tests/test_model_jev.py (new), tests/test_speculate_cmd.py. Verified: 6 new tests + 19 speculate tests green; `model jev` live shows `qwen2.5-coder-1.5b-instruct (provider=LMStudioProvider), loaded`.
+
 ## 2026-09-25 - feat: Jev commands auto-select the Jev model
 
 **Change**: `LMStudioProvider.ensure_model_loaded()` (new) + `JevEngine._ensure_ready()`: before the first request, a Jev engine ensures its dedicated model is loaded in LM Studio — skipping when already loaded, loading it via the management API otherwise, and deferring to the normal request path when LM Studio is unreachable. Runs once per engine, via `asyncio.to_thread` (never blocks the loop); a failed load prints `[jev] could not select model <name>: <reason>` and falls through. Wired for `jev`, `jev_decide` and `speculate --judge jev` (all go through `JevEngine.decide`).

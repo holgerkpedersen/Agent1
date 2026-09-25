@@ -23,6 +23,15 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def _no_model_persist(monkeypatch):
+    """A real failover persists the working model to model.json/.env — tests
+    must never clobber the developer's actual state."""
+    monkeypatch.setattr(
+        "agent_core.constants.persist_model_choice", lambda *a, **k: None,
+    )
+
+
 class _FakeProvider:
     """Minimal LLMProvider stand-in for failover tests.
 

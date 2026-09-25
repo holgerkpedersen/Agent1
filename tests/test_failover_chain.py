@@ -25,6 +25,16 @@ from agent_core.llm.provider import (
 from _helpers import _default_zen_free_model
 
 
+@pytest.fixture(autouse=True)
+def _no_model_persist(monkeypatch):
+    """A real failover persists the working model to model.json/.env — tests
+    must never clobber the developer's actual state (regression: a failover to
+    a stub named 'go' rewrote AGENT_MODEL=go)."""
+    monkeypatch.setattr(
+        "agent_core.constants.persist_model_choice", lambda *a, **k: None,
+    )
+
+
 #: The catalog default chain is the single source of truth for the default
 #: provider order AND the pinned go model.  Deriving the expectation from it
 #: (instead of a duplicated literal) keeps this test from drifting out of sync

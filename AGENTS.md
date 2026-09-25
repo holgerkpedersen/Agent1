@@ -46,8 +46,20 @@ is being extended to audit its own file effects (self-improvement).
   best at `--threshold` or REFUSEs. Branch-dispatch timeout default 300s.
   A branch whose tool-call syntax leaks through as TEXT (e.g. gemma's
   `<|tool_call>call:run{...}`) is failed, not committed, and the judge scores a
-  non-answer 0.0 without asking the model. `--judge jev|both` swaps/averages the
-  LLM judge for the Jev engine (below).
+  non-answer 0.0 without asking the model. `--judge jev` scores with the
+  dedicated small model while the reasoning model still generates the branches
+  (the smart split: big model thinks, small model decides); `--branch-model jev`
+  also generates the branches on the Jev model (cheap/offline, but a 1.5B
+  cannot ground a repo question — expect REFUSE); `--escalate` opts into
+  gray-band escalation to the chat-model judge; `--judge both` averages the
+  two judges. The header prints `branch_model=` / `jev_model=` / `escalate=`.
+  Grounding: a repo/code question (`_is_repo_question`) requires every branch
+  to execute at least one tool (`grounding=on`; `--no-grounding` disables) —
+  ungrounded code claims are not candidates. Before COMMIT, every
+  `file[:line]` claim in the winning answer is verified against the workspace
+  (`_verify_claims`: missing file / line past EOF / bare basename resolved by
+  rglob) and the command REFUSEs on a mismatch — both guards are deterministic
+  and free.
 - `agent_core/jev_engine.py` — the Jev decision engine: a TYPED, probabilistic
   micro-decision (`yesno` -> P(yes)/P(no)/TRUE-FALSE-UNKNOWN, `choice` ->
   distribution over options/argmax-UNDECIDED, `score` -> 0-100 + spread) run on
@@ -70,7 +82,11 @@ is being extended to audit its own file effects (self-improvement).
   timeouts, empty output, unparseable tokens and leaked tool calls are
   ABSTENTIONS (majority -> UNKNOWN), never fabricated votes. Consumers: REPL
   `jev` (`agent_core/commands/jev_cmd.py`) and the read-only NLP tool
-  `jev_decide` (`PLAN_MODE_TOOLS`).
+  `jev_decide` (`PLAN_MODE_TOOLS`). Configured with `model jev [<name>]`
+  (shows the resolved provider + LM Studio status; `model jev <name>` persists
+  `AGENT_JEV_MODEL` to model.json + .env) — the Jev model is independent of
+  the selected chat model and `speculate` prints `jev_model=<name>` in its
+  header so the judge model is visible before the branches run.
 - `harnessfix/jev_telemetry.py` — Jev decision telemetry + calibration: every
   `JevEngine.decide` appends one record (source/model/kind/mechanism/
   probabilities/decision/threshold) to `reports/history/jev.jsonl`
@@ -410,7 +426,10 @@ incrementally as its capability grows — human stays in control.
   reports counts, predicted-vs-observed calibration bins and a suggested yesno
   threshold. `speculate --judge jev` also gained the gray-band cascade
   (`--low`, default 0.3): confident accept/reject costs one small-model call,
-  only `low < P < threshold` escalates that candidate to the LLM judge.
+  only `low < P < threshold` escalates that candidate to the LLM judge — but
+  escalation is now opt-in via `--escalate`, because `--judge jev` runs the
+  whole command (branches + judge) on the dedicated model and must not touch
+  the selected chat model by default.
   Tests: `tests/test_jev_telemetry.py` (13), `tests/test_jev_cmd.py` (20),
   `tests/test_speculate_cmd.py` (19).
 

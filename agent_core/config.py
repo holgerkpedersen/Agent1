@@ -15,6 +15,7 @@ from .constants import (
     DEFAULT_OPENCODE_SERVER_URL,
     DEFAULT_OPENROUTER_API_BASE,
     DEFAULT_OPENROUTER_MODEL,
+    load_model_json,
 )
 from .exceptions import ConfigurationError
 from .timeout import COMPILATION_CHECK_TIMEOUT, SEARCH_COMMAND_TIMEOUT
@@ -303,6 +304,20 @@ def _store_secret(name: str) -> str:
         return ""
 
 
+def _persisted_jev_model() -> str:
+    """Jev model persisted by ``model jev <name>`` (model.json ``jev_model``).
+
+    Sits between the env/.env tier and the catalog default, so a one-time
+    ``model jev`` choice survives restarts without hand-editing .env.  Never
+    raises — settings load must not break.
+    """
+    try:
+        return str(load_model_json().get("jev_model") or "")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Persisted Jev model lookup failed: %s", exc)
+        return ""
+
+
 def _validate_settings(settings: AgentSettings) -> None:
     """Validate the given settings and raise ConfigurationError if invalid."""
 
@@ -501,7 +516,12 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or env_vars.get("OPENROUTER_API_KEY") or _store_secret("OPENROUTER_API_KEY"),
         openrouter_model=os.environ.get("AGENT_OPENROUTER_MODEL") or env_vars.get("AGENT_OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL,
         failover_strategy=os.environ.get("AGENT_FAILOVER_STRATEGY", "ordered").strip().lower(),
-        jev_model=os.environ.get("AGENT_JEV_MODEL") or env_vars.get("AGENT_JEV_MODEL") or DEFAULT_JEV_MODEL,
+        jev_model=(
+            os.environ.get("AGENT_JEV_MODEL")
+            or env_vars.get("AGENT_JEV_MODEL")
+            or _persisted_jev_model()
+            or DEFAULT_JEV_MODEL
+        ),
         jev_provider=(os.environ.get("AGENT_JEV_PROVIDER") or env_vars.get("AGENT_JEV_PROVIDER") or "").strip().lower(),
         jev_samples=_parse_int(os.environ.get("AGENT_JEV_SAMPLES") or env_vars.get("AGENT_JEV_SAMPLES"), 5),
         jev_temperature=_parse_float(os.environ.get("AGENT_JEV_TEMPERATURE") or env_vars.get("AGENT_JEV_TEMPERATURE"), 0.7),

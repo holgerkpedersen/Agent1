@@ -184,6 +184,144 @@ def test_speculate_branch_refuses_mutating_tools():
     assert agent.executed == []  # allowlist blocked it before the executor
 
 
+# ---------------------------------------------------------------------------
+#  Grounding + claim verification
+# ---------------------------------------------------------------------------
+
+
+def test_is_repo_question():
+    from agent_core.commands.speculate_cmd import _is_repo_question
+
+    assert _is_repo_question("How does agent_core/jev_engine.py work?")
+    assert _is_repo_question(
+        "What is the highest-value improvement to the Jev integration?"
+    )
+    assert not _is_repo_question("What is the capital of France?")
+
+
+def test_verify_claims_checks_workspace(tmp_path):
+    from agent_core.commands.speculate_cmd import _verify_claims
+
+    (tmp_path / "real.py").write_text("line1\nline2\n", encoding="utf-8")
+    assert _verify_claims("see real.py:2", str(tmp_path)) == []
+    assert _verify_claims("see real.py:99", str(tmp_path))  # past EOF
+    assert _verify_claims("see ghost.py:1", str(tmp_path))  # missing file
+    assert _verify_claims("no file claims here", str(tmp_path)) == []
+
+
+def test_verify_claims_resolves_bare_basename(tmp_path):
+    from agent_core.commands.speculate_cmd import _verify_claims
+
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "mod.py").write_text("a\nb\n", encoding="utf-8")
+    assert _verify_claims("see mod.py:2", str(tmp_path)) == []  # found in pkg/
+    assert _verify_claims("see mod.py:99", str(tmp_path))  # past EOF
+    assert _verify_claims("see ghost.py:1", str(tmp_path))  # nowhere
+
+
+def test_speculate_requires_grounding_for_repo_questions(capsys):
+    """A repo question answered from memory is not a candidate — the 27B did
+    exactly that and a same-model judge scored it 1.00."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    class UngroundedLLM:
+        model_name = "fake-model"
+
+        async def chat(self, messages, tools=None, **kwargs):
+            content = str(messages[-1].get("content") or "")
+            if content.startswith("Quality judge:"):
+                return "0.9"
+            return "The Jev engine uses sample votes."  # never calls a tool
+
+    agent = type("A", (), {"llm": UngroundedLLM(), "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(SpeculateCommand().execute(
+        ['"How does agent_core/jev_engine.py work?"'], agent,
+    )) is True
+    out = capsys.readouterr().out
+    assert "grounding=on" in out
+    assert "REFUSE" in out
+    assert "COMMIT" not in out
+
+
+def test_speculate_refuse_reports_branch_failure_reasons(capsys):
+    """A bare REFUSE is opaque — the disqualification reasons must be shown."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    class UngroundedLLM:
+        model_name = "fake-model"
+
+        async def chat(self, messages, tools=None, **kwargs):
+            content = str(messages[-1].get("content") or "")
+            if content.startswith("Quality judge:"):
+                return "0.9"
+            return "The Jev engine uses sample votes."
+
+    agent = type("A", (), {"llm": UngroundedLLM(), "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(SpeculateCommand().execute(
+        ['"How does agent_core/jev_engine.py work?"'], agent,
+    )) is True
+    out = capsys.readouterr().out
+    assert "REFUSE" in out
+    assert "branch failures (deterministic guards):" in out
+    assert "without calling any tool" in out
+
+
+def test_speculate_no_grounding_flag_allows_ungrounded(capsys):
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    class UngroundedLLM:
+        model_name = "fake-model"
+
+        async def chat(self, messages, tools=None, **kwargs):
+            content = str(messages[-1].get("content") or "")
+            if content.startswith("Quality judge:"):
+                return "0.9"
+            return "The Jev engine uses sample votes."
+
+    agent = type("A", (), {"llm": UngroundedLLM(), "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(SpeculateCommand().execute(
+        ['"How does agent_core/jev_engine.py work?"', "--no-grounding"], agent,
+    )) is True
+    out = capsys.readouterr().out
+    assert "grounding=off" in out
+    assert "COMMIT" in out
+
+
+def test_speculate_grounded_branch_can_commit(capsys):
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    agent = _ToolAgent("read")  # calls read, then answers
+    asyncio.run(SpeculateCommand().execute(
+        ['"How does agent_core/jev_engine.py work?"'], agent,
+    ))
+    assert agent.executed  # the branch grounded itself
+    out = capsys.readouterr().out
+    assert "COMMIT" in out
+    assert "grounded answer" in out
+
+
+def test_speculate_refuses_unverified_claims(capsys):
+    """A COMMIT-worthy answer citing code that is not there is refused."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    class ClaimingLLM:
+        model_name = "fake-model"
+
+        async def chat(self, messages, tools=None, **kwargs):
+            content = str(messages[-1].get("content") or "")
+            if content.startswith("Quality judge:"):
+                return "0.9"
+            return "The engine lives at agent_core/jev_engine.py:999999."
+
+    agent = type("A", (), {"llm": ClaimingLLM(), "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(SpeculateCommand().execute(['"q"'], agent)) is True
+    out = capsys.readouterr().out
+    assert "REFUSE - unverified file/line claim" in out
+    assert "999999" in out
+    assert "COMMIT" not in out
+
+
 def test_looks_like_tool_call_detects_leaked_syntax():
     from agent_core.commands.speculate_cmd import _looks_like_tool_call
 
@@ -192,6 +330,50 @@ def test_looks_like_tool_call_detects_leaked_syntax():
     assert _looks_like_tool_call('{"tool_calls": [{"id": "1"}]}')
     assert not _looks_like_tool_call("The repo is doing well - about 80/100.")
     assert not _looks_like_tool_call("")
+
+
+def test_looks_like_fabricated_output_detects_pseudo_tool_xml():
+    """A weak branch model writes fake tool XML with placeholder paths instead
+    of calling the tool (observed with qwen2.5-coder-1.5b in pure Jev mode)."""
+    from agent_core.commands.speculate_cmd import _looks_like_fabricated_output
+
+    assert _looks_like_fabricated_output('<definitions path="path/to/x.py">')
+    assert _looks_like_fabricated_output('<references symbol="X" max_results="30">')
+    assert _looks_like_fabricated_output('<search query="X">')
+    assert _looks_like_fabricated_output('<web_search query="X">')
+    assert _looks_like_fabricated_output("see path/to/file.py")
+    assert _looks_like_fabricated_output("docs at example.com")
+    assert not _looks_like_fabricated_output("The fix command edits files in place.")
+    assert not _looks_like_fabricated_output("use the <definitions> tool first")
+    assert not _looks_like_fabricated_output("")
+
+
+def test_speculate_rejects_fabricated_branch_answer(capsys):
+    """Regression: a branch fabricated tool XML with placeholder paths and its
+    own judge scored it 0.83 — it was COMMITted as the answer."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    class FabricatingLLM:
+        model_name = "fake-model"
+
+        async def chat(self, messages, tools=None, **kwargs):
+            content = str(messages[-1].get("content") or "")
+            if content.startswith("Quality judge:"):
+                return "0.9"  # even a perfect judge score must not save it
+            return (
+                '<definitions path="path/to/jev_integration.py">\n'
+                '  <definition class="Jev" line="100"/>\n'
+                '</definitions>\n'
+                '<search query="Jev">\n'
+                '  <file path="path/to/x.py">line 1</file>\n</search>'
+            )
+
+    agent = type("A", (), {"llm": FabricatingLLM(), "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(SpeculateCommand().execute(['"q"'], agent)) is True
+    out = capsys.readouterr().out
+    assert "REFUSE" in out
+    assert "COMMIT" not in out
+    assert "<definitions" not in out  # never presented as the answer
 
 
 def test_speculate_rejects_branch_that_emits_a_tool_call_as_text(capsys):
@@ -283,11 +465,21 @@ def test_speculate_refuses_when_provider_fails(capsys):
 
 
 class _FakeJevEngine:
-    """P(yes)=good for a 'good' answer, bad otherwise."""
+    """P(yes)=good for a 'good' answer, bad otherwise.
 
-    def __init__(self, good=0.9, bad=0.2):
+    ``provider`` is the branch LLM in pure `--judge jev` mode (the engine's
+    pinned small-model provider); it defaults to a branch-answering FakeLLM.
+    """
+
+    model_name = "small"
+
+    def __init__(self, good=0.9, bad=0.2, provider=None):
         self._good = good
         self._bad = bad
+        self.provider = provider if provider is not None else FakeLLM()
+
+    async def ensure_ready(self):
+        pass
 
     async def decide(self, question, state=""):
         from agent_core.jev_engine import JevResult
@@ -303,12 +495,13 @@ class _FakeJevEngine:
 
 
 class _CountingLLM:
-    """Branch answers like FakeLLM but counts LLM-judge calls."""
+    """Branch answers like FakeLLM but counts branch and LLM-judge calls."""
 
     model_name = "fake-model"
 
     def __init__(self, judge_score="0.5"):
         self.judge_calls = 0
+        self.branch_calls = 0
         self.judge_score = judge_score
 
     async def chat(self, messages, tools=None, **kwargs):
@@ -316,6 +509,7 @@ class _CountingLLM:
         if content.startswith("Quality judge:"):
             self.judge_calls += 1
             return self.judge_score
+        self.branch_calls += 1
         branch_id = int(content.split()[2].rstrip("."))
         if branch_id == 0:
             return "good answer %d" % branch_id
@@ -328,20 +522,51 @@ def _patch_jev(monkeypatch, engine):
     monkeypatch.setattr(jev, "build_jev_engine", lambda **kw: engine)
 
 
-def test_speculate_jev_judge_commits_without_llm_judge(monkeypatch, capsys):
+def test_speculate_jev_judge_uses_chat_branches_by_default(monkeypatch, capsys):
+    """The smart split: the reasoning model THINKS (branches), the small Jev
+    model DECIDES (judge)."""
     from agent_core.commands.speculate_cmd import SpeculateCommand
 
+    chat = _CountingLLM()
     _patch_jev(monkeypatch, _FakeJevEngine())
-    llm = _CountingLLM()
-    agent = type("A", (), {"llm": llm, "workspace": "C:/Dev/Agent1"})()
+    agent = type("A", (), {"llm": chat, "workspace": "C:/Dev/Agent1"})()
     assert asyncio.run(
         SpeculateCommand().execute(['"which branch is best?"', "--judge", "jev"], agent)
+    ) is True
+    out = capsys.readouterr().out
+    assert "branch_model=chat" in out
+    assert "jev_model=small" in out
+    assert "COMMIT" in out
+    assert chat.branch_calls > 0   # chat model generated the branches
+    assert chat.judge_calls == 0   # the small model judged
+
+
+def test_speculate_jev_mode_runs_everything_on_the_jev_model(monkeypatch, capsys):
+    """`--branch-model jev` runs the WHOLE command on the dedicated Jev model —
+    branches AND judge — and never touches the selected chat model."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    branch = _CountingLLM()  # stands in for the Jev provider (engine.provider)
+    chat = _CountingLLM()    # the selected chat model — must stay untouched
+    _patch_jev(monkeypatch, _FakeJevEngine(provider=branch))
+    agent = type("A", (), {"llm": chat, "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(
+        SpeculateCommand().execute(
+            ['"which branch is best?"', "--judge", "jev", "--branch-model", "jev"],
+            agent,
+        )
     ) is True
     out = capsys.readouterr().out
     assert "COMMIT" in out
     assert "good answer 0" in out
     assert "judge=jev" in out
-    assert llm.judge_calls == 0  # the LLM judge was never asked
+    assert "jev_model=small" in out
+    assert "branch_model=fake-model" in out
+    assert "timeout=600s" in out
+    assert branch.branch_calls > 0   # branches ran on the Jev provider
+    assert branch.judge_calls == 0   # ...and the LLM judge was never asked
+    assert chat.branch_calls == 0    # the selected chat model was NOT used
+    assert chat.judge_calls == 0
 
 
 def test_speculate_both_judges_average(monkeypatch, capsys):
@@ -362,36 +587,89 @@ def test_speculate_both_judges_average(monkeypatch, capsys):
     assert llm.judge_calls > 0
 
 
-def test_speculate_jev_judge_gray_band_escalates(monkeypatch, capsys):
-    """Cascade: a gray-band Jev score escalates ONE candidate to the LLM judge
-    instead of refusing (a 1.5B judge just under the threshold used to REFUSE
-    good answers)."""
+def test_speculate_jev_escalate_uses_the_chat_model_in_gray_band(monkeypatch, capsys):
+    """`--escalate` is the ONLY way `--judge jev` touches the chat model."""
     from agent_core.commands.speculate_cmd import SpeculateCommand
 
     _patch_jev(monkeypatch, _FakeJevEngine(good=0.5))
-    llm = _CountingLLM(judge_score="0.9")
-    agent = type("A", (), {"llm": llm, "workspace": "C:/Dev/Agent1"})()
+    chat = _CountingLLM(judge_score="0.9")
+    agent = type("A", (), {"llm": chat, "workspace": "C:/Dev/Agent1"})()
     assert asyncio.run(
-        SpeculateCommand().execute(['"which branch is best?"', "--judge", "jev"], agent)
+        SpeculateCommand().execute(
+            ['"which branch is best?"', "--judge", "jev", "--escalate",
+             "--branch-model", "jev"],
+            agent,
+        )
     ) is True
     out = capsys.readouterr().out
-    assert "low=0.3" in out
+    assert "escalate=on" in out
     assert "COMMIT" in out
-    assert llm.judge_calls > 0  # escalated in the gray band
+    assert chat.judge_calls > 0   # escalated in the gray band
+
+
+def test_speculate_jev_gray_band_without_escalate_stays_pure(monkeypatch, capsys):
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    _patch_jev(monkeypatch, _FakeJevEngine(good=0.5))
+    chat = _CountingLLM(judge_score="0.9")
+    agent = type("A", (), {"llm": chat, "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(
+        SpeculateCommand().execute(
+            ['"which branch is best?"', "--judge", "jev", "--branch-model", "jev"],
+            agent,
+        )
+    ) is True
+    out = capsys.readouterr().out
+    assert "escalate=off" in out
+    assert "REFUSE" in out  # 0.5 < 0.7 and no escalation
+    assert chat.branch_calls == 0
+    assert chat.judge_calls == 0
+
+
+def test_speculate_jev_mode_rejects_fabricated_answer(monkeypatch, capsys):
+    """Pure-Jev mode must reject a fabricated branch answer and stay on the
+    Jev model (the selected chat model is never touched)."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    class FabricatingLLM:
+        model_name = "fake-model"
+
+        async def chat(self, messages, tools=None, **kwargs):
+            return (
+                '<references symbol="X" max_results="30">\n'
+                '<reference file="path/to/a.py" line="5"/>\n</references>'
+            )
+
+    chat = _CountingLLM()
+    _patch_jev(monkeypatch, _FakeJevEngine(provider=FabricatingLLM()))
+    agent = type("A", (), {"llm": chat, "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(
+        SpeculateCommand().execute(
+            ['"q"', "--judge", "jev", "--branch-model", "jev"], agent,
+        )
+    ) is True
+    out = capsys.readouterr().out
+    assert "REFUSE" in out
+    assert chat.branch_calls == 0
+    assert chat.judge_calls == 0
 
 
 def test_speculate_jev_judge_confident_reject_skips_llm(monkeypatch, capsys):
     from agent_core.commands.speculate_cmd import SpeculateCommand
 
     _patch_jev(monkeypatch, _FakeJevEngine(good=0.2))
-    llm = _CountingLLM(judge_score="0.9")
-    agent = type("A", (), {"llm": llm, "workspace": "C:/Dev/Agent1"})()
+    chat = _CountingLLM(judge_score="0.9")
+    agent = type("A", (), {"llm": chat, "workspace": "C:/Dev/Agent1"})()
     assert asyncio.run(
-        SpeculateCommand().execute(['"which branch is best?"', "--judge", "jev"], agent)
+        SpeculateCommand().execute(
+            ['"which branch is best?"', "--judge", "jev", "--branch-model", "jev"],
+            agent,
+        )
     ) is True
     out = capsys.readouterr().out
     assert "REFUSE" in out
-    assert llm.judge_calls == 0  # confident reject, no reasoning-model cost
+    assert chat.judge_calls == 0  # confident reject, no reasoning-model cost
+    assert chat.branch_calls == 0
 
 
 def test_speculate_rejects_low_above_threshold(capsys):

@@ -795,13 +795,16 @@ class TestPersistModelChoice:
         data = load_model_json()
         assert isinstance(data, dict)
 
-    def test_save_and_load_roundtrip(self):
-        original = load_model_json()
-        try:
-            test_data = {"model": "laguna-s-2.1", "test_marker": "pytest"}
-            save_model_json(test_data)
-            loaded = load_model_json()
-            assert loaded["model"] == "laguna-s-2.1"
-            assert loaded["test_marker"] == "pytest"
-        finally:
-            save_model_json(original)
+    def test_save_and_load_roundtrip(self, tmp_path, monkeypatch):
+        import agent_core.constants as constants
+
+        # Never touch the developer's real model.json: a failed assertion in
+        # the old save/restore version could leave test data behind.
+        monkeypatch.setattr(
+            constants, "MODEL_JSON_PATH", str(tmp_path / "model.json"),
+        )
+        test_data = {"model": "laguna-s-2.1", "test_marker": "pytest"}
+        save_model_json(test_data)
+        loaded = load_model_json()
+        assert loaded["model"] == "laguna-s-2.1"
+        assert loaded["test_marker"] == "pytest"
