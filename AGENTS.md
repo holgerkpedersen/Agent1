@@ -75,7 +75,11 @@ is being extended to audit its own file effects (self-improvement).
   `AGENT_JEV_MODEL`) — it builds its OWN   provider with `single=True`: ONE
   pinned provider, NO failover chain, and it never touches `agent.llm`. (A
   failover chain was the bug: a Jev call silently drifted to DeepSeek/
-  OpenRouter/the 27B when LM Studio was unreachable.) Before the first request
+  OpenRouter/the 27B when LM Studio was unreachable.) Every prompt carries the
+  current local date/time and a NAMED time of day (`_now_context` /
+  `_time_of_day`: "time of day: night"), so time-dependent questions
+  ("is it evening?") get a real probability instead of a guess. Before the
+  first request
   the engine AUTO-SELECTS its model (`LMStudioProvider.ensure_model_loaded`,
   run once per engine) so a `model` switch that evicted the small model from
   VRAM cannot break a Jev command. NOTE: pick a

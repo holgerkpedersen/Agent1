@@ -1,3 +1,11 @@
+## 2026-09-25 - feat: Jev prompts carry the current local time (time of day)
+
+**Change**: `agent_core/jev_engine.py` — `_now_context()` / `_time_of_day()` prepend a CONTEXT line to every Jev prompt (`_build_messages`): `current local date and time is 2026-09-25 23:52 (Friday, UTC+0200); time of day: night`. The named bucket (morning/afternoon/evening/night) is handed to the model so a 1.5B need not derive it from a 24-hour clock.
+
+**Reason**: `jev yesno "is it evening?"` had no clock in its prompt, so time-dependent questions could only be guessed or abstained; the agent already exposes `get_current_datetime`, so the same fact is now available to every Jev call automatically.
+
+**Files**: agent_core/jev_engine.py, tests/test_jev_engine.py. Verified live at 23:52 local: `is it night?` -> P(yes)=0.76 TRUE, `is it morning?` -> P(yes)=0.22 FALSE, `is it evening?` -> P(yes)=0.54 (borderline, correct for late night). Tests: 51 engine tests green (new: time injected, time-of-day buckets).
+
 ## 2026-09-25 - feat: speculate agreement gate, mandatory citations, calibrated threshold
 
 **Change**: repo-question answers now require a `file:line` citation (evidence), and `--agree N` (default 2) requires N independent branches to cite the SAME evidence files before COMMIT (agreement signature = cited basenames; `--agree 1` disables). `--threshold auto` uses the threshold fitted from labeled outcomes (`harnessfix.jev_telemetry.load_suggested_threshold`, minimum 10 labels), and the new `jev label <id> correct|incorrect [--note ...]` command records those outcomes. The header shows `agree=` and the resolved threshold.

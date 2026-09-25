@@ -140,6 +140,46 @@ class TestParsers:
 # ---------------------------------------------------------------------------
 
 
+class TestPrompt:
+    """Every Jev call carries the current local time so time-dependent
+    questions ("is it evening?") get a real probability instead of a guess."""
+
+    def test_current_time_is_injected(self):
+        from datetime import datetime as _dt
+
+        from agent_core.jev_engine import _build_messages
+
+        messages = _build_messages(
+            JevQuestion(kind=KIND_YESNO, text="is it evening?"), "moon is up",
+        )
+        user = messages[-1]["content"]
+        assert "current local date and time" in user
+        assert f"{_dt.now():%Y-%m-%d}" in user
+        assert "STATE:" in user
+        assert "moon is up" in user
+        assert "QUESTION: is it evening?" in user
+
+    def test_question_without_state_still_has_time(self):
+        from agent_core.jev_engine import _build_messages
+
+        messages = _build_messages(JevQuestion(kind=KIND_SCORE, text="rate it"))
+        user = messages[-1]["content"]
+        assert "current local date and time" in user
+        assert "time of day:" in user
+        assert "STATE:" not in user
+
+    def test_time_of_day_buckets(self):
+        from datetime import datetime as _dt
+
+        from agent_core.jev_engine import _time_of_day
+
+        assert _time_of_day(_dt(2026, 9, 25, 8, 30)) == "morning"
+        assert _time_of_day(_dt(2026, 9, 25, 14, 0)) == "afternoon"
+        assert _time_of_day(_dt(2026, 9, 25, 19, 0)) == "evening"
+        assert _time_of_day(_dt(2026, 9, 25, 23, 51)) == "night"
+        assert _time_of_day(_dt(2026, 9, 25, 3, 0)) == "night"
+
+
 class TestQuestion:
     def test_bad_kind_raises(self):
         with pytest.raises(ValueError):

@@ -36,6 +36,7 @@ import asyncio
 import math
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from agent_core.constants import DEFAULT_JEV_MODEL
@@ -282,13 +283,51 @@ def parse_score(reply: str, max_value: float = 100.0) -> float | None:
 #  Engine
 # ---------------------------------------------------------------------------
 
+def _time_of_day(now: datetime) -> str:
+    """Human time-of-day bucket (morning/afternoon/evening/night).
+
+    Named explicitly in the prompt so a small model does not have to derive
+    "evening" from a 24-hour clock — the fact is handed to it.
+    """
+    hour = now.hour
+    if 5 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 17:
+        return "afternoon"
+    if 17 <= hour < 22:
+        return "evening"
+    return "night"
+
+
+def _now_context() -> str:
+    """Local date/time line injected into every Jev prompt.
+
+    A Jev question can be time-dependent ("is it evening?", "is the release
+    overdue?"); without the current time the small model can only guess or
+    abstain.  The agent already exposes ``get_current_datetime`` — this makes
+    the same fact available to every Jev call, automatically, including the
+    named time of day.
+    """
+    now = datetime.now().astimezone()
+    return (
+        f"{now:%Y-%m-%d %H:%M} ({now:%A}, UTC{now:%z}); "
+        f"time of day: {_time_of_day(now)}"
+    )
+
+
 def _build_messages(question: JevQuestion, state: str = "") -> list[dict[str, str]]:
-    """The short, strict prompt for one Jev call."""
+    """The short, strict prompt for one Jev call.
+
+    Always leads with the current local date/time as CONTEXT, then any caller
+    STATE, then the typed question.
+    """
     system = (
         "You are a strict classifier. Answer with EXACTLY one token and "
         "nothing else. No explanation, no punctuation, no tool calls."
     )
-    lines: list[str] = []
+    lines: list[str] = [
+        f"CONTEXT: current local date and time is {_now_context()}.", "",
+    ]
     state = str(state or "").strip()
     if state:
         lines.extend(["STATE:", state, ""])
