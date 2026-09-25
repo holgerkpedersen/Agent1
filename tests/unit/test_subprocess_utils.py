@@ -190,6 +190,18 @@ def test_shell_info_values_are_strings() -> None:
         assert len(v) > 0
 
 
+def test_shell_info_posix_guidance_is_symmetric(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A POSIX shell's run guidance must warn against cmd.exe builtins AND
+    PowerShell cmdlets — the mirror of the Windows 'no Unix tools' guidance."""
+    import agent_core.subprocess_utils as _mod
+
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    info = _mod.shell_info()
+    assert info["name"] == "bash"
+    assert "cmd.exe" in info["guidance"]
+    assert "PowerShell" in info["guidance"]
+
+
 @pytest.mark.skipif(
     sys.platform != "win32", reason="PowerShell/cmd detection is Windows-only"
 )

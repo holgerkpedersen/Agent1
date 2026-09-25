@@ -215,3 +215,63 @@ def test_speculate_rejects_branch_that_emits_a_tool_call_as_text(capsys):
     assert "REFUSE" in out
     assert "COMMIT" not in out
     assert "<|tool_call>" not in out  # never presented as the answer
+
+
+def test_provider_error_string_scores_zero():
+    """Regression: LMStudioProvider.chat returns '[Error: HTTP Error 400: ...]'
+    as plain text when the server has no model loaded.  _parse_score's
+    first-number regex then extracted the '400' and clamped it to 1.0 —
+    a failed branch was COMMITted as the answer (observed live against a
+    llama-server on WSL Ubuntu 24.04 with no model loaded)."""
+    from agent_core.commands.speculate_cmd import _is_provider_error, _parse_score
+
+    err = ('[Error: HTTP Error 400: {\n'
+           '    "error": {\n'
+           '        "message": "No models loaded. Please load a model in the '
+           'developer page or use the \'lms load\' command.",\n'
+           '        "type": "invalid_request_error",\n'
+           '        "param": "model",\n'
+           '        "code": null\n'
+           '    }\n'
+           '}]')
+    assert _is_provider_error(err)
+    assert _parse_score(err) == 0.0  # was 1.0 before the fix
+
+    # A normal judge reply still parses correctly.
+    assert _parse_score("0.9") == 0.9
+    assert _parse_score("0.5") == 0.5
+    assert _parse_score("") == 0.0
+    assert _parse_score("I think it is fine") == 0.0  # no number -> 0.0
+
+    # A real answer is NOT a provider error.
+    assert not _is_provider_error("The retry policy is 3 attempts.")
+    assert not _is_provider_error("")
+
+
+def test_speculate_refuses_when_provider_fails(capsys):
+    """Regression: when the LLM returns a provider error string for every
+    branch AND the judge, no branch should be COMMITted."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    err_str = ('[Error: HTTP Error 400: {\n'
+               '    "error": {\n'
+               '        "message": "No models loaded.",\n'
+               '        "type": "invalid_request_error",\n'
+               '        "param": "model",\n'
+               '        "code": null\n'
+               '    }\n'
+               '}]')
+
+    class BrokenLLM:
+        model_name = "broken-model"
+
+        async def chat(self, messages, tools=None, **kwargs):
+            # Every call (branch AND judge) returns the same error string.
+            return err_str
+
+    agent = type("A", (), {"llm": BrokenLLM(), "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(SpeculateCommand().execute(['"q"'], agent)) is True
+    out = capsys.readouterr().out
+    assert "REFUSE" in out
+    assert "COMMIT" not in out
+    assert "[Error:" not in out  # error never presented as the answer

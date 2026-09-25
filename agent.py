@@ -3035,6 +3035,23 @@ def _unix_command_hint() -> str:
     )
 
 
+def _windows_command_hint() -> str:
+    """Return a hint when a cmd.exe builtin / PowerShell cmdlet fails on a
+    POSIX shell (Linux/macOS) — the mirror of :func:`_unix_command_hint`."""
+    return (
+        f"\nHint: this shell ({_detect_shell()}) is POSIX — there are no cmd.exe "
+        "builtins (dir/type/findstr/copy/del/where) and no PowerShell cmdlets "
+        "(Get-ChildItem/Select-String/Get-Content). Use ls/cat/grep/find, or a "
+        "Python one-liner (python -c \"...\"); run output is auto-truncated."
+    )
+
+
+def _shell_command_hint() -> str:
+    """The wrong-shell-command hint for the CURRENT platform (Unix-ism on
+    Windows, Windows-ism on POSIX)."""
+    return _unix_command_hint() if os.name == "nt" else _windows_command_hint()
+
+
 def _final_answer_fallback(loop: "ToolLoopRunner") -> str:
     """Concrete stand-in when the model produced no usable answer.
 
@@ -3181,14 +3198,19 @@ _SYSTEM_PROMPT = (
     "RULES:\n"
     f"You are running inside SHELL_NAME={_SHELL_NAME} ({_detect_shell()}). "
     "This is a hard constraint: on Windows (cmd/PowerShell) there is NO "
-    "tail/grep/ls/find; on POSIX, no PowerShell cmdlets. Use Python one-liners "
+    "tail/grep/ls/cat/sed/awk/wc/find; on POSIX there are NO cmd.exe builtins "
+    "(dir/type/findstr/copy/del/where) and NO PowerShell cmdlets "
+    "(Get-ChildItem/Select-String/Get-Content). Use Python one-liners "
     "(python -c \"...\") or the built-in tools instead of shell pipes — never "
     "construct commands that mix Unix and Windows syntax in a single invocation.\n"
     f"- The shell for the run tool is: {_detect_shell()}. On Windows there "
-    "one-liners (python -c \"...\") or the built-in tools; run output is "
-    "truncated to 5000 chars automatically. The run tool reports non-zero "
-    "exit codes as [EXIT CODE: N] at the end of its output — read it from "
-    "there, never chain '...; echo $?' (the model cannot see $? afterwards).\n"
+    "are NO Unix tools (tail/head/grep/ls/cat/sed/awk/wc) and no piping to "
+    "them — use dir/type/findstr/more, PowerShell cmdlets, or Python "
+    "one-liners (python -c \"...\"). Run output is truncated to 5000 chars "
+    "automatically, so '2>&1 | tail -40' is neither needed nor supported. The "
+    "run tool reports non-zero exit codes as [EXIT CODE: N] at the end of its "
+    "output — read it from there, never chain '...; echo $?' (the model cannot "
+    "see $? afterwards).\n"
     "- Python's sys.exitcode is only set at interpreter exit — use "
     "sys.exit(). Shell test tools ship with pytest (scripts exit non-zero "
     "on failure).\n"
@@ -3299,13 +3321,13 @@ def _shape_run_stderr(err: str | None, output: str | None, returncode: int | Non
         # cmd.exe silently fails whole pipelines (rc 255, no output)
         # when a pipe element or command does not exist.
         if os.name == "nt" and returncode == 255 and not output:
-            return output + _unix_command_hint()
+            return output + _shell_command_hint()
         if returncode is not None and returncode != 0:
             output += f"\n[EXIT CODE: {returncode}]"
         return output
     output += f"\n[STDERR]\n{err}"
-    if re.search(r"is not recognized|not found", err, re.I):
-        output += _unix_command_hint()
+    if re.search(r"is not recognized|not found|command not found", err, re.I):
+        output += _shell_command_hint()
     if returncode is not None and returncode != 0:
         output += f"\n[EXIT CODE: {returncode}]"
     return output

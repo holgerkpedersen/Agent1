@@ -148,6 +148,17 @@ def _walk_for_powershell() -> bool:
     return False
 
 
+def _posix_guidance(shell: str) -> str:
+    """Guidance for a POSIX shell — the mirror of the Windows wording: no
+    cmd.exe builtins, no PowerShell cmdlets."""
+    return (
+        f"Use {shell} syntax; forward-slash paths. There are NO cmd.exe "
+        "builtins (dir/type/findstr/copy/del/where) and NO PowerShell cmdlets "
+        "(Get-ChildItem/Select-String/Get-Content) — use ls/cat/grep/find, or a "
+        "Python one-liner (python -c \"...\"). Run output is auto-truncated."
+    )
+
+
 def shell_info() -> dict[str, str]:
     """Return shell metadata for inclusion in LLM system prompts.
 
@@ -169,7 +180,7 @@ def shell_info() -> dict[str, str]:
             "name": shell_name,
             "flag": "-c",
             "separator": "&&",
-            "guidance": f"Use {shell_name} syntax. Path separators use forward slash.",
+            "guidance": _posix_guidance(shell_name),
         }
 
     # Windows: detect PowerShell by walking the process tree.  The run-tool
@@ -185,13 +196,24 @@ def shell_info() -> dict[str, str]:
                 "name": "powershell.exe",
                 "flag": "-Command",
                 "separator": ";",
-                "guidance": "Use PowerShell syntax. Path separators use backslash.",
+                "guidance": (
+                    "Use PowerShell syntax; paths use backslash. There is NO "
+                    "tail/head/sed/awk/wc and NO piping to them (run output is "
+                    "auto-truncated). PowerShell aliases ls/grep/cat/rm/curl do "
+                    "exist; call Python tools as 'python -m <tool>'."
+                ),
             }
         return {
             "name": "cmd.exe",
             "flag": "/c",
             "separator": "&",
-            "guidance": "Use cmd.exe syntax. Path separators use backslash.",
+            "guidance": (
+                "Use cmd.exe syntax; paths use backslash. cmd.exe has NO Unix "
+                "tools — never use tail/head/grep/ls/cat/sed/awk/wc or pipe to "
+                "them (run output is auto-truncated). Use dir/type/findstr/more "
+                "instead, or a Python one-liner (python -c \"...\"). Call Python "
+                "tools as 'python -m <tool>'."
+            ),
         }
 
     # POSIX default
@@ -199,7 +221,7 @@ def shell_info() -> dict[str, str]:
         "name": "/bin/bash",
         "flag": "-c",
         "separator": "&&",
-        "guidance": "Use bash/sh syntax. Path separators use forward slash.",
+        "guidance": _posix_guidance("bash/sh"),
     }
 
 

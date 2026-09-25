@@ -187,6 +187,124 @@ class TestToolCallParserRestart:
         assert ok is True
         assert "already serves" in msg
 
+    def test_no_restart_when_parser_state_unknown(self, patch_http, monkeypatch):
+        """Regression: a server that does NOT expose its argv (no
+        ``status.args`` in /v1/models) must be treated as "parser unknown →
+        assume OK" and NEVER shut down/relaunched.  Observed live: a manually
+        started ``llama-server ... --tool-call-parser qwen3_coder`` was killed
+        and replaced by a router that could not find the model."""
+        fake = _FakeHTTP(
+            _single_props(),
+            ["/home/holger/llama-strix/models/Qwen3.8-27B-ROCmFP4-FAST.gguf"],
+        )
+        patch_http(fake)
+        state = {"shutdown": 0, "launch": 0}
+        monkeypatch.setattr(
+            mod, "shutdown_server",
+            lambda api_url: (state.update(shutdown=state["shutdown"] + 1),
+                             (True, "stopped"))[1],
+        )
+        monkeypatch.setattr(
+            mod, "_launch_server",
+            lambda *a, **k: (state.update(launch=state["launch"] + 1),
+                             (True, "launched"))[1],
+        )
+        ok, msg = mod.ensure_model_served(
+            "http://x/v1",
+            "llama//home/holger/llama-strix/models/Qwen3.8-27B-ROCmFP4-FAST.gguf",
+        )
+        assert ok is True
+        assert "already serves" in msg
+        assert state == {"shutdown": 0, "launch": 0}
+        assert not any(u.endswith("/shutdown") for _m, u, _p in fake.calls)
+
+
+class TestServerHasToolCallParser:
+    """`_server_has_tool_call_parser` must fail SAFE: only a positively-seen
+    argv without the flag is False; an absent argv means "can't tell" -> True."""
+
+    def test_unknown_argv_assumes_ok(self, patch_http):
+        patch_http(_FakeHTTP(_single_props(), ["M"]))  # no status.args field
+        assert mod._server_has_tool_call_parser("http://x/v1") is True
+
+    def test_exposed_argv_without_flag_is_false(self, patch_http):
+        class _Fake:
+            def __call__(self, method, url, payload=None, timeout=10.0):
+                return 200, {"data": [
+                    {"id": "M", "status": {"args": ["llama-server", "-m", "M"]}}
+                ]}
+        patch_http(_Fake())
+        assert mod._server_has_tool_call_parser("http://x/v1") is False
+
+    def test_exposed_argv_with_flag_is_true(self, patch_http):
+        class _Fake:
+            def __call__(self, method, url, payload=None, timeout=10.0):
+                return 200, {"data": [{"id": "M", "status": {"args": [
+                    "llama-server", "--tool-call-parser", "qwen3_coder"
+                ]}}]}
+        patch_http(_Fake())
+        assert mod._server_has_tool_call_parser("http://x/v1") is True
+
+
+class TestExternalServerGuard:
+    """`AGENT_LLAMA_EXTERNAL` / `LLAMA_NO_MANAGE`: the agent must NEVER launch,
+    shut down or relaunch an externally-managed server (WSL / remote)."""
+
+    def _no_lifecycle(self, monkeypatch):
+        state = {"shutdown": 0, "launch": 0}
+        monkeypatch.setattr(
+            mod, "shutdown_server",
+            lambda api_url: (state.update(shutdown=state["shutdown"] + 1),
+                             (True, "stopped"))[1],
+        )
+        monkeypatch.setattr(
+            mod, "_launch_server",
+            lambda *a, **k: (state.update(launch=state["launch"] + 1),
+                             (True, "launched"))[1],
+        )
+        return state
+
+    def test_external_serving_model_is_noop(self, patch_http, monkeypatch):
+        monkeypatch.setenv("AGENT_LLAMA_EXTERNAL", "1")
+        fake = _FakeHTTP(_single_props(), ["/home/holger/m/Qwen3.8-27B.gguf"])
+        patch_http(fake)
+        state = self._no_lifecycle(monkeypatch)
+        ok, msg = mod.ensure_model_served(
+            "http://x/v1", "llama//home/holger/m/Qwen3.8-27B.gguf")
+        assert ok is True
+        assert "already serves" in msg
+        assert state == {"shutdown": 0, "launch": 0}
+
+    def test_external_wrong_model_fails_closed(self, patch_http, monkeypatch):
+        monkeypatch.setenv("LLAMA_NO_MANAGE", "1")
+        fake = _FakeHTTP(_single_props(), ["some-other-model"])
+        patch_http(fake)
+        state = self._no_lifecycle(monkeypatch)
+        ok, msg = mod.ensure_model_served(
+            "http://x/v1", "llama//home/holger/m/Qwen3.8-27B.gguf")
+        assert ok is False
+        assert "does not manage an external one" in msg
+        assert state == {"shutdown": 0, "launch": 0}
+
+    def test_external_down_does_not_launch(self, monkeypatch):
+        monkeypatch.setenv("AGENT_LLAMA_EXTERNAL", "true")
+        monkeypatch.setattr(mod, "is_server_up", lambda api_url: False)
+        state = self._no_lifecycle(monkeypatch)
+        ok, msg = mod.ensure_model_served("http://x/v1", "llama/foo")
+        assert ok is False
+        assert "never starts it" in msg
+        assert state == {"shutdown": 0, "launch": 0}
+
+    def test_external_flag_read_from_dotenv(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("AGENT_LLAMA_EXTERNAL", raising=False)
+        monkeypatch.delenv("LLAMA_NO_MANAGE", raising=False)
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "# comment\nAGENT_LLAMA_EXTERNAL=1\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(mod, "_ENV_PATH", str(env_file))
+        assert mod._external_server() is True
+
 
 class TestResolveLocalGguf:
     def test_maps_routing_label_to_local_file(self, monkeypatch):

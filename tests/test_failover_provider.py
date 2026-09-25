@@ -136,6 +136,72 @@ def test_is_connection_failure_rejects_auth_errors() -> None:
     assert not is_connection_failure("")
 
 
+def _tool_call_with_error_words() -> str:
+    """A VALID tool call whose arguments mention [Error:/unreachable/timeout
+    (e.g. a model writing error-handling code)."""
+    import json
+
+    return json.dumps({
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{
+            "id": "c1",
+            "type": "function",
+            "function": {
+                "name": "write",
+                "arguments": json.dumps({
+                    "path": "x.py",
+                    "content": (
+                        'if s.startswith("[Error:"):  # unreachable / timeout\n'
+                    ),
+                }),
+            },
+        }],
+    })
+
+
+def test_is_connection_failure_ignores_error_text_inside_a_tool_call() -> None:
+    """Regression: the markers are searched over the WHOLE response, so a
+    successful tool-call payload that mentions [Error:/timeout was misread as a
+    transport outage and caused a spurious failover.  Only a response that IS
+    an error string (starts with [Error:) may fail over."""
+    assert not is_connection_failure(_tool_call_with_error_words())
+
+
+class _PayloadProvider:
+    """Provider returning a fixed payload (for failover-loop tests)."""
+
+    def __init__(self, payload: str) -> None:
+        self._payload = payload
+        self.model_name = "fake-model"
+        self.temperature = 0.7
+        self.max_tokens = 100
+        self._profile_name: str | None = None
+        self.last_response_metrics = None
+        self.call_count = 0
+
+    def apply_profile(self, _n: str, _t: float, _m: int) -> None:
+        self._profile_name = _n
+
+    async def chat(self, messages: list[dict[str, str]], **_: Any) -> str:
+        self.call_count += 1
+        return self._payload
+
+
+@pytest.mark.anyio
+async def test_tool_call_with_error_words_does_not_failover() -> None:
+    """The first provider answers with a valid tool call (containing error-like
+    text in its arguments) — no failover must happen."""
+    payload = _tool_call_with_error_words()
+    first = _PayloadProvider(payload)
+    second = _PayloadProvider("second")
+    fp = FailoverProvider([first, second], model_name="fake-model")
+    out = await fp.chat([{"role": "user", "content": "hi"}])
+    assert out == payload
+    assert first.call_count == 1
+    assert second.call_count == 0
+
+
 def test_config_default_single_provider_chain() -> None:
     settings = AgentSettings()
     assert settings.llm_providers == ("lmstudio",)

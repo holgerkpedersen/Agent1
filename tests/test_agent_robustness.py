@@ -482,3 +482,17 @@ class TestTransientLlmErrorRetry:
         assert captured["err"] is not None
         assert "401" in captured["err"]
 
+
+def test_shell_command_hint_is_platform_aware() -> None:
+    """The wrong-shell hint must match the CURRENT platform: no Unix tools on
+    Windows; no cmd.exe builtins / PowerShell cmdlets on POSIX."""
+    import agent
+
+    assert "no Unix tools" in agent._unix_command_hint()
+    assert "cmd.exe" in agent._windows_command_hint()
+    expected = (
+        agent._unix_command_hint() if os.name == "nt"
+        else agent._windows_command_hint()
+    )
+    assert agent._shell_command_hint() == expected
+

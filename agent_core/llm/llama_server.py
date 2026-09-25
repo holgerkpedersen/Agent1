@@ -16,6 +16,11 @@ happens to be serving:
   can resolve local GGUFs, then load the requested model.
 * If no server is running, we launch one (router mode) at the configured URL.
 
+Set ``AGENT_LLAMA_EXTERNAL=1`` (or ``LLAMA_NO_MANAGE=1``) when the server is
+managed elsewhere (WSL / a remote box / another tool): the agent then only
+REPORTS whether the requested model is served and never launches, shuts down or
+relaunches it — which also prevents it from killing a correctly-started server.
+
 The server binary path is recovered from the running instance's argv (exposed
 by ``GET /v1/models`` -> ``status.args``), falling back to ``llama-server`` on
 PATH / common install locations.  This avoids hard-coding a path.
@@ -95,19 +100,31 @@ def _tool_call_parser_for_model(bare: str) -> str | None:
 def _server_has_tool_call_parser(api_url: str) -> bool:
     """Check if the running llama-server was launched with --tool-call-parser.
 
-    Reads the server's argv from ``GET /v1/models`` → ``status.args``.
-    Returns True if the flag is present, False if absent or on any error
-    (conservative: never restart a working server when we can't tell).
+    Reads the server's argv from ``GET /v1/models`` → ``status.args``.  Returns
+    True when the flag is present **or** when the server does not expose its
+    argv at all — most builds' OpenAI-compatible ``/v1/models`` has no
+    ``status.args``, and "can't tell" MUST mean "assume OK", because the
+    alternative is restarting a working server.  It returns False ONLY when the
+    argv WAS exposed and the flag is absent.
+
+    (Observed live: a manually-started ``llama-server -m <gguf> ...
+    --tool-call-parser qwen3_coder`` was read as "lacks the parser" — the
+    missing ``status.args`` fell through to False — so the agent shut it down
+    and relaunched a router that could not find the model: "File Not Found".)
     """
     status, body = _http_json("GET", f"{api_url}/models", timeout=8.0)
     if status != 200 or not isinstance(body, dict):
         return True  # can't tell — assume OK
+    saw_args = False
     for m in (body.get("data") or []):
-        if isinstance(m, dict):
-            args = (m.get("status") or {}).get("args")
-            if isinstance(args, list) and "--tool-call-parser" in args:
+        if not isinstance(m, dict):
+            continue
+        args = (m.get("status") or {}).get("args")
+        if isinstance(args, list):
+            saw_args = True
+            if "--tool-call-parser" in args:
                 return True
-    return False
+    return not saw_args
 
 
 # How long to wait for a freshly (re)started server to begin answering.
@@ -256,10 +273,74 @@ def _resolve_local_gguf(bare_id: str) -> str | None:
     return None
 
 
+#: Env vars that mark the llama-server as EXTERNALLY managed (e.g. a WSL /
+#: remote / separately-started box).  When set, ``ensure_model_served`` never
+#: launches, shuts down or relaunches it — it only reports whether the
+#: requested model is served.  This matches the provider contract that the
+#: external llama-server owns loading.
+_EXTERNAL_ENV_KEYS = ("AGENT_LLAMA_EXTERNAL", "LLAMA_NO_MANAGE")
+
+#: Repo-root .env consulted for the guard (process env wins) — same file the
+#: rest of the agent reads, so it can be set there instead of per-shell.
+_ENV_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    ".env",
+)
+
+
+def _read_dotenv(key: str) -> str | None:
+    """Read *key* from the repo-root .env (stdlib only), or None."""
+    try:
+        with open(_ENV_PATH, encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                env_key, _, val = stripped.partition("=")
+                if env_key.strip() == key:
+                    return val.strip()
+    except OSError:
+        return None
+    return None
+
+
+def _external_server() -> bool:
+    """True when the llama-server is managed outside this agent."""
+    truthy = ("1", "true", "yes", "on")
+    for key in _EXTERNAL_ENV_KEYS:
+        val = os.environ.get(key)
+        if val is None:
+            val = _read_dotenv(key)
+        if (val or "").strip().lower() in truthy:
+            return True
+    return False
+
+
+def _ensure_external(api_url: str, bare: str) -> tuple[bool, str]:
+    """Status-only check for an externally-managed server (no lifecycle calls)."""
+    if not is_server_up(api_url):
+        return False, (
+            f"external llama-server not reachable at {api_url} "
+            "(AGENT_LLAMA_EXTERNAL is set — the agent never starts it)"
+        )
+    served = list_served_models(api_url)
+    if bare in served:
+        return True, f"llama-server already serves '{bare}'"
+    return False, (
+        f"external llama-server serves {served or 'nothing'}, not '{bare}'; "
+        "load it on your server — the agent does not manage an external one"
+    )
+
+
 def ensure_model_served(
     api_url: str, model_name: str, *, extra_args: list[str] | None = None
 ) -> tuple[bool, str]:
     """Make the running llama-server serve *model_name* (best effort).
+
+    When ``AGENT_LLAMA_EXTERNAL`` (or ``LLAMA_NO_MANAGE``) is set, the server is
+    treated as externally managed: this function only REPORTS whether the
+    requested model is served — it never launches, shuts down or relaunches.
+    Otherwise:
 
     Steps:
       1. If the server already serves the bare id, we're done.
@@ -273,6 +354,8 @@ def ensure_model_served(
     confirmed served (or was already served).  Never raises.
     """
     bare = _bare_id(model_name)
+    if _external_server():
+        return _ensure_external(api_url, bare)
     if is_server_up(api_url):
         served = list_served_models(api_url)
         if bare in served:

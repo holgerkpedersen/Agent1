@@ -380,10 +380,17 @@ def is_connection_failure(text: str) -> bool:
     provider.  We only treat transport/5xx failures as failover-worthy —
     a 4xx/auth error is permanent and must NOT be retried against another
     provider.
+
+    The whole response must BE an error string (it starts with ``[Error:``):
+    the markers below are matched with :func:`re.search`, so without that
+    anchor a SUCCESSFUL tool-call payload whose arguments mention ``[Error:`` /
+    ``timeout`` (e.g. a model writing error-handling code) was misread as an
+    outage and triggered a spurious failover to the next provider.
     """
-    if not text or "[Error:" not in text:
+    stripped = str(text).strip()
+    if not stripped.startswith("[Error:"):
         return False
-    return bool(_CONNECTION_FAILURE_RE.search(text))
+    return bool(_CONNECTION_FAILURE_RE.search(stripped))
 
 
 class FailoverProvider:

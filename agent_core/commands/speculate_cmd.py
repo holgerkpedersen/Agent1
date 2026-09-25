@@ -52,8 +52,30 @@ _BRANCH_TOOLS: frozenset[str] = frozenset({
 _BRANCH_MAX_ITERS = 4
 
 
+def _is_provider_error(text: str) -> bool:
+    """True when *text* is a provider/transport error, not a real answer.
+
+    ``LMStudioProvider.chat`` swallows HTTP failures and returns
+    ``"[Error: HTTP Error 400: …]"`` as plain text.  Without this guard the
+    judge (or ``_parse_score``'s first-number regex) treats the ``400`` as a
+    score of ``1.0`` and COMMITs the error message as the answer — observed
+    live against a llama-server with no model loaded (WSL Ubuntu 24.04).
+    """
+    stripped = str(text).strip()
+    if not stripped:
+        return False
+    return stripped.startswith("[Error:") or stripped.startswith("[Error: HTTP")
+
+
 def _parse_score(reply: str) -> float:
-    """Extract a 0.0-1.0 score from a judge reply; unparseable -> 0.0."""
+    """Extract a 0.0-1.0 score from a judge reply; unparseable -> 0.0.
+
+    A provider error string (``[Error: HTTP Error 400: …]``) is NOT a judge
+    reply — its first number is the HTTP status code, which clamps to 1.0.
+    Such text scores 0.0 so a failed branch can never be committed.
+    """
+    if _is_provider_error(reply):
+        return 0.0
     match = _FIRST_NUMBER_RE.search(str(reply))
     if not match:
         return 0.0
@@ -299,7 +321,7 @@ class SpeculateCommand(Command):
             committed.
             """
             answer = str(result.get("answer", "")).strip()
-            if not answer or _looks_like_tool_call(answer):
+            if not answer or _looks_like_tool_call(answer) or _is_provider_error(answer):
                 return 0.0
             prompt = (
                 "Quality judge: score how well the ANSWER answers the QUESTION, "
