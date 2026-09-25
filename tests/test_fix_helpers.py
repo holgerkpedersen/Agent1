@@ -14,6 +14,7 @@ from agent_core.commands.fix_cmd import (
     _fix_unused_ignore,
     _fix_redundant_cast,
     _fix_implicit_optional,
+    _fix_optional_import_none,
     _fix_attr_defined_rename,
     _fix_missing_return_none,
     _fix_bare_generic,
@@ -21,6 +22,10 @@ from agent_core.commands.fix_cmd import (
     _fix_tuple_arity,
     _fix_untyped_params,
     _type_context,
+    _referenced_definitions,
+    _signature_call_sites,
+    _ensure_typing_imports,
+    _error_identifiers,
     _function_returns_value,
     _enclosing_function_name,
 )
@@ -417,3 +422,174 @@ class TestTypeContext:
     def test_fully_annotated_no_change(self):
         src = ["def g(a: int, b: str) -> int:", "    return a"]
         assert _fix_untyped_params(src, 1) is None
+
+
+class TestReferencedDefinitions:
+    """`fix --mypy` used to hide the root cause: the window is centred on the
+    FAILING line, so a helper called one line above (e.g. a mis-annotated
+    accessor) was invisible and the model patched the symptom with a local
+    import/cast.  `_referenced_definitions` puts those definitions in view."""
+
+    SRC = [
+        "def _acc():",            # 1
+        "    return 1",           # 2
+        "",                       # 3
+        "def use():",             # 4
+        "    np = _acc()",        # 5
+        "    np.vstack([1])",     # 6  <- error is here; _acc() is one line above
+    ]
+
+    def test_includes_helper_called_just_above_the_error(self):
+        err = 't.py:6: error: "int" has no attribute "vstack"  [attr-defined]'
+        out = _referenced_definitions(self.SRC, err, 6)
+        assert "def _acc():" in out
+        assert "ROOT CAUSE" in out
+
+    def test_empty_when_nothing_defined_is_referenced(self):
+        src = ["a = 1", "b = a + 1"]
+        assert _referenced_definitions(src, "t.py:2: error: misc  [misc]", 2) == ""
+
+    def test_error_identifiers_fall_back_to_the_error_line(self):
+        # An operator error names only skip-words, so the identifiers must come
+        # from the offending source line.
+        err = 't.py:2: error: Unsupported operand types for - ("None" and "int")  [operator]'
+        names = _error_identifiers(["x = 1", "y = x - 1"], err, 2)
+        assert {"x", "y"} <= names
+
+    def test_fix_prompt_carries_the_root_cause_directive(self):
+        import inspect
+        import agent_core.commands.fix_cmd as fc
+
+        src = inspect.getsource(fc)
+        assert "Fix the ROOT CAUSE" in src
+        assert "update EVERY call site" in src
+        assert "MUST be imported" in src
+
+
+class TestEnsureTypingImports:
+    """The LLM often writes ``nx: Any`` without importing ``Any`` → the verify
+    step then rejects the patch (`name-defined`).  Repair it deterministically."""
+
+    def test_adds_missing_name_to_existing_typing_import(self):
+        src = (
+            "from typing import Callable, cast\n"
+            "\n"
+            "def f(x) -> int:\n"
+            "    y: Any = x\n"
+            "    return cast(int, y)\n"
+        )
+        out, added = _ensure_typing_imports(src)
+        assert added == ["Any"]
+        assert "from typing import Callable, cast, Any" in out
+
+    def test_inserts_new_import_when_none_exists(self):
+        src = "def f(x) -> int:\n    y: Any = x\n    return y\n"
+        out, added = _ensure_typing_imports(src)
+        assert added == ["Any"]
+        assert out.index("from typing import Any") < out.index("def f")
+
+    def test_no_change_when_already_imported(self):
+        src = "from typing import Any\n\ndef f(x) -> Any:\n    return x\n"
+        assert _ensure_typing_imports(src) == (src, [])
+
+    def test_no_change_when_name_is_defined_locally(self):
+        src = "Any = 1\n\ndef f() -> int:\n    return Any\n"
+        assert _ensure_typing_imports(src) == (src, [])
+
+
+class TestFixOptionalImportNone:
+    """`except ImportError: nx = None` where nx is a module: mypy errors
+    "expression has type None, variable has type Module".  The LLM kept
+    guessing bogus annotations; the deterministic fix is a targeted ignore."""
+
+    def test_adds_targeted_ignore_and_keeps_noqa(self):
+        src = ["    nx = None  # noqa: N816 - we keep the alias short"]
+        out = _fix_optional_import_none(src, 1)
+        assert out == [
+            "    nx = None  # type: ignore[assignment]  # noqa: N816 - we keep the alias short"
+        ]
+
+    def test_noop_when_already_ignored(self):
+        assert _fix_optional_import_none(["nx = None  # type: ignore[assignment]"], 1) is None
+
+    def test_noop_for_non_none_assignment(self):
+        assert _fix_optional_import_none(["nx = module"], 1) is None
+
+
+class TestPatchVerdictRejectsNewErrors:
+    """The verifier must RETURN the new-error kinds (not just print them) so the
+    command can reject the patch outright and let the retry loop feed the errors
+    back to the model."""
+
+    def test_returns_new_error_kinds_for_a_bad_candidate(self, tmp_path):
+        from agent_core.commands.fix_cmd import FixCommand
+
+        target = tmp_path / "m.py"
+        target.write_text("x: int = 1\n", encoding="utf-8")
+        bad_candidate = "x: int = 1\ny: Any = 2\n"  # Any is not imported
+        kinds = FixCommand()._show_patch_verdict(
+            str(target), bad_candidate, "m.py",
+            ["m.py:1: error: unrelated  [misc]"], str(tmp_path),
+        )
+        assert ("name-defined", 'Name "Any" is not defined') in kinds
+
+    def test_counts_a_partial_fix_when_the_message_is_duplicated(
+        self, tmp_path, capsys,
+    ):
+        """Two functions with the SAME error message: fixing one must count as
+        1/1 fixed (a set-based compare wrongly said 0/1 because the untouched
+        duplicate survived — rejecting a correct patch)."""
+        from agent_core.commands.fix_cmd import FixCommand
+
+        # mypy emits the identical [assignment] message for both functions.
+        target = tmp_path / "m.py"
+        target.write_text(
+            "def a(x: int = 1.0) -> None:\n    pass\n\n"
+            "def b(x: int = 1.0) -> None:\n    pass\n",
+            encoding="utf-8",
+        )
+        patched = (
+            "def a(x: float = 1.0) -> None:\n    pass\n\n"
+            "def b(x: int = 1.0) -> None:\n    pass\n"
+        )
+        context = [
+            'm.py:1: error: Incompatible default for parameter "x" '
+            '(default has type "float", parameter has type "int")  [assignment]'
+        ]
+        new_kinds = FixCommand()._show_patch_verdict(
+            str(target), patched, "m.py", context, str(tmp_path)
+        )
+        out = capsys.readouterr().out
+        assert new_kinds == set()
+        assert "fixes 1/1" in out
+        assert "→ y" in out
+
+
+class TestSignatureCallSites:
+    """Widening a return type breaks callers elsewhere in the file.  The error
+    window doesn't show them, so the model left a NEW error behind; the prompt
+    must carry the call sites."""
+
+    SRC = [
+        "def split(m):",                          # 1
+        "    return None, None",                  # 2  <- error here (signature)
+        "",                                       # 3
+        "def use(msgs):",                         # 4
+        "    dropped, kept = split(msgs)",        # 5  <- call site
+        "    if dropped is None:",                # 6
+        "        return msgs",                    # 7
+        "    return list(kept)",                  # 8
+    ]
+
+    def test_includes_call_sites_of_the_nearby_signature(self):
+        err = (
+            't.py:2: error: Incompatible return value type '
+            '(got "tuple[None, None]", expected "tuple[list | None, list]")  [return-value]'
+        )
+        out = _signature_call_sites(self.SRC, err, 2)
+        assert "dropped, kept = split(msgs)" in out
+        assert "call site" in out.lower()
+
+    def test_empty_when_there_are_no_call_sites(self):
+        src = ["def f():", "    return 1"]
+        assert _signature_call_sites(src, "t.py:1: error: x  [return-value]", 1) == ""

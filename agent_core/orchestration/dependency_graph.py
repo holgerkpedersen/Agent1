@@ -17,9 +17,9 @@ from collections import defaultdict
 from typing import Callable, Dict, Iterable, Iterator, List, Optional, Protocol, Set, Tuple, cast
 
 try:  # pragma: no cover - networkx is an optional dependency in some envs
-    import networkx as nx  # type: ignore[import-untyped]
+    import networkx as nx
 except ImportError:
-    nx = None  # noqa: N816 - we keep the alias short for readability
+    nx = None  # type: ignore[assignment]  # noqa: N816 - we keep the alias short for readability
 
 
 # ---------------------------------------------------------------------------

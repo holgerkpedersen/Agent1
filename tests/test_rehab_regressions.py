@@ -51,13 +51,19 @@ def test_cleanup_cmd_imports_os() -> None:
     assert "\nimport os\n" in src or src.startswith('"""') and "import os" in src
 
 
-def test_module_similarity_defines_numpy_accessor_with_annotation() -> None:
-    from agent_core.utils.module_similarity import _numpy  # real code path
+def test_module_similarity_imports_numpy_at_module_level() -> None:
+    """Regression: bare ``np`` references used to resolve only through a
+    lazily-fed local, and that accessor was mis-annotated (``-> np.ndarray``),
+    so mypy treated ``np`` as an array and rejected ``np.vstack``/``np.zeros``.
+    numpy is a hard dependency, so the module imports it once at the top and
+    every ``np.`` usage is correctly typed."""
+    import agent_core.utils.module_similarity as ms
 
-    np = _numpy()
-    assert hasattr(np, "zeros")
-    # the old bug: bare `np` references resolved only via local shadowing
-    tree = ast.parse(_module_source("agent_core/utils/module_similarity.py"))
+    assert hasattr(ms.np, "zeros")  # the real module, imported at module level
+    src = _module_source("agent_core/utils/module_similarity.py")
+    assert "import numpy as np" in src
+    assert "_numpy(" not in src  # the mis-annotated accessor is gone
+    tree = ast.parse(src)
     loads = [
         n for n in ast.walk(tree)
         if isinstance(n, ast.Name) and n.id == "np" and isinstance(n.ctx, ast.Load)

@@ -51,9 +51,9 @@ class HueBridgeError(Exception):
 # ------------------------------------------------------------------
 
 def _sRGB_from_linear(c: float) -> float:
-    """Convert linear RGB to sRGB using the standard gamma curve."""
+    """Convert linear RGB to sRGB using the standard gamma curve. Returns float."""
     if c > 0.0031308:
-        return 1.055 * (c ** (1 / 2.4)) - 0.055
+        return 1.055 * (c ** (1.0 / 2.4)) - 0.055
     else:
         return 12.92 * c
 
@@ -656,7 +656,7 @@ class HueBridge:
         await self.set_light_color(light_id, x=x, y=y, brightness=brightness)
 
 
-    async def set_light_brightness(self, light_id: str, percentage: float | None = None):
+    async def set_light_brightness(self, light_id: str, percentage: float | None = None) -> None:
         """Set the brightness of a light without changing color.
 
         Args:

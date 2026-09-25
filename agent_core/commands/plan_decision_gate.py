@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from .plan_schema import DecisionGateResult
 
@@ -28,9 +28,9 @@ class PlanDecisionGate:
     def __init__(self, workspace_root: Path | str):
         self.workspace_root = Path(workspace_root)
         self.decisions_path = self.workspace_root / ".decisions.json"
-        self._decisions: Optional[List[dict]] = None
+        self._decisions: Optional[List[dict[str, Any]]] = None
 
-    def _load_decisions(self) -> List[dict]:
+    def _load_decisions(self) -> List[dict[str, Any]]:
         """Load and cache decisions from .decisions.json."""
         if self._decisions is not None:
             return self._decisions

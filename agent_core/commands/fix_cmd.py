@@ -342,6 +342,32 @@ def _fix_implicit_optional(lines: list[str], lineno: int) -> list[str] | None:
     return lines[:idx] + [new_line] + lines[idx + 1:]
 
 
+def _fix_optional_import_none(lines: list[str], lineno: int) -> list[str] | None:
+    """Add ``# type: ignore[assignment]`` to a bare ``name = None`` assignment.
+
+    The idiomatic optional-import fallback — ``try: import x as nx`` /
+    ``except ImportError: nx = None`` — makes mypy report *"expression has type
+    None, variable has type Module"*.  The LLM keeps "fixing" it with bogus
+    annotations (``nx: Any`` without the import; ``nx: object = None`` inside
+    the except → ``no-redef``), so the accepted pattern is applied mechanically:
+    a targeted ignore on the assignment.  Any trailing comment (e.g.
+    ``# noqa: N816``) is preserved.
+    """
+    idx = lineno - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+    line = lines[idx]
+    if "# type: ignore" in line:
+        return None
+    code, _, comment = line.partition('#')
+    if "=" not in code or not re.search(r'=\s*None\b', code):
+        return None
+    new_line = code.rstrip() + "  # type: ignore[assignment]"
+    if comment.strip():
+        new_line += "  # " + comment.strip()
+    return lines[:idx] + [new_line] + lines[idx + 1:]
+
+
 def _enclosing_function_name(source: str, lineno: int) -> str | None:
     """Name of the function whose body contains *lineno*, or None."""
     try:
@@ -907,14 +933,10 @@ def _cluster_mypy_errors(lines: list[str], errs: list[str]) -> list[list[str]]:
 _IDENT_RE = re.compile(r"[A-Za-z_]\w*")
 
 
-def _type_context(lines: list[str], err: str, error_line: int) -> str:
-    """Collect the type annotations mypy knows for the variables the error
-    mentions, so the LLM can patch against real types instead of guessing.
+def _error_identifiers(lines: list[str], err: str, error_line: int) -> set[str]:
+    """Identifiers the mypy error (or its failing source line) mentions.
 
-    Looks up every identifier appearing in the error message inside the
-    enclosing function: annotated parameters, ``x: T`` local annotations,
-    and ``from module import x`` imports.  Returns a compact prompt block
-    (empty when nothing useful is found).
+    Shared by :func:`_type_context` and :func:`_referenced_definitions`.
     """
     msg = err.split("error: ", 1)[-1] if "error: " in err else err
     # Drop the trailing [error-code] bracket and quoted literals before
@@ -951,6 +973,192 @@ def _type_context(lines: list[str], err: str, error_line: int) -> str:
     # offending source line (e.g. ``a`` in ``a.end_lineno - 1``).
     if not names and 0 <= error_line - 1 < len(lines):
         names |= {m for m in _IDENT_RE.findall(lines[error_line - 1]) if m not in skip}
+    return names
+
+
+#: ``def``/``class`` (optionally async) name at the start of a line.
+_DEF_NAME_RE = re.compile(r'^\s*(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)\b')
+
+#: ``name(`` — a call site, e.g. ``_numpy()``.
+_CALL_NAME_RE = re.compile(r'([A-Za-z_]\w*)\s*\(')
+
+
+def _referenced_definitions(
+    lines: list[str], err: str, error_line: int, *,
+    window: int = 6, max_lines: int = 14,
+) -> str:
+    """Definitions of helpers the error references, for root-cause fixing.
+
+    The error window is centred on the failing line, so a helper defined
+    elsewhere in the file — e.g. a mis-annotated accessor called one line above
+    the error — never appears, and the model "fixes" the symptom with a local
+    import/cast.  Include those ``def``/``class`` snippets so the real cause is
+    in view (empty string when nothing is found).
+    """
+    names = _error_identifiers(lines, err, error_line)
+    lo = max(0, error_line - 1 - window)
+    hi = min(len(lines), error_line + window)
+    for line in lines[lo:hi]:
+        names |= set(_CALL_NAME_RE.findall(line))  # call sites near the error
+    if not names:
+        return ""
+    snippets: list[str] = []
+    for idx, line in enumerate(lines):
+        m = _DEF_NAME_RE.match(line)
+        if not m or m.group(1).lower() not in names:
+            continue
+        end = min(len(lines), idx + max_lines)
+        snippets.append(
+            "\n".join(f"{i:>4} {lines[i - 1].rstrip()}" for i in range(idx + 1, end + 1))
+        )
+    if not snippets:
+        return ""
+    return (
+        "Definitions referenced by the error — fix the ROOT CAUSE here (a wrong "
+        "annotation or helper type), NOT a local workaround:\n"
+        "```python\n" + "\n    ...\n".join(snippets) + "\n```\n"
+    )
+
+
+def _signature_call_sites(
+    lines: list[str], err: str, error_line: int, *,
+    window: int = 12, max_lines: int = 6,
+) -> str:
+    """Call sites of functions whose signature is near the error.
+
+    A patch that widens a return/parameter type (e.g. ``list[T]`` ->
+    ``list[T] | None``) breaks callers that assumed the old type, but those
+    callers live elsewhere in the file and are invisible in the error window —
+    so the model "fixes" one line and leaves a NEW error behind.  Show the call
+    sites so the signature change and its callers move together.
+    """
+    signature_names: set[str] = set()
+    # The enclosing function is the one whose signature the error touches;
+    # add any def/class signature inside the immediate window too.
+    extent = _enclosing_function_extent(lines, error_line)
+    if extent is not None and 0 < extent[0] <= len(lines):
+        m = _DEF_NAME_RE.match(lines[extent[0] - 1])
+        if m:
+            signature_names.add(m.group(1))
+    lo = max(0, error_line - 1 - window)
+    hi = min(len(lines), error_line + window)
+    for line in lines[lo:hi]:
+        m = _DEF_NAME_RE.match(line)
+        if m:
+            signature_names.add(m.group(1))
+    if not signature_names:
+        return ""
+    call_re = re.compile(
+        r'\b(' + "|".join(re.escape(n) for n in sorted(signature_names)) + r')\s*\('
+    )
+    snippets: list[str] = []
+    for idx, line in enumerate(lines):
+        if _DEF_NAME_RE.match(line):  # the definition itself, not a call
+            continue
+        if not call_re.search(line):
+            continue
+        end = min(len(lines), idx + max_lines)
+        snippets.append(
+            "\n".join(f"{i:>4} {lines[i - 1].rstrip()}" for i in range(idx + 1, end + 1))
+        )
+    if not snippets:
+        return ""
+    return (
+        "Call sites of the function whose signature the error touches — if the "
+        "type changes, update these too so NO new error is introduced:\n"
+        "```python\n" + "\n    ...\n".join(snippets) + "\n```\n"
+    )
+
+
+#: typing names the LLM regularly uses WITHOUT importing (the `name-defined`
+#: class of failed patch, e.g. ``nx: Any`` with no ``from typing import Any``).
+_TYPING_NAMES = frozenset({
+    "Any", "Optional", "Union", "Callable", "Iterable", "Iterator", "List",
+    "Dict", "Set", "FrozenSet", "Tuple", "Mapping", "MutableMapping",
+    "Sequence", "MutableSequence", "Generator", "cast", "Protocol",
+    "TypeVar", "Literal", "Final", "ClassVar", "TypedDict", "NamedTuple",
+    "overload", "runtime_checkable", "TYPE_CHECKING", "AnyStr", "Text",
+})
+
+_TYPING_FROM_RE = re.compile(r'^\s*from\s+([\w.]+)\s+import\s+(.+)$')
+
+
+def _ensure_typing_imports(source: str) -> tuple[str, list[str]]:
+    """Import typing names *source* uses but never binds.
+
+    The LLM regularly writes ``nx: Any`` without importing ``Any``; mypy then
+    reports ``name-defined`` and the verifier rejects the whole patch.  Fixing
+    it deterministically removes that class of wasted round-trip.  Returns
+    ``(new_source, added_names)``; unchanged/empty when nothing is missing or
+    the source does not parse.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return source, []
+
+    used = {
+        node.id for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    }
+    missing = set(used & _TYPING_NAMES)
+    if not missing:
+        return source, []
+
+    bound: set[str] = set()
+    lines = source.splitlines()
+    typing_line: int | None = None
+    for i, line in enumerate(lines):
+        m = _TYPING_FROM_RE.match(line)
+        if not m:
+            continue
+        for part in m.group(2).split(','):
+            name = part.strip().split(' as ')[-1].strip().rstrip(')').strip()
+            if name:
+                bound.add(name)
+        if m.group(1) == "typing" and typing_line is None and not line.rstrip().endswith('('):
+            typing_line = i
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else (
+            [node.target] if isinstance(node, ast.AnnAssign) else []
+        )
+        for target in targets:
+            if isinstance(target, ast.Name):
+                bound.add(target.id)
+    missing -= bound
+    if not missing:
+        return source, []
+
+    added = sorted(missing)
+    ending = "\n" if source.endswith("\n") else ""
+    if typing_line is not None:
+        existing = [
+            p.strip() for p in _TYPING_FROM_RE.match(lines[typing_line]).group(2).split(',')
+            if p.strip()
+        ]
+        lines[typing_line] = f"from typing import {', '.join(existing + added)}"
+    else:
+        insert_at = 0
+        for i, line in enumerate(lines):
+            if re.match(r'^\s*(import|from)\s', line):
+                insert_at = i + 1
+        lines.insert(insert_at, f"from typing import {', '.join(added)}")
+    return "\n".join(lines) + ending, added
+
+
+def _type_context(lines: list[str], err: str, error_line: int) -> str:
+    """Collect the type annotations mypy knows for the variables the error
+    mentions, so the LLM can patch against real types instead of guessing.
+
+    Looks up every identifier appearing in the error message inside the
+    enclosing function: annotated parameters, ``x: T`` local annotations,
+    and ``from module import x`` imports.  Returns a compact prompt block
+    (empty when nothing useful is found).
+    """
+    names = _error_identifiers(lines, err, error_line)
     if not names:
         return ""
     extent = _enclosing_function_extent(lines, error_line)
@@ -1818,14 +2026,26 @@ class FixCommand(Command):
                                 before, after = 40, 20
                         window = _extract_window(lines, error_line, before, after)
                         type_ctx = _type_context(lines, err, error_line)
+                        def_ctx = _referenced_definitions(lines, err, error_line)
+                        call_ctx = _signature_call_sites(lines, err, error_line)
                         user_sections.append(
                             f"### Error\n{err}\n\nInstruction: {instruction}\n\n"
                             f"Relevant code:\n```python\n{window}\n```\n"
                             + (f"\n{type_ctx}\n" if type_ctx else "")
+                            + (f"\n{def_ctx}\n" if def_ctx else "")
+                            + (f"\n{call_ctx}\n" if call_ctx else "")
                         )
                 type_hint = _shared_type_hint(slice_errs)
                 system_prompt = (
                     f"Fix the mypy errors in {rel_file}. Make the smallest possible targeted changes. "
+                    "Fix the ROOT CAUSE: when an error is a symptom of a mis-typed helper "
+                    "or annotation (see 'Definitions referenced by the error'), correct that "
+                    "definition — do NOT add a local workaround such as an inline import, a "
+                    "redundant cast, or a per-call type: ignore. If you change a function's "
+                    "signature (return or parameter type), update EVERY call site in this "
+                    "file (see 'Call sites...') so the change introduces no NEW error. "
+                    "Any name you introduce (e.g. Any, ModuleType, cast) MUST be imported "
+                    "in the same patch. "
                     "Prefer [PATCH:]; if the file is over ~200 lines use [PATCH:] exclusively. "
                     "Output EXACTLY ONE block: [PATCH: {rel_file}] with unified hunks (one patch may "
                     "contain multiple @@ hunks), or [FILE: {rel_file}] with the complete corrected file. "
@@ -2082,6 +2302,9 @@ class FixCommand(Command):
                 elif code == "assignment" and "default has type \"None\"" in err:
                     after = _fix_implicit_optional(before, lineno)
                     label = "implicit-optional"
+                elif code == "assignment" and 'expression has type "None"' in err:
+                    after = _fix_optional_import_none(before, lineno)
+                    label = "optional-import-ignore"
                 elif code == "attr-defined":
                     m = _HAS_NO_ATTRIBUTE_MAYBE_RE.search(err)
                     if m:
@@ -2262,6 +2485,9 @@ class FixCommand(Command):
                 failures.append(f"Corruption guard: {reason[:150]}")
                 print(f"  Rejected patch — corruption guard: {reason}")
                 continue
+            result, added = _ensure_typing_imports(result)
+            if added:
+                print(f"  [fix] added missing import(s) the patch needed: {', '.join(added)}")
             if _has_return_error and _return_error_line is not None:
                 from agent_core.commands.fix_cmd import _enclosing_function_extent, _function_can_fall_off_end
                 extent = _enclosing_function_extent(result.split('\n'), _return_error_line)
@@ -2274,7 +2500,14 @@ class FixCommand(Command):
                               f"at line {_return_error_line} — function still falls off the end")
             _show_targeted_issues()
             if not auto_yes and context_errors:
-                self._show_patch_verdict(full, result, rel_file, context_errors, ws_dir)
+                new_kinds = self._show_patch_verdict(full, result, rel_file, context_errors, ws_dir)
+                if new_kinds:
+                    detail = "; ".join(f"[{c}] {m[:80]}" for c, m in sorted(new_kinds)[:3])
+                    failures.append(
+                        f"Patch rejected — introduces new mypy error(s): {detail}"
+                    )
+                    print("  Rejected patch — it introduces new mypy errors (not applied).")
+                    continue
             if save_file_py(full, result, auto_yes=auto_yes):
                 current = result
                 applied += 1
@@ -2298,7 +2531,19 @@ class FixCommand(Command):
                 failures.append(f"Shrinking [FILE:] rewrite for {rel_file}")
                 print(f"  WARNING: [FILE:] content for {rel_file} drops more than 70% of the file, skipping (use [PATCH:] instead)")
                 continue
+            new_code, added = _ensure_typing_imports(new_code)
+            if added:
+                print(f"  [fix] added missing import(s) the patch needed: {', '.join(added)}")
             _show_targeted_issues()
+            if not auto_yes and context_errors:
+                new_kinds = self._show_patch_verdict(full, new_code, rel_file, context_errors, ws_dir)
+                if new_kinds:
+                    detail = "; ".join(f"[{c}] {m[:80]}" for c, m in sorted(new_kinds)[:3])
+                    failures.append(
+                        f"Patch rejected — introduces new mypy error(s): {detail}"
+                    )
+                    print("  Rejected patch — it introduces new mypy errors (not applied).")
+                    continue
             if save_file_py(full, new_code, auto_yes=auto_yes):
                 current = new_code
                 applied += 1
@@ -2318,14 +2563,14 @@ class FixCommand(Command):
 
     def _show_patch_verdict(
         self, full: str, result: str, rel_file: str, context_errors: list[str], ws_dir: str
-    ) -> None:
-        """Verify a candidate [PATCH:] result against mypy BEFORE prompting.
+    ) -> set[tuple[str, str]]:
+        """Verify a candidate result against mypy BEFORE prompting.
 
         The patched text is written to a temporary sibling file and checked
-        with mypy; the outcome is reported as a verdict so the y/N decision
-        is informed: how many of the targeted errors are actually gone, and
-        which NEW errors the patch would introduce.  Best-effort: any mypy
-        failure just suppresses the verdict.
+        with mypy; the outcome is reported as a verdict.  Returns the set of
+        NEW error kinds the patch would introduce (empty when clean) so the
+        caller can reject it outright instead of trusting the operator to read
+        the verdict.  Best-effort: any mypy failure returns an empty set.
         """
         try:
             import tempfile
@@ -2333,7 +2578,7 @@ class FixCommand(Command):
                 suffix=".py", prefix=".mypycheck_", dir=os.path.dirname(full)
             )
         except OSError:
-            return
+            return set()
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(result)
@@ -2343,26 +2588,32 @@ class FixCommand(Command):
                 cwd=ws_dir,
             )
         except OSError:
-            return
+            return set()
         finally:
             try:
                 os.remove(tmp)
             except OSError:
                 print("Silenced exception in fix_cmd.py:2134")
 
+        from collections import Counter
+
         tmp_base = os.path.basename(tmp)
-        patched_kinds: set[tuple[str, str]] = set()
+        patched_counts: Counter[tuple[str, str]] = Counter()
         _ERROR_ID_RE = re.compile(r'^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$')
         for line in r.stdout.split('\n'):
             m = _ERROR_ID_RE.match(line.strip())
             if m and m.group(1).replace('\\', '/').split('/')[-1] == tmp_base:
-                patched_kinds.add((m.group(3), m.group(2).strip()))
+                patched_counts[(m.group(3), m.group(2).strip())] += 1
 
-        if not patched_kinds:
+        if not patched_counts:
             print("  [verify] patched file is mypy-clean — fixes all targeted errors, no new errors. → y")
-            return
+            return set()
 
-        targeted_kinds = _mypy_error_kinds("\n".join(context_errors))
+        targeted_counts: Counter[tuple[str, str]] = Counter()
+        for entry in context_errors:
+            m = _ERROR_ID_RE.match(entry.strip())
+            if m:
+                targeted_counts[(m.group(3), m.group(2).strip())] += 1
         # Baseline = the file's CURRENT full error set, not just the slice:
         # a patch must not be flagged for pre-existing errors it never touched.
         try:
@@ -2389,19 +2640,30 @@ class FixCommand(Command):
                 os.remove(tmp2)
             except OSError:
                 print("Silenced exception in fix_cmd.py:2174")
-        baseline_kinds: set[tuple[str, str]] = set()
+        baseline_counts: Counter[tuple[str, str]] = Counter()
         if r2 is not None:
             tmp2_base = os.path.basename(tmp2)
             for line in r2.stdout.split('\n'):
                 m = _ERROR_ID_RE.match(line.strip())
                 if m and m.group(1).replace('\\', '/').split('/')[-1] == tmp2_base:
-                    baseline_kinds.add((m.group(3), m.group(2).strip()))
+                    baseline_counts[(m.group(3), m.group(2).strip())] += 1
 
-        fixed = targeted_kinds - patched_kinds
-        # NEW errors = errors present after the patch that were NOT already
-        # present before it (pre-existing errors are not "introduced").
-        new_kinds = patched_kinds - (baseline_kinds or targeted_kinds)
-        print(f"  [verify] fixes {len(fixed)}/{len(targeted_kinds)} targeted error(s)")
+        # COUNT-based, not set-based: several errors can share the identical
+        # (code, message) at DIFFERENT lines, so a set wrongly reports a fixed
+        # target as "still present" while an untouched duplicate elsewhere
+        # survives — rejecting a correct partial patch.  (Seen live: two
+        # functions with the same "Incompatible default for parameter ...".)
+        fixed = sum(
+            min(count, max(0, baseline_counts.get(kind, 0) - patched_counts.get(kind, 0)))
+            for kind, count in targeted_counts.items()
+        )
+        total_targeted = sum(targeted_counts.values())
+        # NEW errors = more occurrences after the patch than before it.
+        new_kinds = {
+            kind for kind, n in patched_counts.items()
+            if n > baseline_counts.get(kind, 0)
+        }
+        print(f"  [verify] fixes {fixed}/{total_targeted} targeted error(s)")
         if new_kinds:
             print(f"  [verify] introduces {len(new_kinds)} new error(s):")
             for code, msg in sorted(new_kinds)[:5]:
@@ -2409,10 +2671,11 @@ class FixCommand(Command):
             if len(new_kinds) > 5:
                 print(f"    ... and {len(new_kinds) - 5} more")
             print("  → n (patch introduces new errors)  [s/q = stop whole run]")
-        elif fixed == targeted_kinds:
+        elif fixed >= total_targeted:
             print("  → y (all targeted errors fixed, nothing new)")
         else:
             print("  → n (some targeted errors remain)  [s/q = stop whole run]")
+        return new_kinds
 
     def _capture_proposed(self, response: str, rel_file: str, ws_dir: str) -> dict[str, str]:
         """PROPOSE MODE: turn an LLM [PATCH:]/[FILE:] response into in-memory

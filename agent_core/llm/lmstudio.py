@@ -155,7 +155,7 @@ def chat_timeout() -> int:
         return int(DEFAULT_CHAT_TIMEOUT)
 
 
-def _http_get_json(url: str, timeout: int = HEALTH_CHECK_TIMEOUT) -> dict[str, Any] | None:
+def _http_get_json(url: str, timeout: float = HEALTH_CHECK_TIMEOUT) -> dict[str, Any] | None:
     """Synchronous HTTP GET that returns parsed JSON, or None on failure."""
     try:
         resp = httpx.get(url, timeout=timeout)
