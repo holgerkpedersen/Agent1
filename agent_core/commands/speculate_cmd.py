@@ -205,17 +205,100 @@ def _is_repo_question(text: str) -> bool:
     return any(hint in low for hint in _REPO_QUESTION_HINTS)
 
 
+#: Words that carry no subject signal in a repo question (a grounded branch
+#: should not pass just because a tool result happened to contain "work").
+_SUBJECT_STOPWORDS = frozenset({
+    "what", "which", "where", "when", "does", "this", "that", "with", "from",
+    "have", "should", "would", "could", "there", "their", "about", "into",
+    "than", "then", "them", "they", "your", "will", "shall", "must", "make",
+    "made", "using", "used", "need", "needs", "best", "good", "better",
+    "work", "works", "working", "right", "single", "value", "high",
+    "highest", "improve", "improvement", "improvements", "change", "changes",
+    "repo", "repository", "project", "codebase", "workspace", "code", "file",
+    "files", "command", "commands", "current", "currently", "really", "more",
+    "most", "much", "many", "very", "just", "like", "also", "only", "over",
+    "under", "after", "before", "while", "being", "been", "were", "are",
+    "some", "each", "other", "another", "such", "same", "both", "thing",
+    "things",
+    # 3-letter words (distinctive terms like "jev" must survive).
+    "the", "and", "for", "not", "but", "you", "can", "how", "why", "was",
+    "its", "our", "his", "her", "who", "all", "any", "may", "new", "old",
+    "now", "get", "got", "see", "use", "let", "put", "say", "way", "too",
+    "own", "out", "off", "per", "via", "etc", "one", "two", "has", "had",
+    "did", "add", "run", "set", "end", "key", "fix", "bug",
+})
+
+_IDENT_RE = re.compile(r"`([A-Za-z_][\w.]*)`")
+_FILE_EXT_SUFFIXES = (
+    ".py", ".md", ".json", ".toml", ".txt", ".cfg", ".yaml", ".yml", ".ini",
+)
+
+
+def _question_subject_terms(question: str) -> set[str]:
+    """Distinctive terms a grounded branch's tool evidence should mention.
+
+    Path-like tokens contribute their stem (``speculate_cmd.py`` ->
+    ``speculate_cmd``); significant words (4+ chars, not stopwords) are added
+    too.  Used to reject "grounding" that never touched the subject — e.g. a
+    ``web_search`` call answering a question about the Jev integration.
+    """
+    text = str(question)
+    terms: set[str] = set()
+    for match in _CLAIM_PATH_RE.finditer(text):
+        stem = Path(match.group(1)).stem.lower()
+        if stem:
+            terms.add(stem)
+    for raw in re.findall(r"[A-Za-z][A-Za-z0-9_.-]{2,}", text.lower()):
+        for word in re.split(r"[-_.]", raw):
+            if len(word) >= 3 and word not in _SUBJECT_STOPWORDS:
+                terms.add(word)
+    return terms
+
+
+def _grounded_in_subject(evidence: list[str], terms: set[str]) -> bool:
+    """True when at least one tool RESULT mentions a subject term.
+
+    Evidence is the executed tool output (not the arguments): what matters is
+    that the branch actually looked at the subject matter.  With no subject
+    terms any tool call counts.
+    """
+    if not evidence:
+        return False
+    if not terms:
+        return True
+    blob = "\n".join(evidence).lower()
+    return any(term in blob for term in terms)
+
+
+def _claim_idents(text: str, start: int, end: int, rel: str) -> list[str]:
+    """Backticked identifiers near a citation (excluding the cited filename)."""
+    context = text[max(0, start - 160):min(len(text), end + 160)]
+    idents: list[str] = []
+    for ident in _IDENT_RE.findall(context):
+        low = ident.lower()
+        if low == rel.lower() or low == Path(rel).name.lower():
+            continue
+        if low.endswith(_FILE_EXT_SUFFIXES):
+            continue
+        if len(ident) >= 3:
+            idents.append(ident)
+    return idents
+
+
 def _verify_claims(answer: str, workspace: str) -> list[str]:
     """Check every ``file[:line]`` claim in *answer* against the workspace.
 
-    Returns human-readable mismatches (empty = every claim checks out).  A
-    missing file or a line past EOF means the answer describes code that is not
-    there — it must not be COMMITted as verified fact.  Deterministic and
-    free: no judge involved.
+    Three deterministic checks per claim: the file exists (bare basenames are
+    resolved anywhere in the workspace), the line is within the file, and —
+    when the answer names a backticked symbol next to the citation — that
+    symbol appears within a few lines of the cited line.  A failure means the
+    answer describes code that is not there, so it must not be COMMITted as
+    verified fact.  Deterministic and free: no judge involved.
     """
+    text = str(answer)
     problems: list[str] = []
     seen: set[str] = set()
-    for match in _CLAIM_PATH_RE.finditer(str(answer)):
+    for match in _CLAIM_PATH_RE.finditer(text):
         rel, line = match.group(1), match.group(2)
         if rel in seen:
             continue
@@ -223,11 +306,7 @@ def _verify_claims(answer: str, workspace: str) -> list[str]:
         candidate = Path(rel)
         if not candidate.is_absolute():
             candidate = Path(workspace) / rel
-        if (
-            not candidate.is_file()
-            and "/" not in rel
-            and "\\" not in rel
-        ):
+        if not candidate.is_file() and "/" not in rel and "\\" not in rel:
             # A bare basename ("speculate_cmd.py:324"): resolve it anywhere in
             # the workspace instead of falsely calling it missing.
             try:
@@ -239,14 +318,28 @@ def _verify_claims(answer: str, workspace: str) -> list[str]:
         if not candidate.is_file():
             problems.append(f"{rel} does not exist")
             continue
-        if line:
-            try:
-                with candidate.open(encoding="utf-8", errors="replace") as handle:
-                    count = sum(1 for _ in handle)
-            except OSError:
-                continue
-            if int(line) > count:
-                problems.append(f"{rel}:{line} is past EOF ({count} lines)")
+        if not line:
+            continue
+        try:
+            file_lines = candidate.read_text(
+                encoding="utf-8", errors="replace",
+            ).splitlines()
+        except OSError:
+            continue
+        if int(line) > len(file_lines):
+            problems.append(
+                f"{rel}:{line} is past EOF ({len(file_lines)} lines)"
+            )
+            continue
+        idents = _claim_idents(text, match.start(), match.end(), rel)
+        if idents:
+            index = int(line) - 1
+            window = " ".join(file_lines[max(0, index - 3):index + 4])
+            missing = [i for i in dict.fromkeys(idents) if i not in window]
+            if missing:
+                problems.append(
+                    f"{rel}:{line} does not mention {', '.join(missing[:3])}"
+                )
     return problems
 
 
@@ -400,6 +493,7 @@ class SpeculateCommand(Command):
         # answers from memory is not a candidate (it produced confident,
         # wrong file/line claims that a same-model judge scored 1.00).
         require_grounding = (not no_grounding) and _is_repo_question(question)
+        subject_terms = _question_subject_terms(question)
 
         # Reasons a branch was disqualified (ungrounded / fabricated / leaked
         # tool call).  Surfaced on REFUSE so the user sees WHY nothing was
@@ -503,10 +597,13 @@ class SpeculateCommand(Command):
                 f"{', '.join(sorted(_BRANCH_TOOLS))}. Do not call any other tool. "
                 "NEVER invent tool output: do not write XML/tags like "
                 "<definitions ...> or <search ...>, and no placeholder paths "
-                "like path/to/x.py — if you need a fact, actually call the tool."
+                "like path/to/x.py — if you need a fact, actually call the tool. "
+                "When you claim something about the code, cite it as "
+                "`path/to/file.py:line`."
             )})
             answer = ""
             tool_calls_made = 0
+            tool_evidence: list[str] = []
             for _ in range(_BRANCH_MAX_ITERS):
                 reply = str(asyncio.run(
                     branch_llm.chat(
@@ -534,10 +631,12 @@ class SpeculateCommand(Command):
                             targs = {}
                     except (json.JSONDecodeError, TypeError):
                         targs = {}
+                    result_text = _call_branch_tool(name, targs)
+                    tool_evidence.append(result_text[:20_000])
                     messages.append({
                         "role": "tool",
                         "tool_call_id": str(call.get("id") or ""),
-                        "content": _call_branch_tool(name, targs),
+                        "content": result_text,
                     })
                     tool_calls_made += 1
             else:
@@ -559,6 +658,14 @@ class SpeculateCommand(Command):
                     branch_id,
                     "repo question answered without calling any tool "
                     "(ungrounded code claims are not candidates)",
+                )
+            if require_grounding and not _grounded_in_subject(
+                tool_evidence, subject_terms,
+            ):
+                return _fail(
+                    branch_id,
+                    "repo question answered without tool evidence about the "
+                    "subject (read/search the relevant code)",
                 )
             return {"branch": branch_id, "answer": answer}
 

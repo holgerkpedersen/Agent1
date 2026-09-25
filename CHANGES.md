@@ -1,3 +1,11 @@
+## 2026-09-25 - feat: relevant grounding + cited-line verification in speculate
+
+**Change**: `_question_subject_terms()` extracts distinctive subject terms from a question (path stems + 3+/4+ char non-stopwords, hyphen-split); `_grounded_in_subject()` requires a repo-question branch's executed tool EVIDENCE to mention at least one such term — calling *any* tool no longer satisfies grounding (a `web_search` used to count). `_verify_claims()` now also checks CONTENT: when the answer names a backticked symbol next to a `file:line` citation, that symbol must appear within ±3 lines of the cited line. The branch prompt asks for `path:line` citations.
+
+**Reason**: the 22:04 run answered a repo question wrongly (claimed `--judge jev` uses Jev as a co-thinker on branches and proposed a redundant `--gate` flag) yet passed grounding + claim verification and was scored 0.95. The guards checked form, not meaning; these two deterministic levers close the cheap part of that gap.
+
+**Files**: agent_core/commands/speculate_cmd.py, tests/test_speculate_cmd.py. Verified live: irrelevant tool evidence → REFUSE `without tool evidence about the subject`; a real file cited at a wrong line with a symbol name → REFUSE `speculate_cmd.py:300 does not mention branch_llm` (even with a 0.9 judge score); a grounded, claim-free answer still COMMITs. Tests: 36 speculate tests green.
+
 ## 2026-09-25 - fix: --judge jev keeps chat branches; --branch-model jev for pure Jev
 
 **Change**: new `speculate --branch-model chat|jev` (default `chat`). `--judge jev` now scores with the dedicated small model while the reasoning model generates the branches — the smart split (big model thinks, small model decides). `--branch-model jev` runs the branches on the Jev model too (cheap/offline). The header prints `branch_model=chat|jev`; the Jev engine is built when either role needs it and degrades gracefully per role.

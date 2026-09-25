@@ -147,9 +147,10 @@ class _ToolLLM:
 
 
 class _ToolAgent:
-    def __init__(self, tool_name):
+    def __init__(self, tool_name, tool_result="file contents"):
         self.llm = _ToolLLM(tool_name)
         self.executed = []
+        self.tool_result = tool_result
 
     def _refresh_system_message(self):
         pass
@@ -160,7 +161,7 @@ class _ToolAgent:
 
     async def _execute_tool_call(self, name, args):
         self.executed.append((name, args))
-        return "file contents"
+        return self.tool_result
 
 
 def test_speculate_branch_runs_read_only_tools():
@@ -197,6 +198,42 @@ def test_is_repo_question():
         "What is the highest-value improvement to the Jev integration?"
     )
     assert not _is_repo_question("What is the capital of France?")
+
+
+def test_question_subject_terms_keeps_distinctive_words():
+    from agent_core.commands.speculate_cmd import _question_subject_terms
+
+    terms = _question_subject_terms(
+        "What is the single highest-value improvement to the Jev integration "
+        "right now?"
+    )
+    assert "jev" in terms
+    assert "integration" in terms
+    assert "improvement" not in terms  # stopword
+    assert "highest" not in terms      # stopword
+    assert "jev_engine" in _question_subject_terms(
+        "How does agent_core/jev_engine.py work?"
+    )
+
+
+def test_grounded_in_subject():
+    from agent_core.commands.speculate_cmd import _grounded_in_subject
+
+    assert _grounded_in_subject(["agent_core/jev_engine.py ..."], {"jev"})
+    assert not _grounded_in_subject(["nothing relevant"], {"jev"})
+    assert not _grounded_in_subject([], {"jev"})
+    assert _grounded_in_subject(["anything"], set())  # no terms -> any tool
+
+
+def test_verify_claims_checks_cited_line_content(tmp_path):
+    from agent_core.commands.speculate_cmd import _verify_claims
+
+    lines = ["x = 1"] + [f"y{i} = {i}" for i in range(2, 10)] + ["branch_llm = 10"]
+    (tmp_path / "mod.py").write_text("\n".join(lines), encoding="utf-8")
+    assert _verify_claims("`branch_llm` is set at `mod.py:10`", str(tmp_path)) == []
+    problems = _verify_claims("`branch_llm` is set at `mod.py:1`", str(tmp_path))
+    assert problems
+    assert "does not mention branch_llm" in problems[0]
 
 
 def test_verify_claims_checks_workspace(tmp_path):
@@ -291,7 +328,9 @@ def test_speculate_no_grounding_flag_allows_ungrounded(capsys):
 def test_speculate_grounded_branch_can_commit(capsys):
     from agent_core.commands.speculate_cmd import SpeculateCommand
 
-    agent = _ToolAgent("read")  # calls read, then answers
+    agent = _ToolAgent(
+        "read", tool_result="agent_core/jev_engine.py: sample votes + logprobs",
+    )
     asyncio.run(SpeculateCommand().execute(
         ['"How does agent_core/jev_engine.py work?"'], agent,
     ))
@@ -299,6 +338,21 @@ def test_speculate_grounded_branch_can_commit(capsys):
     out = capsys.readouterr().out
     assert "COMMIT" in out
     assert "grounded answer" in out
+
+
+def test_speculate_rejects_irrelevant_grounding(capsys):
+    """A tool call that never touches the subject is not grounding: the branch
+    called a tool but its result says nothing about the Jev engine."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    agent = _ToolAgent("read", tool_result="nothing about the topic")
+    asyncio.run(SpeculateCommand().execute(
+        ['"How does the Jev engine decide?"'], agent,
+    ))
+    assert agent.executed  # a tool WAS called...
+    out = capsys.readouterr().out
+    assert "REFUSE" in out
+    assert "without tool evidence about the subject" in out
 
 
 def test_speculate_refuses_unverified_claims(capsys):

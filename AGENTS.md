@@ -54,12 +54,14 @@ is being extended to audit its own file effects (self-improvement).
   gray-band escalation to the chat-model judge; `--judge both` averages the
   two judges. The header prints `branch_model=` / `jev_model=` / `escalate=`.
   Grounding: a repo/code question (`_is_repo_question`) requires every branch
-  to execute at least one tool (`grounding=on`; `--no-grounding` disables) —
-  ungrounded code claims are not candidates. Before COMMIT, every
-  `file[:line]` claim in the winning answer is verified against the workspace
-  (`_verify_claims`: missing file / line past EOF / bare basename resolved by
-  rglob) and the command REFUSEs on a mismatch — both guards are deterministic
-  and free.
+  to execute at least one tool whose EVIDENCE mentions a subject term
+  (`_question_subject_terms` / `_grounded_in_subject`; `grounding=on`;
+  `--no-grounding` disables) — calling an unrelated tool does not count.
+  Before COMMIT, every `file[:line]` claim in the winning answer is verified
+  against the workspace (`_verify_claims`: missing file / line past EOF / bare
+  basename resolved by rglob / a backticked symbol next to the citation must
+  appear within ±3 lines of the cited line) and the command REFUSEs on a
+  mismatch — all guards are deterministic and free.
 - `agent_core/jev_engine.py` — the Jev decision engine: a TYPED, probabilistic
   micro-decision (`yesno` -> P(yes)/P(no)/TRUE-FALSE-UNKNOWN, `choice` ->
   distribution over options/argmax-UNDECIDED, `score` -> 0-100 + spread) run on
