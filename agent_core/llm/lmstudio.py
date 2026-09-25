@@ -576,6 +576,46 @@ class LMStudioProvider:
         prefill_s = (tokens / rate) * _PREFILL_MARGIN + _PREFILL_SLACK_S
         return int(min(max(base, prefill_s), _MAX_SCALED_TIMEOUT_S))
 
+    def _announce_model(self, payload: dict[str, Any]) -> None:
+        """Print the model/profile status label once per label change.
+
+        Shared by :meth:`chat` and :meth:`chat_logprobs`, so a Jev logprobs
+        call is just as visible as a normal chat call (the logprobs path used
+        to print nothing, making it look like the Jev model was never used).
+        """
+        label = f"[model: {payload.get('model')}]"
+        if self._profile_name:
+            label = (
+                f"[model: {payload.get('model')} | profile={self._profile_name} "
+                f"t={self.temperature} tok={self.max_tokens}]"
+            )
+        # Print once per session; re-print only when the label changes.
+        if label != self._last_label:
+            print(f"  {label}", end="", flush=True)
+            self._last_label = label
+
+    def ensure_model_loaded(self) -> tuple[bool, str]:
+        """Ensure THIS provider's model is loaded in LM Studio (auto-select).
+
+        The Jev commands call this before their first request so the dedicated
+        small model is (re)selected automatically — even after a ``model``
+        switch or another shell evicted it from VRAM.  Returns ``(True, note)``
+        when the model is available, or when LM Studio is unreachable (the
+        normal request path then reports the transport error itself);
+        ``(False, reason)`` when an explicit load attempt failed.
+        """
+        status = get_models_status()
+        if not status:
+            return True, "LM Studio unreachable"
+        for entry in status:
+            if str(entry.get("key")) != self.model_name:
+                continue
+            if entry.get("loaded"):
+                return True, "already loaded"
+            break
+        ok, message = load_model(self.model_name)
+        return ok, message
+
     async def chat(
         self, 
         messages: list[dict[str, Any]],
@@ -596,15 +636,8 @@ class LMStudioProvider:
         policy = self.retry_policy
         if pbytes > 200_000:
             policy = RetryPolicy(max_retries=1, base_delay=self.retry_policy.base_delay)
-        label = f"[model: {payload['model']}]"
-        if self._profile_name:
-            label = f"[model: {payload['model']} | profile={self._profile_name} t={self.temperature} tok={self.max_tokens}]"
-        # Print the status label once per session; re-print only when the
-        # model/profile/temperature/tokens change mid-session.
-        if label != self._last_label:
-            print(f"  {label}", end="", flush=True)
-            self._last_label = label
-        
+        self._announce_model(payload)
+
         async def _do_request() -> Any:
             start_time = _time.monotonic()
             # _make_request is a BLOCKING urllib call — run it in a worker
@@ -658,6 +691,58 @@ class LMStudioProvider:
         except Exception as e:
             return f"[Error: {e}]"
     
+    async def chat_logprobs(
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int | None = None,
+        top_logprobs: int = 20,
+        disable_thinking: bool = True,
+    ) -> tuple[str, list[dict[str, Any]] | None]:
+        """Single chat call returning ``(content, first_token_top_logprobs)``.
+
+        Like :meth:`chat`, but requests OpenAI-compatible ``logprobs`` so a
+        caller can read the model's OWN probability mass over candidate answer
+        tokens — this is the Jev engine's logprobs tier (one call instead of N
+        samples).  The second element is the first generated token's
+        ``top_logprobs`` entries (``{"token", "logprob"}`` dicts), or ``None``
+        when the backend did not return logprobs; callers then fall back to
+        sampling votes.  On failure the error text is returned as the content
+        with ``None`` logprobs, mirroring ``chat``'s ``[Error: ...]`` contract.
+        """
+        payload = self._build_payload(
+            messages, override_max_tokens=max_tokens,
+            disable_thinking=disable_thinking,
+        )
+        payload["logprobs"] = True
+        payload["top_logprobs"] = max(1, min(int(top_logprobs), 20))
+        timeout = self._scaled_timeout(payload)
+        self._announce_model(payload)
+
+        async def _do_request() -> tuple[str, list[dict[str, Any]] | None]:
+            result = await asyncio.to_thread(self._make_request, payload, timeout)
+            choices = result.get("choices") if isinstance(result, dict) else None
+            if not isinstance(choices, list) or not choices:
+                return "", None
+            choice = choices[0] if isinstance(choices[0], dict) else {}
+            message = choice.get("message") or {}
+            content = str(message.get("content") or "")
+            logprobs = choice.get("logprobs")
+            top: list[dict[str, Any]] | None = None
+            if isinstance(logprobs, dict):
+                entries = logprobs.get("content")
+                if isinstance(entries, list) and entries:
+                    first = entries[0]
+                    if isinstance(first, dict):
+                        raw_top = first.get("top_logprobs")
+                        if isinstance(raw_top, list):
+                            top = [e for e in raw_top if isinstance(e, dict)]
+            return content, top
+
+        try:
+            return await self.retry_policy.execute_with_retry(_do_request)
+        except Exception as e:
+            return f"[Error: {e}]", None
+
     async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """Chat with real-time token streaming to console."""
         payload = self._build_payload(messages, stream=True)

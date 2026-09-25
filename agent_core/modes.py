@@ -43,6 +43,9 @@ MODE_PLAN = "plan"
 PLAN_MODE_TOOLS: frozenset[str] = frozenset({
     "search", "read", "list_files", "diff", "web_search",
     "definitions", "references",
+    # ``jev_decide`` is a pure reader — it asks the dedicated small Jev model a
+    # typed question and returns probabilities; it touches no files.
+    "jev_decide",
     # ``read_skill`` is a pure reader — it only opens skills/<name>/SKILL.md
     # read-only and returns one page of text; the SKILLS index in the system
     # prompt tells the model to call it, so plan mode must allow it.
@@ -100,8 +103,8 @@ def plan_mode_system_suffix() -> str:
     return (
         "\n\nSESSION MODE: PLAN (read-only).\n"
         "- Your toolset is limited to read-only tools (search, read, "
-        "list_files, diff, web_search, definitions, references, delegate); "
-        "any write/edit/run/git/tests/fix call is REJECTED.\n"
+        "list_files, diff, web_search, definitions, references, jev_decide, "
+        "delegate); any write/edit/run/git/tests/fix call is REJECTED.\n"
         "- Do not attempt or promise changes: research the workspace, then "
         "end the turn with a concrete, file-by-file implementation plan as "
         "your final text answer.\n"

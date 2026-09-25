@@ -46,7 +46,41 @@ is being extended to audit its own file effects (self-improvement).
   best at `--threshold` or REFUSEs. Branch-dispatch timeout default 300s.
   A branch whose tool-call syntax leaks through as TEXT (e.g. gemma's
   `<|tool_call>call:run{...}`) is failed, not committed, and the judge scores a
-  non-answer 0.0 without asking the model.
+  non-answer 0.0 without asking the model. `--judge jev|both` swaps/averages the
+  LLM judge for the Jev engine (below).
+- `agent_core/jev_engine.py` — the Jev decision engine: a TYPED, probabilistic
+  micro-decision (`yesno` -> P(yes)/P(no)/TRUE-FALSE-UNKNOWN, `choice` ->
+  distribution over options/argmax-UNDECIDED, `score` -> 0-100 + spread) run on
+  a DEDICATED small model (`settings.jev_model`, default
+  `qwen2.5-coder-1.5b-instruct` via catalog `_defaults.jev_model`; env
+  `AGENT_JEV_MODEL`) — it builds its OWN   provider with `single=True`: ONE
+  pinned provider, NO failover chain, and it never touches `agent.llm`. (A
+  failover chain was the bug: a Jev call silently drifted to DeepSeek/
+  OpenRouter/the 27B when LM Studio was unreachable.) Before the first request
+  the engine AUTO-SELECTS its model (`LMStudioProvider.ensure_model_loaded`,
+  run once per engine) so a `model` switch that evicted the small model from
+  VRAM cannot break a Jev command. NOTE: pick a
+  NON-thinking model — `google/gemma-4-e4b` is a
+  THINKING model whose reasoning-off knobs do NOT work (it needs
+  `jev_max_tokens` >= 512 to reach the verdict, and it is a bad speculate
+  branch model). `qwen2.5-coder-1.5b-instruct` answers terse and verified 5/5
+  on every primitive. Mechanisms: `logprobs` (one call via
+  `LMStudioProvider.chat_logprobs`) and `vote` (N samples;
+  agreement IS the probability), `auto` = logprobs then vote. Provider errors,
+  timeouts, empty output, unparseable tokens and leaked tool calls are
+  ABSTENTIONS (majority -> UNKNOWN), never fabricated votes. Consumers: REPL
+  `jev` (`agent_core/commands/jev_cmd.py`) and the read-only NLP tool
+  `jev_decide` (`PLAN_MODE_TOOLS`).
+- `harnessfix/jev_telemetry.py` — Jev decision telemetry + calibration: every
+  `JevEngine.decide` appends one record (source/model/kind/mechanism/
+  probabilities/decision/threshold) to `reports/history/jev.jsonl`
+  (gitignored, same tree as the execution ledger); best-effort (never breaks a
+  decision) and opt-out via `AGENT_NO_JEV_LOG=1` (tests set it so fake
+  providers never pollute the ledger). `record_outcome(id, correct|incorrect)`
+  labels a decision; `jev stats [--last N] [--json]` renders counts,
+  predicted-vs-observed calibration bins and the threshold that best separates
+  correct from incorrect yesno decisions — the measurement loop that makes the
+  hardcoded 0.7/0.3 thresholds calibratable from real outcomes.
 - `_nlp_read` (in `agent.py`) — paging is line-based and ALWAYS honored: the
   AST `definitions` summary is returned only for a BARE read (no `offset`/
   `limit`) of a `.py` file over `_CONTEXT_AST_THRESHOLD_KB` (50); returning it
@@ -360,6 +394,25 @@ incrementally as its capability grows — human stays in control.
   instead of ~1s per 50 KB, so a >600s prefill no longer trips LM Studio's
   "Client disconnected. Stopping generation...". Floor `LMSTUDIO_CHAT_TIMEOUT`
   (600), cap 3600s. Tests: `tests/test_lmstudio_payload.py`.
+- **Jev decision engine (DONE, 2026-09-25)**: `agent_core/jev_engine.py` +
+  REPL `jev` + NLP `jev_decide` + `speculate --judge jev|both`. Typed
+  yesno/choice/score decisions on a DEDICATED small model
+  (`settings.jev_model`, default `qwen2.5-coder-1.5b-instruct`) via logprobs or sample
+  votes; abstains rather than fabricating a probability. New settings
+  (`jev_model`/`jev_provider`/`jev_samples`/`jev_temperature`/`jev_max_tokens`/
+  `jev_timeout`), `LMStudioProvider.chat_logprobs`, catalog
+  `_defaults.jev_model`. Tests: `tests/test_jev_engine.py` (43),
+  `tests/test_jev_cmd.py` (16), `tests/test_lmstudio_payload.py` (26),
+  `tests/test_speculate_cmd.py` (16).
+- **Jev telemetry + calibration (DONE, 2026-09-25)**: `harnessfix/jev_telemetry.py`
+  records every decision to `reports/history/jev.jsonl` (best-effort, opt-out
+  `AGENT_NO_JEV_LOG=1`), `record_outcome(id, ...)` labels it, and `jev stats`
+  reports counts, predicted-vs-observed calibration bins and a suggested yesno
+  threshold. `speculate --judge jev` also gained the gray-band cascade
+  (`--low`, default 0.3): confident accept/reject costs one small-model call,
+  only `low < P < threshold` escalates that candidate to the LLM judge.
+  Tests: `tests/test_jev_telemetry.py` (13), `tests/test_jev_cmd.py` (20),
+  `tests/test_speculate_cmd.py` (19).
 
 ## Git / remote auth (non-interactive)
 `git push`/`ls-remote` must NOT prompt for credentials (no human at the keyboard).

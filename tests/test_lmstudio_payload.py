@@ -284,3 +284,159 @@ class TestScaledTimeout:
         # A huge prompt estimates a multi-minute prefill -> capped at 3600.
         assert captured["timeout"] == 3600
 
+
+class TestChatLogprobs:
+    """``chat_logprobs`` requests logprobs and returns the first-token mass —
+    the Jev engine's one-call logprobs tier."""
+
+    def _prov(self, monkeypatch):
+        monkeypatch.setenv("LMSTUDIO_URL", "http://localhost:1234/v1")
+        return _provider("google/gemma-4-e4b")
+
+    def test_requests_logprobs_and_parses_top(self, monkeypatch):
+        import asyncio
+
+        captured = {}
+
+        def fake_make_request(payload, timeout=None):
+            captured["payload"] = payload
+            return {
+                "choices": [{
+                    "message": {"content": "yes"},
+                    "logprobs": {
+                        "content": [{
+                            "token": "yes",
+                            "logprob": -0.22,
+                            "top_logprobs": [
+                                {"token": "yes", "logprob": -0.22},
+                                {"token": "no", "logprob": -1.6},
+                            ],
+                        }],
+                    },
+                }]
+            }
+
+        p = self._prov(monkeypatch)
+        monkeypatch.setattr(p, "_make_request", fake_make_request)
+        content, top = asyncio.run(
+            p.chat_logprobs([{"role": "user", "content": "q"}])
+        )
+        assert content == "yes"
+        assert top is not None and top[0]["token"] == "yes"
+        assert captured["payload"]["logprobs"] is True
+        assert captured["payload"]["top_logprobs"] == 20
+
+    def test_missing_logprobs_returns_none(self, monkeypatch):
+        import asyncio
+
+        p = self._prov(monkeypatch)
+        monkeypatch.setattr(
+            p, "_make_request",
+            lambda payload, timeout=None: {
+                "choices": [{"message": {"content": "yes"}}],
+            },
+        )
+        content, top = asyncio.run(
+            p.chat_logprobs([{"role": "user", "content": "q"}])
+        )
+        assert content == "yes"
+        assert top is None
+
+    def test_provider_error_returns_none_top(self, monkeypatch):
+        import asyncio
+
+        p = self._prov(monkeypatch)
+
+        def boom(payload, timeout=None):
+            raise RuntimeError("HTTP Error 400: no models loaded")
+
+        monkeypatch.setattr(p, "_make_request", boom)
+        content, top = asyncio.run(
+            p.chat_logprobs([{"role": "user", "content": "q"}])
+        )
+        assert content.startswith("[Error:")
+        assert top is None
+
+    def test_announces_model_label(self, monkeypatch, capsys):
+        """The logprobs path used to print nothing, so a Jev call looked like
+        it never used the small model."""
+        import asyncio
+
+        monkeypatch.setenv("LMSTUDIO_URL", "http://localhost:1234/v1")
+        p = _provider("qwen2.5-coder-1.5b-instruct")
+        monkeypatch.setattr(
+            p, "_make_request",
+            lambda payload, timeout=None: {
+                "choices": [{"message": {"content": "yes"}}],
+            },
+        )
+        p.apply_profile("jev", 0.7, 512)
+        asyncio.run(p.chat_logprobs([{"role": "user", "content": "q"}]))
+        out = capsys.readouterr().out
+        assert "qwen2.5-coder-1.5b-instruct" in out
+        assert "profile=jev" in out
+
+
+class TestEnsureModelLoaded:
+    """The Jev commands auto-select their dedicated model before the first
+    request — a ``model`` switch or another shell may have evicted it."""
+
+    def _prov(self):
+        return _provider("qwen2.5-coder-1.5b-instruct")
+
+    def test_already_loaded_skips_load(self, monkeypatch):
+        monkeypatch.setattr(
+            _lmstudio_mod, "get_models_status",
+            lambda: [{"key": "qwen2.5-coder-1.5b-instruct", "loaded": True}],
+        )
+        called: list[str] = []
+        monkeypatch.setattr(
+            _lmstudio_mod, "load_model",
+            lambda key, *a, **k: called.append(key) or (True, "loaded"),
+        )
+        ok, msg = self._prov().ensure_model_loaded()
+        assert ok is True
+        assert msg == "already loaded"
+        assert called == []
+
+    def test_not_loaded_is_loaded(self, monkeypatch):
+        monkeypatch.setattr(
+            _lmstudio_mod, "get_models_status",
+            lambda: [{"key": "qwen2.5-coder-1.5b-instruct", "loaded": False}],
+        )
+        called: list[str] = []
+
+        def fake_load(key, *a, **k):
+            called.append(key)
+            return True, "loaded (4.5s)"
+
+        monkeypatch.setattr(_lmstudio_mod, "load_model", fake_load)
+        ok, msg = self._prov().ensure_model_loaded()
+        assert ok is True
+        assert "loaded" in msg
+        assert called == ["qwen2.5-coder-1.5b-instruct"]
+
+    def test_unreachable_defers_to_request_path(self, monkeypatch):
+        monkeypatch.setattr(_lmstudio_mod, "get_models_status", lambda: [])
+        called: list[int] = []
+        monkeypatch.setattr(
+            _lmstudio_mod, "load_model",
+            lambda *a, **k: called.append(1) or (True, "x"),
+        )
+        ok, msg = self._prov().ensure_model_loaded()
+        assert ok is True
+        assert "unreachable" in msg
+        assert called == []
+
+    def test_load_failure_is_reported(self, monkeypatch):
+        monkeypatch.setattr(
+            _lmstudio_mod, "get_models_status",
+            lambda: [{"key": "qwen2.5-coder-1.5b-instruct", "loaded": False}],
+        )
+        monkeypatch.setattr(
+            _lmstudio_mod, "load_model", lambda *a, **k: (False, "not found"),
+        )
+        ok, msg = self._prov().ensure_model_loaded()
+        assert ok is False
+        assert msg == "not found"
+

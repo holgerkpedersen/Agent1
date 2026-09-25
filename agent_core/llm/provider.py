@@ -170,7 +170,11 @@ def _effective_model(
 
 
 def build_provider(
-    settings: Any, model_name: str, provider_override: str | None = None
+    settings: Any,
+    model_name: str,
+    provider_override: str | None = None,
+    *,
+    single: bool = False,
 ) -> "LLMProvider":
     """Configured provider factory (decision #008/#013).
 
@@ -178,6 +182,12 @@ def build_provider(
     #009).  When :attr:`settings.llm_providers` lists more than one provider,
     builds each entry in order and wraps them in a :class:`FailoverProvider`
     so a connectivity loss on the active provider fails over to the next.
+
+    When ``single=True`` the failover chain is IGNORED and exactly ONE concrete
+    provider is built, pinned to *model_name* — the mode the Jev decision
+    engine uses.  Jev must run on its dedicated small model; a failover chain
+    would silently answer with the main/reasoning model when the small one is
+    unreachable, which is exactly what Jev must never do.
 
     Each chain entry may carry a per-entry model override of the form
     ``provider:model`` (split on the first colon).  This lets the same
@@ -275,6 +285,18 @@ def build_provider(
         else:
             resolved_chain.append(entry)
     chain = tuple(resolved_chain)
+
+    # Single-provider mode: build ONE concrete provider pinned to *model_name*,
+    # never a failover chain.  Used by the Jev engine, which must run on its
+    # dedicated small model and must NOT drift to the main/reasoning model when
+    # the small model is unreachable.
+    if single:
+        routed = (
+            provider_override
+            if provider_override in ("lmstudio", "opencode", "llama", "openrouter")
+            else provider_for(model_name, chain[0], persisted_provider)
+        )
+        return _build_one(routed, None, user_explicit=True)
 
     # A single configured provider always yields the concrete provider —
     # routing (persisted/prefix/override) selects WHICH one, it never extends

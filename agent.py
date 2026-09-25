@@ -992,6 +992,7 @@ class Agent:
             "edit": self._nlp_edit,
             "fix": self._nlp_fix,
             "git": self._nlp_git,
+            "jev_decide": self._nlp_jev_decide,
             "list_files": self._nlp_list_files,
             "merge": self._nlp_merge,
             "read": self._nlp_read,
@@ -1099,6 +1100,51 @@ class Agent:
         return await asyncio.to_thread(
             collect_references, symbol, self._effective_ws_dir(), max_results,
         )
+
+    async def _nlp_jev_decide(self, args: dict[str, Any]) -> str:
+        """Typed probabilistic decision from the dedicated small Jev model.
+
+        The engine is built from ``settings.jev_model`` (never ``self.llm``), so
+        a fast local small model makes yes/no, choice and rubric-score calls
+        without involving the main model.  Failures return an error string; the
+        tool is read-only and therefore allowed in plan mode too.
+        """
+        from agent_core.jev_engine import JevQuestion, build_jev_engine
+
+        kind = str(args.get("kind") or "yesno").strip().lower()
+        text = str(args.get("question") or "").strip()
+        if not text:
+            return "Error: jev_decide requires 'question'."
+        raw_options = args.get("options") or []
+        if isinstance(raw_options, str):
+            raw_options = [o.strip() for o in raw_options.split("|")]
+        options = tuple(str(o).strip() for o in raw_options if str(o).strip())
+        rubric = str(args.get("rubric") or "")
+        state = str(args.get("state") or "")
+        try:
+            threshold = float(args.get("threshold", 0.7))
+        except (TypeError, ValueError):
+            threshold = 0.7
+        threshold = min(1.0, max(0.0, threshold))
+        try:
+            question = JevQuestion(
+                kind=kind, text=text, options=options, rubric=rubric,
+            )
+        except ValueError as exc:
+            return f"Error: {exc}"
+        try:
+            engine = build_jev_engine(
+                threshold=threshold,
+                source="tool",
+                log_workspace=getattr(self, "workspace", None),
+            )
+        except Exception as exc:  # noqa: BLE001 - surface a clear setup error
+            return f"jev_decide error: {exc}"
+        try:
+            result = await engine.decide(question, state)
+        except Exception as exc:  # noqa: BLE001 - never kill the turn
+            return f"jev_decide error: {exc}"
+        return result.summary()
 
     async def _nlp_search(self, args: dict[str, Any]) -> str:
         """Search workspace files for text (first 30 matches)."""
@@ -3250,6 +3296,22 @@ _SYSTEM_PROMPT = (
     "- Be concise. Answer in the user's language.\n"
     "- IMPORTANT: If the user message is a greeting (hi, hello, hey, etc.) "
     "or small talk, reply with a short text greeting. Do NOT call any tools."
+    "\n\nJEV DECISION ENGINE (fast, cheap, typed — use it for judgements):\n"
+    "You have jev_decide: a dedicated non-thinking small model that answers "
+    "TYPED questions with probabilities instead of prose. kind='yesno' (the "
+    "question is a proposition -> P(yes)/P(no) plus TRUE/FALSE/UNKNOWN), "
+    "kind='choice' (put the candidates in options -> a probability "
+    "distribution), kind='score' (put the rubric in rubric -> 0-100 plus "
+    "spread). Pass the evidence you already gathered in 'state' and set "
+    "'threshold' (default 0.7). It is read-only and runs on a local small "
+    "model, so it is fast and cheap — far cheaper than another reasoning pass.\n"
+    "- Act on a yesno only when the decision is TRUE (P >= threshold); "
+    "otherwise treat it as undecided and say so — never overclaim a guess.\n"
+    "- Prefer it over guessing for bounded judgements: is this true / risky / "
+    "needed? which of A/B/C is the best target? how well does this draft meet "
+    "the rubric?\n"
+    "- Do NOT use it for open-ended generation, code, or explanations — you "
+    "write those yourself. It is a decision model, not a writer."
     "\n\nMANAGER WORKFLOW (for complex tasks):\n"
     "1. Analyze if the task benefits from parallel specialists.\n"
     "2. Use create_subagent to spawn specialists (e.g. one for research, one for coding).\n"
@@ -3768,6 +3830,8 @@ def _register_commands(registry: CommandRegistry) -> None:
     registry.register(ProposeCommand())
     from agent_core.commands.speculate_cmd import SpeculateCommand
     registry.register(SpeculateCommand())
+    from agent_core.commands.jev_cmd import JevCommand
+    registry.register(JevCommand())
     from agent_core.commands.help_cmd import HelpCommand
     registry.register(HelpCommand())
 

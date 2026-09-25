@@ -154,10 +154,13 @@ class SpeculateCommand(Command):
     @property
     def help_text(self) -> str:
         return (
-            'speculate "question" [--branches N] [--threshold X] '
-            "[--timeout S] - ask the LLM N independent speculative branches "
-            "in parallel, judge-score each answer, and COMMIT only when the "
-            "best score meets the threshold (otherwise REFUSE)"
+            'speculate "question" [--branches N] [--threshold X] [--low X] '
+            "[--timeout S] [--judge llm|jev|both] - ask the LLM N independent "
+            "speculative branches in parallel, judge-score each answer, and "
+            "COMMIT only when the best score meets the threshold (otherwise "
+            "REFUSE); --judge jev scores with the dedicated small Jev model "
+            "and escalates only gray-band scores (--low..--threshold) to the "
+            "LLM judge, both averages the two"
         )
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         from agent_core.orchestrator_probabilistic import (
@@ -169,6 +172,11 @@ class SpeculateCommand(Command):
         parts = list(args)
         num_branches = 3
         threshold = 0.7
+        #: Gray-band floor for the Jev cascade: a Jev score at/below this is a
+        #: confident reject (no LLM call); a score between --low and --threshold
+        #: is uncertain and escalates ONE candidate to the LLM judge.
+        low = 0.3
+        judge_mode = "llm"
         # Branch-dispatch wait.  Each branch carries the agent's full system
         # prompt AND may make several read-only tool round-trips, so a hosted
         # model needs real room; 60s aborted the whole deliberation.  Override
@@ -178,6 +186,24 @@ class SpeculateCommand(Command):
         i = 0
         while i < len(parts):
             p = parts[i]
+            if p == "--judge" and i + 1 < len(parts):
+                judge_mode = parts[i + 1].strip('"').lower()
+                if judge_mode not in ("llm", "jev", "both"):
+                    self.error("--judge must be one of: llm, jev, both")
+                    return True
+                i += 2
+                continue
+            if p == "--low" and i + 1 < len(parts):
+                try:
+                    low = float(parts[i + 1])
+                except ValueError:
+                    self.error("--low expects a number between 0 and 1.")
+                    return True
+                if not 0.0 <= low <= 1.0:
+                    self.error("--low must be within [0.0, 1.0]")
+                    return True
+                i += 2
+                continue
             if p == "--branches" and i + 1 < len(parts):
                 try:
                     num_branches = max(1, int(parts[i + 1]))
@@ -207,7 +233,11 @@ class SpeculateCommand(Command):
                 continue
             i += 1
 
-        skip_values = {"--branches", "--threshold", "--timeout"}
+        if low > threshold:
+            self.error("--low must be <= --threshold")
+            return True
+
+        skip_values = {"--branches", "--threshold", "--timeout", "--judge", "--low"}
         question_parts: list[str] = []
         for j, p in enumerate(parts):
             if p in skip_values and j + 1 < len(parts):
@@ -313,16 +343,45 @@ class SpeculateCommand(Command):
                 }
             return {"branch": branch_id, "answer": answer}
 
-        def scorer(result: dict[str, Any]) -> float:
-            """Judge-score one candidate 0.0-1.0.
+        # Optional Jev judge — the dedicated small model scores each candidate
+        # with a typed yes/no ("is this answer correct and complete?"), giving a
+        # probability instead of a single subjective LLM score.  Built once,
+        # here on the REPL thread; a build failure degrades to the LLM judge
+        # rather than aborting the deliberation.
+        jev_engine: Any = None
+        if judge_mode in ("jev", "both"):
+            try:
+                from agent_core.jev_engine import build_jev_engine
 
-            A non-answer (empty, or a raw tool call) scores 0.0 WITHOUT asking
-            the judge — the judge once rated a leaked tool call 1.0 and it was
-            committed.
-            """
-            answer = str(result.get("answer", "")).strip()
-            if not answer or _looks_like_tool_call(answer) or _is_provider_error(answer):
-                return 0.0
+                jev_engine = build_jev_engine(
+                    source="speculate",
+                    log_workspace=getattr(agent, "workspace", None),
+                )
+            except Exception as exc:  # noqa: BLE001 - degrade to llm judge
+                print(f"  [speculate] Jev judge unavailable ({exc}); using LLM judge")
+                judge_mode = "llm"
+
+        def _jev_judge(answer: str) -> float | None:
+            """P(yes) that *answer* correctly+completely answers the question."""
+            from agent_core.jev_engine import JevQuestion
+
+            question_obj = JevQuestion(
+                kind="yesno",
+                text=(
+                    "The QUESTION below is answered correctly and completely "
+                    "by the ANSWER.\n"
+                    f"QUESTION: {question}\nANSWER: {answer}"
+                ),
+            )
+            try:
+                result = asyncio.run(jev_engine.decide(question_obj))
+            except Exception:  # noqa: BLE001 - treat as unscored
+                return None
+            if result.decision == "UNKNOWN":
+                return None
+            return float(result.probabilities.get("yes", 0.0))
+
+        def _llm_judge(answer: str) -> float:
             prompt = (
                 "Quality judge: score how well the ANSWER answers the QUESTION, "
                 "0.0 to 1.0. 1.0 = directly and correctly answers it; 0.0 = "
@@ -334,7 +393,53 @@ class SpeculateCommand(Command):
             reply = asyncio.run(llm.chat([{"role": "user", "content": prompt}]))
             return _parse_score(str(reply))
 
-        print(f"\n  [speculate] {num_branches} branch(es), threshold={threshold:g}")
+        def scorer(result: dict[str, Any]) -> float:
+            """Score one candidate 0.0-1.0 with the configured judge(s).
+
+            A non-answer (empty, or a raw tool call) scores 0.0 WITHOUT asking
+            any judge — the LLM judge once rated a leaked tool call 1.0 and it
+            was committed.  ``judge_mode`` selects the LLM judge, the small Jev
+            model, or the average of both (whichever is available).
+            """
+            answer = str(result.get("answer", "")).strip()
+            if (
+                not answer
+                or _looks_like_tool_call(answer)
+                or _is_provider_error(answer)
+            ):
+                return 0.0
+            llm_score: float | None = None
+            if judge_mode in ("llm", "both"):
+                llm_score = _llm_judge(answer)
+            if judge_mode == "llm":
+                return llm_score if llm_score is not None else 0.0
+            jev_score = _jev_judge(answer)
+            if judge_mode == "jev":
+                if jev_score is None:
+                    return 0.0
+                # Cascade: a confident Jev verdict costs one small-model call;
+                # only the gray band (low < P < threshold) escalates THIS
+                # candidate to the reasoning model.  Without this, a 1.5B judge
+                # sitting just under the threshold REFUSEd good answers.
+                if low < jev_score < threshold:
+                    llm_score = _llm_judge(answer)
+                    if llm_score is not None:
+                        return max(jev_score, llm_score)
+                return jev_score
+            # both — average whatever is available
+            if jev_score is None:
+                return llm_score if llm_score is not None else 0.0
+            if llm_score is None:
+                return jev_score
+            return (jev_score + llm_score) / 2.0
+
+        judge_note = f"judge={judge_mode}"
+        if judge_mode == "jev":
+            judge_note += f", low={low:g}"
+        print(
+            f"\n  [speculate] {num_branches} branch(es), threshold={threshold:g}, "
+            f"{judge_note}"
+        )
 
         def deliberate() -> Any:
             with Orchestrator(agents=[], max_workers=max(4, num_branches)) as base:

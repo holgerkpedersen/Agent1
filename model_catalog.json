@@ -3,6 +3,7 @@
     "model": "laguna-s-2.1",
     "opencode_model": "opencode-go/mimo-v2.5",
     "openrouter_model": "openrouter/meta-llama/llama-3.1-8b-instruct:free",
+    "jev_model": "qwen2.5-coder-1.5b-instruct",
     "llm_chain": [
       "opencode:opencode-zen/mimo-v2.5-free",
       "opencode:opencode-go/deepseek-v4-flash",
@@ -79,6 +80,20 @@
     "size_gb": 18.1,
     "params": "31B",
     "thinking": true
+  },
+  "google/gemma-4-e4b": {
+    "desc": "Gemma 4 E4B (effective 4B) — NOT recommended for Jev: it is a THINKING model that emits reasoning_content first and client reasoning-off knobs do NOT suppress it (needs jev_max_tokens >= 512 to reach the verdict). Kept only as a fallback",
+    "max_tokens": 4096,
+    "size_gb": 3.2,
+    "params": "7.5B",
+    "thinking": true
+  },
+  "qwen2.5-coder-1.5b-instruct": {
+    "desc": "Qwen2.5 Coder 1.5B Instruct — NON-thinking, terse single-token answers; the default Jev decision model (yesno/choice/score micro-decisions). Verified 2026-09-25: 4/4 terse and 5/5 parsed on every Jev primitive",
+    "max_tokens": 4096,
+    "size_gb": 1.6,
+    "params": "1.5B",
+    "thinking": false
   },
   "kwaipilot_kat-coder-v2.5-dev": {
     "desc": "Kwaipilot Kat-Coder 2.5 dev — coding, thinking",

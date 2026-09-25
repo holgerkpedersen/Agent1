@@ -275,3 +275,149 @@ def test_speculate_refuses_when_provider_fails(capsys):
     assert "REFUSE" in out
     assert "COMMIT" not in out
     assert "[Error:" not in out  # error never presented as the answer
+
+
+# ---------------------------------------------------------------------------
+#  Jev judge (--judge jev|both)
+# ---------------------------------------------------------------------------
+
+
+class _FakeJevEngine:
+    """P(yes)=good for a 'good' answer, bad otherwise."""
+
+    def __init__(self, good=0.9, bad=0.2):
+        self._good = good
+        self._bad = bad
+
+    async def decide(self, question, state=""):
+        from agent_core.jev_engine import JevResult
+
+        good = "good answer" in question.text
+        p = self._good if good else self._bad
+        return JevResult(
+            kind="yesno", model="small", mechanism="vote",
+            probabilities={"yes": p, "no": 1.0 - p},
+            decision="TRUE" if p >= 0.5 else "FALSE",
+            confidence=max(p, 1.0 - p),
+        )
+
+
+class _CountingLLM:
+    """Branch answers like FakeLLM but counts LLM-judge calls."""
+
+    model_name = "fake-model"
+
+    def __init__(self, judge_score="0.5"):
+        self.judge_calls = 0
+        self.judge_score = judge_score
+
+    async def chat(self, messages, tools=None, **kwargs):
+        content = str(messages[-1]["content"])
+        if content.startswith("Quality judge:"):
+            self.judge_calls += 1
+            return self.judge_score
+        branch_id = int(content.split()[2].rstrip("."))
+        if branch_id == 0:
+            return "good answer %d" % branch_id
+        return "mediocre answer %d" % branch_id
+
+
+def _patch_jev(monkeypatch, engine):
+    import agent_core.jev_engine as jev
+
+    monkeypatch.setattr(jev, "build_jev_engine", lambda **kw: engine)
+
+
+def test_speculate_jev_judge_commits_without_llm_judge(monkeypatch, capsys):
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    _patch_jev(monkeypatch, _FakeJevEngine())
+    llm = _CountingLLM()
+    agent = type("A", (), {"llm": llm, "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(
+        SpeculateCommand().execute(['"which branch is best?"', "--judge", "jev"], agent)
+    ) is True
+    out = capsys.readouterr().out
+    assert "COMMIT" in out
+    assert "good answer 0" in out
+    assert "judge=jev" in out
+    assert llm.judge_calls == 0  # the LLM judge was never asked
+
+
+def test_speculate_both_judges_average(monkeypatch, capsys):
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    _patch_jev(monkeypatch, _FakeJevEngine())
+    llm = _CountingLLM()
+    agent = type("A", (), {"llm": llm, "workspace": "C:/Dev/Agent1"})()
+    # good: (0.9 + 0.5) / 2 = 0.7 >= 0.7 -> COMMIT
+    assert asyncio.run(
+        SpeculateCommand().execute(
+            ['"which branch is best?"', "--judge", "both"], agent,
+        )
+    ) is True
+    out = capsys.readouterr().out
+    assert "judge=both" in out
+    assert "COMMIT" in out
+    assert llm.judge_calls > 0
+
+
+def test_speculate_jev_judge_gray_band_escalates(monkeypatch, capsys):
+    """Cascade: a gray-band Jev score escalates ONE candidate to the LLM judge
+    instead of refusing (a 1.5B judge just under the threshold used to REFUSE
+    good answers)."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    _patch_jev(monkeypatch, _FakeJevEngine(good=0.5))
+    llm = _CountingLLM(judge_score="0.9")
+    agent = type("A", (), {"llm": llm, "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(
+        SpeculateCommand().execute(['"which branch is best?"', "--judge", "jev"], agent)
+    ) is True
+    out = capsys.readouterr().out
+    assert "low=0.3" in out
+    assert "COMMIT" in out
+    assert llm.judge_calls > 0  # escalated in the gray band
+
+
+def test_speculate_jev_judge_confident_reject_skips_llm(monkeypatch, capsys):
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    _patch_jev(monkeypatch, _FakeJevEngine(good=0.2))
+    llm = _CountingLLM(judge_score="0.9")
+    agent = type("A", (), {"llm": llm, "workspace": "C:/Dev/Agent1"})()
+    assert asyncio.run(
+        SpeculateCommand().execute(['"which branch is best?"', "--judge", "jev"], agent)
+    ) is True
+    out = capsys.readouterr().out
+    assert "REFUSE" in out
+    assert llm.judge_calls == 0  # confident reject, no reasoning-model cost
+
+
+def test_speculate_rejects_low_above_threshold(capsys):
+    assert _run(['"q"', "--low", "0.9", "--threshold", "0.5"]) is True
+    out = capsys.readouterr().out
+    assert "--low must be <= --threshold" in out
+    assert "COMMIT" not in out
+
+
+def test_speculate_jev_judge_build_failure_falls_back(monkeypatch, capsys):
+    import agent_core.jev_engine as jev
+
+    def boom(**kwargs):
+        raise ValueError("no Jev model configured")
+
+    monkeypatch.setattr(jev, "build_jev_engine", boom)
+    assert _run(['"which branch is best?"', "--judge", "jev"]) is True
+    out = capsys.readouterr().out
+    assert "Jev judge unavailable" in out
+    assert "judge=llm" in out
+    assert "COMMIT" in out
+    assert "good answer 0" in out
+
+
+def test_speculate_rejects_bad_judge(capsys):
+    assert _run(['"q"', "--judge", "bogus"]) is True
+    out = capsys.readouterr().out
+    assert "--judge" in out
+    assert "COMMIT" not in out

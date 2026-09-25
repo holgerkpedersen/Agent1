@@ -414,6 +414,57 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "jev_decide",
+            "description": (
+                "Ask the dedicated small Jev model a TYPED question and get a "
+                "probability instead of prose. Use it for quick, cheap "
+                "judgements the big model should not guess at: kind='yesno' "
+                "(question is a proposition -> P(yes)/P(no)), kind='choice' "
+                "(pass 'options' -> a distribution over them), kind='score' "
+                "(pass 'rubric' -> 0-100 plus spread). Pass 'state' as the "
+                "context the question is judged against. Read-only; runs on "
+                "the configured small Jev model, never the main model."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["yesno", "choice", "score"],
+                        "description": "Question type.",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": (
+                            "The proposition (yesno), question (choice) or "
+                            "subject to score (score)."
+                        ),
+                    },
+                    "options": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Candidate options for kind='choice' (at least two).",
+                    },
+                    "rubric": {
+                        "type": "string",
+                        "description": "Scoring rubric for kind='score' (optional).",
+                    },
+                    "state": {
+                        "type": "string",
+                        "description": "Optional context the question is judged against.",
+                    },
+                    "threshold": {
+                        "type": "number",
+                        "description": "Decision threshold in [0,1] (default 0.7).",
+                    },
+                },
+                "required": ["kind", "question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "web_search",
             "description": (
                 "Search the web via DuckDuckGo and return titled results with URLs and "

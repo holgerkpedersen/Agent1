@@ -129,6 +129,16 @@ DEFAULT_OPENROUTER_MODEL = (
     os.environ.get("AGENT_OPENROUTER_MODEL") or _DEFAULTS["openrouter_model"]
 )
 
+#: Default model for the Jev decision engine (env override first, then the
+#: catalog ``_defaults.jev_model``).  Jev uses a DEDICATED small model (the
+#: non-thinking ``qwen2.5-coder-1.5b-instruct``) for typed yesno/choice/score
+#: micro-decisions; it is never the agent's main model.  Absent from an older
+#: catalog -> "" (the Jev engine then reports a clear configuration error
+#: instead of guessing).
+DEFAULT_JEV_MODEL = (
+    os.environ.get("AGENT_JEV_MODEL") or _DEFAULTS.get("jev_model", "")
+)
+
 #: Default ordered provider failover chain from ``model_catalog.json``
 #: ``_defaults.llm_chain`` (entries may be "provider:model" overrides).
 #: No concrete provider/model names in code.
@@ -298,6 +308,7 @@ __all__: list[str] = [
     "DEFAULT_LLAMA_BASE_URL",
     "DEFAULT_OPENROUTER_API_BASE",
     "DEFAULT_OPENROUTER_MODEL",
+    "DEFAULT_JEV_MODEL",
     "KNOWN_MODELS",
     "LOOP_NOTE_TAG_KEY",
     "MODEL_JSON_PATH",

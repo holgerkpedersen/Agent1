@@ -9,6 +9,7 @@ from typing import Final
 from .constants import (
     DEFAULT_LLM_CHAIN,
     DEFAULT_LLAMA_BASE_URL,
+    DEFAULT_JEV_MODEL,
     DEFAULT_OPENCODE_API_BASE,
     DEFAULT_OPENCODE_MODEL,
     DEFAULT_OPENCODE_SERVER_URL,
@@ -193,6 +194,38 @@ class AgentSettings:
     context_ast_strategy_kb: int = field(
         default_factory=lambda: int(os.environ.get("USE_CONTEXT_AST_STRATEGY", "50"))
     )
+    #: Jev decision engine — a DEDICATED small model used ONLY for typed
+    #: probabilistic micro-decisions (yesno/choice/score), never as the
+    #: agent's main model.  ``jev_model`` defaults to the catalog
+    #: ``_defaults.jev_model`` (env ``AGENT_JEV_MODEL``); ``jev_provider`` is
+    #: an optional explicit provider, otherwise routing is inferred from the
+    #: model name (the ``gemma`` prefix routes to LM Studio).
+    jev_model: str = field(
+        default_factory=lambda: os.environ.get("AGENT_JEV_MODEL") or DEFAULT_JEV_MODEL
+    )
+    jev_provider: str = field(
+        default_factory=lambda: os.environ.get("AGENT_JEV_PROVIDER", "").strip().lower()
+    )
+    #: Number of independent samples per Jev vote (self-consistency).
+    jev_samples: int = field(
+        default_factory=lambda: _parse_int(os.environ.get("AGENT_JEV_SAMPLES"), 5)
+    )
+    #: Sampling temperature for Jev branches (>0 gives vote diversity).
+    jev_temperature: float = field(
+        default_factory=lambda: _parse_float(os.environ.get("AGENT_JEV_TEMPERATURE"), 0.7)
+    )
+    #: Output cap per Jev sample.  An upper bound: a non-thinking model (the
+    #: default ``qwen2.5-coder-1.5b-instruct``) stops right after the verdict
+    #: token, while a thinking model (e.g. ``google/gemma-4-e4b``) needs enough
+    #: room to finish its reasoning before emitting the token — at 8 it is
+    #: truncated mid-thought and the sample abstains.  512 covers both.
+    jev_max_tokens: int = field(
+        default_factory=lambda: _parse_int(os.environ.get("AGENT_JEV_MAX_TOKENS"), 512)
+    )
+    #: Per-sample socket timeout (seconds) for the Jev model.
+    jev_timeout: float = field(
+        default_factory=lambda: _parse_float(os.environ.get("AGENT_JEV_TIMEOUT"), 60.0)
+    )
 
     def __post_init__(self) -> None:
         # Enforce the invariant on every construction (not just at the two
@@ -285,6 +318,22 @@ def _validate_settings(settings: AgentSettings) -> None:
 
     if settings.max_concurrent_tools <= 0:
         raise ConfigurationError("max_concurrent_tools must be positive")
+
+    if settings.jev_provider and settings.jev_provider not in _LLM_PROVIDERS:
+        raise ConfigurationError(
+            "jev_provider must be one of "
+            f"{', '.join(_LLM_PROVIDERS)} or empty (inferred from the model), "
+            f"got '{settings.jev_provider}'"
+        )
+
+    if settings.jev_samples <= 0:
+        raise ConfigurationError("jev_samples must be positive")
+
+    if settings.jev_max_tokens <= 0:
+        raise ConfigurationError("jev_max_tokens must be positive")
+
+    if settings.jev_timeout <= 0:
+        raise ConfigurationError("jev_timeout must be positive")
 
     if settings.llm_provider not in _LLM_PROVIDERS:
         raise ConfigurationError(
@@ -452,6 +501,12 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or env_vars.get("OPENROUTER_API_KEY") or _store_secret("OPENROUTER_API_KEY"),
         openrouter_model=os.environ.get("AGENT_OPENROUTER_MODEL") or env_vars.get("AGENT_OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL,
         failover_strategy=os.environ.get("AGENT_FAILOVER_STRATEGY", "ordered").strip().lower(),
+        jev_model=os.environ.get("AGENT_JEV_MODEL") or env_vars.get("AGENT_JEV_MODEL") or DEFAULT_JEV_MODEL,
+        jev_provider=(os.environ.get("AGENT_JEV_PROVIDER") or env_vars.get("AGENT_JEV_PROVIDER") or "").strip().lower(),
+        jev_samples=_parse_int(os.environ.get("AGENT_JEV_SAMPLES") or env_vars.get("AGENT_JEV_SAMPLES"), 5),
+        jev_temperature=_parse_float(os.environ.get("AGENT_JEV_TEMPERATURE") or env_vars.get("AGENT_JEV_TEMPERATURE"), 0.7),
+        jev_max_tokens=_parse_int(os.environ.get("AGENT_JEV_MAX_TOKENS") or env_vars.get("AGENT_JEV_MAX_TOKENS"), 512),
+        jev_timeout=_parse_float(os.environ.get("AGENT_JEV_TIMEOUT") or env_vars.get("AGENT_JEV_TIMEOUT"), 60.0),
     )
 
     _validate_settings(settings)
