@@ -56,11 +56,13 @@ class JevCommand(Command):
         return (
             'jev yesno "<statement>" | jev choice --options "A|B|C" "<q>" | '
             'jev score --rubric "<rubric>" "<subject>" | jev stats '
-            '[--last N] [--json] [--state "<text>" | --file <path>] '
+            '[--last N] [--json] | jev label <id> correct|incorrect '
+            "[--note \"...\"] [--state \"<text>\" | --file <path>] "
             "[--samples N] [--threshold X] [--mechanism auto|vote|logprobs] "
             "[--model m] [--json] - typed probabilistic decision from the "
             "dedicated small Jev model; 'jev stats' reports decision counts, "
-            "calibration and a suggested threshold from the ledger"
+            "calibration and a suggested threshold; 'jev label' records an "
+            "outcome so the threshold can be calibrated"
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
@@ -73,6 +75,8 @@ class JevCommand(Command):
         parts = list(args)
         if parts and parts[0].strip('"').lower() == "stats":
             return self._stats(parts[1:], agent)
+        if parts and parts[0].strip('"').lower() == "label":
+            return self._label(parts[1:], agent)
         if not parts or parts[0].strip('"').lower() not in _KINDS:
             self.error(
                 'Usage: jev yesno|choice|score "<question>" '
@@ -280,4 +284,41 @@ class JevCommand(Command):
             return True
         for line in format_report(report).splitlines():
             print(f"  {line}")
+        return True
+
+    def _label(self, args: list[str], agent: "Agent") -> bool:
+        """``jev label <id> correct|incorrect [--note "..."]``.
+
+        The labeling half of the calibration loop: ``jev stats`` suggests a
+        threshold from labeled decisions, and this is how decisions get their
+        outcome (the id comes from the telemetry ledger /
+        ``report["..."]``).
+        """
+        from harnessfix.jev_telemetry import record_outcome
+
+        if len(args) < 2:
+            self.error("Usage: jev label <decision-id> correct|incorrect")
+            return True
+        decision_id = args[0].strip('"').strip("'")
+        outcome = args[1].strip('"').strip("'").lower()
+        note = ""
+        i = 2
+        while i < len(args):
+            if args[i] == "--note" and i + 1 < len(args):
+                note = args[i + 1].strip('"')
+                i += 2
+                continue
+            i += 1
+        try:
+            ok = record_outcome(
+                decision_id, outcome,
+                workspace=getattr(agent, "workspace", None), note=note,
+            )
+        except ValueError as exc:
+            self.error(str(exc))
+            return True
+        if ok:
+            print(f"  [jev] labeled {decision_id} as {outcome}.")
+        else:
+            self.error(f"decision '{decision_id}' not found in the ledger.")
         return True

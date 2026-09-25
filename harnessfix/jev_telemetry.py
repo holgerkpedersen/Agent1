@@ -282,6 +282,24 @@ def suggest_threshold(
     return best
 
 
+def load_suggested_threshold(
+    *,
+    workspace: str | None = None,
+    kind: str = "yesno",
+    min_samples: int = 10,
+) -> dict[str, Any] | None:
+    """Calibrated threshold from labeled outcomes, or None when too little data.
+
+    This is the consumer side of the measurement loop: once enough decisions
+    have been labeled ``correct``/``incorrect``, the threshold that best
+    separates them replaces the hardcoded guess (``--threshold auto``).
+    """
+    suggestion = suggest_threshold(load_decisions(workspace=workspace), kind=kind)
+    if suggestion and suggestion["n"] >= min_samples:
+        return suggestion
+    return None
+
+
 def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Aggregate a ledger slice into a calibration report."""
     total = len(records)
@@ -351,6 +369,7 @@ __all__: list[str] = [
     "calibration_bins",
     "format_report",
     "load_decisions",
+    "load_suggested_threshold",
     "log_path",
     "logging_disabled",
     "question_hash",

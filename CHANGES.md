@@ -1,3 +1,11 @@
+## 2026-09-25 - feat: speculate agreement gate, mandatory citations, calibrated threshold
+
+**Change**: repo-question answers now require a `file:line` citation (evidence), and `--agree N` (default 2) requires N independent branches to cite the SAME evidence files before COMMIT (agreement signature = cited basenames; `--agree 1` disables). `--threshold auto` uses the threshold fitted from labeled outcomes (`harnessfix.jev_telemetry.load_suggested_threshold`, minimum 10 labels), and the new `jev label <id> correct|incorrect [--note ...]` command records those outcomes. The header shows `agree=` and the resolved threshold.
+
+**Reason**: the total solution for meaningful repo changes — corroboration (independent branches agreeing on evidence), evidence (mandatory citations), verification (existing guards) and calibration (measured threshold) — so a single confident branch cannot be committed on an unvalidated gate.
+
+**Files**: agent_core/commands/speculate_cmd.py, agent_core/commands/jev_cmd.py, harnessfix/jev_telemetry.py, tests/test_speculate_cmd.py, tests/test_jev_cmd.py. Verified live: `threshold=auto -> 0.5 (calibrated from 12 labeled decisions, accuracy 1.00)`; agreement REFUSE on split evidence; citation REFUSE on uncited repo answers. Tests: 39 speculate + 23 jev-cmd green.
+
 ## 2026-09-25 - feat: relevant grounding + cited-line verification in speculate
 
 **Change**: `_question_subject_terms()` extracts distinctive subject terms from a question (path stems + 3+/4+ char non-stopwords, hyphen-split); `_grounded_in_subject()` requires a repo-question branch's executed tool EVIDENCE to mention at least one such term — calling *any* tool no longer satisfies grounding (a `web_search` used to count). `_verify_claims()` now also checks CONTENT: when the answer names a backticked symbol next to a `file:line` citation, that symbol must appear within ±3 lines of the cited line. The branch prompt asks for `path:line` citations.

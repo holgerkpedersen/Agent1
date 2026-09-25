@@ -132,7 +132,8 @@ class _ToolLLM:
         if content.startswith("Quality judge:"):
             return "0.9"
         if any(m.get("role") == "tool" for m in messages):
-            return "grounded answer"
+            # A repo answer needs a file:line citation (grounding rule).
+            return "grounded answer - see agent_core/jev_engine.py:1"
         return json.dumps({
             "content": "",
             "tool_calls": [{
@@ -147,8 +148,8 @@ class _ToolLLM:
 
 
 class _ToolAgent:
-    def __init__(self, tool_name, tool_result="file contents"):
-        self.llm = _ToolLLM(tool_name)
+    def __init__(self, tool_name, tool_result="file contents", llm=None):
+        self.llm = llm if llm is not None else _ToolLLM(tool_name)
         self.executed = []
         self.tool_result = tool_result
 
@@ -353,6 +354,113 @@ def test_speculate_rejects_irrelevant_grounding(capsys):
     out = capsys.readouterr().out
     assert "REFUSE" in out
     assert "without tool evidence about the subject" in out
+
+
+def test_speculate_requires_citation_for_repo_answers(capsys):
+    """A grounded repo answer must cite file:line evidence."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    class NoCitationLLM:
+        model_name = "fake-model"
+
+        async def chat(self, messages, tools=None, **kwargs):
+            content = str(messages[-1].get("content") or "")
+            if content.startswith("Quality judge:"):
+                return "0.9"
+            if any(m.get("role") == "tool" for m in messages):
+                return "The engine uses sample votes."  # no file:line
+            return json.dumps({
+                "content": "",
+                "tool_calls": [{"id": "c1", "type": "function",
+                                "function": {"name": "read",
+                                             "arguments": "{}"}}],
+            })
+
+    agent = _ToolAgent(
+        "read", tool_result="agent_core/jev_engine.py: sample votes",
+        llm=NoCitationLLM(),
+    )
+    asyncio.run(SpeculateCommand().execute(
+        ['"How does the Jev engine decide?"'], agent,
+    ))
+    out = capsys.readouterr().out
+    assert "REFUSE" in out
+    assert "without a file:line citation" in out
+
+
+def test_speculate_agreement_gate_refuses_when_branches_disagree(capsys):
+    """Independent corroboration: branches citing different evidence must not
+    be committed (a single confident branch is how wrong answers got through)."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+
+    class SplitEvidenceLLM:
+        model_name = "fake-model"
+        _files = (
+            "agent_core/jev_engine.py",
+            "agent_core/commands/speculate_cmd.py",
+            "agent_core/config.py",
+        )
+
+        async def chat(self, messages, tools=None, **kwargs):
+            content = str(messages[-1].get("content") or "")
+            if content.startswith("Quality judge:"):
+                return "0.9"
+            if any(m.get("role") == "tool" for m in messages):
+                prompt = next(
+                    str(m.get("content") or "")
+                    for m in messages
+                    if "Speculative branch" in str(m.get("content") or "")
+                )
+                branch_id = int(prompt.split()[2].rstrip("."))
+                return f"See {self._files[branch_id % 3]}:1 for it."
+            return json.dumps({
+                "content": "",
+                "tool_calls": [{"id": "c1", "type": "function",
+                                "function": {"name": "read",
+                                             "arguments": "{}"}}],
+            })
+
+    agent = _ToolAgent(
+        "read", tool_result="agent_core/jev_engine.py: sample votes",
+        llm=SplitEvidenceLLM(),
+    )
+    asyncio.run(SpeculateCommand().execute(
+        ['"How does the Jev engine decide?"', "--branches", "3"], agent,
+    ))
+    out = capsys.readouterr().out
+    assert "REFUSE - branches disagreed" in out
+    assert "COMMIT" not in out
+
+
+def test_speculate_threshold_auto_calibrates(tmp_path, monkeypatch, capsys):
+    """--threshold auto reads the threshold fitted from labeled outcomes."""
+    from agent_core.commands.speculate_cmd import SpeculateCommand
+    from agent_core.jev_engine import JevQuestion, JevResult
+    from harnessfix.jev_telemetry import record_decision, record_outcome
+
+    monkeypatch.delenv("AGENT_NO_JEV_LOG", raising=False)
+    question = JevQuestion(kind="yesno", text="q")
+    for i in range(12):
+        p_yes = 0.9 if i % 2 == 0 else 0.2
+        result = JevResult(
+            kind="yesno", model="m", mechanism="vote",
+            probabilities={"yes": p_yes, "no": 1.0 - p_yes},
+            decision="TRUE" if p_yes >= 0.7 else "FALSE",
+            confidence=max(p_yes, 1.0 - p_yes), threshold=0.7, n=5,
+        )
+        decision_id = record_decision(result, question, workspace=str(tmp_path))
+        record_outcome(
+            decision_id, "correct" if p_yes >= 0.7 else "incorrect",
+            workspace=str(tmp_path),
+        )
+
+    agent = type("A", (), {"llm": FakeLLM(), "workspace": str(tmp_path)})()
+    assert asyncio.run(SpeculateCommand().execute(
+        ['"which branch is best?"', "--threshold", "auto"], agent,
+    )) is True
+    out = capsys.readouterr().out
+    assert "threshold=auto ->" in out
+    assert "calibrated from 12 labeled decisions" in out
 
 
 def test_speculate_refuses_unverified_claims(capsys):

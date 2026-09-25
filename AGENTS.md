@@ -56,7 +56,12 @@ is being extended to audit its own file effects (self-improvement).
   Grounding: a repo/code question (`_is_repo_question`) requires every branch
   to execute at least one tool whose EVIDENCE mentions a subject term
   (`_question_subject_terms` / `_grounded_in_subject`; `grounding=on`;
-  `--no-grounding` disables) — calling an unrelated tool does not count.
+  `--no-grounding` disables) — calling an unrelated tool does not count — and
+  the answer must carry a `file:line` citation. Corroboration: `--agree N`
+  (default 2) requires N independent branches to cite the SAME evidence files
+  (`_evidence_signature`) before COMMIT. Calibration: `--threshold auto` uses
+  the threshold fitted from labeled outcomes (`jev label <id>
+  correct|incorrect` -> `harnessfix/jev_telemetry.load_suggested_threshold`).
   Before COMMIT, every `file[:line]` claim in the winning answer is verified
   against the workspace (`_verify_claims`: missing file / line past EOF / bare
   basename resolved by rglob / a backticked symbol next to the citation must
@@ -95,10 +100,12 @@ is being extended to audit its own file effects (self-improvement).
   (gitignored, same tree as the execution ledger); best-effort (never breaks a
   decision) and opt-out via `AGENT_NO_JEV_LOG=1` (tests set it so fake
   providers never pollute the ledger). `record_outcome(id, correct|incorrect)`
-  labels a decision; `jev stats [--last N] [--json]` renders counts,
-  predicted-vs-observed calibration bins and the threshold that best separates
-  correct from incorrect yesno decisions — the measurement loop that makes the
-  hardcoded 0.7/0.3 thresholds calibratable from real outcomes.
+  labels a decision (REPL: `jev label <id> correct|incorrect`); `jev stats
+  [--last N] [--json]` renders counts, predicted-vs-observed calibration bins
+  and the threshold that best separates correct from incorrect yesno decisions
+  (`load_suggested_threshold` is the consumer `speculate --threshold auto`
+  uses) — the measurement loop that makes the hardcoded 0.7/0.3 thresholds
+  calibratable from real outcomes.
 - `_nlp_read` (in `agent.py`) — paging is line-based and ALWAYS honored: the
   AST `definitions` summary is returned only for a BARE read (no `offset`/
   `limit`) of a `.py` file over `_CONTEXT_AST_THRESHOLD_KB` (50); returning it

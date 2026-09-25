@@ -43,11 +43,12 @@ if TYPE_CHECKING:
 _FIRST_NUMBER_RE = re.compile(r"[-+]?\d*\.?\d+")
 
 #: Tools a speculative branch may execute — the verified read-only set
-#: (filesystem inspection + web search).  Enforced as a hard allowlist, so a
-#: hallucinated ``run``/``write``/``edit`` can never mutate the workspace even
-#: though the branches run in parallel.
+#: (filesystem inspection + web search + datetime).  Enforced as a hard
+#: allowlist, so a hallucinated ``run``/``write``/``edit`` can never mutate
+#: the workspace even though the branches run in parallel.
 _BRANCH_TOOLS: frozenset[str] = frozenset({
     "search", "read", "list_files", "definitions", "references", "web_search",
+    "get_current_datetime",
 })
 
 #: Max model round-trips per branch before a final, tools-withheld answer.
@@ -343,6 +344,28 @@ def _verify_claims(answer: str, workspace: str) -> list[str]:
     return problems
 
 
+def _has_line_citation(answer: str) -> bool:
+    """True when *answer* cites at least one ``file:line``."""
+    return any(m.group(2) for m in _CLAIM_PATH_RE.finditer(str(answer)))
+
+
+def _evidence_signature(answer: str) -> str:
+    """Agreement key for a candidate: the set of cited file basenames.
+
+    Two branches "agree" when they independently cite the same evidence files;
+    an answer with no citations falls back to a normalized text key (so only
+    near-identical uncited answers agree).  Corroboration by independent
+    branches is the cheapest defence against a confident, wrong answer.
+    """
+    stems = {
+        Path(m.group(1)).name.lower()
+        for m in _CLAIM_PATH_RE.finditer(str(answer))
+    }
+    if stems:
+        return "|".join(sorted(stems))
+    return " ".join(re.findall(r"[a-z0-9_]+", str(answer).lower()))[:200]
+
+
 class SpeculateCommand(Command):
     """Run speculative LLM branches and probabilistically commit or refuse."""
 
@@ -353,18 +376,19 @@ class SpeculateCommand(Command):
     @property
     def help_text(self) -> str:
         return (
-            'speculate "question" [--branches N] [--threshold X] [--low X] '
-            "[--branch-model chat|jev] [--escalate] [--no-grounding] "
+            'speculate "question" [--branches N] [--threshold X|auto] [--low X] '
+            "[--agree N] [--branch-model chat|jev] [--escalate] [--no-grounding] "
             "[--timeout S] [--judge llm|jev|both] - ask the LLM N independent "
             "speculative branches in parallel, judge-score each answer, and "
             "COMMIT only when the best score meets the threshold (otherwise "
-            "REFUSE); repo/code questions require a tool call per branch and "
-            "file:line claims are verified against the workspace before COMMIT; "
-            "--judge jev scores with the dedicated small Jev model (the "
-            "reasoning model still generates the branches); --branch-model jev "
-            "generates the branches on the Jev model too (cheap/offline, for "
-            "general questions); --escalate opts into gray-band escalation to "
-            "the chat-model judge; both averages the two"
+            "REFUSE); repo/code questions require tool evidence about the "
+            "subject, a file:line citation, and --agree branches citing the "
+            "same evidence; file:line claims are verified against the workspace "
+            "before COMMIT; --threshold auto uses the threshold calibrated from "
+            "labeled outcomes ('jev label <id> ...'); --judge jev scores with "
+            "the dedicated small Jev model; --branch-model jev generates the "
+            "branches on the Jev model too; --escalate opts into gray-band "
+            "escalation to the chat-model judge; both averages the two"
         )
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         from agent_core.orchestrator_probabilistic import (
@@ -391,6 +415,12 @@ class SpeculateCommand(Command):
         #: value is the JUDGE: a small model decides, the reasoning model
         #: thinks.  A 1.5B branch cannot ground a repo question.
         branch_model = "chat"
+        #: Independent branches that must cite the SAME evidence before a
+        #: repo-question answer may be committed (`--agree 1` disables).
+        agree = 2
+        #: `--threshold auto` -> use the calibrated threshold from labeled
+        #: outcomes (harnessfix/jev_telemetry), falling back to 0.7.
+        threshold_auto = False
         #: Repo/code questions require every branch to call at least one tool
         #: before its answer is a candidate (ungrounded code claims were
         #: COMMITted with a perfect judge score).  `--no-grounding` disables.
@@ -446,11 +476,26 @@ class SpeculateCommand(Command):
                     return True
                 i += 2
                 continue
-            if p == "--threshold" and i + 1 < len(parts):
+            if p == "--agree" and i + 1 < len(parts):
                 try:
-                    threshold = float(parts[i + 1])
+                    agree = max(1, int(parts[i + 1]))
                 except ValueError:
-                    self.error("--threshold expects a number between 0 and 1.")
+                    self.error("--agree expects a number.")
+                    return True
+                i += 2
+                continue
+            if p == "--threshold" and i + 1 < len(parts):
+                raw_threshold = parts[i + 1].strip('"').strip("'").lower()
+                if raw_threshold == "auto":
+                    threshold_auto = True
+                    i += 2
+                    continue
+                try:
+                    threshold = float(raw_threshold)
+                except ValueError:
+                    self.error(
+                        "--threshold expects a number between 0 and 1, or 'auto'."
+                    )
                     return True
                 if not 0.0 <= threshold <= 1.0:
                     self.error("threshold must be within [0.0, 1.0]")
@@ -467,13 +512,33 @@ class SpeculateCommand(Command):
                 continue
             i += 1
 
+        if threshold_auto:
+            from harnessfix.jev_telemetry import load_suggested_threshold
+
+            suggestion = load_suggested_threshold(
+                workspace=getattr(agent, "workspace", None),
+            )
+            if suggestion:
+                threshold = float(suggestion["threshold"])
+                print(
+                    f"  [speculate] threshold=auto -> {threshold:g} "
+                    f"(calibrated from {suggestion['n']} labeled decisions, "
+                    f"accuracy {suggestion['accuracy']:.2f})"
+                )
+            else:
+                print(
+                    "  [speculate] threshold=auto -> 0.7 (not enough labeled "
+                    "outcomes yet; label decisions with "
+                    "'jev label <id> correct|incorrect')"
+                )
+
         if low > threshold:
             self.error("--low must be <= --threshold")
             return True
 
         skip_values = {
             "--branches", "--threshold", "--timeout", "--judge", "--low",
-            "--branch-model",
+            "--branch-model", "--agree",
         }
         question_parts: list[str] = []
         for j, p in enumerate(parts):
@@ -499,6 +564,9 @@ class SpeculateCommand(Command):
         # tool call).  Surfaced on REFUSE so the user sees WHY nothing was
         # eligible instead of a bare "no candidate reached threshold".
         branch_errors: list[str] = []
+        #: Evidence signature of every SUCCESSFUL branch, for the agreement
+        #: gate (independent corroboration before COMMIT).
+        branch_signatures: list[str] = []
 
         def _fail(branch_id: int, reason: str) -> dict[str, Any]:
             branch_errors.append(reason)
@@ -667,6 +735,13 @@ class SpeculateCommand(Command):
                     "repo question answered without tool evidence about the "
                     "subject (read/search the relevant code)",
                 )
+            if require_grounding and not _has_line_citation(answer):
+                return _fail(
+                    branch_id,
+                    "repo answer without a file:line citation "
+                    "(code claims need evidence)",
+                )
+            branch_signatures.append(_evidence_signature(answer))
             return {"branch": branch_id, "answer": answer}
 
         # Optional Jev judge — the dedicated small model scores each candidate
@@ -766,7 +841,10 @@ class SpeculateCommand(Command):
             judge_note += (
                 f", low={low:g}, escalate={'on' if escalate else 'off'}"
             )
-        judge_note += f", grounding={'on' if require_grounding else 'off'}"
+        judge_note += (
+            f", grounding={'on' if require_grounding else 'off'}"
+            f", agree={agree}"
+        )
         print(
             f"\n  [speculate] {num_branches} branch(es), threshold={threshold:g}, "
             f"timeout={timeout:g}s, {judge_note}"
@@ -801,6 +879,22 @@ class SpeculateCommand(Command):
                 answer = str(best.get("answer", best))
             else:
                 answer = str(best)
+            # Corroboration gate: a repo answer must be independently backed by
+            # `--agree` branches citing the same evidence (a single confident
+            # branch is exactly how a wrong answer used to get through).
+            if require_grounding and agree > 1:
+                best_signature = _evidence_signature(answer)
+                supporters = sum(
+                    1 for signature in branch_signatures
+                    if signature == best_signature
+                )
+                if supporters < agree:
+                    print(
+                        f"  [speculate] REFUSE - branches disagreed: "
+                        f"{supporters}/{agree} independent branches cite the "
+                        "same evidence"
+                    )
+                    return True
             # Verify file[:line] claims against the REAL workspace before
             # committing: an answer describing code that is not there is not a
             # verified fact, however confidently it was judged (deterministic,

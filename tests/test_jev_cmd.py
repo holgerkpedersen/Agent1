@@ -290,4 +290,31 @@ def test_jev_stats_empty_explains_labeling(tmp_path, capsys):
     assert "record_outcome" in out
 
 
+# ---------------------------------------------------------------------------
+#  jev label (calibration outcomes)
+# ---------------------------------------------------------------------------
+
+
+def test_jev_label_records_outcome(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("AGENT_NO_JEV_LOG", raising=False)  # seed the ledger
+    _seed_ledger(tmp_path)
+    from harnessfix.jev_telemetry import load_decisions
+
+    decision_id = load_decisions(workspace=str(tmp_path))[0]["id"]
+    assert _run(["label", decision_id, "correct"], _agent(str(tmp_path))) is True
+    out = capsys.readouterr().out
+    assert "labeled" in out
+    assert load_decisions(workspace=str(tmp_path))[0]["outcome"] == "correct"
+
+
+def test_jev_label_unknown_id(tmp_path, capsys):
+    assert _run(["label", "ghost", "correct"], _agent(str(tmp_path))) is True
+    assert "not found" in capsys.readouterr().out
+
+
+def test_jev_label_requires_an_outcome(tmp_path, capsys):
+    assert _run(["label", "some-id"], _agent(str(tmp_path))) is True
+    assert "Usage: jev label" in capsys.readouterr().out
+
+
 
