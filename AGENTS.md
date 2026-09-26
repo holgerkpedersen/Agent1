@@ -113,7 +113,11 @@ is being extended to audit its own file effects (self-improvement).
 - `_nlp_read` (in `agent.py`) — paging is line-based and ALWAYS honored: the
   AST `definitions` summary is returned only for a BARE read (no `offset`/
   `limit`) of a `.py` file over `_CONTEXT_AST_THRESHOLD_KB` (50); returning it
-  for every offset made the model loop forever on large files.
+  for every offset made the model loop forever on large files. A directory
+  path is rejected with a clear `Not a file (directory)` message (never a raw
+  `[Errno 13]`); `analyze` by contrast accepts a FILE or DIRECTORY (a folder is
+  summarized from a bounded 40-file / 200k-char sample) and no path = the whole
+  workspace.
 - `agent_core/llm/tool_loop.py` — `ToolLoopRunner`: NLP tool-call execution loop.
 - `agent_core/security/` — sanitizers, command allowlist, secrets store (OS keyring
   + encrypted-file fallback); `agent_core/file_system.py`, `path_utils.py` — real

@@ -52,6 +52,38 @@ def _parse_file_refs(text: str) -> list[str]:
     return sorted(set(refs))
 
 
+#: Directory analysis limits: a folder is summarized from a bounded sample so
+#: one ``analyze agent_core/`` call cannot pull the whole tree into context.
+_ANALYZE_MAX_FILES = 40
+_ANALYZE_MAX_CHARS = 200_000
+_ANALYZE_SKIP_DIRS = frozenset({
+    ".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".venv", "venv", "node_modules", ".docs", "backups", "reports",
+    "generated", "dist", "build",
+})
+_ANALYZE_SKIP_SUFFIXES = (
+    ".pyc", ".pyo", ".so", ".dll", ".exe", ".bin", ".png", ".jpg", ".jpeg",
+    ".gif", ".ico", ".zip", ".whl", ".tar", ".gz", ".gguf", ".pdf",
+)
+
+
+def _collect_directory_files(root: str) -> list[str]:
+    """Files under *root* worth analyzing (bounded, skip-list applied)."""
+    files: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if d not in _ANALYZE_SKIP_DIRS and not d.startswith(".")
+        )
+        for name in sorted(filenames):
+            if name.lower().endswith(_ANALYZE_SKIP_SUFFIXES):
+                continue
+            files.append(os.path.join(dirpath, name))
+            if len(files) >= _ANALYZE_MAX_FILES:
+                return files
+    return files
+
+
 class AnalyzeCommand(Command):
     """AI analysis of a file via LM Studio — follows imports and iterates with --desc."""
 
@@ -61,7 +93,11 @@ class AnalyzeCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return 'analyze <file> [--desc "q"] [--stdin] [--deep] - AI analysis via LM Studio'
+        return (
+            'analyze <file|dir> [--desc "q"] [--stdin] [--deep] - AI analysis '
+            "via LM Studio (a directory is summarized from a bounded sample; "
+            "no path = whole workspace)"
+        )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         parts = list(args)
@@ -96,13 +132,24 @@ class AnalyzeCommand(Command):
             return True
 
         if len(parts) < 1:
-            self.error('Usage: analyze <path> [--desc "q"] [--stdin] [--deep]')
-            return True
-
-        path = parts[0]
+            # Default (the schema's "whole workspace"): the directory analyzer
+            # handles the workspace root.
+            path = workspace_path(agent.workspace)
+        else:
+            path = parts[0]
         output_file = parts[1] if len(parts) > 1 else None
 
-        if deep_mode:
+        ws = workspace_path(agent.workspace)
+        resolved = (
+            os.path.normpath(path)
+            if os.path.isabs(path)
+            else os.path.normpath(os.path.join(ws, path))
+        )
+        if os.path.isdir(resolved):
+            # A FOLDER is a first-class target: summarize a bounded sample of
+            # its files (opening it as a file used to raise PermissionError).
+            result = await self._analyze_directory(path, desc_text, agent)
+        elif deep_mode:
             result = await self._deep_analyze(path, desc_text, agent)
         else:
             content = await agent.read_file(path, track_read=False)
@@ -125,6 +172,57 @@ class AnalyzeCommand(Command):
             print(result)
 
         return True
+
+    async def _analyze_directory(
+        self, path: str, question: str | None, agent: "Agent",
+    ) -> str:
+        """Analyze a DIRECTORY from a bounded sample of its files.
+
+        ``analyze agent_core/`` used to fail with an opaque PermissionError
+        (the folder was opened as a file); a directory is a first-class target
+        now, and omitting the path analyzes the whole workspace.  The sample is
+        capped by file count and total characters so one call cannot pull the
+        entire tree into context.
+        """
+        ws = workspace_path(agent.workspace)
+        root = (
+            os.path.normpath(path)
+            if os.path.isabs(path)
+            else os.path.normpath(os.path.join(ws, path))
+        )
+        files = _collect_directory_files(root)
+        if not files:
+            return f"No analyzable files found under {path}."
+        parts: list[str] = []
+        total = 0
+        for full in files:
+            content = await agent.read_file(full, track_read=False)
+            if content.startswith("File not found:") or content.startswith("Error"):
+                continue
+            rel = os.path.relpath(full, ws)
+            chunk = f"\n\n# === {rel} ===\n{content[:20000]}"
+            if total + len(chunk) > _ANALYZE_MAX_CHARS:
+                break
+            parts.append(chunk)
+            total += len(chunk)
+        try:
+            shown = os.path.relpath(root, ws)
+        except ValueError:  # different drive on Windows
+            shown = root
+        listing = "\n".join(f"- {os.path.relpath(f, ws)}" for f in files)
+        system = (
+            "You are an expert code reviewer. Analyze the DIRECTORY: its "
+            "purpose, structure, key modules, risks and concrete improvements."
+        )
+        user = (
+            f"## Directory: {shown}\n## Files ({len(files)}):\n{listing}\n"
+            + "".join(parts)
+            + (f"\n\n## Question:\n{question}" if question else "")
+        )
+        return await agent.llm.chat([
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ])
 
     async def _deep_analyze(self, path: str, question: str | None, agent: "Agent") -> str:
         """Iteratively read files and deepen analysis, following import chains

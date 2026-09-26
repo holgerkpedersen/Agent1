@@ -46,7 +46,8 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "read",
             "description": (
-                "Read a file from the workspace and return its contents. Paging "
+                "Read a FILE from the workspace and return its contents (not a "
+                "directory — use list_files for those). Paging "
                 "is LINE-BASED: offset is the 1-based starting line, limit is "
                 "the number of lines to return. Files are truncated with a hint "
                 "telling you the next offset — page through with offset/limit."
@@ -401,11 +402,15 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "analyze",
-            "description": "Analyze a file or the whole workspace with the LLM and return a summary.",
+            "description": (
+                "Analyze a FILE or DIRECTORY with the LLM and return a summary. "
+                "A directory is summarized from a bounded sample of its files; "
+                "omit 'path' entirely to analyze the whole workspace."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "File path to analyze (default: whole workspace)"},
+                    "path": {"type": "string", "description": "File or directory path to analyze (default: whole workspace)"},
                 },
                 "required": [],
             },

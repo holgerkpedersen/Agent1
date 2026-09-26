@@ -1163,6 +1163,11 @@ class Agent:
     async def _nlp_read(self, args: dict[str, Any]) -> str:
         """Read *limit* lines of a file starting at 1-based *offset*."""
         path = self._resolve_nlp_path(str(args.get("path", "")).strip('"').strip("'"))
+        if os.path.isdir(path):
+            return (
+                f"Not a file (directory): {args.get('path')} — read takes a "
+                "FILE path; use list_files or search for directories."
+            )
         try:
             # Paging is LINE-BASED (1-indexed): models and callers pass the
             # starting line number and a line count, not character offsets —
@@ -1466,7 +1471,11 @@ class Agent:
         return error or output
 
     async def _nlp_analyze(self, args: dict[str, Any]) -> str:
-        """Run the ``analyze`` REPL command (AI analysis) on an optional path."""
+        """Run the ``analyze`` REPL command (AI analysis) on an optional path.
+
+        The path may be a FILE or a DIRECTORY (a folder is summarized from a
+        bounded sample of its files); omitting it analyzes the whole workspace.
+        """
         analyze_args: list[str] = []
         if args.get("path"):
             analyze_args = [self._resolve_nlp_path(str(args["path"]))]
@@ -1998,6 +2007,16 @@ class Agent:
     async def read_file(self, path: str, track_read: bool = True) -> str:
         local_path = self._safe_path(path)
 
+        # A directory is a common mistake (analyze(path="agent_core/")): on
+        # Windows open() raises PermissionError, which surfaced as an opaque
+        # "Error reading file: [Errno 13]".  Say what is actually wrong.
+        if os.path.isdir(local_path):
+            return (
+                f"Not a file (directory): {path} — read/analyze take a FILE "
+                "path; omit the path to analyze the whole workspace, or use "
+                "list_files/search to inspect a directory."
+            )
+
         try:
             with open(local_path, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -2011,6 +2030,10 @@ class Agent:
 
             return content
 
+        except IsADirectoryError:
+            return f"Not a file (directory): {path}"
+        except PermissionError as e:
+            return f"Permission denied reading {path}: {e}"
         except FileNotFoundError:
             return f"File not found: {path}"
         except Exception as e:

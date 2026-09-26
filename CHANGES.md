@@ -1,3 +1,13 @@
+## 2026-09-26 - feat: analyze accepts a directory (and the whole workspace); read stays file-only
+
+**Change**: `analyze <folder>` now works — `AnalyzeCommand._analyze_directory` walks the directory (skip-list: `.git`, `__pycache__`, `reports`, `backups`, binary suffixes, …), samples up to 40 files / 200k chars, and asks the LLM for a directory-level analysis. `analyze` with NO path analyzes the whole workspace (the schema's promise, previously false: it errored `Usage: analyze <path>`). `Agent.read_file` / `_nlp_read` still reject a directory, but with a clear `Not a file (directory): <path> …` instead of Windows' opaque `[Errno 13] Permission denied`. The `analyze` schema now says FILE or DIRECTORY; `read` says not a directory.
+
+**Reason**: `analyze(path="agent_core/")` — a folder — was a natural call but surfaced `Error reading file: [Errno 13] Permission denied: 'C:\Dev\Agent1\agent_core'`; folders are a legitimate analysis target, not a user error.
+
+**Files**: agent_core/commands/analyze_cmd.py, agent.py, agent_core/tool_schemas.py, tests/test_nlp_path_guards.py (new). Verified live: `analyze agent_core/` samples 40 files into a 192k-char prompt; `read agent_core/` returns the clear directory message; `read AGENTS.md` still reads. Tests: 7 new green.
+
+## 2026-09-26 - fix: NLP file tools reject directory paths with a clear message
+
 ## 2026-09-26 - fix: jev choice accepts a positional option list
 
 **Change**: `agent_core/commands/jev_cmd.py` — `jev choice "A|B|C" "<question>"` now works: when `--options` is absent, the first positional token containing pipes is taken as the option list. The usage/error text and the module docstring show both forms.
