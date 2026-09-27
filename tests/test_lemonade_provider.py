@@ -357,7 +357,10 @@ class TestResidency:
         assert ok
         assert prov.context_limit == 65536
         load_calls = [c for c in calls if c.full_url.endswith("/load")]
-        assert load_calls and json.loads(load_calls[0].data)["model_name"] == "qwen3.5-4b-FLM"
+        assert (
+            load_calls and
+            json.loads(load_calls[0].data)["model_name"] == "qwen3.5-4b-FLM"
+        )
 
     def test_ensure_model_loaded_unreachable(self):
         prov = _provider()

@@ -53,7 +53,6 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Sequence
 
-from .orchestrator import ConsensusVoter
 from .refinement_voter import RefinementVoter
 from .context_budget import trim_messages_to_context
 from .engines import device_for_provider

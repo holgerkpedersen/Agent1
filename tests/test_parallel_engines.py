@@ -84,11 +84,13 @@ def test_tool_loop_trims_per_iteration(monkeypatch):
     monkeypatch.setattr(_p, "build_provider", lambda *a, **k: prov)
     # ToolLoopRunner.run is the real one; the fake provider returns plain text
     # after its (trimmed) first call, so the loop makes exactly one LLM call.
-    run = asyncio.run(_p.run_parallel(
+    asyncio.run(
+    _p.run_parallel(
         hist, ["lemonade/x", "zai/glm"], settings=object(),
         provider_overrides={"lemonade/x": "lemonade"},
         tools=tools, execute_tool_fn=fake_execute,
-    ))
+    )
+)
     # Both providers get the fake; assert trimming happened on the NPU call.
     assert any(
         m.get("content") == context_budget.TRIM_NOTE
