@@ -62,6 +62,37 @@ _REVIEW_HELP = """review - Human gate over failed task traces (verification gate
       Write a diagnosis-pinning regression test for a labeled task"""
 
 
+def _unquote(value: str) -> str:
+    """Strip the literal quotes the REPL leaves on a quoted value.
+
+    ``agent.py`` tokenizes input with ``shlex.split(user_input, posix=False)``,
+    which KEEPS the quotes (e.g. ``--note "two words"`` arrives as the single
+    token ``'"two words"'``).  Repo convention: strip them here (same as
+    ``analyze_cmd``, ``fix_cmd``, ``implement_cmd``, ``jev_cmd``).
+    """
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+def _flag_value(args: list[str], flag: str) -> str | None:
+    """Value of ``--flag <value>`` (quotes stripped), or None when absent.
+
+    Supports both ``--flag value`` and ``--flag=value``.  A trailing flag with
+    no value returns ``None`` so callers can error instead of silently using a
+    default.
+    """
+    for i, arg in enumerate(args):
+        if arg == flag:
+            if i + 1 < len(args):
+                return _unquote(args[i + 1])
+            return None
+        if arg.startswith(flag + "="):
+            return _unquote(arg[len(flag) + 1:])
+    return None
+
+
 class ReviewCommand(Command):
     @property
     def name(self) -> str:
@@ -98,7 +129,13 @@ class ReviewCommand(Command):
 
     async def _cmd_refresh(self, args: list[str], agent: "Agent") -> bool:
         trace_dir = _flag_path(args, "--trace-dir", agent, "reports/traces")
+        if trace_dir is None:
+            self.error("Usage: review refresh [--trace-dir <dir>] [--diags-dir <dir>]")
+            return True
         diags_dir = _flag_path(args, "--diags-dir", agent, "reports/harnessfix/diagnoses")
+        if diags_dir is None:
+            self.error("Usage: review refresh [--trace-dir <dir>] [--diags-dir <dir>]")
+            return True
 
         reviews = build_reviews(trace_dir, diags_dir)
         existing = load_reviews(self._reviews_path(agent))
@@ -136,7 +173,7 @@ class ReviewCommand(Command):
             self.error("Usage: review show <task>")
             return True
         reviews = load_reviews(self._reviews_path(agent))
-        rec = reviews.get(args[0])
+        rec = reviews.get(_unquote(args[0]))
         if rec is None:
             print(f"No review record for task {args[0]}. Run `review refresh`, "
                   f"or `review label {args[0]} auto` to have the agent review it.")
@@ -165,12 +202,11 @@ class ReviewCommand(Command):
         if len(args) < 2:
             self.error("Usage: review label <task> <bug|regression|noise|ok|auto> [--note \"...\"]")
             return True
-        task_id, disposition = args[0], args[1].lower()
-        note = ""
-        if "--note" in args:
-            idx = args.index("--note")
-            if idx + 1 < len(args):
-                note = args[idx + 1]
+        task_id = _unquote(args[0])
+        disposition = _unquote(args[1]).lower()
+        note = _flag_value(args, "--note")
+        if note is None:
+            note = ""
         reviews = load_reviews(self._reviews_path(agent))
         if disposition == "auto":
             return await self._auto_label_one(task_id, note, reviews, agent)
@@ -189,13 +225,15 @@ class ReviewCommand(Command):
         """Agent reviews one task (first arg = task id) or every unreviewed."""
         reviews = load_reviews(self._reviews_path(agent))
         if args and not args[0].startswith("--"):
-            return await self._auto_label_one(args[0], "", reviews, agent)
+            note = _flag_value(args, "--note") or ""
+            return await self._auto_label_one(_unquote(args[0]), note, reviews, agent)
+        note = _flag_value(args, "--note") or ""
         targets = [r.task_id for r in reviews.values() if not r.is_labeled()]
         if not targets:
             print("Nothing to auto-review — every record is already labeled.")
             return True
         for task_id in targets:
-            await self._auto_label_one(task_id, "", reviews, agent)
+            await self._auto_label_one(task_id, note, reviews, agent)
         print(f"Auto-reviewed {len(targets)} task(s); human labels always win.")
         return True
 
@@ -242,7 +280,7 @@ class ReviewCommand(Command):
         if not args:
             self.error("Usage: review export <task>")
             return True
-        task_id = args[0]
+        task_id = _unquote(args[0])
         reviews = load_reviews(self._reviews_path(agent))
         rec = reviews.get(task_id)
         if rec is None:
@@ -266,10 +304,13 @@ class ReviewCommand(Command):
         return Path(agent.workspace) / REVIEWS_RELPATH
 
 
-def _flag_path(args: list[str], flag: str, agent: "Agent", default: str) -> Path:
-    path = default
-    if flag in args:
-        idx = args.index(flag)
-        if idx + 1 < len(args):
-            path = args[idx + 1]
-    return Path(agent.workspace) / path
+def _flag_path(args: list[str], flag: str, agent: "Agent", default: str) -> Path | None:
+    """Resolve ``--flag <dir>`` against the workspace, or None when the flag
+    is present but has no value (caller errors instead of silently using the
+    default)."""
+    value = _flag_value(args, flag)
+    if value is None:
+        if any(a == flag or a.startswith(flag + "=") for a in args):
+            return None
+        value = default
+    return Path(agent.workspace) / value
