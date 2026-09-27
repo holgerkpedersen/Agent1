@@ -9,7 +9,7 @@ Uses the real orchestration stack: ``agent_core.orchestration.types.TaskNode`` /
 """
 
 import asyncio
-from typing import Any, Awaitable, Dict
+from typing import Any, Dict
 
 import pytest
 

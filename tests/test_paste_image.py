@@ -11,7 +11,7 @@ library's own graceful degradation in ``paste_image_cmd.encode_clipboard_image``
 """
 import base64
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -31,7 +31,6 @@ needs_pil = pytest.mark.skipif(
 from agent import Agent, _strip_image_blocks
 from agent_core.commands.paste_image_cmd import (
     PasteImageCommand,
-    encode_clipboard_image,
     encode_image_file,
 )
 

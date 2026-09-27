@@ -22,7 +22,6 @@ from pathlib import Path
 
 import pytest
 
-import harnessfix.progress as progress
 import harnessfix.repairs.abandonment_resume as abandonment_resume
 import harnessfix.repairs.stuck_repeat as stuck_repeat
 import harnessfix.repairs.tool_interface as tool_interface

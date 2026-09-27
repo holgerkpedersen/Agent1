@@ -16,8 +16,6 @@ Covers three changes to ``agent_core/commands/implement_cmd.py``:
 """
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
 from unittest.mock import patch
 
 from agent_core.commands.implement_cmd import (

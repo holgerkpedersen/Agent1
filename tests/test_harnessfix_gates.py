@@ -7,12 +7,10 @@ must return a safe value (False for test/security, None for benchmark).
 """
 import subprocess
 import sys
-from pathlib import Path
 
 sys.path.insert(0, ".")
 
 import harnessfix.gates as gates
-from harnessfix.corpus_quality import CorpusQuality
 
 
 def test_benchmark_gate_returns_none_on_timeout(monkeypatch):

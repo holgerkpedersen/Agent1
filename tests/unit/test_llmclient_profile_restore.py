@@ -67,7 +67,6 @@ def test_profile_restore_failure_is_logged_with_traceback(_capture_warnings, mon
 
 def test_profile_restore_success_sets_name(_capture_warnings, monkeypatch):
     """Happy path: a valid profile still restores _profile_name."""
-    from agent_core.constants import load_model_json
 
     def _ok_load():
         return {"profile": "default"}

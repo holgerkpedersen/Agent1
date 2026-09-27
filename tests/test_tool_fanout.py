@@ -8,7 +8,7 @@ import asyncio
 import time
 
 from agent_core.llm.tool_loop import ToolLoopRunner, READONLY_FANOUT_TOOLS
-from test_tool_loop_nlp import _ScriptedLLM, _loop_runner_sync, _make_llm_chat_fn
+from test_tool_loop_nlp import _ScriptedLLM, _loop_runner_sync
 
 
 def _runner(fake, execute_tool, **kwargs):

@@ -1,17 +1,11 @@
 """Tests for model command fuzzy matching and model resolution logic."""
-import os
-import tempfile
 
-import pytest
 
 from agent_core.commands.model_cmd import ModelCommand
 from agent_core.constants import (
     resolve_model,
-    persist_model_choice,
     load_model_json,
     save_model_json,
-    KNOWN_MODELS,
-    MODEL_JSON_PATH,
 )
 
 from _helpers import _default_llm, _default_llm_short
@@ -294,7 +288,6 @@ class TestSwitchModelPrefersOpencode:
 
     def test_partial_free_name_switches_to_opencode(self, monkeypatch):
         from agent_core.commands.model_cmd import ModelCommand
-        from agent_core.config import load_agent_settings
 
         cmd = ModelCommand()
         agent = self._lmstudio_agent_current()

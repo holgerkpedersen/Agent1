@@ -1,5 +1,4 @@
 """Tests for analyze_cmd helpers: import parsing and file reference extraction."""
-import pytest
 from agent_core.commands.analyze_cmd import _parse_imports, _parse_file_refs
 
 

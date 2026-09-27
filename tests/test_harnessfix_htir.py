@@ -6,7 +6,6 @@ expected HTIR nodes and links, and round-trips through the reader.
 from __future__ import annotations
 
 from harnessfix.htir import TraceGraph, compile_trace
-from harnessfix.links import infer_links
 from harnessfix.reader import read_trace, task_id_of
 from harnessfix.tracing import (
     KIND_LLM_RESPONSE,

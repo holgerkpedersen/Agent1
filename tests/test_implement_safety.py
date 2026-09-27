@@ -1,10 +1,8 @@
 """Tests for implement_cmd safety helpers: filename guards and auto-repair."""
 import os
-import sys
 import tempfile
 from pathlib import Path
 
-import pytest
 
 from agent_core.commands.implement_cmd import (
     _is_dangerous_filename,

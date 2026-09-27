@@ -9,7 +9,6 @@ from harnessfix.dashboard import (
     _show_task,
     main,
 )
-from harnessfix.reader import TraceValidationError
 
 _GOOD_TRACE = "\n".join(
     json.dumps(ev)

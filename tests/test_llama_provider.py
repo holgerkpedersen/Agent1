@@ -11,7 +11,6 @@ Covers:
 import json
 from types import SimpleNamespace
 
-import pytest
 
 from agent_core.llm.provider import build_provider, provider_for
 from agent_core.llm.llama_provider import LlamaProvider, discover_local_gguf_models
@@ -470,7 +469,6 @@ class TestNoLmStudioManagement:
             "agent_core.llm.lmstudio.load_model",
             lambda *a, **k: calls.__setitem__("load", calls["load"] + 1),
         )
-        import subprocess
         monkeypatch.setattr(
             "subprocess.run",
             lambda *a, **k: calls.__setitem__("lms", calls["lms"] + 1),

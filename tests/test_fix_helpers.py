@@ -26,7 +26,6 @@ from agent_core.commands.fix_cmd import (
     _signature_call_sites,
     _ensure_typing_imports,
     _error_identifiers,
-    _function_returns_value,
     _enclosing_function_name,
 )
 

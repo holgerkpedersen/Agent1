@@ -48,7 +48,6 @@ def lmstudio_env(monkeypatch):
     Returns a settable holder: ``state.loaded`` is what LM Studio reports as
     loaded; ``state.persisted`` is what model.json would return.
     """
-    from agent_core.commands import model_cmd
 
     class _State:
         loaded = "laguna-s-2.1"

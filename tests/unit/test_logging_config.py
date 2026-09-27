@@ -3,7 +3,6 @@ logging_config is a pure re-export of agent_core.logging_config, and the
 correlation context scopes async-safe IDs."""
 import logging
 
-import pytest
 
 
 def test_root_module_is_pure_reexport():

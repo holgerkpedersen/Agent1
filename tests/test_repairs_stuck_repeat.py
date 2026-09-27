@@ -36,7 +36,6 @@ from harnessfix.repairs.collisions import find_test_collisions
 from harnessfix.repairs.stuck_repeat import (
     STUCK_REPEAT_REPAIR_ID,
     RepairApplyError,
-    apply as apply_stuck,
     revert as revert_stuck,
 )
 

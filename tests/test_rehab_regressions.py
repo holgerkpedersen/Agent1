@@ -16,11 +16,7 @@ Covers bugs that were silent because no tests exercised these paths:
 from __future__ import annotations
 
 import ast
-import builtins
-import io
 import sys
-import tokenize
-from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import pytest

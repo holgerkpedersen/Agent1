@@ -97,7 +97,6 @@ class _FakeHttp:
 class TestProviderCapture:
     def test_lmstudio_captures_usage(self):
         import asyncio
-        import json
         from unittest.mock import patch
         from agent_core.llm.lmstudio import LMStudioProvider
         from agent_core.llm.provider import ResponseMetrics

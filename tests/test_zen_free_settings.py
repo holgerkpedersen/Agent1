@@ -14,7 +14,6 @@ for the opencode-zen FREE tier:
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import patch
 

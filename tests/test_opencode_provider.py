@@ -416,7 +416,6 @@ class TestDirectApiMode:
 
     def test_chat_api_sends_bearer_and_tools(self):
         import asyncio
-        import urllib.request
         prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
         payload = {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
         seen = {}

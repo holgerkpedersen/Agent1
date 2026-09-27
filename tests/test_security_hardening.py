@@ -1,7 +1,5 @@
 """Security hardening tests (plan tasks 1, 2, 5, 6):
 path containment, shell metacharacter rejection, shell_ops delegation."""
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -9,7 +7,6 @@ import pytest
 
 from agent_core.security.allowlist import (
     find_unsafe_shell_pattern,
-    is_command_allowed,
 )
 from agent_core.security.path_utils import SecurityViolationError, normalize_path
 from agent_core.tools.shell_ops import run_command

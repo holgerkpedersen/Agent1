@@ -10,7 +10,6 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
@@ -68,7 +67,6 @@ class TestDecisionConstraintsInChat:
         memory (and cannot leak ``_files_read`` into sibling tests via the
         shared on-disk state).
         """
-        import json as _json
 
         hist_file = tmp_path / "chat_history.json"
         mem_file = tmp_path / "agent_memory.json"
@@ -119,7 +117,6 @@ class TestPlanAnswerPersistence:
         assert "build mode" in text
 
     def test_persist_failure_is_contained(self, agent_obj: Agent, monkeypatch) -> None:
-        import agent as agent_mod
 
         def boom(*a, **kw):
             raise OSError("disk full")

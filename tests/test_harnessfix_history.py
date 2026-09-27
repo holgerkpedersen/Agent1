@@ -91,7 +91,7 @@ class TestTraceParsing:
             "t1.jsonl",
             [_result_event("t1", "read", {"path": "C:/Dev/Agent1/agent.py"}, result="content", ts=1)],
         )
-        from harnessfix.history import _parse_trace_event, _trace_events
+        from harnessfix.history import _parse_trace_event
 
         ev = _parse_trace_event(json.loads(p.read_text(encoding="utf-8").splitlines()[0]))
         assert ev is not None

@@ -1,6 +1,5 @@
 """Tests for the decision-ledger health check (decision #054, #080-#087)."""
 
-from pathlib import Path
 
 from agent_core.decisions import (
     find_stale_decisions,

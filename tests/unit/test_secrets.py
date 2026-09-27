@@ -5,7 +5,6 @@ The secure store requires an optional backend (``keyring`` or
 ``cryptography`` — ``pip install -e .[secrets]``); tests that write secrets
 skip with a clear reason when neither is importable instead of erroring.
 """
-import os
 
 import pytest
 

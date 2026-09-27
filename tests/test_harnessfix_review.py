@@ -1,7 +1,5 @@
 """Tests for harnessfix.review — the human verification gate (decision #053)."""
 
-import json
-from pathlib import Path
 
 import pytest
 

@@ -1,6 +1,5 @@
 """Decision extraction tests (plan task 35): recording, searching, overlap
 detection, persistence, and best-effort contradiction parsing."""
-import json
 import tempfile
 from pathlib import Path
 
@@ -12,7 +11,6 @@ from agent_core.decisions import (
     find_decisions,
     find_overlaps,
     load_decisions,
-    normalize_affected_files,
 )
 
 

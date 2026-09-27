@@ -40,20 +40,16 @@ from harnessfix.htir import HTIRStep, TraceGraph
 from harnessfix.loop import run_loop
 from harnessfix.repairs import (
     CATALOG,
-    LIFECYCLE_LAYER,
     STUCK_REPEAT_REPAIR_ID,
-    repairs_for_layer,
 )
 from harnessfix.repairs.abandonment_resume import (
     ABANDONMENT_RESUME_REPAIR_ID,
     RepairApplyError,
-    apply as apply_resume,
     revert as revert_resume,
 )
 from harnessfix.repairs.stuck_repeat import revert as revert_stuck
 from harnessfix.repairs.collisions import find_test_collisions
 from harnessfix.tracing import (
-    KIND_LOOP_END,
     KIND_TOOL_CALL,
     KIND_TOOL_RESULT,
     LAYER_LIFECYCLE,

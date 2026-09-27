@@ -18,7 +18,6 @@ from pathlib import Path
 import pytest
 
 from agent_core.skills import (
-    SKILL_FILENAME,
     discover_skills,
     read_skill,
     skill_index_block,

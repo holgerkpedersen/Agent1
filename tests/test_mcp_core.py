@@ -22,7 +22,6 @@ from agent_core.mcp.client import (
     MAX_RESULT_CHARS,
     McpClient,
     McpProtocolError,
-    McpToolError,
     truncate_result,
     validate_against_schema,
 )

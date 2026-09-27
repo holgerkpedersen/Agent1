@@ -151,7 +151,6 @@ class TestEmbedder:
 
     def test_similar_texts_rank_above_dissimilar(self):
         e = HashEmbedder()
-        import numpy as np
         q = e.from_string("ImportError: cannot import name 'keyboard' from 'ursina'")
         sim = e.from_string("ImportError cannot import name keyboard from ursina module")
         diff = e.from_string("the weather today is sunny and warm outside")

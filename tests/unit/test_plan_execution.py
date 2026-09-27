@@ -60,7 +60,6 @@ def test_json_parse_basic():
 
 
 def test_json_parse_missing_description_raises():
-    import json
     with pytest.raises(ValueError):
         parse_plan_tasks('{"tasks":[{"id":"T1"}]}', fmt="json")
 

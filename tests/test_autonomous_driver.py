@@ -8,7 +8,6 @@ Covers the safety rails that make "fully autonomous" safe:
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from unittest import mock
 
 import pytest

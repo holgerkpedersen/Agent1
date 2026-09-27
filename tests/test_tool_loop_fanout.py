@@ -21,7 +21,6 @@ import json
 import time
 from typing import Any
 
-import pytest
 
 from agent_core.llm.tool_loop import (
     READONLY_FANOUT_TOOLS,

@@ -245,7 +245,6 @@ def test_real_corpus_matches_pre050_labels():
     if not corpus.is_dir():
         pytest.skip("trace corpus not present (reports/ is gitignored)")
 
-    import json
 
     expected = {
         "bug": ["0f7793", "536848", "9acf2d", "b5b264"],

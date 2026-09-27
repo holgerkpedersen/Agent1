@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import datetime
-from types import SimpleNamespace
 
-import pytest
 
 from agent import _build_chat_prompt
 from agent_core.colors import blue, green, _RESET, _ENABLED

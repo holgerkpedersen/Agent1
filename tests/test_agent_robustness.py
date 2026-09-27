@@ -22,21 +22,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import subprocess
-import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
 import agent
 from agent import Agent
 from agent_core.config import AgentDisplayMode
-from agent_core.constants import (
-    CHAT_HISTORY_TMP_PATH,
-    AGENT_MEMORY_TMP_PATH,
-)
 
 
 @pytest.fixture()
@@ -443,7 +436,6 @@ class TestTransientLlmErrorRetry:
         return captured
 
     def test_retries_transient_timeout_then_succeeds(self, monkeypatch) -> None:
-        from agent_core.config import AgentDisplayMode
 
         bot = Agent(workspace=".")
         calls = {"n": 0}
@@ -464,7 +456,6 @@ class TestTransientLlmErrorRetry:
         assert captured["text"] == "Done"
 
     def test_permanent_error_is_not_retried(self, monkeypatch) -> None:
-        from agent_core.config import AgentDisplayMode
 
         bot = Agent(workspace=".")
         calls = {"n": 0}

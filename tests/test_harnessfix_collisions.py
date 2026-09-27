@@ -12,7 +12,6 @@ pytestmark = pytest.mark.harnessfix_self_test
 from harnessfix.loop import run_loop
 from harnessfix.repairs.collisions import find_test_collisions
 from harnessfix.repairs.tool_interface import (
-    TOOL_INTERFACE_REPAIR_ID,
     _NEW,
     _OLD,
     revert as _revert_tool_interface,

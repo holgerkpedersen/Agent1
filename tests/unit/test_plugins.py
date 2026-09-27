@@ -1,4 +1,3 @@
-import pytest
 
 from agent_core.plugins import BasePlugin, PluginRegistry, PluginManager
 

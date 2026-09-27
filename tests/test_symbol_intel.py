@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -21,7 +20,6 @@ import agent
 from agent import Agent
 from agent_core.modes import MODE_PLAN
 from agent_core.symbol_intel import (
-    MAX_REFERENCES,
     collect_definitions,
     collect_references,
 )

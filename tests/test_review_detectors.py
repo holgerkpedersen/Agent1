@@ -2,7 +2,6 @@
 import tempfile
 import os
 
-import pytest
 
 from agent_core.patterns import (
     detect_module_collisions,

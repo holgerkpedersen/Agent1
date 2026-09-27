@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Final, List, Dict, Any
+from typing import Final, Dict, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Final
 from unittest.mock import MagicMock
 
-import pytest
 
 from agent_core.agent import LLMAgent
 

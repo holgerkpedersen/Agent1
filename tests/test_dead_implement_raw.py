@@ -1,5 +1,4 @@
 from pathlib import Path
-import pytest
 
 def test_implement_raw_module_does_not_exist():
     """Verify that the dead module _implement_raw.py has been removed."""

@@ -9,7 +9,6 @@ from __future__ import annotations
 import pytest
 
 from agent_core.commands.plan_cmd import PlanCommand
-from agent_core.orchestration.dependency_graph import CycleError
 from agent_core.plan_execution import PlanTask, run_plan
 from agent_core.subagent_roles import get_role
 

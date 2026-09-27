@@ -7,7 +7,6 @@ the tools, feeds results back, and terminates on a plain-text answer.
 """
 import json
 import os
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -425,7 +424,6 @@ class TestToolLoopExecution:
         already answered.  Extras are rejected by strict gateways with HTTP
         400 ("Messages with role 'tool' must be a response to a preceding
         message with 'tool_calls'")."""
-        import asyncio
         import agent_core.llm.tool_loop as tl
 
         monkeypatch.setattr(tl, "_TOOL_CONSECUTIVE_FAILURE_LIMIT", 2)
@@ -1609,8 +1607,6 @@ class TestAutoContinue:
     def _seq_llm(responses):
         """A fake LLM that replays a fixed sequence; dict entries become tool
         calls, strings become plain-text answers."""
-        import asyncio
-        from agent import Agent
 
         class SeqLLM:
             def __init__(self):
@@ -1837,7 +1833,6 @@ class TestDisplayModes:
     what the model receives or the returned history/final text."""
 
     def test_default_runner_is_verbose(self):
-        import asyncio
         from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
         runner = ToolLoopRunner(max_iterations=5)
         assert runner.display_mode == DisplayMode.VERBOSE
@@ -1846,7 +1841,6 @@ class TestDisplayModes:
         """CLEAN mode must emit a [reason] line before each [tool], and summarize
         the result (N lines returned + snippet), while the model still gets the
         full payload in the role:tool message."""
-        import asyncio
         from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
 
         fake = _ScriptedLLM([
@@ -1872,7 +1866,6 @@ class TestDisplayModes:
     def test_quiet_suppresses_tool_and_result_stdout_but_keeps_model_payload(self):
         """QUIET hides [tool]/[result] from stdout, yet the full result is still
         fed to the model as a role:tool message and final text/history unchanged."""
-        import asyncio
         from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
 
         fake = _ScriptedLLM([
@@ -1996,7 +1989,6 @@ class TestDisplayModes:
         """The [tool] line must render a long run(command=...) in FULL — no
         mid-command '...' truncation (regression: _fmt_args cut every value
         >60 chars, making shell commands unreadable)."""
-        import asyncio
         from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
 
         command = (
@@ -2031,8 +2023,7 @@ class TestDisplayModes:
     def test_non_command_args_still_truncate_on_tool_line(self, capsys):
         """The 60-char cap must remain for non-command values (paths, queries)
         so read/search/write lines stay compact."""
-        import asyncio
-        from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
+        from agent_core.llm.tool_loop import ToolLoopRunner
 
         long_path = "x" * 120
         fake = _ScriptedLLM([
@@ -2054,8 +2045,7 @@ class TestDisplayModes:
 
     def test_clean_reason_line_shows_full_run_command(self, capsys):
         """CLEAN mode's [reason] line must also render the full run command."""
-        import asyncio
-        from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
+        from agent_core.llm.tool_loop import ToolLoopRunner
 
         command = (
             'cd /d D:\\Dev\\Agent1 && git stash && '

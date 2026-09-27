@@ -11,7 +11,6 @@ never split an assistant/tool pair, and never drop the live (pending) tail.
 import json
 from typing import Any
 
-import pytest
 
 from agent_core.llm.tool_loop import (
     GUARD_COMPACT,

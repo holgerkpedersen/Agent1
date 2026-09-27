@@ -347,9 +347,8 @@ def test_loop_falls_through_to_next_repair_on_rejection(tmp_path, monkeypatch):
     Since decision #052 removed abandonment-resume from the catalog, only one
     lifecycle repair (stuck-repeat) exists.  We monkeypatch a temporary second
     lifecycle repair into the catalog to exercise the fall-through path."""
-    from dataclasses import replace
 
-    from harnessfix.repairs import CATALOG, Repair, repairs_for_layer
+    from harnessfix.repairs import CATALOG, Repair
     from harnessfix.repairs.stuck_repeat import (
         STUCK_REPEAT_REPAIR_ID,
         revert as revert_stuck,
