@@ -461,6 +461,32 @@ incrementally as its capability grows — human stays in control.
   output]` and ended the turn.  Live (2026-09-27): `qwen/qwen3.5-9b` IGNORES the
   reasoning-off knob, so the larger budget is what actually recovers it (250-token
   request -> retry at 4096 -> full answer).  Tests: `tests/test_llm_retry_policy.py`.
+- **Tool-path drop-tools recovery (DONE, 2026-09-27)**: when ``tools`` are
+  sent to a model whose LM Studio TOOL path crashes the engine, `chat` detects
+  it (`_is_tool_path_engine_error`: peg-native grammar, ``bad allocation``/
+  out-of-memory, ``channel error``, ``terminated``, engine predict stream/request
+  failure) and retries the SAME prompt WITHOUT tools so the turn completes as
+  plain chat — then remembers the model in `_tools_unsupported` so later turns
+  skip the doomed attempt.  Proven live with `llama-4-scout-17b-16e-instruct`:
+  with tools the engine dies (`bad allocation`/`terminated`), without tools the
+  full agent system prompt answers fine; LM Studio's own chat works because it
+  sends no tools.  `_engine_server_error` EXCLUDES peg/OOM from transient
+  retries (deterministic).  If no tools were sent or the no-tools retry also
+  fails, the error propagates and the failover chain takes over.  Server-side
+  root cause is a llama.cpp/LM Studio parser/alloc bug; mitigations are a newer
+  LM Studio / higher quant (Q4_K_XL, not Q4_K_S).  Tests:
+  `tests/test_llm_retry_policy.py::TestToolGrammarRecovery`,
+  `::TestToolPathDropTools`.
+- **Engine OOM recovery (DONE, 2026-09-27)**: `LMStudioProvider._open_chat`
+  detects a `std::bad_alloc` engine 400 (`_is_engine_oom_error`: "bad
+  allocation"/"out of memory"/...) and raises a RuntimeError with an actionable
+  message ("free VRAM/RAM or use a smaller model/quant") instead of a transient
+  error — OOM is deterministic, so retrying is wasted.  `_engine_server_error`
+  excludes OOM, and `_CONNECTION_FAILURE_RE` gained `out of memory|bad
+  allocation|failed to allocate|insufficient memory` so the chain fails over.
+  Live: `llama-4-scout-17b-16e-instruct` (~63 GB GGUF) intermittently OOMs on
+  load/alloc; the turn now degrades to failover.  Tests:
+  `tests/test_llm_retry_policy.py::TestEngineOomRecovery`.
 - **Jev decision engine (DONE, 2026-09-25)**: `agent_core/jev_engine.py` +
   REPL `jev` + NLP `jev_decide` + `speculate --judge jev|both`. Typed
   yesno/choice/score decisions on a DEDICATED small model

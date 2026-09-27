@@ -199,9 +199,19 @@ class TestThinkingBudgetRecovery:
         assert out.startswith("[Error:")
 
 
-#: The reported live failure: LM Studio wrapped an engine crash in HTTP 400.
-#: The inner error is a JSON string, so its quotes arrive backslash-escaped.
+#: An engine-side failure LM Studio wraps in HTTP 400.  The inner error is a
+#: JSON string, so its quotes arrive backslash-escaped.  Transient: re-sampling
+#: can succeed.
 _ENGINE_ERROR_BODY = (
+    b'{"error":"Engine protocol predict stream returned an error: '
+    b'{\\"code\\":500,\\"message\\":\\"internal engine failure\\",'
+    b'\\"type\\":\\"server_error\\"}"}'
+)
+
+#: The PEG tool-grammar failure (reported live with
+#: ``llama-4-scout-17b-16e-instruct``).  DETERMINISTIC for a tool payload:
+#: retrying verbatim is wasted, so the provider drops tools and answers as text.
+_PEG_ERROR_BODY = (
     b'{"error":"Engine protocol predict stream returned an error: '
     b'{\\"code\\":500,\\"message\\":\\"The model produced output that does not '
     b'match the expected peg-native format\\",\\"type\\":\\"server_error\\"}"}'
@@ -223,7 +233,7 @@ class TestEngineServerErrors:
         assert excinfo.value.status == 400
 
     def test_engine_error_retried_until_success(self) -> None:
-        """A peg-native engine error is re-sampled, not surfaced as final."""
+        """A transient engine server_error is re-sampled, not surfaced."""
         prov = _provider()
         calls = {"n": 0}
 
@@ -253,3 +263,177 @@ class TestEngineServerErrors:
             result = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert calls["n"] == 2
         assert result == "ok"
+
+
+class TestToolGrammarRecovery:
+    """Regression (2026-09-27, llama-4-scout-17b-16e-instruct): LM Studio's PEG
+    tool-call grammar rejects the model's output; the provider must drop tools
+    and answer as text instead of failing the turn.  The failure is
+    deterministic, so it must NOT be retried verbatim as a transient error."""
+
+    def test_peg_body_is_not_transient(self) -> None:
+        from agent_core.llm.lmstudio import (
+            _engine_server_error,
+            _is_tool_grammar_error,
+        )
+
+        detail = _PEG_ERROR_BODY.decode()
+        assert _is_tool_grammar_error(detail)
+        assert not _engine_server_error(detail)
+
+    def test_peg_error_retries_without_tools(self) -> None:
+        prov = _provider()
+        payloads: list = []
+
+        def fake(req, timeout=None):
+            payloads.append(json.loads(req.data.decode()))
+            if len(payloads) == 1:
+                raise _http_error(req, 400, _PEG_ERROR_BODY)
+            return _FakeResponse(b'{"choices": [{"message": {"content": "ok"}}]}')
+
+        tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
+        with patch("urllib.request.urlopen", side_effect=fake):
+            out = asyncio.run(prov.chat(
+                [{"role": "user", "content": "hi"}], tools=tools
+            ))
+        assert out == "ok"
+        assert len(payloads) == 2  # no verbatim retries, just the no-tools retry
+        assert "tools" in payloads[0]
+        assert "tools" not in payloads[1]
+
+    def test_peg_error_without_tools_surfaces(self) -> None:
+        prov = _provider()
+        calls = {"n": 0}
+
+        def fake(req, timeout=None):
+            calls["n"] += 1
+            raise _http_error(req, 400, _PEG_ERROR_BODY)
+
+        with patch("urllib.request.urlopen", side_effect=fake):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert calls["n"] == 1  # nothing to drop -> no retry
+        assert out.startswith("[Error:")
+
+
+#: The reported live failure (llama-4-scout-17b-16e-instruct, ~63 GB GGUF):
+#: the LM Studio engine cannot allocate the model/context.
+_OOM_BODY = (
+    b'{"error":"Engine protocol predict stream returned an error: '
+    b'{\\"code\\":500,\\"message\\":\\"got exception: bad allocation\\",'
+    b'\\"type\\":\\"server_error\\"}"}'
+)
+
+
+class TestEngineOomRecovery:
+    """Regression (2026-09-27): an out-of-memory engine error is deterministic,
+    so it must fail fast (with a clear message) and let the failover chain
+    move on — not be retried three times verbatim."""
+
+    def test_oom_body_is_not_transient(self) -> None:
+        from agent_core.llm.lmstudio import (
+            _engine_server_error,
+            _is_engine_oom_error,
+        )
+
+        detail = _OOM_BODY.decode()
+        assert _is_engine_oom_error(detail)
+        assert not _engine_server_error(detail)
+
+    def test_oom_raises_runtime_error_with_guidance(self) -> None:
+        prov = _provider()
+
+        def boom(req, timeout=None):
+            raise _http_error(req, 400, _OOM_BODY)
+
+        with patch("urllib.request.urlopen", side_effect=boom):
+            with pytest.raises(RuntimeError) as excinfo:
+                prov._make_request({"model": "x"})
+        assert not isinstance(excinfo.value, TransientHTTPError)
+        assert "out of memory" in str(excinfo.value)
+
+    def test_oom_fails_fast_and_is_failover_worthy(self) -> None:
+        from agent_core.llm.provider import is_connection_failure
+
+        prov = _provider()
+        calls = {"n": 0}
+
+        def fake(req, timeout=None):
+            calls["n"] += 1
+            raise _http_error(req, 400, _OOM_BODY)
+
+        with patch("urllib.request.urlopen", side_effect=fake):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert calls["n"] == 1  # no transient retries for a deterministic OOM
+        assert out.startswith("[Error:")
+        assert "out of memory" in out
+        assert is_connection_failure(out)  # the chain should fail over
+
+
+def _channel_error_body() -> bytes:
+    return (
+        b'{"error":"Engine protocol predict stream returned an error: '
+        b'{\\"code\\":500,\\"message\\":\\"Error: Channel Error\\",'
+        b'\\"type\\":\\"server_error\\"}"}'
+    )
+
+
+class TestToolPathDropTools:
+    """When a model's tool path crashes the LM Studio engine, the provider must
+    drop tools and answer as text (LM Studio's own chat sends no tools).  The
+    reported live case: llama-4-scout-17b-16e-instruct -> "bad allocation"."""
+
+    def test_tool_path_error_markers(self) -> None:
+        from agent_core.llm.lmstudio import _is_tool_path_engine_error
+
+        assert _is_tool_path_engine_error(f"[Error: {_PEG_ERROR_BODY.decode()}]")
+        assert _is_tool_path_engine_error(f"[Error: {_OOM_BODY.decode()}]")
+        assert _is_tool_path_engine_error(f"[Error: {_channel_error_body().decode()}]")
+        assert _is_tool_path_engine_error(
+            '[Error: Engine protocol predict request failed: fetch failed]'
+        )
+        assert _is_tool_path_engine_error('[Error: HTTP Error 400: {"error":"terminated"}]')
+        assert not _is_tool_path_engine_error("[Error: HTTP Error 401: Unauthorized]")
+        assert not _is_tool_path_engine_error("normal response")
+
+    def test_bad_allocation_with_tools_retries_without_tools(self) -> None:
+        prov = _provider()
+        payloads: list = []
+
+        def fake(req, timeout=None):
+            payloads.append(json.loads(req.data.decode()))
+            if len(payloads) == 1:
+                raise _http_error(req, 400, _OOM_BODY)
+            return _FakeResponse(b'{"choices": [{"message": {"content": "hi there"}}]}')
+
+        tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
+        with patch("urllib.request.urlopen", side_effect=fake):
+            out = asyncio.run(prov.chat(
+                [{"role": "user", "content": "hi"}], tools=tools
+            ))
+        assert out == "hi there"
+        assert len(payloads) == 2
+        assert "tools" in payloads[0] and "tools" not in payloads[1]
+
+    def test_tools_disabled_on_subsequent_calls(self) -> None:
+        prov = _provider()
+        payloads: list = []
+
+        def fake(req, timeout=None):
+            payloads.append(json.loads(req.data.decode()))
+            if "tools" in payloads[-1]:
+                raise _http_error(req, 400, _OOM_BODY)
+            return _FakeResponse(b'{"choices": [{"message": {"content": "ok"}}]}')
+
+        tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
+        with patch("urllib.request.urlopen", side_effect=fake):
+            out1 = asyncio.run(prov.chat(
+                [{"role": "user", "content": "a"}], tools=tools
+            ))
+            first_call_len = len(payloads)
+            out2 = asyncio.run(prov.chat(
+                [{"role": "user", "content": "b"}], tools=tools
+            ))
+        assert out1 == "ok" and out2 == "ok"
+        # The 2nd chat must skip tools entirely (no doomed attempt).
+        assert first_call_len == 2
+        assert "tools" not in payloads[first_call_len]

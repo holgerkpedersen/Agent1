@@ -115,17 +115,80 @@ def _model_load_hint(detail: str) -> bool:
     )
 
 
+def _is_tool_grammar_error(detail: str) -> bool:
+    """True when LM Studio reports a PEG tool-call grammar parse failure.
+
+    When ``tools`` are sent, LM Studio constrains the model's output with a PEG
+    grammar so it emits a valid tool call.  A model whose tool-call format does
+    not match the grammar (observed live: ``llama-4-scout-17b-16e-instruct``)
+    fails with "The model produced output that does not match the expected
+    peg-native format" (the engine wraps it as a 500 inside an HTTP 400).
+    This is DETERMINISTIC for a given payload, so retrying it verbatim is
+    wasted — the caller retries the request WITHOUT tools instead.
+    """
+    low = (detail or "").lower()
+    return "peg" in low and ("native" in low or "format" in low or "grammar" in low)
+
+
+def _is_tool_path_engine_error(text: Any) -> bool:
+    """True when an engine error is caused by the TOOL path (grammar/alloc).
+
+    When ``tools`` are sent, LM Studio builds its tool parser/grammar; a model
+    whose tool format is unsupported (observed: ``llama-4-scout-17b-16e-instruct``)
+    fails there with a peg error, a ``bad allocation``, a ``channel error`` or a
+    predict ``fetch failed`` — while the SAME prompt WITHOUT tools succeeds.
+    Dropping tools and retrying recovers the turn (degraded to plain chat),
+    which is exactly what LM Studio's own chat UI does (it sends no tools).
+    """
+    if not isinstance(text, str) or not text.startswith("[Error:"):
+        return False
+    if _is_tool_grammar_error(text):
+        return True
+    low = text.lower()
+    return (
+        "bad allocation" in low
+        or "out of memory" in low
+        or "channel error" in low
+        # The engine crashing/restarting mid-request surfaces as a bare
+        # "terminated" (observed live with llama-4-scout), a predict-stream
+        # error, or a predict fetch failure.
+        or "terminated" in low
+        or "engine protocol predict" in low
+    )
+
+
+def _is_engine_oom_error(detail: str) -> bool:
+    """True when LM Studio's engine reports an out-of-memory failure.
+
+    ``std::bad_alloc`` surfaces as a 400 engine error ("got exception: bad
+    allocation") when the model or its context does not fit in RAM/VRAM
+    (observed: ``llama-4-scout-17b-16e-instruct``, a ~63 GB GGUF).  This is
+    DETERMINISTIC — retrying the same request cannot free memory — so it must
+    fail fast and fail over, never be retried as a transient engine blip.
+    """
+    low = (detail or "").lower()
+    return any(
+        marker in low
+        for marker in (
+            "bad allocation", "bad_alloc", "out of memory", "outofmemory",
+            "failed to allocate", "insufficient memory", "not enough memory",
+        )
+    )
+
+
 def _engine_server_error(detail: str) -> bool:
-    """True when LM Studio's body reports an ENGINE-side failure on a 4xx.
+    """True when LM Studio's body reports a TRANSIENT engine-side failure.
 
     LM Studio wraps engine errors in HTTP 400 even though the request was
     valid; the body carries ``"type": "server_error"`` (sometimes nested and
-    escaped inside a JSON string) or an ``Engine protocol predict ...`` error
-    (e.g. "The model produced output that does not match the expected
-    peg-native format").  These are worth retrying — a re-sample often
-    succeeds — unlike a genuine client error (``invalid_request_error``),
-    which must fail fast.
+    escaped inside a JSON string) or an ``Engine protocol predict ...`` error.
+    Those are worth retrying — a re-sample often succeeds.  A PEG tool-grammar
+    failure and an out-of-memory (``bad allocation``) failure are explicitly
+    EXCLUDED (both deterministic: recovered by dropping tools / failing over),
+    as is a genuine client error (``invalid_request_error``), which fails fast.
     """
+    if _is_tool_grammar_error(detail) or _is_engine_oom_error(detail):
+        return False
     normalized = re.sub(r"\s+", "", detail).replace('\\"', '"').lower()
     return (
         '"type":"server_error"' in normalized
@@ -424,6 +487,9 @@ class LMStudioProvider:
         #: Last printed status label — printed once per session and only
         #: re-printed when it changes (model/profile/temperature/tokens).
         self._last_label: str | None = None
+        #: Models whose LM Studio TOOL path crashes the engine (once detected,
+        #: their requests omit tools entirely — LM Studio's own chat sends none).
+        self._tools_unsupported: set[str] = set()
 
     def apply_profile(
         self, name: str, temperature: float, max_tokens: int,
@@ -516,6 +582,15 @@ class LMStudioProvider:
                 if ok:
                     return urllib.request.urlopen(req, timeout=timeout)
                 detail = f"{detail} (auto-load failed: {msg})"
+            # Out-of-memory is deterministic (the model/context does not fit):
+            # surface an actionable message and fail fast so the failover chain
+            # can move to another provider instead of retrying the same alloc.
+            if exc.code == 400 and _is_engine_oom_error(detail):
+                raise RuntimeError(
+                    f"LM Studio engine out of memory for '{self.model_name}' "
+                    "(bad allocation) — free VRAM/RAM or use a smaller "
+                    f"model/quant. Detail: {detail}"
+                ) from exc
             # Transient statuses become a typed error the RetryPolicy
             # understands (rate limit / gateway blip) — every other status
             # stays a plain RuntimeError so permanent failures fail fast.
@@ -677,14 +752,21 @@ class LMStudioProvider:
     ) -> str:
         """Send chat request to LLM via LM Studio with retry.
 
-        A reasoning model that burns its whole output budget on
-        ``reasoning_content`` and returns no content is retried ONCE with
-        thinking disabled (the universal safe knob) instead of failing the
-        turn — the old behaviour surfaced "[Error: model consumed N reasoning
-        bytes ...]" and ended the task.
+        Two recoveries that keep a turn alive instead of ending it:
+
+        * a reasoning model that burns its whole output budget on
+          ``reasoning_content`` and returns no content is retried ONCE with
+          thinking disabled and a larger budget (the old behaviour surfaced
+          "[Error: model consumed N reasoning bytes ...]" and ended the task);
+        * a model whose LM Studio TOOL path crashes the engine (peg grammar /
+          ``bad allocation`` / ``channel error``) is retried WITHOUT tools,
+          then remembered for the session (LM Studio's own chat sends no tools).
         """
+        # A model already known to break the engine's tool path skips tools
+        # entirely — sending them would just fail again.
+        use_tools = None if self.model_name in self._tools_unsupported else tools
         first_payload = self._build_payload(
-            messages, tools, override_max_tokens=max_tokens,
+            messages, use_tools, override_max_tokens=max_tokens,
             disable_thinking=disable_thinking,
         )
         pbytes = self._payload_bytes(first_payload)
@@ -726,7 +808,7 @@ class LMStudioProvider:
                     )
 
                     # If tools present and model returned tool_calls, return full message
-                    if tools and message.get('tool_calls'):
+                    if use_tools and message.get('tool_calls'):
                         return json.dumps(message)
 
                     # Check for thinking error
@@ -749,6 +831,26 @@ class LMStudioProvider:
                 return f"[Error: {e}]"
 
         result_text = await _run(first_payload, self._scaled_timeout(first_payload))
+        # Tool-path engine failure (peg grammar / bad allocation / channel
+        # error / predict "fetch failed"): the model's tool format crashes the
+        # LM Studio engine, yet the SAME prompt WITHOUT tools succeeds (verified
+        # live with llama-4-scout-17b-16e-instruct).  Mark the model as
+        # tools-unsupported so later turns skip the doomed attempt, then retry
+        # without tools instead of retrying verbatim or failing the turn.
+        if use_tools and _is_tool_path_engine_error(result_text):
+            self._tools_unsupported.add(self.model_name)
+            print(
+                f"  [lmstudio] '{self.model_name}' cannot use tools in this "
+                "setup (engine error) — retrying without tools",
+                flush=True,
+            )
+            no_tools_payload = self._build_payload(
+                messages, None, override_max_tokens=max_tokens,
+                disable_thinking=disable_thinking,
+            )
+            result_text = await _run(
+                no_tools_payload, self._scaled_timeout(no_tools_payload)
+            )
         if not disable_thinking and _is_thinking_budget_error(result_text):
             retry_max = _escalated_max_tokens(
                 max_tokens if max_tokens is not None else self.max_tokens
@@ -759,7 +861,7 @@ class LMStudioProvider:
                 flush=True,
             )
             retry_payload = self._build_payload(
-                messages, tools, override_max_tokens=retry_max,
+                messages, use_tools, override_max_tokens=retry_max,
                 disable_thinking=True,
             )
             result_text = await _run(
