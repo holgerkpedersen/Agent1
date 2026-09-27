@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64
 import io
 import os as _os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from .base import Command
 
@@ -50,7 +50,7 @@ def encode_clipboard_image() -> tuple[str, str] | None:
     platforms it may return ``None`` if no image is on the clipboard).
     """
     try:
-        from PIL import Image, ImageGrab
+        from PIL import ImageGrab
     except Exception:
         return None
     try:
@@ -103,7 +103,7 @@ class PasteImageCommand(Command):
             # Recursively strip surrounding quotes (handles ""path"" or 'path')
             while path and (path.startswith('"') or path.startswith("'")):
                 path = path[1:-1].strip()
-            
+
             abs_path = _os.path.abspath(path)
             print(f"  [debug] Path original: {original_path}")
             print(f"  [debug] Path stripped: {path}")

@@ -10,7 +10,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 from pathlib import Path
 
@@ -28,9 +27,8 @@ from agent_core.commands.plan_schema import (
 from agent_core.commands.plan_lifecycle import PlanLifecycleManager, append_log
 from agent_core.commands.plan_dry_run import PlanDryRunner, MUTATING_TOOLS
 from agent_core.commands.plan_decision_gate import PlanDecisionGate
-from agent_core.commands.plan_lifecycle import PlanLifecycleManager
 from agent_core.file_protection import is_protected
-from agent_core.plan_execution.runner import run_plan, build_and_validate_graph
+from agent_core.plan_execution.runner import run_plan
 
 import asyncio
 from agent import Agent
@@ -485,7 +483,7 @@ class TestRunPlanPersistence:
 
     @staticmethod
     def _tasks():
-        from agent_core.plan_execution.parser import parse_plan_tasks, PlanTask
+        from agent_core.plan_execution.parser import PlanTask
         return [
             PlanTask(id="T1", description="task one", role="implementer"),
             PlanTask(

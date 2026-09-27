@@ -1010,7 +1010,8 @@ def _fix_regex_in_loop(wl: list[str], idx: int, line: int, basename: str, findin
     visible ``name = re.compile(...)`` with identical args instead of emitting
     a duplicate compile line."""
     from agent_core.patterns import _loop_spans
-    import io, tokenize
+    import io
+    import tokenize
 
     spans = _loop_spans(wl)
     spanning = [sp for sp in spans if sp[0] < idx < sp[1]]

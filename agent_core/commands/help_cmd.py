@@ -21,7 +21,7 @@ class HelpCommand(Command):
         from .registry import CommandRegistry
         # Build a fresh registry — same set of commands as run_interactive().
         registry = CommandRegistry()
-        
+
         # Register all built-in commands (mirror _register_commands).
         from .read_cmd import ReadCommand
         from .write_cmd import WriteCommand
@@ -55,7 +55,7 @@ class HelpCommand(Command):
         from .propose_cmd import ProposeCommand
         from .speculate_cmd import SpeculateCommand
         from .jev_cmd import JevCommand
-        
+
         for cmd_cls in (ReadCommand, WriteCommand, SearchCommand, ClearCommand,
                         ModelCommand, AnalyzeCommand, PlanCommand, EntitiesCommand,
                         TaskplanCommand, CleanupCommand, GitCommand, ImplementCommand,

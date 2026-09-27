@@ -87,7 +87,7 @@ class RoutingBus:
                 res = self.send(dest, payload)
                 if res is not None:
                     results.append(res)
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 logger.exception("Broadcast failed for subscriber '%s' on %s", dest, msg_type.value)
         return results
 

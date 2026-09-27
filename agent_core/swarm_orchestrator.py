@@ -1,7 +1,7 @@
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future, wait
-from typing import List, Any, Callable, Dict, Optional, Union
+from typing import List, Any, Callable, Dict, Optional
 
 
 class Orchestrator:
@@ -40,9 +40,9 @@ class Orchestrator:
         return task_id
 
     def dispatch_speculative(
-        self, 
-        reasoning_func: Callable[[int, Any], Any], 
-        context: Any, 
+        self,
+        reasoning_func: Callable[[int, Any], Any],
+        context: Any,
         num_branches: int = 3
     ) -> List[int]:
         """

@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .base import Command
-from agent_core.colors import cyan, green, magenta, blue, yellow
+from agent_core.colors import cyan, green, magenta, blue
 
 if TYPE_CHECKING:
     from agent import Agent

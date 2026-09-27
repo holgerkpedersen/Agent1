@@ -11,7 +11,7 @@ import ast
 import io
 import re
 import tokenize
-from typing import TypedDict, Any, Any, Any, Any, Any, Any, Any, Any, Any
+from typing import TypedDict, Any
 
 
 _DS_CACHE: dict[str, set[int]] = {}

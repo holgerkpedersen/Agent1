@@ -53,7 +53,7 @@ class Sanitizer:
         """
         self.allow_html = allow_html
         self._combined_pattern = re.compile(
-            "|".join(self._FORBIDDEN_PATTERNS), 
+            "|".join(self._FORBIDDEN_PATTERNS),
             re.IGNORECASE
         )
 
@@ -88,16 +88,16 @@ class Sanitizer:
         """
         if isinstance(data, str):
             return self.sanitize_string(data)
-        
+
         if isinstance(data, dict):
             return {
-                str(k): self.sanitize(v) 
+                str(k): self.sanitize(v)
                 for k, v in data.items()
             }
-        
+
         if isinstance(data, list):
             return [self.sanitize(item) for item in data]
-        
+
         if isinstance(data, tuple):
             return tuple(self.sanitize(item) for item in data)
 
@@ -112,7 +112,7 @@ class Sanitizer:
         """
         if not text:
             return text
-        
+
         masked = text
         for pattern in self._SECRET_PATTERNS:
             masked = re.sub(pattern, lambda m: f"{m.group(0)[:12]}****", masked)
@@ -127,16 +127,16 @@ class Sanitizer:
         """
         if isinstance(data, str):
             return self.mask_secrets(self.sanitize_string(data))
-        
+
         if isinstance(data, dict):
             return {
-                str(k): self.sanitize_and_mask(v) 
+                str(k): self.sanitize_and_mask(v)
                 for k, v in data.items()
             }
-        
+
         if isinstance(data, list):
             return [self.sanitize_and_mask(item) for item in data]
-        
+
         if isinstance(data, tuple):
             return tuple(self.sanitize_and_mask(item) for item in data)
 

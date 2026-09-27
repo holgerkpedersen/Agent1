@@ -18,10 +18,9 @@ from __future__ import annotations
 import json
 import logging
 import logging.config
-import sys
 import uuid
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 

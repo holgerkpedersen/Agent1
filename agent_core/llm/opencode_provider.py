@@ -36,7 +36,7 @@ from agent_core.constants import (
     _ZEN_TIER_PREFIXES,
 )
 
-from agent_core.timeout import DEFAULT_CHAT_TIMEOUT, MODEL_REFRESH_TIMEOUT
+from agent_core.timeout import DEFAULT_CHAT_TIMEOUT
 
 from .provider import ResponseMetrics
 from .pricing import estimate_cost

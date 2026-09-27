@@ -13,10 +13,10 @@ class FileSystem:
     
     Extracted from Agent class to separate file system concerns.
     """
-    
+
     def __init__(self, workspace: str):
         self.workspace = workspace
-    
+
     def normalize_path(self, path: str) -> str:
         """Normalize and validate paths with security checks."""
         return resolve_path(path)

@@ -405,10 +405,10 @@ class LMStudioProvider:
     Implements LLMProvider protocol for communicating with LM Studio's
     OpenAI-compatible API endpoint.
     """
-    
+
     def __init__(
-        self, 
-        model_name: str | None = None, 
+        self,
+        model_name: str | None = None,
         api_key: str | None = None,
         retry_policy: RetryPolicy | None = None
     ):
@@ -436,10 +436,10 @@ class LMStudioProvider:
         self._profile_name = name
         self.temperature = temperature
         self.max_tokens = max_tokens
-    
+
     def _build_payload(
-        self, 
-        messages: list[dict[str, Any]], 
+        self,
+        messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         stream: bool = False,
         override_max_tokens: int | None = None,
@@ -495,7 +495,7 @@ class LMStudioProvider:
                 assert isinstance(ctk, dict)
                 ctk.setdefault("enable_thinking", False)
         return payload
-    
+
     def _open_chat(self, req: urllib.request.Request, timeout: int) -> Any:
         """Open *req* against LM Studio, auto-loading the pinned model on a
         "not loaded" 400 (multi-shell recovery).
@@ -548,7 +548,7 @@ class LMStudioProvider:
                 return cast(dict[str, Any], json.loads(response.read().decode()))
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"LM Studio returned non-JSON response: {exc}") from exc
-    
+
     def _check_thinking_error(self, content: str, reasoning: str, finish_reason: str | None = None) -> str | None:
         """Check if model used all tokens thinking with no output.
 
@@ -669,7 +669,7 @@ class LMStudioProvider:
         return ok, message
 
     async def chat(
-        self, 
+        self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
@@ -766,7 +766,7 @@ class LMStudioProvider:
                 retry_payload, self._scaled_timeout(retry_payload)
             )
         return result_text
-    
+
     async def chat_logprobs(
         self,
         messages: list[dict[str, Any]],
@@ -822,7 +822,7 @@ class LMStudioProvider:
     async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """Chat with real-time token streaming to console."""
         payload = self._build_payload(messages, stream=True)
-        
+
         async def _do_stream() -> Any:
             data = json.dumps(payload).encode('utf-8')
             req = urllib.request.Request(
@@ -834,11 +834,11 @@ class LMStudioProvider:
                 },
                 method='POST'
             )
-            
+
             full_content = ""
             reasoning_content = ""
             finish_reason = None
-            
+
             # _open_chat (not raw urlopen): a 400 "model is not loaded" here
             # means another shell evicted our pinned model — reload + retry
             # once, same recovery as the non-streaming path.
@@ -865,21 +865,21 @@ class LMStudioProvider:
                             full_content += token
                     except json.JSONDecodeError as e:
                         logger.warning("LM Studio stream JSON decode error: %s", e)
-            
+
             print()
-            
+
             # Check for thinking error
             thinking_err = self._check_thinking_error(
                 full_content, reasoning_content, finish_reason=finish_reason
             )
             if thinking_err:
                 return thinking_err
-            
+
             return full_content
-        
+
         def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
             print(f"\n  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s...")
-        
+
         try:
             return await self.retry_policy.execute_with_retry(
                 _do_stream,
@@ -887,7 +887,7 @@ class LMStudioProvider:
             )
         except Exception as e:
             return f"[LM Studio stream error: {e}]"
-    
+
     async def analyze_code(self, code: str) -> str:
         """Analyze code using LLM."""
         prompt = f"""Analyze this Python code and identify:
@@ -899,12 +899,12 @@ class LMStudioProvider:
 
 Code:
 {code}"""
-        
+
         messages = [
             {"role": "system", "content": "You are an expert code reviewer. Analyze the provided code and give detailed feedback."},
             {"role": "user", "content": prompt}
         ]
-        
+
         return await self.chat(messages)
 
 

@@ -118,17 +118,17 @@ def normalize_path(raw: str, workspace_root: Path, follow_symlinks: bool = True)
         target = raw_path.resolve(strict=False)
     else:
         target = (resolved_ws / raw_path).resolve(strict=False)
-    
+
     # Enforce strict workspace boundary containment
     try:
         target.relative_to(resolved_ws)
     except ValueError:
         raise SecurityViolationError(f"Path escapes workspace boundary: {raw}")
-        
+
     # Apply symlink policy enforcement
     if not follow_symlinks and target.is_symlink():
         raise SecurityViolationError(f"Symlinks are prohibited in this workspace: {raw}")
-        
+
     return target
 
 
@@ -140,7 +140,7 @@ class WorkspaceSandbox:
             safe_path = sandbox.resolve_path("data/file.txt")
             # ... perform operations on safe_path
     """
-    
+
     def __init__(self, workspace_root: Path | str, follow_symlinks: bool = True) -> None:
         self.workspace_root = Path(workspace_root).resolve()
         self.follow_symlinks = follow_symlinks
@@ -152,8 +152,8 @@ class WorkspaceSandbox:
     def __enter__(self) -> "WorkspaceSandbox":
         return self
 
-    def __exit__(self, exc_type: type[BaseException] | None, 
-                 exc_val: BaseException | None, 
+    def __exit__(self, exc_type: type[BaseException] | None,
+                 exc_val: BaseException | None,
                  exc_tb: object) -> None:
         # Declarative scoping complete; pure validation sandbox requires no cleanup
         pass

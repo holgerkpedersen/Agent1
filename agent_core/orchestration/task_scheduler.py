@@ -237,7 +237,7 @@ class TaskScheduler:
         for handler in self._handlers:
             try:
                 handler(message)
-            except Exception as exc:  # noqa: BLE001 - isolate handler failures
+            except Exception:  # noqa: BLE001 - isolate handler failures
                 print("Silenced exception in task_scheduler.py:240")
 
     def get_result(self, task_id: str) -> Optional[Dict[str, Any]]:

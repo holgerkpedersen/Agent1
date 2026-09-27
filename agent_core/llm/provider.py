@@ -587,8 +587,8 @@ class LLMProvider(Protocol):
         ...
 
     async def chat(
-        self, 
-        messages: list[dict[str, str]], 
+        self,
+        messages: list[dict[str, str]],
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         disable_thinking: bool = False,
@@ -607,7 +607,7 @@ class LLMProvider(Protocol):
             LLM response text, or JSON string if tools present and tool_calls returned
         """
         ...
-    
+
     async def chat_stream(self, messages: list[dict[str, str]]) -> str:
         """Chat with real-time token streaming to console.
         
@@ -618,7 +618,7 @@ class LLMProvider(Protocol):
             Complete response text
         """
         ...
-    
+
     async def analyze_code(self, code: str) -> str:
         """Analyze code and return feedback.
         

@@ -30,7 +30,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from agent_core.commands.base import show_file_diff
 
 # Reuse implement_cmd's module-level gate predicates (no duplication).
 from agent_core.commands.implement_cmd import (  # noqa: F401

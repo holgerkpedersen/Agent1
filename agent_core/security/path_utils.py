@@ -49,7 +49,7 @@ def normalize_path(workspace_root: Path, target_path: str) -> Path:
     """
     # 1. Normalise inputs --------------------------------------------------
     root: Path = workspace_root.resolve(strict=False)
-    
+
     # Handle empty strings gracefully by treating them as current-dir relative
     if not target_path or not target_path.strip():
         raise SecurityViolationError(

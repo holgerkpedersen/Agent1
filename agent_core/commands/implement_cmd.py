@@ -314,7 +314,7 @@ def _trace_variable_source(err: str, lines: list[str], error_line: int) -> str:
     init_lines = []
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if re.match(rf'self\.\w+\s*=\s*\[', stripped) or re.match(rf'self\.\w+\s*=\s*\{{', stripped):
+        if re.match(r'self\.\w+\s*=\s*\[', stripped) or re.match(r'self\.\w+\s*=\s*\{', stripped):
             init_lines.append((i + 1, line.rstrip()))
 
     if not init_lines:
@@ -643,22 +643,22 @@ def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors:
             break
     if class_start == -1:
         class_start = 0
-    
+
     # Find class end (next class or end of file)
     _RE_2 = re.compile(r'^class\s+\w+')
     for i in range(class_start + 1, len(lines)):
         if _RE_2.match(lines[i]):
             class_end = i
             break
-    
+
     class_window = "\n".join(f"{i+1:>4}    {line.rstrip()}" for i, line in enumerate(lines[class_start:class_end], start=class_start))
-    
+
     # Build downstream error summary
     error_summary = [f"- {fname}: {err[:200]}" for fname, fpath, err in downstream_errors]
     downstream_section = ""
     if error_summary:
         downstream_section = "## Downstream errors that this fix will resolve\n" + "\n".join(error_summary) + "\n\n"
-    
+
     sys_msg = f"Fix the {class_name} definition. Add all missing fields/attributes."
     if prefer_file:
         sys_msg += " Patches failed before. Use [FILE:] format — output the complete corrected file."
@@ -841,7 +841,7 @@ def _apply_patch(patch_text: str, fpath: str, original_lines: list[str]) -> tupl
     Delegates to the shared ``agent_core.patch_utils.apply_patch`` used by the
     optimize command's patch mode; *fpath* is kept for call-site compatibility.
     """
-    from agent_core.patch_utils import apply_patch, split_source_lines
+    from agent_core.patch_utils import apply_patch
     return apply_patch(patch_text, original_lines)
 
 
@@ -2082,7 +2082,7 @@ class ImplementCommand(Command):
                 except SyntaxError as exc:
                     print(f"  WARNING: [COMPUTE_DIFF: {filename}] — content has syntax errors: {exc}")
                     continue
-                from agent_core.patch_utils import compute_diff, apply_patch, split_source_lines
+                from agent_core.patch_utils import compute_diff, apply_patch
                 computed = compute_diff(existing_text, content, filename)
                 if computed.strip():
                     ok, patched = apply_patch(computed, split_source_lines(existing_text))

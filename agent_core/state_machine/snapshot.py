@@ -77,14 +77,14 @@ class StateMachine:
     def transition(self, target_state: str, **kwargs: Any) -> Optional[Any]:
         if not target_state:
             raise InvalidTransitionError("Target state cannot be empty.")
-        
-        # In this implementation, any non-empty string is a valid state 
+
+        # In this implementation, any non-empty string is a valid state
         # unless specific transition constraints are added.
         self._current_state = target_state
         self._history.append(target_state)
         return self._current_state
 
     def __hash__(self) -> int:
-        # Return identity hash to ensure the machine remains hashable 
+        # Return identity hash to ensure the machine remains hashable
         # while allowing internal state mutations.
         return hash(id(self))

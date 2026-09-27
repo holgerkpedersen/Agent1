@@ -18,7 +18,7 @@ class RetryConfig:
 
 class RateLimiter:
     """Simple fixed-interval rate limiter based on monotonic time."""
-    
+
     def __init__(self, requests_per_second: float) -> None:
         if requests_per_second <= 0:
             raise ValueError("requests_per_second must be positive")
@@ -35,18 +35,18 @@ class RateLimiter:
 
 class RetryAdapter:
     """Applies exponential backoff retries and optional rate limiting to callable targets."""
-    
+
     def __init__(self, config: RetryConfig | None = None, rate_limiter: RateLimiter | None = None) -> None:
         self.config = config or RetryConfig()
         self.rate_limiter = rate_limiter
 
     def call(self, func: Callable[..., R], *args: Any, **kwargs: Any) -> R:
         last_exception: Exception | None = None
-        
+
         for attempt in range(self.config.max_retries + 1):
             if self.rate_limiter is not None:
                 self.rate_limiter.wait()
-                
+
             try:
                 return func(*args, **kwargs)
             except self.config.retryable_exceptions as exc:
@@ -59,7 +59,7 @@ class RetryAdapter:
                     if self.config.jitter:
                         delay *= random.uniform(0.5, 1.5)
                     time.sleep(delay)
-                    
+
         if last_exception is not None:
             raise last_exception
         # Unreachable given loop logic, but satisfies strict type checking

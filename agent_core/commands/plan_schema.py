@@ -10,7 +10,6 @@ This module centralizes all structural definitions for the plan workflow:
 from __future__ import annotations
 
 import enum
-import json
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Any
 
@@ -93,20 +92,20 @@ def validate_plan_markdown(content: str) -> tuple[bool, List[str]]:
     """Verify that plan markdown follows the required schema."""
     errors = []
     lines = [l.strip() for l in content.splitlines() if l.strip()]
-    
+
     # Check required headings
     found_headings = set()
     for line in lines:
         if line.startswith("#"):
             found_headings.add(line)
-            
+
     for heading in _REQUIRED_HEADINGS:
         if not any(h.startswith(heading) for h in found_headings):
             errors.append(f"Missing required heading: {heading}")
-            
+
     # Check for at least one task
     if "- [" not in content and "- " not in content:
         if "* [" not in content and "* " not in content:
             errors.append("No tasks found (expected lines starting with '- ' or '* ')")
-            
+
     return len(errors) == 0, errors

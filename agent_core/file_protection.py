@@ -79,22 +79,22 @@ def is_protected(path: os.PathLike[str] | str, workspace_root: os.PathLike[str] 
     """
     rel = _rel_posix(path, workspace_root)
     filename = Path(rel).name
-    
+
     # Exact filename matches
     if filename in PROTECTED_FILENAMES:
         return True
-        
+
     # Plan file prefixes (pattern matching)
     for prefix in _PLAN_FILE_PREFIXES:
         if filename.startswith(prefix):
             return True
-            
+
     # reports/ recursive prefix
     lowered = rel.lower()
     for prefix in PROTECTED_PREFIXES:
         if lowered == prefix.rstrip("/") or lowered.startswith(prefix):
             return True
-            
+
     return False
 
 

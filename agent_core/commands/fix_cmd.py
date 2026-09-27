@@ -2877,7 +2877,7 @@ class FixCommand(Command):
                     old_lines.append(text)
                     new_lines.append(text)
                     i += 1
-            
+
             idx = start - 1
             if idx + len(old_lines) <= len(result):
                 del result[idx:idx + len(old_lines)]

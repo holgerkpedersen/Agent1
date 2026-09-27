@@ -82,7 +82,7 @@ def _rgb_from_named_color(name: str) -> tuple[int, int, int]:
         "grey": (128, 128, 128),
     }
 
-    # HSV-based color wheel colors for smoother transitions  
+    # HSV-based color wheel colors for smoother transitions
     hsv_colors: dict[str, tuple[float, float, float]] = {
         "red": (0.0, 1.0, 1.0),
         "green": (120.0, 1.0, 1.0),
@@ -231,7 +231,7 @@ class HueBridge:
         # V1 uses /api/{key} endpoint; V2 uses /api/v2 endpoints
         self._v1_base_url = f"http://{base_ip}/api/{api_key}"
         self._v2_base_url = f"http://{base_ip}/api"
-        # For backward compatibility with existing tests  
+        # For backward compatibility with existing tests
         self._base_url = f"http://{base_ip}/api/{api_key}"
 
     @classmethod

@@ -14,7 +14,6 @@ from agent_core.suppress_log import _suppress_and_log
 import logging
 import os
 import signal
-import traceback
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)

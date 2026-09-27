@@ -10,7 +10,6 @@ from agent_core.config import lmstudio_base_url, load_agent_settings
 from agent_core.constants import (
     DEFAULT_LEMONADE_API_BASE,
     DEFAULT_LLAMA_BASE_URL,
-    DEFAULT_MODEL,
     DEFAULT_OPENCODE_API_BASE,
     DEFAULT_OPENCODE_SERVER_URL,
     DEFAULT_OPENROUTER_API_BASE,

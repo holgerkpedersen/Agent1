@@ -13,7 +13,7 @@ Two subcommands:
 """
 from .base import Command, auto_choice, stop_requested
 from .doc_paths import find_input, resolve_output, new_run_dir
-from .plan_verifier import check_doc, apply_report, summarize, PlanVerifier
+from .plan_verifier import check_doc, apply_report, summarize
 from .plan_schema import validate_plan_markdown
 from .plan_lifecycle import PlanLifecycleManager
 from .plan_dry_run import PlanDryRunner
@@ -24,7 +24,6 @@ if TYPE_CHECKING:
     from agent import Agent
 
 from agent_core.plan_execution import (
-    PlanTask,
     build_and_validate_graph,
     parse_plan_tasks,
     run_plan,

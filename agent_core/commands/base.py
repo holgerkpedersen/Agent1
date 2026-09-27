@@ -401,13 +401,13 @@ class Command(ABC):
     def name(self) -> str:
         """Command name used in REPL."""
         ...
-    
+
     @property
     @abstractmethod
     def help_text(self) -> str:
         """Help text shown in commands list."""
         ...
-    
+
     @abstractmethod
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         """Execute the command.
@@ -420,11 +420,11 @@ class Command(ABC):
             True to continue REPL, False to exit
         """
         ...
-    
+
     def error(self, msg: str) -> None:
         """Print error message."""
         print(f"Error: {msg}")
-    
+
     def success(self, msg: str) -> None:
         """Print success message."""
         print(msg)

@@ -32,7 +32,7 @@ from .provider import ResponseMetrics
 from .pricing import estimate_cost
 from .retry import RetryPolicy, TRANSIENT_HTTP_STATUSES, TransientHTTPError
 from agent_core.constants import DEFAULT_LLAMA_BASE_URL, KNOWN_MODELS, resolve_model
-from agent_core.timeout import DEFAULT_CHAT_TIMEOUT, HEALTH_CHECK_TIMEOUT, MODEL_REFRESH_TIMEOUT
+from agent_core.timeout import DEFAULT_CHAT_TIMEOUT, MODEL_REFRESH_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -544,7 +544,7 @@ class LlamaProvider:
             req = urllib.request.Request(f"{base}/shutdown", method="POST")
             with urllib.request.urlopen(req, timeout=10) as resp:
                 resp.read()
-            return True, f"llama-server shut down (model unloaded)"
+            return True, "llama-server shut down (model unloaded)"
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 return False, f"server does not support /shutdown (HTTP {exc.code})"

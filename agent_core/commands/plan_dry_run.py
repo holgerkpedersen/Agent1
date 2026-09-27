@@ -10,8 +10,6 @@ the plan unless the caller opts into execution with ``--force``.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import List
 
 from .plan_schema import DryRunResult
 

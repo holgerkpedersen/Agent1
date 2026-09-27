@@ -59,7 +59,7 @@ from .reasoning_strip import dedupe_repeated_sections, extract_section, strip_re
 from agent_core import to_windows_path
 from agent_core.decisions import add_decision, annotate_candidates, extract_from_analysis
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent import Agent
 

@@ -36,7 +36,7 @@ from typing import Any, Callable
 from .provider import ResponseMetrics
 from .pricing import estimate_cost
 from agent_core.constants import DEFAULT_OPENROUTER_API_BASE, DEFAULT_OPENROUTER_MODEL
-from agent_core.timeout import DEFAULT_CHAT_TIMEOUT, MODEL_REFRESH_TIMEOUT
+from agent_core.timeout import DEFAULT_CHAT_TIMEOUT
 
 logger = logging.getLogger(__name__)
 

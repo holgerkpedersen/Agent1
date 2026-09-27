@@ -17,21 +17,16 @@ from .base import Command, auto_choice, read_input, stop_requested
 from .doc_paths import find_input
 from .workflow_cmd import _module_inventory
 from agent_core.decisions import (
-    CATEGORIES,
     STATUS_ACTIVE,
     _STATUSES,
     add_decision,
     annotate_candidates,
-    check_contradictions,
     check_contradictions_fast,
     count_by_category,
     count_by_status,
     extract_from_analysis,
     find_decisions,
-    find_meta_warnings,
-    find_open_contradictions,
     find_overlaps,
-    find_stale_decisions,
     ledger_health,
     load_decisions,
     resolve_contradictions,

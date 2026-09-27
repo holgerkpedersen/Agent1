@@ -57,11 +57,11 @@ def _collision_scan(workspace: str) -> str:
 
 class TaskplanCommand(Command):
     """Generate implementation task plan."""
-    
+
     @property
     def name(self) -> str:
         return "taskplan"
-    
+
     @property
     def help_text(self) -> str:
         return ("taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks\n"
@@ -86,7 +86,7 @@ class TaskplanCommand(Command):
         # folder when it has one) — explicit paths are kept.
         tasks_file = resolve_output(ws, clean_args[2] if len(clean_args) > 2 else "tasks.md",
                                     sibling_of=analysis_file)
-        
+
         try:
             with open(analysis_file, "r", encoding="utf-8") as f:
                 analysis_content = f.read()
@@ -95,14 +95,14 @@ class TaskplanCommand(Command):
         except FileNotFoundError as e:
             self.error(f"File not found: {e}")
             return True
-        
+
         # Check for existing entities.py
         entities_content = ""
         entities_py = os.path.join(os.path.dirname(analysis_file), "entities.py")
         if os.path.exists(entities_py):
             with open(entities_py, "r", encoding="utf-8") as f:
                 entities_content = f.read()
-        
+
         # Build collision warning from workspace — the analysis file may live
         # in a .docs/<timestamp>/ run folder, which is not the workspace.
         analysis_parent = os.path.dirname(os.path.abspath(analysis_file))

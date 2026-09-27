@@ -773,7 +773,7 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "description": "Red channel 0-255. Used with 'set_color' action.",
                     },
                     "g": {
-                        "type": "integer", 
+                        "type": "integer",
                         "description": "Green channel 0-255. Used with 'set_color' action.",
                     },
                     "b": {

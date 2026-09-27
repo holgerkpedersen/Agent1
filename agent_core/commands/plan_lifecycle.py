@@ -10,22 +10,20 @@ It provides:
 from __future__ import annotations
 
 import json
-import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 from .plan_schema import PlanStatus, PlanTransition, PlanLogEntry
 
 class PlanLifecycleManager:
     """Manages the state transitions and physical file layout of a plan."""
-    
+
     def __init__(self, plan_dir: Path, workspace_root: Path):
         self.plan_dir = plan_dir
         self.workspace_root = workspace_root
         self.log_file = plan_dir / ".plans.jsonl"
-        
+
     def start_plan(self) -> Path:
         """Transition a plan from PROPOSED to EXECUTING.
         
@@ -34,14 +32,14 @@ class PlanLifecycleManager:
         """
         src = self.plan_dir / "plan_proposed.md"
         dst = self.plan_dir / "plan_executing.md"
-        
+
         if not src.exists():
             raise FileNotFoundError(f"No proposed plan found at {src}")
-            
+
         shutil.move(str(src), str(dst))
         self._log_transition(dst, PlanTransition.START, PlanStatus.EXECUTING)
         return dst
-        
+
     def finish_plan(self) -> Path:
         """Transition a plan from EXECUTING to EXECUTED.
         
@@ -54,14 +52,14 @@ class PlanLifecycleManager:
             src = self.plan_dir / "plan_proposed.md"
             if not src.exists():
                 raise FileNotFoundError(f"No executing plan found in {self.plan_dir}")
-                
+
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         dst = self.plan_dir / f"plan_executed_{ts}.md"
-        
+
         shutil.move(str(src), str(dst))
         self._log_transition(dst, PlanTransition.FINISH, PlanStatus.EXECUTED)
         return dst
-        
+
     def fail_plan(self) -> Path:
         """Transition a plan from EXECUTING to FAILED.
 

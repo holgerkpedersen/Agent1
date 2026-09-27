@@ -5,7 +5,6 @@ from pathlib import Path
 import logging
 
 from agent_core.security.path_utils import (
-    SecurityViolationError,
     normalize_path,
 )
 
