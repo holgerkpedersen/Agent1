@@ -117,8 +117,34 @@ is being extended to audit its own file effects (self-improvement).
   path is rejected with a clear `Not a file (directory)` message (never a raw
   `[Errno 13]`); `analyze` by contrast accepts a FILE or DIRECTORY (a folder is
   summarized from a bounded 40-file / 200k-char sample) and no path = the whole
-  workspace.
+  workspace.  A `read` call may also pass **`paths`** (array) to fetch several
+  files in ONE call (`_nlp_read_many`, capped at `_MAX_READ_FILES`), so a model
+  asked to "read two files" no longer refuses with "I can only read one file
+  at a time".
 - `agent_core/llm/tool_loop.py` — `ToolLoopRunner`: NLP tool-call execution loop.
+- `agent_core/llm/lemonade_provider.py` — first-class AMD Lemonade (NPU)
+  provider. Lemonade is AMD's OpenAI-compatible local server that runs LLMs on
+  the Ryzen AI XDNA NPU (FastFlowLM / Ryzen AI LLM) or the iGPU; the agent talks
+  to it exactly like LM Studio (no model management — Lemonade owns loading).
+  Model ids are namespaced `lemonade/<id>`, `model list` shows a `[lemonade]`
+  section, and `model lemonade/<id>` / `model <name> -p lemonade` switch to it.
+  `LemonadeProvider.health_check()` probes `/models`; base URL comes from
+  `model_catalog.json` `_defaults.lemonade_base_url` (default
+  `http://localhost:13305/api/v1`, override `LEMONADE_API_URL`; optional default
+  model `AGENT_LEMONADE_MODEL`). Install/run with `lemonade run <model>`
+  (lemonade-server.ai). Tests: `tests/test_lemonade_provider.py` (26).
+- `agent_core/llm/engines.py` — engine/accelerator abstraction: a named engine
+  (`npu`→lemonade, `igpu`→lmstudio, `llama`, `cloud`→opencode/openrouter) maps
+  to a provider + `device`; `resolve_engines` picks one model per engine from
+  the live catalogs.  `agent_core/llm/context_budget.py` — per-provider context
+  budgeting (`provider_context_limit` / `trim_messages_to_context`): the oldest
+  turns are trimmed to fit a small NPU window so a prompt that fits the iGPU
+  cannot overflow the NPU.  `run_parallel` gained `provider_overrides` + `warm`
+  and every `ParallelResult` carries `device`; `multillm --engines npu,igpu
+  [--warm]` runs one model per accelerator at once.  `LemonadeProvider` exposes
+  `context_length()` / `ensure_model_loaded()` / `unload_model()` (residency),
+  and the Jev engine can run on the NPU (`model jev lemonade/<small-FLM>`)
+  since it votes when the provider has no `chat_logprobs`.
 - `agent_core/security/` — sanitizers, command allowlist, secrets store (OS keyring
   + encrypted-file fallback); `agent_core/file_system.py`, `path_utils.py` — real
   path utilities (`to_windows_path`, `normalize_path`, `safe_path`, `resolve_path`);
@@ -427,6 +453,14 @@ incrementally as its capability grows — human stays in control.
   instead of ~1s per 50 KB, so a >600s prefill no longer trips LM Studio's
   "Client disconnected. Stopping generation...". Floor `LMSTUDIO_CHAT_TIMEOUT`
   (600), cap 3600s. Tests: `tests/test_lmstudio_payload.py`.
+- **Reasoning-budget auto-recovery (DONE, 2026-09-27)**: `LMStudioProvider.chat`
+  retries ONCE with thinking disabled AND an escalated `max_tokens`
+  (`_escalated_max_tokens`: floor 4096, x4, cap 32768) when a reasoning model
+  returns only `reasoning_content` and no content (`_is_thinking_budget_error`).
+  Before, this surfaced `[Error: model consumed N reasoning bytes with no
+  output]` and ended the turn.  Live (2026-09-27): `qwen/qwen3.5-9b` IGNORES the
+  reasoning-off knob, so the larger budget is what actually recovers it (250-token
+  request -> retry at 4096 -> full answer).  Tests: `tests/test_llm_retry_policy.py`.
 - **Jev decision engine (DONE, 2026-09-25)**: `agent_core/jev_engine.py` +
   REPL `jev` + NLP `jev_decide` + `speculate --judge jev|both`. Typed
   yesno/choice/score decisions on a DEDICATED small model
@@ -449,6 +483,33 @@ incrementally as its capability grows — human stays in control.
   the selected chat model by default.
   Tests: `tests/test_jev_telemetry.py` (13), `tests/test_jev_cmd.py` (20),
   `tests/test_speculate_cmd.py` (19).
+- **Lemonade / AMD NPU provider (DONE, 2026-09-27)**: new
+  `agent_core/llm/lemonade_provider.py` (`LemonadeProvider`) + catalog
+  `_defaults.lemonade_base_url` + `_routing.lemonade` + `AgentSettings.
+  lemonade_api_url`/`lemonade_model` + `_LLM_PROVIDERS` entry.  Routing is
+  namespaced `lemonade/<id>` (the `lemonade` ROUTER key sits BEFORE the LM
+  Studio family keys so `lemonade/qwen…` is not hijacked by the `qwen` key);
+  `model list` gains a `[lemonade]` section, `model <name> -p lemonade` and
+  `model lemonade/<id>` switch to it, and the provider exposes
+  `health_check()` + `list_models()`.  Fetch errors retry 429/5xx and fall over
+  via the shared `(connection error)` marker.  Tests:
+  `tests/test_lemonade_provider.py` (26).
+- **NPU+iGPU parallelism foundation (DONE, 2026-09-27)**: engine/device
+  abstraction (`agent_core/llm/engines.py`), per-provider context budgeting
+  (`agent_core/llm/context_budget.py`), model residency on Lemonade
+  (`context_length`/`ensure_model_loaded`/`unload_model`), and device-aware
+  parallel dispatch (`run_parallel(provider_overrides=..., warm=...)`,
+  `ParallelResult.device`, `multillm --engines npu,igpu [--warm]`).  NPU Jev
+  offload works out of the box (`model jev lemonade/<small-FLM>` → vote
+  mechanism).  Tests: `tests/test_engines.py`, `tests/test_context_budget.py`,
+  `tests/test_parallel_engines.py`, `tests/test_lemonade_provider.py`.
+  Fix (2026-09-27): `build_provider` with a multi-provider chain now adds a
+  SYNTHETIC FRONT ENTRY when the active model routes to a provider the chain
+  does not list (e.g. a `lemonade/…` model with the default cloud-only chain).
+  Before, the model was silently dropped and the chain's first entry answered —
+  `multillm` ran `opencode-go/deepseek` instead of the NPU for a lemonade model,
+  because only `model lemonade/…` (which passes `provider_override`) had
+  reached Lemonade.  Now the NPU is tried first, the chain stays as fallback.
 
 ## Git / remote auth (non-interactive)
 `git push`/`ls-remote` must NOT prompt for credentials (no human at the keyboard).

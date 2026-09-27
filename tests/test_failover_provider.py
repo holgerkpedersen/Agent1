@@ -105,6 +105,41 @@ async def test_all_providers_fail_returns_last_error() -> None:
 
 
 @pytest.mark.anyio
+async def test_failover_on_localized_urllib_winerror() -> None:
+    """End-to-end regression for the reported outage: the first provider is a
+    dead local server whose urllib error carries a localized WinError message;
+    the chain must fail over to the working provider."""
+    dead = _PayloadProvider(
+        "[Error: <urlopen error [WinError 10061] Der kunne ikke oprettes "
+        "forbindelse, fordi destinationscomputeren aktivt nægtede det>]"
+    )
+    alive = _PayloadProvider("ok:lmstudio")
+    fp = FailoverProvider([dead, alive], model_name="llama-4-scout-17b-16e-instruct")
+    out = await fp.chat([{"role": "user", "content": "hi"}])
+    assert out == "ok:lmstudio"
+    assert dead.call_count == 1
+    assert alive.call_count == 1
+
+
+@pytest.mark.anyio
+async def test_failover_on_lmstudio_engine_error() -> None:
+    """End-to-end: LM Studio's HTTP-400-wrapped engine crash (peg-native
+    format) must move the chain to the next provider."""
+    dead = _PayloadProvider(
+        '[Error: HTTP Error 400: {"error":"Engine protocol predict stream '
+        'returned an error: {\\"code\\":500,\\"message\\":\\"The model produced '
+        'output that does not match the expected peg-native format\\",'
+        '\\"type\\":\\"server_error\\"}"}]'
+    )
+    alive = _PayloadProvider("ok:opencode")
+    fp = FailoverProvider([dead, alive], model_name="llama-4-scout-17b-16e-instruct")
+    out = await fp.chat([{"role": "user", "content": "hi"}])
+    assert out == "ok:opencode"
+    assert dead.call_count == 1
+    assert alive.call_count == 1
+
+
+@pytest.mark.anyio
 async def test_failover_warns_on_unreachable(caplog: pytest.LogCaptureFixture) -> None:
     fp = _make_chain({"lmstudio": {0}})
     with caplog.at_level(logging.WARNING):
@@ -135,6 +170,41 @@ def test_is_connection_failure_detects_transport_errors() -> None:
     assert is_connection_failure("[Error: Connection refused]")
     assert is_connection_failure("[Error: HTTP Error 503: gateway]")
     assert is_connection_failure("[Error: timed out after 30s]")
+
+
+def test_is_connection_failure_detects_urllib_winerror() -> None:
+    """Regression: urllib wraps socket errors as ``<urlopen error ...>`` and a
+    refused connection surfaces as ``[WinError 10061]`` followed by a LOCALIZED
+    message (e.g. Danish "nægtede det" — no English "connection refused").
+    Neither matched the old markers, so the failover chain treated the dead
+    llama.cpp/`LM Studio endpoint as a real answer and the turn ended with
+    "The model did not produce a usable response"."""
+    assert is_connection_failure(
+        "[Error: <urlopen error [WinError 10061] Der kunne ikke oprettes "
+        "forbindelse, fordi destinationscomputeren aktivt nægtede det>]"
+    )
+    assert is_connection_failure(
+        "[Error: <urlopen error [Errno 111] Connection refused>]"
+    )
+    assert is_connection_failure(
+        "[Error: [WinError 10060] A connection attempt failed]"
+    )
+
+
+def test_is_connection_failure_detects_lmstudio_engine_errors() -> None:
+    """Regression: LM Studio wraps engine crashes in HTTP 400 (the reported
+    "does not match the expected peg-native format").  The chain must fail
+    over instead of returning that as the final answer."""
+    assert is_connection_failure(
+        '[Error: HTTP Error 400: {"error":"Engine protocol predict stream '
+        'returned an error: {\\"code\\":500,\\"message\\":\\"The model produced '
+        'output that does not match the expected peg-native format\\",'
+        '\\"type\\":\\"server_error\\"}"}]'
+    )
+    assert is_connection_failure(
+        '[Error: HTTP Error 400: {"error":"Engine protocol predict request '
+        'failed: fetch failed"}]'
+    )
 
 
 def test_is_connection_failure_rejects_auth_errors() -> None:

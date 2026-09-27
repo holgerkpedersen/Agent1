@@ -1,12 +1,35 @@
 """Regression tests: `model ... -p llama` must work even when the user has
 multiple `llm_providers` configured (which wraps the LlamaProvider in a
 FailoverProvider).  Previously `provider.api_url` raised AttributeError."""
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from agent_core.commands.model_cmd import ModelCommand, _concrete_llama_provider
 from agent_core.llm.provider import build_provider
+
+
+@pytest.fixture(autouse=True)
+def _no_real_state_or_server(monkeypatch):
+    """Never touch a real llama-server or the live model.json/.env.
+
+    Regression (2026-09-27): ``test_switch_llama_unwraps_failover`` ran the
+    production switch path with the fixture model ``llama/Bonsai-27B-Q1_0``.
+    The unmocked ``persist_model_choice`` wrote that name (and ``provider:
+    llama``) into the developer's REAL model.json/.env, so the next
+    ``python agent.py`` tried to launch llama-server for a model that does not
+    exist; the unmocked ``refresh_server_model_id`` also hit the network and
+    hung the run.
+    """
+    monkeypatch.setattr(
+        "agent_core.commands.model_cmd.persist_model_choice",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "agent_core.llm.llama_provider.LlamaProvider.refresh_server_model_id",
+        lambda self: None,
+    )
 
 
 def _multi_settings():
@@ -73,6 +96,18 @@ async def test_switch_llama_unwraps_failover(monkeypatch):
         "agent_core.llm.llama_server.ensure_model_served", _fake_ensure
     )
 
+    repo = Path(__file__).resolve().parents[1]
+
+    def _live_state() -> tuple[bytes | None, bytes | None]:
+        model = repo / "model.json"
+        env = repo / ".env"
+        return (
+            model.read_bytes() if model.is_file() else None,
+            env.read_bytes() if env.is_file() else None,
+        )
+
+    before = _live_state()
+
     cmd = ModelCommand()
     # _switch_model dispatches on provider_override via the parse path; call the
     # provider-aware helper directly with provider="llama".
@@ -83,3 +118,6 @@ async def test_switch_llama_unwraps_failover(monkeypatch):
     assert captured.get("name") == "llama/Bonsai-27B-Q1_0"
     # The agent now has a concrete (non-failover) provider pinned.
     assert type(agent.llm._provider).__name__ == "LlamaProvider"
+    # Regression (2026-09-27): the switching must NOT persist the fixture model
+    # "llama/Bonsai-27B-Q1_0" into the live model.json/.env.
+    assert _live_state() == before

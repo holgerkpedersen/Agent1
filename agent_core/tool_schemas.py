@@ -46,20 +46,27 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "read",
             "description": (
-                "Read a FILE from the workspace and return its contents (not a "
-                "directory — use list_files for those). Paging "
-                "is LINE-BASED: offset is the 1-based starting line, limit is "
-                "the number of lines to return. Files are truncated with a hint "
+                "Read one FILE (pass 'path') or SEVERAL files in one call (pass "
+                "'paths', an array of paths) from the workspace and return their "
+                "contents (not a directory — use list_files for those). Use "
+                "'paths' when asked to read multiple files at once. Paging is "
+                "LINE-BASED: offset is the 1-based starting line, limit is the "
+                "number of lines to return. Files are truncated with a hint "
                 "telling you the next offset — page through with offset/limit."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Absolute or workspace-relative file path"},
+                    "path": {"type": "string", "description": "Absolute or workspace-relative file path (one file)"},
+                    "paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Several file paths to read in one call (alternative to 'path')",
+                    },
                     "offset": {"type": "integer", "description": "1-based starting line number (default 1)"},
                     "limit": {"type": "integer", "description": "Maximum number of lines to return (default 100)"},
                 },
-                "required": ["path"],
+                "required": [],
             },
         },
     },

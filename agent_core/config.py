@@ -8,6 +8,7 @@ from typing import Final
 
 from .constants import (
     DEFAULT_LLM_CHAIN,
+    DEFAULT_LEMONADE_API_BASE,
     DEFAULT_LLAMA_BASE_URL,
     DEFAULT_JEV_MODEL,
     DEFAULT_OPENCODE_API_BASE,
@@ -171,6 +172,21 @@ class AgentSettings:
             "AGENT_OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL
         )
     )
+    #: AMD Lemonade local server (OpenAI-compatible) — runs LLMs on the Ryzen
+    #: AI NPU (XDNA) or iGPU.  When ``AGENT_LLM_PROVIDER=lemonade`` (or a model
+    #: is namespaced ``lemonade/…``) the agent talks to it over the standard
+    #: /v1/chat/completions protocol.  Override the base URL with
+    #: ``LEMONADE_API_URL`` (Lemonade's default port varies by release).
+    lemonade_api_url: str = field(
+        default_factory=lambda: os.environ.get("LEMONADE_API_URL", DEFAULT_LEMONADE_API_BASE)
+    )
+    #: Optional default Lemonade/NPU model (bare id, e.g. ``qwen3.5-4b-FLM``).
+    #: Used only when the user switches to the lemonade provider without naming
+    #: a model; the live catalog is preferred over this.  Override with
+    #: ``AGENT_LEMONADE_MODEL``.
+    lemonade_model: str = field(
+        default_factory=lambda: os.environ.get("AGENT_LEMONADE_MODEL", "")
+    )
     #: Default opencode-zen FREE model used for catalog listing / probing
     #: (keyless tier — no API key needed).  NO specific model is hardcoded (a
     #: machine/account may not have it); when unset we construct the keyless
@@ -234,7 +250,7 @@ class AgentSettings:
         _validate_settings(self)
 
 
-_LLM_PROVIDERS = ("lmstudio", "opencode", "llama", "openrouter")
+_LLM_PROVIDERS = ("lmstudio", "opencode", "llama", "openrouter", "lemonade")
 
 #: Special chain keyword: resolves at build time to the cheapest paid
 #: ``opencode-go/<id>`` model from the price table (see
@@ -515,6 +531,8 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         openrouter_api_url=os.environ.get("OPENROUTER_API_URL") or env_vars.get("OPENROUTER_API_URL") or DEFAULT_OPENROUTER_API_BASE,
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or env_vars.get("OPENROUTER_API_KEY") or _store_secret("OPENROUTER_API_KEY"),
         openrouter_model=os.environ.get("AGENT_OPENROUTER_MODEL") or env_vars.get("AGENT_OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL,
+        lemonade_api_url=os.environ.get("LEMONADE_API_URL") or env_vars.get("LEMONADE_API_URL") or DEFAULT_LEMONADE_API_BASE,
+        lemonade_model=os.environ.get("AGENT_LEMONADE_MODEL") or env_vars.get("AGENT_LEMONADE_MODEL") or "",
         failover_strategy=os.environ.get("AGENT_FAILOVER_STRATEGY", "ordered").strip().lower(),
         jev_model=(
             os.environ.get("AGENT_JEV_MODEL")

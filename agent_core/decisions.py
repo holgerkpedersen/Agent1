@@ -78,7 +78,9 @@ def _canonical_rel(workspace: str | Path, path: str) -> str | None:
     return rel.as_posix()
 
 
-def normalize_affected_files(workspace: str | Path, files: list[str] | None) -> list[str]:
+def normalize_affected_files(
+    workspace: str | Path, files: list[str] | None
+) -> list[str]:
     """Canonical workspace-relative forms for *files*.
 
     - relative entries are resolved against the workspace
@@ -127,7 +129,9 @@ def load_decisions(workspace: str | Path) -> list[dict[str, Any]]:
     # And date: some records store the timestamp under ``created_at`` instead
     # of ``date``; unify on ``date`` so list/show never KeyError on it.
     for d in decisions:
-        d["affected_files"] = normalize_affected_files(workspace, d.get("affected_files"))
+        d["affected_files"] = normalize_affected_files(
+            workspace, d.get("affected_files")
+        )
         tags = d.get("tags")
         d["tags"] = tags if isinstance(tags, list) else []
         if not d.get("date"):
@@ -364,17 +368,145 @@ def find_overlaps(
 ) -> list[dict[str, Any]]:
     new_tags = set(new_decision.get("tags", []))
     new_files = {
-        c for c in (_canonical_rel(workspace, f) for f in new_decision.get("affected_files", [])) if c
+        c
+        for c in (
+            _canonical_rel(workspace, f)
+            for f in new_decision.get("affected_files", [])
+        )
+        if c
     }
     overlaps = []
     for d in existing:
         old_tags = set(d.get("tags", []))
-        old_files = set(d.get("affected_files", []))  # already canonical (add/load normalized)
+        # already canonical (add/load normalized)
+        old_files = set(d.get("affected_files", []))
         tag_overlap = bool(new_tags & old_tags)
         file_overlap = bool(new_files & old_files)
         if tag_overlap or file_overlap:
             overlaps.append(d)
     return overlaps
+
+
+def build_decision_graph(decisions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build a knowledge graph of decision-code relationships.
+
+    Returns:
+        Graph structure: {
+            "decisions": {decision_id: {...}},
+            "files": {file_path: [decision_ids]},
+            "tags": {tag: [decision_ids]},
+            "symbols": {symbol_name: [decision_ids]}
+        }
+    """
+    graph: dict[str, Any] = {
+        "decisions": {},
+        "files": {},
+        "tags": {},
+        "symbols": {}
+    }
+
+    for d in decisions:
+        d_id = d["id"]
+        graph["decisions"][d_id] = d
+
+        # File relationships
+        for f in d.get("affected_files", []):
+            graph["files"].setdefault(f, []).append(d_id)
+
+        # Tag relationships
+        for tag in d.get("tags", []):
+            graph["tags"].setdefault(tag, []).append(d_id)
+
+    return graph
+
+
+# ── Cached contradiction checks ────────────────────────────────────────────
+# Note: a manual dict cache is used instead of functools.lru_cache because
+# lru_cache would store coroutine objects, which cannot be reused.
+
+_cached_results: dict[tuple[frozenset[str], str, str], str] = {}
+
+
+def _contradiction_cache_key(
+    decisions: list[dict[str, Any]],
+    new_decision_text: str,
+    workspace: str = "",
+) -> tuple[frozenset[str], str, str]:
+    """Cache key: the decision IDs involved + the new text + the workspace.
+
+    Decision IDs are assigned per-workspace (001, 002, ...), so the workspace
+    must be part of the key to avoid cross-workspace collisions.
+    """
+    ids = frozenset(str(d.get("id", "")) for d in decisions)
+    return (ids, new_decision_text, workspace)
+
+
+async def check_contradictions_cached(
+    agent: "Agent",
+    decisions: list[dict[str, Any]],
+    new_decision_text: str,
+    workspace: str = "",
+) -> str:
+    """Cached wrapper around check_contradictions.
+
+    Cache key is the set of decision IDs + the new decision text (+ workspace
+    when provided) — not the full decision objects.
+    """
+    if not decisions:
+        return "No existing decisions to check against."
+    cache_key = _contradiction_cache_key(decisions, new_decision_text, workspace)
+    cached = _cached_results.get(cache_key)
+    if cached is not None:
+        return cached
+    result = await check_contradictions(agent, decisions, new_decision_text)
+    _cached_results[cache_key] = result
+    return result
+
+
+def clear_contradiction_cache() -> None:
+    """Clear the contradiction check cache."""
+    _cached_results.clear()
+
+
+def build_category_index(decisions: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Build inverted index from category to decision IDs.
+
+    Returns:
+        {category: [decision_ids]}
+    """
+    index: dict[str, list[str]] = {}
+    for d in decisions:
+        category = d.get("category", "uncategorized").lower()
+        index.setdefault(category, []).append(d["id"])
+    return index
+
+
+class DecisionCache:
+    """Cache for decisions with lazy loading."""
+
+    def __init__(self, workspace: str | Path):
+        self.workspace = workspace
+        self._cached_decisions: list[dict[str, Any]] | None = None
+        self._cached_graph: dict[str, Any] | None = None
+        self._cached_category_index: dict[str, list[str]] | None = None
+
+    def get_decisions(self) -> list[dict[str, Any]]:
+        """Load decisions if not cached."""
+        if self._cached_decisions is None:
+            self._cached_decisions = load_decisions(self.workspace)
+        return self._cached_decisions
+
+    def get_graph(self) -> dict[str, Any]:
+        """Build and cache decision graph."""
+        if self._cached_graph is None:
+            self._cached_graph = build_decision_graph(self.get_decisions())
+        return self._cached_graph
+
+    def get_category_index(self) -> dict[str, list[str]]:
+        """Build and cache category index."""
+        if self._cached_category_index is None:
+            self._cached_category_index = build_category_index(self.get_decisions())
+        return self._cached_category_index
 
 
 def format_for_prompt(decisions: list[dict[str, Any]]) -> str:
@@ -427,6 +559,35 @@ async def check_contradictions(
         {"role": "user", "content": user_msg},
     ])
     return response if response else "LLM returned no response."
+
+
+async def check_contradictions_fast(
+    agent: "Agent",
+    new_decision: dict[str, Any],
+    new_decision_text: str,
+    workspace: str | Path,
+) -> str:
+    """Fast contradiction check with pre-filtering.
+
+    Uses find_overlaps() to filter decisions before LLM call.
+    Returns early if no overlaps found.
+    """
+    # Load all decisions once
+    all_decisions = load_decisions(workspace)
+
+    # Fast pre-filter: only check decisions that share files/tags
+    candidate_decisions = find_overlaps(new_decision, all_decisions, workspace)
+
+    if not candidate_decisions:
+        return "No similar decisions found - no contradiction risk."
+
+    # Check cache (await: check_contradictions_cached is async)
+    return await check_contradictions_cached(
+        agent,
+        candidate_decisions,
+        new_decision_text,
+        workspace=str(workspace),
+    )
 
 
 async def resolve_contradictions(
@@ -678,7 +839,11 @@ def decisions_as_system_prompt(workspace: str | Path, files: list[str]) -> str:
 
     Returns empty string if no relevant decisions exist.
     """
-    decisions = find_decisions(workspace=str(workspace), files=files) if files else load_decisions(workspace)
+    decisions = (
+        find_decisions(workspace=str(workspace), files=files)
+        if files
+        else load_decisions(workspace)
+    )
     if not decisions:
         return ""
     lines = [

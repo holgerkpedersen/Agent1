@@ -8,6 +8,7 @@ import re
 from .base import Command
 from agent_core.config import lmstudio_base_url, load_agent_settings
 from agent_core.constants import (
+    DEFAULT_LEMONADE_API_BASE,
     DEFAULT_LLAMA_BASE_URL,
     DEFAULT_MODEL,
     DEFAULT_OPENCODE_API_BASE,
@@ -306,6 +307,36 @@ class ModelCommand(Command):
         except Exception:
             return []
 
+    def _lemonade_catalog(self, agent: "Agent") -> list[str]:
+        """Return Lemonade/NPU model ids (namespaced ``lemonade/<id>``).
+
+        Uses the agent's real LemonadeProvider when it is active (possibly
+        wrapped in a FailoverProvider), otherwise a freshly built one from
+        settings.  Returns ``[]`` on any failure so listing never crashes.
+        """
+        from agent_core.llm.lemonade_provider import LemonadeProvider
+
+        provider = getattr(getattr(agent, "llm", None), "_provider", None)
+        if type(provider).__name__ == "FailoverProvider":
+            provider = next(
+                (p for p in getattr(provider, "providers", [])
+                 if type(p).__name__ == "LemonadeProvider"),
+                None,
+            )
+        if type(provider).__name__ == "LemonadeProvider":
+            try:
+                return list(provider.list_models())
+            except Exception:
+                return []
+        try:
+            from agent_core.config import load_agent_settings
+            s = load_agent_settings()
+            return list(LemonadeProvider(
+                api_url=getattr(s, "lemonade_api_url", DEFAULT_LEMONADE_API_BASE),
+            ).list_models())
+        except Exception:
+            return []
+
     def _list_models(self, agent: "Agent", interactive: bool = False, openrouter_free_only: bool = True) -> None:
         """Show available models per LLM provider (LM Studio + opencode).
 
@@ -343,7 +374,8 @@ class ModelCommand(Command):
         print(f"\n  Providers: lmstudio (active: {'*' if active_provider == 'lmstudio' else ' '})"
               f"  opencode (active: {'*' if active_provider == 'opencode' else ' '})"
               f"  llama (active: {'*' if active_provider == 'llama' else ' '})"
-              f"  openrouter (active: {'*' if active_provider == 'openrouter' else ' '})")
+              f"  openrouter (active: {'*' if active_provider == 'openrouter' else ' '})"
+              f"  lemonade (active: {'*' if active_provider == 'lemonade' else ' '})")
         if opencode_models:
             print(f"  [opencode] {len(opencode_models)} model(s) — needs API key:\n")
             for key in opencode_models:
@@ -398,6 +430,22 @@ class ModelCommand(Command):
                 print("            (show the full paid catalog with: model openrouter --all)")
         else:
             print("\n  [openrouter] unreachable — set OPENROUTER_API_KEY / check network")
+
+        # ---- AMD Lemonade (NPU / iGPU) models ----
+        lemonade_models = self._lemonade_catalog(agent)
+        if lemonade_models:
+            print(f"\n  [lemonade] {len(lemonade_models)} model(s) — AMD XDNA NPU via Lemonade:\n")
+            for key in lemonade_models:
+                is_current = key == current
+                marker = "  *" if is_current else "   "
+                print(f"{marker} {key}  (provider=lemonade, NPU)")
+        else:
+            try:
+                from agent_core.config import load_agent_settings
+                _leurl = load_agent_settings().lemonade_api_url
+            except Exception:
+                _leurl = DEFAULT_LEMONADE_API_BASE
+            print(f"\n  [lemonade] NPU server unreachable at {_leurl} - start it: 'lemonade run <model>'")
 
         # ---- LM Studio models ----
         models, loaded_ids = self._fetch_models()
@@ -637,6 +685,23 @@ class ModelCommand(Command):
                 print(f"  Switched: {old} -> {resolved}  (provider=llama)")
             return
 
+        # Lemonade / AMD NPU models, e.g. "lemonade/qwen3.5-4b-FLM".
+        # The model id is namespaced with "lemonade/" so provider routing /
+        # persistence agree; the prefix is stripped at the HTTP boundary.
+        if lowered.startswith("lemonade/"):
+            old = agent.llm.model_name
+            if query == old:
+                print(f"  Already using: {query}")
+                return
+            from agent_core.config import load_agent_settings
+            from agent_core.llm.provider import build_provider
+            settings = load_agent_settings()
+            agent.llm._provider = build_provider(settings, query, provider_override="lemonade")
+            agent.llm.model_name = query
+            persist_model_choice(query, provider="lemonade")
+            print(f"  Switched: {old} -> {query}  (provider=lemonade, NPU)")
+            return
+
         # OpenRouter hosted models, e.g. "openrouter/anthropic/claude-3.5-haiku".
         # The openrouter-go/ prefix is also accepted as an alias for openrouter/.
         if lowered.startswith("openrouter/") or lowered.startswith("openrouter-go/"):
@@ -742,6 +807,25 @@ class ModelCommand(Command):
             print(f"  Switched: {old} -> {oc_match}  (provider=opencode)")
             return
 
+        # AMD Lemonade (NPU) models: a bare id like "qwen3.5-4b-FLM" resolves
+        # against the live NPU catalog before falling back to difflib on LM
+        # Studio names (the NPU server may be the only place that model exists).
+        lemonade_models = self._lemonade_catalog(agent)
+        le_match = self._resolve_lemonade_match(query, lemonade_models)
+        if le_match:
+            old = agent.llm.model_name
+            if le_match == old:
+                print(f"  Already using: {le_match}")
+                return
+            from agent_core.config import load_agent_settings
+            from agent_core.llm.provider import build_provider
+            settings = load_agent_settings()
+            agent.llm._provider = build_provider(settings, le_match, provider_override="lemonade")
+            agent.llm.model_name = le_match
+            persist_model_choice(le_match, provider="lemonade")
+            print(f"  Switched: {old} -> {le_match}  (provider=lemonade, NPU)")
+            return
+
         # Last resort: difflib against LM Studio models (no catalog match).
         lmstudio_fuzzy = self._resolve_lmstudio_fuzzy(query, models)
         if lmstudio_fuzzy:
@@ -818,8 +902,8 @@ class ModelCommand(Command):
             print("  Specify a model name, e.g. `model <name> --provider <lmstudio|opencode>`.")
             return
 
-        if provider not in ("lmstudio", "opencode", "llama", "openrouter"):
-            print(f"  Unknown provider '{provider}'. Options: lmstudio, opencode, llama, openrouter.")
+        if provider not in ("lmstudio", "opencode", "llama", "openrouter", "lemonade"):
+            print(f"  Unknown provider '{provider}'. Options: lmstudio, opencode, llama, openrouter, lemonade.")
             return
 
         from agent_core.config import load_agent_settings
@@ -919,6 +1003,24 @@ class ModelCommand(Command):
                 print(f"  Switched: {old} -> {resolved}  (provider=llama)")
             return
 
+        # provider == "lemonade" — match against the live Lemonade (NPU) catalog.
+        if provider == "lemonade":
+            le_models = self._lemonade_catalog(agent)
+            q = self._resolve_lemonade_match(query, le_models)
+            if q is None:
+                # Bare name — treat as a lemonade/<id> directly when it does not
+                # already carry the prefix (so a not-yet-listed model still works).
+                q = query if query.startswith("lemonade/") else f"lemonade/{query}"
+            old = agent.llm.model_name
+            if q == old:
+                print(f"  Already using: {q}")
+                return
+            agent.llm._provider = build_provider(settings, q, provider_override="lemonade")
+            agent.llm.model_name = q
+            persist_model_choice(q, provider="lemonade")
+            print(f"  Switched: {old} -> {q}  (provider=lemonade, NPU)")
+            return
+
         # provider == "lmstudio" — match against the LM Studio API.
         models, _ = self._fetch_models()
         if not models:
@@ -1005,13 +1107,14 @@ class ModelCommand(Command):
             current = provider_for(agent.llm.model_name, settings.llm_provider, persisted_provider)
             print(f"  Provider: {current}  (model: {agent.llm.model_name})")
             print(f"  Persisted provider: {persisted_provider or '(auto)'}")
-            print("  Options: model provider lmstudio | model provider opencode | model provider llama | model provider openrouter")
-            print("  Pick a model + provider explicitly: model <name> --provider <lmstudio|opencode|llama|openrouter>")
+            print("  Providers: lmstudio | opencode | llama | openrouter | lemonade")
+            print("  Switch: model provider <name>  |  model <name> -p <name>")
             return
 
         target = args[0].strip().lower()
-        if target not in ("lmstudio", "opencode", "llama", "openrouter"):
-            print(f"  Unknown provider '{target}'. Options: lmstudio, opencode, llama, openrouter.")
+        if target not in ("lmstudio", "opencode", "llama", "openrouter", "lemonade"):
+            print(f"  Unknown provider '{target}'.")
+            print("  Options: lmstudio, opencode, llama, openrouter, lemonade")
             return
 
         from agent_core.constants import load_model_json, persist_model_choice
@@ -1026,7 +1129,16 @@ class ModelCommand(Command):
             print(f"  Already on provider '{target}'.")
             return
 
-        if target == "opencode":
+        if target == "lemonade":
+            le_models = self._lemonade_catalog(agent)
+            model = le_models[0] if le_models else (
+                f"lemonade/{settings.lemonade_model}" if settings.lemonade_model else ""
+            )
+            if not model:
+                print("  No Lemonade/NPU models available — start the server "
+                      "(`lemonade run <model>`) or set AGENT_LEMONADE_MODEL.")
+                return
+        elif target == "opencode":
             model = settings.opencode_model
         elif target == "openrouter":
             model = settings.openrouter_model
@@ -1231,10 +1343,28 @@ class ModelCommand(Command):
         return False, msg
 
     async def _load_model(self, rest: list[str], agent: "Agent") -> None:
-        """Load a model into LM Studio and optionally switch to it."""
+        """Load a model and switch to it.
+
+        ``model load`` is the LM Studio loader, but a namespaced id belongs to a
+        different provider (Lemonade/NPU, opencode, OpenRouter, llama.cpp) and
+        must NOT be fuzzy-matched against the LM Studio catalog — that once
+        loaded the unrelated ``qwen/qwen3.5-9b`` for
+        ``model load lemonade/qwen3.5-4b-FLM``.  Delegating to
+        :meth:`_switch_model` lets each provider own its loading (Lemonade
+        auto-loads on first request; llama.cpp reconciles the server).
+        """
         query = " ".join(rest).strip()
         if not query:
             print("  Usage: model load <name>")
+            return
+
+        lowered = query.lower()
+        provider_prefixes = (
+            "lemonade/", "opencode/", "opencode-go/", "opencode-zen/",
+            "zen/", "openrouter/", "openrouter-go/", "llama/",
+        )
+        if any(lowered.startswith(p) for p in provider_prefixes):
+            await self._switch_model([query], agent)
             return
 
         resolved = _lms.resolve_model_name(query)
@@ -1245,6 +1375,12 @@ class ModelCommand(Command):
 
         # Check if already loaded — skip API call if so
         models, loaded_ids = self._fetch_models()
+        if not models:
+            # LM Studio is unreachable — let the provider-aware resolver try the
+            # other catalogs (opencode / Lemonade NPU) instead of "loading" a
+            # phantom LM Studio model.
+            await self._switch_model([query], agent)
+            return
         loaded_keys = [m["key"] for m in models if m["loaded"]]
         if resolved in loaded_keys:
             print(f"  Already loaded: {resolved}")
@@ -1497,6 +1633,36 @@ class ModelCommand(Command):
         matches = difflib.get_close_matches(query, tails, n=1, cutoff=0.3)
         if matches:
             for m in openrouter_models:
+                if m.split("/", 1)[-1] == matches[0]:
+                    return str(m)
+        return None
+
+    def _resolve_lemonade_match(self, query: str, lemonade_models: list[str]) -> str | None:
+        """Fuzzy-match *query* against the Lemonade (NPU) catalog.
+
+        Same precedence as the opencode/openrouter matchers (exact, substring,
+        difflib) but against ``lemonade/<id>`` names, so a bare NPU model name
+        like ``qwen3.5-4b-FLM`` resolves to the namespaced id.
+        """
+        if not query or not lemonade_models:
+            return None
+        qlo = query.strip().lower()
+        if qlo.startswith("lemonade/"):
+            qlo = qlo[len("lemonade/"):]
+
+        # Exact on the bare id
+        for m in lemonade_models:
+            if qlo == m.lower() or qlo == m.lower().split("/", 1)[-1]:
+                return str(m)
+        # Substring on the bare id
+        sub = [m for m in lemonade_models if qlo in m.lower().split("/", 1)[-1]]
+        if len(sub) == 1:
+            return str(sub[0])
+        # difflib on bare ids
+        tails = [m.split("/", 1)[-1] for m in lemonade_models]
+        matches = difflib.get_close_matches(query, tails, n=1, cutoff=0.3)
+        if matches:
+            for m in lemonade_models:
                 if m.split("/", 1)[-1] == matches[0]:
                     return str(m)
         return None

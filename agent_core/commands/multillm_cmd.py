@@ -2,14 +2,20 @@
 
 Usage::
 
-    multillm "question" [--models m1,m2,...] [--max-tokens N]
-             [--thinking] [--concurrency N] [--template <id>]
+    multillm "question" [--models m1,m2,...] [--engines npu,igpu] [--warm]
+             [--max-tokens N] [--thinking] [--concurrency N] [--template <id>]
              [--role model:system-prompt] [--role-file path.json]
 
 Default models: the current agent model plus the configured opencode model
 (``laguna-s-2.1`` + the configured opencode model when nothing is
-persisted) — one local LM Studio model and one hosted opencode model answer
-the same prompt in parallel, so their answers can be compared directly.
+persisted) — one local model and one hosted opencode model answer the same
+prompt in parallel, so their answers can be compared directly.
+
+Any provider works, including the AMD NPU via Lemonade: ``--models
+lemonade/qwen3.5-4b-FLM,opencode-go/deepseek-v4-flash`` (or the ``npu/<id>``
+shorthand), or ``--engines npu,igpu`` to run one model on each accelerator.
+``--warm`` preloads each engine's model first.  Each engine is trimmed to its
+OWN context window (so a 4k NPU model is never sent the iGPU-sized prompt).
 
 Each model gets its OWN provider instance (separate opencode session, no
 shared state), all ``chat`` calls are fired with ``asyncio.gather``, and the
@@ -49,6 +55,25 @@ if TYPE_CHECKING:
     from agent import Agent
 
 
+def _expand_model_aliases(models: list[str]) -> list[str]:
+    """Expand engine shorthands in ``--models`` to provider-namespaced ids.
+
+    ``npu/<id>`` and ``npu:<id>`` mean the AMD NPU via Lemonade, so
+    ``--models npu/qwen3.5-4b-FLM,opencode-go/...`` works without remembering
+    the ``lemonade/`` namespace.  Other names pass through unchanged.
+    """
+    out: list[str] = []
+    for raw in models:
+        model = str(raw).strip()
+        low = model.lower()
+        if low.startswith("npu/"):
+            model = "lemonade/" + model.split("/", 1)[1]
+        elif low.startswith("npu:"):
+            model = "lemonade/" + model.split(":", 1)[1]
+        out.append(model)
+    return out
+
+
 def _default_models(agent: "Agent") -> list[str]:
     """Current agent model + the configured opencode model (deduped)."""
     current = agent.llm.model_name
@@ -76,10 +101,11 @@ class MultiLlmCommand(Command):
     def help_text(self) -> str:
         return (
             'multillm "question" [--models laguna-s-2.1,opencode-go/...] '
-            "[--max-tokens N] [--thinking] [--concurrency N] "
-            "[--role model:prompt] [--role-file path.json] [--synthesize] - ask "
-            "multiple LLMs the same question in parallel, each with its own role; "
-            "--synthesize merges the answers through one extra LLM call"
+            "[--engines npu,igpu] [--warm] [--max-tokens N] [--thinking] "
+            "[--concurrency N] [--role model:prompt] [--role-file path.json] "
+            "[--synthesize] - ask multiple LLMs the same question in parallel; "
+            "--engines runs one model per accelerator (NPU + iGPU) at once, "
+            "--warm preloads them; --synthesize merges answers via one extra call"
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
@@ -90,12 +116,14 @@ class MultiLlmCommand(Command):
 
         parts = list(args)
         models: list[str] = []
+        engine_names: list[str] = []
         max_tokens: int | None = None
         disable_thinking = True
         concurrency: int | None = None
         template_id = "parallel"
         roles: dict[str, str] = {}
         synthesize = False
+        warm = False
 
         i = 0
         while i < len(parts):
@@ -107,6 +135,16 @@ class MultiLlmCommand(Command):
             if p == "--models" and i + 1 < len(parts):
                 models = [m.strip() for m in parts[i + 1].split(",") if m.strip()]
                 i += 2
+                continue
+            if p == "--engines" and i + 1 < len(parts):
+                engine_names = [
+                    e.strip() for e in parts[i + 1].split(",") if e.strip()
+                ]
+                i += 2
+                continue
+            if p == "--warm":
+                warm = True
+                i += 1
                 continue
             if p == "--max-tokens" and i + 1 < len(parts):
                 try:
@@ -172,7 +210,7 @@ class MultiLlmCommand(Command):
         ]
         # Drop flag values from the question.
         skip_values = {
-            "--models", "--max-tokens", "--concurrency", "--template",
+            "--models", "--engines", "--max-tokens", "--concurrency", "--template",
             "--role", "--role-file",
         }
         flag_values: set[str] = set()
@@ -186,23 +224,41 @@ class MultiLlmCommand(Command):
             self.error('Usage: multillm "question" [--models m1,m2]')
             return True
 
+        try:
+            settings = load_agent_settings()
+        except Exception as exc:
+            self.error(f"Could not load agent settings: {exc}")
+            return True
+
+        models = _expand_model_aliases(models)
+
+        # --engines npu,igpu -> one model per accelerator, pinned to its
+        # provider so routing can't be hijacked by the persisted provider.
+        provider_overrides: dict[str, str] = {}
+        if engine_names:
+            from agent_core.llm.engines import resolve_engines
+
+            eng_models, provider_overrides, eng_errors = resolve_engines(
+                engine_names, settings
+            )
+            for err in eng_errors:
+                self.error(f"--engines: {err}")
+            for em in eng_models:
+                if em not in models:
+                    models.append(em)
+
         if not models:
             models = _default_models(agent)
         if len(models) < 2:
             self.error(
-                "multillm needs at least two models — pass --models m1,m2"
+                "multillm needs at least two models — pass --models m1,m2 "
+                "or --engines npu,igpu"
             )
             return True
 
         messages = [{"role": "user", "content": question}]
         print(f"\n  [multillm] {len(models)} model(s) in parallel: {', '.join(models)}")
         print(f"  [multillm] question: {question[:200]}")
-
-        try:
-            settings = load_agent_settings()
-        except Exception as exc:
-            self.error(f"Could not load agent settings: {exc}")
-            return True
 
         run = await run_parallel(
             messages,
@@ -213,6 +269,8 @@ class MultiLlmCommand(Command):
             template_id=template_id,
             concurrency=concurrency,
             roles=roles,
+            provider_overrides=provider_overrides or None,
+            warm=warm,
             # Give the models the SAME tools the agent uses — each model can
             # read/search/list files, run tests, etc. instead of answering
             # from the prompt alone (2026-08-21: models asked for the file

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from agent_core.constants import (
+    DEFAULT_LEMONADE_API_BASE,
     DEFAULT_LLAMA_BASE_URL,
     DEFAULT_OPENCODE_API_BASE,
     DEFAULT_OPENCODE_MODEL,
@@ -27,6 +28,7 @@ _PROVIDER_TYPE_BY_CLASS = {
     "LMStudioProvider": "lmstudio",
     "OpencodeProvider": "opencode",
     "OpenRouterProvider": "openrouter",
+    "LemonadeProvider": "lemonade",
 }
 
 
@@ -88,12 +90,12 @@ def provider_for(
     for prefix, provider in ROUTER.items():
         if prefix in m:
             return provider
-    if persisted_provider in ("lmstudio", "opencode", "llama", "openrouter"):
+    if persisted_provider in ("lmstudio", "opencode", "llama", "openrouter", "lemonade"):
         return persisted_provider
     # A chain entry may carry a per-entry model override ("opencode:model");
     # the provider part is everything before the first colon.
     provider_setting = provider_setting.split(":", 1)[0].strip()
-    return provider_setting if provider_setting in ("lmstudio", "opencode", "llama", "openrouter") else "lmstudio"
+    return provider_setting if provider_setting in ("lmstudio", "opencode", "llama", "openrouter", "lemonade") else "lmstudio"
 
 
 def _split_entry(entry: str) -> tuple[str, str | None]:
@@ -259,6 +261,15 @@ def build_provider(
                 api_key=getattr(settings, "openrouter_api_key", ""),
             )
 
+        # AMD Lemonade local server (OpenAI-compatible, NPU/iGPU backends).
+        if provider_name == "lemonade":
+            from .lemonade_provider import LemonadeProvider
+
+            return LemonadeProvider(
+                model_name=eff or getattr(settings, "lemonade_model", "") or None,
+                api_url=getattr(settings, "lemonade_api_url", DEFAULT_LEMONADE_API_BASE),
+            )
+
         # Unknown entries fall back to LM Studio (the default provider).
         from .lmstudio import LMStudioProvider
 
@@ -293,7 +304,7 @@ def build_provider(
     if single:
         routed = (
             provider_override
-            if provider_override in ("lmstudio", "opencode", "llama", "openrouter")
+            if provider_override in ("lmstudio", "opencode", "llama", "openrouter", "lemonade")
             else provider_for(model_name, chain[0], persisted_provider)
         )
         return _build_one(routed, None, user_explicit=True)
@@ -303,7 +314,7 @@ def build_provider(
     # the chain.  Only an explicit multi-provider chain builds a FailoverProvider.
     if len(chain) == 1:
         # An explicit override wins over prefix-based and persisted routing.
-        if provider_override in ("lmstudio", "opencode", "llama", "openrouter"):
+        if provider_override in ("lmstudio", "opencode", "llama", "openrouter", "lemonade"):
             return _build_one(provider_override, None, user_explicit=True)
         # No override: the model prefix / persisted provider still selects the
         # concrete provider (e.g. an opencode-go name routes to opencode even
@@ -326,7 +337,7 @@ def build_provider(
     # only the tier that matches the user's model.
     ordered_entries = list(chain)
     explicit_entry: str | None = None
-    if provider_override in ("lmstudio", "opencode", "llama", "openrouter"):
+    if provider_override in ("lmstudio", "opencode", "llama", "openrouter", "lemonade"):
         matching = [e for e in ordered_entries if _provider_part(e) == provider_override]
         rest = [e for e in ordered_entries if _provider_part(e) != provider_override]
         if matching:
@@ -359,6 +370,15 @@ def build_provider(
                 explicit_entry,
                 *(e for e in ordered_entries if e is not explicit_entry),
             ]
+        else:
+            # The active model routes to a provider the chain does NOT list
+            # (e.g. a lemonade/NPU model with a cloud-only chain).  The user's
+            # model must be served by ITS OWN provider first, so add a synthetic
+            # front entry; without this the chain silently answered with a
+            # different provider (multillm ran opencode-go/deepseek instead of
+            # the NPU).  The configured chain stays as the fallback order.
+            explicit_entry = routed
+            ordered_entries = [routed, *ordered_entries]
 
     providers = [
         _build_one(
@@ -383,7 +403,8 @@ _CONNECTION_FAILURE_RE = re.compile(
     r"\[Error:\s*(?:"
     r".*(?:unreachable|connection\s*(?:refused|reset|error)|connecterror|"
     r"timeout|timed out|urlerror|nameresolutionerror|failed to resolve|"
-    r"getaddrinfo|http error 5\d\d|"
+    r"getaddrinfo|urlopen error|winerror|http error 5\d\d|"
+    r"server_error|engine protocol predict|"
     r"opencode-zen free model \S+ is currently unavailable|"
     r"openrouter free-tier model is rate-limited|"
     r"openrouter.*only available on agentic harnesses|"

@@ -59,7 +59,7 @@ def _load_model_catalog() -> dict[str, Any]:
         )
     for key in (
         "opencode_server_url", "opencode_api_base", "opencode_zen_api_base",
-        "llama_base_url", "openrouter_api_base",
+        "llama_base_url", "openrouter_api_base", "lemonade_base_url",
     ):
         if not str(defaults.get(key) or "").strip():
             raise RuntimeError(f"model catalog must define '_defaults.{key}'")
@@ -154,6 +154,8 @@ DEFAULT_OPENCODE_API_BASE = _DEFAULTS["opencode_api_base"]
 DEFAULT_OPENCODE_ZEN_API_BASE = _DEFAULTS["opencode_zen_api_base"]
 DEFAULT_LLAMA_BASE_URL = _DEFAULTS["llama_base_url"]
 DEFAULT_OPENROUTER_API_BASE = _DEFAULTS["openrouter_api_base"]
+#: Local AMD Lemonade (NPU/iGPU) OpenAI-compatible endpoint.
+DEFAULT_LEMONADE_API_BASE = _DEFAULTS["lemonade_base_url"]
 
 MODEL_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "model.json")
 CHAT_HISTORY_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "chat_history.json")
@@ -217,6 +219,10 @@ def resolve_model(explicit: str | None = None) -> str:
     provider = provider_for(persisted_model, provider_setting, persisted_provider)
     if provider == "opencode":
         return persisted_model if persisted_model.startswith("opencode") else opencode_model
+    if provider == "lemonade" and persisted_model.startswith("lemonade/"):
+        # Lemonade/NPU ids are agent-namespaced; the persisted choice is
+        # authoritative (there is no LM Studio-style live poll for it).
+        return persisted_model
 
     # Persisted choice wins over what another shell may have loaded since.
     if persisted_model in KNOWN_MODELS:
@@ -335,6 +341,7 @@ __all__: list[str] = [
     "DEFAULT_OPENCODE_MODEL",
     "DEFAULT_OPENCODE_SERVER_URL",
     "DEFAULT_OPENCODE_ZEN_API_BASE",
+    "DEFAULT_LEMONADE_API_BASE",
     "DEFAULT_LLAMA_BASE_URL",
     "DEFAULT_OPENROUTER_API_BASE",
     "DEFAULT_OPENROUTER_MODEL",

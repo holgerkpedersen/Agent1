@@ -7,6 +7,7 @@ import time as _time
 from typing import Any, cast
 import logging
 import os
+import re
 import urllib.request
 import urllib.error
 
@@ -112,6 +113,55 @@ def _model_load_hint(detail: str) -> bool:
         needle in d
         for needle in ("not loaded", "is not loaded", "load it first", "load the model")
     )
+
+
+def _engine_server_error(detail: str) -> bool:
+    """True when LM Studio's body reports an ENGINE-side failure on a 4xx.
+
+    LM Studio wraps engine errors in HTTP 400 even though the request was
+    valid; the body carries ``"type": "server_error"`` (sometimes nested and
+    escaped inside a JSON string) or an ``Engine protocol predict ...`` error
+    (e.g. "The model produced output that does not match the expected
+    peg-native format").  These are worth retrying — a re-sample often
+    succeeds — unlike a genuine client error (``invalid_request_error``),
+    which must fail fast.
+    """
+    normalized = re.sub(r"\s+", "", detail).replace('\\"', '"').lower()
+    return (
+        '"type":"server_error"' in normalized
+        or '"code":"server_error"' in normalized
+        or "engineprotocolpredict" in normalized
+    )
+
+
+#: Output budget for the thinking-exhaustion retry: never below the floor,
+#: up to 4x the first request, never above the cap (and never REDUCING an
+#: already-large request).  Live (2026-09-27): a reasoning model given 250
+#: tokens spent ~900 reasoning bytes and emitted nothing, while 4096 tokens
+#: produced a full answer — so the retry has to grow the budget, not just
+#: disable thinking (some models, e.g. qwen3.5-9b, ignore the reasoning-off
+#: knob entirely).
+_THINKING_RETRY_FLOOR = 4096
+_THINKING_RETRY_CAP = 32768
+
+
+def _escalated_max_tokens(requested: int) -> int:
+    """A larger output budget for a reasoning model that exhausted the first."""
+    base = max(1, int(requested or 0))
+    return max(base, _THINKING_RETRY_FLOOR, min(base * 4, _THINKING_RETRY_CAP))
+
+
+def _is_thinking_budget_error(text: Any) -> bool:
+    """True when a provider reply is the reasoning-budget exhaustion error.
+
+    Matches the messages produced by :meth:`LMStudioProvider._check_thinking_error`
+    ("model consumed N reasoning bytes with no output" / "model hit the output
+    limit (N reasoning bytes)").  Used to trigger a one-shot retry with thinking
+    disabled instead of failing the turn.
+    """
+    if not isinstance(text, str) or not text.startswith("[Error:"):
+        return False
+    return "reasoning bytes" in text.lower()
 
 
 def _management_url() -> str:
@@ -469,7 +519,9 @@ class LMStudioProvider:
             # Transient statuses become a typed error the RetryPolicy
             # understands (rate limit / gateway blip) — every other status
             # stays a plain RuntimeError so permanent failures fail fast.
-            if exc.code in TRANSIENT_HTTP_STATUSES:
+            # LM Studio also wraps engine-side crashes in a 400; those are
+            # retryable too (see _engine_server_error).
+            if exc.code in TRANSIENT_HTTP_STATUSES or _engine_server_error(detail):
                 raise TransientHTTPError(exc.code, detail) from exc
             raise RuntimeError(f"HTTP Error {exc.code}: {detail}") from exc
 
@@ -623,73 +675,97 @@ class LMStudioProvider:
         max_tokens: int | None = None,
         disable_thinking: bool = False,
     ) -> str:
-        """Send chat request to LLM via LM Studio with retry."""
-        payload = self._build_payload(
+        """Send chat request to LLM via LM Studio with retry.
+
+        A reasoning model that burns its whole output budget on
+        ``reasoning_content`` and returns no content is retried ONCE with
+        thinking disabled (the universal safe knob) instead of failing the
+        turn — the old behaviour surfaced "[Error: model consumed N reasoning
+        bytes ...]" and ended the task.
+        """
+        first_payload = self._build_payload(
             messages, tools, override_max_tokens=max_tokens,
             disable_thinking=disable_thinking,
         )
-        pbytes = self._payload_bytes(payload)
-        timeout = self._scaled_timeout(payload)
+        pbytes = self._payload_bytes(first_payload)
         # A request that times out because it is genuinely too large for the
         # local model will just time out again on retry — bound retries for
         # oversized payloads so we fail fast instead of stalling ~40min.
         policy = self.retry_policy
         if pbytes > 200_000:
             policy = RetryPolicy(max_retries=1, base_delay=self.retry_policy.base_delay)
-        self._announce_model(payload)
 
-        async def _do_request() -> Any:
-            start_time = _time.monotonic()
-            # _make_request is a BLOCKING urllib call — run it in a worker
-            # thread so it never stalls the event loop.  Without this,
-            # asyncio.gather in run_parallel() serializes every model: the
-            # first coroutine's sync HTTP round-trip blocks the loop and the
-            # second model's chat() cannot even start until it finishes.
-            result = await asyncio.to_thread(self._make_request, payload, timeout)
-            elapsed_ms = (_time.monotonic() - start_time) * 1000.0
+        async def _run(payload: dict[str, Any], timeout: int) -> str:
+            self._announce_model(payload)
 
-            if 'choices' in result and len(result['choices']) > 0:
-                choice = result['choices'][0]
-                message = choice.get('message', {})
-                content = message.get('content') or ""
-                reasoning = message.get('reasoning_content') or ""
+            async def _do_request() -> Any:
+                start_time = _time.monotonic()
+                # _make_request is a BLOCKING urllib call — run it in a worker
+                # thread so it never stalls the event loop.  Without this,
+                # asyncio.gather in run_parallel() serializes every model: the
+                # first coroutine's sync HTTP round-trip blocks the loop and the
+                # second model's chat() cannot even start until it finishes.
+                result = await asyncio.to_thread(self._make_request, payload, timeout)
+                elapsed_ms = (_time.monotonic() - start_time) * 1000.0
 
-                # Per-turn token/latency/cost accounting (plan ARCH item 17).
-                usage = result.get("usage") if isinstance(result, dict) else None
-                prompt_tokens = int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
-                completion_tokens = int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0
-                self.last_response_metrics = ResponseMetrics(
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    latency_ms=elapsed_ms,
-                    cost=estimate_cost(prompt_tokens, completion_tokens, self.model_name, "lmstudio"),
-                )
+                if 'choices' in result and len(result['choices']) > 0:
+                    choice = result['choices'][0]
+                    message = choice.get('message', {})
+                    content = message.get('content') or ""
+                    reasoning = message.get('reasoning_content') or ""
 
-                # If tools present and model returned tool_calls, return full message
-                if tools and message.get('tool_calls'):
-                    return json.dumps(message)
+                    # Per-turn token/latency/cost accounting (plan ARCH item 17).
+                    usage = result.get("usage") if isinstance(result, dict) else None
+                    prompt_tokens = int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
+                    completion_tokens = int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0
+                    self.last_response_metrics = ResponseMetrics(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        latency_ms=elapsed_ms,
+                        cost=estimate_cost(prompt_tokens, completion_tokens, self.model_name, "lmstudio"),
+                    )
 
-                # Check for thinking error
-                thinking_err = self._check_thinking_error(
-                    content, reasoning, finish_reason=choice.get('finish_reason')
-                )
-                if thinking_err:
-                    return thinking_err
+                    # If tools present and model returned tool_calls, return full message
+                    if tools and message.get('tool_calls'):
+                        return json.dumps(message)
 
-                return content or reasoning
+                    # Check for thinking error
+                    thinking_err = self._check_thinking_error(
+                        content, reasoning, finish_reason=choice.get('finish_reason')
+                    )
+                    if thinking_err:
+                        return thinking_err
 
-            return ""
-        
-        def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
-            print(f"  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s...")
-        
-        try:
-            return await policy.execute_with_retry(
-                _do_request, 
-                on_retry=_on_retry
+                    return content or reasoning
+
+                return ""
+
+            def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
+                print(f"  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s...")
+
+            try:
+                return await policy.execute_with_retry(_do_request, on_retry=_on_retry)
+            except Exception as e:
+                return f"[Error: {e}]"
+
+        result_text = await _run(first_payload, self._scaled_timeout(first_payload))
+        if not disable_thinking and _is_thinking_budget_error(result_text):
+            retry_max = _escalated_max_tokens(
+                max_tokens if max_tokens is not None else self.max_tokens
             )
-        except Exception as e:
-            return f"[Error: {e}]"
+            print(
+                "  [lmstudio] reasoning budget exhausted — retrying with "
+                f"thinking disabled and max_tokens={retry_max}",
+                flush=True,
+            )
+            retry_payload = self._build_payload(
+                messages, tools, override_max_tokens=retry_max,
+                disable_thinking=True,
+            )
+            result_text = await _run(
+                retry_payload, self._scaled_timeout(retry_payload)
+            )
+        return result_text
     
     async def chat_logprobs(
         self,

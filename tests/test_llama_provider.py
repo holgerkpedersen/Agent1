@@ -48,6 +48,17 @@ class TestProviderForRouting:
         assert provider_for("laguna-s-2.1") == "lmstudio"
         assert provider_for(_default_llm()) == "opencode"
 
+    def test_lmstudio_llama_family_names_do_not_route_to_llama(self):
+        """Regression: the ROUTER key was the bare substring "llama", so LM
+        Studio models whose names merely CONTAIN it were routed to the
+        llama.cpp server at llama_base_url. With no server on :8080 the chat
+        died with WinError 10061 instead of using LM Studio. Only the
+        "llama/" namespace (llama.cpp ids) selects the llama provider."""
+        assert provider_for("llama-4-scout-17b-16e-instruct") == "lmstudio"
+        assert provider_for("llama3.2-1b") == "lmstudio"
+        assert provider_for("meta/llama-3.3-70b") == "lmstudio"
+        assert provider_for("llama/qwen3.8-flash-next") == "llama"
+
 
 # ---------------------------------------------------------------------------
 #  build_provider

@@ -1161,11 +1161,55 @@ class Agent:
         return "\n".join(f"  {line}" for line in lines[:30])
 
     async def _nlp_read(self, args: dict[str, Any]) -> str:
-        """Read *limit* lines of a file starting at 1-based *offset*."""
+        """Read one file (``path``) or several files (``paths``) in one call.
+
+        The ``paths`` array is what lets a model satisfy "read these two files"
+        in a SINGLE tool call instead of refusing ("I can only read one file at
+        a time") or asking the user to re-specify.
+        """
+        raw_paths = args.get("paths")
+        if isinstance(raw_paths, list) and raw_paths:
+            return await self._nlp_read_many(raw_paths, args)
+        if not str(args.get("path", "")).strip():
+            return "Read error: provide 'path' (one file) or 'paths' (a list)."
         path = self._resolve_nlp_path(str(args.get("path", "")).strip('"').strip("'"))
+        return await self._read_page(path, args, original=args.get("path"))
+
+    async def _nlp_read_many(self, raw_paths: list[Any], args: dict[str, Any]) -> str:
+        """Read several files in one call (the ``paths`` form of ``read``).
+
+        Each file is paged with the same offset/limit as a single read and
+        returned under a ``=== <path> ===`` header.  The call is capped at
+        ``_MAX_READ_FILES`` distinct paths so a runaway model cannot pull the
+        whole workspace into context in one shot.
+        """
+        cleaned: list[str] = []
+        for raw in raw_paths:
+            value = str(raw).strip().strip('"').strip("'")
+            if value and value not in cleaned:
+                cleaned.append(value)
+        if not cleaned:
+            return "Read error: 'paths' must be a non-empty list of file paths."
+        extra = ""
+        if len(cleaned) > _MAX_READ_FILES:
+            extra = (
+                f"\n\n[read capped at {_MAX_READ_FILES} files per call; "
+                f"{len(cleaned) - _MAX_READ_FILES} skipped]"
+            )
+            cleaned = cleaned[:_MAX_READ_FILES]
+        blocks: list[str] = []
+        for raw in cleaned:
+            path = self._resolve_nlp_path(raw)
+            text = await self._read_page(path, args, original=raw)
+            blocks.append(f"=== {raw} ===\n{text}")
+        return "\n\n".join(blocks) + extra
+
+    async def _read_page(self, path: str, args: dict[str, Any], original: Any) -> str:
+        """Read *limit* lines of *path* starting at 1-based *offset* (shared
+        by single- and multi-file reads)."""
         if os.path.isdir(path):
             return (
-                f"Not a file (directory): {args.get('path')} — read takes a "
+                f"Not a file (directory): {original} — read takes a "
                 "FILE path; use list_files or search for directories."
             )
         try:
@@ -2980,6 +3024,11 @@ _MAX_RUN_TIMEOUT_S = 600
 
 #: Hard ceiling for the NLP ``read`` tool's per-call line limit.
 _MAX_READ_LINES = 500
+
+#: Cap on distinct files a single ``read`` call may fetch via the ``paths``
+#: array (multi-file read) — a runaway model must not pull the whole workspace
+#: into context in one shot.
+_MAX_READ_FILES = 10
 
 #: File-size threshold (KB) above which .py files get an AST-based definition
 #: summary instead of full content.  Set via USE_CONTEXT_AST_STRATEGY env var

@@ -23,6 +23,7 @@ from agent_core.decisions import (
     add_decision,
     annotate_candidates,
     check_contradictions,
+    check_contradictions_fast,
     count_by_category,
     count_by_status,
     extract_from_analysis,
@@ -259,9 +260,13 @@ class DecideCommand(Command):
             ids = ", ".join(f"#{d['id']}" for d in overlaps)
             print(f"Tag/file overlap detected with: {ids}")
 
-        # Always LLM-powered deep check
-        print("\nChecking for contradictions (LLM)...")
-        result = await check_contradictions(agent, decisions, text)
+        # Fast contradiction check with pre-filtering
+        print("\nChecking for contradictions...")
+        new_decision_data = {
+            "tags": [],
+            "affected_files": _extract_file_refs(text)
+        }
+        result = await check_contradictions_fast(agent, new_decision_data, text, ws)
         print(result)
         return True
 

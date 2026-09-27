@@ -91,6 +91,41 @@ def test_nlp_read_rejects_non_integer_offset(agent: Agent, tmp_path: Path) -> No
     assert "must be integers" in result
 
 
+def test_read_schema_advertises_multi_file() -> None:
+    from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
+
+    read = next(s for s in NLP_TOOL_SCHEMAS if s["function"]["name"] == "read")
+    props = read["function"]["parameters"]["properties"]
+    assert props["paths"]["type"] == "array"
+    assert props["path"]["type"] == "string"
+
+
+def test_read_multiple_files_in_one_call(agent: Agent, tmp_path: Path) -> None:
+    """Regression: `read` must accept `paths` so a model can read two files
+    in one call instead of refusing ("I can only read one file at a time")."""
+    a = tmp_path / "a.txt"
+    b = tmp_path / "b.txt"
+    a.write_text("alpha", encoding="utf-8")
+    b.write_text("beta", encoding="utf-8")
+    out = asyncio.run(agent._execute_tool_call(
+        "read", {"paths": [str(a), str(b)], "offset": 1, "limit": 10}
+    ))
+    assert f"=== {a} ===" in out
+    assert f"=== {b} ===" in out
+    assert "alpha" in out and "beta" in out
+
+
+def test_read_missing_path_and_paths_errors(agent: Agent) -> None:
+    out = asyncio.run(agent._execute_tool_call("read", {}))
+    assert out.startswith("Read error")
+
+
+def test_read_empty_paths_list_errors(agent: Agent) -> None:
+    out = asyncio.run(agent._execute_tool_call("read", {"paths": []}))
+    # Empty list falls through to the single-file path check.
+    assert out.startswith("Read error")
+
+
 # ---------------------------------------------------------------------------
 # _nlp_list_files
 # ---------------------------------------------------------------------------

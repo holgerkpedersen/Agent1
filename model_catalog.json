@@ -15,13 +15,15 @@
     "opencode_api_base": "https://opencode.ai/zen/go/v1",
     "opencode_zen_api_base": "https://opencode.ai/zen/v1",
     "llama_base_url": "http://127.0.0.1:8080/v1",
-    "openrouter_api_base": "https://openrouter.ai/api/v1"
+    "openrouter_api_base": "https://openrouter.ai/api/v1",
+    "lemonade_base_url": "http://localhost:13305/api/v1"
   },
   "_routing": {
     "opencode": "opencode",
     "zen": "opencode",
     "openrouter": "openrouter",
-    "llama": "llama",
+    "lemonade": "lemonade",
+    "llama/": "llama",
     "laguna": "lmstudio",
     "qwen": "lmstudio",
     "kwaipilot": "lmstudio",

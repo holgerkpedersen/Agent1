@@ -153,6 +153,46 @@ def _isolate_from_real_tree_and_beacons(
     )
 
 
+#: The DEVELOPER's persisted model state — never the test run's.  A test that
+#: exercises a model-switch path and forgets to stub ``persist_model_choice``
+#: rewrites these files.  History (2026-09-27):
+#: ``test_model_cmd_failover_llama`` ran the production switch path with the
+#: fixture model ``llama/Bonsai-27B-Q1_0``; the write landed in the live
+#: ``model.json``/``.env``, so the next ``python agent.py`` tried to launch
+#: llama-server for a model that does not exist.  Snapshot + restore per test
+#: only ever undoes such an accidental leak — tests that sandbox themselves
+#: (``chdir(tmp_path)`` or ``monkeypatch.setattr(MODEL_JSON_PATH, ...)``) never
+#: touch the real files in the first place.
+_REPO_MODEL_STATE_FILES = (
+    Path(__file__).resolve().parent / "model.json",
+    Path(__file__).resolve().parent / ".env",
+)
+
+
+def _read_bytes_or_none(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _restore_repo_model_state() -> None:
+    """Restore the live model.json/.env if a test changed them."""
+    before = {path: _read_bytes_or_none(path) for path in _REPO_MODEL_STATE_FILES}
+    yield
+    for path, original in before.items():
+        if _read_bytes_or_none(path) == original:
+            continue
+        try:
+            if original is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(original)
+        except OSError:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Full-suite time budget.
 #

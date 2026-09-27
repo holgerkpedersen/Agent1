@@ -55,6 +55,8 @@ from typing import Any, Awaitable, Callable, Sequence
 
 from .orchestrator import ConsensusVoter
 from .refinement_voter import RefinementVoter
+from .context_budget import trim_messages_to_context
+from .engines import device_for_provider
 from .provider import ResponseMetrics, build_provider, get_last_metrics, provider_for
 
 #: Text prefix every provider returns on failure (never raises).
@@ -66,11 +68,14 @@ class ParallelResult:
     """Outcome of one model's parallel chat call."""
 
     model: str
-    provider: str  # "lmstudio" | "opencode"
+    provider: str  # "lmstudio" | "opencode" | "lemonade" | ...
     text: str
     ok: bool  # False when the call failed (error string or exception)
     metrics: ResponseMetrics | None = None
     exception: str = ""
+    #: Accelerator the model ran on ("npu" | "igpu" | "cpu" | "cloud") —
+    #: lets callers group results/telemetry by device, not provider type.
+    device: str = ""
 
     @property
     def error(self) -> str:
@@ -175,6 +180,9 @@ def _make_tool_llm_chat_fn(provider: Any, max_tokens: int | None,
     async def llm_chat_fn(
         messages: list[dict[str, Any]], tools: list[dict[str, Any]],
     ) -> tuple[str, list[dict[str, Any]]]:
+        # Re-trim EVERY iteration: tool results accumulate across the loop, so
+        # the initial trim is not enough for a small NPU context window.
+        messages = trim_messages_to_context(messages, provider=provider)
         raw = await provider.chat(
             messages, tools=tools, max_tokens=max_tokens,
             disable_thinking=disable_thinking,
@@ -216,6 +224,8 @@ async def run_parallel(
     tools: Sequence[dict[str, Any]] | None = None,
     execute_tool_fn: Callable[[str, dict[str, Any]], Awaitable[str]] | None = None,
     max_tool_iterations: int = 40,
+    provider_overrides: dict[str, str] | None = None,
+    warm: bool = False,
 ) -> ParallelRun:
     """Fire ``chat(messages)`` on every *model* simultaneously.
 
@@ -252,6 +262,11 @@ async def run_parallel(
         max_tool_iterations: Per-model tool-loop iteration cap (default 40 —
             enough for a focused review; each model runs its OWN loop so the
             cap is per model, not shared).
+        provider_overrides: Optional ``{model: provider}`` map pinning a model
+            to a provider (used by ``--engines`` so an iGPU model name cannot
+            be hijacked by a persisted provider of another type).
+        warm: When True, ask each provider's ``ensure_model_loaded`` hook to
+            preload its model before dispatch (residency manager); best-effort.
 
     Returns:
         A :class:`ParallelRun` with one :class:`ParallelResult` per model,
@@ -266,10 +281,19 @@ async def run_parallel(
         raise ValueError("run_parallel needs at least two models")
     if tools and execute_tool_fn is None:
         raise ValueError("tools requires execute_tool_fn")
+    overrides = {str(k): str(v) for k, v in (provider_overrides or {}).items()}
     providers = []
     for m in models:
         try:
-            providers.append(build_provider(settings, str(m)))
+            override = overrides.get(str(m))
+            # Only pass the kwarg when an override exists so existing
+            # ``build_provider(settings, model)`` test doubles keep working.
+            if override:
+                providers.append(
+                    build_provider(settings, str(m), provider_override=override)
+                )
+            else:
+                providers.append(build_provider(settings, str(m)))
         except Exception as exc:  # pragma: no cover - defensive
             raise ValueError(f"cannot build provider for {m!r}: {exc}") from exc
 
@@ -280,6 +304,9 @@ async def run_parallel(
         role = roles.get(model_name)
         if role:
             model_messages.insert(0, {"role": "system", "content": role})
+        # Per-engine context budget: a small NPU window must not be overrun by
+        # a prompt that fits the iGPU/cloud model.  No-op when unknown.
+        model_messages = trim_messages_to_context(model_messages, provider=provider)
         try:
             if tools and execute_tool_fn is not None:
                 from .tool_loop import ToolLoopRunner
@@ -305,6 +332,20 @@ async def run_parallel(
         except BaseException as exc:  # return_exceptions safety net
             return exc
 
+    if warm:
+        async def _warm(provider: Any) -> None:
+            ensure = getattr(provider, "ensure_model_loaded", None)
+            if not callable(ensure):
+                return
+            try:
+                ok, note = await asyncio.to_thread(ensure)
+                if not ok:
+                    print(f"  [parallel] warm-up skipped: {note}")
+            except Exception:  # noqa: BLE001 - warming is best-effort
+                pass
+
+        await asyncio.gather(*(_warm(p) for p in providers), return_exceptions=True)
+
     if concurrency is not None and concurrency >= 1:
         sem = asyncio.Semaphore(int(concurrency))
 
@@ -322,14 +363,18 @@ async def run_parallel(
     for model, provider, outcome in zip(models, providers, gathered):
         text, exception = _error_or_exception(outcome)
         ok = not exception and not text.startswith(_ERROR_PREFIXES)
+        provider_name = overrides.get(str(model)) or provider_for(
+            str(model), "lmstudio"
+        )
         run.results.append(
             ParallelResult(
                 model=str(model),
-                provider=provider_for(str(model), "lmstudio"),
+                provider=provider_name,
                 text=text,
                 ok=ok,
                 metrics=get_last_metrics(provider),
                 exception=exception,
+                device=device_for_provider(provider_name),
             )
         )
     return run
@@ -343,7 +388,8 @@ def summarize(run: ParallelRun) -> str:
         metrics = ""
         if r.metrics is not None and r.metrics.total_tokens:
             metrics = f"  ({r.metrics.total_tokens} tok, {r.metrics.latency_ms:.0f} ms)"
-        lines.append(f"  [{status}] {r.model} ({r.provider}){metrics}")
+        device = f"{r.device}/" if r.device else ""
+        lines.append(f"  [{status}] {r.model} ({device}{r.provider}){metrics}")
         if not r.ok:
             lines.append(f"      {r.error[:200]}")
     lines.append(f"  {run.consensus()}")

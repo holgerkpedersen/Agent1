@@ -39,6 +39,7 @@ def _valid_catalog() -> dict:
             "opencode_zen_api_base": "https://example.invalid/zen/v1",
             "llama_base_url": "http://127.0.0.1:8080/v1",
             "openrouter_api_base": "https://example.invalid/api/v1",
+            "lemonade_base_url": "http://localhost:13305/api/v1",
         },
         "_routing": {"model-a": "lmstudio", "opencode": "opencode"},
         "_zen_free_tier_prefixes": ["opencode-zen/", "zen/"],
@@ -130,6 +131,7 @@ class TestCatalogLoader:
             "opencode_zen_api_base",
             "llama_base_url",
             "openrouter_api_base",
+            "lemonade_base_url",
         ],
     )
     def test_missing_endpoint_url_raises(self, tmp_path, monkeypatch, key):
@@ -197,6 +199,7 @@ class TestDefaultsFromCatalog:
         assert constants.DEFAULT_MODEL == constants._DEFAULTS["model"]
         assert constants.DEFAULT_OPENCODE_MODEL == constants._DEFAULTS["opencode_model"]
         assert constants.DEFAULT_OPENROUTER_MODEL == constants._DEFAULTS["openrouter_model"]
+        assert constants.DEFAULT_LEMONADE_API_BASE == constants._DEFAULTS["lemonade_base_url"]
 
     def test_env_overrides_still_win(self, monkeypatch):
         monkeypatch.setenv("AGENT_MODEL", "env-model-a")
