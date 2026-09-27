@@ -36,7 +36,7 @@ def _failed_trace(path: Path, task_id: str = "t1", exc: str = "ValueError", msg:
         {"task_id": task_id, "ts": 2.0, "kind": "tool_call", "layer": "tool_interface",
          "iteration": 0, "tool": "run", "args_hash": "{}"},
         {"task_id": task_id, "ts": 3.0, "kind": "tool_error", "layer": "tool_interface",
-         "iteration": 0, "tool": "run", "exception": exc, "message": msg or f"boom in foo.py"},
+         "iteration": 0, "tool": "run", "exception": exc, "message": msg or "boom in foo.py"},
         {"task_id": task_id, "ts": 9.0, "kind": "loop_end", "layer": "lifecycle",
          "iteration": 0, "outcome": "error", "termination_reason": "tool_error"},
     ]

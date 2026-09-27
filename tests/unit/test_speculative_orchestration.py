@@ -51,7 +51,7 @@ def test_dispatch_speculative_empty():
     with Orchestrator(agents=[], max_workers=4) as orch:
         def reasoning_func(branch_id, context):
             return {"branch": branch_id}
-        
+
         task_ids = orch.dispatch_speculative(reasoning_func, {}, num_branches=0)
         assert len(task_ids) == 0
         assert orch.wait_for_completion(timeout=5) is True

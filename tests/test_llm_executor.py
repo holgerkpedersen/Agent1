@@ -37,10 +37,10 @@ def test_llm_executor_empty_description_raises_error() -> None:
 def test_llm_executor_no_tool_calls_returns_empty_list() -> None:
     """LLMExecutor returns empty list when no tool calls in response."""
     executor = LLMExecutor(api_key="fake-key", model="qwen3-coder-30b-a3b-instruct")
-    
+
     mock_chat_completion = AsyncMock()
     mock_chat_completion.choices = []
-    
+
     with patch.object(executor.client.chat.completions, "create", return_value=mock_chat_completion):
         # Should raise error not return empty list
         with pytest.raises(LLMExecutorError):
@@ -50,10 +50,10 @@ def test_llm_executor_no_tool_calls_returns_empty_list() -> None:
 def test_llm_executor_tool_execution_failure_returns_error_string() -> None:
     """LLMExecutor returns error string when tool call fails."""
     executor = LLMExecutor(api_key="fake-key", model="qwen3-coder-30b-a3b-instruct")
-    
+
     mock_chat_completion = AsyncMock()
     mock_chat_completion.choices = [AsyncMock(message=AsyncMock(model_dump=lambda: {"tool_calls": [{"name": "read_file", "function": {"arguments": '{"filename": "test.txt"}'}}]}))]
-    
+
     with patch.object(executor.client.chat.completions, "create", return_value=mock_chat_completion):
         # Mock the tool call to return an error string
         with patch("fixcommand.core.executor.llm_executor.execute_tool_call", return_value="Error: tool failed"):
@@ -65,7 +65,7 @@ def test_llm_executor_tool_execution_failure_returns_error_string() -> None:
 def test_llm_executor_api_failure_raises_error() -> None:
     """LLMExecutor raises LLMExecutorError if API call fails."""
     executor = LLMExecutor(api_key="fake-key", model="qwen3-coder-30b-a3b-instruct")
-    
+
     with patch.object(executor.client.chat.completions, "create", side_effect=Exception("API failed")):
         # Should raise specific error not generic exception
         with pytest.raises(LLMExecutorError):

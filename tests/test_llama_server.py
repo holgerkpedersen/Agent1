@@ -309,7 +309,8 @@ class TestExternalServerGuard:
 class TestResolveLocalGguf:
     def test_maps_routing_label_to_local_file(self, monkeypatch):
         # Point the llama models dir (NOT the LM Studio dir) at a temp tree.
-        import os, tempfile
+        import os
+        import tempfile
         from agent_core.llm import llama_provider
         d = tempfile.mkdtemp()
         rel = os.path.join(d, "lmstudio-community", "Bonsai-27B-GGUF")
@@ -330,7 +331,8 @@ class TestResolveLocalGguf:
 
     def test_never_reads_lmstudio_dir(self, monkeypatch):
         """A GGUF in the LM Studio models dir must NOT resolve for llama."""
-        import os, tempfile
+        import os
+        import tempfile
         from agent_core.llm import llama_provider
         d = tempfile.mkdtemp()
         rel = os.path.join(d, "lmstudio-community", "Bonsai-27B-GGUF")

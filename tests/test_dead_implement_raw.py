@@ -23,17 +23,17 @@ def test_no_references_to_dead_symbols():
         "benchmarks",
         "tests"
     ]
-    
+
     found_references = []
 
     for target in target_dirs:
         path = Path(target)
         if not path.exists():
             continue
-            
+
         # If it's a file, check it directly; if directory, walk it
         files_to_check = [path] if path.is_file() else path.rglob("*.py")
-        
+
         for file_path in files_to_check:
             if file_path.resolve() == test_file_path:
                 continue
@@ -43,7 +43,7 @@ def test_no_references_to_dead_symbols():
                 for token in search_tokens:
                     if token in content:
                         found_references.append(f"{file_path}:{token}")
-            except Exception as e:
+            except Exception:
                 # Skip files that can't be read (e.g. permission issues)
                 continue
 
