@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agent implementation with workspace management and tool execution."""
+"""Agent implementation with workspace management and tool execution.."""
 
 from collections.abc import Iterator
 
