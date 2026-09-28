@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""commit-msg hook: reject vacuous subjects, advise on format.
+
+Installed via ``git config core.hooksPath .githooks`` (see AGENTS.md).  The
+message file path arrives as argv[1]; a missing argument or a missing policy
+module must never block a commit, so every failure path prints a warning and
+exits 0.
+"""
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+HOOK_PATH = Path(__file__).resolve()
+RELATIVE_POLICY = ("agent_core", "commit_policy.py")
+
+
+def _find_repo_root() -> Path | None:
+    """Walk up from the hook until agent_core/commit_policy.py is found.
+
+    The hook lives in two possible places: ``.githooks/`` (via
+    ``core.hooksPath``) or a plain ``.git/hooks/`` install.  A fixed
+    ``parent.parent`` is wrong for the second case -- it resolves to ``.git/``
+    -- so search instead.  ``GIT_DIR``/``GIT_WORK_TREE`` are consulted first
+    because a hook in a bare-ish layout can sit far from the worktree.
+    """
+    import os
+
+    candidates: list[Path] = []
+    for var in ("GIT_WORK_TREE", "GIT_DIR"):
+        value = os.environ.get(var)
+        if value:
+            path = Path(value)
+            candidates.append(path if var == "GIT_WORK_TREE" else path.parent)
+    start = HOOK_PATH.parent
+    candidates.append(start)
+    for parent in start.parents:
+        candidates.append(parent)
+    for base in candidates:
+        policy = base.joinpath(*RELATIVE_POLICY)
+        if policy.is_file():
+            return base
+    return None
+
+
+def _load_policy():
+    """Import commit_policy by path -- never via the agent_core package.
+
+    Importing the package would pull entities, file_system and the rest of the
+    agent stack into a git hook, for a six-line style check.
+    """
+    root = _find_repo_root()
+    if root is None:
+        return None
+    spec = importlib.util.spec_from_file_location(
+        "agent_core_commit_policy", root.joinpath(*RELATIVE_POLICY)
+    )
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    # Register BEFORE exec_module: @dataclass resolves the defining module
+    # through sys.modules[cls.__module__].__dict__, and KeyError/AttributeError
+    # there otherwise.  This is the order importlib's own docs prescribe.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
+    return module
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2:
+        print("commit-msg: no message file given; skipping policy check")
+        return 0
+    message_file = Path(argv[1])
+    try:
+        message = message_file.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print(f"commit-msg: cannot read {message_file} ({exc}); skipping")
+        return 0
+
+    try:
+        policy = _load_policy()
+    except Exception as exc:  # noqa: BLE001 - a hook must never break a commit
+        print(f"commit-msg: commit_policy unavailable ({exc}); skipping")
+        return 0
+    if policy is None:
+        print("commit-msg: commit_policy not found; skipping")
+        return 0
+
+    report = policy.check_message(message)
+    rendered = report.render()
+    if rendered:
+        print(rendered)
+    return 0 if report.ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

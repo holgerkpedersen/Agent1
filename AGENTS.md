@@ -250,11 +250,22 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   with `git config core.hooksPath .githooks` (or copy
   `.githooks/pre-commit` to `.git/hooks/`). Run `ruff check --fix` yourself
   before committing if you want the advisory issues cleaned too.
+- A `commit-msg` hook (tracked at `.githooks/commit-msg`, active via the same
+  `core.hooksPath`) enforces the commit-subject convention below. It loads
+  `agent_core/commit_policy.py` **by path** (never via the `agent_core`
+  package, which would drag the whole agent stack into a git hook) and is
+  stdlib-only. Vacuous subjects (`"commit changes"`, `wip`, a bare filename)
+  are **errors** and block the commit; format deviations (no type prefix,
+  unknown type, trailing period, >72 chars) are **warnings** and never block
+  you. Covered by `tests/test_commit_policy.py`.
 - Implement auto-runs `py_compile` on every written file.
 
 ## Conventions
 
 - Commit style: short `fix:` / `feat:` / `docs:` subjects (see `git log`).
+  **Enforced** by `.githooks/commit-msg` via `agent_core/commit_policy.py`:
+  write WHAT changed and WHY. `"commit changes"` is rejected — don't pass a
+  lazy subject straight to `git commit -m`.
 - **Every bug fix ships with a regression test** (e.g. `TestDependencyCascadeSafety`,
   `TestPersistentMemory`, `TestAnalysisVerifier`).
 - Decisions are recorded via the `decide` step; candidates carrying unverified claims

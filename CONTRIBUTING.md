@@ -102,6 +102,16 @@ Files: list of key files changed. Verified: test suite green.
 
 Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`.
 
+The subject must say **what changed and why**. Subjects that carry no
+information (`commit changes`, `wip`, `misc`, a bare filename like `agent.py`)
+are rejected by the `commit-msg` hook (`.githooks/commit-msg`, enforced by
+`agent_core/commit_policy.py`) — pass a real subject to `git commit -m`, never
+a lazy placeholder. Install the hook once with
+`git config core.hooksPath .githooks`.
+
+Format deviations — missing/unknown type prefix, trailing period, subject over
+72 characters — are printed as advisory warnings and never block a commit.
+
 ---
 
 ## Reporting Issues
