@@ -2470,8 +2470,20 @@ class Agent:
                 # chaining would only re-burn the same broken LLM call.
                 if llm_error:
                     break
+                # A bare answer to an action request with ZERO tool calls is a
+                # claim about repo state the model never observed (2026-09-28:
+                # "commit changes" -> "everything is already committed and
+                # pushed", with no git call ever made).  Re-enter the loop with
+                # a note pointing at the git tool instead of accepting it.
+                unverified = (
+                    reason in ("answer", "no_progress")
+                    and _unverified_action_claim(
+                        user_input, getattr(loop, "tool_calls_made", 0) or 0
+                    )
+                )
                 needs_more = (
                     reason == "cap"
+                    or unverified
                     or (
                         reason in ("answer", "no_progress")
                         and _looks_incomplete(final_text)
@@ -2494,12 +2506,18 @@ class Agent:
                         break
                     last_answer = final_text
                     continuations += 1
+                    # An unverified claim gets a targeted note (go look at the
+                    # repo) instead of the generic "continue the task" note,
+                    # which would just invite the same unverified answer again.
+                    note = _VERIFY_NOTE if unverified else _CONTINUE_NOTE
                     if display_mode != AgentDisplayMode.QUIET:
                         why = {
                             "cap": "iteration budget exhausted",
                             "answer": "answer signals unfinished work",
                             "no_progress": "the final answer signals unfinished work",
                         }.get(reason, reason)
+                        if unverified:
+                            why = "answer claimed repo state without calling git"
                         print(
                             magenta(f"\n  [auto-continue] Run {continuations}: ")
                             + yellow(f"{why} — continuing automatically.\n")
@@ -2509,7 +2527,7 @@ class Agent:
                         # system messages mid-conversation.  The tag marks this
                         # as loop-injected so the strip below cannot confuse it
                         # with a real user prompt.
-                        {"role": "user", "content": _CONTINUE_NOTE,
+                        {"role": "user", "content": note,
                          _CONTINUE_NOTE_TAG_KEY: _CONTINUE_NOTE_TAG},
                     ]
                     continue
@@ -3293,6 +3311,58 @@ def _looks_incomplete(text: str) -> bool:
     return any(marker in low for marker in _INCOMPLETE_MARKERS)
 
 
+#: Imperative work-order verbs that mean "do this to the repository", as
+#: opposed to asking *about* git.  Word-bounded so "committed"/"pushing" in a
+#: question do not match.
+_ACTION_VERB_RE = re.compile(r"\b(commit|push|stage)\b", re.I)
+
+#: Leading tokens that mark a sentence as a question rather than an order.
+#: "what does commit mean" is a question, "commit the changes" is an order.
+_QUESTION_LEAD_RE = re.compile(
+    r"^\s*(what|why|how|when|where|who|which|is|are|was|were|does|did|do|"
+    r"can|could|should|would|will|has|have|am|explain|tell|show)\b",
+    re.I,
+)
+
+
+def _unverified_action_claim(user_input: str, tool_calls_made: int) -> bool:
+    """Did the model assert a repository action it never actually performed?
+
+    A turn that used no tool at all cannot know the state of the repository, so
+    any answer claiming that work was committed, staged or pushed is a guess.
+    The 2026-09-28 failure is the canonical case: the user typed ``git status``
+    (a registry command whose output goes to stdout and never into the chat
+    history) and then "commit changes", and the model answered "Everything is
+    already committed and pushed" without a single tool call.
+
+    Returns ``True`` only for an *imperative* request — a question such as
+    "is my work already committed?" is asking for an explanation and is left
+    alone, because the loop cannot verify the answer to an open question.
+    """
+    text = (user_input or "").strip()
+    if not text or tool_calls_made > 0:
+        return False
+    if not _ACTION_VERB_RE.search(text):
+        return False
+    # A question is not a work order: do not force tools on "why did my commit
+    # fail?" — that needs an explanation, and an answer is the right output.
+    if "?" in text or _QUESTION_LEAD_RE.match(text):
+        return False
+    return True
+
+
+#: Steering note injected when an action request was answered with no tool
+#: calls.  Tagged like the continuation note so it is stripped from the
+#: persisted history when the turn ends.
+_VERIFY_NOTE = (
+    "You answered without calling a single tool, so you have not verified "
+    "anything about this repository — you cannot know whether changes are "
+    "staged, committed or pushed. Do not assert that state. Call the git tool "
+    "now (subcommand='status' first), then do the work and report what it "
+    "actually returned."
+)
+
+
 def _resolve_display_mode() -> AgentDisplayMode:
     """Resolve the agent's display mode from settings/env.
 
@@ -3632,6 +3702,12 @@ _SYSTEM_PROMPT = (
     "leave staged work behind. Never invent flags.\n"
     "- Verify numbers (e.g. how many tests exist) with the tests tool or git "
     "log before claiming them.\n"
+    "- NEVER claim a repository state you have not observed with a tool this "
+    "turn. Output the user saw in the terminal is NOT in your context — `git "
+    "status` typed as a chat command is executed by the REPL and printed to "
+    "stdout, so you never see it. If you called no tool, you do not know what "
+    "is staged, committed or pushed. Call the git tool before stating it; an "
+    "unverified \"already committed and pushed\" is a fabrication.\n"
     "- If a search finds nothing in source files, state that the symbol does "
     "not exist in the current code — never repeat the same search.\n"
     "- A failing test is a real signal: fix the implementation — never weaken "
