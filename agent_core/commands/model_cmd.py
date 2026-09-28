@@ -1465,6 +1465,9 @@ class ModelCommand(Command):
                 print(f"  No profile: {name}")
                 return
             agent.llm._profile_name = name
+            # User pin (plan B2): suppresses the meta-policy profile
+            # suggestion for the rest of the session.
+            agent.llm._profile_pinned = True
             agent.llm._provider.apply_profile(
                 name, profile.temperature, profile.max_tokens,
             )

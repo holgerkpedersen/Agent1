@@ -8,8 +8,11 @@ Two related contracts are pinned here:
    byte/schema-compatible with that server, and must NEVER raise (decision
    #014: it is harness-layer observability only, never a behavioural lever).
 
-2. ``chat_nlp`` records exactly one experience per ``run()`` invocation, with
-   the outcome/success derived from the loop verdict and provider errors.
+2. ``chat_nlp`` records exactly one ``llm_decision`` experience per
+   ``run()`` invocation, with the outcome/success derived from the loop
+   verdict and provider errors, plus exactly one ``chat_turn`` row from the
+   plan-A3 ``_finish_turn`` hook — run verdict and turn outcome are distinct
+   observability records, one of each per turn, never duplicates.
 
 Both used to write into the LIVE repo files (``agent_memory.json`` /
 ``agent_memory.db``) during test runs, because ``chat_nlp`` tests sandboxed
@@ -214,12 +217,13 @@ class TestChatNlpRecordsExperience:
 
     def test_completed_answer_records_success_row(self, tmp_path: Path) -> None:
         # "All done" is a strong completion marker -> no auto-continue, so
-        # exactly one run (and one row) happens deterministically.
+        # exactly one run happens: one llm_decision row (plan B2/A3 hook)
+        # plus one chat_turn row (plan A3 hook), nothing else.
         bot, db = self._run_turn(tmp_path, "All done.")
         print(f"# model={bot.model_name} db={db.name}")
 
         rows = _rows(db)
-        assert len(rows) == 1
+        assert len(rows) == 2, f"expected llm_decision + chat_turn, got {rows!r}"
         _ts, action, outcome, ctx, success = rows[0]
         assert action == "llm_decision"
         assert outcome == 1.0
@@ -229,18 +233,31 @@ class TestChatNlpRecordsExperience:
         assert payload["continuations"] == 0
         assert payload["model"] == bot.model_name
         assert payload["final_text_len"] == len("All done.")
+        # The A3 turn row: clean turn, no mutated files -> quality proxy 0.7.
+        _ts2, action2, outcome2, ctx2, success2 = rows[1]
+        assert action2 == "chat_turn"
+        assert outcome2 == pytest.approx(0.7)
+        assert success2 == 1
+        turn_payload = json.loads(ctx2)
+        assert turn_payload == {"plan_mode": False, "files": []}
 
     def test_provider_error_records_failure_row(self, tmp_path: Path) -> None:
         """An "[Error..." reply is a provider failure, not an answer."""
         _bot, db = self._run_turn(tmp_path, "[Error] provider exploded")
 
         rows = _rows(db)
-        assert len(rows) == 1
+        assert len(rows) == 2, f"expected llm_decision + chat_turn, got {rows!r}"
         _ts, action, outcome, ctx, success = rows[0]
         assert action == "llm_decision"
         assert outcome == 0.0
         assert success == 0
         assert json.loads(ctx)["verdict"] in ("answer", "cap", "stuck", "no_progress")
+        # A3 turn row: llm_error -> quality proxy 0.0, recorded as a failure.
+        _ts2, action2, outcome2, ctx2, success2 = rows[1]
+        assert action2 == "chat_turn"
+        assert outcome2 == pytest.approx(0.0)
+        assert success2 == 0
+        assert json.loads(ctx2) == {"plan_mode": False, "files": []}
 
     def test_context_records_the_model_that_answered(self, tmp_path: Path) -> None:
         """The row must be self-describing for cross-model comparison."""

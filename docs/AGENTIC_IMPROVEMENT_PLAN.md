@@ -18,6 +18,18 @@ per decision #079 — no emojis in files.)
    returns `np.zeros((n, 384))` (stub). Options: real embeddings via LM
    Studio `/v1/embeddings`, or a zero-dep RAG block reusing
    `harnessfix/history.py` matchers to inject recent per-file history.
+   PROGRESS 2026-09-28: the user-model half has a zero-dependency variant
+   now — `agent_core/habits.py` mines recurring user messages and
+   `reports/traces/*.jsonl` task inputs into a workspace-local
+   `.habits.json` ledger (`mine_habits`, `load_habits`/`save_habits`,
+   corrupt bytes quarantined to `.habits.json.bad-<ts>`), and
+   `habits_block()` injects at most 8 lines behind a `USER HABITS` marker
+   that `_strip_dynamic_system_blocks` rebuilds each turn
+   (`Agent._habits_block`, agent.py:2907). The REPL `habits` command
+   (`agent_core/commands/habits_cmd.py`, registered at agent.py:4112)
+   offers `list / pin / forget / mine / off / on`; `off` flips the
+   `habits_enabled` workspace pref and suppresses the prompt block. The
+   embedding/KG half of this item remains open.
 3. [S] **Make multillm consensus honest** — `ParallelRun.agree()` derives each
    vote from `_looks_negative()` (first-120-chars heuristic). Replace with a
    structured verdict schema requested in the role prompt, then let
@@ -27,6 +39,14 @@ per decision #079 — no emojis in files.)
    `MetricsTracker.record_turn`, `PromptCache` are implemented + tested but
    nothing outside tests instantiates them. Feed `evolution_metrics.score_run()`
    outcomes back so profile selection adapts from trace data.
+   PROGRESS 2026-09-28: `agent_core/llm/learning.py` now wires the loop in
+   production — module singletons `METRICS`/`EVOLVER`, `record_turn_outcome()`
+   called from `Agent._finish_turn` (task type inferred by
+   `agent_core/llm/task_type.py::infer_task_type`, weights evolved every 10
+   turns and persisted to `meta_policy.json`), `recommend_profile()` for the
+   one-line profile suggestion (applied only under the `profile_auto` pref,
+   default off), and `save_weights()` on the shutdown paths. Still open from
+   this item: feeding `evolution_metrics.score_run()` outcomes back.
 
 ## B. Tool-loop capability upgrades
 
@@ -131,6 +151,17 @@ Remaining quick wins: none — remaining items are [S]-scale.
 
 ## Progress log
 
+- 2026-09-28 — **#4 progress + #2 user-model variant**: shipped the
+  self-improvement wiring — `agent_core/llm/learning.py` (production
+  `MetricsTracker`/`MetaPolicyEvolver` loop, `meta_policy.json` persistence),
+  `agent_core/llm/task_type.py`, `agent_core/habits.py` (`.habits.json`
+  habit ledger + `USER HABITS` prompt block), and the `habits` command
+  (`agent_core/commands/habits_cmd.py`). Per-turn observability: turn-log
+  hook in `_finish_turn`, quality `append_event`, calibrated Jev thresholds
+  (`agent_core/commands/jev_cmd.py`), persisted perf history
+  (`agent_core/commands/perf_cmd.py`). Tests: `tests/test_habits.py` (15),
+  `tests/test_learning_wiring.py` (8), `tests/test_jev_telemetry.py` (18);
+  full suite 2924 passed, 7 skipped.
 - 2026-09-24 — **#17 DONE**: removed dead duplicate modules `agent_core/tool_executor.py` and `agent_core/secure_file_retriever.py`, plus orphaned prototype `agent_core/commands/_implement_raw.py`.
 - 2026-08-25 — **#10 started**: second catalog repair
   `stuck-repeat-tool-hints` (`harnessfix/repairs/stuck_repeat.py`,

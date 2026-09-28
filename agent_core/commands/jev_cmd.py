@@ -96,6 +96,7 @@ class JevCommand(Command):
         rubric = ""
         samples: int | None = None
         threshold = 0.7
+        threshold_given = False
         mechanism = "auto"
         model: str | None = None
         as_json = False
@@ -139,6 +140,7 @@ class JevCommand(Command):
                 if not 0.0 <= threshold <= 1.0:
                     self.error("threshold must be within [0.0, 1.0]")
                     return True
+                threshold_given = True
                 i += 2
                 continue
             if p == "--mechanism" and nxt is not None:
@@ -209,6 +211,24 @@ class JevCommand(Command):
         except ValueError as exc:
             self.error(str(exc))
             return True
+
+        if not threshold_given:
+            # B4: calibrated default — once >= 10 labeled decisions exist,
+            # the threshold that best separates correct/incorrect replaces
+            # the hardcoded 0.7; fallback stays 0.7 (never raises).  An
+            # explicit --threshold always wins.
+            try:
+                from harnessfix.jev_telemetry import load_suggested_threshold
+
+                suggestion = load_suggested_threshold(
+                    workspace=getattr(agent, "workspace", None),
+                    kind=kind,
+                    min_samples=10,
+                )
+                if suggestion:
+                    threshold = float(suggestion["threshold"])
+            except Exception:  # noqa: BLE001 - calibration must not break the command
+                pass
 
         try:
             engine = build_jev_engine(

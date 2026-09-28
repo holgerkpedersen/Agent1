@@ -31,6 +31,7 @@ from agent_core.constants import (  # noqa: F401
     AGENT_MEMORY_JSON_PATH,
     AGENT_MEMORY_TMP_PATH,
     LOOP_NOTE_TAG_KEY,
+    TURN_LOG_PATH,
 )
 from agent_core.config import load_agent_settings, AgentDisplayMode
 from agent_core.file_system import FileSystem
@@ -48,6 +49,11 @@ from agent_core.modes import (
 from agent_core.subagent_roles import get_role, role_names
 from agent_core.llm.provider import is_connection_failure
 from agent_core.llm.tool_loop import ToolLoopRunner
+from agent_core.llm.learning import (
+    record_turn_outcome,
+    recommend_profile,
+    save_weights as save_meta_policy_weights,
+)
 from agent_core.context_management import CorrelationIdContext
 from agent_core.hue.bridge import HueBridge, HueBridgeError
 try:
@@ -71,6 +77,7 @@ from agent_core.skills import (
     load_skill_index,
     read_skill,
 )
+from agent_core.habits import HABITS_MARKER, habits_block, load_habits
 from agent_core.symbol_intel import collect_definitions, collect_references
 from agent_core.commands.read_cmd import ReadCommand
 from agent_core.commands.write_cmd import WriteCommand
@@ -325,6 +332,11 @@ class LLMClient:
             settings = None
         self._provider = build_provider(settings, self._model_name)
         self._profile_name: str | None = None
+        #: True once the user pins a profile this session (`model profile
+        #: use`) or one is restored from model.json — suppresses the
+        #: meta-policy profile suggestion (plan B2; a restored profile
+        #: counts as pinned).
+        self._profile_pinned: bool = False
         # Restore active profile from model.json on startup
         try:
             from agent_core.constants import load_model_json
@@ -334,6 +346,7 @@ class LLMClient:
                 from agent_core.llm.model_profiles import get_profile
                 profile = get_profile(prof_name)
                 self._profile_name = prof_name
+                self._profile_pinned = True
                 self._provider.apply_profile(
                     prof_name, profile.temperature, profile.max_tokens,
                 )
@@ -1121,10 +1134,29 @@ class Agent:
         options = tuple(str(o).strip() for o in raw_options if str(o).strip())
         rubric = str(args.get("rubric") or "")
         state = str(args.get("state") or "")
-        try:
-            threshold = float(args.get("threshold", 0.7))
-        except (TypeError, ValueError):
+        raw_threshold = args.get("threshold")
+        if raw_threshold is None:
+            # B4: calibrated default — once >= 10 labeled decisions exist,
+            # the threshold that best separates correct/incorrect replaces
+            # the hardcoded 0.7 guess; fallback stays 0.7 (never raises).
             threshold = 0.7
+            try:
+                from harnessfix.jev_telemetry import load_suggested_threshold
+
+                suggestion = load_suggested_threshold(
+                    workspace=getattr(self, "workspace", None),
+                    kind=kind,
+                    min_samples=10,
+                )
+                if suggestion:
+                    threshold = float(suggestion["threshold"])
+            except Exception:  # noqa: BLE001 - calibration must not break the tool
+                threshold = 0.7
+        else:
+            try:
+                threshold = float(raw_threshold)
+            except (TypeError, ValueError):
+                threshold = 0.7
         threshold = min(1.0, max(0.0, threshold))
         try:
             question = JevQuestion(
@@ -2207,6 +2239,7 @@ class Agent:
             )
             + self._decision_constraints_block()
             + self._skill_index_block()
+            + self._habits_block()
             + (plan_mode_system_suffix() if self.is_plan_mode() else ""),
         }
 
@@ -2483,6 +2516,52 @@ class Agent:
         # (or a follow-up prompt) can continue the dialogue.
         self._chat_history = _trim_chat_history(self._chat_history)
         mutated_files = self._mutating_files_this_turn()
+        # Harness-layer observability ONLY (decision #014): bounded per-turn
+        # outcome log + first production chat_turn experience.  Every hook
+        # here is try/except-no-op — a broken state dir must never kill a
+        # finished turn (same contract as _record_llm_experience).
+        try:
+            started = getattr(self, "_turn_started_at", None)
+            duration = round((datetime.now() - started).total_seconds(), 3) \
+                if started else None
+            tail = str(getattr(self, "_last_user_input", "") or "")[-200:]
+            record = {
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "user_input_tail": tail,
+                "mutated_files": list(mutated_files or []),
+                "llm_error": bool(llm_error),
+                "duration": duration,
+            }
+            _append_turn_log(record)
+            self._record_llm_experience(
+                action="chat_turn",
+                outcome=0.0 if llm_error else (1.0 if mutated_files else 0.7),
+                context={
+                    "plan_mode": bool(self.is_plan_mode()),
+                    "files": list(mutated_files or []),
+                },
+            )
+            # Meta-policy loop (B2): success/failure under the inferred
+            # task type + active profile, with token/cost metrics from the
+            # provider's last call; evolves+saves weights every 10 turns.
+            # Never raises (same observability contract as above).
+            record_turn_outcome(
+                str(getattr(self, "_last_user_input", "") or ""),
+                profile_name=getattr(self.llm, "_profile_name", None),
+                success=not llm_error,
+                latency_seconds=duration,
+                provider=getattr(self.llm, "_provider", None),
+                mutated_files=list(mutated_files or []),
+            )
+            # Per-turn quality (B3): one `turn`/`quality` event so the
+            # harnessfix dashboard shows live quality.  Proxy path works
+            # with tracing disabled; whole block is try/except no-op.
+            _quality = _turn_quality_score(llm_error, mutated_files)
+            if _quality is not None:
+                from agent_core.monitoring.metrics_file import append_event
+                append_event("turn", "quality", float(_quality))
+        except Exception:  # noqa: BLE001 - observability must not break turns
+            logger.debug("Turn-outcome hooks failed (no-op)", exc_info=True)
         self._save_chat_history()
         self._save_memory()
 
@@ -2559,6 +2638,59 @@ class Agent:
         """
         self._refresh_system_message()
         self._read_streak = 0
+        # Turn-outcome observability (A3): the input + start time feed the
+        # bounded turn log and duration written by _finish_turn.
+        self._last_user_input = user_input
+        self._turn_started_at = datetime.now()
+        # Meta-policy suggestion (B2): at most ONE line when the task's
+        # mapped profile clearly outscores the running one, and only if the
+        # user pinned no profile this session (restored-from-model.json
+        # counts as pinned).  Auto-apply happens only behind the
+        # `profile_auto` workspace pref (default off — no silent sampling
+        # changes, decision #014).  Never raises: a broken pref file must
+        # not kill the turn.
+        try:
+            if not getattr(self.llm, "_profile_pinned", False):
+                _suggested = recommend_profile(
+                    user_input, getattr(self.llm, "_profile_name", None),
+                )
+                if _suggested:
+                    _auto = False
+                    try:
+                        import pathlib as _pathlib
+                        from agent_core.llm.workspace_prefs import get_pref
+                        _auto = get_pref(
+                            _pathlib.Path(self._effective_ws_dir()),
+                            "profile_auto",
+                        ) is True
+                    except Exception:  # noqa: BLE001 - pref file is optional
+                        _auto = False
+                    _quiet = _resolve_display_mode() == AgentDisplayMode.QUIET
+                    if _auto:
+                        try:
+                            from agent_core.llm.model_profiles import get_profile
+                            _prof = get_profile(_suggested)
+                            self.llm._provider.apply_profile(
+                                _suggested, _prof.temperature, _prof.max_tokens,
+                            )
+                            self.llm._profile_name = _suggested
+                        except Exception:  # noqa: BLE001 - never break the turn
+                            logger.debug(
+                                "profile_auto apply failed (no-op)",
+                                exc_info=True,
+                            )
+                        else:
+                            if not _quiet:
+                                print(gray(
+                                    f"  [profile] auto-applied {_suggested}"
+                                    " (profile_auto pref)"))
+                    elif not _quiet:
+                        print(gray(
+                            f"  [suggest] profile {_suggested} for this task"
+                            " — 'model profile use' or set pref"
+                            " profile_auto"))
+        except Exception:  # noqa: BLE001 - observability must not break turns
+            logger.debug("Profile suggestion failed (no-op)", exc_info=True)
         self._append_user_turn(user_input, images)
         # Pre-trim: bound the history BEFORE the first LLM call so a large
         # restored session (e.g. 60 messages from chat_history.json) does not
@@ -2770,6 +2902,23 @@ class Agent:
             return load_skill_index(self._effective_ws_dir())
         except Exception:
             logger.exception('Skill index unavailable:\n')
+            return ""
+
+    def _habits_block(self) -> str:
+        """Mined user-habits block for the chat system prompt.
+
+        Only the compact block (marker + at most 8 lines, see
+        :func:`agent_core.habits.habits_block`) is injected; it is rebuilt
+        every turn from the workspace ledger so a habit pinned or mined
+        mid-session is advertised on the next turn.  Empty string when the
+        workspace has no habits — the prompt then stays byte-identical to
+        before.  Never raises: a broken ``.habits.json`` must not kill a chat
+        turn (same rule as :meth:`_decision_constraints_block`).
+        """
+        try:
+            return habits_block(load_habits(self._effective_ws_dir()))
+        except Exception:
+            logger.exception('Habits block unavailable:\n')
             return ""
 
     # ------------------------------------------------------------------
@@ -3231,6 +3380,85 @@ def _git_branch() -> str:
     return "(unknown)"
 
 
+def _turn_quality_score(llm_error: str | None, mutated_files: list[str]) -> float | None:
+    """B3: per-turn quality score in [0,1] for the shared metrics log.
+
+    With harnessfix tracing enabled *and* a turn-scoped events API present
+    in ``harnessfix.tracing``, the trace events are scored with
+    ``score_run``.  No such API exists today, so the traced path is
+    skipped (never score the whole session as if it were this turn).
+    With tracing off the cheap proxy is used: ``llm_error`` -> 0.0,
+    mutated files -> 0.8, clean turn -> 0.7.  Never raises; returns
+    ``None`` only if the check itself fails (nothing is recorded then).
+    """
+    try:
+        from harnessfix.tracing import trace_enabled
+
+        if trace_enabled():
+            import harnessfix.tracing as _tr
+
+            events: list[dict[str, Any]] | None = None
+            for _name in ("current_turn_events", "take_turn_events",
+                          "drain_turn_events", "turn_events"):
+                _getter = getattr(_tr, _name, None)
+                if callable(_getter):
+                    events = _getter()
+                    if events:
+                        break
+            if not events:
+                for _attr in ("_writer", "current_writer", "get_writer"):
+                    _obj = getattr(_tr, _attr, None)
+                    if callable(_obj):
+                        _obj = _obj()
+                    if _obj is None:
+                        continue
+                    events = (getattr(_obj, "events", None)
+                              or getattr(_obj, "_events", None))
+                    if events:
+                        break
+            if events:
+                from harnessfix.evolution_metrics import score_run
+
+                return float(score_run(events))
+            # Traced but no turn-scoped events: fall through to the proxy
+            # rather than scoring the entire session.
+        if llm_error:
+            return 0.0
+        if mutated_files:
+            return 0.8
+        return 0.7
+    except Exception:  # noqa: BLE001 - observability must not break turns
+        return None
+
+
+def _append_turn_log(record: dict[str, Any]) -> None:
+    """Append one turn-outcome line to ``turn_log.jsonl`` (bounded, atomic-ish).
+
+    Harness-layer observability only (decision #014): the log feeds habit
+    mining and is rewritten to its newest 500 lines whenever it grows past
+    that bound, so it can never bloat the state dir.  Never raises — a broken
+    or missing state dir must not break a finished turn.
+    """
+    try:
+        path = TURN_LOG_PATH
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        lines: list[str] = []
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                lines = [ln for ln in fh.read().splitlines() if ln.strip()]
+        lines.append(json.dumps(record, ensure_ascii=False))
+        if len(lines) > 500:
+            lines = lines[-500:]
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001 - observability must not break turns
+        logger.debug("Could not append turn log (no-op)", exc_info=True)
+
+
 def _strip_dynamic_system_blocks(text: str) -> str:
     """Remove previously injected dynamic blocks from a system prompt.
 
@@ -3242,6 +3470,7 @@ def _strip_dynamic_system_blocks(text: str) -> str:
     markers = (
         "\n\nCRITICAL DESIGN CONSTRAINTS",
         SKILL_INDEX_MARKER,
+        HABITS_MARKER,
         "\n\nSESSION MODE: PLAN",
     )
     cut = len(text)
@@ -3880,6 +4109,8 @@ def _register_commands(registry: CommandRegistry) -> None:
     registry.register(WorkflowCommand())
     registry.register(OptimizeCommand())
     registry.register(PerfCommand())
+    from agent_core.commands.habits_cmd import HabitsCommand
+    registry.register(HabitsCommand())
     registry.register(PasteCommand())
     registry.register(PasteImageCommand())
     registry.register(DisplayCommand())
@@ -4034,6 +4265,7 @@ async def run_interactive() -> None:
             if user_input is None:
                 # Shutdown requested or stdin exhausted
                 agent._save_memory()
+                save_meta_policy_weights()
                 _warn_uncommitted(agent)
                 break
             if not user_input:
@@ -4042,6 +4274,7 @@ async def run_interactive() -> None:
             # Check for quit command
             if user_input.lower() in ["quit", "exit", "q"]:
                 agent._save_memory()
+                save_meta_policy_weights()
                 _warn_uncommitted(agent)
                 print(green("Goodbye!"))
                 break
@@ -4095,6 +4328,7 @@ async def run_interactive() -> None:
             if not sys.stdin.isatty():
                 print(yellow("\n[stdin] Input stream ended — shutting down."))
             agent._save_memory()
+            save_meta_policy_weights()
             _warn_uncommitted(agent)
             break
 

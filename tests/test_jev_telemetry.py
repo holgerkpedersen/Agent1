@@ -8,9 +8,11 @@ suggested threshold).
 """
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
+import agent as agent_mod
 from agent_core.jev_engine import JevEngine, JevQuestion, JevResult
 from harnessfix.jev_telemetry import (
     CORRECT,
@@ -18,6 +20,7 @@ from harnessfix.jev_telemetry import (
     calibration_bins,
     format_report,
     load_decisions,
+    load_suggested_threshold,
     log_path,
     question_hash,
     record_decision,
@@ -182,3 +185,110 @@ class TestEngineRecordsAutomatically:
         )
         result = asyncio.run(engine.decide(_question()))
         assert result.decision == "FALSE"
+
+
+def _label_count(workspace, count, monkeypatch):
+    """Record *count* labeled yesno decisions into *workspace*'s ledger."""
+    monkeypatch.delenv("AGENT_NO_JEV_LOG", raising=False)
+    pairs = [(0.9, CORRECT), (0.8, CORRECT), (0.2, INCORRECT), (0.6, INCORRECT)]
+    for i in range(count):
+        p_yes, outcome = pairs[i % len(pairs)]
+        decision_id = record_decision(
+            _result(p_yes=p_yes), _question(), workspace=str(workspace),
+        )
+        record_outcome(decision_id, outcome, workspace=str(workspace))
+
+
+class TestThresholdSuggestionGating:
+    """B4: a threshold suggestion needs >= 10 labeled samples (min_samples)."""
+
+    def test_nine_labeled_samples_yet_none(self, tmp_path, monkeypatch):
+        _label_count(tmp_path, 9, monkeypatch)
+        # The calculator itself already has data...
+        assert suggest_threshold(load_decisions(workspace=str(tmp_path))) is not None
+        # ...but the gated consumer stays silent below min_samples=10.
+        assert load_suggested_threshold(workspace=str(tmp_path)) is None
+
+    def test_tenth_labeled_sample_enables_suggestion(self, tmp_path, monkeypatch):
+        _label_count(tmp_path, 9, monkeypatch)
+        assert load_suggested_threshold(workspace=str(tmp_path)) is None
+        _label_count(tmp_path, 1, monkeypatch)
+        suggestion = load_suggested_threshold(workspace=str(tmp_path))
+        assert suggestion is not None
+        assert suggestion["n"] >= 10
+        assert 0.0 < float(suggestion["threshold"]) <= 1.0
+
+    def test_min_samples_argument_is_respected(self, tmp_path, monkeypatch):
+        _label_count(tmp_path, 10, monkeypatch)
+        assert load_suggested_threshold(workspace=str(tmp_path)) is not None
+        assert load_suggested_threshold(
+            workspace=str(tmp_path), min_samples=20
+        ) is None
+
+
+class TestJevDecideThresholdFallback:
+    """agent._nlp_jev_decide: calibrated threshold, else the 0.7 default."""
+
+    @staticmethod
+    def _make_agent(workspace, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            agent_mod, "CHAT_HISTORY_JSON_PATH", str(tmp_path / "chat_history.json")
+        )
+        monkeypatch.setattr(
+            agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
+        )
+        return agent_mod.Agent(workspace=str(workspace))
+
+    @staticmethod
+    def _patch_engine(monkeypatch, captured):
+        import agent_core.jev_engine as jev_engine
+
+        class _FakeResult:
+            @staticmethod
+            def summary():
+                return "TRUE"
+
+        class _FakeEngine:
+            async def decide(self, question, state=""):
+                captured["question"] = question
+                return _FakeResult()
+
+        def _fake_build(**kwargs):
+            captured.update(kwargs)
+            return _FakeEngine()
+
+        monkeypatch.setattr(jev_engine, "build_jev_engine", _fake_build)
+
+    def test_falls_back_to_point_seven_below_min_samples(
+        self, tmp_path, monkeypatch
+    ):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _label_count(ws, 9, monkeypatch)
+        bot = self._make_agent(ws, monkeypatch, tmp_path)
+        captured: dict = {}
+        self._patch_engine(monkeypatch, captured)
+
+        answer = asyncio.run(bot._nlp_jev_decide({"question": "is it true?"}))
+
+        assert answer == "TRUE"
+        assert captured["threshold"] == pytest.approx(0.7), (
+            "with < 10 labeled samples the tool must fall back to 0.7"
+        )
+
+    def test_applies_calibrated_threshold_at_ten_samples(
+        self, tmp_path, monkeypatch
+    ):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _label_count(ws, 10, monkeypatch)
+        bot = self._make_agent(ws, monkeypatch, tmp_path)
+        captured: dict = {}
+        self._patch_engine(monkeypatch, captured)
+
+        answer = asyncio.run(bot._nlp_jev_decide({"question": "is it true?"}))
+
+        assert answer == "TRUE"
+        expected = load_suggested_threshold(workspace=str(ws))
+        assert expected is not None, "sanity: 10 labels must yield a suggestion"
+        assert captured["threshold"] == pytest.approx(float(expected["threshold"]))

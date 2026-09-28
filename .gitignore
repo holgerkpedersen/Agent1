@@ -158,6 +158,9 @@ pytest_out.txt
 performance_dashboard.html
 model.json
 reports/benchmark_*.json
+turn_log.jsonl
+meta_policy.json
+perf_history.json
 
 # Tool caches
 .mypy_cache/

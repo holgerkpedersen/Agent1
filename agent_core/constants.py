@@ -169,6 +169,12 @@ AGENT_MEMORY_JSON_PATH = os.path.join(_MODEL_JSON_DIR, "agent_memory.json")
 CHAT_HISTORY_TMP_PATH = CHAT_HISTORY_JSON_PATH + ".tmp"
 AGENT_MEMORY_TMP_PATH = AGENT_MEMORY_JSON_PATH + ".tmp"
 
+#: Per-turn outcome log (JSONL, bounded to the newest 500 lines): one record
+#: per finished chat turn {ts, user_input_tail, mutated_files, llm_error,
+#: duration} — harness-layer observability only (decision #014) feeding habit
+#: mining and the self-improvement loop.
+TURN_LOG_PATH = os.path.join(_MODEL_JSON_DIR, "turn_log.jsonl")
+
 #: Message key marking loop-INJECTED user notes (the auto-continue note).
 #: Tagged messages are stripped from history when a turn ends and MUST be
 #: stripped again at the LLM payload boundary (sanitize_message_roles) so
@@ -351,6 +357,7 @@ __all__: list[str] = [
     "MODEL_JSON_PATH",
     "ROUTER",
     "THINKING_GATES",
+    "TURN_LOG_PATH",
     "load_model_json",
     "persist_jev_model",
     "persist_model_choice",

@@ -151,6 +151,55 @@ def _isolate_from_real_tree_and_beacons(
         "AGENT_MEMORY_JSON_PATH",
         str(runtime_dir / "agent_memory.json"),
     )
+    # Plan A3/B2 added two MORE live state files that resolve at CALL time
+    # and were not covered by the redirect above: ``_append_turn_log`` writes
+    # ``turn_log.jsonl`` from the agent module global (the A3 turn log), and
+    # ``learning.save_weights`` writes ``meta_policy.json`` next to the LIVE
+    # ``agent_core.constants.CHAT_HISTORY_JSON_PATH`` — that constant must
+    # stay live (``TestRuntimeStateIsolation`` pins it), so the resolver in
+    # ``agent_core.llm.learning`` is redirected instead.  Without this, every
+    # suite run seeded the live turn log with fixture turns ("finish the
+    # task", ...) and evolved the developer's meta-policy weights from test
+    # outcomes (observed: 6+ fixture entries, deep_analysis 1.099529).
+    monkeypatch.setattr(
+        agent_module,
+        "TURN_LOG_PATH",
+        str(runtime_dir / "turn_log.jsonl"),
+    )
+    import agent_core.llm.learning as learning_module
+
+    monkeypatch.setattr(
+        learning_module,
+        "_state_path",
+        lambda: str(runtime_dir / "meta_policy.json"),
+    )
+    # B3's quality hook appends to the shared dashboard event file, which
+    # ``metrics_file`` resolves to the REPO ROOT by design (agent_dashboard
+    # tails it).  Every test that drives a real ``_finish_turn`` therefore
+    # appended fake quality events to the developer's LIVE beacon — the tail
+    # of ``.metrics_events.jsonl`` after one suite run read 0.7/0.0/0.7,
+    # exactly the three turns of ``test_experience_recording``.  No test
+    # asserts a write to the real file (they all capture ``append_event``
+    # itself), so redirecting the resolver is safe.
+    import agent_core.monitoring.metrics_file as metrics_file_module
+
+    monkeypatch.setattr(
+        metrics_file_module,
+        "default_events_path",
+        lambda: runtime_dir / ".metrics_events.jsonl",
+    )
+    # B5's PerfTracker persists timings next to the LIVE chat history
+    # (``perf_cmd`` computes PERF_HISTORY_JSON_PATH from the constants at
+    # import).  Same class of leak: an unpatched ``PerfTracker.record()``
+    # would create perf_history.json at the repo root.  Call-time lookup in
+    # the module makes this monkeypatch effective.
+    import agent_core.commands.perf_cmd as perf_cmd_module
+
+    monkeypatch.setattr(
+        perf_cmd_module,
+        "PERF_HISTORY_JSON_PATH",
+        str(runtime_dir / "perf_history.json"),
+    )
 
 
 #: The DEVELOPER's persisted model state — never the test run's.  A test that

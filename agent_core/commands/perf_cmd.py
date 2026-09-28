@@ -7,7 +7,12 @@ Usage:
     perf --html           Export as self-contained HTML dashboard
 """
 
+import json
+import logging
+import os
 from datetime import datetime as _datetime
+
+from agent_core.constants import CHAT_HISTORY_JSON_PATH
 
 from .base import Command
 
@@ -15,24 +20,81 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent import Agent
 
+logger = logging.getLogger(__name__)
+
+#: Command-timing history in the same state dir as ``CHAT_HISTORY_JSON_PATH``
+#: (B5): loaded at first use and written back after every record, so timings
+#: survive a restart.  Atomic tmp + os.replace, bounded to the newest
+#: ``_PERF_HISTORY_MAX`` records; read/write failures are logged at debug and
+#: otherwise ignored (a broken state dir must not break a command).
+PERF_HISTORY_JSON_PATH = os.path.join(
+    os.path.dirname(CHAT_HISTORY_JSON_PATH), "perf_history.json",
+)
+_PERF_HISTORY_MAX = 1000
+
 
 class PerfTracker:
-    """In-memory command timing collector — no threads, no SQLite, no deps."""
+    """Command timing collector — memory first, then persisted to disk.
+
+    No threads, no SQLite, no deps: records load lazily from
+    ``PERF_HISTORY_JSON_PATH`` on first use and are written back (atomic
+    tmp + ``os.replace``) after every :meth:`record`, bounded to the newest
+    ``_PERF_HISTORY_MAX`` entries.  Read/write failures log at debug and
+    never raise; with no file present the behaviour is exactly the old
+    in-memory-only tracker.
+    """
 
     _records: list[dict[str, Any]] = []
+    _loaded = False
+
+    @classmethod
+    def _ensure_loaded(cls) -> None:
+        """Load persisted records once (first use); never raises."""
+        if cls._loaded:
+            return
+        cls._loaded = True  # only ever retry by calling reset()/reload
+        try:
+            with open(PERF_HISTORY_JSON_PATH, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, list):
+                cls._records = [
+                    r for r in data[-_PERF_HISTORY_MAX:]
+                    if isinstance(r, dict)
+                ]
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError):  # corrupt/partial JSON, IO errors
+            logger.debug(
+                "perf history load failed (starting empty)", exc_info=True
+            )
+
+    @classmethod
+    def _save(cls) -> None:
+        """Persist records atomically, bounded; never raises."""
+        try:
+            payload = json.dumps(cls._records[-_PERF_HISTORY_MAX:])
+            tmp_path = PERF_HISTORY_JSON_PATH + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                fh.write(payload)
+            os.replace(tmp_path, PERF_HISTORY_JSON_PATH)
+        except (OSError, TypeError, ValueError):
+            logger.debug("perf history save failed (no-op)", exc_info=True)
 
     @classmethod
     def record(cls, command: str, elapsed_s: float, input_text: str = "") -> None:
+        cls._ensure_loaded()
         cls._records.append({
             "command": command,
             "elapsed_s": round(elapsed_s, 3),
             "input_len": len(input_text),
             "timestamp": _datetime.now().isoformat(timespec="seconds"),
         })
+        cls._save()
 
     @classmethod
     def summary(cls) -> list[dict[str, Any]]:
         """Aggregate by command name, return sorted by total time descending."""
+        cls._ensure_loaded()
         by_cmd: dict[str, list[float]] = {}
         for r in cls._records:
             by_cmd.setdefault(r["command"], []).append(r["elapsed_s"])
@@ -50,11 +112,14 @@ class PerfTracker:
 
     @classmethod
     def detail(cls) -> list[dict[str, Any]]:
+        cls._ensure_loaded()
         return cls._records
 
     @classmethod
     def reset(cls) -> None:
+        cls._ensure_loaded()
         cls._records.clear()
+        cls._save()
 
 
 class PerfCommand(Command):
