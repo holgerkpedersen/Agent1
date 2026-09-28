@@ -180,7 +180,10 @@ class MessageReport:
             [
                 "",
                 "commit-msg: commit message rejected by agent_core.commit_policy",
-                *(f"  subject: {self.subject!r}" if self.subject else []),
+                # NOTE: the conditional must yield a LIST.  Returning a bare
+                # string here made `*` unpack it character by character, so
+                # the subject printed one letter per line.
+                *( [f"  subject: {self.subject!r}"] if self.subject else [] ),
                 *lines,
                 "",
                 "  Format: <type>(<scope>): <imperative summary>",

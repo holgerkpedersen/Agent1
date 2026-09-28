@@ -171,6 +171,19 @@ class TestCheckMessage:
         assert "commit changes" in text
         assert "commit-msg" in text
 
+    def test_report_keeps_the_subject_on_a_single_line(self) -> None:
+        """Regression: render() unpacked the subject STRING, one char per line.
+
+        The rejection message is the only feedback the author gets, so a
+        shredded subject line made the block unreadable.  Asserted on the
+        exact line -- the ERROR text also contains the subject, so a
+        substring check alone passes even when the subject line is broken.
+        """
+        lines = check_message("commit changes").render().splitlines()
+        assert "  subject: 'commit changes'" in lines
+        # A mangled block emits single-character lines; nothing here should.
+        assert not [ln for ln in lines if len(ln.strip()) == 1]
+
     def test_clean_report_renders_nothing(self) -> None:
         assert check_message("fix: a good subject\n\nbody\n").render() == ""
 
