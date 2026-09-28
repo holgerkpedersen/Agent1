@@ -12,6 +12,7 @@ unnecessary fatal changes".  These tests pin:
 """
 from agent import _SYSTEM_PROMPT
 from agent_core.llm.harmony import (
+    HARMONY_GIT_ADDENDUM,
     HARMONY_SAFETY_ADDENDUM,
     apply_harmony_prompt,
     is_harmony_model,
@@ -58,8 +59,23 @@ class TestApplyHarmonyPrompt:
         once = apply_harmony_prompt(
             [{"role": "system", "content": "BASE"}], "gpt-oss-20b")
         twice = apply_harmony_prompt(once, "gpt-oss-20b")
-        marker = HARMONY_SAFETY_ADDENDUM.strip()
-        assert twice[0]["content"].count(marker) == 1
+        content = twice[0]["content"]
+        assert content.count(HARMONY_SAFETY_ADDENDUM.strip()) == 1
+        assert content.count(HARMONY_GIT_ADDENDUM.strip()) == 1
+
+    def test_addendum_carries_the_full_commit_sequence(self):
+        text = HARMONY_GIT_ADDENDUM.lower()
+        assert "commit changes" in text
+        assert "never run `git push` alone" in text
+        assert "add -a" in text
+        assert "commit -m" in text
+
+    def test_prepended_system_carries_git_addendum(self):
+        msgs = apply_harmony_prompt(
+            [{"role": "user", "content": "commit changes"}], "gpt-oss-20b")
+        content = msgs[0]["content"]
+        assert HARMONY_GIT_ADDENDUM.strip() in content
+        assert HARMONY_SAFETY_ADDENDUM.strip() in content
 
     def test_non_harmony_model_leaves_messages_untouched(self):
         original = [{"role": "user", "content": "hi"}]

@@ -42,6 +42,29 @@ HARMONY_SAFETY_ADDENDUM = (
     "green."
 )
 
+#: Git-workflow addendum.  gpt-oss follows the harmony template's leading
+#: ``# Instructions`` block but often ignores tool/SOP guidance that lives
+#: deeper, so "commit changes" was mis-served as a bare ``git push`` (which
+#: sends only commits and leaves staged work behind).  Spelling the full
+#: sequence out in the honoured developer slot is the instruction-side half
+#: of the fix; the ``git`` handler's push/commit backstops are the hard half.
+HARMONY_GIT_ADDENDUM = (
+    "\n\nGIT WORKFLOW (harmony/gpt-oss — follow exactly):\n"
+    "- \"Commit changes\" means the FULL sequence: status -> add -A -> "
+    "commit -m \"<message>\" -> push. Never run `git push` alone, because "
+    "push only sends commits and silently leaves staged work behind.\n"
+    "- Stage everything with `git add -A` (a bare `-` is not a pathspec). "
+    "Commit with a `-m` message — a message-less commit hangs on an editor."
+)
+
+#: Every addendum injected into the leading slot, in order.  Iterating this
+#: tuple keeps ``apply_harmony_prompt`` idempotent per block (a long tool loop
+#: re-shapes the same history each iteration).
+HARMONY_ADDENDA: tuple[str, ...] = (
+    HARMONY_SAFETY_ADDENDUM,
+    HARMONY_GIT_ADDENDUM,
+)
+
 
 def is_harmony_model(*names: str) -> bool:
     """True when any of *names* identifies a harmony (gpt-oss) model.
@@ -71,14 +94,16 @@ def apply_harmony_prompt(
     """
     if not is_harmony_model(model_name):
         return messages
-    marker = HARMONY_SAFETY_ADDENDUM.strip()
     out = list(messages)
     if out and out[0].get("role") == "system":
         first = dict(out[0])
         content = str(first.get("content") or "")
-        if marker not in content:
-            first["content"] = content + HARMONY_SAFETY_ADDENDUM
+        for addendum in HARMONY_ADDENDA:
+            if addendum.strip() not in content:
+                content += addendum
+        first["content"] = content
         out[0] = first
     else:
-        out.insert(0, {"role": "system", "content": marker})
+        joined = "".join(addendum.strip() for addendum in HARMONY_ADDENDA)
+        out.insert(0, {"role": "system", "content": joined})
     return out

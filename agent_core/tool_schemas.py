@@ -184,9 +184,12 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "what changed before staging or committing. Stage EVERYTHING "
                 "with subcommand='add', args='-A' (a bare '-' is NOT a valid "
                 "git pathspec); stage one path with args='<path>'. Commit with "
-                "subcommand='commit', args='-m \"message\"'. Push with "
-                "subcommand='push'. Use only the forms shown here or a real "
-                "git flag — do not invent flags."
+                "subcommand='commit', args='-m \"message\"' (a message-less "
+                "commit hangs on an editor). Push with subcommand='push'. "
+                "\"Commit changes\" means the FULL sequence status -> add -A "
+                "-> commit -m -> push; never push alone, since `git push` only "
+                "sends commits and leaves staged work behind. Use only the "
+                "forms shown here or a real git flag — do not invent flags."
             ),
             "parameters": {
                 "type": "object",

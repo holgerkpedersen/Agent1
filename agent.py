@@ -1458,6 +1458,50 @@ class Agent:
                 "changes, or args=\"<path>\" for specific files (a bare '-' is "
                 "not a valid pathspec)."
             )
+        # A message-less `git commit` opens an editor and blocks until the
+        # 30s timeout (the harness sets no GIT_EDITOR), so answer with the
+        # correct form instead of paying for a hang. Editor-free message
+        # sources: -m/-F, reuse -C/-c, --fixup/--squash, and `--amend
+        # --no-edit`. A bare `--amend` is NOT accepted (it opens the editor).
+        has_message = any(
+            a in ("-m", "--message", "-F", "--file")
+            or a.startswith(("--message=", "-m", "--file="))
+            or a in ("-C", "--reuse-message", "--fixup", "--squash")
+            for a in extra
+        )
+        amend_no_edit = "--amend" in extra and "--no-edit" in extra
+        if subcmd == "commit" and not (extra and (has_message or amend_no_edit)):
+            return (
+                "Git guidance: `git commit` needs a message or it opens an "
+                "editor and hangs. Use subcommand='commit', args='-m \"<message>\"'."
+            )
+        # `git push` only sends committed work: if changes are staged but not
+        # committed, a push leaves them behind — the 2026-09-28 "commit
+        # changes" run pushed an older commit and silently skipped the staged
+        # work. Stop and point at the missing commit instead.
+        if subcmd == "push":
+            staged, _staged_err = _run_subprocess_captured(
+                ["git", "diff", "--cached", "--name-only"],
+                self._effective_ws_dir(), 30, "Git",
+            )
+            staged_files = [
+                ln.strip()
+                for ln in staged.splitlines()
+                if ln.strip() and ln.strip() != "(no output)"
+                and not ln.strip().startswith("[STDERR]")
+            ]
+            if staged_files:
+                listing = ", ".join(staged_files[:5])
+                more = (
+                    "" if len(staged_files) <= 5
+                    else f" (+{len(staged_files) - 5} more)"
+                )
+                return (
+                    f"Git guidance: {len(staged_files)} staged change(s) are "
+                    f"NOT committed yet ({listing}{more}) — `git push` would "
+                    "leave them behind. Commit first with subcommand='commit', "
+                    "args='-m \"<message>\"', then push again."
+                )
         # Arg-list execution (no shell): shell metacharacters in
         # model-supplied args become literal git arguments.
         output, error = _run_subprocess_captured(
@@ -3582,7 +3626,10 @@ _SYSTEM_PROMPT = (
     "- Git: call the git tool with subcommand='status' FIRST, before staging or "
     "committing. Stage everything with subcommand='add', args='-A' — a bare "
     "'-' is NOT a pathspec and will fail. Commit with subcommand='commit', "
-    "args='-m \"message\"'. Never invent flags.\n"
+    "args='-m \"message\"'. A request to \"commit changes\" means the FULL "
+    "sequence status -> add -A -> commit -m -> (only if asked) push; never "
+    "push alone, because `git push` only sends commits and would silently "
+    "leave staged work behind. Never invent flags.\n"
     "- Verify numbers (e.g. how many tests exist) with the tests tool or git "
     "log before claiming them.\n"
     "- If a search finds nothing in source files, state that the symbol does "
