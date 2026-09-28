@@ -66,7 +66,7 @@ def load_plugin_class_from_path(path: Path, class_name: str) -> Optional[Type[Ba
         return None
     module = importlib.util.module_from_spec(spec)
     try:
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        spec.loader.exec_module(module)
     except Exception:
         return None
     cls = getattr(module, class_name, None)

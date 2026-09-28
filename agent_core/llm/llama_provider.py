@@ -242,13 +242,24 @@ class LlamaProvider:
         Reuses :func:`agent_core.llm.lmstudio.sanitize_message_roles` so role
         normalization (mid-conversation system -> user, orphan tool drops,
         loop-tag stripping) is identical to LM Studio and opencode providers.
+
+        For harmony (gpt-oss) models the messages are first shaped by
+        :func:`agent_core.llm.harmony.apply_harmony_prompt`, which puts the
+        "no unnecessary fatal changes" safety addendum into the leading
+        system message — the slot the harmony chat template renders as the
+        ``# Instructions`` developer block.  Shaping runs BEFORE sanitizing
+        so the injected system message stays in position 0.
         """
         from .lmstudio import sanitize_message_roles
+        from .harmony import apply_harmony_prompt
         model_info = KNOWN_MODELS.get(self.model_name, {})
         max_tok = override_max_tokens or self.max_tokens
+        shaped = apply_harmony_prompt(
+            messages, f"{self.model_name} {self._server_model_id()}"
+        )
         payload: dict[str, Any] = {
             "model": self._server_model_id(),
-            "messages": sanitize_message_roles(messages),
+            "messages": sanitize_message_roles(shaped),
             "temperature": self.temperature,
             "max_tokens": max_tok,
         }
