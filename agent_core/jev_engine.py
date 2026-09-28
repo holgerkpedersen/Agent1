@@ -1,4 +1,4 @@
-"""Jev decision engine — typed, probabilistic answers from a dedicated small model.
+"""Jev decision engine — typed, probabilistic answers from a dedicated small model..
 
 Jev (named after TypeSafe AI's System One decision model) turns a *state* plus a
 *typed question* into a typed, probabilistic answer a caller can branch on:
