@@ -66,7 +66,11 @@ is being extended to audit its own file effects (self-improvement).
   against the workspace (`_verify_claims`: missing file / line past EOF / bare
   basename resolved by rglob / a backticked symbol next to the citation must
   appear within ±3 lines of the cited line) and the command REFUSEs on a
-  mismatch — all guards are deterministic and free.
+  mismatch — all guards are deterministic and free. Also exposed as the
+  read-only NLP tool `speculate` (LLM calls it on demand via
+  `Agent._nlp_speculate`; JSON args question/branches/judge/branch_model/
+  threshold; output is captured into the tool result, nothing leaks to REPL
+  stdout) and in `PLAN_MODE_TOOLS` — branches can never mutate.
 - `agent_core/jev_engine.py` — the Jev decision engine: a TYPED, probabilistic
   micro-decision (`yesno` -> P(yes)/P(no)/TRUE-FALSE-UNKNOWN, `choice` ->
   distribution over options/argmax-UNDECIDED, `score` -> 0-100 + spread) run on

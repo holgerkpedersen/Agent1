@@ -480,6 +480,76 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "speculate",
+            "description": (
+                "Run N independent speculative branches IN PARALLEL and get a "
+                "fast grounded answer: each branch reasons as you do and may "
+                "call read-only tools to ground itself, every branch is "
+                "judge-scored 0.0-1.0, and the result COMMITs only the best "
+                "when it meets 'threshold' — otherwise it REFUSES with the "
+                "reasons (ungrounded answers, fabricated tool output, "
+                "disagreement between branches). Use it when a quick "
+                "corroborated answer beats your own long chain of thought: "
+                "'where/what/how' questions about this repo (branches bring "
+                "back file:line evidence), or any question where independent "
+                "opinions are worth more than one. Speed knobs: judge='jev' "
+                "scores on the dedicated small model (fast); branch_model="
+                "'jev' runs the WHOLE deliberation on it (fastest, but weak "
+                "at grounding repo questions); fewer branches = faster. "
+                "Read-only — branches cannot mutate files; allowed in plan "
+                "mode."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": (
+                            "The question to deliberate. Must not start with "
+                            "'--' (it would be parsed as a command flag)."
+                        ),
+                    },
+                    "branches": {
+                        "type": "integer",
+                        "description": (
+                            "Number of independent branches (default 3; "
+                            "fewer = faster, more = stronger corroboration)."
+                        ),
+                    },
+                    "judge": {
+                        "type": "string",
+                        "enum": ["llm", "jev", "both"],
+                        "description": (
+                            "Who scores the branches: 'llm' (default), "
+                            "'jev' = dedicated small model (fastest) or "
+                            "'both' = average of both."
+                        ),
+                    },
+                    "branch_model": {
+                        "type": "string",
+                        "enum": ["chat", "jev"],
+                        "description": (
+                            "Who generates the branches: 'chat' (default, "
+                            "the reasoning model) or 'jev' = whole "
+                            "deliberation on the small model (fastest/cheapest)."
+                        ),
+                    },
+                    "threshold": {
+                        "type": "number",
+                        "description": (
+                            "Commit threshold in [0,1] for the best branch's "
+                            "judge score (default 0.7; lower = commits more "
+                            "easily)."
+                        ),
+                    },
+                },
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "web_search",
             "description": (
                 "Search the web via DuckDuckGo and return titled results with URLs and "

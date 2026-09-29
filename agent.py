@@ -1013,6 +1013,7 @@ class Agent:
             "references": self._nlp_references,
             "run": self._nlp_run,
             "search": self._nlp_search,
+            "speculate": self._nlp_speculate,
             "tests": self._nlp_tests,
             "web_search": self._nlp_web_search,
             "write": self._nlp_write,
@@ -1177,6 +1178,77 @@ class Agent:
         except Exception as exc:  # noqa: BLE001 - never kill the turn
             return f"jev_decide error: {exc}"
         return result.summary()
+
+    async def _nlp_speculate(self, args: dict[str, Any]) -> str:
+        """On-demand speculative deliberation for the LLM.
+
+        Runs the SAME pipeline as the REPL ``speculate`` command — N parallel
+        branches (each carrying this agent's live system prompt and a bounded
+        READ-ONLY tool loop), judge scoring, COMMIT/REFUSE gate — and returns
+        its printed verdict as the tool result, so the main model can get a
+        fast, independently corroborated answer instead of one long reasoning
+        chain.  Branches are hard-capped to ``_BRANCH_TOOLS`` (read-only),
+        which is why this tool is plan-mode safe too: it cannot mutate files.
+
+        Argument validation happens HERE (clear errors for the model); the
+        command's own parsing guards cover the rest (threshold range, branch
+        count).  Output is captured via ``redirect_stdout`` so nothing leaks
+        to the REPL — the verdict exists only in this tool result.
+        """
+        import contextlib
+        import io
+
+        from agent_core.commands.speculate_cmd import SpeculateCommand
+
+        question = str(args.get("question") or "").strip().strip('"').strip("'")
+        if not question:
+            return "Error: speculate requires 'question'."
+        if question.startswith("--"):
+            return (
+                "Error: 'question' must not start with '--' (it would be "
+                "parsed as a command flag)."
+            )
+
+        parts = [question]
+
+        branches = args.get("branches")
+        if branches is not None:
+            try:
+                n = max(1, int(branches))
+            except (TypeError, ValueError):
+                return "Error: 'branches' must be a positive integer."
+            parts += ["--branches", str(n)]
+
+        judge = str(args.get("judge") or "llm").strip().lower()
+        if judge not in ("llm", "jev", "both"):
+            return "Error: 'judge' must be one of: llm, jev, both."
+        parts += ["--judge", judge]
+
+        branch_model = str(args.get("branch_model") or "chat").strip().lower()
+        if branch_model not in ("chat", "jev"):
+            return "Error: 'branch_model' must be one of: chat, jev."
+        if branch_model != "chat":
+            parts += ["--branch-model", branch_model]
+
+        threshold = args.get("threshold")
+        if threshold is not None:
+            try:
+                t = float(threshold)
+            except (TypeError, ValueError):
+                return "Error: 'threshold' must be a number in [0.0, 1.0]."
+            if not 0.0 <= t <= 1.0:
+                return "Error: 'threshold' must be within [0.0, 1.0]."
+            parts += ["--threshold", repr(t)]
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            await SpeculateCommand().execute(parts, self)
+        text = buf.getvalue().strip()
+        if not text:
+            return "speculate produced no output."
+        # The committed answer is the point of this tool — give it more room
+        # than a 5k shell dump before truncating.
+        return _truncate_output(text, limit=8000)
 
     async def _nlp_search(self, args: dict[str, Any]) -> str:
         """Search workspace files for text (first 30 matches)."""
@@ -3744,7 +3816,19 @@ _SYSTEM_PROMPT = (
     "needed? which of A/B/C is the best target? how well does this draft meet "
     "the rubric?\n"
     "- Do NOT use it for open-ended generation, code, or explanations — you "
-    "write those yourself. It is a decision model, not a writer."
+    "write those yourself. It is a decision model, not a writer.\n"
+    "\nSPECULATE — parallel grounded answers on demand:\n"
+    "You have speculate: it runs N independent speculative branches in "
+    "parallel (each reasons as you do and may call read-only tools to ground "
+    "itself), judge-scores every branch, and COMMITs only the best when it "
+    "meets the threshold — otherwise it REFUSES with the reasons. Use it when "
+    "a fast corroborated answer beats your own long chain of thought: "
+    "'where/what/how' questions about this repo (branches bring back file:line "
+    "evidence), or any question where independent opinions are worth more than "
+    "one. Speed knobs: judge='jev' scores on the dedicated small model; "
+    "branch_model='jev' runs the WHOLE deliberation on it (fastest, but weak "
+    "at grounding repo questions); fewer branches = faster. Read-only and "
+    "allowed in plan mode."
     "\n\nMANAGER WORKFLOW (for complex tasks):\n"
     "1. Analyze if the task benefits from parallel specialists.\n"
     "2. Use create_subagent to spawn specialists (e.g. one for research, one for coding).\n"

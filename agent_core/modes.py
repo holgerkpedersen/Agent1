@@ -46,6 +46,11 @@ PLAN_MODE_TOOLS: frozenset[str] = frozenset({
     # ``jev_decide`` is a pure reader — it asks the dedicated small Jev model a
     # typed question and returns probabilities; it touches no files.
     "jev_decide",
+    # ``speculate`` is read-only too: every speculative branch may only call
+    # the _BRANCH_TOOLS allowlist (search/read/list_files/definitions/
+    # references/web_search/get_current_datetime), so parallel branches can
+    # never mutate the workspace while plan mode holds.
+    "speculate",
     # ``read_skill`` is a pure reader — it only opens skills/<name>/SKILL.md
     # read-only and returns one page of text; the SKILLS index in the system
     # prompt tells the model to call it, so plan mode must allow it.
@@ -104,7 +109,8 @@ def plan_mode_system_suffix() -> str:
         "\n\nSESSION MODE: PLAN (read-only).\n"
         "- Your toolset is limited to read-only tools (search, read, "
         "list_files, diff, web_search, definitions, references, jev_decide, "
-        "delegate); any write/edit/run/git/tests/fix call is REJECTED.\n"
+        "speculate, delegate); any write/edit/run/git/tests/fix call is "
+        "REJECTED.\n"
         "- Do not attempt or promise changes: research the workspace, then "
         "end the turn with a concrete, file-by-file implementation plan as "
         "your final text answer.\n"
