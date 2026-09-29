@@ -73,9 +73,12 @@ from agent_core.skills import (
     DEFAULT_PAGE_LINES,
     SKILL_INDEX_MARKER,
     SkillError,
+    discover_skills,
     format_skill_page,
     load_skill_index,
+    match_skills_for_input,
     read_skill,
+    skill_hint_block,
 )
 from agent_core.habits import HABITS_MARKER, habits_block, load_habits
 from agent_core.symbol_intel import collect_definitions, collect_references
@@ -2383,6 +2386,9 @@ class Agent:
                     "Switch back with 'mode build' to apply changes."
                 ))
             user_input = f"{plan_mode_turn_note()}\n\n{user_input}"
+        hint = "" if images else self._skill_hint_block(user_input)
+        if hint:
+            user_input = f"{hint}\n\n{user_input}"
         self._turn_start_index = len(self._chat_history)
         if images:
             #: OpenAI-format content array: text plus one image_url block per
@@ -3036,6 +3042,23 @@ class Agent:
             return load_skill_index(self._effective_ws_dir())
         except Exception:
             logger.exception('Skill index unavailable:\n')
+            return ""
+
+    def _skill_hint_block(self, user_input: str) -> str:
+        """Per-turn skill hint prepended to the user message when a skill matches.
+
+        Only name + one-line description are injected (see
+        :func:`agent_core.skills.skill_hint_block`); the runbook BODY still
+        only enters context via an explicit ``read_skill`` call.  Never raises:
+        a broken match must not kill a chat turn (same rule as
+        :meth:`_skill_index_block`).
+        """
+        try:
+            skills = discover_skills(self._effective_ws_dir())
+            matched = match_skills_for_input(skills, user_input or "")
+            return skill_hint_block(matched)
+        except Exception:
+            logger.exception("Skill hint unavailable:\n")
             return ""
 
     def _habits_block(self) -> str:

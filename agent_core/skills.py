@@ -67,10 +67,16 @@ MAX_BODY_BYTES = 24 * 1024
 DEFAULT_PAGE_LINES = 200
 MAX_PAGE_LINES = 400
 
+#: Max chars of hint text injected into a user message per matching skill.
 #: Exact prefix of the injected index block — also the marker
 #: ``agent._strip_dynamic_system_blocks`` uses to rebuild it every turn
 #: (without it a long session would accumulate one stale block per turn).
 SKILL_INDEX_MARKER = "\n\nSKILLS (on-demand procedural knowledge)"
+
+#: Max chars of hint text injected into a user message per matching skill.
+MAX_HINT_CHARS = 120
+#: Cap on the number of skills matched against one user message.
+MAX_SKILL_MATCHES = 3
 
 _NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
@@ -321,6 +327,53 @@ def discover_skills(workspace: str | Path) -> list[Skill]:
             )
             break
     return sorted(found, key=lambda skill: skill.name)
+
+
+def _skill_hint_text(skill: Skill) -> str:
+    """One-line hint for a matched skill (description, capped)."""
+    text = skill.when_to_use or skill.description
+    if len(text) > MAX_HINT_CHARS:
+        text = text[:MAX_HINT_CHARS - 1].rstrip() + "…"
+    return f"{skill.name} — {text}"
+
+
+def match_skills_for_input(
+    skills: Sequence[Skill], user_text: str, *, max_matches: int = MAX_SKILL_MATCHES,
+) -> list[Skill]:
+    """Return up to *max_matches* skills whose metadata matches *user_text*.
+
+    Matching is deliberately conservative (fail-open, never raises): a skill
+    counts as a match when its name or any tag appears in the lower-cased user
+    text.  The result preserves input order; duplicates are impossible because
+    discovery already deduplicates by name.
+    """
+    if not skills or not user_text:
+        return []
+    lowered = " ".join(part.lower() for part in re.split(r"\s+", user_text))
+    matched: list[Skill] = []
+    for skill in skills:
+        tokens = [skill.name, *skill.tags]
+        if any(token and token.lower() in lowered for token in tokens):
+            matched.append(skill)
+            if len(matched) >= max_matches:
+                break
+    return matched
+
+
+def skill_hint_block(skills: Sequence[Skill]) -> str:
+    """The per-turn user-message hint (``""`` when nothing matched).
+
+    Formatted as ``"Skill hints (load with read_skill when the task matches):\\n- …"``
+    — one line per matched skill.  The model is told to load, not obeyed by:
+    the body still only enters context through an explicit ``read_skill`` call.
+    """
+    if not skills:
+        return ""
+    lines = [
+        "Skill hints (load with read_skill when the task matches):",
+        *[f"- {_skill_hint_text(s)}" for s in skills],
+    ]
+    return "\n".join(lines)
 
 
 def skill_index_block(skills: Sequence[Skill]) -> str:
