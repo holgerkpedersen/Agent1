@@ -70,7 +70,16 @@ is being extended to audit its own file effects (self-improvement).
   read-only NLP tool `speculate` (LLM calls it on demand via
   `Agent._nlp_speculate`; JSON args question/branches/judge/branch_model/
   threshold; output is captured into the tool result, nothing leaks to REPL
-  stdout) and in `PLAN_MODE_TOOLS` — branches can never mutate.
+  stdout) and in `PLAN_MODE_TOOLS` — branches can never mutate. Field notes
+  from live runs on local providers: a SLOW local chat model can push a full
+  deliberation past the default 600s branch-dispatch timeout (every branch
+  carries the whole system prompt plus several tool round-trips) — the run
+  times out instead of committing; and a small local Jev model cannot ground
+  repo questions (`branch_model='jev'`), so expect REFUSE via the
+  deterministic guards (fabricated tool output / ungrounded claims) rather
+  than a commit. That is by design: refuse over fabricate — use `speculate`
+  for fast corroborated repo answers on providers where chat-mode branches
+  finish in seconds, not minutes.
 - `agent_core/jev_engine.py` — the Jev decision engine: a TYPED, probabilistic
   micro-decision (`yesno` -> P(yes)/P(no)/TRUE-FALSE-UNKNOWN, `choice` ->
   distribution over options/argmax-UNDECIDED, `score` -> 0-100 + spread) run on
