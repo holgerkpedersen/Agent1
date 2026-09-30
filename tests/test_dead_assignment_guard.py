@@ -46,6 +46,11 @@ SKIP_DIRS = {
 }
 
 
+def _names_in(node: ast.AST) -> set[str]:
+    """Every plain `Name` bound by an assignment target (a, b, obj.attr[0])."""
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+
 def _iter_py_files(root: Path) -> list[Path]:
     out: list[Path] = []
     for p in sorted(root.rglob("*.py")):
@@ -63,9 +68,9 @@ def _module_level_names(tree: ast.Module) -> set[str]:
         for st in body:
             if isinstance(st, ast.Assign):
                 for t in st.targets:
-                    names.update(n.id for n in ast.walk(t) if isinstance(n, ast.Name))
+                    names.update(_names_in(t))
             elif isinstance(st, (ast.AnnAssign, ast.AugAssign)):
-                names.update(n.id for n in ast.walk(st.target) if isinstance(n, ast.Name))
+                names.update(_names_in(st.target))
             elif isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 names.add(st.name)
             elif isinstance(st, (ast.Import, ast.ImportFrom)):
