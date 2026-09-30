@@ -108,6 +108,22 @@ class TestIsFullRun:
     def test_multiple_positionals_is_not_full_run(self):
         assert conftest._is_full_run(self._config(["tests", "tests/unit"])) is False
 
+    def test_subset_selectors_are_not_full_runs(self):
+        """`--lf` / `--nf` / `--testmon` run a SUBSET: they are the cheap lanes
+        the agent is told to prefer, so they must not be measured, killed or
+        gated like the whole suite (they were misclassified before 2026-09-30)."""
+        for args in (
+            ["--lf"],
+            ["-q", "--no-cov", "--lf"],
+            ["--lfnf"],
+            ["--nf"],
+            ["--new-first"],
+            ["--failed-first"],
+            ["--testmon"],
+            ["--lf", "tests/"],
+        ):
+            assert conftest._is_full_run(self._config(args)) is False, args
+
     def test_option_values_are_not_positionals(self):
         """Regression (2026-09-21): ``-p no:cacheprovider`` was read as a test
         path, so a full run lost its watchdog AND its elapsed-time recording

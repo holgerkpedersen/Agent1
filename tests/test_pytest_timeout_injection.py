@@ -18,11 +18,14 @@ import asyncio
 import pytest
 
 import agent
+import agent_core.pytest_gate as agent_core_pytest_gate
 from agent import Agent
 
 
 @pytest.fixture()
 def bot() -> Agent:
+    # The full-run gate is exercised in tests/test_pytest_full_run_gate.py; here
+    # it would shell out to `git status` through a stubbed subprocess.Popen.
     return Agent(workspace=".")
 
 
@@ -195,6 +198,7 @@ class TestRunToolTimeout:
     ) -> None:
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)
         monkeypatch.setattr(agent, "_pytest_full_suite_timeout", lambda: 1800.0)
+        monkeypatch.setenv(agent_core_pytest_gate.GATE_ENV, "off")
         proc = self._run(
             bot,
             {"command": "python -m pytest -q --no-cov", "timeout": 600},
@@ -206,6 +210,7 @@ class TestRunToolTimeout:
     ) -> None:
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)
         monkeypatch.setattr(agent, "_pytest_full_suite_timeout", lambda: 900.0)
+        monkeypatch.setenv(agent_core_pytest_gate.GATE_ENV, "off")
         proc = self._run(
             bot,
             {"command": "python -m pytest -q --no-cov", "timeout": 30},

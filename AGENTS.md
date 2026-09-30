@@ -238,7 +238,21 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
 ## Verification commands
 
 - **Test efficiently — never pay for the whole suite twice.**
-  - Full suite (only before commit/push): `python -m pytest -q --no-cov`.
+  - **Full-suite gate (2026-09-30)** `agent_core/pytest_gate.py`: a
+    WHOLE-SUITE run (no test path, or `tests`/`.` spelled out) is REFUSED by
+    the `run`/`tests` tools unless (a) a REAL tracked source file differs from
+    the session baseline (`git status --porcelain -uall`; scratch paths
+    `_tmp_*`, `tmp/`, `*.bak`, `reports/`, `.docs/`, `__pycache__` never
+    count) and (b) the per-session budget `AGENT_MAX_FULL_PYTEST_RUNS`
+    (default **1**) is not spent. The refusal text names the cheap lanes, so
+    the model self-corrects from the tool result. Escape hatch:
+    `AGENT_PYTEST_FULL_RUN_GATE=off` (or raise the budget) for a deliberate
+    second pass. Also fixed here: `--lf` / `--nf` / `--new-first` /
+    `--testmon` select a SUBSET and are no longer classified as full runs by
+    either classifier (`agent._is_full_pytest_command`, `conftest._is_full_run`)
+    — they were being given the whole-suite budget *and* the gate.
+  - Full suite (only before commit/push, and only via the one earned run):
+    `python -m pytest -q --no-cov`.
     Bare `pytest` and the whole tree spelled out (`pytest tests/`, `pytest .`)
     are all treated as full runs: they record their elapsed time and get a
     budget of `max(PYTEST_FULL_SUITE_TIMEOUT, last * 1.50)`. An overrunning run

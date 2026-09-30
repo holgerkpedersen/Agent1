@@ -23,6 +23,7 @@ from datetime import datetime
 
 from agent_core import to_windows_path
 from agent_core.path_utils import resolve_path, safe_path
+from agent_core.pytest_gate import FullRunGate
 from agent_core.colors import cyan, green, yellow, blue, magenta, gray, red
 from agent_core.constants import (  # noqa: F401
     resolve_model,
@@ -508,6 +509,10 @@ class Agent:
         self._semantic_index: dict[str, set[int]] = defaultdict(set)
         self._files_read: set[str] = set()
         self._file_mtimes: dict[str, float] = {}
+        #: Keeps FULL pytest runs rare and late: a full run is refused unless a
+        #: real source file changed since the baseline, and at most
+        #: AGENT_MAX_FULL_PYTEST_RUNS (default 1) per session may be spent.
+        self._full_run_gate = FullRunGate(self.workspace)
         #: Per-tool-call file effects accumulated while a trace sink is active
         #: (self-improvement files-affected recording; decision #048 — this is
         #: None except during a traced chat_nlp loop, so untraced runs are
@@ -1458,7 +1463,14 @@ class Agent:
         timeout = max(1, min(int(args.get("timeout") or 120), _MAX_RUN_TIMEOUT_S))
         if not cmd_to_run:
             return "Error: run requires a command."
-        if _is_full_pytest_command(cmd_to_run):
+        is_full_run = _is_full_pytest_command(cmd_to_run)
+        if is_full_run:
+            # A full run costs ~2 min and must be EARNED (a real source file
+            # changed) and RARE (one per session by default) - so it happens at
+            # the END of real work, never after a _tmp_* scratch probe.
+            refusal = self._full_run_gate.check()
+            if refusal:
+                return refusal
             # The suite's own budget (PYTEST_FULL_SUITE_TIMEOUT) is the source
             # of truth here; a model-guessed 600s would kill the run mid-suite.
             # This escape hatch is deliberately NOT capped by _MAX_RUN_TIMEOUT_S.
@@ -1493,6 +1505,8 @@ class Agent:
                 )
         except Exception as e:
             return f"Error: {e}"
+        if is_full_run:
+            self._full_run_gate.record_full_run()
         return _truncate_output(_shape_run_stderr(err, output, proc.returncode))
 
     async def _nlp_git(self, args: dict[str, Any]) -> str:
@@ -1653,8 +1667,14 @@ class Agent:
         #: the agent split runs into subsets. 300s covers whole-suite runs.
         timeout = 300
         if os.path.abspath(test_path) == os.path.abspath(self._effective_ws_dir()):
-            # Whole-workspace run: honour the same budget as the watchdog.
+            # Whole-workspace run: same "earned and rare" gate as the run tool -
+            # no real change means a full pass verifies nothing.
+            refusal = self._full_run_gate.check()
+            if refusal:
+                return refusal
+            # Honour the same budget as the watchdog.
             timeout = max(timeout, int(_pytest_full_suite_timeout()))
+            self._full_run_gate.record_full_run()
         if framework == "pytest":
             cmd = [sys.executable, "-m", "pytest", test_path, "-v"]
         else:
@@ -4034,6 +4054,17 @@ _PYTEST_VALUE_FLAGS = {
 }
 
 
+#: Flags that SELECT A SUBSET, so the invocation is not a full run: ``--lf``
+#: / ``--nf`` (only failed / only new) and ``--testmon`` (only what changed).
+#: Without this, ``pytest --lf`` looked like a full run and got both the suite
+#: budget and the full-run gate - i.e. the cheap lanes were penalised exactly
+#: like the expensive one.  Mirrors conftest._SUBSET_FLAGS.
+_PYTEST_SUBSET_FLAGS = {
+    "--lf", "--last-failed", "--lfnf", "--last-failed-no-failures",
+    "--nf", "--new-first", "--failed-first", "--testmon",
+}
+
+
 def _is_full_pytest_command(command: str) -> bool:
     """True when *command* invokes pytest with no explicit test path.
 
@@ -4041,7 +4072,8 @@ def _is_full_pytest_command(command: str) -> bool:
     the whole test tree spelled out (``tests`` / ``tests/`` / ``.`` — the
     configured ``testpaths``).  Spelling the suite explicitly (``pytest
     tests/``) used to be misread as a targeted run, so it got the 120s default
-    instead of the suite budget and was killed mid-run.  Segments without
+    instead of the suite budget and was killed mid-run.  A subset selector
+    (``--lf`` / ``--nf`` / ``--testmon``) is NOT a full run.  Segments without
     pytest, ``K=V`` assignments and redirections (``2>&1``, ``>nul``) are
     ignored; values consumed by :data:`_PYTEST_VALUE_FLAGS` are not paths;
     any other positional token marks a targeted run.
@@ -4058,6 +4090,10 @@ def _is_full_pytest_command(command: str) -> bool:
             if skip_next:
                 skip_next = False
                 continue
+            if token in _PYTEST_SUBSET_FLAGS:
+                # Checked BEFORE the value-flag list: ``--lfnf`` is in both and
+                # is boolean in pytest, so it must not swallow the next token.
+                return False  # runs a subset, not the suite
             if token in _PYTEST_VALUE_FLAGS:
                 skip_next = True
                 continue

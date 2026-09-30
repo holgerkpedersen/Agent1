@@ -278,6 +278,16 @@ _VALUE_FLAGS = {
     "--lfnf", "--last-failed-no-failures",
 }
 
+#: Flags that SELECT A SUBSET of the suite, so the invocation is NOT a full
+#: run: `--lf`/`--nf` (only failed / only new), `--testmon` (pytest-testmon:
+#: only what changed).  Treating them as full runs gave the cheap lanes the
+#: whole-suite budget/watchdog - and made the agent's full-run gate refuse the
+#: very commands that exist to avoid a full run.
+_SUBSET_FLAGS = {
+    "--lf", "--last-failed", "--lfnf", "--last-failed-no-failures",
+    "--nf", "--new-first", "--failed-first", "--testmon",
+}
+
 _watchdog_stop = threading.Event()
 
 
@@ -329,7 +339,8 @@ def _is_full_run(config: pytest.Config) -> bool:
 
     No positional arg, or exactly one that is the whole test tree spelled out
     (a configured ``testpaths`` entry or ``.``).  A real target such as
-    ``tests/test_x.py`` or ``tests/unit`` is NOT a full run.
+    ``tests/test_x.py`` or ``tests/unit`` is NOT a full run, and neither is a
+    subset selector such as ``--lf`` / ``--nf`` / ``--testmon``.
     """
     raw = getattr(config, "invocation_params", None)
     args = list(getattr(raw, "args", None) or [])
@@ -339,6 +350,10 @@ def _is_full_run(config: pytest.Config) -> bool:
         if skip_next:
             skip_next = False
             continue
+        if arg in _SUBSET_FLAGS:
+            # BEFORE _VALUE_FLAGS: ``--lfnf`` is in both and is boolean in
+            # pytest, so it must not swallow the next token.
+            return False  # runs a subset, not the suite
         if arg in _VALUE_FLAGS:
             skip_next = True  # the next token is this option's value, not a path
             continue

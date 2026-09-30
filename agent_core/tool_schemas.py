@@ -154,7 +154,13 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "Output is truncated to 5000 chars. Non-zero "
                 "exit codes are shown as [EXIT CODE: N] at the end of the "
                 "output — do NOT try to capture them via shell pipelines or "
-                "Python (sys.exitcode is only set at interpreter exit)."
+                "Python (sys.exitcode is only set at interpreter exit). "
+                "TESTING RULE: a WHOLE-SUITE pytest run (no test path) is "
+                "refused unless a real source file changed, and is limited to "
+                "one per session — run it ONCE at the END of the work. Use "
+                "`--lf` (only what failed), `--testmon` (only what changed) or "
+                "an explicit test path while iterating; scratch files like "
+                "_tmp_*.py never justify a full run."
             ),
             "parameters": {
                 "type": "object",
@@ -174,8 +180,7 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "required": ["command"],
             },
         },
-    },
-    {
+    },    {
         "type": "function",
         "function": {
             "name": "git",
