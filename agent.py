@@ -3052,10 +3052,29 @@ class Agent:
         only enters context via an explicit ``read_skill`` call.  Never raises:
         a broken match must not kill a chat turn (same rule as
         :meth:`_skill_index_block`).
+
+        Side-effects on a successful match: increments the shared
+        ``skill.hint.matched`` metrics counter (mirrored to the event file so
+        a standalone --serve dashboard sees it) and prints a short
+        ``[skill-hints]`` status line suppressed in QUIET mode.
         """
         try:
             skills = discover_skills(self._effective_ws_dir())
             matched = match_skills_for_input(skills, user_input or "")
+            if not matched:
+                return ""
+            # Observability: count the hit + mirror to shared event file.
+            try:
+                collector = self.get_metrics_collector()
+                collector.increment_counter("skill.hint.matched")
+                from agent_core.monitoring.metrics_file import append_event as _ae
+                _ae("counter", "skill.hint.matched", 1.0)
+            except Exception:
+                pass  # metrics must never kill a turn
+            # Status print (suppressed in QUIET mode, same contract as [plan mode]).
+            if _resolve_display_mode() != AgentDisplayMode.QUIET:
+                names = ", ".join(s.name for s in matched)
+                print(yellow(f"  [skill-hints] matched: {names}"))
             return skill_hint_block(matched)
         except Exception:
             logger.exception("Skill hint unavailable:\n")

@@ -337,6 +337,102 @@ def _skill_hint_text(skill: Skill) -> str:
     return f"{skill.name} — {text}"
 
 
+#: Minimum length (chars) of a ``when_to_use`` phrase to count as a match —
+#: shorter fragments ("a fix", "done") would over-trigger on ordinary chat.
+MIN_WHEN_TO_USE_PHRASE_CHARS = 8
+
+#: Words that carry no trigger value in a clause like "use when X or Y" —
+#: they glue phrases together and must not count as phrase content.
+_STOPWORDS = frozenset(
+    {"or", "and", "the", "a", "an", "any", "to", "of", "in", "on"}
+)
+
+
+def _when_to_use_phrases(phrase: str | None) -> list[str]:
+    """Split a ``when_to_use`` clause into matchable phrases, longest first.
+
+    The clause is split on commas/semicolons/slashes and any parentheticals
+    are dropped (they carry usage notes, not trigger words); conjunctions like
+    "or" glue the alternatives together ("test failure or unexpected behavior"
+    is ONE phrase).  Phrases shorter than
+    :data:`MIN_WHEN_TO_USE_PHRASE_CHARS` after stripping stopwords are
+    discarded: matching a whole short phrase like "a fix" in free text would
+    fire on almost every turn.
+    """
+    if not phrase:
+        return []
+    cleaned = re.sub(r"\([^)]*\)", " ", phrase).lower()
+    parts = [part.strip(" .;:") for part in re.split(r"[,;/]", cleaned)]
+    usable: list[str] = []
+    for part in parts:
+        # Rejoin the original text WITHOUT stopwords so the user's phrasing
+        # ("implementing any feature") can still substring-match; "or"/"and"
+        # glue alternatives into one phrase, commas separate them.  Dashes are
+        # kept (they are content in names like test-driven-development).
+        words = re.findall(r"[a-z0-9][\w'-]*", part)
+        # Keep only the DISTINCTIVE words: dropping common stopwords ("the",
+        # "a") makes a phrase like "running the repo tests" match user text
+        # that keeps its own articles ("we are running the repo tests now").
+        content_words = [w for w in words if w not in _STOPWORDS]
+        phrase_text = " ".join(content_words).strip()
+        if len(phrase_text) >= MIN_WHEN_TO_USE_PHRASE_CHARS:
+            usable.append(phrase_text)
+        # Keep a single distinctive word (≥3 chars, e.g. "bug") as its own
+        # phrase so "Any Bug" in a when_to_use clause still triggers on user
+        # text containing that word — but never common short words like "a".
+        elif len(content_words) == 1 and len(content_words[0]) >= 3:
+            usable.append(phrase_text)
+    return sorted(set(usable), key=len, reverse=True)
+
+
+def _phrase_hit(phrases: list[str], text_words: set[str], lowered_text: str = "") -> bool:
+    """True when *text_words* contains enough of some phrase's words.
+
+    A two-word phrase needs BOTH words ("repo tests" → "repo" AND "tests")
+    AND the two occurrences must be close together in the text (at most one
+    word apart) — so a generic pair like "green tests" scattered through an
+    unrelated sentence ("the tests are green now", distance 2) does not fire.
+    A three+ word phrase needs all but one (no positional requirement), and a
+    single content word (e.g. "bug") matches on exact presence only — substring
+    matching is deliberately avoided so "debugger" does not trigger a skill
+    that says *use when: bug*.  Phrases are already ordered longest-first.
+    """
+    # Pre-compute word positions for the positional check (only needed for
+    # two-word phrases).  *lowered_text* is the normalised user text; if it
+    # was not supplied we fall back to a pure set-based match (backward compat).
+    token_positions: dict[str, list[int]] = {}
+    if lowered_text:
+        tokens = lowered_text.replace("-", " ").split()
+        for idx, tok in enumerate(tokens):
+            token_positions.setdefault(tok, []).append(idx)
+
+    for phrase in phrases:
+        words = [w for w in phrase.split() if len(w) > 1]
+        if not words:
+            continue
+        unique_words = list(dict.fromkeys(words))
+        hits = sum(1 for w in unique_words if w in text_words or any(w == tw for tw in text_words))
+        # Single-word phrases need that one word; two-word phrases need BOTH;
+        # three+ word phrases tolerate one missing word.
+        needed = 1 if len(unique_words) == 1 else (2 if len(unique_words) == 2 else max(2, len(unique_words) - 1))
+        if hits < needed:
+            continue
+        # Positional proximity for two-word phrases: the two words must be
+        # adjacent (at most one token between them).  This rejects generic
+        # pairs scattered through unrelated sentences ("the tests are green
+        # now": "tests" at idx 1, "green" at idx 3 → distance 2) while still
+        # catching natural collocations like "repo tests", "green tests in CI".
+        if len(unique_words) == 2 and lowered_text:
+            w1, w2 = unique_words
+            pos1 = token_positions.get(w1, [])
+            pos2 = token_positions.get(w2, [])
+            close = any(abs(p1 - p2) <= 1 for p1 in pos1 for p2 in pos2)
+            if not close:
+                continue
+        return True
+    return False
+
+
 def match_skills_for_input(
     skills: Sequence[Skill], user_text: str, *, max_matches: int = MAX_SKILL_MATCHES,
 ) -> list[Skill]:
@@ -344,16 +440,34 @@ def match_skills_for_input(
 
     Matching is deliberately conservative (fail-open, never raises): a skill
     counts as a match when its name or any tag appears in the lower-cased user
-    text.  The result preserves input order; duplicates are impossible because
-    discovery already deduplicates by name.
+    text, OR one of its ``when_to_use`` phrases does — so "implement the retry
+    feature" can trigger the TDD runbook whose clause says *use when
+    implementing any feature or bug fix*.  The result preserves input order;
+    duplicates are impossible because discovery already deduplicates by name.
+
+    Phrase matching is deliberately fuzzy, mirroring how a human skims a "use
+    when" note: each phrase is split into words and the user text matches when
+    it contains at least ``max(2, len(words) - 1)`` of them (one word for
+    two-word phrases like "repo tests", all but one for longer ones).  Exact
+    substring matching was tried first and failed in practice: a phrase's
+    stopwords are stripped while the user text keeps its own articles/preps, so
+    "running repo tests" never matched "we are running *the* repo tests now".
     """
     if not skills or not user_text:
         return []
     lowered = " ".join(part.lower() for part in re.split(r"\s+", user_text))
+    text_words = set(lowered.replace("-", " ").split())
     matched: list[Skill] = []
     for skill in skills:
         tokens = [skill.name, *skill.tags]
-        if any(token and token.lower() in lowered for token in tokens):
+        hit = any(token and token.lower() in lowered for token in tokens)
+        if not hit and skill.when_to_use:
+            # Fuzzy whole-phrase match on the "use when" clause (longest
+            # phrases first so a specific phrase wins over generic siblings).
+            hit = _phrase_hit(
+                _when_to_use_phrases(skill.when_to_use), text_words, lowered_text=lowered,
+            )
+        if hit:
             matched.append(skill)
             if len(matched) >= max_matches:
                 break
