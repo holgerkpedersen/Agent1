@@ -199,7 +199,7 @@ def _consolidate_wiki(trace_dir: Path, output_dir: Path, summary: dict[str, Any]
     a wiki error must not halt the autonomous loop.
     """
     try:
-        from harnessfix.wiki import consolidate, WIKI_DIR
+        from harnessfix.wiki import consolidate
         pages = consolidate(trace_dir, output_dir / "wiki")
         return len(pages)
     except Exception as exc:  # pragma: no cover - defensive
@@ -513,9 +513,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n[autonomous] === iteration {iteration}/{args.max_iterations} ===")
         print(
             "[autonomous] Running harness gate (trace collection, diagnosis, "
-            f"baseline pytest, then per-candidate apply + test gate). This is "
-            f"silent for several minutes; live state is in "
-            f"reports/harnessfix/run_status.json."
+            "baseline pytest, then per-candidate apply + test gate). This is "
+            "silent for several minutes; live state is in "
+            "reports/harnessfix/run_status.json."
         )
         write_progress({
             "iteration": iteration,

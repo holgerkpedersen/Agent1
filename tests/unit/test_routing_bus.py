@@ -67,7 +67,6 @@ class TestHandlerRouting:
 class TestSubscribeBroadcast:
     def test_broadcast_to_subscribers(self):
         bus = RoutingBus()
-        got = []
         bus.subscribe(MessageType.EVENT, "a")
         bus.subscribe(MessageType.EVENT, "b")
         bus.register_handler("a", lambda m: "A")

@@ -1677,7 +1677,6 @@ class ModelCommand(Command):
         strong = self._resolve_match_strong(query, models)
         if strong:
             return strong
-        qlo = query.lower()
 
         # difflib on keys
         keys = [m["key"] for m in models]

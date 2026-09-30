@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import csv
 import io
-import os
 import sqlite3
 import sys
 import json

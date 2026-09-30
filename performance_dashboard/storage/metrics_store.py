@@ -478,7 +478,6 @@ class MetricsCache:
     async def set_cached(
         self, cache_key: str, result: QueryResult, ttl: Optional[int] = None
     ) -> None:
-        effective_ttl = ttl if ttl is not None else self.default_ttl
         with self._lock:
             # Enforce LRU eviction when exceeding max_size
             if len(self._cache) >= self.max_size and cache_key not in self._cache:

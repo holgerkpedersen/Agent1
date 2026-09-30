@@ -398,13 +398,9 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
                     exempt_ids.add(id(sub))
 
         if isinstance(node, ast.Call):
-            closing = False
-            if isinstance(node.func, ast.Name) and node.func.id == "closing":
-                closing = True
-            elif isinstance(node.func, ast.Attribute) and node.func.attr == "closing":
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "closing":
                 for call_arg in node.args:
                     for sub in ast.walk(call_arg):
-                        exempt_ids.add(id(sub))
                         exempt_ids.add(id(sub))
 
         if _any_target_is_open(node) or _import_binds_open(node):

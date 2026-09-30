@@ -14,7 +14,6 @@ import ast
 import operator
 import sys
 import json
-import json as _json
 from typing import Any
 
 # ---------------------------------------------------------------------------

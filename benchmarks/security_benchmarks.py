@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 import pathlib
 import statistics
 import timeit
@@ -13,7 +12,7 @@ from agent_core.security.path_utils import (
     SecurityViolationError,
     normalize_path,
 )
-from agent_core.tools.file_ops import read_file, write_file
+from agent_core.tools.file_ops import read_file
 from agent_core.tools.shell_ops import run_command
 
 

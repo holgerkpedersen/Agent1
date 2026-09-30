@@ -8,7 +8,6 @@ suggested threshold).
 """
 
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 

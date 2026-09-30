@@ -648,7 +648,6 @@ class WorkflowCommand(Command):
             print("\n[auto] Autonomous mode — prompts auto-select safe defaults.")
 
         spec_file = None
-        greenfield = False
         features_file = None
 
         # Use agent's workspace as default — --workspace overrides after parsing
@@ -678,7 +677,6 @@ class WorkflowCommand(Command):
                 spec_file = str(run_dir / "project_spec.md")
                 with open(spec_file, "w", encoding="utf-8") as f:
                     f.write(f"# Project Specification\n\n{desc_text}")
-                greenfield = True
                 print(f"\n[desc] {desc_text[:120]}...")
         elif "--stdin" in parts:
             text = read_stdin("Paste spec or description. Type --- on its own line when done:")
@@ -687,7 +685,6 @@ class WorkflowCommand(Command):
                 spec_file = str(run_dir / "project_spec.md")
                 with open(spec_file, "w", encoding="utf-8") as f:
                     f.write(f"# Project Specification\n\n{text}")
-                greenfield = True
                 print(f"\n[stdin] {len(text)} chars")
         elif "--from" in parts:
             fi = parts.index("--from")
@@ -695,7 +692,6 @@ class WorkflowCommand(Command):
             while end < len(parts) and not parts[end].startswith("--"):
                 end += 1
             spec_file = " ".join(parts[fi + 1:end])
-            greenfield = True
 
         if "--features" in parts:
             fi = parts.index("--features")
@@ -710,8 +706,6 @@ class WorkflowCommand(Command):
                     f.write(f"# Feature Requirements\n\n{feat_val}")
                 print(f"\n[features] {feat_val}")
 
-        filtered = [p for p in parts if not p.startswith("--") and p not in [spec_file, features_file]]
-        target = filtered[0] if filtered else "."
 
         target_workspace = agent.workspace
         if "--workspace" in parts:

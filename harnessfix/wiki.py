@@ -30,12 +30,12 @@ import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from .corpus import _is_failed_trace, collect_traces
 from .diagnose import diagnose_graph
 from .htir import compile_trace
-from .episodes import Episode, extract_episode, successful_episodes
+from .episodes import Episode, extract_episode
 from .reader import TraceValidationError
 from .tracing import LAYERS
 

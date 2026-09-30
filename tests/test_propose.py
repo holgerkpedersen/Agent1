@@ -166,7 +166,7 @@ def test_propose_never_writes_the_tree(tmp_path: Path) -> None:
     )
     after = {p.name: p.read_text() for p in tmp_path.rglob("*.py")}
     # src.py must be byte-identical — propose did not touch the tree.
-    assert after["src.py"] == "old = 1\n"
+    assert after["src.py"] == before["src.py"]
     assert "extra.py" not in after  # new file was NOT written to the tree
     # The only new artifacts live under reports/.
     assert (tmp_path / "reports" / "proposals" / "t3" / "proposal.md").exists()

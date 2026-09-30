@@ -70,7 +70,9 @@ class TestRecord:
     def test_multiple_records_preserve_order(self) -> None:
         m = EvolutionMetrics()
         a, b, c = _metric(0.1), _metric(0.2), _metric(0.3)
-        m.record(a); m.record(b); m.record(c)
+        m.record(a)
+        m.record(b)
+        m.record(c)
         assert m.recent_metrics() == [a, b, c]
 
     def test_window_trims_oldest(self) -> None:
@@ -228,7 +230,8 @@ class TestRecentMetrics:
     def test_returns_history_list(self) -> None:
         m = EvolutionMetrics()
         a, b = _metric(0.1), _metric(0.2)
-        m.record(a); m.record(b)
+        m.record(a)
+        m.record(b)
         assert m.recent_metrics() == [a, b]
 
     def test_after_trim_only_window_entries(self) -> None:

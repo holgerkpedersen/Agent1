@@ -8,7 +8,6 @@ and historical reporting capabilities.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
 from flask import Blueprint, request, jsonify, current_app
 from marshmallow import ValidationError
 

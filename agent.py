@@ -1706,7 +1706,7 @@ class Agent:
 
     async def _nlp_get_current_datetime(self, args: dict[str, Any]) -> str:
         """Return the current date/time, optionally in a given timezone."""
-        from datetime import datetime, timezone
+        from datetime import datetime
         import zoneinfo
         tz_name = args.get("timezone")
         if tz_name:
@@ -1833,7 +1833,6 @@ class Agent:
 
     async def _get_plan_state(self) -> dict[str, Any]:
         """Detect current plan status + tasks from the filesystem."""
-        from pathlib import Path
         from agent_core.commands.doc_paths import latest_run_dir
         from agent_core.plan_execution.parser import parse_plan_tasks
 

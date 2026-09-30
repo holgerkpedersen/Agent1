@@ -22,7 +22,6 @@ class ClearCommand(Command):
         stats_only = "stats" in args
 
         stats = agent.memory_stats()
-        stale = agent.check_stale_files()
 
         print("Memory state:")
         print(f"  chat history:       {stats['chat_history']} messages")

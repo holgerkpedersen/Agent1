@@ -1,8 +1,6 @@
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 from ..models import (
-    CommandMetric,
-    TaskMetric,
     PerformanceRecord,
     StatisticalSummary,
     TimeSeriesPoint,

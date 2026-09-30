@@ -19,7 +19,6 @@ import asyncio
 import json
 from pathlib import Path
 
-import pytest
 
 import agent as agent_mod
 from agent import Agent

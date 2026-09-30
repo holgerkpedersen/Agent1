@@ -135,7 +135,7 @@ def test_get_baseline_failures_caches_and_invalidates_on_head(monkeypatch, tmp_p
 
     # Different HEAD -> cache invalidated, re-computed.
     monkeypatch.setattr(gates, "_git_head", lambda: "head-bbb")
-    third = gates.get_baseline_failures(force=True)
+    gates.get_baseline_failures(force=True)
     assert calls["n"] == 2
 
 

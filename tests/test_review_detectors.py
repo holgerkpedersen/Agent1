@@ -84,7 +84,6 @@ class ProfileMetadata:
     temperature: float = 0.7
     reasoning_budget: int = 0
 """)
-            gen_path = os.path.join(td, "some_module", "consumer.py")
             source_files = {
                 "some_module/consumer.py": """
 from some_module.models import ProfileMetadata

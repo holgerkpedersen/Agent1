@@ -17,7 +17,6 @@ from .evolution_metrics import (
     DEFAULT_THRESHOLD,
     DEFAULT_WINDOW_SIZE,
     EvolutionMetricsScorer,
-    score_run,
 )
 from .reader import read_trace, TraceValidationError
 from .tracing import TRACE_DIR

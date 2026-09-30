@@ -234,10 +234,6 @@ class HueBridge:
         # For backward compatibility with existing tests
         self._base_url = f"http://{base_ip}/api/{api_key}"
 
-    @classmethod
-    def from_env(cls) -> "HueBridge":
-        """Create a HueBridge from HUE_BRIDGE_IP and HUE_API_KEY."""
-
     # ------------------------------------------------------------------
     # V1 API HTTP helpers (for legacy on/off/brightness/CT operations)
     # ------------------------------------------------------------------

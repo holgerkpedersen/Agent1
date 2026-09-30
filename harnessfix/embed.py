@@ -22,7 +22,6 @@ All embedders implement ``from_string(text) -> np.ndarray`` of shape
 """
 from __future__ import annotations
 
-import hashlib
 import re
 from typing import List, Protocol
 

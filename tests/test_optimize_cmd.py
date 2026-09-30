@@ -1891,7 +1891,7 @@ class TestPerFindingPatches:
             nonlocal system_prompt, max_tokens_seen
             system_prompt = messages[0]["content"]
             max_tokens_seen = max(max_tokens_seen, kwargs.get("max_tokens", 0))
-            numbered = _numbered_context(messages[-1]["content"])
+            _numbered_context(messages[-1]["content"])
             return _fix_hunk_for_pattern("huge.py", messages[-1]["content"])
 
         agent = SimpleNamespace(

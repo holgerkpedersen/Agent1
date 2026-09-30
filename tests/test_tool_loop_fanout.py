@@ -365,7 +365,6 @@ class TestFanoutEdgeCases:
         execution_log: list[tuple[str, str, float]] = []
 
         async def execute_tool(name, args):
-            t = time.monotonic()
             await asyncio.sleep(0.05)
             execution_log.append((name, "end", time.monotonic()))
             return "ok"

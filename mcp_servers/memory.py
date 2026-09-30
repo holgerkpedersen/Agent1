@@ -355,7 +355,7 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
         if row is None:
             raise ValueError(f"Experience with id={exp_id} not found")
         d = dict(row)
-        lines = [f"Experience:"]
+        lines = ["Experience:"]
         for k, v in d.items():
             lines.append(f"  {k}: {v}")
         return "\n".join(lines)

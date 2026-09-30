@@ -1,7 +1,7 @@
 import json
-from typing import List, Dict, Any, cast
+from typing import List, Dict, Any
 
-from ..tools.definitions import ApplyFixArgs, ReadFileArgs, ToolCallResult
+from ..tools.definitions import ToolCallResult
 
 
 def parse_tool_calls(response_message: Dict[str, Any]) -> List[ToolCallResult]:

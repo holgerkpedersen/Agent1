@@ -417,7 +417,7 @@ class TestAgentReconcileHook:
         monkeypatch.setattr("agent_core.llm.provider.build_provider",
                             lambda settings, name: provider)
 
-        client = LLMClient("llama/Bonsai-27B-Q1_0")
+        LLMClient("llama/Bonsai-27B-Q1_0")
         assert called.get("model") == "llama/Bonsai-27B-Q1_0"
         assert called.get("api_url") == "http://127.0.0.1:8080/v1"
         # The served id is pinned on the provider so chat uses the right model.
@@ -435,7 +435,7 @@ class TestAgentReconcileHook:
         called = {}
         monkeypatch.setattr(mod, "ensure_model_served",
                             lambda api_url, model_name: called.update(x=1) or (True, "ok"))
-        client = LLMClient("laguna-s-2.1")
+        LLMClient("laguna-s-2.1")
         assert "x" not in called  # llama manager must NOT be invoked
 
 

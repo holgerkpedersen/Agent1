@@ -95,7 +95,6 @@ class TestParallelConcurrency:
 
         # Simulate a slow LM Studio: the synchronous HTTP call (urlopen)
         # blocks for 0.2s, exactly like a real round-trip.
-        real_urlopen = urllib.request.urlopen
 
         def _slow_urlopen(req, timeout=None):
             time.sleep(0.2)

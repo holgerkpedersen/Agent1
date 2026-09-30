@@ -251,7 +251,6 @@ class TestContinueNoteTagging:
         # Force one auto-continue so an injected note actually gets appended.
         monkeypatch.setattr(agent, "_MAX_CHAINED_RUNS", 2)
 
-        real_looks_incomplete = agent._looks_incomplete
         calls = {"n": 0}
 
         def fake_looks_incomplete(text: str) -> bool:

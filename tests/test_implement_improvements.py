@@ -68,7 +68,6 @@ class TestGenerationRetrySentinels:
     def test_batch_failure_records_outcome_for_every_batch_file(self):
         """When generation fails after retries, every file in the batch gets
         an outcome so --status/--retry and the summary report it honestly."""
-        cmd = ImplementCommand()
         outcomes: dict[str, str] = {}
         batch = ["agent_core/a.py", "agent_core/b.py"]
         impl_response = "[LM Studio stream error: model is not loaded]"

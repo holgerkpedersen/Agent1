@@ -1,6 +1,6 @@
 """Output rendering adapters converting visualizations into consumable formats."""
 
-from typing import List, Optional, Sequence, Tuple, Union, Dict, Any
+from typing import List, Optional, Tuple, Union, Dict, Any
 
 from ..models import (
     DashboardLayoutSpec,
@@ -9,7 +9,6 @@ from ..models import (
     TaskMetric,
     CommandMetric,
     TimeSeriesPoint,
-    TrendAnalysisResult,
 )
 from .charts import SVGExporter
 

@@ -44,7 +44,7 @@ class _Handler:
         from http.server import BaseHTTPRequestHandler
         handler: BaseHTTPRequestHandler = self  # type: ignore[assignment]
         length = int(handler.headers.get("content-length", 0))
-        body = handler.rfile.read(length)
+        handler.rfile.read(length)
         payload = json.dumps({"ok": True, "echo_host":
                               handler.headers.get("Host", "")}).encode()
         handler.send_response(200)

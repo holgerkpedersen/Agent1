@@ -1689,8 +1689,10 @@ class ImplementCommand(Command):
                 pos = td_match.end()
                 paren_depth = 0
                 while pos < len(source) and source[pos] != ':':
-                    if source[pos] == '(': paren_depth += 1
-                    elif source[pos] == ')': paren_depth -= 1
+                    if source[pos] == '(':
+                        paren_depth += 1
+                    elif source[pos] == ')':
+                        paren_depth -= 1
                     pos += 1
                 if pos < len(source) and source[pos] == ':':
                     body_start = pos + 1

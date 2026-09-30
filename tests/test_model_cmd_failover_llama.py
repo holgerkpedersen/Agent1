@@ -82,7 +82,6 @@ async def test_switch_llama_unwraps_failover(monkeypatch):
         captured["name"] = name
         return True, "served"
 
-    fake_props = {"default_generation_settings": {}, "model_path": "", "role": "router"}
     monkeypatch.setattr(
         "agent_core.llm.llama_server.is_server_up", lambda api_url: True
     )

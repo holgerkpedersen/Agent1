@@ -224,7 +224,7 @@ class ShellCommandHandler:
 
 def _handle_get_current_datetime(args: GetCurrentDatetimeArgs | dict) -> dict[str, str]:
     """Return the current date/time as an ISO 8601 string."""
-    from datetime import datetime, timezone as _tz_mod
+    from datetime import datetime
 
     if isinstance(args, dict):
         args = GetCurrentDatetimeArgs(**args)

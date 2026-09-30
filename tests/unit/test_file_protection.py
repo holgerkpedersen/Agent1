@@ -128,7 +128,6 @@ class TestCleanupDeleteRespectsProtection:
     def test_delete_skips_protected_and_removes_others(self, ws):
         from agent_core.commands.cleanup_cmd import CleanupCommand
 
-        cmd = CleanupCommand()
         # Build a fake "unreferenced" set that mixes protected + deletable.
         # Rel paths mirror how cleanup_cmd feeds is_protected(f, ws_path).
         unreferenced_rel = ["scratch.py", ".env", "reports/traces/t.jsonl"]

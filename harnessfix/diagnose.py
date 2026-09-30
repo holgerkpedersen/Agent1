@@ -89,7 +89,6 @@ def _find_signature(kind: str, payload: dict[str, Any]) -> tuple[str, str] | Non
 
 def diagnose_graph(graph: TraceGraph) -> Diagnosis:
     """Classify a compiled trace graph against the heuristic signatures."""
-    task_id = graph.task_id
     guards: list[str] = []
     guard_indices: list[int] = []
     tool_errors: list[dict[str, Any]] = []

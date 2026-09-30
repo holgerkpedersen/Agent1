@@ -59,7 +59,7 @@ def test_rationale_surfaces_corpus_layer_evidence():
         "baseline_rate": None,
         "post_rate": None,
     }
-    out = build_repair_rationale(STUCK_REPEAT_ID := STUCK_REPEAT_REPAIR_ID, summary)
+    out = build_repair_rationale(STUCK_REPEAT_REPAIR_ID, summary)
     assert "42 trace(s)" in out
     assert f"Target layer '{repair.layer}' is evidenced in 17 failed" in out
     # Offline gate is the primary signal when no benchmark model is set.

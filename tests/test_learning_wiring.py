@@ -37,7 +37,7 @@ import agent_core.constants as constants
 import agent_core.llm.learning as learning
 from agent_core.commands.perf_cmd import PerfTracker
 from agent_core.config import AgentDisplayMode
-from agent_core.llm.learning import DEFAULT_PROFILE_TYPE, record_turn_outcome
+from agent_core.llm.learning import DEFAULT_PROFILE_TYPE
 from agent_core.llm.meta_policy import MetaPolicyEvolver
 from agent_core.llm.metrics_tracker import MetricsTracker
 from agent_core.llm.llm_types import ProfileType
@@ -264,7 +264,7 @@ def test_finish_turn_records_quality_event_with_tracing_disabled(
     import harnessfix.tracing as tracing
 
     monkeypatch.setattr(tracing, "trace_enabled", lambda: False)
-    metrics = _sandbox_learning(tmp_path, monkeypatch)
+    _sandbox_learning(tmp_path, monkeypatch)
     bot = _make_agent(tmp_path / "ws_quality", tmp_path, monkeypatch)
     # Keep this test focused on the quality hook (the B2 hook is covered by
     # test_finish_turn_records_success_and_failure_task_types above).  The
