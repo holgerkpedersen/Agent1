@@ -66,7 +66,10 @@ def test_match_by_when_to_use_phrase() -> None:
     skills = [
         _skill(
             "test-driven-development", "", ("tdd",),
-            when_to_use="implementing any feature or bug fix, before writing implementation code",
+            when_to_use=(
+                "implementing any feature or bug fix, "
+                "before writing implementation code"
+            ),
         ),
     ]
     text = (
@@ -82,7 +85,10 @@ def test_when_to_use_does_not_over_trigger() -> None:
     skills = [
         _skill(
             "verification-before-completion", "", ("done-gate",),
-            when_to_use="about to claim completion, a fix, green tests, or to commit/merge",
+            when_to_use=(
+                "about to claim completion, a fix, green tests, "
+                "or to commit/merge"
+            ),
         ),
     ]
     # A single generic word from the clause is NOT enough.
@@ -188,8 +194,6 @@ def test_no_hint_on_multimodal_turns(tmp_path: Path, monkeypatch) -> None:
 def test_hint_match_writes_metrics(tmp_path: Path, monkeypatch) -> None:
     """A matched hint increments `skill.hint.matched` and mirrors it to the
     shared event file (so a standalone --serve dashboard sees it)."""
-    import agent as agent_mod
-
     bot = _make_agent(tmp_path, monkeypatch)
     collector = bot.get_metrics_collector()
     base = collector.get_counter_value("skill.hint.matched")
@@ -223,8 +227,6 @@ def test_hint_status_print_in_non_quiet_mode(
     tmp_path: Path, monkeypatch, capsys,
 ) -> None:
     """Like [plan mode]: the match is announced unless QUIET mode hides it."""
-    import agent as agent_mod
-
     bot = _make_agent(tmp_path, monkeypatch)
     monkeypatch.setenv("AGENT_DISPLAY_MODE", "verbose")
     try:
@@ -238,8 +240,6 @@ def test_hint_status_print_in_non_quiet_mode(
 def test_hint_status_print_suppressed_in_quiet(
     tmp_path: Path, monkeypatch, capsys,
 ) -> None:
-    import agent as agent_mod
-
     bot = _make_agent(tmp_path, monkeypatch)
     monkeypatch.setenv("AGENT_DISPLAY_MODE", "quiet")
     try:

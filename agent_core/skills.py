@@ -385,7 +385,9 @@ def _when_to_use_phrases(phrase: str | None) -> list[str]:
     return sorted(set(usable), key=len, reverse=True)
 
 
-def _phrase_hit(phrases: list[str], text_words: set[str], lowered_text: str = "") -> bool:
+def _phrase_hit(
+    phrases: list[str], text_words: set[str], lowered_text: str = "",
+) -> bool:
     """True when *text_words* contains enough of some phrase's words.
 
     A two-word phrase needs BOTH words ("repo tests" → "repo" AND "tests")
@@ -411,10 +413,18 @@ def _phrase_hit(phrases: list[str], text_words: set[str], lowered_text: str = ""
         if not words:
             continue
         unique_words = list(dict.fromkeys(words))
-        hits = sum(1 for w in unique_words if w in text_words or any(w == tw for tw in text_words))
+        hits = sum(
+            1 for w in unique_words
+            if w in text_words or any(w == tw for tw in text_words)
+        )
         # Single-word phrases need that one word; two-word phrases need BOTH;
         # three+ word phrases tolerate one missing word.
-        needed = 1 if len(unique_words) == 1 else (2 if len(unique_words) == 2 else max(2, len(unique_words) - 1))
+        if len(unique_words) == 1:
+            needed = 1
+        elif len(unique_words) == 2:
+            needed = 2
+        else:
+            needed = max(2, len(unique_words) - 1)
         if hits < needed:
             continue
         # Positional proximity for two-word phrases: the two words must be
@@ -465,7 +475,9 @@ def match_skills_for_input(
             # Fuzzy whole-phrase match on the "use when" clause (longest
             # phrases first so a specific phrase wins over generic siblings).
             hit = _phrase_hit(
-                _when_to_use_phrases(skill.when_to_use), text_words, lowered_text=lowered,
+                _when_to_use_phrases(skill.when_to_use),
+                text_words,
+                lowered_text=lowered,
             )
         if hit:
             matched.append(skill)
