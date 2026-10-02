@@ -38,6 +38,26 @@ def _provider_type(provider: Any) -> str:
 
 
 @dataclass(frozen=True)
+class ProviderResult:
+    """What one transport call returned (the public completion contract).
+
+    A fake/injected transport (e.g. agentic_bench's offline fakes) returns
+    this from ``build_transport(agent).complete(prompt)``; the real ChatML
+    transports return it too.  It carries everything a runner needs to
+    score one turn — content, which model answered, latency and finish
+    reason — so callers never touch provider internals.
+    """
+
+    content: str = ""
+    model: str = ""
+    provider: str = ""
+    tools_used: int = 0
+    latency_ms: float = 0.0
+    context_window_used: float = 0.0
+    finish_reason: str = "stop"
+
+
+@dataclass(frozen=True)
 class ResponseMetrics:
     """Per-call token/latency/cost accounting (plan ARCH item 14).
 

@@ -181,10 +181,42 @@ TURN_LOG_PATH = os.path.join(_MODEL_JSON_DIR, "turn_log.jsonl")
 #: the internal marker never reaches a provider as an unknown field.
 LOOP_NOTE_TAG_KEY = "_loop_note"
 
+#: Root directory for benchmark reports, harnessfix output, etc.  Created on
+#: demand by save_report(); read-only in normal operation.
+REPORTS_DIR = os.path.join(_MODEL_JSON_DIR, "reports")
+
 
 # ---------------------------------------------------------------------------
 #  Single-source-of-truth model resolution
 # ---------------------------------------------------------------------------
+
+#: Process-lifetime cache for the LM Studio "what is loaded right now" poll.
+#: ``None`` = not polled yet; a list = the polled model dicts.
+_LIVE_POLL_CACHE: list[dict[str, Any]] | None = None
+
+
+def _live_loaded_models(poll: Any) -> list[dict[str, Any]]:
+    """Run the LM Studio model poll at most ONCE per process.
+
+    The poll is a blocking HTTP request made from every provider
+    construction; without this cache a single ``Agent()`` cost ~4.5s of
+    socket wait (four calls) and the full test suite spent minutes in it.
+    Tests that need a fresh poll call :func:`reset_live_poll_cache`.
+    """
+    global _LIVE_POLL_CACHE
+    if _LIVE_POLL_CACHE is None:
+        try:
+            _LIVE_POLL_CACHE = list(poll())
+        except Exception:
+            _LIVE_POLL_CACHE = []
+    return _LIVE_POLL_CACHE
+
+
+def reset_live_poll_cache() -> None:
+    """Forget the cached live LM Studio poll (tests / explicit refresh)."""
+    global _LIVE_POLL_CACHE
+    _LIVE_POLL_CACHE = None
+
 
 def resolve_model(explicit: str | None = None) -> str:
     """Return the best model name to use, checking sources in priority order.
@@ -236,9 +268,19 @@ def resolve_model(explicit: str | None = None) -> str:
 
     # First-run fallback: nothing usable persisted — adopt whatever LM
     # Studio currently has loaded (if anything).
+    #
+    # The poll is a live HTTP round-trip (~2s against a busy LM Studio) and
+    # this function runs on EVERY provider construction — ``Agent.__init__``
+    # alone calls it four times, and the test suite builds ~370 Agents.  An
+    # uncached poll therefore added minutes of pure socket wait to a single
+    # pytest run.  Cache the answer for the process: a session that starts
+    # with nothing persisted must not keep re-asking which model is in VRAM,
+    # and the poll is only a *first-run* fallback anyway.  ``model`` (the
+    # REPL switch) and LMStudioProvider's own reload path do not go through
+    # here, so an explicit switch still takes effect immediately.
     try:
         from agent_core.llm.lmstudio import get_models_status
-        models = get_models_status()
+        models = _live_loaded_models(get_models_status)
         loaded = [m["key"] for m in models if m["loaded"]]
         if loaded:
             return str(loaded[0])

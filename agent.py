@@ -560,6 +560,29 @@ class Agent:
 
         # Initialize LLM client for AI analysis (LM Studio)
         self.llm = LLMClient(model_name=self.model_name)
+        # Route the client's transport through this Agent's construction seam.
+        # ``build_transport`` is the documented injection point — its docstring
+        # says it "returns the provider object that becomes client._provider",
+        # and tests patch it to swap in a FakeTransport.  Default behaviour is
+        # unchanged: the default build_transport returns exactly what LLMClient
+        # built itself, so this is a no-op on real runs; only a patched seam
+        # changes anything.  Re-apply any restored profile after swapping so
+        # replacing the transport never silently drops the active model profile.
+        try:
+            _seamed = self.build_transport(self.llm)
+            if _seamed is not self.llm._provider:
+                prof_name = self.llm._profile_name
+                prof = None
+                if prof_name:
+                    from agent_core.llm.model_profiles import get_profile
+                    prof = get_profile(prof_name)
+                self.llm._provider = _seamed
+                if prof_name and prof is not None:
+                    self.llm._provider.apply_profile(
+                        prof_name, prof.temperature, prof.max_tokens,
+                    )
+        except Exception as _seam_err:  # best-effort — never crash construction
+            logger.exception("build_transport seam wiring failed:\n")
 
         # Initialize extracted components
         self.fs = FileSystem(self.workspace)
@@ -585,6 +608,24 @@ class Agent:
             "analyze_file", lambda args: self._tool_analyze_file(**args))
         self.dispatcher.register(
             "llm_analyze", lambda args: self._tool_llm_analyze(**args))
+
+    def build_transport(self, client: "LLMClient") -> Any:
+        """Build the transport (provider) that drives this agent's LLM client.
+
+        Public construction seam: returns the provider object that becomes
+        ``client._provider`` — the object whose ``chat(messages, tools, ...)``
+        answers every turn of a tool loop.  Callers may patch or replace it
+        (e.g. agentic_bench injects offline fake transports in tests) without
+        touching private attributes; the default builds the production provider
+        from settings and the resolved model name.
+        """
+        from agent_core.config import load_agent_settings
+        from agent_core.llm.provider import build_provider
+        try:
+            settings = load_agent_settings()
+        except Exception:
+            settings = None
+        return build_provider(settings, client.model_name)
 
     # ── Sub-agent support ───────────────────────────────────────────────
     def spawn_subagent(

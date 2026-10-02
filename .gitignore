@@ -139,6 +139,7 @@ project_*.md
 reports/traces/
 reports/harnessfix/
 reports/history/
+reports/benchmarks/
 # WikiSkill layer 2 - consolidated knowledge base distilled from traces.
 reports/wiki/
 reports/benchmark_harnessfix.json

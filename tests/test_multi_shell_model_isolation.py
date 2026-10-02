@@ -223,3 +223,155 @@ class TestSessionPinThroughRealLLMClient:
 
         client = agent_mod.LLMClient()
         assert client.model_name == "laguna-s-2.1"
+
+
+# ---------------------------------------------------------------------------
+# Live-poll cost regression (2026-10-01)
+#
+# The live LM Studio poll is a blocking HTTP round-trip (~2s against a busy
+# server) that runs from EVERY provider construction — ``Agent.__init__`` calls
+# ``resolve_model`` four times, and ``tests/`` builds ~370 Agents.  Uncached,
+# one ``Agent()`` cost 4.5s of pure socket wait and a single full pytest run
+# spent minutes inside it (observed: a ``harnessfix.loop --auto-approve`` run
+# that looked hung was really blocked in ``socket.connect`` via this poll).
+#
+# Contract: the poll runs AT MOST ONCE per process, and the cache is
+# resettable so the isolation tests above still see their own poll.
+# ---------------------------------------------------------------------------
+
+class TestLivePollIsCached:
+    def test_poll_runs_once_for_many_resolutions(self, monkeypatch) -> None:
+        import agent_core.constants as const
+
+        const.reset_live_poll_cache()
+        monkeypatch.setattr(const, "load_model_json", lambda: {})
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type("S", (), {
+                "llm_provider": "lmstudio",
+                "opencode_model": "opencode-go/deepseek-v4-flash",
+            })(),
+        )
+        calls = {"n": 0}
+
+        def _poll() -> list[dict[str, Any]]:
+            calls["n"] += 1
+            return _fake_models("qwen3.5-9b-mtp")
+
+        monkeypatch.setattr(
+            "agent_core.llm.lmstudio.get_models_status", _poll
+        )
+
+        for _ in range(5):
+            assert const.resolve_model(None) == "qwen3.5-9b-mtp"
+        assert calls["n"] == 1, "live poll must be cached, not re-run per call"
+
+    def test_reset_makes_the_next_call_poll_again(self, monkeypatch) -> None:
+        import agent_core.constants as const
+
+        monkeypatch.setattr(const, "load_model_json", lambda: {})
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type("S", (), {
+                "llm_provider": "lmstudio",
+                "opencode_model": "opencode-go/deepseek-v4-flash",
+            })(),
+        )
+        seen: list[str] = []
+
+        def _poll() -> list[dict[str, Any]]:
+            key = f"model-{len(seen)}"
+            seen.append(key)
+            return _fake_models(key)
+
+        monkeypatch.setattr("agent_core.llm.lmstudio.get_models_status", _poll)
+
+        const.reset_live_poll_cache()
+        assert const.resolve_model(None) == "model-0"
+        const.reset_live_poll_cache()
+        assert const.resolve_model(None) == "model-1"
+
+    def test_autouse_fixture_clears_the_cache_between_tests(
+        self, monkeypatch
+    ) -> None:
+        """Pin the conftest autouse reset itself.
+
+        Without it the isolation tests above pass only by luck: they all fake
+        the SAME model, so a stale cache is indistinguishable from a fresh
+        poll.  This test deliberately caches ``leaked-from-a-prior-test`` and
+        asserts the next test starts from a clean slate.
+        """
+        import agent_core.constants as const
+
+        const.reset_live_poll_cache()
+        monkeypatch.setattr(const, "load_model_json", lambda: {})
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type("S", (), {
+                "llm_provider": "lmstudio",
+                "opencode_model": "opencode-go/deepseek-v4-flash",
+            })(),
+        )
+        monkeypatch.setattr(
+            "agent_core.llm.lmstudio.get_models_status",
+            lambda: _fake_models("leaked-from-a-prior-test"),
+        )
+        # Deliberately DO NOT reset: poison the process-wide cache.
+        assert const.resolve_model(None) == "leaked-from-a-prior-test"
+
+    def test_cache_does_not_survive_into_the_next_test(
+        self, monkeypatch
+    ) -> None:
+        """Runs AFTER ``test_autouse_fixture_clears_the_cache_between_tests``.
+
+        That test leaves ``leaked-from-a-prior-test`` in the process-wide
+        cache on purpose.  If the conftest autouse reset were removed, this
+        test would still see it and fail.
+        """
+        import agent_core.constants as const
+
+        assert const._LIVE_POLL_CACHE is None, (
+            "the autouse fixture must clear the live-poll cache between tests; "
+            f"leaked value: {const._LIVE_POLL_CACHE!r}"
+        )
+
+        monkeypatch.setattr(const, "load_model_json", lambda: {})
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type("S", (), {
+                "llm_provider": "lmstudio",
+                "opencode_model": "opencode-go/deepseek-v4-flash",
+            })(),
+        )
+        monkeypatch.setattr(
+            "agent_core.llm.lmstudio.get_models_status",
+            lambda: _fake_models("fresh-poll"),
+        )
+        assert const.resolve_model(None) == "fresh-poll"
+
+    def test_poll_failure_is_cached_as_empty_not_retried_forever(
+        self, monkeypatch
+    ) -> None:
+        """A dead LM Studio must not be re-probed on every construction."""
+        import agent_core.constants as const
+
+        const.reset_live_poll_cache()
+        monkeypatch.setattr(const, "load_model_json", lambda: {})
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type("S", (), {
+                "llm_provider": "lmstudio",
+                "opencode_model": "opencode-go/deepseek-v4-flash",
+            })(),
+        )
+        calls = {"n": 0}
+
+        def _poll() -> list[dict[str, Any]]:
+            calls["n"] += 1
+            raise OSError("connection refused")
+
+        monkeypatch.setattr("agent_core.llm.lmstudio.get_models_status", _poll)
+
+        for _ in range(3):
+            const.resolve_model(None)
+        assert calls["n"] == 1, "a failed poll must not be retried per call"

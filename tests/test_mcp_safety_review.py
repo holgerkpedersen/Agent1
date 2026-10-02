@@ -184,3 +184,52 @@ class TestF3ExposeGateAtCallTime:
             assert "not exposed" in out
         finally:
             mgr.disconnect_all()
+
+
+# ---------------------------------------------------------------------------
+# F4: a fixture-managed MCP manager must not leak stdio children (2026-10-01)
+#
+# ``tests/test_mcp_cmd.py``'s ``cmd`` fixture built a fresh McpManager per test
+# and returned without tearing it down.  Five of its tests run ``mcp connect
+# fake``, which spawns a real ``fake_mcp_server.py``; those children outlived
+# the run and showed up in the developer's task list as orphans (exactly five,
+# one per connecting test, all parented to the pytest process).
+#
+# Contract: the stdio child is terminated when the fixture tears down, whether
+# or not the test remembered to disconnect.
+# ---------------------------------------------------------------------------
+
+class TestF4NoOrphanedStdioChildren:
+    def test_connect_then_teardown_leaves_no_live_transport(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import asyncio
+        import io
+        from contextlib import redirect_stdout
+
+        from agent_core.commands.mcp_cmd import MCPCommand
+        from agent_core.mcp.config import save_mcp_servers, validate_entry
+        from agent_core.mcp.manager import McpManager
+
+        path = tmp_path / "mcp.json"
+        save_mcp_servers(
+            {"fake": validate_entry("fake", {
+                "transport": "stdio", "command": FIXTURE,
+            })},
+            path,
+        )
+        mgr = McpManager(config_path=path)
+        monkeypatch.setattr("agent_core.commands.mcp_cmd.get_manager", lambda: mgr)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            asyncio.run(MCPCommand().execute(["connect", "fake"], agent=None))
+        assert mgr.is_connected("fake"), "connect must really have spawned"
+
+        # Exactly what the ``cmd`` fixture teardown does.
+        mgr.disconnect_all()
+
+        assert not mgr.is_connected("fake"), "client must be dropped on teardown"
+        assert mgr.status_one("fake")["state"] == "stopped", (
+            "the stdio child must be terminated on teardown, not orphaned"
+        )

@@ -23,7 +23,13 @@ FIXTURE = [sys.executable,
 
 @pytest.fixture()
 def cmd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MCPCommand:
-    """A command whose manager uses a temp config pre-loaded with the fake server."""
+    """A command whose manager uses a temp config pre-loaded with the fake server.
+
+    Yields the command and then tears the manager down: ``mcp connect fake``
+    spawns a real ``fake_mcp_server.py`` child, and a test that connects
+    without an explicit ``mcp disconnect`` used to leak that child into the
+    developer's task list (five orphans observed, one per connecting test).
+    """
     path = tmp_path / "mcp.json"
     cfgs = {"fake": validate_entry("fake", {
         "transport": "stdio", "command": FIXTURE,
@@ -31,7 +37,10 @@ def cmd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MCPCommand:
     save_mcp_servers(cfgs, path)
     mgr = McpManager(config_path=path)
     monkeypatch.setattr("agent_core.commands.mcp_cmd.get_manager", lambda: mgr)
-    return MCPCommand()
+    try:
+        yield MCPCommand()
+    finally:
+        mgr.disconnect_all()
 
 
 def run(cmd: MCPCommand, *args: str) -> str:

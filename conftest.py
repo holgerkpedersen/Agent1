@@ -227,9 +227,21 @@ def _read_bytes_or_none(path: Path) -> bytes | None:
 
 @pytest.fixture(autouse=True)
 def _restore_repo_model_state() -> None:
-    """Restore the live model.json/.env if a test changed them."""
+    """Restore the live model.json/.env if a test changed them.
+
+    Also clears ``resolve_model``'s process-lifetime LM Studio poll cache
+    between tests.  The cache exists so a real session pays the ~2s live poll
+    at most once (it runs on EVERY provider construction), but a test that
+    monkeypatches ``get_models_status`` to assert poll-driven resolution
+    (``test_multi_shell_model_isolation``) must see its own poll, not the
+    answer a previous test happened to cache.
+    """
+    from agent_core.constants import reset_live_poll_cache
+
     before = {path: _read_bytes_or_none(path) for path in _REPO_MODEL_STATE_FILES}
+    reset_live_poll_cache()
     yield
+    reset_live_poll_cache()
     for path, original in before.items():
         if _read_bytes_or_none(path) == original:
             continue
