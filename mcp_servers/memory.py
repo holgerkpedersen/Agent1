@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -89,6 +90,181 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path())
     conn.row_factory = sqlite3.Row
     return conn
+
+
+# ---------------------------------------------------------------------------
+# Full-text search index (FTS5)
+# ---------------------------------------------------------------------------
+#
+# Retrieval used to be ``action LIKE '%q%' OR context LIKE '%q%'`` ordered by
+# ``outcome DESC``.  That could not match a multi-word query whose words sit in
+# different columns ("refactor auth" missed every row), ranked by a near-
+# constant heuristic instead of relevance, and scanned the whole table on
+# every call.  SQLite ships FTS5 (verified on this interpreter), so the
+# server keeps a real index and ranks with bm25().
+#
+# The index is a CACHE, never a source of truth: `experiences` remains the
+# table of record and `Agent._record_llm_experience` writes straight into it
+# without going through this server.  `_ensure_fts` therefore self-heals on
+# every search (rebuilds when the index is missing or behind) rather than
+# depending on triggers, which would silently break for those direct writes.
+
+_FTS_TABLE = "experiences_fts"
+_FTS_STALE_KEY = "_fts_built_upto"  # table rowid high-water mark in a side table
+
+
+def _tokenize(query: str) -> list[str]:
+    """Split a user query into plain FTS5 tokens.
+
+    Everything that is not alphanumeric (underscore included, so snake_case
+    and dotted paths survive) is a separator.  Returning bare tokens — rather
+    than passing user text to MATCH — means FTS operators typed by the user
+    ("OR", "NEAR", "*", unbalanced quotes) are literal search words instead
+    of syntax, so a query can never widen itself into a UNION or raise.
+    """
+    return [t for t in re.split(r"[^0-9A-Za-z_]+", query or "") if t]
+
+
+def _fts_match_expr(tokens: list[str]) -> str:
+    """Build an AND-ed, quoted MATCH expression from *tokens*."""
+    return " AND ".join('"' + t.replace('"', '""') + '"' for t in tokens)
+
+
+def _ensure_fts(conn: sqlite3.Connection) -> bool:
+    """Make sure the FTS index exists and covers every row of `experiences`.
+
+    Returns True when the index is usable, False when this SQLite lacks FTS5
+    (or the experiences table is missing) so callers can fall back to LIKE.
+    Idempotent and cheap when already current: it compares the indexed high-
+    water mark against ``MAX(rowid)`` and rebuilds only when they differ.
+    """
+    try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (_FTS_TABLE,),
+        ).fetchone()
+        if exists is None:
+            conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts "
+                "USING fts5(action, context, content='experiences', "
+                "content_rowid='rowid')"
+            )
+            _rebuild_fts(conn)
+            conn.commit()
+        elif not _fts_is_current(conn):
+            _rebuild_fts(conn)
+            conn.commit()
+        return True
+    except sqlite3.Error:
+        # No FTS5 in this build, or a table we cannot index: the caller uses
+        # the LIKE fallback.  Never raise out of a search tool.
+        return False
+
+
+def _fts_is_current(conn: sqlite3.Connection) -> bool:
+    """True when the index already holds every row currently in `experiences`."""
+    try:
+        row = conn.execute("SELECT MAX(rowid) FROM experiences").fetchone()
+    except sqlite3.Error:
+        return False
+    max_rowid = row[0] if row else None
+    mark = conn.execute(
+        "SELECT value FROM experiences_meta WHERE key=?", (_FTS_STALE_KEY,)
+    ).fetchone()
+    if mark is None:
+        return False
+    # A rebuild that found an empty table records -1; compare as ints so a
+    # NULL max (empty table) and the marker still agree.
+    try:
+        return int(mark[0]) == int(max_rowid or -1)
+    except (TypeError, ValueError):
+        return False
+
+
+def _rebuild_fts(conn: sqlite3.Connection) -> None:
+    """Rebuild the whole index from `experiences` and record the mark."""
+    conn.execute("CREATE TABLE IF NOT EXISTS experiences_meta "
+                 "(key TEXT PRIMARY KEY, value TEXT)")
+    max_rowid = conn.execute("SELECT MAX(rowid) FROM experiences").fetchone()[0]
+    # An EXTERNAL-CONTENT index stores no copy of the text: it must be
+    # maintained through its own commands.  A plain DELETE/INSERT against the
+    # virtual table raises "database disk image is malformed"; 'rebuild'
+    # reindexes the whole content table in a single pass (cheaper than
+    # delete-then-copy, and atomic).
+    conn.execute(
+        "INSERT INTO experiences_fts (experiences_fts) VALUES('rebuild')"
+    )
+    conn.execute(
+        "INSERT INTO experiences_meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (_FTS_STALE_KEY, str(int(max_rowid or -1))),
+    )
+
+
+def _order_clause(order_by: str | None) -> str:
+    """Validate an ORDER BY request and render it as safe SQL.
+
+    *order_by* is the caller's ``"<column> <ASC|DESC>"`` string.  It is parsed
+    against a whitelist of real columns and two directions rather than
+    interpolated whole, so an unexpected value degrades to bm25 relevance
+    order instead of silently dropping the caller's sort.
+    """
+    if not order_by:
+        return "ORDER BY bm25(experiences_fts)"
+    parts = order_by.split()
+    if len(parts) != 2:
+        return "ORDER BY bm25(experiences_fts)"
+    column, direction = parts[0].lower(), parts[1].upper()
+    if column not in ("outcome", "timestamp") or direction not in ("ASC", "DESC"):
+        return "ORDER BY bm25(experiences_fts)"
+    return f"ORDER BY e.{column} {direction}"
+
+
+def _search_experiences(
+    conn: sqlite3.Connection, query: str, limit: int, *,
+    success: bool | None = None,
+    order_by: str | None = None,
+) -> list:
+    """Rows matching *query*. FTS5 + bm25 when available.
+
+    *order_by* is an explicit ``"column ASC|DESC"`` chosen by the caller; when
+    it is None the rows come back in bm25 relevance order.  *success* adds the
+    same success filter ``list_experiences`` applies.
+
+    Falls back to the historical LIKE scan when the query has no usable
+    tokens or FTS5 is unavailable, so the tool keeps working everywhere.
+    """
+    tokens = _tokenize(query)
+    if not tokens:
+        return []
+    if _ensure_fts(conn):
+        try:
+            clause = ""
+            params: list[Any] = []
+            if success is not None:
+                clause = " AND e.success = ?"
+                params.append(1 if success else 0)
+            return conn.execute(
+                "SELECT e.* FROM experiences_fts f "
+                "JOIN experiences e ON e.rowid = f.rowid "
+                f"WHERE experiences_fts MATCH ?{clause} "
+                f"{_order_clause(order_by)} LIMIT ?",
+                (_fts_match_expr(tokens), *params, limit),
+            ).fetchall()
+        except sqlite3.Error:
+            pass  # corrupt index or bad expression: degrade, do not raise
+    where = ""
+    params = []
+    if success is not None:
+        where = " AND success = ?"
+        params.append(1 if success else 0)
+    like = f"%{query.strip()}%"
+    params.extend([like, like, limit])
+    return conn.execute(
+        "SELECT * FROM experiences WHERE (action LIKE ? OR context LIKE ?)"
+        f"{where} ORDER BY outcome DESC LIMIT ?",
+        params,
+    ).fetchall()
 
 
 # ---------------------------------------------------------------------------
@@ -317,11 +493,12 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
             else:
                 where_clauses.append("success = 0")
         if args.get("search"):
-            where_clauses.append("(action LIKE ? OR context LIKE ?)")
-            like = f"%{args['search']}%"
-            params.extend([like, like])
-
-        where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+            # Text search goes through the same tokenised index as
+            # search_experiences (was: a whole-string LIKE, which could not
+            # match a query whose words are spread across columns).
+            search = args["search"]
+        else:
+            search = None
         sort = args.get("sort", "timestamp")
         if sort not in ("outcome", "timestamp"):
             sort = "timestamp"
@@ -331,10 +508,20 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
         limit = args.get("limit", 20)
 
         with _connect() as conn:
-            rows = conn.execute(
-                f"SELECT * FROM experiences {where} ORDER BY {sort} {order} LIMIT ?",
-                (*params, limit),
-            ).fetchall()
+            if search:
+                rows = _search_experiences(
+                    conn, search, limit,
+                    success=(bool(args["success"]) if "success" in args else None),
+                    order_by=f"{sort} {order}",
+                )
+            else:
+                where = f"WHERE {' AND '.join(where_clauses)}" \
+                    if where_clauses else ""
+                rows = conn.execute(
+                    f"SELECT * FROM experiences {where} "
+                    f"ORDER BY {sort} {order} LIMIT ?",
+                    (*params, limit),
+                ).fetchall()
 
         if not rows:
             return "No matching experiences found."
@@ -363,13 +550,8 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
     if name == "search_experiences":
         query = args["query"]
         limit = args.get("limit", 10)
-        like = f"%{query}%"
         with _connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM experiences WHERE action LIKE ? OR context LIKE ? "
-                "ORDER BY outcome DESC LIMIT ?",
-                (like, like, limit),
-            ).fetchall()
+            rows = _search_experiences(conn, query, limit)
         if not rows:
             return f"No experiences matching '{query}'."
         return _format_table(rows, max_rows=limit)

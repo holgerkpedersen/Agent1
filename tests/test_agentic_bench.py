@@ -14,10 +14,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import agentic_bench as ab
-from agent import Agent
+from agent import Agent, LLMClient
 from agent_core.llm.provider import ProviderResult
 from agent_core.llm.tool_loop import ToolLoopRunner
 from agentic_bench import run_tool_loop
@@ -32,8 +33,11 @@ from agentic_bench import run_tool_loop
 class FakeTransport:
     """Minimal ChatML transport: completes each prompt with the echo reply."""
 
-    def __init__(self, agent: Agent) -> None:
-        self.agent = agent
+    def __init__(self, client: LLMClient) -> None:
+        # The build_transport seam hands this the LLMClient, so ``client`` is
+        # what gets stored.  ``_result`` reads ``.model_name``, which both
+        # LLMClient and Agent expose, so the attribute works either way.
+        self.agent = client
 
     async def complete(self, prompt: str, **kwargs) -> ProviderResult:
         marker = ""
@@ -310,6 +314,457 @@ class TestCli(unittest.IsolatedAsyncioTestCase):
                 await ab.main(args)
             pt.assert_called_once()
             self.assertEqual(pt.call_args.args[0], "m-t")
+
+
+# ---------------------------------------------------------------------------
+# Seam coverage: build_transport is the documented injection point for the
+# transport every turn flows through. These tests exercise it through the
+# public API only (decision #014) — no private attributes, no fakes built
+# outside Agent construction. The 4 classes below close the seam-coverage
+# gap left by the harness landing: (1) the patched factory is called once
+# per constructed agent, (2) every turn's final assistant message carries the
+# transport's reply and each tool call executes exactly once per scenario,
+# (3) a patched build_transport that answers with tool_calls keeps a 2-call
+# run on ONE loop call per repetition while delegation tools stay refused,
+# (4) the default build_transport output behaves identically to what LLMClient
+# built itself for chat / chat_stream / the auto-resume continuation chain.
+# ---------------------------------------------------------------------------
+
+def _make_turn_agent() -> Agent:
+    """Fresh main-loop Agent with FakeTransport installed at construction."""
+    return _agent("seam")
+
+
+class SpyProvider:
+    """Recording stand-in for the default provider LLMClient builds itself.
+
+    Implements the full public surface LLMClient delegates to (chat,
+    chat_stream, analyze_code). Tests construct a fresh Agent per spy so
+    call counts are exactly 1; tests that need raw LLMClient objects build
+    one directly and say so in their docstring.
+    """
+
+    def __init__(self, agent: Agent | None = None) -> None:
+        # Same (agent) factory signature as FakeTransport — the patched
+        # build_transport seam is called with client._agent's transport.  It
+        # is optional because two tests install spies through a
+        # side_effect seam that hands back ALREADY-BUILT spies, one per
+        # constructed Agent; there the agent is irrelevant to the spy.
+        self.agent = agent
+        self.chat_calls: list[tuple[list, Any]] = []
+        self.stream_calls: list[list] = []
+        self.analyze_calls: list[str] = []
+        #: Canned replies popped by :meth:`chat`, one per call.  Tests set
+        #: this instead of monkeypatching ``chat``: a replacement lambda
+        #: would bypass the recording below and the tests assert on
+        #: ``chat_calls``.
+        self.replies: list[str] = []
+        #: Point-in-time copies of each request.  ``chat_calls`` stores the
+        #: LIVE list so tests can assert pass-by-name identity, but
+        #: chat_with_continuation mutates that same list across turns — so
+        #: every recorded entry would show the FINAL history.  These
+        #: snapshots are what per-turn history assertions read.
+        self.chat_snapshots: list[list[dict]] = []
+        #: Per-call keyword arguments (e.g. ``max_tokens``), snapshotted so
+        #: the continuation chain can assert the token cap reached the wire.
+        self.chat_kwargs: list[dict] = []
+
+    async def chat(self, messages, tools=None, **kwargs) -> str:
+        """Record the exact objects LLMClient forwarded; answer canned text."""
+        self.chat_calls.append((messages, tools))
+        self.chat_snapshots.append([dict(m) for m in messages])
+        self.chat_kwargs.append(dict(kwargs))
+        if self.replies:
+            return self.replies.pop(0)
+        # Mirror FakeTransport: echo the marker from the last user message so a
+        # clean run still satisfies its scenario rubric.  Answering with inert
+        # text would make every scenario FAIL and hide the seam behaviour these
+        # tests are here to assert.
+        content = next(
+            (str(m.get("content", "")) for m in reversed(list(messages))
+             if isinstance(m, dict) and m.get("role") == "user"),
+            "",
+        )
+        marker = ""
+        for line in content.splitlines():
+            if ab.MARKER_TOKEN in line:
+                marker = f"{ab.MARKER_TOKEN}{line.strip()}"
+                break
+        return f"spy reply {marker}".strip()
+
+    def apply_profile(self, name, temperature, max_tokens) -> None:
+        """No-op: the real provider surface the seam calls after swapping.
+
+        Agent.__init__ re-applies a restored profile to a newly installed
+        provider; without this the seam raises and agent.py swallows it.
+        """
+        self.profile = (name, temperature, max_tokens)
+
+    async def chat_stream(self, messages) -> str:
+        self.stream_calls.append(messages)
+        return "stream reply"
+
+    async def analyze_code(self, code: str) -> str:
+        self.analyze_calls.append(code)
+        return "analysis"
+
+
+class ToolCallTransport(FakeTransport):
+    """Fake transport that answers with a batch of tool calls first.
+
+    The first ``tool_calls_per_turn`` turns return a JSON assistant message
+    carrying real tool-call dicts; the final turn returns plain text so the
+    loop ends on a text answer.
+    """
+
+    def __init__(self, agent: Agent) -> None:
+        super().__init__(agent)
+        self.turns = 0
+        self.tool_calls_per_turn = 2
+
+    async def chat(self, messages, tools=None, **kwargs) -> str:
+        self.turns += 1
+        if self.turns <= self.tool_calls_per_turn:
+            calls = [
+                {"id": f"call-{n}", "type": "function",
+                 "function": {"name": "read",
+                             "arguments": json.dumps({"path": f"f{n}.txt"})}}
+                for n in range(self.tool_calls_per_turn)
+            ]
+            return json.dumps({"content": f"narration {self.turns}",
+                              "tool_calls": calls})
+        return await super().chat(messages, tools=tools, **kwargs)
+
+
+class TestSeamFactoryPerTurnAgent(unittest.IsolatedAsyncioTestCase):
+    """The patched factory runs exactly once per constructed Agent."""
+
+    async def asyncSetUp(self) -> None:
+        self.calls: list[LLMClient] = []
+
+        def factory(client: LLMClient) -> FakeTransport:
+            # The seam is a METHOD: Agent.__init__ calls
+            # ``self.build_transport(self.llm)``, so it receives the LLMClient
+            # (not the Agent) and must return the provider synchronously —
+            # an ``async def`` here would install a coroutine as
+            # ``client._provider``.  Patching it with a plain function would
+            # bind it as a method and pass (self, client); staticmethod keeps
+            # the (client) signature.  The patch lands before __init__ builds
+            # LLMClient, so every construction is counted.
+            self.calls.append(client)
+            return FakeTransport(client)
+
+        # ``new=`` must carry the staticmethod itself: patch.object sets the
+        # attribute on the class, and a plain function there would be bound
+        # as a method and receive (self, client).
+        self.patcher = patch.object(Agent, "build_transport",
+                                    new=staticmethod(factory))
+        self.patcher.start()
+        self.addCleanup(self.patcher.stop)
+        self.agent = _make_turn_agent()
+
+    async def test_factory_sees_n_agents_for_n_reps(self) -> None:
+        """One fresh turn agent per scenario and repetition, all on main loop."""
+        results = await ab.run_scenarios(
+            self.agent, model="m-seam", repetitions=1)
+        n_scen = len(ab.SCENARIOS)
+        self.assertEqual(len(results), n_scen)
+        # One entry per (scenario, rep); every run on the main surface.
+        self.assertGreaterEqual(len(self.calls), 1 + n_scen)
+        for client in self.calls:
+            self.assertIsInstance(client._provider, FakeTransport)
+        # Only the turn agents built INSIDE run_scenarios get _agent attached
+        # (agentic_bench attaches it right after make_agent returns); the
+        # base agent this test constructed has none.
+        turn_agents = [c for c in self.calls if hasattr(c, "_agent")]
+        self.assertEqual(len(turn_agents), len(self.calls) - 1)
+        for client in turn_agents:
+            self.assertIsInstance(client._agent, Agent)
+            self.assertIsInstance(client._agent.llm._provider, FakeTransport)
+            # ToolDispatcher exposes its registry as _handlers (there is no
+            # public handlers() accessor).
+            self.assertEqual(
+                len(client._agent.dispatcher._handlers), n_scen + 4,
+                "turn agents must carry the full main-loop tool surface")
+
+    async def test_patched_factory_reaches_every_turn(self) -> None:
+        """The injected transport answers every turn on the public chat path."""
+        built: list[SpyProvider] = []
+
+        def factory(client: LLMClient) -> SpyProvider:
+            spy = SpyProvider(client)
+            built.append(spy)
+            return spy
+
+        # The patch must stay active for the WHOLE test: run_scenarios builds
+        # a fresh agent per scenario, and outside the seam each one would
+        # install the real provider instead of our spy.
+        with patch.object(Agent, "build_transport", new=staticmethod(factory)):
+            agent = _make_turn_agent()
+            # The seam constructs the provider itself, so assert on the
+            # instance the client actually holds — a separate SpyProvider()
+            # would be a different object that never sees a call.
+            base = agent.llm._provider
+            self.assertIsInstance(base, SpyProvider)
+            self.assertIs(base, built[0])
+            results = await ab.run_scenarios(
+                agent, model="m-spy", repetitions=1)
+        # run_scenarios builds a FRESH agent (and so a fresh provider) per
+        # scenario/rep, so the base agent's spy sees nothing.
+        turn_spies = built[1:]
+        self.assertEqual(len(turn_spies), len(ab.SCENARIOS))
+        self.assertEqual(base.chat_calls, [],
+                         "the base agent must not run any scenario")
+        for spy in turn_spies:
+            self.assertEqual(len(spy.chat_calls), 1,
+                             "one chat call per scenario run")
+            msgs, _ = spy.chat_calls[0]
+            self.assertEqual(len(msgs), 1,
+                             "a run starts from the bare scenario prompt")
+        self.assertEqual(sum(len(s.chat_calls) for s in turn_spies),
+                         len(ab.SCENARIOS), "one turn per scenario run")
+        for res in results:
+            self.assertTrue(res.passed, f"{res.scenario.id} scored {res.score}")
+
+
+class TestSeamToolCallTurns(unittest.IsolatedAsyncioTestCase):
+    """A tool-call-only answer stays on one loop call and executes once."""
+
+    def setUp(self) -> None:
+        self.patcher = patch.object(Agent, "build_transport",
+                                   new=ToolCallTransport)
+        self.addCleanup(self.patcher.stop)
+
+    async def asyncSetUp(self) -> None:
+        # IsolatedAsyncioTestCase runs setUp before the loop starts; the
+        # agent must be built here, not in setUp.
+        self.agent = _make_turn_agent()
+
+    async def test_tool_calls_execute_once_per_rep(self) -> None:
+        """The transport's 2-call batch reaches the dispatcher once per rep.
+
+        ToolCallTransport answers the first two turns with a batch of two
+        ``read`` calls (f0.txt, f1.txt) and then with plain text.  Each rep
+        must execute both reads exactly once — the loop de-duplicates the
+        repeat, so the recorded calls are the proof the batch is not
+        replayed.  Path-miss recovery adds its own ``list_files`` calls, so
+        this asserts on the reads rather than a total count.
+        """
+        executed: list[tuple[str, dict]] = []
+        real_execute = Agent._execute_tool_call
+
+        async def recording_execute(self, name: str, args: dict) -> str:
+            executed.append((name, args))
+            return await real_execute(self, name, args)
+
+        async def spy(transport, messages, tool_defs, **kw):
+            seen = [t["function"]["name"] for t in tool_defs]
+            self.assertIn("run", seen, "main-loop surface must include run")
+            self.assertNotIn("delegate", seen, "scenarios must not delegate")
+            return await run_tool_loop(transport, messages, tool_defs, **kw)
+
+        with patch.object(Agent, "build_transport", new=ToolCallTransport), \
+             patch.object(Agent, "_execute_tool_call", new=recording_execute), \
+             patch("agentic_bench.run_tool_loop", side_effect=spy):
+            results = await ab.run_scenarios(
+                self.agent, model="m-tc", repetitions=1)
+
+        self.assertEqual(len(results), len(ab.SCENARIOS))
+        reads = [a["path"] for name, a in executed if name == "read"]
+        n_scen = len(ab.SCENARIOS)
+        self.assertEqual(reads.count("f0.txt"), n_scen, "f0 read once per rep")
+        self.assertEqual(reads.count("f1.txt"), n_scen, "f1 read once per rep")
+        # Nothing from the delegation surface may reach the dispatcher.
+        delegated = [n for n, _ in executed
+                     if n.lower() in ab.DELEGATION_TOOLS]
+        self.assertEqual(delegated, [], "delegation must never execute")
+
+    async def test_delegation_tool_call_is_refused(self) -> None:
+        """A delegation call comes back refused, not farmed out to a subagent.
+
+        run_tool_loop short-circuits DELEGATION_TOOLS before the dispatcher,
+        so the refusal text lands in the conversation and no subagent runs.
+        """
+        class DelegatingTransport:
+            """Answers every turn with one delegation tool call."""
+
+            def __init__(self, client: LLMClient) -> None:
+                self.client = client
+
+            async def chat(self, messages, tools=None, **kwargs) -> str:
+                return json.dumps({
+                    "content": "delegating",
+                    "tool_calls": [{
+                        "id": "call-0", "type": "function",
+                        "function": {"name": "delegate_batch",
+                                     "arguments": json.dumps({"tasks": []})},
+                    }],
+                })
+
+        agent = _make_turn_agent()
+        agent.llm._agent = agent
+        agent.llm._provider = DelegatingTransport(agent.llm)
+
+        executed: list[str] = []
+        real_execute = Agent._execute_tool_call
+
+        async def recording_execute(self, name: str, args: dict) -> str:
+            executed.append(name)
+            return await real_execute(self, name, args)
+
+        seen: list[dict] = []
+        real_run = ToolLoopRunner.run
+
+        async def capturing_run(runner, messages, llm_chat_fn, execute_tool_fn,
+                                **kw):
+            response, final = await real_run(
+                runner, messages, llm_chat_fn, execute_tool_fn, **kw)
+            seen.extend(final)
+            return response, final
+
+        with patch.object(Agent, "_execute_tool_call", new=recording_execute), \
+             patch.object(ToolLoopRunner, "run", new=capturing_run):
+            outcomes = await run_tool_loop(
+                agent.llm, [{"role": "user", "content": "go"}],
+                ab.build_main_surface(agent), repetitions=1, max_iterations=2)
+
+        self.assertEqual(len(outcomes), 1)
+        self.assertNotIn("delegate_batch", executed,
+                         "a refused delegation never reaches the dispatcher")
+        refusals = [str(m.get("content", "")) for m in seen
+                    if m.get("role") == "tool"]
+        self.assertTrue(refusals, "the tool result must be reported back")
+        self.assertTrue(
+            all("refused" in r for r in refusals),
+            f"delegation must be refused outright, got {refusals}")
+
+
+class TestSeamDefaultProviderBehaviour(unittest.IsolatedAsyncioTestCase):
+    """The default build_transport output behaves like the built provider."""
+
+    async def asyncSetUp(self) -> None:
+        self.spies = [SpyProvider(), SpyProvider()]
+        built: list[object] = []
+
+        def factory(client: LLMClient) -> SpyProvider:
+            # side_effect is invoked with the LLMClient the seam receives, so
+            # it must consume that argument — a bare __getitem__ would index
+            # the list with a client and raise TypeError.
+            spy = self.spies[len(built)]
+            built.append(spy)
+            return spy
+
+        self.patcher = patch.object(Agent, "build_transport", side_effect=factory)
+        self.patcher.start()
+        self.addCleanup(self.patcher.stop)
+
+    async def test_chat_forwards_messages_and_tools_unchanged(self) -> None:
+        """chat() reaches the provider's chat with the SAME messages object."""
+        agent = _make_turn_agent()
+        spy = self.spies[0]
+        # Pin the canned reply: the default echo path would append the marker
+        # from the prompt, and this test is about forwarding, not content.
+        spy.replies = ["spy reply"]
+        msgs = [{"role": "user", "content": f"say {ab.MARKER_TOKEN}9"}]
+        tools = ab.build_main_surface(agent)
+        reply = await agent.llm.chat(msgs, tools=tools)
+        self.assertEqual(reply, "spy reply")
+        # A spy provider must land as client._provider at construction.
+        self.assertIsInstance(agent.llm._provider, SpyProvider)
+        self.assertIs(agent.llm._provider, spy)
+        self.assertGreaterEqual(len(spy.chat_calls), 1)
+        got_msgs, got_tools = spy.chat_calls[0]
+        self.assertIs(got_msgs, msgs, "the loop's list must be passed by name")
+        self.assertIs(got_tools, tools)
+        # The auto-resume path chains through the same public chat() entry.
+        # It re-requests for as long as the reply looks truncated, so the
+        # exact count follows the canned text — assert the contract, not a
+        # hard-coded number of turns.
+        before = len(spy.chat_calls)
+        await agent.llm.chat_with_continuation(msgs, max_tokens=99)
+        self.assertGreater(len(spy.chat_calls), before,
+                           "auto-resume must issue at least one more chat()")
+        for _, tools2 in spy.chat_calls[1:]:
+            self.assertIsNone(tools2,
+                              "continuation requests carry no tool schema")
+        self.assertTrue(
+            all(kw.get("max_tokens") == 99 for kw in spy.chat_kwargs[before:]),
+            "the caller's token cap reaches every continuation request")
+
+    async def test_chat_stream_reaches_provider(self) -> None:
+        """chat_stream() delegates to the provider's chat_stream."""
+        agent = _make_turn_agent()
+        # Each test builds one agent, so the seam hands out spies[0] again —
+        # take the provider off the client rather than guessing the index.
+        spy = agent.llm._provider
+        self.assertIs(spy, self.spies[0])
+        reply = await agent.llm.chat_stream(
+            [{"role": "user", "content": "stream me"}])
+        self.assertEqual(reply, "stream reply")
+        self.assertGreaterEqual(len(spy.stream_calls), 1)
+
+
+class TestSeamContinuationChain(unittest.IsolatedAsyncioTestCase):
+    """Auto-resume chains continuation requests and appends each turn."""
+
+    async def asyncSetUp(self) -> None:
+        # Direct LLMClient construction (last resort, per the brief): this
+        # test needs a bare client with no Agent, so it has no build_transport
+        # seam to exercise; the spy provider is installed as _provider.
+        from agent import LLMClient
+        self.client = LLMClient(model_name="main")
+        self.spy = SpyProvider()
+        self.client._agent = None
+        self.client._provider = self.spy
+
+    async def test_continuation_chains_and_appends_turns(self) -> None:
+        """3rd call gets max_tokens=99; each turn lands in the history.
+
+        The spy answers with a truncated code fence, so auto-resume keeps
+        requesting continuations until the 3rd request hits the token cap
+        and returns plain text — the final answer is all replies joined.
+        """
+        self.spy.replies = list(_CONT_REPLIES)
+        reply = await self.client.chat_with_continuation(
+            [{"role": "user", "content": "write a bubble sort"}],
+            max_continues=3, max_tokens=99)
+        self.assertEqual(len(self.spy.chat_calls), 3)
+        self.assertEqual(
+            len(self.spy.stream_calls), 0,
+            "auto-resume goes through chat, never streaming")
+        for _, tools in self.spy.chat_calls:
+            self.assertIsNone(tools, "continuation requests carry no tool schema")
+        # Every turn carries the caller's token cap all the way to the wire.
+        self.assertEqual([kw.get("max_tokens") for kw in self.spy.chat_kwargs],
+                         [99, 99, 99])
+        # Each turn grows the history by one assistant answer + one "continue"
+        # request.  Read the SNAPSHOTS: chat_calls holds the live list, which
+        # chat_with_continuation mutates, so every entry would otherwise show
+        # the final history.
+        counts = [sum(1 for m in snap if m.get("role") == "user")
+                  for snap in self.spy.chat_snapshots]
+        self.assertEqual(counts, [1, 2, 3],
+                         "each continuation request re-sends the grown history")
+        first = self.spy.chat_snapshots[0]
+        self.assertEqual([m["content"] for m in first
+                          if m.get("role") == "user"], ["write a bubble sort"])
+        last = self.spy.chat_snapshots[-1]
+        users = [m["content"] for m in last if m.get("role") == "user"]
+        # The tail users are resume prompts, NOT assistant replies, so they
+        # must not repeat code the assistant already produced.
+        for prompt in users[1:]:
+            self.assertIn("Continue exactly where you stopped", prompt)
+            self.assertNotIn("def bubble_sort", prompt)
+        assistants = [m["content"] for m in last if m.get("role") == "assistant"]
+        self.assertEqual(assistants, _CONT_REPLIES[:2],
+                         "prior turns are replayed so the model can resume")
+        self.assertEqual(reply, "".join(_CONT_REPLIES),
+                         "the final answer is every reply, joined")
+
+
+_CONT_REPLIES = ["```python\ndef bubble_sort(a):\n    # part 1",
+                 "```\ndef bubble_sort(b):\n    # part 2",
+                 "def bubble_sort(c):\n    # done"]
 
 
 if __name__ == "__main__":

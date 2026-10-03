@@ -299,7 +299,17 @@ async def run_tool_loop(
         if parsed is not None:
             calls = parsed.get("tool_calls")
             if isinstance(calls, list) and calls:
-                updated = [*msgs, {"role": "assistant", **calls[0]}]
+                # The runner reads the batch as a LIST under the "tool_calls"
+                # key (tool_loop.py: ToolLoopRunner.run) — the same shape the
+                # real providers emit (see lemonade_provider / opencode_provider
+                # _encode_tool_response). Spreading calls[0] flat instead put
+                # id/type/function on the message, left "tool_calls" absent,
+                # and silently disabled every tool call a scenario made.
+                updated = [*msgs, {
+                    "role": "assistant",
+                    "content": str(parsed.get("content") or ""),
+                    "tool_calls": calls,
+                }]
                 return str(parsed.get("content") or ""), updated
             content = parsed.get("content")
             text = str(content) if content is not None else raw
