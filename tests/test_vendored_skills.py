@@ -1,7 +1,8 @@
 """Guard for the vendored runbook skills under ``skills/``.
 
-The five vendored skills (TDD, systematic debugging, verification-before-
-completion, code review, subagent orchestration) are loaded through
+The vendored skills (TDD, systematic debugging, verification-before-
+completion, code review, subagent orchestration, strategic jev use) are
+loaded through
 :mod:`agent_core.skills`, which validates frontmatter up front and silently
 skips anything malformed.  Without a test, a future edit that adds an
 unsupported frontmatter field would drop the skill from the index with only
@@ -27,6 +28,7 @@ WORKSPACE = Path(__file__).resolve().parent.parent
 
 #: The vendored runbook set — each must stay loadable and indexed.
 VENDORED_SKILLS = {
+    "jev-strategy",
     "requesting-code-review",
     "subagent-orchestration",
     "systematic-debugging",
@@ -51,7 +53,11 @@ def test_every_skill_dir_on_disk_passes_validation(caplog) -> None:
     assert root.is_dir(), "skills/ directory missing from the workspace"
     with caplog.at_level(logging.WARNING, logger="agent_core.skills"):
         discover_skills(WORKSPACE)
-    skipped = [rec.getMessage() for rec in caplog.records if "Skill skipped" in rec.getMessage()]
+    skipped = [
+        rec.getMessage()
+        for rec in caplog.records
+        if "Skill skipped" in rec.getMessage()
+    ]
     assert not skipped, f"skills on disk failed validation: {skipped}"
 
 
