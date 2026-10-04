@@ -1042,7 +1042,9 @@ class TestRunToolShellAwareness:
 
         result = asyncio.run(run())
         assert "Hint" in result
-        assert "tail" in result  # the generic hint text lists tail/grep/ls
+        # `grep` is the tool BOTH hint variants name (cmd.exe: "tail/grep/ls",
+        # POSIX: "ls/cat/grep/find") — `tail` only appears on Windows.
+        assert "grep" in result
 
     def test_silent_pipeline_failure_gets_shell_hint(self):
         """cmd.exe fails whole Unix-style pipelines silently (rc 255, no

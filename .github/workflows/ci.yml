@@ -13,6 +13,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.12"]
+    env:
+      # GitHub's 2-core runners need ~10 min for the full suite on Windows —
+      # right at conftest's 600 s full-run watchdog floor (there is no repo
+      # .env in a fresh checkout, so the floor is all there is).  Raise it so
+      # a slow-but-healthy run is not os._exit(124)-killed mid-suite.
+      PYTEST_FULL_SUITE_TIMEOUT: "1800"
     steps:
       - uses: actions/checkout@v4
 

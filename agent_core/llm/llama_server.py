@@ -419,8 +419,6 @@ def _dynamic_load(api_url: str, bare: str, currently_served: list[str]) -> tuple
         last_err = (body.get("error", {}).get("message")
                     if isinstance(body, dict) else str(body)) or f"HTTP {status}"
     return False, last_err
-    err = body.get("error", {}).get("message") if isinstance(body, dict) else str(body)
-    return False, err or f"HTTP {status}"
 
 
 def running_server_pids(api_url: str) -> list[int]:

@@ -1576,21 +1576,21 @@ class ImplementCommand(Command):
             return False, "OK"
 
         if retry_mode:
-            missing = []
+            retry_targets = []
             for fname in all_files:
                 shadow_name = _shadowing_stdlib_dir(fname, Path(workspace_path(target_workspace)))
                 if shadow_name:
-                    missing.append(fname)
+                    retry_targets.append(fname)
                     print(f"  SHADOW: {fname} shadows stdlib '{shadow_name}'")
                 elif file_needs_generation(fname)[0]:
-                    missing.append(fname)
+                    retry_targets.append(fname)
                 else:
                     print(f"  OK: {fname}")
-            if not missing:
+            if not retry_targets:
                 print("  All files present and compile OK — nothing to retry.")
                 return True
-            print(f"\n  Retrying {len(missing)} missing file(s): {', '.join(missing)}\n")
-            all_files = missing
+            print(f"\n  Retrying {len(retry_targets)} missing file(s): {', '.join(retry_targets)}\n")
+            all_files = retry_targets
             force_mode = True  # Overwrite anything that exists but doesn't compile
 
         protected_files = set()
@@ -2316,10 +2316,8 @@ class ImplementCommand(Command):
                                         pass
                         if not ok:
                             print(f"  WARNING: [PATCH: {filename}] — retry produced no usable content")
-                            continue
                     except Exception as exc:
                         print(f"  WARNING: [PATCH: {filename}] — retry failed: {exc}")
-                        continue
                 # Last resort: generate the file directly with a focused prompt
                 if not ok:
                     print(f"  Attempting direct generation for {filename}...")

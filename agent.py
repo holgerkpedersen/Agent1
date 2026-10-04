@@ -1819,17 +1819,17 @@ class Agent:
                 light_id = args.get("light_id", "")
                 if not light_id:
                     return "Error: light_id is required for set_light."
-                state: dict[str, Any] = {}
+                light_state: dict[str, Any] = {}
                 if "on" in args:
-                    state["on"] = bool(args["on"])
+                    light_state["on"] = bool(args["on"])
                 if "brightness" in args:
-                    state["brightness"] = float(args["brightness"])
+                    light_state["brightness"] = float(args["brightness"])
                 if "mirek" in args:
-                    state["mirek"] = int(args["mirek"])
-                if not state:
+                    light_state["mirek"] = int(args["mirek"])
+                if not light_state:
                     return "Error: no state changes specified (on, brightness, mirek)."
-                await bridge.set_light(light_id, **state)
-                return f"Light {light_id} updated: {state}"
+                await bridge.set_light(light_id, **light_state)
+                return f"Light {light_id} updated: {light_state}"
 
             elif action == "color_capabilities":
                 light_id = args.get("light_id", "")

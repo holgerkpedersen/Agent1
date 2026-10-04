@@ -67,10 +67,18 @@ def _write_git_shim(bin_dir: Path, work_dir: Path, subcommand: str) -> None:
     interpreter: ``git.exe <subcommand>`` makes Python execute a script
     file named ``<subcommand>`` from the working directory, which writes
     the raw bytes to stdout.
+
+    POSIX has no PATHEXT dance: execvp matches the bare name ``git``
+    exactly, so the same interpreter copy must ALSO exist under the
+    extension-less name (``shutil.copy`` carries the exec bit over).
     """
     git_exe = bin_dir / "git.exe"
     if not git_exe.exists():
         shutil.copy(sys.executable, git_exe)
+    if os.name != "nt":
+        git_bin = bin_dir / "git"
+        if not git_bin.exists():
+            shutil.copy(sys.executable, git_bin)
     work_dir.joinpath(subcommand).write_text(
         "import sys\n"
         f"sys.stdout.buffer.write({BAD_BYTES!r})\n"

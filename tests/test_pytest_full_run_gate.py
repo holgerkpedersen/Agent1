@@ -20,6 +20,7 @@ import pytest
 
 import agent
 from agent import Agent
+from agent_core import pytest_gate
 from agent_core.pytest_gate import (
     DEFAULT_MAX_FULL_RUNS,
     GATE_ENV,
@@ -149,6 +150,17 @@ class TestSubsetFlagsAreNotFullRuns:
 
 
 class TestFullRunGate:
+    @pytest.fixture(autouse=True)
+    def _pin_budget(self, monkeypatch) -> None:
+        """Pin the documented default so these tests assert on the CAP itself.
+
+        The repo-root ``.env`` may carry a deliberately raised
+        ``AGENT_MAX_FULL_PYTEST_RUNS``; without this pin the suite would assert
+        on whatever the local config happens to say. Tests that care about a
+        specific budget set the variable themselves and win.
+        """
+        monkeypatch.setenv(MAX_FULL_RUNS_ENV, str(DEFAULT_MAX_FULL_RUNS))
+
     def test_refuses_without_real_change(self, monkeypatch) -> None:
         git = _Git(" M agent_core/llm/tool_loop.py\n")
         git.install(monkeypatch)
@@ -209,6 +221,60 @@ class TestFullRunGate:
         gate.record_full_run()
         gate.record_full_run()
         assert gate.check() is None
+
+
+class TestBudgetReadsDotenv:
+    """The COUNT budget must be raisable without restarting the launch shell.
+
+    History (2026-10-03): ``.env`` already carried ``PYTEST_FULL_SUITE_TIMEOUT``
+    and the refusal text told the model to "raise AGENT_MAX_FULL_PYTEST_RUNS
+    deliberately", but ``max_full_runs_from_env`` only looked at the process
+    env — so the documented raise had nowhere to go. It now falls back to the
+    repo-root ``.env``, exactly like ``agent._read_env_value`` does for the
+    timeout.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_process_env(self, monkeypatch) -> None:
+        monkeypatch.delenv(MAX_FULL_RUNS_ENV, raising=False)
+
+    def test_absent_process_env_reads_dotenv(self, monkeypatch, tmp_path) -> None:
+        dotenv = tmp_path / ".env"
+        dotenv.write_text(
+            "PYTEST_FULL_SUITE_TIMEOUT=600\nAGENT_MAX_FULL_PYTEST_RUNS=4\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(pytest_gate, "_ENV_FILE_PATH", str(dotenv))
+        assert max_full_runs_from_env() == 4
+
+    def test_process_env_wins_over_dotenv(self, monkeypatch, tmp_path) -> None:
+        dotenv = tmp_path / ".env"
+        dotenv.write_text("AGENT_MAX_FULL_PYTEST_RUNS=9\n", encoding="utf-8")
+        monkeypatch.setattr(pytest_gate, "_ENV_FILE_PATH", str(dotenv))
+        monkeypatch.setenv(MAX_FULL_RUNS_ENV, "2")
+        assert max_full_runs_from_env() == 2
+
+    def test_invalid_process_env_stays_default_not_dotenv(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """A present-but-garbage env value must not silently read ``.env``."""
+        dotenv = tmp_path / ".env"
+        dotenv.write_text("AGENT_MAX_FULL_PYTEST_RUNS=9\n", encoding="utf-8")
+        monkeypatch.setattr(pytest_gate, "_ENV_FILE_PATH", str(dotenv))
+        monkeypatch.setenv(MAX_FULL_RUNS_ENV, "not-a-number")
+        assert max_full_runs_from_env() == DEFAULT_MAX_FULL_RUNS
+
+    def test_missing_dotenv_keeps_default(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr(
+            pytest_gate, "_ENV_FILE_PATH", str(tmp_path / "does-not-exist.env")
+        )
+        assert max_full_runs_from_env() == DEFAULT_MAX_FULL_RUNS
+
+    def test_dotenv_zero_still_disables(self, monkeypatch, tmp_path) -> None:
+        dotenv = tmp_path / ".env"
+        dotenv.write_text("AGENT_MAX_FULL_PYTEST_RUNS=0\n", encoding="utf-8")
+        monkeypatch.setattr(pytest_gate, "_ENV_FILE_PATH", str(dotenv))
+        assert max_full_runs_from_env() == 0
 
 
 # ---------------------------------------------------------------------------

@@ -186,9 +186,44 @@ def gate_enabled() -> bool:
     return (os.environ.get(GATE_ENV) or "").strip().lower() not in _GATE_OFF
 
 
+#: Repo-root ``.env`` consulted for the full-run COUNT, mirroring how the
+#: timeout budget already works (``agent._read_env_value``): process env wins,
+#: then ``.env``.
+_ENV_FILE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"
+)
+
+
+def _read_env_file_value(key: str) -> str:
+    """Value of *key* from the repo-root ``.env``, or ``""`` when absent."""
+    try:
+        with open(_ENV_FILE_PATH, "r", encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                env_key, _, val = stripped.partition("=")
+                if env_key.strip() == key:
+                    return val.strip()
+    except OSError:
+        pass
+    return ""
+
+
 def max_full_runs_from_env() -> int:
-    """Per-session full-run budget: ``AGENT_MAX_FULL_PYTEST_RUNS`` or the default."""
-    raw = (os.environ.get(MAX_FULL_RUNS_ENV) or "").strip()
+    """Per-session full-run budget: ``AGENT_MAX_FULL_PYTEST_RUNS`` or the default.
+
+    Process env wins; when the variable is *absent* the repo-root ``.env`` is
+    consulted — that is where ``PYTEST_FULL_SUITE_TIMEOUT`` already lives, and
+    the refusal text tells the model to "raise AGENT_MAX_FULL_PYTEST_RUNS
+    deliberately", which until now had nowhere to be raised except the launch
+    environment.  A present-but-unparsable value still falls back to the
+    default rather than to ``.env``.
+    """
+    raw = os.environ.get(MAX_FULL_RUNS_ENV)
+    if raw is None:
+        raw = _read_env_file_value(MAX_FULL_RUNS_ENV)
+    raw = (raw or "").strip()
     if not raw:
         return DEFAULT_MAX_FULL_RUNS
     try:

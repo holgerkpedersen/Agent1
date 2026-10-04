@@ -168,7 +168,9 @@ perf_history.json
 .ruff_cache/
 .pytest_cache/
 .pytest_tmp/
-.testmondata
+# `.testmondata*` (no dot before the star): testmon keeps its SQLite index in
+# WAL mode, which also writes `.testmondata-shm` / `.testmondata-wal`.
+.testmondata*
 .testmondata.*
 mcp.json
 reports/mcp/
