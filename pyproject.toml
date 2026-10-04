@@ -48,6 +48,9 @@ dev = [
     # `pytest --testmon` re-runs only tests affected by changed files, so an
     # iterative edit loop does not pay for the full suite every time.
     "pytest-testmon>=2.0",
+    # Tests marked `@pytest.mark.asyncio` (decision/perf/gate suites) need a real
+    # async plugin; without it every async def fails to run.
+    "pytest-asyncio>=0.23",
     "ruff>=0.4",
     "types-networkx>=3.0",
     "types-pyyaml>=6.0",
@@ -99,6 +102,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 markers = [
+    "asyncio: async test driven by pytest-asyncio (see the dev extra)",
     "integration: end-to-end tests that require a real llama-server binary on PATH; skipped automatically when none is found",
     "harnessfix_self_test: HarnessFix loop/repair self-tests that mutate agent_core/llm/tool_loop.py; excluded from the autonomous test gate so they cannot revert an applied repair mid-run",
     "slow: latency benchmarks with timing loops and assertions; collect-only skips them via -m 'not slow'",

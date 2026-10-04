@@ -11,6 +11,7 @@ only phase 3/4 machinery is reachable from the interactive command surface.
 
 import asyncio
 import json
+from pathlib import Path
 
 
 class FakeLLM:
@@ -476,7 +477,11 @@ def test_speculate_refuses_unverified_claims(capsys):
                 return "0.9"
             return "The engine lives at agent_core/jev_engine.py:999999."
 
-    agent = type("A", (), {"llm": ClaimingLLM(), "workspace": "C:/Dev/Agent1"})()
+    # The claim is only \"line past EOF\" when jev_engine.py really exists, so
+    # verify against THIS repo checkout (a hardcoded dev path fails in CI).
+    repo_root = Path(__file__).resolve().parents[1]
+    assert (repo_root / "agent_core" / "jev_engine.py").is_file()
+    agent = type("A", (), {"llm": ClaimingLLM(), "workspace": str(repo_root)})()
     assert asyncio.run(SpeculateCommand().execute(['"q"'], agent)) is True
     out = capsys.readouterr().out
     assert "REFUSE - unverified file/line claim" in out
