@@ -193,3 +193,61 @@ def test_should_accept_harness_unavailable_is_non_blocking():
     assert gates.should_accept_harness(None, None, target_layer="lifecycle") is True
 
 
+# ── Agentic-scenario gate (plan item #12) ────────────────────────────────
+
+def test_agentic_gate_none_without_model():
+    """No model -> non-blocking None, exactly like the benchmark gate.
+
+    ``run_agentic_gate`` must not import/run the benchmark when there is no
+    live model: that is what keeps offline harness runs unchanged.
+    """
+    assert gates.run_agentic_gate(None) is None
+    assert gates.run_agentic_gate("") is None
+
+
+def test_agentic_gate_never_raises(monkeypatch):
+    """A failing agentic benchmark must yield None, never raise into run_loop."""
+    import agentic_bench
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("benchmark exploded")
+
+    monkeypatch.setattr(agentic_bench, "run_agentic_gate", _boom)
+    assert gates.run_agentic_gate("some-model") is None
+
+
+def test_agentic_gate_delegates_to_agentic_bench(monkeypatch):
+    """The gate wires through to agentic_bench.run_agentic_gate (item #12)."""
+    import agentic_bench
+
+    seen: dict[str, object] = {}
+
+    def _fake(model, profile="", out_dir=None):
+        seen["args"] = (model, profile, out_dir)
+        return 75.0
+
+    monkeypatch.setattr(agentic_bench, "run_agentic_gate", _fake)
+    assert gates.run_agentic_gate("m", "deep") == 75.0
+    assert seen["args"] == ("m", "deep", None)
+
+
+def test_should_accept_agentic_regression_is_rejected():
+    """A drop in agentic task performance rejects, mirroring should_accept."""
+    assert gates.should_accept_agentic(80.0, 70.0) is False
+    assert gates.should_accept_agentic(70.0, 80.0) is True
+    assert gates.should_accept_agentic(80.0, 80.0) is True
+
+
+def test_should_accept_agentic_unavailable_is_non_blocking():
+    """Missing evidence (either side None) must never block acceptance."""
+    assert gates.should_accept_agentic(None, None) is True
+    assert gates.should_accept_agentic(80.0, None) is True
+    assert gates.should_accept_agentic(None, 10.0) is True
+
+
+def test_should_accept_agentic_tolerance():
+    """A drop within the tolerance is accepted."""
+    assert gates.should_accept_agentic(80.0, 78.0, regression_tolerance=5.0) is True
+    assert gates.should_accept_agentic(80.0, 70.0, regression_tolerance=5.0) is False
+
+

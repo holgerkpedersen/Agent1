@@ -533,6 +533,10 @@ def test_loop_benchmark_is_optional_cross_check(tmp_path, monkeypatch):
         return 60.0 if _bm_calls["n"] == 1 else 55.0
 
     monkeypatch.setattr(gates, "run_benchmark_gate", _benchmark)
+    # Plan item #12 also runs the agentic-scenario gate; keep it unavailable so
+    # this test stays hermetic (no real benchmark launch) and focused on the
+    # benchmark clause.
+    monkeypatch.setattr(gates, "run_agentic_gate", lambda *a, **k: None)
     (tmp_path / "no_tests_bc").mkdir()
     monkeypatch.setattr(
         "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_bc"
@@ -547,6 +551,87 @@ def test_loop_benchmark_is_optional_cross_check(tmp_path, monkeypatch):
         assert summary["verdict"] == "rejected_and_reverted"
         # The harness gate still ran and recorded its (passing) verdict.
         assert summary["harness_accepted"] is True
+    finally:
+        revert()
+
+
+def test_loop_agentic_regression_vetoes_acceptance(tmp_path, monkeypatch):
+    """Plan item #12: the agentic-scenario gate is wired into acceptance.
+
+    A model-backed run whose real agentic task score REGRESSED must be
+    rejected even when the Q&A benchmark is flat and the offline harness gate
+    passes — otherwise the harness could accept a repair that made the main
+    tool loop worse at actual work.
+    """
+    from harnessfix.repairs.tool_interface import revert
+
+    traces_dir = tmp_path / "traces_ag"
+    traces_dir.mkdir()
+    _write_tool_error_trace(traces_dir, "ag1")
+
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
+    monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+    # Q&A benchmark flat -> it is not the deciding factor here.
+    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: 60.0)
+    # Agentic gate: baseline 80.0 (first call), post 50.0 (second call).
+    _agentic_calls = {"n": 0}
+
+    def _agentic(model, profile=None, out_dir=None):
+        if not model:
+            return None
+        _agentic_calls["n"] += 1
+        return 80.0 if _agentic_calls["n"] == 1 else 50.0
+
+    monkeypatch.setattr(gates, "run_agentic_gate", _agentic)
+    (tmp_path / "no_tests_ag").mkdir()
+    monkeypatch.setattr(
+        "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_ag"
+    )
+
+    out = tmp_path / "out_ag"
+    try:
+        summary = run_loop(traces_dir, approve=True, model="some-model", output_dir=out)
+        assert summary["accepted"] is False
+        assert summary["verdict"] == "rejected_and_reverted"
+        assert summary["agentic_baseline"] == 80.0
+        assert summary["agentic_post"] == 50.0
+        assert summary["agentic_accepted"] is False
+        # The offline harness gate still passed: the agentic veto decided.
+        assert summary["harness_accepted"] is True
+    finally:
+        revert()
+
+
+def test_loop_agentic_gate_offline_is_non_blocking(tmp_path, monkeypatch):
+    """Without --model the agentic gate is skipped (None) and never blocks.
+
+    Offline harness runs (the deterministic default path) must behave exactly
+    as before: no agentic evidence recorded, acceptance decided by the tests,
+    security and offline harness-quality gates.
+    """
+    from harnessfix.repairs.tool_interface import revert
+
+    traces_dir = tmp_path / "traces_agoff"
+    traces_dir.mkdir()
+    _write_tool_error_trace(traces_dir, "agoff1")
+
+    monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+    monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
+    monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+    monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+    (tmp_path / "no_tests_agoff").mkdir()
+    monkeypatch.setattr(
+        "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_agoff"
+    )
+
+    out = tmp_path / "out_agoff"
+    try:
+        summary = run_loop(traces_dir, approve=True, model=None, output_dir=out)
+        assert summary["agentic_baseline"] is None
+        assert summary["agentic_post"] is None
+        assert summary["agentic_accepted"] is True
+        assert summary["accepted"] is True
     finally:
         revert()
 

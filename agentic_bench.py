@@ -23,19 +23,27 @@ Usage:
     python agentic_bench.py --out PATH          # report file (default: canonical)
     python agentic_bench.py --trend m1,m2        # print trend table and exit
 
-Run with the CLI flag ``--agentic`` on agent.py to wire the same scenarios
-into the HarnessFix gates (see harnessfix/gates.py).
+The same scenarios gate the HarnessFix loop: ``harnessfix/gates.py`` calls
+:func:`run_agentic_gate`, which ``harnessfix/loop.py::run_loop`` samples
+before/after a repair (see harnessfix/gates.py).  Every scenario runs inside a
+throwaway sandbox workspace (see :func:`sandbox_workspace`) — a benchmark must
+never mutate the tree it is measuring.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -240,12 +248,53 @@ SCENARIOS = _build_bank()
 # Runner: main loop + main-loop tool surface, injected transport factory
 # ---------------------------------------------------------------------------
 
+@contextlib.contextmanager
+def sandbox_workspace() -> Iterator[Path]:
+    """Yield a throwaway workspace for scenarios to run in.
+
+    Scenarios execute REAL main-loop tools (``run``, ``write``, ``edit``,
+    ``git`` …) through the real dispatcher, and one scenario commits and
+    pushes.  Running them in the live checkout would let a benchmark mutate —
+    and publish — the tree it is measuring: ``scratch/*`` litter in the repo,
+    a spurious commit, and a ``git push`` to ``origin``.  The project already
+    enforces this for the harness itself (see
+    ``tests/test_autonomous_sandbox.py``); the benchmark must hold the same
+    line.
+
+    The sandbox is a temp dir with its own ``git init`` so the git scenario
+    can stage/commit without touching the real repository.  It is *not* a
+    clone: scenarios only need a scratch area plus a commit-able repo, and a
+    clone of this checkout would be slow and would carry its ``origin``.
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="agentic-bench-sbx-"))
+    try:
+        # Best-effort local repo so scn-git-1 has something to commit into;
+        # a failure here (no git on PATH) must not abort the whole gate —
+        # the other scenarios do not need it.
+        for argv in (
+            ["git", "init"],
+            ["git", "config", "user.email", "bench@localhost"],
+            ["git", "config", "user.name", "agentic-bench"],
+        ):
+            try:
+                subprocess.run(
+                    argv, cwd=tmp, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=30,
+                )
+            except (OSError, subprocess.SubprocessError):
+                break
+        yield tmp
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def make_agent(workspace: str, model_name: str) -> Agent:
     """Build a fresh main-loop Agent for one scenario turn.
 
     The gate passes the same ``model`` it passes to ``run_benchmark_gate``,
     so gate runs land under the same display_name key (the plain model name)
-    the gates read back from the report file.
+    the gates read back from the report file.  *workspace* should be a
+    sandbox (see :func:`sandbox_workspace`), never the live checkout.
     """
     return Agent(workspace=workspace, model_name=model_name)
 
@@ -361,6 +410,10 @@ async def run_scenarios(
     factory, then hands the prompt, the main-loop tool surface and the
     client to :func:`run_tool_loop` — one call per scenario. Returns ONE
     aggregated result per scenario: scores are averaged over the repetitions.
+
+    Scenarios run against *agent.workspace*: pass a sandbox (see
+    :func:`sandbox_workspace`) so real tool calls cannot mutate a live
+    checkout.  The offline tests pass their own tmp workspace directly.
     """
     reps = max(1, int(repetitions))
     results: list[ScenarioResult] = []
@@ -422,8 +475,17 @@ def parse_rubric(text: str) -> tuple[str, int]:
 def score_run(
     outcome: RunOutcome, rubric: tuple[str, ...], model: str, profile: str
 ) -> tuple[float, list[str]]:
-    """Judge every criterion of *rubric* against one run's outcome."""
+    """Judge every criterion of *rubric* against one run's outcome.
+
+    The weighted mean is normalized by the TOTAL weight, not by the number of
+    criteria, so the score stays in [0, 1] and ``PASS_THRESHOLD`` means what
+    it says.  Dividing a weight-summed total by ``len(rubric)`` inflated every
+    score above 1.0 (scn-shell-1, weights 3+2, scored a *perfect* run 2.5),
+    which made the pass threshold vacuous and let ``should_accept_agentic``
+    compare incomparable magnitudes.
+    """
     total = 0.0
+    weight_sum = 0
     notes: list[str] = []
     for text in rubric:
         criterion, weight = parse_rubric(text)
@@ -433,7 +495,10 @@ def score_run(
         )
         notes.append(f"{verdict.verdict}: {verdict.reason}")
         total += weight * verdict.score
-    return total / len(rubric), notes
+        weight_sum += weight
+    if weight_sum <= 0:
+        return 0.0, notes
+    return total / weight_sum, notes
 
 
 def judge(
@@ -595,11 +660,11 @@ async def main(args: argparse.Namespace) -> None:
         print_trend(args.trend, args.out or None)
         return
 
-    manager = Agent(workspace=os.path.abspath(os.path.dirname(__file__)))
-    results = await run_scenarios(
-        manager, model=args.model, repetitions=args.repetitions,
-        max_iterations=args.max_iterations,
-    )
+    with sandbox_workspace() as workspace:
+        results = await run_scenarios(
+            make_agent(str(workspace), args.model), model=args.model,
+            repetitions=args.repetitions, max_iterations=args.max_iterations,
+        )
     # Honour --out: the report goes exactly where the caller asked.
     path = save_report(results, args.out, model=args.model, profile="",
                        reps=args.repetitions)
@@ -616,16 +681,23 @@ def run_agentic_gate(
 
     Writes ``agentic_bench.json`` next to ``benchmark_harnessfix.json`` so the
     loop's gates can compare per-repetition scores before/after a repair. The
-    gate is non-blocking: None (with an empty run list) when no scenarios ran,
-    mirroring how the benchmark gate degrades when no live model is set.
+    gate is non-blocking: None when no model is supplied or when no scenario
+    produced a result, mirroring how the benchmark gate degrades when no live
+    model is set.
+
+    Scenarios run inside a throwaway sandbox workspace, never the live
+    checkout: the tool calls they make are real (one scenario commits and
+    pushes), so the gate must not be able to mutate the tree it measures.
     """
     if not model:
         return None
     out = Path(out_dir) / "agentic_bench.json" if out_dir else report_path()
-    agent = make_agent(os.path.abspath(os.path.dirname(__file__)), model)
-    results = asyncio.run(run_scenarios(
-        agent, model=model, profile=profile, max_iterations=_GATE_MAX_ITERATIONS,
-    ))
+    with sandbox_workspace() as workspace:
+        agent = make_agent(str(workspace), model)
+        results = asyncio.run(run_scenarios(
+            agent, model=model, profile=profile,
+            max_iterations=_GATE_MAX_ITERATIONS,
+        ))
     save_report(results, out, model=model, profile=profile, reps=DEFAULT_REPETITIONS)
     if not results:
         return None

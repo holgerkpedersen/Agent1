@@ -220,6 +220,51 @@ def run_benchmark_gate(
         return None
 
 
+def run_agentic_gate(
+    model: str | None,
+    profile: str | None = None,
+    out_dir: str | Path | None = None,
+) -> float | None:
+    """Single-shot agentic-scenario pass rate (percent), or ``None``.
+
+    ``run_benchmark_gate`` scores *answers* (Q&A accuracy); this gate scores
+    *agentic work* — every scenario is driven through the real main tool loop
+    on a seeded-broken fixture and judged against a weighted rubric (see
+    ``agentic_bench.py``).  Both feed the same acceptance decision, so the
+    harness now exercises the loop it is actually repairing rather than only
+    question answering.
+
+    Non-blocking by contract, exactly like the benchmark gate: ``None`` when no
+    model is supplied, when no scenario ran, or on ANY error — a gate must
+    never raise into ``run_loop``.  The import is deferred so the harness stays
+    importable (and cheap) when the benchmark is not being used.
+    """
+    if not model:
+        return None
+    try:
+        from agentic_bench import run_agentic_gate as _run_agentic
+        return _run_agentic(model, profile or "", out_dir)
+    except Exception:  # noqa: BLE001 - a gate must never raise into run_loop
+        return None
+
+
+def should_accept_agentic(
+    baseline_rate: float | None,
+    post_rate: float | None,
+    regression_tolerance: float = 0.0,
+) -> bool:
+    """Accept iff the agentic gate did not regress.
+
+    Mirrors the benchmark clause of :func:`should_accept`: unavailable
+    evidence (``None`` on either side) is non-blocking, so a harness run with
+    no live model — or a benchmark that produced no scenarios — is unaffected
+    by this gate instead of being rejected on missing evidence.
+    """
+    if baseline_rate is None or post_rate is None:
+        return True
+    return post_rate >= baseline_rate - regression_tolerance
+
+
 def should_accept(
     tests_passed: bool,
     security_passed: bool,

@@ -22,6 +22,7 @@ from agent import Agent, LLMClient
 from agent_core.llm.provider import ProviderResult
 from agent_core.llm.tool_loop import ToolLoopRunner
 from agentic_bench import run_tool_loop
+from harnessfix.judge import JudgeVerdict
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +201,16 @@ class TestRunner(unittest.IsolatedAsyncioTestCase):
         self.agent = _agent("main")
 
     async def test_clean_run_passes_every_scenario(self) -> None:
-        with patch.object(Agent, "build_transport", new=FakeTransport):
+        """A run that actually drives the tools passes every rubric.
+
+        The transport MUST emit tool calls: scn-shell-1's rubric explicitly
+        requires the ``run`` tool, so a text-only fake is not a clean run and
+        correctly scores 0.6 (its marker criterion alone, 3 of 5 weight).
+        Under the old ``total / len(rubric)`` math that became 1.5 and the
+        text-only fake "passed" every scenario for the wrong reason — which is
+        exactly the false green this benchmark existed to catch.
+        """
+        with patch.object(Agent, "build_transport", new=ToolCallTransport):
             results = await ab.run_scenarios(
                 self.agent, model="m-ok", repetitions=1
             )
@@ -243,6 +253,56 @@ class TestRunner(unittest.IsolatedAsyncioTestCase):
         for names in seen:
             self.assertIn("run", names)
             self.assertNotIn("delegate", names, "scenarios must not delegate")
+
+
+class TestWeightedScoring(unittest.TestCase):
+    """``score_run`` must normalise by total weight and stay inside [0, 1]."""
+
+    def _score(self, rubric: tuple[str, ...], verdicts: list[float]) -> float:
+        with patch.object(ab, "judge", side_effect=[
+            JudgeVerdict(v, "pass" if v else "fail", "") for v in verdicts
+        ]):
+            score, notes = ab.score_run(
+                ab.RunOutcome("done", 1, 1), rubric, "m", "")
+        self.assertEqual(len(notes), len(rubric))
+        return score
+
+    def test_perfect_run_scores_exactly_one(self) -> None:
+        """A fully satisfied rubric scores 1.0, not the raw weight sum.
+
+        Regression: ``score_run`` divided the weight-summed total by
+        ``len(rubric)``, so scn-shell-1 (weights 3 + 2) scored a PERFECT run
+        2.5.  Every score then sailed past ``PASS_THRESHOLD``, which made the
+        agentic gate unfailable no matter how badly a run did.
+        """
+        for sc in ab.SCENARIOS:
+            with self.subTest(scenario=sc.id):
+                score = self._score(sc.rubric, [1.0] * len(sc.rubric))
+                self.assertAlmostEqual(score, 1.0, places=6)
+                self.assertLessEqual(score, 1.0)
+
+    def test_empty_run_scores_zero(self) -> None:
+        for sc in ab.SCENARIOS:
+            with self.subTest(scenario=sc.id):
+                self.assertAlmostEqual(
+                    self._score(sc.rubric, [0.0] * len(sc.rubric)), 0.0,
+                    places=6,
+                )
+
+    def test_weights_shift_the_mean_within_unit_range(self) -> None:
+        """A partial run scores the WEIGHTED mean, never the weight sum."""
+        rubric = ("first criterion (weight=3)", "second criterion (weight=2)")
+        # Only the first criterion is satisfied: 3*1.0 + 2*0.0 = 3, over a
+        # total weight of 5 -> 0.6.  The old math returned 3 / 2 = 1.5.
+        score = self._score(rubric, [1.0, 0.0])
+        self.assertAlmostEqual(score, 0.6, places=6)
+        self.assertGreaterEqual(score, 0.0)
+        self.assertLessEqual(score, 1.0)
+
+    def test_all_zero_weight_rubric_scores_zero_not_nan(self) -> None:
+        """A degenerate all-zero-weight rubric must not divide by zero."""
+        score = self._score(("degenerate (weight=0)",), [1.0])
+        self.assertEqual(score, 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -523,8 +583,24 @@ class TestSeamFactoryPerTurnAgent(unittest.IsolatedAsyncioTestCase):
                              "a run starts from the bare scenario prompt")
         self.assertEqual(sum(len(s.chat_calls) for s in turn_spies),
                          len(ab.SCENARIOS), "one turn per scenario run")
+        # The spy answers in text only (one turn per scenario), so it satisfies
+        # every marker criterion but NOT scn-shell-1's explicit "the run tool
+        # was used" criterion.  The score must reflect that honestly instead of
+        # relying on the old >1.0 inflated total.
         for res in results:
-            self.assertTrue(res.passed, f"{res.scenario.id} scored {res.score}")
+            self.assertLessEqual(res.score, 1.0, res.scenario.id)
+            self.assertGreaterEqual(res.score, 0.0, res.scenario.id)
+        shell = next(r for r in results if r.scenario.id == "scn-shell-1")
+        weights = [ab.parse_rubric(t)[1] for t in shell.scenario.rubric]
+        self.assertAlmostEqual(
+            shell.score, weights[0] / sum(weights), places=4,
+            msg="a text-only run earns only scn-shell-1's marker criterion",
+        )
+        self.assertFalse(
+            shell.passed,
+            "a text-only run must not pass a scenario whose rubric requires "
+            "the run tool",
+        )
 
 
 class TestSeamToolCallTurns(unittest.IsolatedAsyncioTestCase):

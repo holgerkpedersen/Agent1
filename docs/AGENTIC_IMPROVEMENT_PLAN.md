@@ -95,6 +95,16 @@ per decision #079 — no emojis in files.)
 12. [S] **Agentic benchmark** — `benchmark.py` measures Q&A accuracy only;
     add SWE-task scenarios (seeded-broken fixture repos, score = tests green
     after headless agent work) wired into `gates.run_benchmark_gate`.
+    **DONE** (2026-10-05): `agentic_bench.py` scores real agentic *work* (6
+    scenarios — shell, file_edit ×2, git, mcp, multi_tool — driven through the
+    real main tool loop with the delegation tools withheld, judged against a
+    weighted rubric) and is now wired into the HarnessFix gate chain:
+    `gates.run_agentic_gate` + `gates.should_accept_agentic` (fail-open to
+    `None`, mirroring the benchmark gate) are called by
+    `harnessfix/loop.py::run_loop` before/after the repair and veto acceptance
+    on a score regression. Non-blocking when no model is supplied, so offline
+    runs are unchanged. Residual gap: scenarios are rubric-scored main-loop
+    tasks, not literal seeded-broken fixture repos scored by pytest green.
 
 ## D. Orchestration & UX
 
@@ -150,6 +160,20 @@ Next substantive feature: #10 IN PROGRESS (second catalog repair landed
 Remaining quick wins: none — remaining items are [S]-scale.
 
 ## Progress log
+
+- 2026-10-05 — **#12 DONE (wiring)**: the agentic-scenario benchmark now gates
+  the HarnessFix loop. `harnessfix/gates.py` gains `run_agentic_gate` (deferred
+  import of `agentic_bench.run_agentic_gate`, returns `None` on no model / no
+  scenarios / ANY error — a gate must never raise into `run_loop`) and
+  `should_accept_agentic` (regression clause with tolerance, fail-open when
+  evidence is unavailable). `harnessfix/loop.py::run_loop` samples the gate
+  around the repair and ANDs it into `accepted` as an additional veto; the run
+  summary records `agentic_baseline` / `agentic_post` / `agentic_accepted`.
+  Because the gate is `None` without `--model`, offline acceptance is byte-for
+  -byte unchanged. Tests: `tests/test_harnessfix_gates.py` (6 new) +
+  `tests/test_harnessfix_loop.py` (2 new: regression veto, offline
+  non-blocking). Residual gap: scenarios are rubric-scored main-loop tasks,
+  not seeded-broken fixture repos scored by pytest green.
 
 - 2026-09-28 — **#4 progress + #2 user-model variant**: shipped the
   self-improvement wiring — `agent_core/llm/learning.py` (production

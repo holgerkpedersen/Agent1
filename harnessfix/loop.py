@@ -204,6 +204,10 @@ def run_loop(
             continue
 
         baseline_rate = gates.run_benchmark_gate(model, profile)
+        # Agentic-scenario quality signal (plan item #12): the Q&A benchmark
+        # scores answers, this scores real agentic work through the main tool
+        # loop.  Both are non-blocking (None) when no model is supplied.
+        agentic_baseline = gates.run_agentic_gate(model, profile)
         try:
             # Apply the repair to the real tree.  NOTE: ``applied_summary``
             # is intentionally PURE (it must not mutate the tree — see
@@ -224,6 +228,8 @@ def run_loop(
         security_passed, security_tail = gates.run_security_gate()
         set_phase("running_security_gate", security_passed=security_passed)
         post_rate = gates.run_benchmark_gate(model, profile)
+        agentic_post = gates.run_agentic_gate(model, profile)
+        agentic_ok = gates.should_accept_agentic(agentic_baseline, agentic_post)
         # Offline harness-quality gate: re-score the corpus after the repair
         # is applied; the repair's own layer is the targeting key (a repair
         # must address a failure mode the corpus actually evidences).
@@ -241,9 +247,13 @@ def run_loop(
         # supplied) OR the offline harness-quality gate (always available).
         # This demotes the benchmark from the de-facto quality criterion to an
         # optional cross-check while keeping a deterministic, offline gate.
+        # The agentic-scenario gate (plan item #12) is an additional veto: it
+        # is non-blocking (agentic_ok is True) whenever no model is supplied,
+        # so offline runs are unchanged, but a model-backed run is rejected if
+        # real agentic task performance regressed.
         accepted = (tests_passed and security_passed) and (
             benchmark_ok if model else harness_ok
-        )
+        ) and agentic_ok
         summary.update(
             tests_passed=tests_passed,
             tests_tail=tests_tail,
@@ -251,6 +261,9 @@ def run_loop(
             security_tail=security_tail,
             baseline_rate=baseline_rate,
             post_rate=post_rate,
+            agentic_baseline=agentic_baseline,
+            agentic_post=agentic_post,
+            agentic_accepted=agentic_ok,
             harness_baseline=harness_baseline.model_dump() if harness_baseline else None,
             harness_post=harness_post.model_dump() if harness_post else None,
             harness_accepted=harness_ok,
