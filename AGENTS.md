@@ -299,6 +299,13 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   require explicit confirmation before recording.
 - Windows shell is `cmd.exe` — no grep/tail; use `python -c "..."` one-liners inside
   the agent REPL; normalize paths via `to_windows_path`.
+- The NLP `search` tool's `path` argument is a **DIRECTORY to search recursively**,
+  not a filename filter. Point it at a file (`path="types.py"`,
+  `path="agent_core/memory/types.py"`) and it returns `No files found` even though the
+  query matches that very file. Both separators work (`agent_core/memory` and
+  `agent_core\memory` both match), so a forward slash is never the problem; a
+  non-existent directory is. For "where is X defined/used?", prefer `references`
+  (one call, whole-word, capped) over `search` — it cannot misfire this way.
 - Analysis claims are verified against real files/symbols (`analysis_verifier`):
   typed annotated attrs (`self._x: T = ...`), segment-scoped symbol resolution,
   dotted-module references all count as verified.
