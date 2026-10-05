@@ -75,8 +75,23 @@ per decision #079 — no emojis in files.)
    (`run` does not hit `run_interactive`), oversized files skipped.
    Both read-only → added to `PLAN_MODE_TOOLS`; system prompt steers the
    model to prefer them over grep+read paging.
-9. **Stream final answers** — `chat_stream` exists (with model-eviction
-   recovery) but `chat_nlp` blocks silently through long turns.
+9. **Stream final answers** — STATUS: **DONE 2026-10-05**.
+   `chat_stream` existed (with model-eviction recovery) but `chat_nlp`
+   blocked silently through long turns. The forced-synthesis call — the
+   tool-less "produce the final answer now" step after a cap/stuck verdict —
+   now streams via `provider chat_stream` when `AGENT_STREAM_FINAL_ANSWER`
+   is enabled (default **off**, so an existing run stays byte-identical).
+   Capability-gated by `provider_supports_streaming`: Opencode/OpenRouter/
+   Lemonade implement `chat_stream` as a bare `return await self.chat(...)`
+   that prints nothing, so their return value must NOT be treated as
+   already-shown (that would make `_finish_turn` skip its print and emit no
+   answer at all); a `FailoverProvider` is judged by `_providers[0]`, the one
+   that serves the stream. Fails open — exception, empty text, `(no output)`
+   or a provider error sentinel falls back to the blocking call, so a broken
+   stream never costs the user the answer. The runner reports
+   `final_answer_streamed` and `_finish_turn` re-prints only when it is false.
+   Residual gap: only the forced-synthesis call streams; ordinary
+   tool-calling turns still block.
 
 ## C. Complete the self-improvement loop
 
