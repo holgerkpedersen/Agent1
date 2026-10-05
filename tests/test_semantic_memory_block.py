@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from agent_core.memory import (
     SEMANTIC_MEMORY_MARKER,
     load_semantic_memory,
@@ -102,7 +100,9 @@ def test_agent_semantic_memory_block_uses_real_ledger(tmp_path) -> None:
     from agent import Agent
 
     (tmp_path / ".semantic_memory.json").write_text(
-        json.dumps([{"metadata": {"text": "deploy uses blue-green"}, "similarity_score": 0.8}]),
+        json.dumps(
+            [{"metadata": {"text": "deploy uses blue-green"}, "similarity_score": 0.8}]
+        ),
         encoding="utf-8",
     )
 
