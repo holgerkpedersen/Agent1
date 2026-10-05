@@ -99,7 +99,11 @@ def _parse_args(args: list[str]) -> tuple[bool, bool, float] | None:
     return as_json, show_latency, bucket_ms
 
 
-def _render(summary: dict[str, Any], db_path: str, latency: list[dict[str, Any]] | None) -> None:
+def _render(
+    summary: dict[str, Any],
+    db_path: str,
+    latency: list[dict[str, Any]] | None,
+) -> None:
     """Print the human-readable roll-up."""
     print(f"  Memory attribution ({os.path.basename(db_path)})")
     print(f"    experiences: {summary['experiences']}")
@@ -129,9 +133,10 @@ def _render(summary: dict[str, Any], db_path: str, latency: list[dict[str, Any]]
         if not latency:
             print("    (no latencies logged)")
         else:
+            width = _bucket_width(latency)
             for bucket in latency:
                 low = bucket["bucket_ms"]
-                print(f"    {low:.0f}-{low + _bucket_width(latency) - 1:.0f}: {bucket['count']}")
+                print(f"    {low:.0f}-{low + width - 1:.0f}: {bucket['count']}")
 
 
 def _bucket_width(histogram: list[dict[str, Any]]) -> float:
