@@ -69,7 +69,9 @@ ATTRIBUTION_COLUMNS: tuple[tuple[str, str], ...] = (
 #: Full DDL used when this module has to create the table from scratch.
 CREATE_EXPERIENCES_SQL = (
     "CREATE TABLE IF NOT EXISTS experiences ("
-    + ", ".join(f"{name} {typ}" for name, typ in EXPERIENCE_COLUMNS + ATTRIBUTION_COLUMNS)
+    + ", ".join(
+        f"{name} {typ}" for name, typ in EXPERIENCE_COLUMNS + ATTRIBUTION_COLUMNS
+    )
     + ")"
 )
 

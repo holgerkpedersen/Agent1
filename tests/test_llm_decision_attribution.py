@@ -173,9 +173,13 @@ class TestAttributionSchema:
 
     def test_declared_column_tuples_match_the_created_table(self) -> None:
         """The exported column contract must not drift from the real DDL."""
-        assert [n for n, _ in EXPERIENCE_COLUMNS] == [n for n, _ in _MCP_EXPERIENCE_COLUMNS]
+        assert [n for n, _ in EXPERIENCE_COLUMNS] == [
+            n for n, _ in _MCP_EXPERIENCE_COLUMNS
+        ]
 
-    def test_llm_decisions_table_holds_the_provenance_columns(self, tmp_path: Path) -> None:
+    def test_llm_decisions_table_holds_the_provenance_columns(
+        self, tmp_path: Path
+    ) -> None:
         db = tmp_path / "m.db"
         conn = _connect(db)
         try:
@@ -188,7 +192,9 @@ class TestAttributionSchema:
             "outcome_experience_id", "latency_ms", "token_usage", "timestamp",
         ]
 
-    def test_migration_is_idempotent_and_preserves_existing_rows(self, tmp_path: Path) -> None:
+    def test_migration_is_idempotent_and_preserves_existing_rows(
+        self, tmp_path: Path
+    ) -> None:
         db = tmp_path / "m.db"
         conn = _connect(db)
         try:
@@ -247,7 +253,9 @@ class TestAttributionSchema:
 # --------------------------------------------------------------------------
 
 class TestDecisionStamping:
-    def test_row_is_stamped_with_the_agents_model(self, tmp_path: Path, monkeypatch) -> None:
+    def test_row_is_stamped_with_the_agents_model(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
         bot = Agent(workspace=str(tmp_path))
@@ -429,7 +437,9 @@ class TestNeverRaises:
         assert bot._record_llm_experience(action="a", outcome=1.5) is None
         assert not _db_path_for(mem).exists()
 
-    def test_analytics_helpers_return_empty_for_a_missing_db(self, tmp_path: Path) -> None:
+    def test_analytics_helpers_return_empty_for_a_missing_db(
+        self, tmp_path: Path
+    ) -> None:
         missing = str(tmp_path / "nope.db")
         assert experiences_by_llm(missing) == []
         assert success_rate_by_model(missing) == []
@@ -438,7 +448,9 @@ class TestNeverRaises:
         assert summary["experiences"] == 0
         assert summary["llm_decisions"] == 0
 
-    def test_latency_histogram_rejects_a_nonpositive_bucket(self, tmp_path: Path) -> None:
+    def test_latency_histogram_rejects_a_nonpositive_bucket(
+        self, tmp_path: Path
+    ) -> None:
         with pytest.raises(ValueError):
             decision_latency_histogram(str(tmp_path / "m.db"), bucket_ms=0)
 
@@ -464,7 +476,9 @@ def _seed(db: Path, rows: list[tuple]) -> None:
 
 
 class TestAttributionAnalytics:
-    def test_experiences_by_llm_counts_only_attributed_rows(self, tmp_path: Path) -> None:
+    def test_experiences_by_llm_counts_only_attributed_rows(
+        self, tmp_path: Path
+    ) -> None:
         db = tmp_path / "m.db"
         _seed(db, [
             ("a", 1.0, 1, "model-a"),
@@ -524,7 +538,9 @@ class TestAttributionAnalytics:
 
         assert decision_latency_histogram(db) == [{"bucket_ms": 0, "count": 1}]
 
-    def test_summary_separates_attributed_from_unattributed(self, tmp_path: Path) -> None:
+    def test_summary_separates_attributed_from_unattributed(
+        self, tmp_path: Path
+    ) -> None:
         db = tmp_path / "m.db"
         _seed(db, [
             ("a", 1.0, 1, "model-a"),
