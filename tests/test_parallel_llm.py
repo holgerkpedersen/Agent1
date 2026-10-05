@@ -25,6 +25,7 @@ from agent_core.llm.parallel import (
     ParallelResult,
     ParallelRun,
     _looks_negative,
+    parse_verdict,
     run_parallel,
     summarize,
 )
@@ -269,6 +270,215 @@ class TestConsensus:
         assert _looks_negative("bug found at line 3")
         assert not _looks_negative("Yes, this looks correct")
         assert _looks_negative("")  # empty answer counts as reject
+
+
+class TestStructuredVerdict:
+    """The honest-consensus fix: vote from the model's OWN stated verdict.
+
+    The old vote was ``verdict and not _looks_negative(text)`` — a lexical
+    guess over the first 120 chars, which a model can contradict in its own
+    conclusion ("No, wait — on reflection this is correct").  These tests pin
+    the structured ``VERDICT:`` path AND the fallback for answers that carry
+    no verdict line.
+    """
+
+    def test_parse_verdict_approve_and_reject(self):
+        assert parse_verdict("Looks fine.\nVERDICT: APPROVE")[0] is True
+        assert parse_verdict("Broken.\nVERDICT: REJECT")[0] is False
+
+    def test_parse_verdict_accept_and_deny_synonyms(self):
+        assert parse_verdict("VERDICT: ACCEPT")[0] is True
+        assert parse_verdict("VERDICT: DENY")[0] is False
+
+    def test_parse_verdict_tolerates_markdown_and_punctuation(self):
+        """Models emit bold/heading verdict lines — still parse them."""
+        assert parse_verdict("**VERDICT:** APPROVE")[0] is True
+        assert parse_verdict("## VERDICT: REJECT")[0] is False
+        assert parse_verdict("- VERDICT - APPROVE")[0] is True
+
+    def test_parse_verdict_last_line_wins(self):
+        """A restated proposition must not override the final conclusion."""
+        text = "VERDICT: REJECT is what a hasty read suggests.\n" \
+               "On closer inspection:\nVERDICT: APPROVE"
+        assert parse_verdict(text)[0] is True
+
+    def test_parse_verdict_reason_extracted(self):
+        verdict, reason = parse_verdict(
+            "Some prose.\nVERDICT: REJECT\nREASON: off-by-one at line 42"
+        )
+        assert verdict is False
+        assert reason == "off-by-one at line 42"
+
+    def test_parse_verdict_absent_returns_none(self):
+        """No verdict line → (None, '') so the caller can fall back, not guess."""
+        assert parse_verdict("This is fine, I think.") == (None, "")
+        assert parse_verdict("") == (None, "")
+        # A prose mention is NOT a verdict line (must be at line start).
+        assert parse_verdict("the verdict is approve")[0] is None
+
+    def test_structured_verdict_beats_negative_heuristic(self):
+        """REGRESSION: prose looks negative, model's verdict says APPROVE."""
+        run = ParallelRun(template_id="sv1")
+        run.results = [
+            ParallelResult(
+                model="a", provider="lmstudio", ok=True,
+                text="No, wait — I checked and this is correct.\n"
+                     "VERDICT: APPROVE\nREASON: checked the call site",
+            ),
+        ]
+        # The heuristic alone would reject this answer.
+        assert _looks_negative(run.results[0].text) is True
+        run.agree(verdict=True)
+        assert run.voter.vote_status("sv1")["yes"] == 1  # structured wins
+        assert run.results[0].verdict is True
+        assert run.results[0].verdict_reason == "checked the call site"
+        assert run.votes_structured == 1
+
+    def test_structured_reject_beats_positive_heuristic(self):
+        """Mirror case: prose looks positive, model's verdict says REJECT."""
+        run = ParallelRun(template_id="sv2")
+        run.results = [
+            ParallelResult(
+                model="a", provider="lmstudio", ok=True,
+                text="Yes, this looks correct at first glance.\n"
+                     "VERDICT: REJECT\nREASON: mutates the caller's list",
+            ),
+        ]
+        assert _looks_negative(run.results[0].text) is False
+        run.agree(verdict=True)
+        assert run.voter.vote_status("sv2")["yes"] == 0
+        assert run.results[0].verdict is False
+
+    def test_unparseable_answer_falls_back_to_heuristic(self):
+        """No verdict line → the old lexical behavior is preserved."""
+        run = ParallelRun(template_id="sv3")
+        run.results = [
+            ParallelResult(model="a", provider="lmstudio", ok=True,
+                           text="yes looks good"),
+            ParallelResult(model="b", provider="opencode", ok=True,
+                           text="no, has a bug"),
+        ]
+        run.agree(verdict=True)
+        assert run.voter.vote_status("sv3") == {
+            "total": 2, "yes": 1, "no": 1,
+        }
+        assert run.votes_structured == 0
+        assert all(r.verdict is None for r in run.results)
+
+    def test_auto_agree_uses_own_verdicts(self):
+        """Each model votes its OWN verdict — no reference verdict needed."""
+        run = ParallelRun(template_id="sv4", verdict_requested=True)
+        run.results = [
+            ParallelResult(model="a", provider="lmstudio", ok=True,
+                           text="prose\nVERDICT: APPROVE"),
+            ParallelResult(model="b", provider="opencode", ok=True,
+                           text="prose\nVERDICT: APPROVE"),
+            ParallelResult(model="c", provider="lmstudio", ok=True,
+                           text="prose\nVERDICT: REJECT"),
+        ]
+        assert run.auto_agree() == 3
+        assert run.voter.vote_status("sv4")["yes"] == 2
+        assert run.quorum_reached(quorum_threshold=0.5) is True  # 2/3
+        assert "consensus APPROVE" in run.consensus()
+
+    def test_auto_agree_skips_unparseable_answers(self):
+        """A silent model is NOT counted as a reject — it just doesn't vote."""
+        run = ParallelRun(template_id="sv5", verdict_requested=True)
+        run.results = [
+            ParallelResult(model="a", provider="lmstudio", ok=True,
+                           text="prose\nVERDICT: APPROVE"),
+            ParallelResult(model="b", provider="opencode", ok=True,
+                           text="rambling answer with no verdict line"),
+            ParallelResult(model="c", provider="lmstudio", ok=False,
+                           text="[Error: down]"),
+        ]
+        assert run.auto_agree() == 1
+        assert run.voter.vote_status("sv5")["total"] == 1
+        # Only the one stated verdict counts — and it approves.
+        assert run.quorum_reached(quorum_threshold=1.0) is True
+
+    def test_auto_agree_with_no_stated_verdicts_is_no_consensus(self):
+        """No parseable verdicts → no votes → quorum must NOT be claimed."""
+        run = ParallelRun(template_id="sv6", verdict_requested=True)
+        run.results = [
+            ParallelResult(model="a", provider="lmstudio", ok=True, text="maybe"),
+            ParallelResult(model="b", provider="opencode", ok=True, text="unclear"),
+        ]
+        assert run.auto_agree() == 0
+        assert run.quorum_reached(quorum_threshold=0.0) is False
+        assert "no usable model answers" in run.consensus()
+
+    def test_summarize_shows_verdict_labels(self):
+        run = ParallelRun(template_id="sv7", verdict_requested=True)
+        run.results = [
+            ParallelResult(model="a", provider="lmstudio", ok=True,
+                           text="x\nVERDICT: APPROVE\nREASON: fine"),
+            ParallelResult(model="b", provider="opencode", ok=True,
+                           text="y\nVERDICT: REJECT\nREASON: leak"),
+        ]
+        run.auto_agree()
+        out = summarize(run)
+        assert "[APPROVE]" in out
+        assert "[REJECT]" in out
+        assert "verdict: fine" in out
+
+    def test_verdict_instruction_appended_to_last_user_message(self):
+        """run_parallel(verdict_instruction=True) asks every model for a line."""
+        seen = {}
+
+        class _Recording:
+            def __init__(self, model_name):
+                self.model_name = model_name
+                self.last_response_metrics = None
+
+            async def chat(self, messages, tools=None, max_tokens=None,
+                           disable_thinking=False):
+                seen[self.model_name] = list(messages)
+                return "ok\nVERDICT: APPROVE"
+
+        with patch("agent_core.llm.parallel.build_provider",
+                   side_effect=lambda s, m: _Recording(m)):
+            run = asyncio.run(run_parallel(
+                [{"role": "user", "content": "is this ok?"}],
+                ["laguna-s-2.1", "opencode-go/deepseek-v4-flash"],
+                _settings(),
+                verdict_instruction=True,
+            ))
+
+        assert run.verdict_requested is True
+        for model in ("laguna-s-2.1", "opencode-go/deepseek-v4-flash"):
+            user_msgs = [m for m in seen[model] if m["role"] == "user"]
+            assert "VERDICT: APPROVE" in user_msgs[-1]["content"]
+            assert user_msgs[-1]["content"].startswith("is this ok?")
+        assert run.auto_agree() == 2
+        assert run.quorum_reached(quorum_threshold=1.0) is True
+
+    def test_verdict_instruction_off_by_default(self):
+        """Existing callers must not get the extra prompt text."""
+        seen = {}
+
+        class _Recording:
+            def __init__(self, model_name):
+                self.model_name = model_name
+                self.last_response_metrics = None
+
+            async def chat(self, messages, tools=None, max_tokens=None,
+                           disable_thinking=False):
+                seen[self.model_name] = list(messages)
+                return "ok"
+
+        with patch("agent_core.llm.parallel.build_provider",
+                   side_effect=lambda s, m: _Recording(m)):
+            run = asyncio.run(run_parallel(
+                [{"role": "user", "content": "is this ok?"}],
+                ["laguna-s-2.1", "opencode-go/deepseek-v4-flash"],
+                _settings(),
+            ))
+
+        assert run.verdict_requested is False
+        for model in ("laguna-s-2.1", "opencode-go/deepseek-v4-flash"):
+            user_msgs = [m for m in seen[model] if m["role"] == "user"]
+            assert user_msgs[-1]["content"] == "is this ok?"
 
 
 class TestRoles:
@@ -658,3 +868,124 @@ class TestSummarize:
         assert "a" in out and "b" in out
         assert "[ok]" in out and "[ERROR]" in out
         assert "no usable model answers" in out  # zero ok votes
+
+
+class TestMultiLlmVerdictFlag:
+    """``multillm --verdict`` end-to-end through the REAL command path.
+
+    REGRESSION: before this, nothing in production ever called ``agree()``, so
+    ``summarize()``'s consensus line was ALWAYS "no usable model answers —
+    no consensus" no matter what the models said.  The flag must (a) ask every
+    model for a structured VERDICT line and (b) record those lines as votes.
+    """
+
+    @staticmethod
+    def _agent():
+        class FakeLLM:
+            model_name = "laguna-s-2.1"
+        return type("A", (), {
+            "llm": FakeLLM(), "workspace": "C:/Dev/Agent1",
+        })()
+
+    @staticmethod
+    def _run(args):
+        from agent_core.commands.multillm_cmd import MultiLlmCommand
+        return asyncio.run(MultiLlmCommand().execute(args, TestMultiLlmVerdictFlag._agent()))
+
+    def test_verdict_flag_asks_and_counts_votes(self, capsys):
+        seen = {}
+
+        class _Verdicting:
+            def __init__(self, model_name):
+                self.model_name = model_name
+                self.last_response_metrics = None
+
+            async def chat(self, messages, tools=None, max_tokens=None,
+                           disable_thinking=False):
+                seen[self.model_name] = str(messages[-1]["content"])
+                # Model A approves, model B rejects.
+                word = "APPROVE" if self.model_name == "laguna-s-2.1" else "REJECT"
+                return f"my answer\nVERDICT: {word}\nREASON: because {word}"
+
+        def factory(settings, model_name):
+            return _Verdicting(model_name)
+
+        args = [
+            "is the patch safe?",
+            "--models", "laguna-s-2.1,opencode-go/deepseek-v4-flash",
+            "--verdict",
+        ]
+        with patch("agent_core.llm.parallel.build_provider", side_effect=factory):
+            ok = self._run(args)
+
+        assert ok is True
+        # (a) every model was asked for a structured verdict line.
+        for model in ("laguna-s-2.1", "opencode-go/deepseek-v4-flash"):
+            assert "VERDICT: APPROVE" in seen[model]
+            assert seen[model].startswith("is the patch safe?")
+        # (b) the verdicts were counted, and the summary shows real votes.
+        out = capsys.readouterr().out
+        assert "2 structured verdict(s) counted." in out
+        assert "[APPROVE]" in out and "[REJECT]" in out
+        assert "consensus APPROVE (1/2" in out
+        assert "no usable model answers" not in out
+
+    def test_without_flag_no_verdict_requested_and_no_votes(self, capsys):
+        seen = {}
+
+        class _Plain:
+            def __init__(self, model_name):
+                self.model_name = model_name
+                self.last_response_metrics = None
+
+            async def chat(self, messages, tools=None, max_tokens=None,
+                           disable_thinking=False):
+                seen[self.model_name] = str(messages[-1]["content"])
+                return "just prose, no verdict line"
+
+        def factory(settings, model_name):
+            return _Plain(model_name)
+
+        args = [
+            "is the patch safe?",
+            "--models", "laguna-s-2.1,opencode-go/deepseek-v4-flash",
+        ]
+        with patch("agent_core.llm.parallel.build_provider", side_effect=factory):
+            ok = self._run(args)
+
+        assert ok is True
+        # The prompt is untouched and nothing pretends to be a vote.
+        for model in ("laguna-s-2.1", "opencode-go/deepseek-v4-flash"):
+            assert seen[model] == "is the patch safe?"
+        out = capsys.readouterr().out
+        assert "structured verdict" not in out
+        assert "no usable model answers" in out  # honest: no votes recorded
+
+    def test_flag_with_silent_models_reports_no_consensus(self, capsys):
+        """Models that ignore the instruction must NOT be counted as rejects."""
+
+        class _Silent:
+            def __init__(self, model_name):
+                self.model_name = model_name
+                self.last_response_metrics = None
+
+            async def chat(self, messages, tools=None, max_tokens=None,
+                           disable_thinking=False):
+                return "I have thoughts but no structured conclusion."
+
+        def factory(settings, model_name):
+            return _Silent(model_name)
+
+        args = [
+            "is the patch safe?",
+            "--models", "laguna-s-2.1,opencode-go/deepseek-v4-flash",
+            "--verdict",
+        ]
+        with patch("agent_core.llm.parallel.build_provider", side_effect=factory):
+            ok = self._run(args)
+
+        assert ok is True
+        out = capsys.readouterr().out
+        assert "No model emitted a parseable 'VERDICT:' line" in out
+        assert "no usable model answers" in out
+        assert "consensus APPROVE" not in out

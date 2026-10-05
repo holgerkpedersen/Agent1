@@ -4,7 +4,7 @@ Usage::
 
     multillm "question" [--models m1,m2,...] [--engines npu,igpu] [--warm]
              [--max-tokens N] [--thinking] [--concurrency N] [--template <id>]
-             [--role model:system-prompt] [--role-file path.json]
+             [--role model:system-prompt] [--role-file path.json] [--verdict]
 
 Default models: the current agent model plus the configured opencode model
 (``laguna-s-2.1`` + the configured opencode model when nothing is
@@ -103,9 +103,11 @@ class MultiLlmCommand(Command):
             'multillm "question" [--models laguna-s-2.1,opencode-go/...] '
             "[--engines npu,igpu] [--warm] [--max-tokens N] [--thinking] "
             "[--concurrency N] [--role model:prompt] [--role-file path.json] "
-            "[--synthesize] - ask multiple LLMs the same question in parallel; "
-            "--engines runs one model per accelerator (NPU + iGPU) at once, "
-            "--warm preloads them; --synthesize merges answers via one extra call"
+            "[--synthesize] [--verdict] - ask multiple LLMs the same question "
+            "in parallel; --engines runs one model per accelerator (NPU + iGPU) "
+            "at once, --warm preloads them; --synthesize merges answers via one "
+            "extra call; --verdict makes each model end with a structured "
+            "VERDICT: APPROVE|REJECT line so the consensus counts real votes"
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
@@ -124,12 +126,17 @@ class MultiLlmCommand(Command):
         roles: dict[str, str] = {}
         synthesize = False
         warm = False
+        verdict = False
 
         i = 0
         while i < len(parts):
             p = parts[i]
             if p == "--synthesize":
                 synthesize = True
+                i += 1
+                continue
+            if p == "--verdict":
+                verdict = True
                 i += 1
                 continue
             if p == "--models" and i + 1 < len(parts):
@@ -271,6 +278,7 @@ class MultiLlmCommand(Command):
             roles=roles,
             provider_overrides=provider_overrides or None,
             warm=warm,
+            verdict_instruction=verdict,
             # Give the models the SAME tools the agent uses — each model can
             # read/search/list files, run tests, etc. instead of answering
             # from the prompt alone (2026-08-21: models asked for the file
@@ -302,6 +310,17 @@ class MultiLlmCommand(Command):
                 print(f"  [Error] {r.error}")
             print()
         print(f"{'=' * 60}")
+        if verdict:
+            # Count each model's OWN structured verdict as its vote; models
+            # that never stated one abstain (they are not counted as rejects).
+            recorded = run.auto_agree()
+            if recorded:
+                print(cyan(f"  {recorded} structured verdict(s) counted."))
+            else:
+                print(yellow(
+                    "  No model emitted a parseable 'VERDICT:' line — "
+                    "no consensus to report."
+                ))
         print(summarize(run))
 
         if synthesize:

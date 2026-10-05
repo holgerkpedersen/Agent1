@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Sequence
 
@@ -60,6 +61,61 @@ from .provider import ResponseMetrics, build_provider, get_last_metrics, provide
 
 #: Text prefix every provider returns on failure (never raises).
 _ERROR_PREFIXES = ("[Error", "[LM Studio")
+
+#: Instruction appended to the shared prompt when a structured verdict is
+#: requested.  Asking every model for the SAME machine-readable line is what
+#: makes the consensus honest: the vote comes from the model's own stated
+#: conclusion instead of a lexical guess about its prose.
+VERDICT_INSTRUCTION = (
+    "End your answer with exactly two final lines, in this format:\n"
+    "VERDICT: APPROVE\n"
+    "REASON: <one short sentence>\n"
+    "Use VERDICT: REJECT instead when the proposition is false, buggy or "
+    "should not be accepted. The VERDICT line must be one of APPROVE or "
+    "REJECT — nothing else on that line."
+)
+
+#: ``VERDICT: APPROVE`` / ``VERDICT: REJECT`` (markdown bold, headings and a
+#: leading list bullet tolerated).  Anchored to a line start so a passing
+#: mention of the word inside prose is not mistaken for the verdict.
+_VERDICT_RE = re.compile(
+    r"^[ \t>]*(?:[-*+][ \t]+)?[*_`#]*[ \t]*VERDICT[ \t]*[*_`]*[ \t]*[:\-][ \t]*"
+    r"[*_`]*[ \t]*(APPROVE|ACCEPT|REJECT|DENY|NO)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+#: ``REASON: ...`` on its own line (same tolerance as the verdict line).
+_REASON_RE = re.compile(
+    r"^[ \t>]*(?:[-*+][ \t]+)?[*_`#]*[ \t]*REASON[ \t]*[*_`]*[ \t]*[:\-][ \t]*"
+    r"[*_`]*[ \t]*(.+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_APPROVING_WORDS = frozenset({"approve", "accept"})
+
+
+def parse_verdict(text: str) -> tuple[bool | None, str]:
+    """Extract the structured ``VERDICT:`` line from one model's answer.
+
+    Returns ``(verdict, reason)`` where *verdict* is ``True`` for
+    APPROVE/ACCEPT, ``False`` for REJECT/DENY/NO and ``None`` when the answer
+    carries no parseable verdict line (callers then fall back to the lexical
+    heuristic — never guess a vote).  The LAST verdict line wins: models
+    sometimes restate the proposition before concluding.
+    """
+    if not text:
+        return None, ""
+    matches = list(_VERDICT_RE.finditer(text))
+    if not matches:
+        return None, ""
+    last = matches[-1]
+    word = last.group(1).lower()
+    verdict = word in _APPROVING_WORDS
+    reason = ""
+    reason_match = _REASON_RE.search(text, last.end())
+    if reason_match:
+        reason = reason_match.group(1).strip().strip("*_` ")
+    return verdict, reason[:300]
 
 
 @dataclass
@@ -75,6 +131,12 @@ class ParallelResult:
     #: Accelerator the model ran on ("npu" | "igpu" | "cpu" | "cloud") —
     #: lets callers group results/telemetry by device, not provider type.
     device: str = ""
+    #: Structured approve/reject parsed from this answer's ``VERDICT:`` line
+    #: by :meth:`ParallelRun.agree` (``None`` = the answer carried no
+    #: parseable structured verdict, so the lexical heuristic was used).
+    verdict: bool | None = None
+    #: The ``reason`` field of that structured verdict ("" when absent).
+    verdict_reason: str = ""
 
     @property
     def error(self) -> str:
@@ -82,6 +144,13 @@ class ParallelResult:
         if self.ok:
             return ""
         return self.exception or self.text[:400]
+
+    @property
+    def verdict_label(self) -> str:
+        """``"APPROVE"`` / ``"REJECT"`` / ``""`` (no parsed structured vote)."""
+        if self.verdict is None:
+            return ""
+        return "APPROVE" if self.verdict else "REJECT"
 
 
 @dataclass
@@ -97,6 +166,9 @@ class ParallelRun:
     template_id: str
     results: list[ParallelResult] = field(default_factory=list)
     voter: RefinementVoter = field(default_factory=RefinementVoter)
+    #: True when the run asked every model for a structured ``VERDICT:`` line
+    #: (set by ``run_parallel(verdict_instruction=True)``).
+    verdict_requested: bool = False
 
     @property
     def ok_results(self) -> list[ParallelResult]:
@@ -107,11 +179,52 @@ class ParallelRun:
         return [r for r in self.results if not r.ok]
 
     def agree(self, verdict: bool) -> None:
-        """Record ``verdict`` (approve=True / reject=False) from every model."""
+        """Record every model's vote on the proposition under test.
+
+        Each vote prefers the model's OWN structured ``VERDICT:`` line
+        (:func:`parse_verdict`); only an answer with no parseable verdict line
+        falls back to the lexical :func:`_looks_negative` heuristic.  So a
+        model that states its conclusion explicitly is never overruled by a
+        first-120-chars guess about its prose.
+
+        *verdict* is the reference verdict the caller is testing for: the
+        recorded vote is True when the model's conclusion MATCHES it.  The
+        parsed verdict and its reason are stamped onto each
+        :class:`ParallelResult` (``verdict`` / ``verdict_reason``) so callers
+        can see why a model voted the way it did.
+        """
         for r in self.ok_results:
-            self.voter.collect_vote(
-                self.template_id, verdict and not _looks_negative(r.text)
-            )
+            parsed, reason = parse_verdict(r.text)
+            r.verdict = parsed
+            r.verdict_reason = reason
+            positive = (not _looks_negative(r.text)) if parsed is None else parsed
+            self.voter.collect_vote(self.template_id, positive == bool(verdict))
+
+    @property
+    def votes_structured(self) -> int:
+        """How many recorded votes came from a parsed structured verdict."""
+        return sum(1 for r in self.ok_results if r.verdict is not None)
+
+    def auto_agree(self) -> int:
+        """Record every model's OWN parsed verdict — no reference verdict.
+
+        The honest path: each model votes exactly what its ``VERDICT:`` line
+        says.  An answer with no parseable verdict line is SKIPPED rather
+        than guessed at, so ``quorum_reached()`` only ever reflects models
+        that actually stated a conclusion.  Returns the number of votes
+        recorded (0 → the caller should say so instead of claiming a
+        consensus).
+        """
+        recorded = 0
+        for r in self.ok_results:
+            parsed, reason = parse_verdict(r.text)
+            r.verdict = parsed
+            r.verdict_reason = reason
+            if parsed is None:
+                continue
+            self.voter.collect_vote(self.template_id, parsed)
+            recorded += 1
+        return recorded
 
     def quorum_reached(self, quorum_threshold: float = 0.5) -> bool:
         """True when ``yes / total >= quorum_threshold`` for the recorded votes.
@@ -225,6 +338,7 @@ async def run_parallel(
     max_tool_iterations: int = 40,
     provider_overrides: dict[str, str] | None = None,
     warm: bool = False,
+    verdict_instruction: bool = False,
 ) -> ParallelRun:
     """Fire ``chat(messages)`` on every *model* simultaneously.
 
@@ -266,6 +380,12 @@ async def run_parallel(
             be hijacked by a persisted provider of another type).
         warm: When True, ask each provider's ``ensure_model_loaded`` hook to
             preload its model before dispatch (residency manager); best-effort.
+        verdict_instruction: When True, append
+            :data:`VERDICT_INSTRUCTION` to the shared prompt so every model
+            ends with a machine-readable ``VERDICT: APPROVE|REJECT`` line.
+            The parsed conclusions drive :meth:`ParallelRun.auto_agree`, which
+            makes the consensus honest (each vote is the model's own stated
+            conclusion, not a lexical guess about its prose).
 
     Returns:
         A :class:`ParallelRun` with one :class:`ParallelResult` per model,
@@ -298,8 +418,22 @@ async def run_parallel(
 
     roles = roles or {}
 
+    # One shared prompt for every model (that is the point of a comparison).
+    # The verdict instruction is appended to the LAST user message rather than
+    # sent as a trailing system message: providers weight a system turn that
+    # follows the question inconsistently, while the instruction is then part
+    # of the question each model answers.
+    shared: list[dict[str, Any]] = [dict(m) for m in messages]
+    if verdict_instruction:
+        for msg in reversed(shared):
+            if msg.get("role") == "user":
+                msg["content"] = f"{msg.get('content', '')}\n\n{VERDICT_INSTRUCTION}"
+                break
+        else:
+            shared.append({"role": "system", "content": VERDICT_INSTRUCTION})
+
     async def _call(provider: Any, model_name: str) -> Any:
-        model_messages = list(messages)
+        model_messages = list(shared)
         role = roles.get(model_name)
         if role:
             model_messages.insert(0, {"role": "system", "content": role})
@@ -358,7 +492,7 @@ async def run_parallel(
 
     gathered = await asyncio.gather(*coros, return_exceptions=True)
 
-    run = ParallelRun(template_id=template_id)
+    run = ParallelRun(template_id=template_id, verdict_requested=verdict_instruction)
     for model, provider, outcome in zip(models, providers, gathered):
         text, exception = _error_or_exception(outcome)
         ok = not exception and not text.startswith(_ERROR_PREFIXES)
@@ -388,7 +522,14 @@ def summarize(run: ParallelRun) -> str:
         if r.metrics is not None and r.metrics.total_tokens:
             metrics = f"  ({r.metrics.total_tokens} tok, {r.metrics.latency_ms:.0f} ms)"
         device = f"{r.device}/" if r.device else ""
-        lines.append(f"  [{status}] {r.model} ({device}{r.provider}){metrics}")
+        vote = ""
+        if r.ok and r.verdict is not None:
+            vote = f"  [{r.verdict_label}]"
+        lines.append(
+            f"  [{status}] {r.model} ({device}{r.provider}){metrics}{vote}"
+        )
+        if r.ok and r.verdict is not None and r.verdict_reason:
+            lines.append(f"      verdict: {r.verdict_reason[:200]}")
         if not r.ok:
             lines.append(f"      {r.error[:200]}")
     lines.append(f"  {run.consensus()}")
@@ -398,6 +539,8 @@ def summarize(run: ParallelRun) -> str:
 __all__ = [
     "ParallelResult",
     "ParallelRun",
+    "VERDICT_INSTRUCTION",
+    "parse_verdict",
     "run_parallel",
     "summarize",
 ]
