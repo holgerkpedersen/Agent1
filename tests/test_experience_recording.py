@@ -88,7 +88,17 @@ class TestRecordLlmExperienceDirect:
     def test_table_schema_matches_mcp_memory_server(
         self, tmp_path: Path, monkeypatch,
     ) -> None:
-        """The created DDL must match the table the MCP server reads/writes."""
+        """The MCP columns must stay byte-identical AND come first.
+
+        Decision attribution appends nullable columns to ``experiences``.  The
+        MCP memory server reads this table with ``SELECT *`` and formats rows by
+        column NAME, and both writers name their columns explicitly — so
+        appending is compatible, while *inserting* or *reordering* would
+        silently shift every positional read in the server.  This asserts the
+        stronger invariant that replaced plain equality: the first five columns
+        are exactly the MCP ones, and everything appended after them is
+        nullable (so a pre-existing row reads back NULL, not a fake value).
+        """
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
         bot = Agent(workspace=str(tmp_path))
@@ -100,7 +110,10 @@ class TestRecordLlmExperienceDirect:
         finally:
             conn.close()
         # (cid, name, type, notnull, dflt_value, pk) -> name/type, in order.
-        assert [(r[1], r[2]) for r in info] == _MCP_EXPERIENCE_COLUMNS
+        observed = [(r[1], r[2]) for r in info]
+        assert observed[:len(_MCP_EXPERIENCE_COLUMNS)] == _MCP_EXPERIENCE_COLUMNS
+        for row in info[len(_MCP_EXPERIENCE_COLUMNS):]:
+            assert row[3] == 0, f"appended column {row[1]!r} must be nullable"
 
     def test_pre_existing_table_is_reused_not_clobbered(
         self, tmp_path: Path, monkeypatch,

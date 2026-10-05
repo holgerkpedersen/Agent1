@@ -48,14 +48,14 @@ from agent_core.modes import (
     plan_mode_turn_note,
 )
 from agent_core.subagent_roles import get_role, role_names
-from agent_core.llm.provider import is_connection_failure
+from agent_core.llm.provider import get_last_metrics, is_connection_failure
 from agent_core.llm.tool_loop import ToolLoopRunner
 from agent_core.llm.learning import (
     record_turn_outcome,
     recommend_profile,
     save_weights as save_meta_policy_weights,
 )
-from agent_core.context_management import CorrelationIdContext
+from agent_core.context_management import CORRELATION_ID_CTX, CorrelationIdContext
 from agent_core.hue.bridge import HueBridge, HueBridgeError
 try:
     from harnessfix.tracing import TraceWriter, trace_enabled
@@ -536,6 +536,11 @@ class Agent:
         #: :meth:`_mutating_files_this_turn` must never treat those as files
         #: changed by the live turn.
         self._turn_start_index: int = len(self._chat_history)
+        #: Run id of the current turn (the turn's correlation id, decision
+        #: #050).  Every experience row written this turn carries it in the
+        #: llm_decisions provenance log, so one turn's decisions are linkable
+        #: as a unit.  ``None`` outside a turn (direct calls, tests).
+        self._turn_run_id: str | None = None
         #: Consecutive ``read`` tool calls in the current turn (read-loop
         #: guard).  Reset at turn start and by every non-read tool call; when
         #: it crosses ``_MAX_CONSECUTIVE_READS`` a steering note is appended
@@ -2550,7 +2555,12 @@ class Agent:
         #: One correlation id per TURN: every chained run of this chat_nlp
         #: call shares it, so a single task is linkable across its traces
         #: (decision #050).
-        with CorrelationIdContext():
+        with CorrelationIdContext() as turn_cid:
+            #: One run id per turn, reused by every experience row this turn
+            #: writes (decision attribution): the llm_decisions provenance log
+            #: and the chat_turn roll-up row share the llm_decision row's id,
+            #: so a whole turn is linkable in one join.
+            self._turn_run_id = turn_cid
             while True:
                 #: Per-run trace writer (one JSONL file per run() invocation,
                 #: decision #029).  AGENT_NO_TRACE=1 disables trace capture.
@@ -2598,6 +2608,10 @@ class Agent:
                 #: never-raising SQLite write that mirrors MCP record_experience.
                 _run_outcome = 1.0 if not llm_error else 0.0
                 _run_success = bool(not llm_error and reason in ("answer", "cap"))
+                #: Provider telemetry for this run, when the transport reports
+                #: it: latency + tokens land in the llm_decisions provenance
+                #: row so cost/latency can be compared per model later.
+                _metrics = get_last_metrics(getattr(self.llm, "_provider", None))
                 self._record_llm_experience(
                     action="llm_decision",
                     outcome=_run_outcome,
@@ -2609,6 +2623,10 @@ class Agent:
                         "final_text_len": len(final_text),
                     },
                     success=_run_success,
+                    decision_prompt=final_messages,
+                    run_id=self._turn_run_id or CORRELATION_ID_CTX.get() or None,
+                    latency_ms=getattr(_metrics, "latency_ms", None),
+                    token_usage=getattr(_metrics, "total_tokens", None),
                 )
                 # A provider-level failure is not an answer: never auto-continue —
                 # chaining would only re-burn the same broken LLM call.
@@ -2746,6 +2764,12 @@ class Agent:
                     "plan_mode": bool(self.is_plan_mode()),
                     "files": list(mutated_files or []),
                 },
+                #: The turn roll-up is attributed to the same model that made
+                #: the turn's decisions, and shares the turn's run id — so the
+                #: llm_decision row and this quality row are one unit in the
+                #: llm_decisions provenance log.
+                decision_prompt=str(getattr(self, "_last_user_input", "") or "") or None,
+                run_id=self._turn_run_id or CORRELATION_ID_CTX.get() or None,
             )
             # Meta-policy loop (B2): success/failure under the inferred
             # task type + active profile, with token/cost metrics from the
@@ -3312,7 +3336,9 @@ class Agent:
 
     def _record_llm_experience(
         self, action: str, outcome: float, context: dict[str, Any] | None = None,
-        success: bool | None = None,
+        success: bool | None = None, decision_llm: str | None = None,
+        decision_prompt: Any = None, run_id: str | None = None,
+        latency_ms: float | None = None, token_usage: int | None = None,
     ) -> int | None:
         """Record an LLM decision/outcome into agent_memory.db (experiences).
 
@@ -3325,6 +3351,37 @@ class Agent:
         self-improvement loop.  It must NEVER raise: if agent_memory.db is
         absent, unwritable, or the table missing, we silently no-op so untraced
         / non-memory runs stay byte-identical (decisions #048/#049).
+
+        Decision attribution (plan: memory-collection LLM attribution)
+        -------------------------------------------------------------
+        Every row is stamped with the LLM that *decided* it, so a later model
+        swap can be measured against ground-truth memory outcomes:
+
+        ``decision_llm``
+            The deciding model.  Defaults to this agent's active model
+            (:func:`agent_core.memory.attribution.resolve_decision_llm`), so
+            the stamp cannot be forgotten by a call site.
+        ``decision_prompt_hash``
+            SHA-256 of the prompt/conversation behind the decision (canonical,
+            tag-insensitive — see ``prompt_sha256``), or ``NULL`` when the
+            caller passes no prompt.  Never a hash of the empty string, which
+            would falsely claim "the empty prompt was the decision input".
+        ``decision_timestamp``
+            When the decision was taken (same instant as ``timestamp`` for a
+            direct write).
+
+        An attributed write also appends one ``llm_decisions`` provenance row
+        (run_id, model, prompt hash, the new experience rowid, latency, token
+        usage).  The invariant is exact: one ``llm_decisions`` row per
+        experience whose ``decision_llm`` is non-NULL.
+
+        Schema compatibility: the first five columns keep the MCP server's
+        exact names/order/types; the three attribution columns are APPENDED
+        and nullable.  The server reads with ``SELECT *`` and formats rows by
+        column name, and both writers name their columns explicitly — so old
+        rows read back ``NULL`` and the server is unaffected.  Additive DDL
+        only: no row is ever rewritten, so MCP-authored tables are extended in
+        place, never clobbered.
         """
         try:
             outcome = float(outcome)
@@ -3335,26 +3392,54 @@ class Agent:
             ctx_str = json.dumps(context or {}, ensure_ascii=False, sort_keys=True)
             ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
             import sqlite3
+
+            from agent_core.memory.attribution import (
+                ensure_attribution_schema, prompt_sha256, record_llm_decision,
+                resolve_decision_llm,
+            )
+            if decision_llm is None:
+                decision_llm = resolve_decision_llm(self)
+            prompt_hash = (
+                prompt_sha256(decision_prompt) if decision_prompt is not None else None
+            )
             db_path = AGENT_MEMORY_JSON_PATH.replace(".json", ".db")
             conn = sqlite3.connect(db_path, timeout=5.0)
             try:
                 #: Ensure the schema exists.  No other in-repo code path
-                #: creates this table (the MCP memory server only reads/writes
-                #: it), so without this a fresh workspace would silently no-op
-                #: forever.  Idempotent, and the DDL is byte-compatible with
-                #: the table the memory server expects (same columns/order).
-                conn.execute(
-                    "CREATE TABLE IF NOT EXISTS experiences ("
-                    "timestamp TEXT, action TEXT, outcome REAL, "
-                    "context TEXT, success INTEGER)"
-                )
+                #: creates these tables (the MCP memory server only
+                #: reads/writes ``experiences``), so without this a fresh
+                #: workspace would silently no-op forever.  Idempotent and
+                #: additive: it creates ``experiences`` with the MCP columns
+                #: first and ALTERs the attribution columns in when a
+                #: pre-existing (MCP-written) table is found.
+                ensure_attribution_schema(conn)
+                if decision_llm is None:
+                    # Unattributable (no model identity available): write the
+                    # plain MCP-shaped row and leave the attribution columns
+                    # NULL rather than inventing an author.
+                    cur = conn.execute(
+                        "INSERT INTO experiences "
+                        "(timestamp, action, outcome, context, success) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (ts, action, outcome, ctx_str, 1 if success else 0),
+                    )
+                    conn.commit()
+                    return int(cur.lastrowid)
                 cur = conn.execute(
-                    "INSERT INTO experiences (timestamp, action, outcome, context, success) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (ts, action, outcome, ctx_str, 1 if success else 0),
+                    "INSERT INTO experiences (timestamp, action, outcome, "
+                    "context, success, decision_llm, decision_prompt_hash, "
+                    "decision_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (ts, action, outcome, ctx_str, 1 if success else 0,
+                     decision_llm, prompt_hash, ts),
+                )
+                rowid = int(cur.lastrowid)
+                record_llm_decision(
+                    conn, run_id=run_id, model_name=decision_llm,
+                    prompt_sha256=prompt_hash, outcome_experience_id=rowid,
+                    latency_ms=latency_ms, token_usage=token_usage,
                 )
                 conn.commit()
-                return int(cur.lastrowid)
+                return rowid
             finally:
                 conn.close()
         except Exception as exc:  # noqa: BLE001 - must never raise per contract
