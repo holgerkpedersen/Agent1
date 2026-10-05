@@ -48,7 +48,11 @@ from agent_core.modes import (
     plan_mode_turn_note,
 )
 from agent_core.subagent_roles import get_role, role_names
-from agent_core.llm.provider import get_last_metrics, is_connection_failure
+from agent_core.llm.provider import (
+    get_last_metrics,
+    is_connection_failure,
+    provider_supports_streaming,
+)
 from agent_core.llm.tool_loop import ToolLoopRunner
 from agent_core.llm.learning import (
     record_turn_outcome,
@@ -2597,6 +2601,7 @@ class Agent:
                     tools=filter_tool_schemas(NLP_TOOL_SCHEMAS, self.mode),
                     seen_calls=seen_calls,
                     effects_fn=self._take_trace_effects,
+                    stream_fn=_resolve_stream_fn(self.llm),
                 )
                 self._pending_effects = None
                 self._active_trace_writer = None
@@ -2825,7 +2830,12 @@ class Agent:
                 clean = "Plan: " + clean.strip()
 
         if clean.strip():
-            print(green(clean))
+            # A streamed answer already appeared on the console token-by-token
+            # (plan #9): printing it again would show the user the answer twice.
+            # getattr, not attribute access: a loop-like object without the flag
+            # (fakes, older runners) means "not streamed" -> print normally.
+            if not getattr(loop, "final_answer_streamed", False):
+                print(green(clean))
         else:
             # No usable answer: tell the user CONCRETELY what the loop did
             # instead of the cryptic "did not produce a response".
@@ -3645,6 +3655,40 @@ _VERIFY_NOTE = (
     "now (subcommand='status' first), then do the work and report what it "
     "actually returned."
 )
+
+
+def _resolve_stream_fn(
+    llm: Any,
+) -> Callable[[list[dict[str, Any]]], Awaitable[str]] | None:
+    """Return the streaming final-answer callable for *llm*, or None (plan #9).
+
+    Opt-in and capability-gated, both deliberately:
+
+    * ``AGENT_STREAM_FINAL_ANSWER`` (default false) — streaming changes what the
+      console shows, so an existing run must stay byte-identical unless the
+      user asks for it (same contract as the other display settings, #048).
+    * ``provider_supports_streaming`` — Opencode/OpenRouter/Lemonade implement
+      ``chat_stream`` as a bare ``return await self.chat(...)`` that prints
+      NOTHING.  On those, the returned text has not appeared on screen, so
+      treating it as "already shown" would make ``_finish_turn`` skip its print
+      and show the user no answer at all.
+
+    Never raises: any failure here just means "no streaming", i.e. the
+    pre-existing blocking behaviour.
+    """
+    try:
+        settings = load_agent_settings()
+        if not getattr(settings, "stream_final_answer", False):
+            return None
+    except Exception:  # noqa: BLE001 - settings failure must not break a turn
+        return None
+    provider = getattr(llm, "_provider", None) or llm
+    if not provider_supports_streaming(provider):
+        return None
+    stream = getattr(llm, "chat_stream", None)
+    if not callable(stream):
+        return None
+    return cast("Callable[[list[dict[str, Any]]], Awaitable[str]]", stream)
 
 
 def _resolve_display_mode() -> AgentDisplayMode:

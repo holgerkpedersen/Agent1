@@ -37,6 +37,31 @@ def _provider_type(provider: Any) -> str:
     return _PROVIDER_TYPE_BY_CLASS.get(type(provider).__name__, "")
 
 
+#: Providers whose ``chat_stream`` really prints tokens to the console as they
+#: arrive.  The others implement it as a bare ``return await self.chat(...)``
+#: (Opencode/OpenRouter/Lemonade) and print NOTHING.
+_STREAMING_PROVIDER_CLASSES = frozenset({"LMStudioProvider", "LlamaProvider"})
+
+
+def provider_supports_streaming(provider: Any) -> bool:
+    """Return True when *provider*'s ``chat_stream`` really prints tokens.
+
+    Callers use this to decide whether the text they got back has ALREADY
+    appeared on the console.  Streaming is only a display optimisation, so on a
+    provider whose ``chat_stream`` merely delegates to ``chat`` (printing
+    nothing) treating the return value as "already shown" would make the caller
+    skip its own print and show the user NO answer at all.
+
+    A :class:`FailoverProvider` is judged by the provider that would actually
+    serve the stream: its ``chat_stream`` delegates to the FIRST provider only
+    (no failover), so that is the one whose capability matters.
+    """
+    providers = getattr(provider, "_providers", None)
+    if providers:
+        provider = providers[0]
+    return type(provider).__name__ in _STREAMING_PROVIDER_CLASSES
+
+
 @dataclass(frozen=True)
 class ProviderResult:
     """What one transport call returned (the public completion contract).
@@ -455,6 +480,27 @@ def is_connection_failure(text: str) -> bool:
     if not stripped.startswith("[Error:"):
         return False
     return bool(_CONNECTION_FAILURE_RE.search(stripped))
+
+
+def is_provider_error(text: str) -> bool:
+    """Return True if *text* is a provider failure sentinel, not content.
+
+    Providers RETURN their failures as bracketed strings instead of raising
+    (``[Error: ...]`` from most transports, ``[LM Studio stream error: ...]``
+    and ``[llama-server stream error: ...]`` from the streaming paths).  Any
+    caller that would otherwise treat the response as the model's answer must
+    reject these first — otherwise an outage is shown to the user as if it were
+    an answer.
+
+    Narrower than :func:`is_connection_failure`, which additionally asks
+    whether the failure is worth RETRYING on another provider.  Here the only
+    question is "is this content or a failure?", so permanent errors (4xx/auth)
+    count too.  Anchored at the start of the response so a successful answer
+    that merely *mentions* ``[Error:`` (e.g. code being written about error
+    handling) is not misread as a failure.
+    """
+    stripped = str(text).strip()
+    return stripped.startswith(("[Error:", "[LM Studio", "[llama-server"))
 
 
 class FailoverProvider:

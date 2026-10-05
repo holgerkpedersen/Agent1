@@ -10,6 +10,7 @@ import time
 from typing import Any, Awaitable, Callable
 
 from agent_core.constants import LOOP_NOTE_TAG_KEY
+from agent_core.llm.provider import is_provider_error
 from harnessfix.tracing import (
     GUARD_BUDGET,
     GUARD_DEADLINE,
@@ -518,6 +519,18 @@ class ToolLoopRunner:
         #: so it resumes instead of restarting (decision #052).  Populated from
         #: the trace effects callback; empty unless a sink is attached.
         self._mutated_files: set[str] = set()
+        #: Answers produced by the streaming path this run (plan #9).  Kept as
+        #: text so :attr:`final_answer_streamed` can tell whether the text the
+        #: user is about to see ALREADY appeared live — the caller then skips
+        #: re-printing it instead of showing the answer twice.
+        self._streamed_answers: list[str] = []
+        #: True when the final answer was streamed to the console while it was
+        #: generated.  The caller must not print the answer again in that case.
+        self.final_answer_streamed: bool = False
+        #: Set by :meth:`run`; the optional streaming path for the final answer.
+        self._stream_fn: (
+            Callable[[list[dict[str, Any]]], Awaitable[str]] | None
+        ) = None
 
     async def run(
         self,
@@ -528,6 +541,7 @@ class ToolLoopRunner:
         seen_calls: dict[tuple[str, str], int] | None = None,
         trace: TraceSink | None = None,
         effects_fn: Callable[[str, dict[str, Any]], list[str]] | None = None,
+        stream_fn: Callable[[list[dict[str, Any]]], Awaitable[str]] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run conversation with automatic tool calling loop.
 
@@ -546,6 +560,16 @@ class ToolLoopRunner:
                         the files a tool call affected, attached to the
                         tool_result/tool_error events.  Only invoked when a
                         trace sink is attached.
+            stream_fn: Optional async ``(messages) -> text`` that prints the
+                        answer to the console as it is generated (provider
+                        ``chat_stream``).  Used ONLY for the tool-less forced-
+                        synthesis call — the long "produce the final answer now"
+                        moment after a cap/stuck verdict, where blocking silently
+                        is what plan #9 set out to fix.  Tool iterations always
+                        use ``llm_chat_fn`` (streaming cannot carry tool_calls).
+                        Fails open: an exception, empty text or ``(no output)``
+                        falls back to the blocking call, because a broken stream
+                        must never swallow the answer (decision #034).
 
         Returns:
             Tuple of (final_text, updated_messages)
@@ -557,6 +581,7 @@ class ToolLoopRunner:
         """
         self._trace = self._trace if trace is None else trace
         self._effects_fn = self._effects_fn if effects_fn is None else effects_fn
+        self._stream_fn = stream_fn
         try:
             return await self._run_traced(
                 messages, llm_chat_fn, execute_tool_fn, tools, seen_calls
@@ -1199,12 +1224,16 @@ class ToolLoopRunner:
             )
             current_messages.append({"role": "user", "content": note})
             injected_notes.append(note)
-            response_text, updated_messages = await llm_chat_fn(current_messages, [])
+            response_text, updated_messages = await self._forced_final_answer(
+                current_messages, llm_chat_fn, iteration
+            )
             current_messages = updated_messages
-            self._emit_synthesis_response(iteration, response_text)
             # Large contexts occasionally make the model return nothing even
             # when forced; one explicit second chance keeps the guarantee that
-            # the loop never ends without an answer (decision #034).
+            # the loop never ends without an answer (decision #034).  The
+            # second chance stays on the BLOCKING path: it exists precisely
+            # because the first attempt produced nothing, so re-streaming would
+            # re-run the same failing transport instead of the fallback.
             if not response_text or response_text.strip() == "(no output)":
                 current_messages.append({"role": "user", "content": _FORCED_SYNTHESIS_RETRY})
                 response_text, updated_messages = await llm_chat_fn(current_messages, [])
@@ -1223,6 +1252,13 @@ class ToolLoopRunner:
             if part and part.strip():
                 final_text = part
                 break
+        # Did the answer the user is about to receive ALREADY appear on the
+        # console, streamed while it was generated?  Then the caller must not
+        # print it a second time (plan #9).  Matched by identity of the text,
+        # so a fallback/retry answer that differs is still printed normally.
+        self.final_answer_streamed = bool(
+            final_text and final_text in self._streamed_answers
+        )
         # Steering notes were only meant for the current loop; a fresh turn has
         # a fresh budget, so they must not leak into the persisted history.
         # Matched on content (any role): the notes travel as "user" messages
@@ -1234,6 +1270,52 @@ class ToolLoopRunner:
             ]
         self.iterations_used = min(iteration + 1, self.max_iterations)
         return final_text, current_messages
+
+    async def _forced_final_answer(
+        self,
+        current_messages: list[dict[str, Any]],
+        llm_chat_fn: Callable[
+            [list[dict[str, Any]], list[dict[str, Any]]],
+            Awaitable[tuple[str, list[dict[str, Any]]]],
+        ],
+        iteration: int,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Produce the forced final answer, streaming it when one is supplied.
+
+        The tool-less forced-synthesis call is the long "produce the final
+        answer now" moment — exactly where blocking silently is what the user
+        notices (plan #9).  With a ``stream_fn`` it serves that call so the
+        answer appears as it is generated.
+
+        Fails open: any exception, empty text or ``(no output)`` falls back to
+        the blocking ``llm_chat_fn``.  Streaming is a display optimisation and
+        must never cost the user their answer (decision #034).
+        """
+        if self._stream_fn is None:
+            text, updated = await llm_chat_fn(current_messages, [])
+            self._emit_synthesis_response(iteration, text)
+            return text, updated
+        try:
+            streamed = await self._stream_fn(list(current_messages))
+        except Exception:
+            # A broken stream is not a broken turn: fall through to blocking.
+            streamed = ""
+        if is_provider_error(streamed):
+            # Providers RETURN error strings instead of raising, and
+            # FailoverProvider.chat_stream delegates to the FIRST provider only
+            # (no failover).  Accepting that text would show the user an error
+            # as if it were the answer AND skip the blocking call that would
+            # have failed over — so an error string is never an answer.
+            streamed = ""
+        if streamed and streamed.strip() and streamed.strip() != "(no output)":
+            self._streamed_answers.append(streamed)
+            updated = list(current_messages)
+            updated.append({"role": "assistant", "content": streamed})
+            self._emit_synthesis_response(iteration, streamed)
+            return streamed, updated
+        text, updated = await llm_chat_fn(current_messages, [])
+        self._emit_synthesis_response(iteration, text)
+        return text, updated
 
     def _emit_synthesis_response(self, iteration: int, response_text: str) -> None:
         """Trace the forced-synthesis LLM call (decision #034: every loop

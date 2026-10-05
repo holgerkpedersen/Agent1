@@ -243,6 +243,17 @@ class AgentSettings:
     jev_timeout: float = field(
         default_factory=lambda: _parse_float(os.environ.get("AGENT_JEV_TIMEOUT"), 60.0)
     )
+    #: Stream the forced-synthesis final answer token-by-token instead of
+    #: blocking silently (plan #9).  OFF by default: streaming is a display
+    #: optimisation, so an existing run must stay byte-identical unless the
+    #: user opts in (same contract as the other display settings).  Ignored on
+    #: a provider whose ``chat_stream`` prints nothing — see
+    #: :func:`agent_core.llm.provider.provider_supports_streaming`.
+    stream_final_answer: bool = field(
+        default_factory=lambda: _parse_bool(
+            os.environ.get("AGENT_STREAM_FINAL_ANSWER"), False
+        )
+    )
 
     def __post_init__(self) -> None:
         # Enforce the invariant on every construction (not just at the two
@@ -455,6 +466,23 @@ def _parse_float(value: str | None, default: float) -> float:
         return default
 
 
+def _parse_bool(value: str | None, default: bool = False) -> bool:
+    """Safely parse a boolean from a string.
+
+    Accepts the usual spellings (1/0, true/false, yes/no, on/off).  Anything
+    else — including ``None`` — falls back to *default* rather than raising, so
+    a typo in an env var can never stop the agent from starting.
+    """
+    if value is None:
+        return default
+    normalised = value.strip().lower()
+    if normalised in ("1", "true", "yes", "on"):
+        return True
+    if normalised in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
 def _parse_display_mode(value: str | None, default: AgentDisplayMode = AgentDisplayMode.VERBOSE) -> AgentDisplayMode:
     """Safely parse the display mode from a string."""
     if value is None:
@@ -478,6 +506,7 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         AGENT_SEARCH_COMMAND_TIMEOUT_SEC -> search_command_timeout_sec (float)
         AGENT_COMPILATION_CHECK_TIMEOUT_SEC -> compilation_check_timeout_sec (float)
         AGENT_DISPLAY_MODE -> display_mode (AgentDisplayMode: verbose|clean|quiet, default verbose)
+        AGENT_STREAM_FINAL_ANSWER -> stream_final_answer (bool, default false)
     """
     env_vars = _load_env_file(env_path)
 
@@ -545,6 +574,11 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         jev_temperature=_parse_float(os.environ.get("AGENT_JEV_TEMPERATURE") or env_vars.get("AGENT_JEV_TEMPERATURE"), 0.7),
         jev_max_tokens=_parse_int(os.environ.get("AGENT_JEV_MAX_TOKENS") or env_vars.get("AGENT_JEV_MAX_TOKENS"), 512),
         jev_timeout=_parse_float(os.environ.get("AGENT_JEV_TIMEOUT") or env_vars.get("AGENT_JEV_TIMEOUT"), 60.0),
+        stream_final_answer=_parse_bool(
+            os.environ.get("AGENT_STREAM_FINAL_ANSWER")
+            or env_vars.get("AGENT_STREAM_FINAL_ANSWER"),
+            False,
+        ),
     )
 
     _validate_settings(settings)
