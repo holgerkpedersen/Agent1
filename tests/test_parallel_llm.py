@@ -890,7 +890,8 @@ class TestMultiLlmVerdictFlag:
     @staticmethod
     def _run(args):
         from agent_core.commands.multillm_cmd import MultiLlmCommand
-        return asyncio.run(MultiLlmCommand().execute(args, TestMultiLlmVerdictFlag._agent()))
+        agent = TestMultiLlmVerdictFlag._agent()
+        return asyncio.run(MultiLlmCommand().execute(args, agent))
 
     def test_verdict_flag_asks_and_counts_votes(self, capsys):
         seen = {}
