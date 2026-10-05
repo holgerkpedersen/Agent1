@@ -55,6 +55,9 @@ class HelpCommand(Command):
         from .propose_cmd import ProposeCommand
         from .speculate_cmd import SpeculateCommand
         from .jev_cmd import JevCommand
+        from .memory_cmd import MemoryCommand
+        from .habits_cmd import HabitsCommand
+        from .issue_cmd import IssueCommand
 
         for cmd_cls in (ReadCommand, WriteCommand, SearchCommand, ClearCommand,
                         ModelCommand, AnalyzeCommand, PlanCommand, EntitiesCommand,
@@ -64,6 +67,7 @@ class HelpCommand(Command):
                         ReviewCommand, RunCommand, SelfHealCommand, ReconstructCommand,
                         MultiLlmCommand, DemoDataCommand, ModeCommand, SubAgentCommand,
                         MCPCommand, ProposeCommand, SpeculateCommand, JevCommand,
+                        MemoryCommand, HabitsCommand, IssueCommand,
                         HelpCommand):
             registry.register(cmd_cls())
 

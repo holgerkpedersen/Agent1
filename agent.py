@@ -4580,6 +4580,8 @@ def _register_commands(registry: CommandRegistry) -> None:
     registry.register(SpeculateCommand())
     from agent_core.commands.jev_cmd import JevCommand
     registry.register(JevCommand())
+    from agent_core.commands.memory_cmd import MemoryCommand
+    registry.register(MemoryCommand())
     from agent_core.commands.help_cmd import HelpCommand
     registry.register(HelpCommand())
 
