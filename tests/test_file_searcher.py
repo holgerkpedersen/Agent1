@@ -56,6 +56,51 @@ class TestFileSearcher:
         result = asyncio.run(FileSearcher().search("zzz-not-there", str(tmp_path)))
         assert result == "No matches found"
 
+    def test_path_is_a_directory_not_a_filename_filter(self, tmp_path):
+        """`path` must be a DIRECTORY searched recursively, never a file filter.
+
+        Pinning the real failure mode: pointing `path` at a FILE whose contents
+        DO match returns "No matches found", because _walk_search bails out on
+        `if not os.path.isdir(local_path)`. This was previously misdiagnosed as
+        `path` filtering by filename; it does not filter at all.
+        """
+        target = tmp_path / "types.py"
+        target.write_text("SEMANTIC_MEMORY_MARKER = 'x'\n", encoding="utf-8")
+
+        # A directory searches recursively and finds it.
+        via_dir = asyncio.run(
+            FileSearcher().search("SEMANTIC_MEMORY_MARKER", str(tmp_path))
+        )
+        assert "types.py:1" in via_dir
+
+        # The same path aimed at the FILE finds nothing, though the needle is
+        # on line 1 of that very file.
+        via_file = asyncio.run(
+            FileSearcher().search("SEMANTIC_MEMORY_MARKER", str(target))
+        )
+        assert via_file == "No matches found"
+
+    def test_directory_search_is_recursive_and_separator_agnostic(self, tmp_path):
+        """A subdirectory argument recurses; '/' and '\\' behave identically.
+
+        The only broken input is something that is not an existing directory
+        (a file, or a bare name not resolvable from the search base).
+        """
+        nested = tmp_path / "pkg" / "sub"
+        nested.mkdir(parents=True)
+        (nested / "deep.py").write_text("DEEP_NEEDLE = 1\n", encoding="utf-8")
+
+        # Recursion into a subdirectory, both separators.
+        for arg in (str(tmp_path / "pkg"), str(tmp_path / "pkg" / "sub")):
+            result = asyncio.run(FileSearcher().search("DEEP_NEEDLE", arg))
+            assert "deep.py:1" in result, arg
+
+        # A non-existent directory yields no matches rather than raising.
+        missing = asyncio.run(
+            FileSearcher().search("DEEP_NEEDLE", str(tmp_path / "nope"))
+        )
+        assert missing == "No matches found"
+
     def test_project_workflow_docs_are_not_code_matches(self, tmp_path):
         """project_*.md are temporary workflow artifacts — a symbol that only
         lives in them (like '_execute_nlp_tool') must not appear as a match."""

@@ -300,11 +300,16 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
 - Windows shell is `cmd.exe` — no grep/tail; use `python -c "..."` one-liners inside
   the agent REPL; normalize paths via `to_windows_path`.
 - The NLP `search` tool's `path` argument is a **DIRECTORY to search recursively**,
-  not a filename filter. Point it at a file (`path="types.py"`,
-  `path="agent_core/memory/types.py"`) and it returns `No files found` even though the
-  query matches that very file. Both separators work (`agent_core/memory` and
-  `agent_core\memory` both match), so a forward slash is never the problem; a
-  non-existent directory is. For "where is X defined/used?", prefer `references`
+  not a filename filter. Mechanism (`agent_core/file_searcher.py::_walk_search`,
+  the `if not os.path.isdir(local_path): return matches` guard): a non-directory
+  short-circuits to zero matches, which `_nlp_search` renders as the misleading
+  `No files found matching that query.` So pointing it at a FILE
+  (`path="types.py"`, `path="agent_core/memory/types.py"`) returns no hits even
+  though the query matches that very file. Both separators work
+  (`agent_core/memory` and `agent_core\memory` both match), so a forward slash is
+  never the problem; a non-existent directory is (e.g. bare `memory` — paths
+  resolve against the workspace root, not CWD). Do NOT misdiagnose this as
+  filename filtering. For "where is X defined/used?", prefer `references`
   (one call, whole-word, capped) over `search` — it cannot misfire this way.
 - Analysis claims are verified against real files/symbols (`analysis_verifier`):
   typed annotated attrs (`self._x: T = ...`), segment-scoped symbol resolution,
