@@ -112,12 +112,16 @@ class TestFileSearcher:
             "1. `_execute_nlp_tool` shell=True replacement",
             encoding="utf-8",
         )
-        (tmp_path / "src.py").write_text("def _execute_tool_call():\n    pass\n", encoding="utf-8")
+        (tmp_path / "src.py").write_text(
+            "def _execute_tool_call():\n    pass\n", encoding="utf-8"
+        )
 
         result = asyncio.run(FileSearcher().search("_execute_nlp_tool", str(tmp_path)))
         assert result == "No matches found"
 
-        result2 = asyncio.run(FileSearcher().search("_execute_tool_call", str(tmp_path)))
+        result2 = asyncio.run(
+            FileSearcher().search("_execute_tool_call", str(tmp_path))
+        )
         assert "src.py" in result2
         assert "project_plan.md" not in result2
         assert "project_tasks.md" not in result2
@@ -144,12 +148,16 @@ class TestFileSearcher:
             "1. `_execute_nlp_tool` shell=True replacement",
             encoding="utf-8",
         )
-        (tmp_path / "src.py").write_text("def _execute_tool_call():\n    pass\n", encoding="utf-8")
+        (tmp_path / "src.py").write_text(
+            "def _execute_tool_call():\n    pass\n", encoding="utf-8"
+        )
 
         result = asyncio.run(FileSearcher().search("_execute_nlp_tool", str(tmp_path)))
         assert result == "No matches found"
 
-        result2 = asyncio.run(FileSearcher().search("_execute_tool_call", str(tmp_path)))
+        result2 = asyncio.run(
+            FileSearcher().search("_execute_tool_call", str(tmp_path))
+        )
         assert "src.py" in result2
         assert ".docs" not in result2
 
@@ -188,7 +196,9 @@ class TestSearchToolHandler:
 
     def test_search_tool_excludes_chat_history(self, tmp_path):
         from agent import Agent
-        (tmp_path / "src.py").write_text("def real_symbol():\n    pass\n", encoding="utf-8")
+        (tmp_path / "src.py").write_text(
+            "def real_symbol():\n    pass\n", encoding="utf-8"
+        )
         (tmp_path / "chat_history.json").write_text(
             '{"content": "real_symbol mention in conversation"}', encoding="utf-8"
         )
