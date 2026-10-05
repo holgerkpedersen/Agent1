@@ -8,10 +8,13 @@ from typing import List
 from .memory_store import MemoryStore
 from .types import (
     EmbeddingService,
+    SEMANTIC_MEMORY_MARKER,
     SQLiteStorage,
     StorageBackend,
     VectorDatabase,
     VectorEmbeddingModel,
+    load_semantic_memory,
+    semantic_memory_block,
 )
 
 __all__: List[str] = [
@@ -21,4 +24,7 @@ __all__: List[str] = [
     "VectorDatabase",
     "VectorEmbeddingModel",
     "MemoryStore",
+    "SEMANTIC_MEMORY_MARKER",
+    "semantic_memory_block",
+    "load_semantic_memory",
 ]

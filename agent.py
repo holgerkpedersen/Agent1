@@ -82,6 +82,11 @@ from agent_core.skills import (
     skill_hint_block,
 )
 from agent_core.habits import HABITS_MARKER, habits_block, load_habits
+from agent_core.memory import (
+    SEMANTIC_MEMORY_MARKER,
+    load_semantic_memory,
+    semantic_memory_block,
+)
 from agent_core.symbol_intel import collect_definitions, collect_references
 from agent_core.commands.read_cmd import ReadCommand
 from agent_core.commands.write_cmd import WriteCommand
@@ -2419,6 +2424,7 @@ class Agent:
             + self._decision_constraints_block()
             + self._skill_index_block()
             + self._habits_block()
+            + self._semantic_memory_block()
             + (plan_mode_system_suffix() if self.is_plan_mode() else ""),
         }
 
@@ -3157,6 +3163,25 @@ class Agent:
             logger.exception('Habits block unavailable:\n')
             return ""
 
+    def _semantic_memory_block(self) -> str:
+        """Embedding/KG memory block for the chat system prompt.
+
+        Builds a compact block from indexed memories (see
+        :func:`agent_core.memory.semantic_memory_block`).  It is
+        rebuilt every turn from the workspace ledger so a memory indexed or
+        updated mid-session is advertised on the next turn.  Empty string when
+        the workspace has no indexed memories — the prompt then stays
+        byte-identical to before.  Never raises: a broken ``.semantic_memory``
+        must not kill a chat turn (same rule as
+        :meth:`_decision_constraints_block`).
+        """
+        try:
+            indexed_memories = load_semantic_memory(self._effective_ws_dir())
+            return semantic_memory_block(indexed_memories, k=5)
+        except Exception:
+            logger.exception('Semantic memory block unavailable:\n')
+            return ""
+
     # ------------------------------------------------------------------
     #  Persistent NLP chat history (chat_history.json)
     # ------------------------------------------------------------------
@@ -3759,6 +3784,7 @@ def _strip_dynamic_system_blocks(text: str) -> str:
         "\n\nCRITICAL DESIGN CONSTRAINTS",
         SKILL_INDEX_MARKER,
         HABITS_MARKER,
+        SEMANTIC_MEMORY_MARKER,
         "\n\nSESSION MODE: PLAN",
     )
     cut = len(text)

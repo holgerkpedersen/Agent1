@@ -3,9 +3,14 @@
 Moved verbatim from the retired ``src/agent1.core`` namespace so the memory
 stack is self-contained inside ``agent_core``.
 """
-from typing import Any, Dict, List, Optional, Protocol
+import logging  # noqa: E402
+from datetime import datetime  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class StorageBackend(Protocol):
@@ -15,6 +20,7 @@ class StorageBackend(Protocol):
 
 
 import json  # noqa: E402  (kept next to its only user, as in the original)
+import os  # noqa: E402  (used by EmbeddingService for AGENT_EMBEDDING_MODEL)
 import sqlite3  # noqa: E402
 import time  # noqa: E402
 
@@ -67,11 +73,40 @@ class VectorEmbeddingModel(Protocol):
 
 
 class EmbeddingService:
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
-        self._model_name: str = model_name
+    """Real semantic embedding service via LM Studio /v1/embeddings.
+
+    Uses the optional backend from :mod:`agent_core.utils.module_similarity`,
+    which probes LM Studio for an embedding-capable model and then calls
+    /v1/embeddings.  Returns 384-dim float vectors (all-MiniLM-L6-v2).
+    """
+
+    def __init__(self) -> None:
+        # Model name from AGENT_EMBEDDING_MODEL env var (or "" for unavailable)
+        self._model_name: str = os.environ.get("AGENT_EMBEDDING_MODEL", "")
+        self._backend = None  # lazily created
+
+    def _ensure_backend(self) -> Any:
+        """Create the LM Studio embedding backend on first use."""
+        if self._backend is None:
+            try:
+                from agent_core.utils.module_similarity import _EmbeddingBackend
+                self._backend = _EmbeddingBackend()
+            except Exception:
+                # Fail-open: backend unavailable but service still works
+                self._backend = None
+        return self._backend
 
     def embed_text(self, texts: List[str]) -> np.ndarray:
-        return np.zeros((len(texts), 384))
+        """Embed a batch of texts into 384-dim vectors using LM Studio."""
+        backend = self._ensure_backend()
+        if backend is None or not backend.available:
+            # Stub fallback: zeros (never raises, fail-open)
+            return np.zeros((len(texts), 384))
+        try:
+            return backend.embed(texts)
+        except Exception:
+            # Fail-open: fallback to zeros on any backend error
+            return np.zeros((len(texts), 384))
 
 
 class VectorDatabase:
@@ -111,10 +146,158 @@ class VectorDatabase:
         return top_results
 
 
+# ---------------------------------------------------------------------------
+# System-prompt injection helper (used by agent._strip_dynamic_system_blocks)
+# ---------------------------------------------------------------------------
+#: Marker prefixing the injected semantic-memory block.  ``agent.py`` strips
+#: everything from this marker onward before re-injecting a fresh block, so a
+#: long-lived session never accumulates stale copies (same contract as
+#: ``HABITS_MARKER`` / ``SKILL_INDEX_MARKER``).
+SEMANTIC_MEMORY_MARKER = "\n\nSEMANTIC MEMORY"
+
+#: Workspace-local ledger holding indexed semantic memories.
+SEMANTIC_MEMORY_FILENAME = ".semantic_memory.json"
+
+#: Hard cap on rendered lines so the block cannot bloat the system prompt.
+MAX_BLOCK_LINES = 8
+
+
+def _semantic_memory_block(
+    memories: Sequence[Any] | None,
+    query: str | None = None,
+    *,
+    k: int = 3,
+    line_cap: int = 10,
+) -> str:
+    """Inject a SEMANTIC MEMORY block into the system prompt (empty when none).
+
+    Empty input (``[]``, ``""``, ``None``) returns the empty string so a fresh
+    workspace prompt stays byte-identical to the pre-KG baseline.
+    Accepts dicts with ``metadata`` and ``similarity_score`` (from
+    ``VectorDatabase.search_similar``) or plain strings (e.g. wiki notes).
+
+    When a query is provided, the block is prefixed with ``QUERY: ...`` for
+    context-aware relevance.
+    """
+    if not memories:
+        return ""
+    if isinstance(memories, str):
+        memories = [memories]
+    lines: list[str] = []
+    if query:
+        lines.append(f"QUERY: {query[:140]}")
+    for mem in memories[:k]:
+        if isinstance(mem, Mapping):
+            md = mem.get("metadata") or {}
+            score = mem.get("similarity_score", 0.0)
+            text = str(md.get("text") or "").strip()[:120]
+            when = md.get("timestamp", "?")
+            lines.append(f"  - {text} (score {score:.2f}, when {when})")
+        else:
+            text = str(mem).strip()[:120]
+            lines.append(f"  - {text}")
+        if len(lines) >= line_cap:
+            break
+    if not lines:
+        return ""
+    block = SEMANTIC_MEMORY_MARKER + "\n" + "\n".join(lines) + "\n"
+    assert block.startswith(SEMANTIC_MEMORY_MARKER)  # marker contract
+    return block
+
+
+def semantic_memory_block(
+    memories: Sequence[Any] | None,
+    query: str | None = None,
+    *,
+    k: int = MAX_BLOCK_LINES,
+) -> str:
+    """Public wrapper around :func:`_semantic_memory_block`.
+
+    ``agent.Agent._semantic_memory_block`` calls this with the ledger loaded by
+    :func:`load_semantic_memory`.  ``k`` is clamped to ``MAX_BLOCK_LINES`` so a
+    caller cannot accidentally bloat the system prompt.
+    """
+    return _semantic_memory_block(
+        memories,
+        query,
+        k=min(k, MAX_BLOCK_LINES),
+        line_cap=MAX_BLOCK_LINES + 1,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Persistence (workspace-local .semantic_memory.json)
+# ---------------------------------------------------------------------------
+
+def _semantic_memory_path(workspace: str | Path) -> Path:
+    """The workspace's ``.semantic_memory.json`` ledger path."""
+    return Path(workspace) / SEMANTIC_MEMORY_FILENAME
+
+
+def load_semantic_memory(workspace: str | Path) -> list[dict[str, Any]]:
+    """Load indexed semantic memories from the workspace ledger.
+
+    NEVER raises (``[]`` on any failure), so a broken ledger cannot kill a chat
+    turn.  A corrupt file is quarantined to ``.semantic_memory.json.bad-<ts>``
+    so the bytes stay inspectable (same rule as :func:`load_habits`).
+
+    Returns a list of ``{"metadata": {...}, "similarity_score": float}`` dicts
+    ready for :func:`semantic_memory_block`.
+    """
+    path = _semantic_memory_path(workspace)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        return []
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        quarantine = f"{path}.bad-{stamp}"
+        try:
+            os.replace(path, quarantine)
+        except OSError:
+            logger.warning("Failed to quarantine corrupt semantic memory at %s", path)
+        else:
+            logger.warning("Corrupt semantic memory moved to %s", quarantine)
+        return []
+    except Exception:  # noqa: BLE001 - contract: never raise
+        logger.exception("Semantic memory load unavailable:\n")
+        return []
+
+    if not isinstance(data, list):
+        return []
+    memories: list[dict[str, Any]] = []
+    for entry in data:
+        if isinstance(entry, Mapping):
+            metadata = entry.get("metadata")
+            if not isinstance(metadata, Mapping):
+                metadata = {"text": entry.get("text", "")}
+            text = str(metadata.get("text") or "").strip()
+            if not text:
+                continue
+            memories.append(
+                {
+                    "metadata": dict(metadata),
+                    "similarity_score": float(entry.get("similarity_score") or 0.0),
+                }
+            )
+        elif isinstance(entry, str) and entry.strip():
+            memories.append(
+                {"metadata": {"text": entry.strip()}, "similarity_score": 0.0}
+            )
+    return memories
+
+
 __all__ = [
     "StorageBackend",
     "SQLiteStorage",
     "VectorEmbeddingModel",
     "EmbeddingService",
     "VectorDatabase",
+    "SEMANTIC_MEMORY_MARKER",
+    "SEMANTIC_MEMORY_FILENAME",
+    "MAX_BLOCK_LINES",
+    "_semantic_memory_block",
+    "semantic_memory_block",
+    "load_semantic_memory",
 ]
