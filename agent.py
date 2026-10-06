@@ -91,6 +91,10 @@ from agent_core.memory import (
     load_semantic_memory,
     semantic_memory_block,
 )
+from agent_core.security.allowlist import (
+    DESTRUCTIVE_SHELL_PATTERNS,
+    find_destructive_shell_pattern,
+)
 from agent_core.symbol_intel import collect_definitions, collect_references
 from agent_core.commands.read_cmd import ReadCommand
 from agent_core.commands.write_cmd import WriteCommand
@@ -3707,28 +3711,11 @@ def _resolve_display_mode() -> AgentDisplayMode:
 
 #: Destructive shell patterns the ``run`` tool refuses (word-boundary,
 #: case-insensitive) — the command injection surface of the NLP loop.
-_DANGEROUS_SHELL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"rm\s+-r[f]?", re.I), "recursive file removal (rm -r/-rf)"),
-    (re.compile(r"\bdeltree\b", re.I), "deltree"),
-    (re.compile(r"\brd\s+/s", re.I), "rd /s"),
-    (re.compile(r"\brmdir\s+/s", re.I), "rmdir /s"),
-    (re.compile(r"\bdel\s+/[sqf]", re.I), "del /s /q /f"),
-    (re.compile(r"\bformat\s+[a-z]:", re.I), "format <drive>:"),
-    (re.compile(r"\bshutdown\b", re.I), "shutdown"),
-    (re.compile(r"\breboot\b", re.I), "reboot"),
-    (re.compile(r"restart-computer", re.I), "restart-computer"),
-    (re.compile(r"stop-computer", re.I), "stop-computer"),
-    (re.compile(r"\bdiskpart\b", re.I), "diskpart"),
-    (re.compile(r"\bmkfs\b", re.I), "mkfs"),
-    (re.compile(r"wipefs", re.I), "wipefs"),
-    (re.compile(r"\bdd\s+of=", re.I), "dd of="),
-    (re.compile(r"taskkill\s+/f", re.I), "taskkill /f"),
-    (re.compile(r"\breg\s+delete", re.I), "reg delete"),
-    (re.compile(r"remove-item\s+-recurse", re.I), "Remove-Item -Recurse"),
-    (re.compile(r"clear-recyclebin", re.I), "Clear-RecycleBin"),
-    (re.compile(r"format-volume", re.I), "Format-Volume"),
-    (re.compile(r"invoke-expression", re.I), "Invoke-Expression"),
-]
+#:
+#: The policy has ONE owner now: ``agent_core.security.allowlist`` (plan #16).
+#: This name is an alias of the shared object, kept so existing callers and
+#: tests keep working while there is no second copy to drift out of sync.
+_DANGEROUS_SHELL_PATTERNS = DESTRUCTIVE_SHELL_PATTERNS
 
 
 def _unix_command_hint() -> str:
@@ -4170,12 +4157,18 @@ def _shape_run_stderr(err: str | None, output: str | None, returncode: int | Non
 
 
 def _blocked_shell_command(command: str) -> str | None:
-    """Return a description of the first blocked destructive pattern in
-    *command*, or None if the command passes the safety scan."""
-    for pattern, desc in _DANGEROUS_SHELL_PATTERNS:
-        if pattern.search(command):
-            return desc
-    return None
+    """Return a description of the first policy violation in *command*.
+
+    Delegates to the shared TIER-1 policy (plan #16):
+    ``allowlist.find_destructive_shell_pattern`` — the destructive block-list
+    that every execution path shares.  The NLP ``run`` tool deliberately does
+    NOT apply the strict structural scan: it keeps ``shell=True`` and must
+    still execute pipes (``... 2>&1 | ...``), which cmd.exe fails silently and
+    which the tool surfaces as a wrong-shell Hint (pinned by
+    ``tests/test_tool_loop_nlp.py::TestRunToolShellAwareness``).  Adding the
+    metacharacter gate here would delete that diagnostic.
+    """
+    return find_destructive_shell_pattern(command)
 
 
 #: Repo-root .env consulted for the full-pytest budget (conftest reads it too).

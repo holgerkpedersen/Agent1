@@ -141,9 +141,20 @@ per decision #079 — no emojis in files.)
 15. [Q] **multillm synthesis flag** — results print side-by-side then stop.
     Add `--synthesize` (merge answers through one model) and print per-model
     `ResponseMetrics` token/latency in the REPL summary.
-16. **Unify shell policy** — NLP `run` uses a destructive-*blocklist* +
-    `shell=True`; `tool_router.py`/`tools/shell_ops.py` use an allowlist.
-    Converge on allowlist-with-fallbacks.
+16. **Unify shell policy** — STATUS: **DONE 2026-09-06**.
+    NLP `run` used a destructive-*blocklist* + `shell=True`;
+    `tool_router.py`/`tools/shell_ops.py` used an allowlist. Converged on
+    allowlist-with-fallbacks: one policy owner
+    (`agent_core/security/allowlist.py`) exposing a **two-tier** API —
+    TIER-1 `DESTRUCTIVE_SHELL_PATTERNS` + `find_destructive_shell_pattern`
+    (the destructive block-list every path shares), TIER-2 `scan_command`
+    (tier-1 plus the structural metacharacter scan, quoted spans blanked out
+    so `python -c "import sys; sys.exit(3)"` stays legal). The NLP `run` tool
+    takes TIER-1 only: it keeps `shell=True` and must still execute pipes,
+    because cmd.exe fails Unix-style pipelines silently and that is what
+    triggers the wrong-shell Hint. `tool_router` takes TIER-2 and is
+    argv-first with a builtin-only shell fallback.
+    Tests: `tests/test_shell_policy_unification.py` (13).
 
 ## E. Code health
 
@@ -255,6 +266,24 @@ Remaining quick wins: none — remaining items are [S]-scale.
   `llm/config.py` now re-exports the canonical `llm_types.ProfileType`
   (the divergent "fast-codegen" enum is gone).
 - Tests for all of the above: `tests/test_quickwins_2026_08_25.py` (14).
+- 2026-09-06 — **#16 DONE**: shell policy unified on allow-list-with-fallbacks.
+  `agent_core/security/allowlist.py` is now the single owner, with a two-tier
+  API: `DESTRUCTIVE_SHELL_PATTERNS` (moved verbatim out of `agent.py`) +
+  `find_destructive_shell_pattern()` is TIER-1; `scan_command()` is TIER-2
+  (tier-1 plus the structural metacharacter scan, quoted spans blanked out so
+  `python -c "import sys; sys.exit(3)"` stays legal).
+  `agent._DANGEROUS_SHELL_PATTERNS` is now an alias of the shared tuple and
+  `_blocked_shell_command` delegates to TIER-1 only. That tier split is the
+  load-bearing part: the NLP `run` tool keeps `shell=True` and must still
+  execute pipes, because cmd.exe fails Unix-style pipelines silently and that
+  silent failure is exactly what triggers the wrong-shell Hint — a documented
+  feature pinned by `TestRunToolShellAwareness` (applying TIER-2 there broke it
+  and was caught by `tests/test_tool_loop_nlp.py` during this change).
+  The NLP path also keeps its permissive fallback (non-allow-listed dev
+  commands like `findstr` still run). `tool_router.ShellCommandHandler` takes
+  TIER-2, dropped unconditional `shell=True` for argv execution with a
+  documented builtin-only shell fallback, and gained the destructive gate.
+  Tests: `tests/test_shell_policy_unification.py` (13).
 - 2026-08-25 — **#10 DONE** (third catalog repair): `abandonment-resume-protocol`
   (`harnessfix/repairs/abandonment_resume.py`, lifecycle layer). Trace evidence:
   of 263 traces in the 2026-08-25 corpus, 8 mutated files (write/edit/fix,

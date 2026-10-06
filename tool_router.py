@@ -157,10 +157,12 @@ class ShellCommandHandler:
     def execute(self, args: ShellCommandArgs) -> str | dict[str, Any]:
         """Execute a command after the shared security gates."""
         import shlex
+        import shutil
         import subprocess
         from agent_core.security.allowlist import (
             find_unsafe_shell_pattern,
             is_command_allowed,
+            scan_command,
         )
 
         cmd = args.command.strip()
@@ -196,10 +198,26 @@ class ShellCommandHandler:
                 details={"command": cmd},
             )
 
+        # Gate 3 — destructive patterns (shared policy, plan #16). Checked
+        # after the allow-list so the established "not in the allowed command
+        # list" message for e.g. `rm -rf /` is preserved.
+        destructive = scan_command(cmd)
+        if destructive is not None:
+            raise ToolExecutionError(
+                f"Command '{cmd}' contains {destructive}",
+                details={"command": cmd},
+            )
+
+        # Prefer argv execution (shell=False) so nothing is re-interpreted by
+        # a shell. Windows builtins (echo/dir/type) have no executable, so
+        # they keep the documented shell fallback — safe because the gates
+        # above already rejected chaining, pipes, redirection and
+        # destructive patterns.
+        use_shell = shutil.which(tokens[0]) is None
         try:
             result = subprocess.run(
-                cmd,
-                shell=True,
+                cmd if use_shell else list(tokens),
+                shell=use_shell,
                 capture_output=True,
                 text=True,
                 encoding="utf-8", errors="replace",

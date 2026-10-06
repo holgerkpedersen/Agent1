@@ -7,7 +7,8 @@ the fragile blacklist approach previously used in tool execution.
 from __future__ import annotations
 
 import logging
-from typing import Final, Set
+import re
+from typing import Final, List, Set
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -43,6 +44,33 @@ _UNSAFE_SHELL_TOKENS: Final[tuple[tuple[str, str], ...]] = (
     ("$(", "command substitution ($()"),
     ("\n", "embedded newline"),
     ("\r", "embedded newline"),
+)
+
+#: Destructive shell patterns refused outright (word-boundary,
+#: case-insensitive) — the command injection surface of the NLP loop.
+#: Moved here from ``agent.py`` so the policy has ONE owner (plan #16);
+#: ``agent._DANGEROUS_SHELL_PATTERNS`` is now an alias of this object.
+DESTRUCTIVE_SHELL_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
+    (re.compile(r"rm\s+-r[f]?", re.I), "recursive file removal (rm -r/-rf)"),
+    (re.compile(r"\bdeltree\b", re.I), "deltree"),
+    (re.compile(r"\brd\s+/s", re.I), "rd /s"),
+    (re.compile(r"\brmdir\s+/s", re.I), "rmdir /s"),
+    (re.compile(r"\bdel\s+/[sqf]", re.I), "del /s /q /f"),
+    (re.compile(r"\bformat\s+[a-z]:", re.I), "format <drive>:"),
+    (re.compile(r"\bshutdown\b", re.I), "shutdown"),
+    (re.compile(r"\breboot\b", re.I), "reboot"),
+    (re.compile(r"restart-computer", re.I), "restart-computer"),
+    (re.compile(r"stop-computer", re.I), "stop-computer"),
+    (re.compile(r"\bdiskpart\b", re.I), "diskpart"),
+    (re.compile(r"\bmkfs\b", re.I), "mkfs"),
+    (re.compile(r"wipefs", re.I), "wipefs"),
+    (re.compile(r"\bdd\s+of=", re.I), "dd of="),
+    (re.compile(r"taskkill\s+/f", re.I), "taskkill /f"),
+    (re.compile(r"\breg\s+delete", re.I), "reg delete"),
+    (re.compile(r"remove-item\s+-recurse", re.I), "Remove-Item -Recurse"),
+    (re.compile(r"clear-recyclebin", re.I), "Clear-RecycleBin"),
+    (re.compile(r"format-volume", re.I), "Format-Volume"),
+    (re.compile(r"invoke-expression", re.I), "Invoke-Expression"),
 )
 
 # ---------------------------------------------------------------------------
@@ -81,6 +109,83 @@ def find_unsafe_shell_pattern(cmd_str: str) -> str | None:
         if token in cmd_str:
             return description
     return None
+
+
+def _strip_quoted_segments(cmd_str: str) -> str:
+    """Blank out single/double-quoted spans so their contents are not scanned.
+
+    ``python -c "import sys; sys.exit(3)"`` is a legitimate command: the ``;``
+    is data inside a quoted argument, not a shell operator.  Quoted spans are
+    replaced with an equal-length run of spaces so reported offsets stay valid
+    and the surrounding text is still checked.
+    """
+    out: List[str] = []
+    quote: str | None = None
+    escaped = False
+    for ch in cmd_str:
+        if escaped:
+            out.append(" " if quote else ch)
+            escaped = False
+            continue
+        if ch == "\\" and quote:
+            out.append(" ")
+            escaped = True
+            continue
+        if quote:
+            if ch == quote:
+                quote = None
+            out.append(" ")
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            out.append(" ")
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
+def find_destructive_shell_pattern(cmd_str: str) -> str | None:
+    """Return the first destructive pattern description in *cmd_str*, or None.
+
+    This is the TIER-1 policy: the destructive block-list that every execution
+    path shares (plan #16).  It is the only gate the permissive NLP ``run``
+    dev-shell applies — that path deliberately still executes pipelines and
+    chaining (see :func:`scan_command` for why), so it must NOT be given the
+    structural scan.
+    """
+    if not cmd_str:
+        return None
+    for pattern, description in DESTRUCTIVE_SHELL_PATTERNS:
+        if pattern.search(cmd_str):
+            return description
+    return None
+
+
+def scan_command(cmd_str: str) -> str | None:
+    """Return a description of the first policy violation in *cmd_str*.
+
+    This is the STRICT policy (TIER-1 + TIER-2), for callers that execute
+    through the binary allow-list (``tool_router``, ``tools/shell_ops``).  It
+    applies, in order:
+
+    1. destructive-pattern matching (:data:`DESTRUCTIVE_SHELL_PATTERNS`);
+    2. the structural metacharacter scan (:func:`find_unsafe_shell_pattern`)
+       on the command with quoted spans blanked out.
+
+    Returns ``None`` when the command is acceptable — the caller then decides
+    whether to apply the binary allow-list or its own fallback.
+
+    Note the two-tier split: the NLP ``run`` tool intentionally does NOT use
+    this function.  It keeps ``shell=True`` and must still execute pipes
+    (``... 2>&1 | ...``), which on cmd.exe fail silently and are surfaced to
+    the model as a wrong-shell Hint — a documented feature pinned by
+    ``tests/test_tool_loop_nlp.py::TestRunToolShellAwareness``.  Rejecting
+    metacharacters there would delete that diagnostic.
+    """
+    destructive = find_destructive_shell_pattern(cmd_str)
+    if destructive is not None:
+        return destructive
+    return find_unsafe_shell_pattern(_strip_quoted_segments(cmd_str))
 
 
 def is_command_allowed(binary_name: str) -> bool:
