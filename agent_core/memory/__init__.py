@@ -18,11 +18,16 @@ from .attribution import (
     resolve_decision_llm,
     success_rate_by_model,
 )
-from .memory_store import MemoryStore
+from .memory_store import (
+    MemoryStore,
+    clear_semantic_index_cache,
+    semantic_search_memories,
+)
 from .types import (
     EmbeddingService,
     MAX_GOAL_CHARS,
     ORIGINAL_GOAL_MARKER,
+    ORIGINAL_GOAL_SUFFIX,
     SEMANTIC_MEMORY_MARKER,
     SQLiteStorage,
     StorageBackend,
@@ -30,6 +35,7 @@ from .types import (
     VectorEmbeddingModel,
     load_semantic_memory,
     original_goal_block,
+    original_goal_from_block,
     semantic_memory_block,
 )
 
@@ -40,12 +46,16 @@ __all__: List[str] = [
     "VectorDatabase",
     "VectorEmbeddingModel",
     "MemoryStore",
+    "semantic_search_memories",
+    "clear_semantic_index_cache",
     "SEMANTIC_MEMORY_MARKER",
     "semantic_memory_block",
     "load_semantic_memory",
     "ORIGINAL_GOAL_MARKER",
+    "ORIGINAL_GOAL_SUFFIX",
     "MAX_GOAL_CHARS",
     "original_goal_block",
+    "original_goal_from_block",
     # LLM decision attribution (observability only — decision #014).
     "EXPERIENCE_COLUMNS",
     "ATTRIBUTION_COLUMNS",

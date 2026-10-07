@@ -1138,6 +1138,12 @@ class TestPersistentChatHistory:
         assert len(trimmed) == 60
         assert trimmed[0]["content"] == "SYS"
         assert trimmed[-1]["content"] == "msg-79"
+        # The count-cap trim now leaves a compaction NOTE as the first body
+        # slot instead of dropping the oldest messages silently (the note
+        # repeats the pinned "Original task" so the agent cannot forget it —
+        # see tests/test_original_goal.py).  The note takes one slot, so the
+        # kept tail is one message shorter than the old silent-drop contract.
+        assert trimmed[1]["content"].startswith("[context compaction]")
 
         class FakeLLM:
             async def chat(self, messages, tools=None, **kwargs):
@@ -1169,14 +1175,16 @@ class TestPersistentChatHistory:
 
             asyncio.run(run())
             # The SAVED history is the projected bounded window: system prompt
-            # plus the last 59 messages (msg-23..msg-79, hello, done).
+            # plus the compaction note (first body slot) and the newest 58
+            # messages (msg-24..msg-79, hello, done).
             saved = json.loads(history_file.read_text(encoding="utf-8"))
             assert len(saved) == 60
             # The system message is the base prompt PLUS workspace-derived
             # dynamic blocks (the skill index — ``Agent(workspace=".")`` scans
             # the repo's skills/).  Assert the base survives, not byte-equality.
             assert saved[0]["content"].startswith("SYS")
-            assert saved[1]["content"] == "msg-23"
+            assert saved[1]["content"].startswith("[context compaction]")
+            assert saved[2]["content"] == "msg-24"
             assert saved[-2]["content"] == "hello"
             assert saved[-1]["content"] == "done"
 

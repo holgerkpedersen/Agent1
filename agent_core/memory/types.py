@@ -167,6 +167,15 @@ MAX_BLOCK_LINES = 8
 #: ``SEMANTIC_MEMORY_MARKER`` / ``HABITS_MARKER`` / ``SKILL_INDEX_MARKER``).
 ORIGINAL_GOAL_MARKER = "\n\nORIGINAL TASK"
 
+#: Closing boilerplate of the ORIGINAL TASK block (see
+#: :func:`original_goal_block`).  Extracted as a constant so
+#: :func:`original_goal_from_block` can recover the goal text from a restored
+#: system prompt without the two ever drifting apart.
+ORIGINAL_GOAL_SUFFIX = (
+    "\n\nThis is the user's original request for this session. Do not "
+    "lose sight of it - every answer must stay aligned with it.\n"
+)
+
 #: How much of the user's first prompt is kept as the pinned goal.  A first
 #: prompt that is itself a file dump would otherwise swallow the context
 #: budget it is supposed to protect.
@@ -262,11 +271,37 @@ def original_goal_block(
         ORIGINAL_GOAL_MARKER
         + "\n"
         + text
-        + "\n\nThis is the user's original request for this session. Do not "
-        "lose sight of it - every answer must stay aligned with it.\n"
+        + ORIGINAL_GOAL_SUFFIX
     )
     assert block.startswith(ORIGINAL_GOAL_MARKER)  # marker contract
     return block
+
+
+def original_goal_from_block(
+    prompt: str | None, *, max_chars: int = MAX_GOAL_CHARS
+) -> str:
+    """Recover the pinned goal text from a system prompt ("" when absent).
+
+    The inverse of :func:`original_goal_block`: the goal is persisted inside
+    the system message of ``chat_history.json``, so when ``agent_memory.json``
+    is lost or corrupt the ORIGINAL TASK block is the most faithful recovery
+    source available (full text, unlike the 300-char compaction-note excerpt).
+
+    The goal text is whitespace-normalised and single-line by construction, so
+    the first line of the block body is the goal even when the closing
+    boilerplate cannot be found.  Never raises.
+    """
+    try:
+        text = str(prompt or "")
+        if ORIGINAL_GOAL_MARKER not in text:
+            return ""
+        tail = text.split(ORIGINAL_GOAL_MARKER, 1)[1]
+        idx = tail.find(ORIGINAL_GOAL_SUFFIX)
+        body = tail[:idx] if idx >= 0 else tail
+        first_line = body.strip().splitlines()[0].strip() if body.strip() else ""
+        return first_line[:max_chars].strip()
+    except Exception:  # noqa: BLE001 - recovery must not kill a session
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -342,8 +377,10 @@ __all__ = [
     "SEMANTIC_MEMORY_FILENAME",
     "MAX_BLOCK_LINES",
     "ORIGINAL_GOAL_MARKER",
+    "ORIGINAL_GOAL_SUFFIX",
     "MAX_GOAL_CHARS",
     "original_goal_block",
+    "original_goal_from_block",
     "_semantic_memory_block",
     "semantic_memory_block",
     "load_semantic_memory",

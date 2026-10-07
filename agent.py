@@ -92,7 +92,9 @@ from agent_core.memory import (
     SEMANTIC_MEMORY_MARKER,
     load_semantic_memory,
     original_goal_block,
+    original_goal_from_block,
     semantic_memory_block,
+    semantic_search_memories,
 )
 from agent_core.security.allowlist import (
     DESTRUCTIVE_SHELL_PATTERNS,
@@ -2424,9 +2426,13 @@ class Agent:
     # can be read (and tested) in isolation.  Behaviour is unchanged.
     # ------------------------------------------------------------------
 
-    def _refresh_system_message(self) -> None:
+    def _refresh_system_message(self, query: str | None = None) -> None:
         """Ensure history starts with a system message and rebuild its dynamic
         blocks (decision-constraints / skill index / plan-mode suffix).
+
+        *query* is the current user message (when known) — forwarded to
+        :meth:`_semantic_memory_block` so the SEMANTIC MEMORY block shows the
+        ledger entries most relevant to THIS turn.
 
         The stored BASE prompt (position 0 minus previously injected dynamic
         blocks) is preserved — only the dynamic blocks are rebuilt, so nothing
@@ -2442,6 +2448,11 @@ class Agent:
                     plan_mode_system_suffix() if self.is_plan_mode() else ""
                 ),
             })
+        elif self._chat_history[0].get("role") != "system":
+            # A history whose head is NOT a system message (hand-built in a
+            # test, or a corrupt file) must keep that message: rewriting
+            # position 0 would silently swallow the user's first prompt.
+            self._chat_history.insert(0, {"role": "system", "content": _SYSTEM_PROMPT})
         self._chat_history[0] = {
             "role": "system",
             "content": _strip_dynamic_system_blocks(
@@ -2451,7 +2462,7 @@ class Agent:
             + self._decision_constraints_block()
             + self._skill_index_block()
             + self._habits_block()
-            + self._semantic_memory_block()
+            + self._semantic_memory_block(query)
             + (plan_mode_system_suffix() if self.is_plan_mode() else ""),
         }
 
@@ -2907,12 +2918,13 @@ class Agent:
         mid-task and wait for the end-user.
 
         The turn pipeline is split into four readable phases:
-        1. ``_refresh_system_message`` — current ledger/plan-mode in prompt.
+        1. ``_refresh_system_message`` — current ledger/plan-mode in prompt
+           (semantic memories query-ranked for this user message).
         2. ``_append_user_turn`` — multimodal user message + turn boundary.
         3. ``_run_chained_tool_loop`` — tool loop + auto-continue chaining.
         4. ``_finish_turn`` — trim/persist history, print the outcome.
         """
-        self._refresh_system_message()
+        self._refresh_system_message(user_input)
         self._read_streak = 0
         # Turn-outcome observability (A3): the input + start time feed the
         # bounded turn log and duration written by _finish_turn.
@@ -3236,7 +3248,7 @@ class Agent:
             logger.exception('Habits block unavailable:\n')
             return ""
 
-    def _semantic_memory_block(self) -> str:
+    def _semantic_memory_block(self, query: str | None = None) -> str:
         """Embedding/KG memory block for the chat system prompt.
 
         Builds a compact block from indexed memories (see
@@ -3247,9 +3259,31 @@ class Agent:
         byte-identical to before.  Never raises: a broken ``.semantic_memory``
         must not kill a chat turn (same rule as
         :meth:`_decision_constraints_block`).
+
+        When *query* (the current user message) is known, the ledger entries
+        are ranked with :func:`semantic_search_memories`
+        (:meth:`MemoryStore.semantic_search`) and the top-5 most relevant ones
+        are injected, prefixed with a ``QUERY:`` line.  When embeddings are
+        unavailable the ranking returns ``[]`` and the block falls back to the
+        unranked ledger order WITHOUT the query line (byte-identical to the
+        old behaviour).
         """
         try:
             indexed_memories = load_semantic_memory(self._effective_ws_dir())
+            if query and indexed_memories:
+                try:
+                    ranked = semantic_search_memories(
+                        indexed_memories,
+                        query,
+                        k=5,
+                        embedding_service=getattr(
+                            self, "_semantic_embedding_service", None
+                        ),
+                    )
+                except Exception:  # noqa: BLE001 - ranking is best-effort only
+                    ranked = []
+                if ranked:
+                    return semantic_memory_block(ranked, query=query, k=5)
             return semantic_memory_block(indexed_memories, k=5)
         except Exception:
             logger.exception('Semantic memory block unavailable:\n')
@@ -3272,9 +3306,13 @@ class Agent:
         """
         if self._original_goal:
             return
-        source = _first_user_message_text(self._chat_history)
-        if not source and pending_user_input:
+        recovered = _recover_original_goal(self._chat_history)
+        if recovered is not None:
+            source = recovered
+        elif pending_user_input:
             source = pending_user_input
+        else:
+            source = ""
         if source:
             self._original_goal = source[:MAX_GOAL_CHARS]
 
@@ -3329,7 +3367,9 @@ class Agent:
                         func["arguments"] = "{}"
                 except (json.JSONDecodeError, TypeError):
                     func["arguments"] = "{}"
-        return _project_chat_history(_strip_image_blocks(messages))
+        return _project_chat_history(
+            _strip_image_blocks(messages), getattr(self, "_original_goal", ""),
+        )
 
     def _save_chat_history(self) -> None:
         """Persist the NLP conversation so the next session can continue it.
@@ -3343,7 +3383,9 @@ class Agent:
         next load.
         """
         payload = json.dumps(
-            _project_chat_history(_strip_image_blocks(self._chat_history)),
+            _project_chat_history(
+                _strip_image_blocks(self._chat_history), self._original_goal,
+            ),
             ensure_ascii=False, indent=2,
         )
         # Derive the temp file from the CURRENT json path so tests that
@@ -4521,6 +4563,86 @@ def _message_size(m: dict[str, Any]) -> int:
     return total
 
 
+def _compaction_note_goal(text: str) -> str:
+    """The ``Original task`` excerpt a compaction note carries ("" when none).
+
+    Compaction notes are the ONE place the dropped first prompt still speaks:
+    ``_trim_chat_history`` appends an excerpt of the pinned goal to the note it
+    leaves behind, so a later session can recover the request from it.
+    """
+    marker = "Original task (do not lose sight of it): "
+    if marker not in text:
+        return ""
+    excerpt = text.split(marker, 1)[1].strip()
+    if excerpt.endswith("..."):
+        excerpt = excerpt[:-3].strip()
+    return excerpt
+
+
+def _is_compaction_note(text: str) -> bool:
+    return text.strip().startswith("[context compaction]")
+
+
+def _strip_turn_wrappers(text: str) -> str:
+    """Remove harness steering wrappers from a stored user message.
+
+    ``_append_user_turn`` prepends a plan-mode note and/or skill hints to the
+    message it stores, so the first user message in a restored history may not
+    BE the raw request.  Both wrappers are one paragraph followed by a blank
+    line — peel them off until the remainder looks like the raw prompt.
+    """
+    text = text.strip()
+    while True:
+        if text.lower().startswith("[plan mode]"):
+            parts = text.split("\n\n", 1)
+            text = parts[1].strip() if len(parts) == 2 else ""
+        elif text.startswith("Skill hints (load with read_skill"):
+            parts = text.split("\n\n", 1)
+            text = parts[1].strip() if len(parts) == 2 else ""
+        else:
+            return text
+
+
+def _recover_original_goal(messages: list[dict[str, Any]]) -> str | None:
+    """Recover the session's ORIGINAL request from a restored history.
+
+    Sources, most faithful first:
+
+    1. The ``ORIGINAL TASK`` block in the system prompt — the goal itself,
+       persisted verbatim by every session that had one.
+    2. The ``Original task`` excerpt in a compaction note — the request as the
+       last trim remembered it (capped, but never wrong).
+    3. The first REAL user message (steering wrappers stripped), but only when
+       no compaction note precedes it — a note ahead of it means the true
+       first prompt was already dropped and this message is merely a LATER
+       request.
+
+    Returns ``""`` when the original is provably gone and ``None`` when the
+    history holds nothing to judge (a fresh session — the pending input is the
+    original then).  A wrong pin is worse than none: the block claims to be
+    "the user's original request" and steers every later answer towards it.
+    """
+    try:
+        compacted = False
+        for m in messages:
+            role = m.get("role")
+            if role == "system":
+                goal = original_goal_from_block(str(m.get("content") or ""))
+                if goal:
+                    return goal
+            elif role == "user":
+                text = _first_user_message_text([m])
+                if not text:
+                    continue
+                if _is_compaction_note(text):
+                    compacted = True
+                    return _compaction_note_goal(text) or ""
+                return _strip_turn_wrappers(text) or ""
+        return "" if compacted else None
+    except Exception:  # noqa: BLE001 - recovery must not kill a session
+        return None
+
+
 def _first_user_message_text(
     messages: list[dict[str, Any]],
 ) -> str:
@@ -4581,12 +4703,14 @@ def _trim_chat_history(
     :func:`_repair_unanswered_tool_calls`.
     """
     messages = _drop_orphan_tool_messages(messages)
+    count_dropped = 0
     if len(messages) <= _MAX_CHAT_MESSAGES:
         head = messages[:1]
         body = list(messages[1:])
     else:
         head = messages[:1]
         body = list(messages[-(_MAX_CHAT_MESSAGES - 1):])
+        count_dropped = (len(messages) - 1) - len(body)
 
     # Strip large tool-call arguments from assistant messages in the body:
     # the LLM only needs to know WHICH tool was called, not the full payload
@@ -4601,25 +4725,30 @@ def _trim_chat_history(
     # following tool result.
     total = sum(_message_size(m) for m in body)
     if total <= _HISTORY_CHAR_BUDGET:
+        trimmed = body
+        dropped = count_dropped
+    else:
+        keep_from = 0
+        running = total
+        for i, m in enumerate(body):
+            if running <= _HISTORY_CHAR_BUDGET:
+                keep_from = i
+                break
+            running -= _message_size(m)
+            role = m.get("role")
+            prev_role = body[i - 1].get("role") if i else None
+            boundary_safe = not (
+                role == "tool" or prev_role == "assistant" and "tool_calls" in body[i - 1]
+            )
+            if i == len(body) - 1 or boundary_safe:
+                keep_from = i + 1
+        trimmed = body[keep_from:]
+        dropped = count_dropped + keep_from
+    if not dropped:
         return _repair_unanswered_tool_calls(
             _drop_orphan_tool_messages(head + body)
         )
-    keep_from = 0
-    running = total
-    for i, m in enumerate(body):
-        if running <= _HISTORY_CHAR_BUDGET:
-            keep_from = i
-            break
-        running -= _message_size(m)
-        role = m.get("role")
-        prev_role = body[i - 1].get("role") if i else None
-        boundary_safe = not (
-            role == "tool" or prev_role == "assistant" and "tool_calls" in body[i - 1]
-        )
-        if i == len(body) - 1 or boundary_safe:
-            keep_from = i + 1
-    trimmed = body[keep_from:]
-    note_content = _HISTORY_TRIM_NOTE.format(dropped=keep_from)
+    note_content = _HISTORY_TRIM_NOTE.format(dropped=dropped)
     goal_text = " ".join(str(goal).split()) if goal else ""
     if goal_text:
         excerpt = goal_text[:_HISTORY_TRIM_GOAL_CAP]
@@ -4630,6 +4759,10 @@ def _trim_chat_history(
         "role": "user",
         "content": note_content,
     }
+    # The compaction note is a message too — it must not push the result over
+    # the count cap (the note replaces what it dropped, it does not add to it).
+    if len(head) + 1 + len(trimmed) > _MAX_CHAT_MESSAGES and _MAX_CHAT_MESSAGES > 2:
+        trimmed = trimmed[-(_MAX_CHAT_MESSAGES - 2):]
     return _repair_unanswered_tool_calls(
         _drop_orphan_tool_messages(head + [note] + trimmed)
     )
@@ -4668,7 +4801,9 @@ def _strip_image_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def _project_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _project_chat_history(
+    messages: list[dict[str, Any]], goal: str | None = None,
+) -> list[dict[str, Any]]:
     """Project a conversation down to what the NEXT session should see.
 
     Keeps the system prompt plus a bounded multi-exchange window (see
@@ -4676,6 +4811,10 @@ def _project_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]
     instead of forgetting it.  Loop steering notes (``NOTE: This ...`` tool
     messages), empty assistant placeholders, and orphan tool messages are
     dropped as cross-session noise.
+
+    *goal* is forwarded to the trimmer so the compaction note this projection
+    may leave behind carries the ``Original task`` reminder — the saved file is
+    exactly where the next session must be able to recover it from.
     """
     if not messages:
         return []
@@ -4689,7 +4828,7 @@ def _project_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]
         if m.get("role") == "assistant" and not content and not m.get("tool_calls"):
             continue  # empty placeholder with no action
         cleaned.append(m)
-    return _trim_chat_history(head + cleaned)
+    return _trim_chat_history(head + cleaned, goal)
 
 
 # ---------------------------------------------------------------------------

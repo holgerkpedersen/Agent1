@@ -201,3 +201,150 @@ class TestOriginalGoalPersistence:
         bot._append_user_turn(GOAL, None)
         bot.clear_history()
         assert bot._original_goal == ""
+
+
+class TestCompactionNoteAlwaysCarriesTheGoal:
+    """Every path that DROPS history must leave a goal reminder behind.
+
+    Regression: the count cap (``_MAX_CHAT_MESSAGES``) dropped the oldest
+    messages — exactly where the first prompt lives — without emitting any
+    compaction note at all (only the char-budget path did), and the persist
+    projection (``_project_chat_history``) trimmed WITHOUT the goal, so the
+    note it left behind never carried the ``Original task`` reminder.
+    """
+
+    def test_count_cap_trim_emits_note_with_goal(self, bot: Agent) -> None:
+        bot._append_user_turn(GOAL, None)
+        _fill_body(bot, _MAX_CHAT_MESSAGES + 20)
+        trimmed = _trim_chat_history(list(bot._chat_history), bot._original_goal)
+        notes = [
+            str(m.get("content") or "")
+            for m in trimmed
+            if "context compaction" in str(m.get("content") or "")
+        ]
+        assert notes, "count-cap trim dropped messages without a compaction note"
+        assert "Original task" in notes[0]
+        assert "Byg en CLI" in notes[0]
+
+    def test_count_cap_trim_still_fits_the_cap(self, bot: Agent) -> None:
+        bot._append_user_turn(GOAL, None)
+        _fill_body(bot, _MAX_CHAT_MESSAGES + 20)
+        trimmed = _trim_chat_history(list(bot._chat_history), bot._original_goal)
+        assert len(trimmed) <= _MAX_CHAT_MESSAGES
+
+    def test_saved_note_carries_the_goal(self, bot: Agent) -> None:
+        """The save-time projection trims too — its note must carry the goal."""
+        bot._append_user_turn(GOAL, None)
+        bot._refresh_system_message()
+        _fill_body(bot, _MAX_CHAT_MESSAGES + 20)
+        bot._save_chat_history()
+        data = json.loads(
+            Path(agent.CHAT_HISTORY_JSON_PATH).read_text(encoding="utf-8"),
+        )
+        notes = [
+            str(m.get("content") or "")
+            for m in data
+            if "context compaction" in str(m.get("content") or "")
+        ]
+        assert notes, "save-time trim dropped messages without a compaction note"
+        assert "Original task" in notes[0]
+        assert "Byg en CLI" in notes[0]
+
+
+class TestGoalRecoveryFromRestoredHistory:
+    """Goal recovery must never pin a WRONG prompt as "the original request"."""
+
+    def test_goal_recovered_from_system_block(self, bot: Agent) -> None:
+        """agent_memory.json lost + history trimmed: the ORIGINAL TASK block in
+        the persisted system prompt is the authoritative source.  Regression:
+        recovery used to pin the first *surviving* user message ('msg 61') as
+        the session's original request."""
+        bot._append_user_turn(GOAL, None)
+        bot._refresh_system_message()
+        _fill_body(bot, _MAX_CHAT_MESSAGES + 20)
+        bot._save_chat_history()
+        bot._save_memory()
+        Path(agent.AGENT_MEMORY_JSON_PATH).unlink()
+        revived = Agent(workspace=bot.workspace)
+        assert revived._original_goal.startswith("Byg en CLI")
+
+    def test_goal_recovered_from_note_excerpt(self, bot: Agent) -> None:
+        """No system block (old history): the compaction note's excerpt is the
+        next best source — and the note text itself must never become the goal."""
+        bot._chat_history = [
+            {"role": "system", "content": "s"},
+            {
+                "role": "user",
+                "content": agent._HISTORY_TRIM_NOTE.format(dropped=3)
+                + "\nOriginal task (do not lose sight of it): " + GOAL,
+            },
+            {"role": "user", "content": "senere besked"},
+        ]
+        bot._original_goal = ""
+        bot._ensure_original_goal()
+        assert bot._original_goal.startswith("Byg en CLI")
+        assert "context compaction" not in bot._original_goal
+
+    def test_no_goal_pinned_when_original_is_unrecoverable(self, bot: Agent) -> None:
+        """A later message must NOT be promoted to "the original request" —
+        the block explicitly steers every answer towards it, so a wrong pin is
+        worse than none."""
+        bot._chat_history = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "content": agent._HISTORY_TRIM_NOTE.format(dropped=3)},
+            {"role": "user", "content": "senere besked"},
+        ]
+        bot._original_goal = ""
+        bot._ensure_original_goal("endnu senere besked")
+        assert bot._original_goal == ""
+
+    def test_goal_strips_plan_mode_wrapper(self, bot: Agent) -> None:
+        from agent_core.modes import plan_mode_turn_note
+
+        wrapped = f"{plan_mode_turn_note()}\n\n{GOAL}"
+        bot._chat_history = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "content": wrapped},
+        ]
+        bot._original_goal = ""
+        bot._ensure_original_goal()
+        assert bot._original_goal == GOAL
+
+    def test_goal_strips_skill_hint_wrapper(self, bot: Agent) -> None:
+        wrapped = (
+            "Skill hints (load with read_skill when the task matches):\n"
+            "- fixer\n\n" + GOAL
+        )
+        bot._chat_history = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "content": wrapped},
+        ]
+        bot._original_goal = ""
+        bot._ensure_original_goal()
+        assert bot._original_goal == GOAL
+
+
+class TestGoalBlockExtraction:
+    def test_round_trip(self) -> None:
+        from agent_core.memory import original_goal_block, original_goal_from_block
+
+        prompt = "BASE PROMPT" + original_goal_block(GOAL) + "\nother block"
+        assert original_goal_from_block(prompt) == GOAL
+
+    def test_empty_when_absent(self) -> None:
+        from agent_core.memory import original_goal_from_block
+
+        assert original_goal_from_block("BASE PROMPT") == ""
+
+
+class TestSystemHeadNeverSwallowsTheFirstPrompt:
+    def test_non_system_first_message_is_not_swallowed(self, bot: Agent) -> None:
+        """A history whose [0] is a USER message must not have it rewritten
+        into the system prompt — the user's message stays in the body."""
+        bot._chat_history = [{"role": "user", "content": GOAL}]
+        bot._refresh_system_message()
+        assert bot._chat_history[0]["role"] == "system"
+        assert any(
+            m.get("role") == "user" and m.get("content") == GOAL
+            for m in bot._chat_history
+        )
