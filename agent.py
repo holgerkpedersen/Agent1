@@ -1781,10 +1781,10 @@ class Agent:
                 return refusal
             self._full_run_gate.record_full_run()
         if framework == "pytest":
-            # The suite budget bounds any pytest invocation (a targeted path
-            # can still select thousands of tests); unittest keeps the plain cap.
-            timeout = max(timeout, int(_pytest_full_suite_timeout()))
-        if framework == "pytest":
+            # A whole-workspace run gets the measured suite budget; a targeted
+            # path keeps the plain cap so nested/single-file runs stay bounded.
+            if is_full:
+                timeout = max(timeout, int(_pytest_full_suite_timeout()))
             cmd = [sys.executable, "-m", "pytest", test_path, "-v"]
         else:
             cmd = [sys.executable, "-m", "unittest", test_path, "-v"]
