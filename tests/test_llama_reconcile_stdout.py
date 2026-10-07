@@ -17,7 +17,6 @@ from typing import Any
 
 import pytest
 
-import agent as agent_module
 from agent import LLMClient
 
 
