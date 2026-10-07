@@ -286,7 +286,6 @@ def _apply_card_update(payload: dict[str, Any]) -> bool:
     from . import issues as issue_store  # lazy import
 
     source_id = payload.get("source_id", "")
-    target_ref = payload.get("target_ref", "")
     mapping = _load_id_map()
 
     if not source_id:
@@ -332,7 +331,6 @@ def _apply_card_move(payload: dict[str, Any]) -> bool:
     from . import issues as issue_store  # lazy import
 
     source_id = payload.get("source_id", "")
-    target_ref = payload.get("target_ref", "")
     mapping = _load_id_map()
 
     if not source_id:
@@ -364,7 +362,6 @@ def _apply_card_delete(payload: dict[str, Any]) -> bool:
     from . import issues as issue_store  # lazy import
 
     source_id = payload.get("source_id", "")
-    target_ref = payload.get("target_ref", "")
     mapping = _load_id_map()
 
     if not source_id:

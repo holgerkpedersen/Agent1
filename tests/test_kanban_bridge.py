@@ -257,7 +257,7 @@ class TestMakeIssueSync:
              patch.object(kb, 'enqueue') as mock_enqueue, \
              patch('harnessfix.issues._get_kanban_bridge', return_value=kb):
             from harnessfix import issues as issue_store
-            result = issue_store.make_issue(
+            issue_store.make_issue(
                 category="test", title="Test Issue", locations=["file.py:42"],
             )
             assert mock_enqueue.called
