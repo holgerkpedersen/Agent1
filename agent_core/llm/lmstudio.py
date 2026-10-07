@@ -135,20 +135,28 @@ def _is_tool_path_engine_error(text: Any) -> bool:
 
     When ``tools`` are sent, LM Studio builds its tool parser/grammar; a model
     whose tool format is unsupported (observed: ``llama-4-scout-17b-16e-instruct``)
-    fails there with a peg error, a ``bad allocation``, a ``channel error`` or a
-    predict ``fetch failed`` — while the SAME prompt WITHOUT tools succeeds.
-    Dropping tools and retrying recovers the turn (degraded to plain chat),
-    which is exactly what LM Studio's own chat UI does (it sends no tools).
+    fails there with a peg error, a ``channel error`` or a predict ``fetch
+    failed`` — while the SAME prompt WITHOUT tools succeeds.  Dropping tools and
+    retrying recovers the turn (degraded to plain chat), which is exactly what
+    LM Studio's own chat UI does (it sends no tools).
+
+    An OUT-OF-MEMORY is deliberately NOT one of these: dropping tools cannot
+    make a model that does not fit fit.  It used to match here because
+    :func:`_is_engine_oom_error`'s own message quotes "bad allocation", so a
+    deterministic OOM was silently downgraded to tool-less chat — a subagent
+    tasked with writing and running tests then answered in prose and did
+    nothing.  OOM is handled by :func:`_is_engine_oom_error` and must fail fast
+    so the failover chain moves on.
     """
     if not isinstance(text, str) or not text.startswith("[Error:"):
+        return False
+    if _is_engine_oom_error(text):
         return False
     if _is_tool_grammar_error(text):
         return True
     low = text.lower()
     return (
-        "bad allocation" in low
-        or "out of memory" in low
-        or "channel error" in low
+        "channel error" in low
         # The engine crashing/restarting mid-request surfaces as a bare
         # "terminated" (observed live with llama-4-scout), a predict-stream
         # error, or a predict fetch failure.

@@ -378,50 +378,76 @@ def _channel_error_body() -> bytes:
 
 
 class TestToolPathDropTools:
-    """When a model's tool path crashes the LM Studio engine, the provider must
-    drop tools and answer as text (LM Studio's own chat sends no tools).  The
-    reported live case: llama-4-scout-17b-16e-instruct -> "bad allocation"."""
+    """When a model's tool path crashes the LM Studio engine, the provider may
+    drop tools and answer as text (LM Studio's own chat sends no tools).
+
+    An out-of-memory is NOT a tool-path failure: dropping tools cannot make an
+    oversized model fit, so it must fail fast instead of degrading a
+    tool-calling caller into plain chat that cannot act."""
 
     def test_tool_path_error_markers(self) -> None:
         from agent_core.llm.lmstudio import _is_tool_path_engine_error
 
         assert _is_tool_path_engine_error(f"[Error: {_PEG_ERROR_BODY.decode()}]")
-        assert _is_tool_path_engine_error(f"[Error: {_OOM_BODY.decode()}]")
         assert _is_tool_path_engine_error(f"[Error: {_channel_error_body().decode()}]")
         assert _is_tool_path_engine_error(
             '[Error: Engine protocol predict request failed: fetch failed]'
         )
-        assert _is_tool_path_engine_error('[Error: HTTP Error 400: {"error":"terminated"}]')
+        assert _is_tool_path_engine_error(
+            '[Error: HTTP Error 400: {"error":"terminated"}]'
+        )
         assert not _is_tool_path_engine_error("[Error: HTTP Error 401: Unauthorized]")
         assert not _is_tool_path_engine_error("normal response")
 
-    def test_bad_allocation_with_tools_retries_without_tools(self) -> None:
+    def test_oom_is_not_a_tool_path_error(self) -> None:
+        """Regression: the OOM message quotes "bad allocation", so it used to
+        match the tool-path classifier and silently dropped tools."""
+        from agent_core.llm.lmstudio import (
+            _is_engine_oom_error,
+            _is_tool_path_engine_error,
+        )
+
+        text = f"[Error: {_OOM_BODY.decode()}]"
+        assert _is_engine_oom_error(text)
+        assert not _is_tool_path_engine_error(text)
+
+    def test_oom_with_tools_fails_fast_instead_of_dropping_tools(self) -> None:
+        """Regression (subagent hang): a tool-using caller must never be
+        silently answered without tools when the engine is out of memory — the
+        caller cannot tell the difference between a real answer and a degraded
+        one, so the task looks done while nothing happened."""
+        from agent_core.llm.provider import is_connection_failure
+
         prov = _provider()
         payloads: list = []
 
         def fake(req, timeout=None):
             payloads.append(json.loads(req.data.decode()))
-            if len(payloads) == 1:
-                raise _http_error(req, 400, _OOM_BODY)
-            return _FakeResponse(b'{"choices": [{"message": {"content": "hi there"}}]}')
+            raise _http_error(req, 400, _OOM_BODY)
 
         tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
         with patch("urllib.request.urlopen", side_effect=fake):
             out = asyncio.run(prov.chat(
                 [{"role": "user", "content": "hi"}], tools=tools
             ))
-        assert out == "hi there"
-        assert len(payloads) == 2
-        assert "tools" in payloads[0] and "tools" not in payloads[1]
+        assert len(payloads) == 1, "a deterministic OOM must not be retried"
+        assert out.startswith("[Error:")
+        assert "out of memory" in out
+        assert is_connection_failure(out), "the failover chain must move on"
 
     def test_tools_disabled_on_subsequent_calls(self) -> None:
+        """A GENUINE tool-path failure is remembered so the doomed attempt is
+        not repeated; the caller keeps getting the degraded text answer that
+        makes sense for plain chat."""
         prov = _provider()
         payloads: list = []
 
         def fake(req, timeout=None):
             payloads.append(json.loads(req.data.decode()))
             if "tools" in payloads[-1]:
-                raise _http_error(req, 400, _OOM_BODY)
+                # PEG is deterministic and non-transient: it fails fast, so the
+                # "already known unsupported" memo can be observed in one turn.
+                raise _http_error(req, 400, _PEG_ERROR_BODY)
             return _FakeResponse(b'{"choices": [{"message": {"content": "ok"}}]}')
 
         tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
