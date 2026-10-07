@@ -2589,6 +2589,10 @@ class Agent:
             #: and the chat_turn roll-up row share the llm_decision row's id,
             #: so a whole turn is linkable in one join.
             self._turn_run_id = turn_cid
+            #: Arm turn-scoped trace-event collection (plan item #4 residual):
+            #: every record this turn's runs write is buffered in memory so
+            #: _finish_turn can score the turn with score_run().
+            _begin_trace_turn()
             while True:
                 #: Per-run trace writer (one JSONL file per run() invocation,
                 #: decision #029).  AGENT_NO_TRACE=1 disables trace capture.
@@ -2806,6 +2810,12 @@ class Agent:
             # task type + active profile, with token/cost metrics from the
             # provider's last call; evolves+saves weights every 10 turns.
             # Never raises (same observability contract as above).
+            # Per-turn quality (B3 + plan item #4 residual): with tracing on
+            # and a turn armed, this is the trace-derived score_run() score
+            # of this turn's own events (drained); otherwise the cheap
+            # proxy.  It decides the success/failure fed to the meta-policy,
+            # so profile weights evolve from real trace outcomes.
+            _quality = _turn_quality_score(llm_error, mutated_files)
             record_turn_outcome(
                 str(getattr(self, "_last_user_input", "") or ""),
                 profile_name=getattr(self.llm, "_profile_name", None),
@@ -2813,11 +2823,11 @@ class Agent:
                 latency_seconds=duration,
                 provider=getattr(self.llm, "_provider", None),
                 mutated_files=list(mutated_files or []),
+                quality=_quality,
             )
-            # Per-turn quality (B3): one `turn`/`quality` event so the
-            # harnessfix dashboard shows live quality.  Proxy path works
-            # with tracing disabled; whole block is try/except no-op.
-            _quality = _turn_quality_score(llm_error, mutated_files)
+            # Per-turn quality into the harnessfix dashboard: one
+            # `turn`/`quality` event.  Proxy path works with tracing
+            # disabled; whole block is try/except no-op.
             if _quality is not None:
                 from agent_core.monitoring.metrics_file import append_event
                 append_event("turn", "quality", float(_quality))
@@ -3883,13 +3893,14 @@ def _git_branch() -> str:
 def _turn_quality_score(llm_error: str | None, mutated_files: list[str]) -> float | None:
     """B3: per-turn quality score in [0,1] for the shared metrics log.
 
-    With harnessfix tracing enabled *and* a turn-scoped events API present
-    in ``harnessfix.tracing``, the trace events are scored with
-    ``score_run``.  No such API exists today, so the traced path is
-    skipped (never score the whole session as if it were this turn).
-    With tracing off the cheap proxy is used: ``llm_error`` -> 0.0,
-    mutated files -> 0.8, clean turn -> 0.7.  Never raises; returns
-    ``None`` only if the check itself fails (nothing is recorded then).
+    With harnessfix tracing enabled and a turn armed via ``begin_turn()``
+    (the tool-loop caller arms it once per turn), the turn's own trace
+    events are drained and scored with ``score_run`` — one turn is never
+    scored from another turn's events.  A provider error always scores
+    0.0, whatever the trace recorded.  Otherwise the cheap proxy:
+    ``llm_error`` -> 0.0, mutated files -> 0.8, clean turn -> 0.7.
+    Never raises; returns ``None`` only if the check itself fails
+    (nothing is recorded then).
     """
     try:
         from harnessfix.tracing import trace_enabled
@@ -3898,24 +3909,17 @@ def _turn_quality_score(llm_error: str | None, mutated_files: list[str]) -> floa
             import harnessfix.tracing as _tr
 
             events: list[dict[str, Any]] | None = None
-            for _name in ("current_turn_events", "take_turn_events",
-                          "drain_turn_events", "turn_events"):
+            #: Prefer the DRAINING getters: a peek-only getter would leave the
+            #: turn's events buffered and leak them into the next turn's score.
+            for _name in ("take_turn_events", "drain_turn_events",
+                          "current_turn_events", "turn_events"):
                 _getter = getattr(_tr, _name, None)
                 if callable(_getter):
                     events = _getter()
                     if events:
                         break
-            if not events:
-                for _attr in ("_writer", "current_writer", "get_writer"):
-                    _obj = getattr(_tr, _attr, None)
-                    if callable(_obj):
-                        _obj = _obj()
-                    if _obj is None:
-                        continue
-                    events = (getattr(_obj, "events", None)
-                              or getattr(_obj, "_events", None))
-                    if events:
-                        break
+            if llm_error:
+                return 0.0
             if events:
                 from harnessfix.evolution_metrics import score_run
 
@@ -3929,6 +3933,24 @@ def _turn_quality_score(llm_error: str | None, mutated_files: list[str]) -> floa
         return 0.7
     except Exception:  # noqa: BLE001 - observability must not break turns
         return None
+
+
+def _begin_trace_turn() -> None:
+    """Arm turn-scoped trace-event collection for the coming turn.
+
+    Plan item #4 residual: the turn's own trace events are buffered in
+    memory (``harnessfix.tracing``) so :func:`_turn_quality_score` can feed
+    them to ``score_run`` at turn end.  Degrades to a no-op when harnessfix
+    (or the API) is unavailable; never raises.
+    """
+    try:
+        import harnessfix.tracing as _tr
+
+        starter = getattr(_tr, "begin_turn", None) or getattr(_tr, "start_turn", None)
+        if callable(starter):
+            starter()
+    except Exception:  # noqa: BLE001 - observability must not break turns
+        logger.debug("Could not arm trace turn (no-op)", exc_info=True)
 
 
 def _append_turn_log(record: dict[str, Any]) -> None:

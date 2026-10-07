@@ -176,6 +176,13 @@ def profile_name_for_type(profile_type: ProfileType) -> str:
     return profile_type.value.replace("_", "-")
 
 
+#: A trace-derived turn quality at or above this value is recorded as a
+#: success; below it, a failure (plan item #4 residual).  score_run() gives
+#: completed runs >= 0.7 (latency-penalized) and incomplete/errored runs
+#: 0.0, so 0.5 separates the two without clipping penalized successes.
+QUALITY_SUCCESS_THRESHOLD = 0.5
+
+
 def record_turn_outcome(
     user_input: str,
     *,
@@ -184,6 +191,7 @@ def record_turn_outcome(
     latency_seconds: float | None = None,
     provider: Any = None,
     mutated_files: list[str] | None = None,
+    quality: float | None = None,
 ) -> None:
     """Record one finished chat turn into ``METRICS``; never raises.
 
@@ -191,6 +199,14 @@ def record_turn_outcome(
     profile type comes from *profile_name* (falls back to
     ``DEFAULT_PROFILE_TYPE`` — un-pinned turns are recorded under the
     profile whose temperature matches the provider default).
+
+    *quality* is the trace-derived turn score
+    (``harnessfix.evolution_metrics.score_run`` over the turn's own events).
+    When present it decides the recorded success/failure
+    (``quality >= QUALITY_SUCCESS_THRESHOLD``) instead of the caller's
+    *success* proxy, so profile weights evolve from real trace outcomes —
+    e.g. a loop that ended ``no_progress`` without a provider error is
+    recorded as the failure it was.  ``None`` keeps the *success* flag.
 
     On success, ``MetricsTracker.record_turn`` is used when the provider
     exposes ``last_response_metrics`` (token/cost accounting) — it already
@@ -205,6 +221,8 @@ def record_turn_outcome(
     global _turns_since_evolve
     try:
         load_weights()
+        if quality is not None:
+            success = float(quality) >= QUALITY_SUCCESS_THRESHOLD
         task_type = infer_task_type(
             user_input, mutated_files=list(mutated_files) if mutated_files else None,
         )

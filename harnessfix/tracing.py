@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -103,6 +104,71 @@ def truncate(text: str, cap: int) -> str:
     return text[:cap] + f"...[truncated {len(text) - cap} chars]"
 
 
+#: Cap on the in-memory turn buffer: the NEWEST ``TURN_EVENTS_CAP`` records of
+#: an armed turn are kept (``loop_end`` carries the outcome, so the tail is
+#: exactly what a per-turn scorer needs).
+TURN_EVENTS_CAP = 2000
+
+_TURN_LOCK = threading.Lock()
+_TURN_EVENTS: list[dict[str, Any]] = []
+_TURN_ARMED = False
+
+
+def _buffer_event(record: dict[str, Any]) -> None:
+    """Append one written record to the turn buffer when a turn is armed.
+
+    In-memory twin of the JSONL write.  Events emitted OUTSIDE an armed turn
+    are only traced to disk, never buffered — so tooling and tests that use
+    TraceWriter directly can never pollute a turn's score.
+    """
+    with _TURN_LOCK:
+        if not _TURN_ARMED:
+            return
+        _TURN_EVENTS.append(record)
+        if len(_TURN_EVENTS) > TURN_EVENTS_CAP:
+            del _TURN_EVENTS[:-TURN_EVENTS_CAP]
+
+
+def begin_turn() -> None:
+    """Arm turn-scoped event collection for a new turn (plan item #4).
+
+    Clears any buffered leftovers (a previous turn that crashed before its
+    score was taken) and starts buffering every record ``TraceWriter.emit``
+    writes.  The tool-loop caller invokes this once per turn, before the
+    first run starts.
+    """
+    global _TURN_ARMED
+    with _TURN_LOCK:
+        _TURN_EVENTS.clear()
+        _TURN_ARMED = True
+
+
+def current_turn_events() -> list[dict[str, Any]]:
+    """Return a copy of the current turn's buffered records (peek, no drain)."""
+    with _TURN_LOCK:
+        return list(_TURN_EVENTS)
+
+
+def take_turn_events() -> list[dict[str, Any]]:
+    """Drain the current turn's buffered records and disarm collection.
+
+    The caller scores exactly ONE turn's events: collection only happens
+    between :func:`begin_turn` and this call, so one turn can never score
+    another turn's events.
+    """
+    global _TURN_ARMED
+    with _TURN_LOCK:
+        events = list(_TURN_EVENTS)
+        _TURN_EVENTS.clear()
+        _TURN_ARMED = False
+        return events
+
+
+def drain_turn_events() -> list[dict[str, Any]]:
+    """Alias of :func:`take_turn_events` (both names are probed by agent.py)."""
+    return take_turn_events()
+
+
 class TraceWriter:
     """Appends JSONL events for one task to reports/traces/{task_id}.jsonl.
 
@@ -138,15 +204,22 @@ class TraceWriter:
     def emit(self, event: dict[str, Any]) -> None:
         if self._closed:
             return
+        record: dict[str, Any] = {
+            "task_id": self.task_id,
+            "ts": time.time(),
+            "correlation_id": CORRELATION_ID_CTX.get(),
+            **self._meta,
+            **event,
+        }
+        #: In-memory twin of the JSONL write: when a turn is armed
+        #: (begin_turn), the record also lands in the turn buffer so the
+        #: turn's quality can be scored from its own events.
+        try:
+            _buffer_event(record)
+        except Exception:  # noqa: BLE001 - buffering must never break emit
+            logger.debug("turn buffering failed (no-op)", exc_info=True)
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
-            record: dict[str, Any] = {
-                "task_id": self.task_id,
-                "ts": time.time(),
-                "correlation_id": CORRELATION_ID_CTX.get(),
-                **self._meta,
-                **event,
-            }
             with self.path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
         except OSError as exc:

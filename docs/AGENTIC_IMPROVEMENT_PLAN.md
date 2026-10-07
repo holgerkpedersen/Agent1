@@ -45,8 +45,18 @@ per decision #079 — no emojis in files.)
    `agent_core/llm/task_type.py::infer_task_type`, weights evolved every 10
    turns and persisted to `meta_policy.json`), `recommend_profile()` for the
    one-line profile suggestion (applied only under the `profile_auto` pref,
-   default off), and `save_weights()` on the shutdown paths. Still open from
-   this item: feeding `evolution_metrics.score_run()` outcomes back.
+   default off), and `save_weights()` on the shutdown paths.
+   DONE 2026-10-05: `evolution_metrics.score_run()` outcomes now feed back —
+   `harnessfix.tracing` gained turn-scoped event collection
+   (`begin_turn`/`take_turn_events`/`current_turn_events`, bounded at
+   `TURN_EVENTS_CAP`, armed once per turn from `Agent._run_chained_tool_loop`),
+   `Agent._turn_quality_score` scores the turn's OWN drained events with
+   `score_run()` (provider error always 0.0; cheap 0.0/0.8/0.7 proxy only
+   when tracing is off or no turn was armed), and `record_turn_outcome()`
+   takes that `quality` and lets it decide the recorded success/failure
+   (`QUALITY_SUCCESS_THRESHOLD = 0.5`), so profile weights evolve from real
+   trace outcomes — a `no_progress`/`stuck`/`error` loop is recorded as the
+   failure it was even when the LLM answered without a provider error.
 
 ## B. Tool-loop capability upgrades
 

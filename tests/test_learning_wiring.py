@@ -17,6 +17,9 @@ friends, always against the **real** production API of
    redirect of ``TURN_LOG_PATH`` / ``meta_policy.json`` is pinned here —
    fixture turns used to land in the developer's real turn log and evolved
    real meta-policy weights from test outcomes).
+7. Turn-scoped trace quality (plan item #4 residual): a traced turn's own
+   events are scored with ``harnessfix.evolution_metrics.score_run`` and the
+   score decides the success/failure that feeds ``MetaPolicyEvolver``.
 
 Everything writes into ``tmp_path``; shared singletons (``METRICS``,
 ``EVOLVER``, ``PerfTracker`` class state, module globals) are monkeypatched
@@ -361,3 +364,112 @@ def test_suite_redirects_turn_log_and_meta_policy_out_of_the_live_repo(
         assert tmp_path.resolve() in path.parents, (
             f"{name} -> {path} is not inside this test's tmp_path"
         )
+
+
+# ---------------------------------------------------------------------------
+# 7. turn-scoped trace quality feeds score_run back (plan item #4 residual)
+# ---------------------------------------------------------------------------
+
+def _trace_one_turn(tmp_path: Path, monkeypatch, *, outcome: str,
+                    tool_duration_s: float | None = None, task_id: str = "q"):
+    """Arm a turn and emit one realistic run through the real TraceWriter."""
+    import harnessfix.tracing as tracing
+    from harnessfix.tracing import KIND_LOOP_END, KIND_TOOL_RESULT, TraceWriter
+
+    monkeypatch.setattr(tracing, "trace_enabled", lambda: True)
+    tracing.begin_turn()
+    writer = TraceWriter(task_id=task_id, directory=tmp_path / "traces")
+    if tool_duration_s is not None:
+        writer.emit({"kind": KIND_TOOL_RESULT, "layer": "tool_interface",
+                     "tool": "run", "duration_s": tool_duration_s})
+    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle", "outcome": outcome})
+    return tracing
+
+
+def test_turn_quality_scores_the_turns_own_events_with_score_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from harnessfix.evolution_metrics import score_run
+
+    tracing = _trace_one_turn(
+        tmp_path, monkeypatch, outcome="completed",
+        tool_duration_s=5.0, task_id="q1",
+    )
+    try:
+        events = tracing.current_turn_events()
+        expected = score_run(events)  # 1.0 - min(5/30, 1) * 0.3 = 0.95
+        assert agent_mod._turn_quality_score(None, []) == pytest.approx(expected)
+        assert expected == pytest.approx(0.95)
+        # The turn's events are consumed: the next scoring call cannot re-use
+        # them and falls back to the cheap proxy for a clean turn.
+        assert agent_mod._turn_quality_score(None, []) == pytest.approx(0.7)
+    finally:
+        tracing.take_turn_events()
+
+
+def test_turn_quality_is_zero_on_llm_error_even_with_a_completed_trace(
+    tmp_path: Path, monkeypatch
+) -> None:
+    tracing = _trace_one_turn(
+        tmp_path, monkeypatch, outcome="completed", task_id="q2",
+    )
+    try:
+        assert agent_mod._turn_quality_score(
+            "provider exploded", [],
+        ) == pytest.approx(0.0), "an errored turn must never score as quality"
+        # ...and its events were still consumed (no leak into the next turn).
+        assert tracing.take_turn_events() == []
+    finally:
+        tracing.take_turn_events()
+
+
+def test_record_turn_outcome_lets_trace_quality_decide_success(
+    tmp_path: Path, monkeypatch
+) -> None:
+    metrics = _sandbox_learning(tmp_path, monkeypatch)
+
+    # A trace score of 0.0 wins over the caller's optimistic success flag ...
+    learning.record_turn_outcome(
+        "fix the crash", profile_name=None, success=True, quality=0.0,
+    )
+    # ... and a good trace score wins over a pessimistic flag.
+    learning.record_turn_outcome(
+        "implement the widget", profile_name=None, success=False, quality=0.9,
+    )
+
+    assert sum(metrics._failure_counts.values()) == 1, (
+        "quality 0.0 must record a failure even when success=True"
+    )
+    assert sum(metrics._success_counts.values()) == 1, (
+        "quality 0.9 must record a success even when success=False"
+    )
+
+
+def test_finish_turn_feeds_traced_quality_into_the_meta_policy(
+    tmp_path: Path, monkeypatch
+) -> None:
+    metrics = _sandbox_learning(tmp_path, monkeypatch)
+    bot = _make_agent(tmp_path / "ws_traced", tmp_path, monkeypatch)
+    # The trace says the loop ended without progress although the LLM
+    # answered without a provider error: score_run(...) == 0.0, so the
+    # meta-policy must record a FAILURE although the proxy says success.
+    tracing = _trace_one_turn(
+        tmp_path, monkeypatch, outcome="no_progress", task_id="q3",
+    )
+    try:
+        events = _finish(
+            bot, monkeypatch, tmp_path,
+            final_text="Hmm.", llm_error=None,
+            user_input="fix the flaky test",
+        )
+    finally:
+        tracing.take_turn_events()
+
+    assert sum(metrics._failure_counts.values()) == 1, (
+        "a no_progress turn must record a failure from its trace score"
+    )
+    assert sum(metrics._success_counts.values()) == 0
+    assert any(
+        name == "quality" and value == pytest.approx(0.0)
+        for _, name, value in events
+    ), f"expected the trace score 0.0 as quality event, got {events!r}"
