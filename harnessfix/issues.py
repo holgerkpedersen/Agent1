@@ -14,6 +14,7 @@ the autonomous driver (outcome).
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,56 @@ DEFAULT_AUTONOMY_LEVEL = 1
 VALID_AUTONOMY_LEVELS = (0, 1, 2)
 
 RESOLVED_STATUSES = ("resolved", "wontfix")
+
+# Lazy import for Kanban sync — only loaded when enabled via env var.
+_kanban_bridge = None
+
+
+def _get_kanban_bridge():
+    """Lazy-load kanban_bridge to avoid circular imports and unnecessary deps."""
+    global _kanban_bridge
+    if _kanban_bridge is None:
+        try:
+            from . import kanban_bridge  # type: ignore[import-not-found,unused-import]
+            _kanban_bridge = kanban_bridge
+        except ImportError:
+            pass
+    return _kanban_bridge
+
+
+def _should_sync() -> bool:
+    """Check if Kanban sync is enabled via environment variable.
+
+    Best-effort: any failure while resolving the bridge (e.g. the module is
+    missing or a broken install) is treated as "sync disabled" rather than
+    propagating — issue creation must never fail because of the sync path.
+    """
+    if os.environ.get("KANBAN_SYNC_ENABLED", "0") != "1":
+        return False
+    try:
+        return _get_kanban_bridge() is not None
+    except Exception:
+        return False
+
+
+def _enqueue_sync(op: str, source_id: str, payload: dict[str, Any]) -> None:
+    """Best-effort Kanban enqueue. Never raises into the caller.
+
+    Syncing to Kanban is a side-effect of the issue ledger; a broken bridge
+    or a full disk must not abort the primary operation (issue create/resolve).
+    """
+    try:
+        if not _should_sync():
+            return
+        kb = _get_kanban_bridge()
+        if kb is not None:
+            kb.enqueue({"op": op, "source_id": source_id, "payload": payload})
+    except Exception as exc:  # noqa: BLE001 — deliberately swallow, sync is optional
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Kanban sync failed for %s (%s): %s", op, source_id, exc
+        )
 
 
 def _now() -> str:
@@ -82,7 +133,7 @@ def make_issue(
     decision_ref: str | None = None,
     autonomy_level: int = DEFAULT_AUTONOMY_LEVEL,
 ) -> dict[str, Any]:
-    return {
+    issue = {
         "id": _slug(category, locations),
         "title": title,
         "category": category,
@@ -97,6 +148,12 @@ def make_issue(
         "created_at": _now(),
         "resolved_at": None,
     }
+
+    # Enqueue creation to Kanban if sync is enabled (best-effort side-effect)
+    payload = {k: v for k, v in issue.items() if k != "repair_ref"}
+    _enqueue_sync("issue_create", issue["id"], payload)
+
+    return issue
 
 
 def upsert(issues: list[dict[str, Any]], issue: dict[str, Any]) -> bool:
@@ -124,6 +181,12 @@ def resolve(
     it["resolved_at"] = _now() if disposition in RESOLVED_STATUSES else None
     if note:
         it["evidence"] = f"{it.get('evidence', '')}\n[note] {note}".strip()
+
+    # Enqueue resolution to Kanban if sync is enabled (best-effort side-effect)
+    payload = dict(it)  # copy of the resolved issue
+    payload["disposition"] = disposition
+    _enqueue_sync("issue_resolve", issue_id, payload)
+
     return True
 
 

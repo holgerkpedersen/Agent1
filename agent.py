@@ -17,13 +17,18 @@ import shlex
 import signal
 import subprocess
 import sys
+import time
 import traceback
 from collections import defaultdict
 from datetime import datetime
 
 from agent_core import to_windows_path
 from agent_core.path_utils import resolve_path, safe_path
-from agent_core.pytest_gate import FullRunGate
+from agent_core.pytest_gate import (
+    DEFAULT_FULL_SUITE_TIMEOUT,
+    FullRunGate,
+    record_full_run_seconds,
+)
 from agent_core.colors import cyan, green, yellow, blue, magenta, gray, red
 from agent_core.constants import (  # noqa: F401
     resolve_model,
@@ -1537,6 +1542,7 @@ class Agent:
         timeout = max(1, min(int(args.get("timeout") or 120), _MAX_RUN_TIMEOUT_S))
         if not cmd_to_run:
             return "Error: run requires a command."
+        is_pytest = _is_pytest_command(cmd_to_run)
         is_full_run = _is_full_pytest_command(cmd_to_run)
         if is_full_run:
             # A full run costs ~2 min and must be EARNED (a real source file
@@ -1545,9 +1551,12 @@ class Agent:
             refusal = self._full_run_gate.check()
             if refusal:
                 return refusal
-            # The suite's own budget (PYTEST_FULL_SUITE_TIMEOUT) is the source
-            # of truth here; a model-guessed 600s would kill the run mid-suite.
-            # This escape hatch is deliberately NOT capped by _MAX_RUN_TIMEOUT_S.
+        # The suite budget bounds ANY pytest run: a subset selector such as
+        # ``--lf`` can select most of the suite and used to be killed at
+        # whatever timeout the model guessed (typically 300s).  Targeted path
+        # runs and non-pytest commands stay capped by _MAX_RUN_TIMEOUT_S.
+        # This escape hatch is deliberately NOT capped by _MAX_RUN_TIMEOUT_S.
+        if is_full_run or (is_pytest and _is_subset_pytest_command(cmd_to_run)):
             timeout = max(timeout, int(_pytest_full_suite_timeout()))
         blocked = _blocked_shell_command(cmd_to_run)
         if blocked:
@@ -1558,6 +1567,7 @@ class Agent:
         # holding the captured pipes open — the caller then waits far
         # beyond the timeout while the "killed" command keeps working.
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        started = time.monotonic()
         try:
             proc = subprocess.Popen(
                 cmd_to_run,
@@ -1573,14 +1583,29 @@ class Agent:
             except subprocess.TimeoutExpired:
                 _kill_process_tree(proc)
                 output, err = proc.communicate()
+                if is_full_run:
+                    # A killed run proves it lasted AT LEAST this long.  Record
+                    # that lower bound so the next budget grows past the point
+                    # that killed this one, instead of losing the same run again.
+                    record_full_run_seconds(
+                        time.monotonic() - started, completed=False,
+                    )
+                hint = (
+                    f" Measured full-suite budget: "
+                    f"{int(_pytest_full_suite_timeout())}s (pytest)."
+                    if is_pytest
+                    else ""
+                )
                 return (
                     f"Command timed out after {timeout}s — process tree killed. "
-                    "For long-running jobs, pass a larger timeout."
+                    f"For long-running jobs, pass a larger timeout.{hint}"
                 )
         except Exception as e:
             return f"Error: {e}"
         if is_full_run:
             self._full_run_gate.record_full_run()
+            # Measure, don't guess: the next run's timeout is 1.5x this.
+            record_full_run_seconds(time.monotonic() - started)
         return _truncate_output(_shape_run_stderr(err, output, proc.returncode))
 
     async def _nlp_git(self, args: dict[str, Any]) -> str:
@@ -1734,29 +1759,39 @@ class Agent:
             return f"Edit error: {e}"
 
     async def _nlp_tests(self, args: dict[str, Any]) -> str:
-        """Run pytest/unittest on *path* (300s cap covers the full suite)."""
+        """Run pytest/unittest on *path* (bounded by the measured suite budget)."""
         test_path = self._resolve_nlp_path(str(args.get("path") or "."))
         framework = str(args.get("framework") or "pytest")
-        #: The full suite takes ~2.5 minutes, so 120s is too short and made
-        #: the agent split runs into subsets. 300s covers whole-suite runs.
+        #: The full suite takes ~15 minutes here (measured 861.5s), not the
+        #: 2.5 minutes this used to assume - 300s killed whole-suite runs.
         timeout = 300
-        if os.path.abspath(test_path) == os.path.abspath(self._effective_ws_dir()):
+        is_full = (
+            os.path.abspath(test_path) == os.path.abspath(self._effective_ws_dir())
+        )
+        if is_full:
             # Whole-workspace run: same "earned and rare" gate as the run tool -
             # no real change means a full pass verifies nothing.
             refusal = self._full_run_gate.check()
             if refusal:
                 return refusal
-            # Honour the same budget as the watchdog.
-            timeout = max(timeout, int(_pytest_full_suite_timeout()))
             self._full_run_gate.record_full_run()
+        if framework == "pytest":
+            # The suite budget bounds any pytest invocation (a targeted path
+            # can still select thousands of tests); unittest keeps the plain cap.
+            timeout = max(timeout, int(_pytest_full_suite_timeout()))
         if framework == "pytest":
             cmd = [sys.executable, "-m", "pytest", test_path, "-v"]
         else:
             cmd = [sys.executable, "-m", "unittest", test_path, "-v"]
-        # The full suite takes ~2.5 minutes; 300s covers whole-suite runs.
+        started = time.monotonic()
         output, error = _run_subprocess_captured(
             cmd, self._effective_ws_dir(), timeout, "Tests",
         )
+        if is_full:
+            timed_out = "timed out after" in (output or "")
+            record_full_run_seconds(
+                time.monotonic() - started, completed=not timed_out,
+            )
         return error or output
 
     async def _nlp_analyze(self, args: dict[str, Any]) -> str:
@@ -4311,7 +4346,8 @@ def _blocked_shell_command(command: str) -> str | None:
 _ENV_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 _PYTEST_FULL_SUITE_TIMEOUT_KEY = "PYTEST_FULL_SUITE_TIMEOUT"
 _PYTEST_LAST_FULL_RUN_KEY = "PYTEST_LAST_FULL_RUN_SECONDS"
-#: Must match conftest._FULL_SUITE_MARGIN so tool and watchdog agree.
+#: Must match conftest._FULL_SUITE_MARGIN so tool and watchdog agree; the
+#: authoritative copy lives in agent_core.pytest_gate.
 _FULL_SUITE_MARGIN = 0.50
 
 
@@ -4334,22 +4370,24 @@ def _read_env_value(key: str) -> str:
 
 
 def _pytest_full_suite_timeout() -> float:
-    """Timeout (seconds) to grant a full pytest run.
+    """Timeout (seconds) to grant a pytest run.
 
-    The model regularly guesses a timeout (often 600s) for
-    ``python -m pytest -q --no-cov``, which is below the suite's real budget on
-    slower machines — the run tool then killed it mid-suite and the whole run
-    was wasted.  Reuse the SAME budget conftest's watchdog enforces:
+    The model regularly guesses a timeout (often 300-600s) for
+    ``python -m pytest ...``, which is below the suite's real cost — the run
+    tool then killed it mid-suite and the whole run was wasted.  Reuse the SAME
+    budget conftest's watchdog enforces:
     ``max(PYTEST_FULL_SUITE_TIMEOUT, PYTEST_LAST_FULL_RUN_SECONDS * 1.5)``,
-    read from the process env then the repo ``.env``.  Falling back to
-    ``_MAX_RUN_TIMEOUT_S`` keeps behaviour identical on a bare checkout.
+    read from the process env then the repo ``.env``.  The floor comes from
+    measurement (a real full run took 861.5s here, 608s in CI), not from taste
+    — see :data:`agent_core.pytest_gate.DEFAULT_FULL_SUITE_TIMEOUT`.
     """
     try:
         floor = float(
-            _read_env_value(_PYTEST_FULL_SUITE_TIMEOUT_KEY) or _MAX_RUN_TIMEOUT_S
+            _read_env_value(_PYTEST_FULL_SUITE_TIMEOUT_KEY)
+            or DEFAULT_FULL_SUITE_TIMEOUT
         )
     except ValueError:
-        floor = float(_MAX_RUN_TIMEOUT_S)
+        floor = DEFAULT_FULL_SUITE_TIMEOUT
     try:
         last = float(_read_env_value(_PYTEST_LAST_FULL_RUN_KEY) or 0.0)
     except ValueError:
@@ -4432,6 +4470,46 @@ def _is_full_pytest_command(command: str) -> bool:
                 continue  # the whole test tree spelled out is still a full run
             return False
         return True
+    return False
+
+
+def _is_pytest_command(command: str) -> bool:
+    """True when *command* invokes pytest at all (full, subset or targeted).
+
+    The whole-suite budget bounds the cost of ANY pytest invocation — a subset
+    can select most of the suite — so every pytest command gets it as its
+    timeout floor.  Targeted path runs are the exception (see
+    :func:`_is_subset_pytest_command`); non-pytest commands stay capped.
+    """
+    for segment in re.split(r"&&|\|\||[;|]", command):
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = segment.split()
+        if any(t in ("pytest", "py.test") for t in tokens):
+            return True
+    return False
+
+
+def _is_subset_pytest_command(command: str) -> bool:
+    """True for a pytest run limited by a SUBSET selector, not by a path.
+
+    ``pytest --lf`` / ``--nf`` / ``--testmon`` is not a full run (the
+    full-run gate stays off), but it still selects from the whole suite and
+    can cost as much as one — so it deserves the same timeout floor.  This is
+    the reported bug: ``python -m pytest --lf -q --no-cov`` was killed at the
+    model's guessed 300s because it matched neither the full-run path nor a
+    targeted path.
+    """
+    for segment in re.split(r"&&|\|\||[;|]", command):
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = segment.split()
+        if not any(t in ("pytest", "py.test") for t in tokens):
+            continue
+        if any(t in _PYTEST_SUBSET_FLAGS for t in tokens):
+            return True
     return False
 
 

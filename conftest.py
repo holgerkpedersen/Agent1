@@ -273,7 +273,12 @@ def _restore_repo_model_state() -> None:
 _ENV_FILE = Path(__file__).resolve().parent / ".env"
 _FULL_SUITE_TIMEOUT_KEY = "PYTEST_FULL_SUITE_TIMEOUT"
 _LAST_FULL_RUN_KEY = "PYTEST_LAST_FULL_RUN_SECONDS"
-_DEFAULT_FULL_SUITE_TIMEOUT = 600.0
+#: Floor when nothing has been measured yet.  Taken from measurement, not
+#: taste: a real full run of this suite took 861.5s on the development box and
+#: 608s in CI, so the old 600s floor was already below the real cost and let
+#: the watchdog kill a healthy run.  Matches
+#: ``agent_core.pytest_gate.DEFAULT_FULL_SUITE_TIMEOUT``.
+_DEFAULT_FULL_SUITE_TIMEOUT = 1500.0
 _FULL_SUITE_MARGIN = 0.50  # 50% headroom over the last recorded duration
 
 #: pytest options whose FOLLOWING token is their value, not a test path

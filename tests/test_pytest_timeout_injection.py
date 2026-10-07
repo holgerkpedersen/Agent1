@@ -166,7 +166,10 @@ class TestBudgetResolution:
         monkeypatch.delenv("PYTEST_FULL_SUITE_TIMEOUT", raising=False)
         monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
         monkeypatch.setattr(agent, "_ENV_FILE_PATH", str(tmp_path / "absent.env"))
-        assert agent._pytest_full_suite_timeout() == float(agent._MAX_RUN_TIMEOUT_S)
+        assert (
+            agent._pytest_full_suite_timeout()
+            == agent_core_pytest_gate.DEFAULT_FULL_SUITE_TIMEOUT
+        )
 
     def test_garbage_value_falls_back_to_cap(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch,
@@ -174,7 +177,10 @@ class TestBudgetResolution:
         monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "not-a-number")
         monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
         monkeypatch.setattr(agent, "_ENV_FILE_PATH", str(tmp_path / "absent.env"))
-        assert agent._pytest_full_suite_timeout() == float(agent._MAX_RUN_TIMEOUT_S)
+        assert (
+            agent._pytest_full_suite_timeout()
+            == agent_core_pytest_gate.DEFAULT_FULL_SUITE_TIMEOUT
+        )
 
 
 # ---------------------------------------------------------------------------

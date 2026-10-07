@@ -32,14 +32,20 @@ from typing import Iterable
 
 __all__ = [
     "DEFAULT_MAX_FULL_RUNS",
+    "DEFAULT_FULL_SUITE_TIMEOUT",
+    "FULL_SUITE_MARGIN",
+    "FULL_SUITE_TIMEOUT_ENV",
     "GATE_ENV",
+    "LAST_FULL_RUN_ENV",
     "MAX_FULL_RUNS_ENV",
     "FullRunGate",
     "changed_real_files",
+    "full_suite_timeout",
     "gate_enabled",
     "is_scratch_path",
     "is_testable_source",
     "max_full_runs_from_env",
+    "record_full_run_seconds",
 ]
 
 #: Environment override for the per-session full-run budget.
@@ -208,6 +214,109 @@ def _read_env_file_value(key: str) -> str:
     except OSError:
         pass
     return ""
+
+
+#: Environment key holding the floor for a pytest run's timeout budget.
+FULL_SUITE_TIMEOUT_ENV = "PYTEST_FULL_SUITE_TIMEOUT"
+#: Environment key holding the last measured full-suite duration in seconds,
+#: written back after every full run (see :func:`record_full_run_seconds`).
+LAST_FULL_RUN_ENV = "PYTEST_LAST_FULL_RUN_SECONDS"
+
+#: Timeout floor when nothing has been measured yet.  Chosen from measurement,
+#: not taste: a real full run of this suite took **861.5s** on the development
+#: box and **608s** in CI, so the old 600s floor was already below the real
+#: cost and killed runs mid-suite.  1500s survives an unmapped machine; as soon
+#: as one run is recorded, the 50% margin over that measurement takes over.
+DEFAULT_FULL_SUITE_TIMEOUT = 1500.0
+
+#: Headroom granted over the last measured full-run duration.  MUST stay in
+#: sync with ``conftest._FULL_SUITE_MARGIN`` (a regression test asserts it) so
+#: the tool timeout and the in-suite watchdog agree.
+FULL_SUITE_MARGIN = 0.50
+
+
+def full_suite_timeout() -> float:
+    """Seconds a pytest run may take: ``max(floor, last_full_run * 1.5)``.
+
+    Process env wins over the repo ``.env`` for both keys, mirroring
+    :func:`max_full_runs_from_env`.  Once a run has been measured the
+    measurement is the source of truth, so the budget tracks the machine
+    instead of a guessed constant.
+    """
+    raw_floor = os.environ.get(FULL_SUITE_TIMEOUT_ENV)
+    if raw_floor is None:
+        raw_floor = _read_env_file_value(FULL_SUITE_TIMEOUT_ENV)
+    try:
+        floor = float((raw_floor or "").strip() or DEFAULT_FULL_SUITE_TIMEOUT)
+    except ValueError:
+        floor = DEFAULT_FULL_SUITE_TIMEOUT
+
+    raw_last = os.environ.get(LAST_FULL_RUN_ENV)
+    if raw_last is None:
+        raw_last = _read_env_file_value(LAST_FULL_RUN_ENV)
+    try:
+        last = float((raw_last or "").strip() or 0.0)
+    except ValueError:
+        last = 0.0
+    return max(floor, last * (1.0 + FULL_SUITE_MARGIN))
+
+
+def _write_env_file_value(key: str, value: str) -> None:
+    """Set *key* in the repo-root ``.env``, preserving comments and other keys.
+
+    Never raises: losing a timing measurement must not break the run that
+    produced it.
+    """
+    try:
+        with open(_ENV_FILE_PATH, "r", encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        lines = []
+    out: list[str] = []
+    replaced = False
+    for line in lines:
+        stripped = line.strip()
+        if (
+            not stripped.startswith("#")
+            and "=" in stripped
+            and stripped.partition("=")[0].strip() == key
+        ):
+            out.append(f"{key}={value}")
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        if out and out[-1].strip():
+            out.append("")
+        out.append(f"{key}={value}")
+    try:
+        with open(_ENV_FILE_PATH, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(out) + "\n")
+    except OSError:
+        pass
+
+
+def record_full_run_seconds(seconds: float, *, completed: bool = True) -> None:
+    """Persist how long a full pytest run really took.
+
+    A COMPLETED run is a measurement and overwrites the stored value.  A run
+    killed by a timeout only proves it lasted *at least* that long, so it is
+    stored as a lower bound (``max(stored, seconds)``) — the budget then grows
+    past the point that killed it instead of being pinned to a too-short
+    guess, which is the failure mode that makes a harness kill the same run
+    over and over.  Never raises.
+    """
+    try:
+        seconds = max(0.0, float(seconds))
+    except (TypeError, ValueError):
+        return
+    if not completed:
+        try:
+            stored = float(_read_env_file_value(LAST_FULL_RUN_ENV) or 0.0)
+        except ValueError:
+            stored = 0.0
+        seconds = max(stored, seconds)
+    _write_env_file_value(LAST_FULL_RUN_ENV, f"{seconds:.1f}")
 
 
 def max_full_runs_from_env() -> int:
