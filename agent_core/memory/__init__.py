@@ -21,12 +21,15 @@ from .attribution import (
 from .memory_store import MemoryStore
 from .types import (
     EmbeddingService,
+    MAX_GOAL_CHARS,
+    ORIGINAL_GOAL_MARKER,
     SEMANTIC_MEMORY_MARKER,
     SQLiteStorage,
     StorageBackend,
     VectorDatabase,
     VectorEmbeddingModel,
     load_semantic_memory,
+    original_goal_block,
     semantic_memory_block,
 )
 
@@ -40,6 +43,9 @@ __all__: List[str] = [
     "SEMANTIC_MEMORY_MARKER",
     "semantic_memory_block",
     "load_semantic_memory",
+    "ORIGINAL_GOAL_MARKER",
+    "MAX_GOAL_CHARS",
+    "original_goal_block",
     # LLM decision attribution (observability only — decision #014).
     "EXPERIENCE_COLUMNS",
     "ATTRIBUTION_COLUMNS",

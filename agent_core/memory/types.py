@@ -161,6 +161,17 @@ SEMANTIC_MEMORY_FILENAME = ".semantic_memory.json"
 #: Hard cap on rendered lines so the block cannot bloat the system prompt.
 MAX_BLOCK_LINES = 8
 
+#: Marker prefixing the pinned "original task" block.  ``agent.py`` strips
+#: everything from this marker onward before re-injecting a fresh block, so a
+#: long-lived session never accumulates stale copies (same contract as
+#: ``SEMANTIC_MEMORY_MARKER`` / ``HABITS_MARKER`` / ``SKILL_INDEX_MARKER``).
+ORIGINAL_GOAL_MARKER = "\n\nORIGINAL TASK"
+
+#: How much of the user's first prompt is kept as the pinned goal.  A first
+#: prompt that is itself a file dump would otherwise swallow the context
+#: budget it is supposed to protect.
+MAX_GOAL_CHARS = 4000
+
 
 def _semantic_memory_block(
     memories: Sequence[Any] | None,
@@ -223,6 +234,39 @@ def semantic_memory_block(
         k=min(k, MAX_BLOCK_LINES),
         line_cap=MAX_BLOCK_LINES + 1,
     )
+
+
+def original_goal_block(
+    goal: str | None, *, max_chars: int = MAX_GOAL_CHARS
+) -> str:
+    """Inject the session's ORIGINAL TASK block into the system prompt.
+
+    The chat-history projection trims the OLDEST body messages
+    (``_MAX_CHAT_MESSAGES`` / ``_HISTORY_CHAR_BUDGET``) — exactly where the
+    user's first prompt lives — so without this block the agent silently
+    forgets the task it was given.  Keeping the goal in the system prompt
+    (position 0, always kept and never trimmed) makes it survive compaction
+    and session restarts.
+
+    The text is whitespace-normalised and capped at *max_chars*, so a first
+    prompt that is itself a pasted file cannot blow up the system prompt.
+    Returns the empty string when there is no goal, so a session without one
+    gets a byte-identical prompt to the pre-goal baseline.
+    """
+    if not goal:
+        return ""
+    text = " ".join(str(goal).split())[:max_chars].strip()
+    if not text:
+        return ""
+    block = (
+        ORIGINAL_GOAL_MARKER
+        + "\n"
+        + text
+        + "\n\nThis is the user's original request for this session. Do not "
+        "lose sight of it - every answer must stay aligned with it.\n"
+    )
+    assert block.startswith(ORIGINAL_GOAL_MARKER)  # marker contract
+    return block
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +341,9 @@ __all__ = [
     "SEMANTIC_MEMORY_MARKER",
     "SEMANTIC_MEMORY_FILENAME",
     "MAX_BLOCK_LINES",
+    "ORIGINAL_GOAL_MARKER",
+    "MAX_GOAL_CHARS",
+    "original_goal_block",
     "_semantic_memory_block",
     "semantic_memory_block",
     "load_semantic_memory",

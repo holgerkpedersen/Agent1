@@ -87,8 +87,11 @@ from agent_core.skills import (
 )
 from agent_core.habits import HABITS_MARKER, habits_block, load_habits
 from agent_core.memory import (
+    MAX_GOAL_CHARS,
+    ORIGINAL_GOAL_MARKER,
     SEMANTIC_MEMORY_MARKER,
     load_semantic_memory,
+    original_goal_block,
     semantic_memory_block,
 )
 from agent_core.security.allowlist import (
@@ -533,6 +536,12 @@ class Agent:
         self._pending_effects: list[str] | None = None
         self._knowledge_graph: dict[str, Any] = {}
         self._working_memory: list[Any] = []
+        #: The session's original request (the user's first prompt), pinned
+        #: into the system prompt so chat-history compaction can never drop it
+        #: (see :func:`agent_core.memory.original_goal_block`).  Persisted in
+        #: agent_memory.json so a restored session still knows what it was
+        #: asked to do.
+        self._original_goal: str = ""
         self._history: list[Any] = []
         #: NLP conversation context — persisted to chat_history.json so a new
         #: session continues where the previous one left off.
@@ -575,6 +584,10 @@ class Agent:
         #: working memory) — restored from agent_memory.json so work done in a
         #: previous session is not forgotten.
         self._load_memory()
+        # A session restored from a history that predates the goal block would
+        # otherwise never capture a goal; fall back to the first user message
+        # already in the loaded history.
+        self._ensure_original_goal()
 
         # Initialize LLM client for AI analysis (LM Studio)
         self.llm = LLMClient(model_name=self.model_name)
@@ -2434,6 +2447,7 @@ class Agent:
             "content": _strip_dynamic_system_blocks(
                 str(self._chat_history[0].get("content") or _SYSTEM_PROMPT)
             )
+            + self._original_goal_block()
             + self._decision_constraints_block()
             + self._skill_index_block()
             + self._habits_block()
@@ -2455,7 +2469,13 @@ class Agent:
         belongs to THIS turn — the boundary per-turn scans such as
         ``_mutating_files_this_turn`` use, so tool results restored from a
         previous session's chat_history.json are never rescanned.
+
+        The RAW ``user_input`` (before any plan-mode note or skill hint is
+        prepended) is offered to :meth:`_ensure_original_goal`, so the pinned
+        goal is what the user actually asked for rather than our steering
+        wrapper around it.
         """
+        self._ensure_original_goal(user_input)
         if self.is_plan_mode() and not images:
             # Same visibility contract as every other status print:
             # suppressed in QUIET mode, which promises only the final answer.
@@ -2747,7 +2767,9 @@ class Agent:
         """
         # Keep the conversation bounded and persist it so the next session
         # (or a follow-up prompt) can continue the dialogue.
-        self._chat_history = _trim_chat_history(self._chat_history)
+        self._chat_history = _trim_chat_history(
+            self._chat_history, self._original_goal,
+        )
         mutated_files = self._mutating_files_this_turn()
         # Harness-layer observability ONLY (decision #014): bounded per-turn
         # outcome log + first production chat_turn experience.  Every hook
@@ -2940,7 +2962,9 @@ class Agent:
         # restored session (e.g. 60 messages from chat_history.json) does not
         # blow the model's prefill budget and trigger an HTTP 500.  The
         # post-turn trim in _finish_turn still runs for incremental cleanup.
-        self._chat_history = _trim_chat_history(self._chat_history)
+        self._chat_history = _trim_chat_history(
+            self._chat_history, self._original_goal,
+        )
         # Snapshot history right after the user turn so a transient LLM failure
         # can be retried from a clean slate — the failed run's tool messages are
         # discarded on retry (otherwise the retry would re-feed them and
@@ -3100,6 +3124,7 @@ class Agent:
         """Clear all agent state."""
         self._history = []
         self._chat_history.clear()
+        self._original_goal = ""
         self._files_read.clear()
         self._file_mtimes.clear()
         self._knowledge_graph.clear()
@@ -3220,6 +3245,43 @@ class Agent:
             logger.exception('Semantic memory block unavailable:\n')
             return ""
 
+    def _ensure_original_goal(
+        self, pending_user_input: str | None = None,
+    ) -> None:
+        """Record the session's original request once, and only once.
+
+        The goal is whatever the user asked FIRST: the first user message
+        already in a restored history, or the input of the first turn of a
+        fresh session (``pending_user_input`` — captured before the plan-mode
+        note and skill hints are prepended to it).  Later prompts never replace
+        it: the point is to pin what the session was *originally* about, which
+        is exactly what chat-history compaction drops first.
+
+        Capped at ``MAX_GOAL_CHARS`` so a first prompt that is itself a file
+        dump cannot bloat the system prompt or ``agent_memory.json``.
+        """
+        if self._original_goal:
+            return
+        source = _first_user_message_text(self._chat_history)
+        if not source and pending_user_input:
+            source = pending_user_input
+        if source:
+            self._original_goal = source[:MAX_GOAL_CHARS]
+
+    def _original_goal_block(self) -> str:
+        """The pinned ORIGINAL TASK block for the chat system prompt.
+
+        Rebuilt every turn from ``_original_goal`` (same contract as
+        :meth:`_decision_constraints_block`); empty string when no goal is
+        recorded, so the prompt stays byte-identical to before in that case.
+        Never raises: a missing goal must not kill a chat turn.
+        """
+        try:
+            return original_goal_block(self._original_goal)
+        except Exception:
+            logger.exception('Original goal block unavailable:\n')
+            return ""
+
     # ------------------------------------------------------------------
     #  Persistent NLP chat history (chat_history.json)
     # ------------------------------------------------------------------
@@ -3321,6 +3383,9 @@ class Agent:
         hist = data.get("history")
         if isinstance(hist, list):
             self._history = hist
+        goal = data.get("original_goal")
+        if isinstance(goal, str):
+            self._original_goal = goal
 
     def _save_memory(self) -> None:
         """Persist cross-session memory so the next session resumes with it.
@@ -3335,6 +3400,7 @@ class Agent:
             "knowledge_graph": self._knowledge_graph,
             "working_memory": self._working_memory,
             "history": self._history,
+            "original_goal": self._original_goal,
         }
         # Derive the temp file from the CURRENT json path (same rule as
         # _save_chat_history): a stale module-level AGENT_MEMORY_TMP_PATH can
@@ -3504,6 +3570,11 @@ _HISTORY_TRIM_NOTE = (
     "the context window. Earlier file contents are no longer visible — "
     "re-read anything you still need."
 )
+
+#: How much of the pinned goal the compaction note repeats.  The full goal
+#: lives in the system prompt (ORIGINAL TASK block); this is only a recency
+#: reminder placed near the newest messages, so a short excerpt is enough.
+_HISTORY_TRIM_GOAL_CAP = 300
 
 #: How many automatic continuation runs chat_nlp may chain before handing
 #: control back to the user.  The model cannot predict its own tool budget,
@@ -3897,6 +3968,7 @@ def _strip_dynamic_system_blocks(text: str) -> str:
     before the first dynamic marker — is what survives.
     """
     markers = (
+        ORIGINAL_GOAL_MARKER,
         "\n\nCRITICAL DESIGN CONSTRAINTS",
         SKILL_INDEX_MARKER,
         HABITS_MARKER,
@@ -4427,8 +4499,46 @@ def _message_size(m: dict[str, Any]) -> int:
     return total
 
 
-def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _first_user_message_text(
+    messages: list[dict[str, Any]],
+) -> str:
+    """The text of the first user message in *messages* ("" when there is none).
+
+    Multimodal user messages carry a content array whose text block holds the
+    actual request; a pure-image message yields nothing and the search
+    continues.  Used to recover the session's original request from a restored
+    history (see :meth:`Agent._ensure_original_goal`).
+    """
+    for m in messages:
+        if m.get("role") != "user":
+            continue
+        content = m.get("content")
+        if isinstance(content, str):
+            text = content.strip()
+        elif isinstance(content, list):
+            text = ""
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = str(block.get("text") or "").strip()
+                    if text:
+                        break
+        else:
+            text = ""
+        if text:
+            return text
+    return ""
+
+
+def _trim_chat_history(
+    messages: list[dict[str, Any]], goal: str | None = None,
+) -> list[dict[str, Any]]:
     """Keep the conversation within a bounded context; returns a new list.
+
+    *goal* is the session's pinned original request (see
+    ``Agent._original_goal``).  When compaction has to drop messages, a short
+    excerpt of it is repeated in the compaction note so the newest messages
+    still carry what the session was originally about — the first user prompt
+    is otherwise exactly what the caps below drop first.
 
     Two caps apply (plan item B-#5 — the old code had only the count cap, so
     a handful of huge read/write messages could blow the context window while
@@ -4487,9 +4597,16 @@ def _trim_chat_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if i == len(body) - 1 or boundary_safe:
             keep_from = i + 1
     trimmed = body[keep_from:]
+    note_content = _HISTORY_TRIM_NOTE.format(dropped=keep_from)
+    goal_text = " ".join(str(goal).split()) if goal else ""
+    if goal_text:
+        excerpt = goal_text[:_HISTORY_TRIM_GOAL_CAP]
+        if len(goal_text) > _HISTORY_TRIM_GOAL_CAP:
+            excerpt += "..."
+        note_content += "\nOriginal task (do not lose sight of it): " + excerpt
     note = {
         "role": "user",
-        "content": _HISTORY_TRIM_NOTE.format(dropped=keep_from),
+        "content": note_content,
     }
     return _repair_unanswered_tool_calls(
         _drop_orphan_tool_messages(head + [note] + trimmed)
