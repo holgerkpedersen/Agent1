@@ -47,11 +47,14 @@ def shared_queue(tmp_path, monkeypatch):
     """
     data = tmp_path / "data"
     data.mkdir()
+    a1_to_kb = data / "queue-agent1-to-kanban"
+    kb_to_a1 = data / "queue-kanban-to-agent1"
+    id_map = data / ".card_id_map.json"
     for mod in (kb, ks):
         monkeypatch.setattr(mod, "DATA_DIR", data)
-        monkeypatch.setattr(mod, "QUEUE_AGENT1_TO_KANBAN", data / "queue-agent1-to-kanban")
-        monkeypatch.setattr(mod, "QUEUE_KANBAN_TO_AGENT1", data / "queue-kanban-to-agent1")
-        monkeypatch.setattr(mod, "CARD_ID_MAP_PATH", data / ".card_id_map.json")
+        monkeypatch.setattr(mod, "QUEUE_AGENT1_TO_KANBAN", a1_to_kb)
+        monkeypatch.setattr(mod, "QUEUE_KANBAN_TO_AGENT1", kb_to_a1)
+        monkeypatch.setattr(mod, "CARD_ID_MAP_PATH", id_map)
         monkeypatch.setattr(mod, "DEAD_LETTER_DIR", data / "dead-letter")
     monkeypatch.setattr(issue_store, "ISSUES_PATH", tmp_path / "issues.json")
     return data
@@ -91,7 +94,9 @@ def _app_with_card(monkeypatch, tmp_path, title="Synced card"):
     return store, resp.get_json()["id"], client
 
 
-def test_card_create_echo_does_not_duplicate_the_card(shared_queue, tmp_path, monkeypatch):
+def test_card_create_echo_does_not_duplicate_the_card(
+    shared_queue, tmp_path, monkeypatch
+):
     store, card_id, _ = _app_with_card(monkeypatch, tmp_path)
 
     # Kanban → Agent1: the card becomes an issue, mapped back to the card.
@@ -107,7 +112,9 @@ def test_card_create_echo_does_not_duplicate_the_card(shared_queue, tmp_path, mo
     assert cards[0].id == card_id
 
 
-def test_repeated_poll_cycles_do_not_grow_the_board(shared_queue, tmp_path, monkeypatch):
+def test_repeated_poll_cycles_do_not_grow_the_board(
+    shared_queue, tmp_path, monkeypatch
+):
     store, card_id, _ = _app_with_card(monkeypatch, tmp_path)
 
     for cycle in range(3):
@@ -126,5 +133,6 @@ def test_round_trip_produces_no_dead_letters(shared_queue, tmp_path, monkeypatch
     kb.process_inbound()
     ks.process_inbound(store)
 
-    dead = list((shared_queue / "dead-letter").glob("**/*")) if (shared_queue / "dead-letter").exists() else []
+    dead_dir = shared_queue / "dead-letter"
+    dead = list(dead_dir.glob("**/*")) if dead_dir.exists() else []
     assert dead == [], f"unexpected dead letters: {dead}"
