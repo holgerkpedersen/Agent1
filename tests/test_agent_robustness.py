@@ -423,7 +423,7 @@ class TestTransientLlmErrorRetry:
 
         monkeypatch.setattr(bot, "_run_chained_tool_loop", fake_loop)
         monkeypatch.setattr(bot, "_finish_turn", fake_finish)
-        monkeypatch.setattr(bot, "_refresh_system_message", lambda: None)
+        monkeypatch.setattr(bot, "_refresh_system_message", lambda *a, **k: None)
         monkeypatch.setattr(bot, "_append_user_turn", lambda *a, **k: None)
         monkeypatch.setattr(agent, "_resolve_display_mode",
                             lambda: AgentDisplayMode.QUIET)
