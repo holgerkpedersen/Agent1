@@ -417,12 +417,17 @@ class LLMClient:
                     break
         if type(provider).__name__ != "LlamaProvider":
             return
+        # Diagnostics go to STDERR, never stdout: stdout belongs to the REPL
+        # and to callers that capture it (tests assert on a clean stdout).
+        def _info(message: str) -> None:
+            sys.stderr.write(message + "\n")
+
         with _suppress_and_log("llama model reconciliation failed"):
             from agent_core.llm import llama_server
             api_url = getattr(provider, "api_url", None)
             if not api_url:
                 return
-            print(f"  [llama] ensuring '{self._model_name}' is served by llama-server...")
+            _info(f"  [llama] ensuring '{self._model_name}' is served by llama-server...")
             # list_served_models returns bare server IDs (e.g. "Bonsai-27B-Q1_0")
             # while self._model_name may carry the routing prefix ("llama/…").
             bare_name = self._model_name.removeprefix("llama/")
@@ -430,28 +435,28 @@ class LLMClient:
             if served:
                 current_served_model = served[0]
                 if current_served_model == bare_name:
-                    print(f"  [llama] Model '{bare_name}' already served by server.")
+                    _info(f"  [llama] Model '{bare_name}' already served by server.")
                     provider._cached_server_model_id = current_served_model
                 else:
-                    print(f"  [llama] Server serving '{current_served_model}', attempting to ensure '{bare_name}' is served...")
+                    _info(f"  [llama] Server serving '{current_served_model}', attempting to ensure '{bare_name}' is served...")
                     ok, msg = llama_server.ensure_model_served(api_url, self._model_name)
                     if ok:
                         # Re-check after ensuring it's served
                         served_after = llama_server.list_served_models(api_url)
                         if served_after and served_after[0] == bare_name:
                             provider._cached_server_model_id = served_after[0]
-                            print(f"  [llama] Successfully ensured '{bare_name}' is served.")
+                            _info(f"  [llama] Successfully ensured '{bare_name}' is served.")
                         else:
-                            print(f"  [llama] WARNING: ensure_model_served reported success, but model not found in list: {msg}")
+                            _info(f"  [llama] WARNING: ensure_model_served reported success, but model not found in list: {msg}")
                     else:
-                        print(f"  [llama] WARNING: could not ensure model served: {msg}")
+                        _info(f"  [llama] WARNING: could not ensure model served: {msg}")
             else:
-                print(f"  [llama] No model currently served by the server. Attempting to ensure '{self._model_name}' is served.")
+                _info(f"  [llama] No model currently served by the server. Attempting to ensure '{self._model_name}' is served.")
                 ok, msg = llama_server.ensure_model_served(api_url, self._model_name)
                 if ok:
-                    print(f"  [llama] Successfully ensured model served: {msg}")
+                    _info(f"  [llama] Successfully ensured model served: {msg}")
                 else:
-                    print(f"  [llama] WARNING: could not ensure model served: {msg}")
+                    _info(f"  [llama] WARNING: could not ensure model served: {msg}")
 
     @property
     def model_name(self) -> str:
