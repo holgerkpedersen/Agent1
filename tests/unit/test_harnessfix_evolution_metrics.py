@@ -111,12 +111,22 @@ def _write_trace_file(tmp_path, name, events):
 
 
 def _events(outcome, duration=0.0, task_id="t"):
-    evs = [
-        {"kind": "task_begin", "task_id": task_id, "layer": LAYER_VERIFICATION, "user_input": "x"},
-        {"kind": "tool_result", "task_id": task_id, "layer": LAYER_EXECUTION, "duration_s": duration},
-        {"kind": "loop_end", "task_id": task_id, "layer": LAYER_OBSERVABILITY, "outcome": outcome},
+    return [
+        {"kind": "task_begin", "task_id": task_id,
+         "layer": LAYER_VERIFICATION, "user_input": "x"},
+        {"kind": "tool_result", "task_id": task_id,
+         "layer": LAYER_EXECUTION, "duration_s": duration},
+        {"kind": "loop_end", "task_id": task_id,
+         "layer": LAYER_OBSERVABILITY, "outcome": outcome},
     ]
-    return evs
+
+
+def _stub_events(task_id="stub"):
+    """A single task_begin with no loop_end — an aborted noise stub."""
+    return [
+        {"kind": "task_begin", "task_id": task_id,
+         "layer": LAYER_VERIFICATION, "user_input": "x"},
+    ]
 
 
 class TestLoadCorpusStubFilter:
@@ -128,9 +138,7 @@ class TestLoadCorpusStubFilter:
         _write_trace_file(tmp_path, "a", _events(COMPLETED))
         _write_trace_file(tmp_path, "b", _events(COMPLETED))
         # Aborted write: a lone task_begin, no loop_end, 1 event.
-        _write_trace_file(tmp_path, "stub", [
-            {"kind": "task_begin", "task_id": "stub", "layer": "verification", "user_input": "x"},
-        ])
+        _write_trace_file(tmp_path, "stub", _stub_events("stub"))
         sc = EvolutionMetricsScorer(window_size=50)
         assert sc.load_corpus(tmp_path) == 2
         # Stub excluded -> average stays at the two real 1.0 runs.
@@ -140,8 +148,9 @@ class TestLoadCorpusStubFilter:
         # A genuinely finished run with < MIN_ACTIVITY_EVENTS events still
         # carries loop_end, so it IS evidence and must be kept.
         _write_trace_file(tmp_path, "terse", [
-            {"kind": "task_begin", "task_id": "terse", "layer": "verification", "user_input": "x"},
-            {"kind": "loop_end", "task_id": "terse", "layer": "observability", "outcome": "completed"},
+            _stub_events("terse")[0],
+            {"kind": "loop_end", "task_id": "terse",
+             "layer": LAYER_OBSERVABILITY, "outcome": "completed"},
         ])
         sc = EvolutionMetricsScorer(window_size=50)
         assert sc.load_corpus(tmp_path) == 1
@@ -149,9 +158,7 @@ class TestLoadCorpusStubFilter:
 
     def test_iter_run_scores_skips_stub(self, tmp_path):
         _write_trace_file(tmp_path, "a", _events(COMPLETED))
-        _write_trace_file(tmp_path, "stub", [
-            {"kind": "task_begin", "task_id": "stub", "layer": "verification", "user_input": "x"},
-        ])
+        _write_trace_file(tmp_path, "stub", _stub_events("stub"))
         scores = dict(iter_run_scores(tmp_path))
         assert "stub" not in scores
         assert len(scores) == 1
@@ -162,9 +169,7 @@ class TestLoadCorpusStubFilter:
         for i in range(2):
             _write_trace_file(tmp_path, f"real{i}", _events(COMPLETED))
         for i in range(20):
-            _write_trace_file(tmp_path, f"stub{i}", [
-                {"kind": "task_begin", "task_id": f"stub{i}", "layer": "verification", "user_input": "x"},
-            ])
+            _write_trace_file(tmp_path, f"stub{i}", _stub_events(f"stub{i}"))
         sc = EvolutionMetricsScorer(window_size=10, threshold=0.7)
         sc.load_corpus(tmp_path)
         assert sc.windowed_average() == pytest.approx(1.0)
