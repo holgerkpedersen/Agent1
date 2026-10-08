@@ -7,7 +7,13 @@ import pytest
 from harnessfix.evolution_metrics import (
     DEFAULT_THRESHOLD,
     EvolutionMetricsScorer,
+    iter_run_scores,
     score_run,
+)
+from harnessfix.tracing import (
+    LAYER_EXECUTION,
+    LAYER_OBSERVABILITY,
+    LAYER_VERIFICATION,
 )
 
 COMPLETED = "completed"
@@ -95,6 +101,74 @@ class TestShouldEvolve:
         sc3 = EvolutionMetricsScorer(threshold=0.7)
         sc3.record_trace(_run(COMPLETED, (0.0,)))  # 1.0 -> avg 1.0 >= 0.7 -> no evolve
         assert sc3.should_evolve() is False
+
+
+def _write_trace_file(tmp_path, name, events):
+    import json
+    p = tmp_path / f"{name}.jsonl"
+    p.write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8")
+    return p
+
+
+def _events(outcome, duration=0.0, task_id="t"):
+    evs = [
+        {"kind": "task_begin", "task_id": task_id, "layer": LAYER_VERIFICATION, "user_input": "x"},
+        {"kind": "tool_result", "task_id": task_id, "layer": LAYER_EXECUTION, "duration_s": duration},
+        {"kind": "loop_end", "task_id": task_id, "layer": LAYER_OBSERVABILITY, "outcome": outcome},
+    ]
+    return evs
+
+
+class TestLoadCorpusStubFilter:
+    """Aborted noise stubs (no loop_end, < MIN_ACTIVITY_EVENTS events) record
+    no outcome: they must not enter the quality window (same rule as
+    harnessfix.corpus_quality._is_countable)."""
+
+    def test_aborted_stub_is_not_counted(self, tmp_path):
+        _write_trace_file(tmp_path, "a", _events(COMPLETED))
+        _write_trace_file(tmp_path, "b", _events(COMPLETED))
+        # Aborted write: a lone task_begin, no loop_end, 1 event.
+        _write_trace_file(tmp_path, "stub", [
+            {"kind": "task_begin", "task_id": "stub", "layer": "verification", "user_input": "x"},
+        ])
+        sc = EvolutionMetricsScorer(window_size=50)
+        assert sc.load_corpus(tmp_path) == 2
+        # Stub excluded -> average stays at the two real 1.0 runs.
+        assert sc.windowed_average() == pytest.approx(1.0)
+
+    def test_terse_completed_run_is_counted(self, tmp_path):
+        # A genuinely finished run with < MIN_ACTIVITY_EVENTS events still
+        # carries loop_end, so it IS evidence and must be kept.
+        _write_trace_file(tmp_path, "terse", [
+            {"kind": "task_begin", "task_id": "terse", "layer": "verification", "user_input": "x"},
+            {"kind": "loop_end", "task_id": "terse", "layer": "observability", "outcome": "completed"},
+        ])
+        sc = EvolutionMetricsScorer(window_size=50)
+        assert sc.load_corpus(tmp_path) == 1
+        assert sc.windowed_average() == pytest.approx(1.0)
+
+    def test_iter_run_scores_skips_stub(self, tmp_path):
+        _write_trace_file(tmp_path, "a", _events(COMPLETED))
+        _write_trace_file(tmp_path, "stub", [
+            {"kind": "task_begin", "task_id": "stub", "layer": "verification", "user_input": "x"},
+        ])
+        scores = dict(iter_run_scores(tmp_path))
+        assert "stub" not in scores
+        assert len(scores) == 1
+
+    def test_stub_cannot_flip_should_evolve(self, tmp_path):
+        # Two real completions + many stubs: without the filter the stubs
+        # would drag the window under threshold and falsely trigger evolution.
+        for i in range(2):
+            _write_trace_file(tmp_path, f"real{i}", _events(COMPLETED))
+        for i in range(20):
+            _write_trace_file(tmp_path, f"stub{i}", [
+                {"kind": "task_begin", "task_id": f"stub{i}", "layer": "verification", "user_input": "x"},
+            ])
+        sc = EvolutionMetricsScorer(window_size=10, threshold=0.7)
+        sc.load_corpus(tmp_path)
+        assert sc.windowed_average() == pytest.approx(1.0)
+        assert sc.should_evolve() is False
 
 
 class TestReadonlyContract:

@@ -1,5 +1,6 @@
 """Unit tests for harnessfix.dashboard --quality wiring (read-only)."""
 import json
+import os
 
 from harnessfix import dashboard
 from harnessfix.tracing import (
@@ -53,6 +54,34 @@ class TestQualityReport:
             _write_trace(tmp_path, f"t{i}", "completed", duration=0.0)
         rep = dashboard._quality_report(tmp_path, limit=3)
         assert rep["inspected"] == 3
+
+    def test_window_holds_most_recent_runs_not_oldest(self, tmp_path):
+        # The sliding window must summarise the MOST RECENT runs.  Files are
+        # sorted newest-first for the report, so the scorer has to be fed
+        # oldest-first; otherwise a size-N window keeps the OLDEST N runs.
+        old = _write_trace(tmp_path, "old", "completed", duration=0.0)   # 1.0
+        mid = _write_trace(tmp_path, "mid", "completed", duration=0.0)   # 1.0
+        new = _write_trace(tmp_path, "new", "error")                     # 0.0
+        base = 1_700_000_000.0
+        os.utime(old, (base, base))
+        os.utime(mid, (base + 100, base + 100))
+        os.utime(new, (base + 200, base + 200))
+        rep = dashboard._quality_report(tmp_path, window_size=1, threshold=0.7)
+        # Newest run failed -> window (size 1) must report 0.0 and trigger.
+        assert rep["windowed_average"] == 0.0
+        assert rep["should_evolve"] is True
+        # Report listing stays newest-first.
+        assert rep["runs"][0]["task_id"] == "new"
+
+    def test_window_recent_successes_do_not_trigger(self, tmp_path):
+        old = _write_trace(tmp_path, "old", "error")                     # 0.0
+        new = _write_trace(tmp_path, "new", "completed", duration=0.0)   # 1.0
+        base = 1_700_000_000.0
+        os.utime(old, (base, base))
+        os.utime(new, (base + 100, base + 100))
+        rep = dashboard._quality_report(tmp_path, window_size=1, threshold=0.7)
+        assert rep["windowed_average"] == 1.0
+        assert rep["should_evolve"] is False
 
 
 class TestMainQualityFlag:

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
+from typing import Any, Sequence
 
 from .diagnose import Diagnosis, diagnose_graph
 from .htir import TraceGraph, compile_trace
@@ -36,6 +37,22 @@ def _is_failed_trace(graph: TraceGraph) -> bool:
     if outcome == "completed":
         return False
     return not graph.has_final_answer()
+
+
+def is_countable_events(events: Sequence[dict[str, Any]]) -> bool:
+    """True iff an event stream is real evidence about run outcome.
+
+    An aborted noise stub — no ``loop_end`` and fewer than
+    ``MIN_ACTIVITY_EVENTS`` events — records no outcome, so counting it
+    would depress aggregate quality metrics (``success_rate``, windowed
+    average) without adding any evidence.  A terse run that DID finish
+    carries ``loop_end`` and is kept.  Event-level twin of
+    :func:`harnessfix.corpus_quality._is_countable`, which works on a
+    compiled graph.
+    """
+    if len(events) >= MIN_ACTIVITY_EVENTS:
+        return True
+    return any(ev.get("kind") == "loop_end" for ev in events)
 
 
 def collect_traces(trace_dir: Path) -> list[Path]:

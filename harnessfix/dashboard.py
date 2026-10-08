@@ -13,6 +13,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .corpus import is_countable_events
 from .evolution_metrics import (
     DEFAULT_THRESHOLD,
     DEFAULT_WINDOW_SIZE,
@@ -266,12 +267,15 @@ def _quality_report(
         files = files[:limit]
     scorer = EvolutionMetricsScorer(window_size=window_size, threshold=threshold)
     per_run: list[dict[str, Any]] = []
-    for p in files:
+    # Feed the scorer OLDEST-first: the sliding window keeps the LAST N
+    # recorded runs, so recording in report order (newest-first) would make
+    # the window summarise the OLDEST runs instead of the most recent ones.
+    for p in reversed(files):
         try:
             events = read_trace(p)
         except TraceValidationError:
             continue
-        if not events:
+        if not is_countable_events(events):
             continue
         task_id = str(events[0].get("task_id", p.stem))
         per_run.append({
@@ -283,6 +287,8 @@ def _quality_report(
                 "incomplete",
             ),
         })
+    # Report newest-first.
+    per_run.reverse()
     return {
         "traces_dir": str(traces_dir),
         "inspected": len(per_run),

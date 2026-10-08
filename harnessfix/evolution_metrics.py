@@ -26,7 +26,7 @@ from typing import Any, Iterable, Sequence
 
 from agent_core.evolution_metrics import EvolutionMetrics, ExecutionMetric
 
-from .corpus import collect_traces
+from .corpus import collect_traces, is_countable_events
 from .reader import TraceValidationError, read_trace
 from .tracing import KIND_LOOP_END, KIND_TOOL_RESULT
 
@@ -91,14 +91,17 @@ def iter_run_scores(
     """Yield ``(task_id, score)`` for every readable trace in *trace_dir*.
 
     Unreadable/corrupt traces are skipped (read_trace raises
-    TraceValidationError).  Traces without a ``loop_end`` score 0.0.
+    TraceValidationError).  Aborted noise stubs (no ``loop_end``, fewer than
+    ``MIN_ACTIVITY_EVENTS`` events) record no outcome and are skipped too, so
+    they cannot depress the aggregate quality signal.  A real interrupted run
+    (no ``loop_end`` but enough activity) still scores 0.0.
     """
     for path in collect_traces(Path(trace_dir)):
         try:
             events = read_trace(path)
         except TraceValidationError:
             continue
-        if not events:
+        if not is_countable_events(events):
             continue
         task_id = str(events[0].get("task_id", Path(path).stem))
         yield task_id, score_run(events, latency_budget_s, penalty_weight)
@@ -138,34 +141,32 @@ class EvolutionMetricsScorer:
         return score
 
     def record_trace_file(self, path: str | os.PathLike[str]) -> float | None:
-        """Score and record a single trace file; None if unreadable."""
+        """Score and record a single trace file; None if unreadable or a stub."""
         try:
             events = read_trace(Path(path))
         except TraceValidationError:
             return None
-        if not events:
+        if not is_countable_events(events):
             return None
         return self.record_trace(events)
 
     def load_corpus(self, trace_dir: str | os.PathLike[str]) -> int:
-        """Record every readable trace in *trace_dir*. Returns run count."""
+        """Record every countable trace in *trace_dir*. Returns run count.
+
+        Iterates the trace files directly (not via a reconstructed
+        ``task_id``-derived path, which silently skipped any trace whose
+        recorded ``task_id`` differs from its filename stem).  Aborted noise
+        stubs are excluded, matching :func:`iter_run_scores`.
+        """
         count = 0
-        for task_id, score in iter_run_scores(
-            trace_dir, self.latency_budget_s, self.penalty_weight
-        ):
-            # Re-derive success/latency from the file for the ExecutionMetric.
+        for path in collect_traces(Path(trace_dir)):
             try:
-                events = read_trace(Path(trace_dir) / f"{task_id}.jsonl")
+                events = read_trace(path)
             except TraceValidationError:
                 continue
-            outcome = _run_outcome(events)
-            self._metrics.record(
-                ExecutionMetric(
-                    score=score,
-                    success=outcome == "completed",
-                    latency=_run_latency_s(events),
-                )
-            )
+            if not is_countable_events(events):
+                continue
+            self.record_trace(events)
             count += 1
         return count
 
