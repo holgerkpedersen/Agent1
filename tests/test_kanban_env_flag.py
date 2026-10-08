@@ -65,6 +65,10 @@ def _isolated_sync_state(tmp_path, monkeypatch):
         kb._BOOT_HANDLES[:] = saved_handles
 
 
+# The documented "turn sync on" line from .env.example.
+_ENV_ON = "KANBAN_SYNC_ENABLED=1\n"
+
+
 def _write_env(tmp_path, text: str):
     path = tmp_path / ".env"
     path.write_text(text, encoding="utf-8")
@@ -83,14 +87,14 @@ class TestSyncEnabledResolver:
     def test_dotenv_one_enables(self, tmp_path, monkeypatch):
         """The core regression: .env alone must be enough to enable sync."""
         import harnessfix.kanban_bridge as kb
-        monkeypatch.setattr(kb, "ENV_FILE_PATH", _write_env(tmp_path, "KANBAN_SYNC_ENABLED=1\n"))
+        monkeypatch.setattr(kb, "ENV_FILE_PATH", _write_env(tmp_path, _ENV_ON))
 
         assert kb.sync_enabled() is True
 
     def test_process_env_wins_over_dotenv(self, tmp_path, monkeypatch):
         """An explicit export must override the file, not be shadowed by it."""
         import harnessfix.kanban_bridge as kb
-        monkeypatch.setattr(kb, "ENV_FILE_PATH", _write_env(tmp_path, "KANBAN_SYNC_ENABLED=1\n"))
+        monkeypatch.setattr(kb, "ENV_FILE_PATH", _write_env(tmp_path, _ENV_ON))
         monkeypatch.setenv("KANBAN_SYNC_ENABLED", "0")
 
         assert kb.sync_enabled() is False
@@ -103,7 +107,9 @@ class TestSyncEnabledResolver:
 
     def test_missing_env_file_is_disabled(self, monkeypatch):
         import harnessfix.kanban_bridge as kb
-        monkeypatch.setattr(kb, "ENV_FILE_PATH", __import__("pathlib").Path("does-not-exist.env"))
+        monkeypatch.setattr(
+            kb, "ENV_FILE_PATH", __import__("pathlib").Path("does-not-exist.env")
+        )
 
         assert kb.sync_enabled() is False
 
@@ -130,11 +136,13 @@ class TestGatesHonourDotenv:
     def test_inbound_boot_starts_from_dotenv(self, tmp_path, monkeypatch):
         """``agent.py:main()`` -> ``start_inbound_processor()`` must honour .env."""
         import harnessfix.kanban_bridge as kb
-        monkeypatch.setattr(kb, "ENV_FILE_PATH", _write_env(tmp_path, "KANBAN_SYNC_ENABLED=1\n"))
+        env = _write_env(tmp_path, "KANBAN_SYNC_ENABLED=1\n")
+        monkeypatch.setattr(kb, "ENV_FILE_PATH", env)
 
         proc = kb.start_inbound_processor(poll_interval=0.05)
 
-        assert proc is not None, ".env enabled sync but the inbound poller never started"
+        msg = ".env enabled sync but the inbound poller never started"
+        assert proc is not None, msg
         assert kb.inbound_processor_running() is True
         assert len(_inbound_threads()) == 1
 
@@ -142,13 +150,15 @@ class TestGatesHonourDotenv:
         """``issues._should_sync()`` must honour .env or issues never enqueue."""
         import harnessfix.kanban_bridge as kb
         from harnessfix import issues as issue_store
-        monkeypatch.setattr(kb, "ENV_FILE_PATH", _write_env(tmp_path, "KANBAN_SYNC_ENABLED=1\n"))
+        env = _write_env(tmp_path, "KANBAN_SYNC_ENABLED=1\n")
+        monkeypatch.setattr(kb, "ENV_FILE_PATH", env)
 
         assert issue_store._should_sync() is True
 
     def test_outbound_disabled_when_dotenv_says_zero(self, tmp_path, monkeypatch):
         import harnessfix.kanban_bridge as kb
         from harnessfix import issues as issue_store
-        monkeypatch.setattr(kb, "ENV_FILE_PATH", _write_env(tmp_path, "KANBAN_SYNC_ENABLED=0\n"))
+        env = _write_env(tmp_path, "KANBAN_SYNC_ENABLED=0\n")
+        monkeypatch.setattr(kb, "ENV_FILE_PATH", env)
 
         assert issue_store._should_sync() is False

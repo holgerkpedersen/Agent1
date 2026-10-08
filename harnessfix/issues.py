@@ -14,7 +14,6 @@ the autonomous driver (outcome).
 from __future__ import annotations
 
 import json
-import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
