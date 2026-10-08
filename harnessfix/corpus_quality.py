@@ -22,7 +22,12 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from .corpus import _is_failed_trace, collect_traces, diagnose_corpus
+from .corpus import (
+    MIN_ACTIVITY_EVENTS,
+    _is_failed_trace,
+    collect_traces,
+    diagnose_corpus,
+)
 from .diagnose import Diagnosis
 from .reader import TraceValidationError
 from .htir import compile_trace
@@ -35,7 +40,10 @@ class CorpusQuality(BaseModel):
     (``loop_end.outcome == "completed"``), in [0, 1].  ``mechanism_counts``
     and ``layer_counts`` are the diagnosis frequencies across the *failed*
     traces, keyed by mechanism / layer.  ``total`` is the number of readable
-    traces in the corpus.
+    traces in the corpus that count as outcome evidence — aborted noise
+    stubs (no ``loop_end``, fewer than ``MIN_ACTIVITY_EVENTS`` events) are
+    excluded, since they record no outcome and would otherwise depress
+    ``success_rate`` without adding any diagnosis evidence.
     """
 
     success_rate: float
@@ -53,6 +61,21 @@ def _is_completed(graph: "Any") -> bool:
         if s.kind == "loop_end":
             return str(s.payload.get("outcome", "completed")) == "completed"
     return False
+
+
+def _is_countable(graph: "Any") -> bool:
+    """True iff a trace is real evidence about run outcome.
+
+    Noise stubs — fewer than ``MIN_ACTIVITY_EVENTS`` events and no
+    ``loop_end`` — are an ABORTED write (the loop always emits ``loop_end``
+    via ``finally``, so a trace without one never finished a run).  They
+    record no outcome, so counting them in the denominator silently
+    depresses ``success_rate`` without adding any diagnosis evidence.  A
+    terse run that DID finish is kept: it carries ``loop_end``.
+    """
+    if len(graph.steps) >= MIN_ACTIVITY_EVENTS:
+        return True
+    return any(s.kind == "loop_end" for s in graph.steps)
 
 
 def corpus_quality(trace_dir: Path | str) -> CorpusQuality:
@@ -83,6 +106,8 @@ def corpus_quality(trace_dir: Path | str) -> CorpusQuality:
         try:
             graph = compile_trace(path)
         except TraceValidationError:
+            continue
+        if not _is_countable(graph):
             continue
         total += 1
         if _is_completed(graph):

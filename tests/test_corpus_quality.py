@@ -133,3 +133,48 @@ def test_accept_harness_rejects_dropped_success_rate(tmp_path):
 def test_accept_harness_unavailable_is_non_blocking():
     # Missing evidence degrades to fail-open so it never rejects on its own.
     assert should_accept_harness(None, None, target_layer="lifecycle") is True
+
+
+def _write_noise_stub(traces_dir: Path, task_id: str) -> None:
+    """An ABORTED write: a prompt but no loop_end (the loop always emits
+    loop_end via finally, so this trace never finished a run)."""
+    writer = TraceWriter(task_id=task_id, directory=traces_dir)
+    writer.emit({"kind": "task_begin", "layer": "context", "user_input": "hello"})
+    writer.close()
+
+
+def test_corpus_quality_excludes_noise_stubs_from_denominator(tmp_path):
+    """Regression: aborted stubs must not depress success_rate.
+
+    The live corpus accumulated 360 sub-3-event stubs (no loop_end) — each
+    holds only a task_begin and sometimes a step_start, i.e. a session that
+    was aborted before any tool ran.  They record no outcome, so counting
+    them in the denominator understated the real completion rate
+    (0.7594 with stubs vs 0.8776 without).  Only traces that carry outcome
+    evidence — >=3 events, or a loop_end however terse — may count.
+    """
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    _write_completed(traces, "ok1")
+    _write_completed(traces, "ok2")
+    for i in range(5):
+        _write_noise_stub(traces, f"stub{i}")
+
+    q = corpus_quality(traces)
+    # The 5 stubs are ignored: 2 real runs, both completed.
+    assert q.total == 2, "noise stubs must not be counted as outcome evidence"
+    assert q.success_rate == 1.0
+
+
+def test_corpus_quality_keeps_terse_completed_run(tmp_path):
+    """A terse run that DID finish (loop_end present) is still counted."""
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    writer = TraceWriter(task_id="terse", directory=traces)
+    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
+                 "outcome": "completed", "termination_reason": "answer"})
+    writer.close()
+
+    q = corpus_quality(traces)
+    assert q.total == 1
+    assert q.success_rate == 1.0
