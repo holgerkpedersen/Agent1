@@ -521,6 +521,57 @@ class TestToolLoopExecution:
                         f"following={following}"
                     )
 
+    def test_raised_tool_exception_counts_as_consecutive_failure(self, monkeypatch):
+        """Regression: a tool that RAISES must count toward the
+        consecutive-failure guard.
+
+        The accepted ``tool-interface-error-detail`` repair changed the
+        fed-back string to ``"Tool error (<ExcType>): <msg>"``, but the guard
+        still matched the OLD prefix ``"Tool error:"`` — so raised exceptions
+        silently stopped counting and the variant-repeat break never fired
+        for them.  Exercised through the REAL code path (the tool raises).
+        """
+        import asyncio
+        import agent_core.llm.tool_loop as tl
+
+        monkeypatch.setattr(tl, "_TOOL_CONSECUTIVE_FAILURE_LIMIT", 2)
+
+        fake = _ScriptedLLM([
+            ("run", {"command": "cmd1"}),
+            ("run", {"command": "cmd2"}),   # 2nd raise -> note must be queued
+            "done",
+        ])
+        sent_batches = []
+
+        async def execute_tool(name, args):
+            raise RuntimeError("boom")
+
+        inner = _make_llm_chat_fn(fake)
+
+        async def capturing_fn(messages, tools):
+            sent_batches.append([dict(m) for m in messages])
+            return await inner(messages, tools)
+
+        runner = ToolLoopRunner(max_iterations=10)
+        final_text, _ = asyncio.run(runner.run(
+            messages=[{"role": "user", "content": "go"}],
+            llm_chat_fn=capturing_fn,
+            execute_tool_fn=execute_tool,
+            tools=list(NLP_TOOL_SCHEMAS),
+        ))
+
+        assert final_text == "done"
+        notes = [
+            str(m.get("content", ""))
+            for batch in sent_batches
+            for m in batch
+            if "no useful results" in str(m.get("content", ""))
+        ]
+        assert notes, (
+            "a tool that raises must trigger the consecutive-failure note; "
+            f"roles per batch={[[m.get('role') for m in b] for b in sent_batches]}"
+        )
+
 
 def _loop_runner_sync(runner, fake_llm, execute_tool, **kwargs):
     import asyncio

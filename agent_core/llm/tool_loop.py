@@ -174,6 +174,25 @@ _PATH_RECOVERY_NOTE = (
 #: patterns that all fail).  This note breaks the cycle by forcing a
 #: strategy change.  Decision #061 — laguna-s-2.1 repeated grep variants.
 _TOOL_CONSECUTIVE_FAILURE_LIMIT = 4
+#: Prefixes the loop itself puts on a FAILED tool result (the string fed back
+#: to the model).  Both spellings are recognised: the current one carries the
+#: exception type — ``"Tool error (<ExcType>): <msg>"`` (the accepted
+#: tool-interface-error-detail repair) — and the legacy bare ``"Tool error:"``
+#: is kept so results coming from tools that build the message themselves
+#: still count.  Matching only the legacy prefix silently disabled the
+#: consecutive-failure guard for every RAISED exception.
+_TOOL_ERROR_PREFIXES = ("Tool error:", "Tool error (")
+
+
+def _is_tool_error_result(text: str) -> bool:
+    """True if *text* is an error result the loop itself produced.
+
+    Recognises the current ``"Tool error (<ExcType>): ..."`` form as well as
+    the legacy ``"Tool error: ..."`` one (see ``_TOOL_ERROR_PREFIXES``).
+    """
+    return text.startswith(_TOOL_ERROR_PREFIXES)
+
+
 _TOOL_CONSECUTIVE_FAILURE_NOTE = (
     "You have now called {tool} {count} times in a row with no useful results "
     "(all returned empty or errors). The current approach is not working. "
@@ -928,7 +947,7 @@ class ToolLoopRunner:
                 _is_empty_or_error = (
                     not _result_stripped
                     or _result_stripped.startswith("No files found")
-                    or _result_stripped.startswith("Tool error:")
+                    or _is_tool_error_result(_result_stripped)
                     or _result_stripped.startswith("Error")
                     or "returned no output" in _result_stripped.lower()
                 )
