@@ -87,7 +87,9 @@ class TestStartInboundProcessor:
 
         threads = _inbound_threads()
         assert len(threads) == 1, f"expected exactly one poller thread, got {threads}"
-        assert threads[0].daemon, "poller must be a daemon or it blocks interpreter exit"
+        assert threads[0].daemon, (
+            "poller must be a daemon or it blocks interpreter exit"
+        )
 
     def test_second_call_reuses_first_processor(self, monkeypatch):
         """A second poller on the same queue only widens the torn-line window."""
@@ -177,7 +179,9 @@ class TestAgentBootWiring:
     def test_main_starts_kanban_before_branches(self, agent_module, monkeypatch):
         """main() must boot the poller — that call site IS the fix."""
         order: list[str] = []
-        monkeypatch.setattr(agent_module, "_start_kanban_inbound", lambda: order.append("kanban"))
+        monkeypatch.setattr(
+            agent_module, "_start_kanban_inbound", lambda: order.append("kanban"),
+        )
 
         async def _fake_interactive() -> None:
             order.append("interactive")
@@ -205,7 +209,9 @@ class TestManualCli:
     def test_process_in_flag(self, monkeypatch):
         import harnessfix.kanban_bridge as kb
         processed: list = []
-        monkeypatch.setattr(kb, "process_inbound", lambda qdir: processed.append(qdir) or 0)
+        monkeypatch.setattr(
+            kb, "process_inbound", lambda qdir: processed.append(qdir) or 0,
+        )
 
         assert self._run_main(monkeypatch, ["--process-in"]) == 0
         assert processed, "--process-in must call process_inbound"
@@ -214,7 +220,9 @@ class TestManualCli:
         """The docstring advertised ``--process`` for years; keep it working."""
         import harnessfix.kanban_bridge as kb
         processed: list = []
-        monkeypatch.setattr(kb, "process_inbound", lambda qdir: processed.append(qdir) or 0)
+        monkeypatch.setattr(
+            kb, "process_inbound", lambda qdir: processed.append(qdir) or 0,
+        )
 
         assert self._run_main(monkeypatch, ["--process"]) == 0
         assert processed, "--process alias must still process inbound"
@@ -222,10 +230,15 @@ class TestManualCli:
     def test_queue_dir_is_honoured(self, monkeypatch, tmp_path):
         import harnessfix.kanban_bridge as kb
         seen: list[Path] = []
-        monkeypatch.setattr(kb, "process_inbound", lambda qdir: seen.append(qdir) or 0)
+        monkeypatch.setattr(
+            kb, "process_inbound", lambda qdir: seen.append(qdir) or 0,
+        )
 
         target = tmp_path / "custom-queue"
-        assert self._run_main(monkeypatch, ["--process-in", "--queue-dir", str(target)]) == 0
+        rc = self._run_main(
+            monkeypatch, ["--process-in", "--queue-dir", str(target)],
+        )
+        assert rc == 0
         assert seen == [target]
 
     def test_no_flag_prints_help_and_fails(self, monkeypatch, capsys):

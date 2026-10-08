@@ -543,3 +543,71 @@ class TestMalformedQueueLines:
         assert len(dead) == 1, (
             f"a quarantined line must not be re-processed on later polls: {dead}"
         )
+
+
+# ---------------------------------------------------------------------------
+# card_move → issue status: FRAME_TO_STATUS is keyed by column TITLE
+# ---------------------------------------------------------------------------
+
+class TestResolveFrameStatus:
+    """``_resolve_frame_status`` maps a moved card's column to an issue status.
+
+    ``FRAME_TO_STATUS`` is keyed by the human-readable column *title*
+    ("Finished" -> resolved), while the Kanban app identifies a frame by an
+    opaque uuid. A ``card_move`` message that carried only ``frame_id`` could
+    therefore never hit the table: every move fell back to "open" and silently
+    rewrote a resolved issue back to open.
+
+    The Kanban side now sends ``frame_title`` alongside ``frame_id``; these
+    tests pin the reader's half of that contract, including the fallback that
+    keeps pre-fix messages (id only) from crashing.
+    """
+
+    def test_title_resolves_to_its_status(self):
+        import harnessfix.kanban_bridge as kb
+
+        assert kb._resolve_frame_status(
+            {"payload": {"frame_id": "uuid-hex", "frame_title": "Finished"}}
+        ) == "resolved"
+
+    def test_every_mapped_column_title_resolves(self):
+        """The table is the contract: each key must be reachable by title."""
+        import harnessfix.kanban_bridge as kb
+
+        for title, status in kb.FRAME_TO_STATUS.items():
+            got = kb._resolve_frame_status(
+                {"payload": {"frame_id": "opaque", "frame_title": title}}
+            )
+            assert got == status, f"{title!r} must map to {status!r}, got {got!r}"
+
+    def test_opaque_id_alone_falls_back_to_open(self):
+        """Pre-fix messages carry only the uuid; they must not crash."""
+        import harnessfix.kanban_bridge as kb
+
+        assert kb._resolve_frame_status(
+            {"payload": {"frame_id": "6f1c-uuid-not-a-title"}}
+        ) == "open"
+
+    def test_empty_title_does_not_shadow_the_id(self):
+        """An empty ``frame_title`` must not stop a usable id being tried."""
+        import harnessfix.kanban_bridge as kb
+
+        # frame_title is blank, so resolution must move on to the next key.
+        assert kb._resolve_frame_status(
+            {"payload": {"frame_title": "", "frame_id": "Finished"}}
+        ) == "resolved"
+
+    def test_unwrapped_payload_is_accepted(self):
+        """A bare payload (no outer ``payload`` key) resolves the same way."""
+        import harnessfix.kanban_bridge as kb
+
+        assert kb._resolve_frame_status(
+            {"frame_id": "x", "frame_title": "On-going"}
+        ) == "in-progress"
+
+    def test_unknown_title_is_open(self):
+        import harnessfix.kanban_bridge as kb
+
+        assert kb._resolve_frame_status(
+            {"payload": {"frame_title": "Not A Column"}}
+        ) == "open"
