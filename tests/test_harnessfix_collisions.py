@@ -87,14 +87,59 @@ class TestFindTestCollisions:
         assert hit.fragment == "Tool error: "
         assert hit.to_dict()["file"].endswith("test_x.py")
 
+    def test_tool_double_returning_the_string_is_not_a_collision(self, tmp_path):
+        """A fake executor that RETURNS the runtime string produces it; it does
+        not pin it, so rewriting the production format cannot break it.
+
+        Observed live: two ``async def execute_tool`` doubles returning
+        "Tool error: boom" in tests/test_tool_loop_nlp.py blocked the
+        tool-interface-error-detail repair (loop verdict
+        ``skipped_test_collision``) although that file's real assertion already
+        pins the NEW format."""
+        tests_dir = tmp_path / "tests"
+        _write_asserting_test(
+            tests_dir,
+            'async def execute_tool(name, args):\n    return "Tool error: boom"\n',
+        )
+        assert find_test_collisions(("Tool error: ",), tests_dir) == []
+
+    def test_fragment_in_a_plain_string_literal_is_not_a_collision(self, tmp_path):
+        """Only assertions pin runtime output: an assignment holding the string
+        is a fixture value, not a test contract."""
+        tests_dir = tmp_path / "tests"
+        _write_asserting_test(tests_dir, 'msg = "Tool error: boom"\n')
+        assert find_test_collisions(("Tool error: ",), tests_dir) == []
+
+    def test_multiline_assertion_is_still_a_collision(self, tmp_path):
+        """The fragment may sit on a continuation line of a bracketed assert."""
+        tests_dir = tmp_path / "tests"
+        _write_asserting_test(
+            tests_dir,
+            'def test_x():\n'
+            '    assert (\n'
+            '        "Tool error: boom"\n'
+            '    ) in content\n',
+        )
+        hits = find_test_collisions(("Tool error: ",), tests_dir)
+        assert len(hits) == 1
+        assert hits[0].line == 3
+
+    def test_bare_comparison_is_still_a_collision(self, tmp_path):
+        """Conservative: an equality/membership comparison outside a string
+        literal counts as a pin even without the ``assert`` keyword."""
+        tests_dir = tmp_path / "tests"
+        _write_asserting_test(tests_dir, 'msg == "Tool error: boom"\n')
+        hits = find_test_collisions(("Tool error: ",), tests_dir)
+        assert len(hits) == 1
+
     def test_no_fragments_or_missing_dir_returns_empty(self, tmp_path):
         assert find_test_collisions((), tmp_path) == []
         assert find_test_collisions(("Tool error: ",), tmp_path / "nope") == []
 
     def test_reports_every_fragment_and_file(self, tmp_path):
         tests_dir = tmp_path / "tests"
-        _write_asserting_test(tests_dir, 'a = "Tool error: x"\n', "a.py")
-        _write_asserting_test(tests_dir, 'b = "Tool error: y"\n', "b.py")
+        _write_asserting_test(tests_dir, 'assert "Tool error: x" in a\n', "a.py")
+        _write_asserting_test(tests_dir, 'assert "Tool error: y" in b\n', "b.py")
         hits = find_test_collisions(("Tool error: ",), tests_dir)
         assert len(hits) == 2
 
@@ -107,7 +152,7 @@ class TestFindTestCollisions:
         assert "test_harnessfix_collisions.py" in GUARD_TEST_FILENAMES
         tests_dir = tmp_path / "tests"
         _write_asserting_test(
-            tests_dir, 'a = "Tool error: x"\n', "test_harnessfix_collisions.py"
+            tests_dir, 'assert "Tool error: x" in a\n', "test_harnessfix_collisions.py"
         )
         assert find_test_collisions(("Tool error: ",), tests_dir) == []
         # Opting out of the exclusion still finds it.
@@ -172,6 +217,47 @@ class TestLoopCollisionGuard:
             revert()
         assert _OLD in _loop_source()
 
+    def test_loop_proceeds_when_hits_are_only_producers(self, tmp_path, monkeypatch):
+        """Regression (live deadlock): tests that merely RETURN the runtime
+        string must not block the repair.
+
+        The loop reported verdict ``skipped_test_collision`` for
+        tool-interface-error-detail because tests/test_tool_loop_nlp.py has
+        ``async def execute_tool`` doubles returning "Tool error: boom".
+        Those produce the string; the file's real assertion already pins the
+        NEW format."""
+        traces_dir = tmp_path / "traces"
+        traces_dir.mkdir()
+        _write_tool_error_trace(traces_dir, "tr4")
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        _write_asserting_test(
+            tests_dir,
+            'async def execute_tool(name, args):\n    return "Tool error: boom"\n',
+        )
+        monkeypatch.setattr(
+            "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tests_dir
+        )
+        monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
+        monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
+        monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
+        monkeypatch.setattr(
+            gates, "run_benchmark_gate", lambda model, profile=None: None
+        )
+
+        from harnessfix.repairs.tool_interface import revert
+
+        out = tmp_path / "out"
+        try:
+            summary = run_loop(traces_dir, approve=True, model=None, output_dir=out)
+            assert summary["verdict"] == "accepted", summary
+            assert "collisions" not in summary
+            assert _NEW in _loop_source()
+        finally:
+            revert()
+        assert _OLD in _loop_source()
+
     def test_guard_fixture_hits_are_ignored_and_recorded(self, tmp_path, monkeypatch):
         """Decision #051: matches inside the guard's OWN test files no longer
         block the repair; they are reported as ignored_guard_test_hits."""
@@ -182,7 +268,7 @@ class TestLoopCollisionGuard:
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         _write_asserting_test(
-            tests_dir, 'a = "Tool error: x"\n', "test_harnessfix_collisions.py"
+            tests_dir, 'assert "Tool error: x" in a\n', "test_harnessfix_collisions.py"
         )
         monkeypatch.setattr(
             "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tests_dir

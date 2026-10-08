@@ -586,6 +586,22 @@ incrementally as its capability grows — human stays in control.
   `multillm` ran `opencode-go/deepseek` instead of the NPU for a lemonade model,
   because only `model lemonade/…` (which passes `provider_override`) had
   reached Lemonade.  Now the NPU is tried first, the chain stays as fallback.
+- **#080 — collision guard distinguishes pins from producers (DONE, 2026-09-27)**:
+  `harnessfix/repairs/collisions.py` reported every test-suite occurrence of a
+  repair-affected fragment, including tests that merely *produce* it.  With the
+  accepted `tool-interface-error-detail` repair already in the tree, the two
+  executor doubles in `tests/test_tool_loop_nlp.py` (`return "Tool error: boom"`)
+  made every loop iteration end `skipped_test_collision` — the loop deadlocked
+  reporting a collision the file's real assertion no longer had (it pins the NEW
+  `"Tool error (<ExcType>): "` form).  The guard now groups lines into logical
+  statements (`_logical_statements`, bracket-depth, so a wrapped `assert (` …
+  `) in out` stays ONE statement) and reports a hit only when the statement
+  PINS the fragment (`_statement_pins`: no `return`/`yield`/assignment, and an
+  `assert`/comparison/`in`/`.startswith(`/`.count(` marker).  Classification errs
+  toward MISSING a pin — a missed pin costs one gate run (the test gate reverts
+  the repair), a false collision blocks the repair forever.  Verified: 0
+  non-guard pins for all three catalog fragments, `test_tool_loop_nlp.py` clean,
+  real pins still caught.  Tests: `tests/test_harnessfix_collisions.py` (12).
 
 ## Git / remote auth (non-interactive)
 `git push`/`ls-remote` must NOT prompt for credentials (no human at the keyboard).
