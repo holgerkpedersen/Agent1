@@ -20,6 +20,12 @@ LinkKind = Literal["provenance", "control_flow"]
 #: the ones we diagnose and repair).
 _OK_OUTCOMES = frozenset({"completed"})
 
+#: Minimum length of the last ``llm_response`` text for a run to count as
+#: having DELIVERED a substantive final answer (decision #052 refinement).
+#: Shared with ``harnessfix.evolution_metrics.score_run`` so the "did this run
+#: do the task?" judgement cannot drift between the diagnose and scoring paths.
+MIN_FINAL_ANSWER_CHARS = 80
+
 
 class HTIRStep(BaseModel):
     """One trace event with its layer facet and graph links."""
@@ -103,7 +109,7 @@ class TraceGraph(BaseModel):
         for s in self.steps:
             if s.kind == "llm_response":
                 answer = str(s.payload.get("text", "")).strip()
-        return len(answer) >= 80
+        return len(answer) >= MIN_FINAL_ANSWER_CHARS
 
 
 def compile_trace(path: Path | str) -> TraceGraph:

@@ -28,7 +28,18 @@ from agent_core.evolution_metrics import EvolutionMetrics, ExecutionMetric
 
 from .corpus import collect_traces, is_countable_events
 from .reader import TraceValidationError, read_trace
-from .tracing import KIND_LOOP_END, KIND_TOOL_RESULT
+from .tracing import KIND_LLM_RESPONSE, KIND_LOOP_END, KIND_TOOL_RESULT
+
+#: Guard-terminated loop_end outcomes (decision #052): the loop guards stopped
+#: the LOOP, not the answer — such a run that still delivered a substantive
+#: final answer DID the task and must not score 0.0.  ``error`` is deliberately
+#: NOT here: a provider/transport failure is a real failure even if some text
+#: was produced, so an error run keeps scoring 0.0.
+DELIVERED_OUTCOMES = frozenset({"stuck", "budget_exhausted", "no_progress"})
+
+#: A guard-terminated run that delivered an answer is worth slightly less than
+#: a cleanly completed one (the guards firing is itself a signal to evolve).
+DEFAULT_DELIVERED_BASE = 0.9
 
 #: Default sliding-window size (number of recent runs kept).
 DEFAULT_WINDOW_SIZE = 10
@@ -59,22 +70,48 @@ def _run_latency_s(events: Sequence[dict[str, Any]]) -> float:
     return total
 
 
+def _has_substantive_final_answer(events: Sequence[dict[str, Any]]) -> bool:
+    """True when the LAST ``llm_response`` text is a substantive answer.
+
+    Event-level twin of :meth:`harnessfix.htir.TraceGraph.has_final_answer`
+    (same :data:`harnessfix.htir.MIN_FINAL_ANSWER_CHARS` threshold, imported
+    lazily to avoid a module cycle).  This is what makes decision #052's
+    refinement apply to SCORING as well as diagnosis: a guard-terminated run
+    that delivered its final answer did the task.
+    """
+    from .htir import MIN_FINAL_ANSWER_CHARS
+
+    answer = ""
+    for ev in events:
+        if ev.get("kind") == KIND_LLM_RESPONSE:
+            answer = str(ev.get("text", "")).strip()
+    return len(answer) >= MIN_FINAL_ANSWER_CHARS
+
+
 def score_run(
     events: Sequence[dict[str, Any]],
     latency_budget_s: float = DEFAULT_LATENCY_BUDGET_S,
     penalty_weight: float = DEFAULT_PENALTY_WEIGHT,
+    delivered_base: float = DEFAULT_DELIVERED_BASE,
 ) -> float:
     """Compute a per-run quality score in [0, 1] from trace events.
 
-    score = 1.0 if the run succeeded (outcome == "completed") else 0.0,
-    minus a latency penalty = min(latency_s / budget, 1) * weight,
-    clamped to [0, 1].  A run with no ``loop_end`` scores 0.0 (incomplete).
+    Base = 1.0 when the run succeeded (outcome == "completed"); when the loop
+    guards terminated the run (stuck / budget_exhausted / no_progress) but the
+    run still DELIVERED a substantive final answer, base = *delivered_base*
+    (decision #052: the guard stops the loop, not the answer).  Everything else
+    — a genuine ``error``, an interrupted run with no ``loop_end``, a guard
+    stop with no answer — bases at 0.0.  Then a latency penalty
+    ``min(latency_s / budget, 1) * weight`` is subtracted and the result is
+    clamped to [0, 1].
     """
     outcome = _run_outcome(events)
-    if outcome is None or outcome != "completed":
-        base = 0.0
-    else:
+    if outcome == "completed":
         base = 1.0
+    elif outcome in DELIVERED_OUTCOMES and _has_substantive_final_answer(events):
+        base = delivered_base
+    else:
+        base = 0.0
     latency = _run_latency_s(events)
     if latency_budget_s <= 0:
         penalty = 0.0

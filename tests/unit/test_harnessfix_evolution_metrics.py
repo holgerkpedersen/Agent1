@@ -176,6 +176,126 @@ class TestLoadCorpusStubFilter:
         assert sc.should_evolve() is False
 
 
+def _guard_run(outcome, answer: str = "", duration: float | None = None,
+               task_id="t") -> list[dict]:
+    """A guard-terminated run: tool work, an LLM answer, then loop_end.
+
+    Mirrors what the real loop emits when a guard (stuck / budget_exhausted /
+    no_progress) stops the loop AFTER the forced-synthesis answer.
+    """
+    events = [
+        {"kind": "task_begin", "task_id": task_id,
+         "layer": LAYER_VERIFICATION, "user_input": "x"},
+    ]
+    if duration is not None:
+        events.append({"kind": "tool_result", "task_id": task_id,
+                       "layer": LAYER_EXECUTION, "duration_s": duration})
+    if answer:
+        events.append({"kind": "llm_response", "task_id": task_id,
+                       "layer": LAYER_OBSERVABILITY, "text": answer})
+    events.append({"kind": "loop_end", "task_id": task_id,
+                   "layer": LAYER_OBSERVABILITY, "outcome": outcome})
+    return events
+
+
+#: Comfortably above MIN_FINAL_ANSWER_CHARS (80) — a real synthesis answer.
+LONG_ANSWER = "Here is the fix I applied: I changed the guard to resume " \
+              "instead of restarting, and I verified it with pytest."
+
+
+class TestDeliveredGuardTerminatedRuns:
+    """Decision #052 refinement, applied to SCORING.
+
+    A guard stops the LOOP, not the answer: a stuck / budget_exhausted /
+    no_progress run that still delivered a substantive final answer DID the
+    task.  Before this fix every such run scored exactly 0.0 — contradicting
+    the diagnose path, which already treats them as delivered
+    (``TraceGraph.has_final_answer``).  Measured on the live corpus: 117 runs
+    (89 stuck, 26 budget_exhausted, 2 no_progress) were mis-scored 0.0.
+    """
+
+    @pytest.mark.parametrize("outcome", ["stuck", "budget_exhausted", "no_progress"])
+    def test_delivered_guard_run_is_not_zero(self, outcome):
+        assert score_run(_guard_run(outcome, LONG_ANSWER)) > 0.0
+
+    @pytest.mark.parametrize("outcome", ["stuck", "budget_exhausted", "no_progress"])
+    def test_delivered_guard_run_scores_the_delivered_base(self, outcome):
+        # No latency -> the full delivered base.
+        assert score_run(_guard_run(outcome, LONG_ANSWER)) == pytest.approx(0.9)
+
+    @pytest.mark.parametrize("outcome", ["stuck", "budget_exhausted", "no_progress"])
+    def test_guard_run_without_answer_still_scores_zero(self, outcome):
+        # The guard fired and nothing was delivered: a genuine failure.
+        assert score_run(_guard_run(outcome)) == 0.0
+
+    def test_delivered_scores_below_a_clean_completion(self):
+        # Guards firing is itself a signal to evolve, so delivering through a
+        # guard must never outrank a clean completion.
+        delivered = score_run(_guard_run("stuck", LONG_ANSWER))
+        clean = score_run(_run(COMPLETED))
+        assert delivered < clean
+
+    def test_error_outcome_keeps_scoring_zero_even_with_an_answer(self):
+        # A provider/transport failure is a REAL failure: text produced before
+        # it must not be mistaken for a delivered task.
+        assert score_run(_guard_run(ERROR, LONG_ANSWER)) == 0.0
+
+    def test_interrupted_run_with_an_answer_still_scores_zero(self):
+        # No loop_end at all (crash/kill/provider loss, decision #052).
+        events = [e for e in _guard_run("stuck", LONG_ANSWER)
+                  if e["kind"] != "loop_end"]
+        assert score_run(events) == 0.0
+
+    def test_latency_penalty_applies_on_top_of_the_delivered_base(self):
+        # 5s / 30s budget * 0.3 = 0.05 -> 0.9 - 0.05 = 0.85
+        assert score_run(
+            _guard_run("stuck", LONG_ANSWER, duration=5.0)
+        ) == pytest.approx(0.85)
+
+    def test_delivered_base_is_clamped_to_one(self):
+        assert score_run(_guard_run("stuck", LONG_ANSWER), delivered_base=5.0) == 1.0
+
+
+class TestFinalAnswerThresholdIsSharedWithHtir:
+    """The "did this run deliver?" judgement must not drift between the
+    diagnose path (TraceGraph.has_final_answer) and scoring (score_run)."""
+
+    def test_threshold_is_imported_from_htir(self):
+        from harnessfix import htir
+        from harnessfix import evolution_metrics as em
+
+        # Same single source of truth, not two literals.
+        assert htir.MIN_FINAL_ANSWER_CHARS == 80
+        answer = "x" * (htir.MIN_FINAL_ANSWER_CHARS - 1)
+        assert score_run(_guard_run("stuck", answer)) == 0.0
+        answer = "x" * htir.MIN_FINAL_ANSWER_CHARS
+        assert score_run(_guard_run("stuck", answer)) > 0.0
+        assert em.DELIVERED_OUTCOMES == {"stuck", "budget_exhausted", "no_progress"}
+
+    def test_only_the_LAST_llm_response_counts(self):
+        # An early long answer followed by a terse closing response means the
+        # run did NOT deliver (the closing text is what the user got).
+        events = _guard_run("stuck", LONG_ANSWER)
+        events.insert(-1, {"kind": "llm_response", "task_id": "t",
+                           "layer": LAYER_OBSERVABILITY, "text": "Hmm."})
+        assert score_run(events) == 0.0
+
+
+class TestDeliveredRunsInTheQualityWindow:
+    def test_delivered_guard_run_lifts_the_windowed_average(self):
+        sc = EvolutionMetricsScorer(window_size=3, threshold=0.7)
+        sc.record_trace(_guard_run("stuck", LONG_ANSWER))
+        # 0.9 alone is >= threshold, so no evolution is flagged...
+        assert sc.windowed_average() == pytest.approx(0.9)
+        assert sc.should_evolve() is False
+
+    def test_undelivered_guard_run_still_drags_the_window_down(self):
+        sc = EvolutionMetricsScorer(window_size=3, threshold=0.7)
+        sc.record_trace(_guard_run("stuck"))
+        assert sc.windowed_average() == 0.0
+        assert sc.should_evolve() is True
+
+
 class TestReadonlyContract:
     def test_no_file_writes_on_import_or_score(self, tmp_path):
         # Scoring synthetic events must not create/modify any file.

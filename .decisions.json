@@ -16,7 +16,9 @@
       "type-safety"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "002",
@@ -36,7 +38,9 @@
       "source-path-guarding"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "003",
@@ -56,7 +60,9 @@
       "web-search"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "004",
@@ -75,7 +81,9 @@
       "nlp"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "005",
@@ -93,7 +101,9 @@
       "untrusted-content"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "006",
@@ -113,7 +123,9 @@
       "web-search"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "007",
@@ -132,7 +144,9 @@
       "abstraction"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "008",
@@ -152,7 +166,9 @@
       "provider"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "009",
@@ -172,7 +188,9 @@
       "configuration"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "010",
@@ -193,7 +211,9 @@
       "configuration"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "011",
@@ -214,7 +234,9 @@
       "compatibility"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "012",
@@ -235,7 +257,9 @@
       "prompts"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "013",
@@ -253,7 +277,9 @@
       "harness-repair"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "014",
@@ -270,7 +296,9 @@
       "repair-scope"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "015",
@@ -288,7 +316,9 @@
       "merge"
     ],
     "contradictions": [],
-    "resolved_by": "031"
+    "resolved_by": "031",
+    "status": "active",
+    "category": ""
   },
   {
     "id": "016",
@@ -304,7 +334,9 @@
       "architecture"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "017",
@@ -322,7 +354,9 @@
       "validation"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "018",
@@ -341,7 +375,9 @@
       "tracing"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "019",
@@ -359,7 +395,9 @@
       "architecture"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "020",
@@ -377,7 +415,9 @@
       "trust-boundary"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "021",
@@ -396,7 +436,9 @@
       "sanitization"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "022",
@@ -412,7 +454,9 @@
       "tracing"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "023",
@@ -430,7 +474,9 @@
       "gate"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "024",
@@ -450,7 +496,9 @@
       "whitelist"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "025",
@@ -466,7 +514,9 @@
       "recovery"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "026",
@@ -482,7 +532,9 @@
       "taxonomy"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "027",
@@ -501,7 +553,9 @@
       "metrics"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "028",
@@ -520,7 +574,9 @@
       "blocked"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "029",
@@ -540,7 +596,9 @@
       "architecture"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "030",
@@ -556,7 +614,9 @@
       "llm"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "031",
@@ -571,7 +631,9 @@
       "workflow"
     ],
     "contradictions": [],
-    "resolved_by": "015"
+    "resolved_by": "015",
+    "status": "active",
+    "category": ""
   },
   {
     "id": "032",
@@ -586,7 +648,9 @@
       "architecture"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "033",
@@ -603,7 +667,9 @@
       "git"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "034",
@@ -622,7 +688,9 @@
       "tracing"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "035",
@@ -642,7 +710,9 @@
       "logging"
     ],
     "contradictions": [],
-    "resolved_by": "007"
+    "resolved_by": "007",
+    "status": "active",
+    "category": ""
   },
   {
     "id": "036",
@@ -664,7 +734,9 @@
       "defense-in-depth"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "037",
@@ -687,7 +759,9 @@
       "input-validation"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "038",
@@ -709,7 +783,9 @@
       "aes-encryption"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "039",
@@ -737,7 +813,9 @@
       "security-gate"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "040",
@@ -759,7 +837,9 @@
       "write-safety"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "041",
@@ -783,7 +863,9 @@
       "observability-security"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "042",
@@ -806,7 +888,9 @@
       "auditability"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "044",
@@ -825,7 +909,9 @@
       "specificity"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "045",
@@ -844,7 +930,9 @@
       "path-handling"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "046",
@@ -866,7 +954,9 @@
       "dry"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "047",
@@ -885,7 +975,9 @@
       "PII"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "048",
@@ -905,7 +997,9 @@
       "opt-out"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "049",
@@ -926,7 +1020,9 @@
       "instrumentation-visibility"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "050",
@@ -949,7 +1045,9 @@
       "metadata"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "051",
@@ -969,7 +1067,9 @@
       "collision-guard"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "052",
@@ -990,7 +1090,9 @@
       "interrupted-runs"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "053",
@@ -1011,7 +1113,9 @@
       "labeling"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "054",
@@ -1031,7 +1135,9 @@
       "staleness"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "055",
@@ -1052,7 +1158,9 @@
       "reasoning-models"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "056",
@@ -1070,7 +1178,9 @@
       "audit"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "057",
@@ -1088,7 +1198,9 @@
       "observability"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "058",
@@ -1109,7 +1221,9 @@
       "testing"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "059",
@@ -1127,7 +1241,9 @@
       "pytest"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "060",
@@ -1153,7 +1269,9 @@
       "traces"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "061",
@@ -1172,7 +1290,9 @@
       "refactor"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "062",
@@ -1189,7 +1309,9 @@
       "dry"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "063",
@@ -1209,7 +1331,9 @@
       "dry"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "064",
@@ -1226,7 +1350,9 @@
       "shutdown"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "065",
@@ -1244,7 +1370,9 @@
       "production"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "066",
@@ -1261,7 +1389,9 @@
       "secrets"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "067",
@@ -1277,7 +1407,9 @@
       "blockers"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "068",
@@ -1299,7 +1431,9 @@
       "blocking"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "069",
@@ -1321,7 +1455,9 @@
       "scope"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "070",
@@ -1339,7 +1475,9 @@
       "accuracy"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "071",
@@ -1360,7 +1498,9 @@
       "observer-effect"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "072",
@@ -1381,7 +1521,9 @@
       "architecture"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "073",
@@ -1403,7 +1545,9 @@
       "gating"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "074",
@@ -1424,7 +1568,9 @@
       "blocking"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "075",
@@ -1443,7 +1589,9 @@
       "i18n"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "076",
@@ -1466,7 +1614,9 @@
       "regression-gate"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "077",
@@ -1488,7 +1638,9 @@
       "tool-loop"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "078",
@@ -1510,13 +1662,14 @@
       "plan-mode",
       "context"
     ],
-    "status": "accepted",
+    "status": "active",
     "created_at": "2026-08-24T10:43:00.306892+00:00",
     "related_decisions": [
       "077",
       "035"
     ],
-    "date": "2026-08-24T10:43:00.306892+00:00"
+    "date": "2026-08-24T10:43:00.306892+00:00",
+    "category": ""
   },
   {
     "id": "079",
@@ -1540,7 +1693,9 @@
       "audit"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "080",
@@ -1564,7 +1719,9 @@
     "resolved_by": null,
     "meta_warnings": [
       "Repeats unverified claim reference: plan_proposed.md"
-    ]
+    ],
+    "status": "active",
+    "category": ""
   },
   {
     "id": "081",
@@ -1587,7 +1744,9 @@
       "tool-dispatch"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "082",
@@ -1611,7 +1770,9 @@
     "resolved_by": null,
     "meta_warnings": [
       "Repeats unverified claim reference: .plans.json"
-    ]
+    ],
+    "status": "active",
+    "category": ""
   },
   {
     "id": "083",
@@ -1635,7 +1796,9 @@
     "resolved_by": null,
     "meta_warnings": [
       "Repeats unverified claim reference: decisions.json"
-    ]
+    ],
+    "status": "active",
+    "category": ""
   },
   {
     "id": "084",
@@ -1659,7 +1822,9 @@
     "meta_warnings": [
       "Affected file does not exist in workspace: .plans.json",
       "Repeats unverified claim reference: .plans.json"
-    ]
+    ],
+    "status": "active",
+    "category": ""
   },
   {
     "id": "085",
@@ -1680,7 +1845,9 @@
       "safety"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "086",
@@ -1705,7 +1872,9 @@
     "resolved_by": null,
     "meta_warnings": [
       "Repeats unverified claim reference: plan_executed_...md"
-    ]
+    ],
+    "status": "active",
+    "category": ""
   },
   {
     "id": "087",
@@ -1730,7 +1899,9 @@
     "meta_warnings": [
       "Repeats unverified claim reference: plan_executed_...md",
       "Repeats unverified claim reference: plan_proposed.md"
-    ]
+    ],
+    "status": "active",
+    "category": ""
   },
   {
     "id": "088",
@@ -1754,7 +1925,9 @@
     "resolved_by": null,
     "meta_warnings": [
       "Repeats unverified claim reference: .plans.json"
-    ]
+    ],
+    "status": "active",
+    "category": ""
   },
   {
     "id": "089",
@@ -1770,7 +1943,9 @@
       "plan-lifecycle"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "090",
@@ -1787,7 +1962,9 @@
       "append-only"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "091",
@@ -1805,7 +1982,9 @@
       "defense-in-depth"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "092",
@@ -1822,7 +2001,9 @@
       "type-safety"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "093",
@@ -1839,7 +2020,9 @@
       "structured-content"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "094",
@@ -1855,7 +2038,9 @@
       "testability"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "095",
@@ -1874,7 +2059,9 @@
       "blocked"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "096",
@@ -1895,7 +2082,9 @@
       "plan-mode"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "097",
@@ -1915,7 +2104,9 @@
       "bypass"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "098",
@@ -1934,7 +2125,9 @@
       "path-traversal"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "099",
@@ -1952,7 +2145,9 @@
       "signal-handling"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "100",
@@ -1969,7 +2164,9 @@
       "forbidden-patterns"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "101",
@@ -1988,7 +2185,9 @@
       "imports"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "102",
@@ -2006,7 +2205,9 @@
       "JSON-parsing"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "103",
@@ -2026,7 +2227,9 @@
       "concurrency"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "104",
@@ -2046,7 +2249,9 @@
       "NLP-tools"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "105",
@@ -2069,7 +2274,9 @@
     "resolved_by": null,
     "meta_warnings": [
       "Negative existence claim without a file reference — cannot be verified against the workspace."
-    ]
+    ],
+    "status": "active",
+    "category": ""
   },
   {
     "id": "106",
@@ -2091,7 +2298,9 @@
     "resolved_by": null,
     "meta_warnings": [
       "Repeats unverified claim reference: EXDEV"
-    ]
+    ],
+    "status": "active",
+    "category": ""
   },
   {
     "id": "107",
@@ -2103,7 +2312,9 @@
     "affected_files": [],
     "tags": [],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "108",
@@ -2121,7 +2332,9 @@
       "planning"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "109",
@@ -2140,7 +2353,9 @@
       "production"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "110",
@@ -2158,7 +2373,9 @@
       "dry"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "111",
@@ -2176,7 +2393,9 @@
       "python-3.12"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "112",
@@ -2194,7 +2413,9 @@
       "production"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "113",
@@ -2214,7 +2435,9 @@
       "process"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   },
   {
     "id": "114",
@@ -2245,6 +2468,31 @@
       "testing"
     ],
     "contradictions": [],
-    "resolved_by": null
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
+  },
+  {
+    "id": "115",
+    "date": "2026-10-08T13:31:22+00:00",
+    "title": "score_run must credit guard-terminated runs that delivered their answer",
+    "context": "evolution_metrics.score_run based the score purely on loop_end.outcome (1.0 only for 'completed', 0.0 otherwise), but the diagnose path (TraceGraph.has_final_answer) already treated a guard-terminated run that still emitted a substantive final answer as having DELIVERED the task. The two paths disagreed, so a delivered answer was scored 0.0. Measured on the live corpus: 117 runs (89 stuck, 26 budget_exhausted, 2 no_progress) were mis-scored 0.0 while carrying an answer the user actually received. Each of those 0.0s also dragged the sliding-window quality average down and flipped should_evolve to true on evidence that the runs had in fact succeeded.",
+    "decision": "score_run bases at DEFAULT_DELIVERED_BASE (0.9) when loop_end.outcome is in DELIVERED_OUTCOMES (stuck, budget_exhausted, no_progress) AND the run delivered a substantive final answer, i.e. the LAST llm_response 'text' is at least MIN_FINAL_ANSWER_CHARS (80) long; 1.0 for 'completed'; 0.0 for a genuine 'error', an interrupted run with no loop_end, or a guard stop with no answer. The 80-char threshold is now a single constant, harnessfix.htir.MIN_FINAL_ANSWER_CHARS, imported lazily by evolution_metrics._has_substantive_final_answer so the diagnose and scoring paths cannot drift apart. Latency penalty is unchanged and still subtracted on top; the result stays clamped to [0, 1]. Tests: tests/unit/test_harnessfix_evolution_metrics.py (TestDeliveredGuardTerminatedRuns, TestFinalAnswerThresholdIsSharedWithHtir, TestDeliveredRunsInTheQualityWindow).",
+    "rationale": "A guard stops the LOOP, not the answer: the runner forces a synthesis response before a guard terminates, so outcome alone is the wrong signal for 'did this run do the task?'. Delivered base 0.9 (not 1.0) keeps the guards firing visible as an evolution signal while no longer reporting a delivered task as a total failure; 'error' is deliberately excluded because a provider/transport failure is a real failure even if some text was produced, and only the LAST llm_response counts because that is the text the user received. Verified: the 10 new behaviour tests fail without the fix (stash/red-green) and all 36 pass with it; 71 adjacent htir/dashboard/diagnose/loop/wiring tests stay green; live CLI --quality windowed_average moved 0.6047 -> 0.6783 (still should_evolve=true, so the repair signal survives).",
+    "affected_files": [
+      "harnessfix/evolution_metrics.py",
+      "harnessfix/htir.py",
+      "tests/unit/test_harnessfix_evolution_metrics.py"
+    ],
+    "tags": [
+      "scoring",
+      "verification-gate",
+      "evolution-metrics",
+      "guards"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "quality"
   }
 ]
