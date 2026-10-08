@@ -273,6 +273,16 @@ def _apply_card_create(payload: dict[str, Any]) -> bool:
         autonomy_level=1,  # Kanban cards default to auto-safe
     )
 
+    # Persist the issue before recording the mapping.  ``make_issue`` only
+    # *builds* the dict — it does not write the ledger (the repo-scan collector
+    # does the upsert).  Linking without saving left a phantom pair in the id
+    # map: later card_update/card_move messages resolved to an issue id that
+    # existed nowhere, so every follow-up logged "no matching issue" and the
+    # card could never be updated or resolved.
+    issues = issue_store.load_issues()
+    if issue_store.upsert(issues, issue):
+        issue_store.save_issues(issues)
+
     # Record the ID mapping
     card_id = payload.get("id", "")
     if card_id:
@@ -326,6 +336,23 @@ def _apply_card_update(payload: dict[str, Any]) -> bool:
     return True
 
 
+def _resolve_frame_status(payload: dict[str, Any]) -> str:
+    """Map a card_move payload to an issue status.
+
+    The Kanban side sends the column *title* ("Finished") alongside the opaque
+    frame id.  ``FRAME_TO_STATUS`` is keyed by title, so resolving the id alone
+    could never hit: every move fell back to "open", silently rewriting a
+    resolved issue back to open.  The id is still accepted for messages that
+    were enqueued before the title was added.
+    """
+    inner = payload.get("payload", payload) or {}
+    for key in ("frame_title", "frame_id"):
+        value = inner.get(key, "")
+        if value and value in FRAME_TO_STATUS:
+            return FRAME_TO_STATUS[value]
+    return "open"
+
+
 def _apply_card_move(payload: dict[str, Any]) -> bool:
     """Move a Kanban card → update Agent1 issue status."""
     from . import issues as issue_store  # lazy import
@@ -337,8 +364,7 @@ def _apply_card_move(payload: dict[str, Any]) -> bool:
         return False
 
     issue_id = resolve_id(source_id, mapping) or source_id
-    frame_id = payload.get("payload", {}).get("frame_id", "")
-    status = FRAME_TO_STATUS.get(frame_id, "open")
+    status = _resolve_frame_status(payload)
 
     issues = issue_store.load_issues()
     existing = issue_store.find_by_id(issues, issue_id)
@@ -401,12 +427,47 @@ def _process_single_message(msg: dict[str, Any]) -> bool:
         return False
 
 
+def _quarantine_malformed(
+    queue_dir: Path, idx: int, line: str, exc: Exception
+) -> None:
+    """Preserve an unparseable queue line instead of losing it to the log.
+
+    A line that is not JSON can never be retried into success, so re-reading it
+    forever is pointless — but silently dropping it destroys the only copy of
+    whatever the sender wrote.  Quarantining satisfies both: the offset moves
+    past the bad line and the raw bytes survive for inspection.
+    """
+    try:
+        dl_dir = _dead_letter_dir(queue_dir)
+        dl_dir.mkdir(parents=True, exist_ok=True)
+        dl_file = dl_dir / f"malformed_line_{idx}.jsonl"
+        dl_file.write_text(
+            json.dumps(
+                {"seq": idx + 1, "error": str(exc), "raw": line},
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        logger.error(
+            "Quarantined malformed JSON from queue line %d to %s: %s",
+            idx, dl_file, exc,
+        )
+    except OSError as write_exc:  # noqa: BLE001 — never break the read loop
+        logger.error(
+            "Could not quarantine malformed queue line %d (%s); line dropped",
+            idx, write_exc,
+        )
+
+
 def read_queue(queue_dir: Path) -> tuple[list[dict[str, Any]], int]:
     """Read new lines from the queue's messages.jsonl starting at offset.txt.
 
-    Returns (new_messages, next_offset).  Messages with invalid JSON are
-    logged but NOT skipped — their line stays in the file so they can be
-    retried on the next poll.
+    Returns (new_messages, next_offset).  A line with invalid JSON can never
+    be retried into success, so it is quarantined to the dead-letter
+    directory and the offset advances past it.  Re-reading it forever was
+    the old behaviour: one bad byte re-logged an error on every poll for
+    the life of the queue, and the bytes were lost to nothing but the log.
     """
     queue_dir = queue_dir.resolve()
     msg_file = queue_dir / "messages.jsonl"
@@ -444,7 +505,7 @@ def read_queue(queue_dir: Path) -> tuple[list[dict[str, Any]], int]:
             msg = json.loads(line)
             new_messages.append(msg)
         except json.JSONDecodeError as exc:
-            logger.warning("Skipping malformed JSON in queue at line %d: %s", idx, exc)
+            _quarantine_malformed(queue_dir, idx, line, exc)
 
     return new_messages, next_offset
 
@@ -502,6 +563,7 @@ def process_inbound(queue_dir: Path | None = None) -> int:
         queue_dir = QUEUE_KANBAN_TO_AGENT1
 
     queue_dir = queue_dir.resolve()
+    current_offset = _read_int(queue_dir / "offset.txt")
     new_messages, next_offset = read_queue(queue_dir)
     applied = 0
 
@@ -521,7 +583,12 @@ def process_inbound(queue_dir: Path | None = None) -> int:
             logger.exception("Failed processing op=%s: %r", op, msg)
             _record_failure(queue_dir, msg)
 
-    if new_messages:
+    # Advance whenever the cursor actually needs to move — not merely when a
+    # *parsed* message was seen.  A queue holding only a malformed line returns
+    # no messages but a higher next_offset; guarding on `new_messages` left the
+    # cursor at 0, so that unparseable line was re-read (and re-quarantined) on
+    # every poll for the life of the queue.
+    if next_offset > current_offset:
         advance_offset(queue_dir, next_offset)
         logger.info(
             "Processed %d/%d messages from %s (offset now %d)",

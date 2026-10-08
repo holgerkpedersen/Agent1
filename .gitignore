@@ -155,6 +155,10 @@ reports/models.json
 
 # Runtime state written by the agent during normal use — never source.
 checkpoints/
+# Kanban sync queues / id map / uploads. KANBAN_WORKING_DIR defaults to the
+# sibling Kanban checkout's data/, but a local override (or an older default)
+# can create one here; queue state is machine-local and never source.
+data/
 pytest_out.txt
 performance_dashboard.html
 model.json

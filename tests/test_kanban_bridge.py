@@ -480,3 +480,66 @@ class TestDeadLettering:
         )
         assert kb.process_inbound(qdir) == 1
         assert applied_ops == ["bad_op", "good_op"], "good message must still be reached"
+
+
+class TestMalformedQueueLines:
+    """An unparseable line must be quarantined, not dropped and not re-read.
+
+    ``read_queue`` used to log a warning and move on while the caller advanced
+    the offset past the line, so the only copy of whatever the sender wrote was
+    lost to a log message.  Worse, when the malformed line was the *only*
+    content, ``process_inbound`` guarded the offset update behind
+    ``if new_messages:`` — which is empty in that case — so the cursor never
+    moved and the bad line was re-read and re-logged on every poll forever.
+    """
+
+    def _queue_with(self, qdir: Path, lines: list[str]) -> Path:
+        qdir.mkdir(parents=True, exist_ok=True)
+        (qdir / "messages.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return qdir
+
+    def test_malformed_only_queue_quarantines_and_advances(self, tmp_path, monkeypatch):
+        import harnessfix.kanban_bridge as kb
+        monkeypatch.setattr(kb, "DEAD_LETTER_DIR", tmp_path / "dead-letter")
+
+        qdir = self._queue_with(tmp_path / "q", ["{not json"])
+        assert kb.process_inbound(qdir) == 0
+
+        # The cursor must move even though nothing parsed, or this line is
+        # re-read (and re-quarantined) on every single poll.
+        assert int((qdir / "offset.txt").read_text(encoding="utf-8")) == 1
+
+        dead = list((tmp_path / "dead-letter").glob("malformed_line_*.jsonl"))
+        assert len(dead) == 1, f"malformed line must be preserved, got {dead}"
+        record = json.loads(dead[0].read_text(encoding="utf-8").splitlines()[0])
+        assert record["raw"] == "{not json"
+        assert record["seq"] == 1
+
+    def test_malformed_line_is_not_silently_dropped(self, tmp_path, monkeypatch):
+        """A good line must not carry the offset past an unparseable one."""
+        import harnessfix.kanban_bridge as kb
+        monkeypatch.setattr(kb, "DEAD_LETTER_DIR", tmp_path / "dead-letter")
+
+        good = '{"seq": 1, "op": "card_update", "source_id": "c1", "payload": {}}'
+        qdir = self._queue_with(tmp_path / "q", [good, "{not json"])
+        kb.process_inbound(qdir)
+
+        dead = list((tmp_path / "dead-letter").glob("malformed_line_*.jsonl"))
+        assert len(dead) == 1, "the bad line must be quarantined, not discarded"
+        assert json.loads(
+            dead[0].read_text(encoding="utf-8").splitlines()[0]
+        )["raw"] == "{not json"
+
+    def test_malformed_line_is_read_once(self, tmp_path, monkeypatch):
+        import harnessfix.kanban_bridge as kb
+        monkeypatch.setattr(kb, "DEAD_LETTER_DIR", tmp_path / "dead-letter")
+
+        qdir = self._queue_with(tmp_path / "q", ["{not json"])
+        kb.process_inbound(qdir)
+        kb.process_inbound(qdir)
+        kb.process_inbound(qdir)
+
+        dead = list((tmp_path / "dead-letter").glob("malformed_line_*.jsonl"))
+        assert len(dead) == 1, (
+            f"a quarantined line must not be re-processed on later polls: {dead}"
+        )

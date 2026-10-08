@@ -136,3 +136,60 @@ def test_round_trip_produces_no_dead_letters(shared_queue, tmp_path, monkeypatch
     dead_dir = shared_queue / "dead-letter"
     dead = list(dead_dir.glob("**/*")) if dead_dir.exists() else []
     assert dead == [], f"unexpected dead letters: {dead}"
+
+
+def test_card_create_persists_the_issue_it_maps(
+    shared_queue, tmp_path, monkeypatch
+):
+    """An inbound card must land in the ledger, not just in the id map.
+
+    ``issues.make_issue()`` only builds the dict; the repo-scan collector does
+    the ``upsert``.  ``_apply_card_create`` used to link the card to that
+    unsaved issue, leaving a phantom mapping: every later card_update/move
+    resolved to an id present nowhere and logged "no matching issue".
+    """
+    _, card_id, _ = _app_with_card(monkeypatch, tmp_path)
+
+    assert kb.process_inbound() == 1
+    issue_id = kb.resolve_id(card_id)
+    assert issue_id, "card must be mapped to the issue it created"
+
+    ledger = issue_store.load_issues()
+    assert issue_store.find_by_id(ledger, issue_id) is not None, (
+        f"id map claims {issue_id} <-> {card_id} but the issue is absent "
+        f"from the ledger ({len(ledger)} entries)"
+    )
+
+
+def test_move_to_finished_resolves_the_issue(
+    shared_queue, tmp_path, monkeypatch
+):
+    """Moving a card to the "Finished" column must resolve its issue.
+
+    The Kanban side sends an opaque frame *id*; ``FRAME_TO_STATUS`` is keyed by
+    the column *title*, so resolving the id alone never hit and every move fell
+    back to "open" — silently reopening resolved issues.
+    """
+    store, card_id, client = _app_with_card(monkeypatch, tmp_path)
+
+    assert kb.process_inbound() == 1
+    issue_id = kb.resolve_id(card_id)
+    assert issue_id
+
+    finished = Frame(id=uuid.uuid4().hex, title="Finished")
+    store.add_frame(finished)
+
+    resp = client.post(
+        f"/api/cards/{card_id}/move",
+        json={"frame_id": finished.id},
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+
+    assert kb.process_inbound() == 1
+    issue = issue_store.find_by_id(issue_store.load_issues(), issue_id)
+    assert issue is not None
+    assert issue["status"] == "resolved", (
+        f"move to Finished left status={issue['status']!r} (expected 'resolved')"
+    )
+    assert issue["resolved_at"], "a resolved issue must carry resolved_at"
