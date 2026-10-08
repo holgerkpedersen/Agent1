@@ -8,11 +8,15 @@ the filesystem survives.
 
 Usage::
 
-    KANBAN_SYNC_ENABLED=1 python harnessfix/issue_loop.py   # auto-process on boot
+    KANBAN_SYNC_ENABLED=1 python agent.py        # auto-process on boot
+
+``agent.py`` calls :func:`start_inbound_processor` at startup when
+``KANBAN_SYNC_ENABLED=1``, so the REPL process both enqueues outbound
+messages and drains the inbound queue.
 
 or manually::
 
-    python -m harnessfix.kanban_bridge --process            # one-shot poll
+    python -m harnessfix.kanban_bridge --process-in         # one-shot poll
 
 Queue layout (one directory SHARED with the Kanban app, so both processes see
 the same files)::
@@ -35,6 +39,7 @@ Message format (one JSON object per line)::
 """
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import os
@@ -637,6 +642,61 @@ class QueueProcessor:
         self._stop_event.set()
 
 
+# --- Boot integration ----------------------------------------------------------
+
+# One processor per process, mirroring the Kanban side's module-level
+# ``_SYNC_HANDLES`` sentinel.  Every extra poller on the same queue directory
+# widens the window where an interpreter exit lands ``messages.jsonl``
+# mid-append, and the reader then advances past the torn line.  The sentinel
+# starts as ``[]`` ("no processor yet") and is falsy, so a truthiness test —
+# not ``is None`` — is what lets the first sync-enabled boot win.
+_BOOT_HANDLES: list["QueueProcessor"] = []
+
+
+def start_inbound_processor(
+    queue_dir: Path | None = None, poll_interval: float = 5.0,
+) -> "QueueProcessor | None":
+    """Start the inbound poller on a daemon thread; return it (None if reused).
+
+    This is the production boot path for Kanban → Agent1 messages.  Without a
+    caller, ``QueueProcessor`` was constructed nowhere outside tests: Agent1
+    enqueued ``issue_create``/``issue_resolve`` outbound while every inbound
+    card move/update/delete sat unread in ``queue-kanban-to-agent1`` forever.
+    That is the half-wired state this function closes.
+
+    Gated on ``KANBAN_SYNC_ENABLED=1`` and idempotent per process.  Sync
+    failure is swallowed (logged, not raised): a broken queue must never
+    prevent the agent from booting.
+    """
+    if os.environ.get("KANBAN_SYNC_ENABLED", "0") != "1":
+        return None
+    if _BOOT_HANDLES:
+        # Reuse the process's first processor — the poller is queue-dir based
+        # and stateless between polls, so a second one adds nothing but a
+        # wider mid-append kill window on the same files.
+        logger.debug("Reusing the process's inbound Kanban processor")
+        return None
+    try:
+        proc = QueueProcessor(queue_dir=queue_dir, poll_interval=poll_interval)
+        # Registered before start() so a failure to spawn the thread still
+        # leaves stop() reachable; stop() is idempotent and only sets a flag.
+        atexit.register(proc.stop)
+        threading.Thread(
+            target=proc.run_forever, name="kanban-inbound", daemon=True,
+        ).start()
+        _BOOT_HANDLES.append(proc)
+        logger.info("Kanban inbound processor started (queue=%s)", proc.queue_dir)
+        return proc
+    except Exception as exc:  # noqa: BLE001 — never crash boot on sync failure
+        logger.error("Failed to start Kanban inbound processor: %s", exc)
+        return None
+
+
+def inbound_processor_running() -> bool:
+    """True when this process already owns a started inbound processor."""
+    return bool(_BOOT_HANDLES)
+
+
 # --- CLI entry point -----------------------------------------------------------
 
 def main() -> int:
@@ -645,6 +705,11 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Process Kanban sync queues")
     parser.add_argument("--process-in", action="store_true", help="Process inbound (Kanban -> Agent1)")
+    # Documented as ``--process`` in this module's docstring for a long time;
+    # kept as a hidden alias so the old invocation in operator notes still
+    # works instead of exiting with "unrecognized arguments".
+    parser.add_argument("--process", dest="process_in", action="store_true",
+                        help=argparse.SUPPRESS)
     parser.add_argument("--queue-dir", type=str, help="Queue directory to process")
     args = parser.parse_args()
 

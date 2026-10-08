@@ -5185,8 +5185,32 @@ async def run_interactive() -> None:
             break
 
 
+def _start_kanban_inbound() -> None:
+    """Start the Kanban → Agent1 inbound poller for this process, if enabled.
+
+    Best-effort by contract: the import is lazy (harnessfix is optional for
+    some entry points) and every failure is logged rather than raised, because
+    an optional integration must never stop the agent from starting.
+    """
+    try:
+        from harnessfix.kanban_bridge import start_inbound_processor
+    except ImportError as exc:  # pragma: no cover - harnessfix always present
+        logger.warning("Kanban sync unavailable (import failed): %s", exc)
+        return
+    try:
+        start_inbound_processor()
+    except Exception as exc:  # noqa: BLE001 - never crash boot on sync failure
+        logger.error("Kanban inbound processor failed to start: %s", exc)
+
+
 async def main() -> None:
     """Main entry point - runs interactive mode or the web dashboard."""
+    # Start the Kanban inbound poller before any mode branches: Agent1's
+    # outbound producers (issues.make_issue/resolve) only run inside this
+    # process, so this is where the reply queue must be drained.  Gated on
+    # KANBAN_SYNC_ENABLED=1 and idempotent per process; a sync failure is
+    # logged and never blocks boot.
+    _start_kanban_inbound()
     if "--serve" in sys.argv:
         # run_dashboard_server() is synchronous (ThreadingHTTPServer.serve_forever);
         # awaiting it raised "object NoneType can't be used in 'await' expression".
