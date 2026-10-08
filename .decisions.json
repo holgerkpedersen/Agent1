@@ -2494,5 +2494,28 @@
     "resolved_by": null,
     "status": "active",
     "category": "quality"
+  },
+  {
+    "id": "116",
+    "date": "2026-10-08T14:08:43+00:00",
+    "title": "The NLP run tool must pin UTF-8 on its subprocess.Popen child",
+    "context": "decision #114 required every subprocess call with text=True to pin encoding='utf-8', errors='replace', and added tests/test_subprocess_utf8_encoding.py to enforce it. But the source-level guard matched only `subprocess.run(` — the NLP `run` tool (agent.py `_nlp_run`) spawns the shell via subprocess.Popen, so that call site was never covered and still passed text=True with no encoding. It is the highest-traffic child call in the system: every command the agent runs goes through it. On this machine (locale.getpreferredencoding() == 'cp1252') a command emitting UTF-8 (CJK, emoji, git output) came back as mojibake ('中' -> 'ä¸\\xad') or raised UnicodeDecodeError out of communicate().",
+    "decision": "agent.py `_nlp_run` passes encoding='utf-8', errors='replace' to its subprocess.Popen(text=True). The guard in tests/test_subprocess_utf8_encoding.py was widened from the literal `subprocess.run(` to a regex over ENTRY_POINTS = (run, Popen, check_output, call), so any future text=True child call is caught regardless of entry point. Two behavioural tests (TestNlpRunEncoding) drive the REAL Agent._nlp_run with a child script that writes raw UTF-8 bytes to stdout.buffer.",
+    "rationale": "The invariant in #114 is about text=True child calls, not about subprocess.run specifically — Popen is the same decode path (_readerthread -> locale codec). Widening the guard rather than patching the one site means the class of bug cannot return through Popen. Verified by mutation: with the encoding pin removed, all three tests fail (mojibake 'ä¸\\xad', a real UnicodeDecodeError on byte 0x81, and the source guard flagging agent.py), and all 6 pass with it restored; 32 adjacent run/shell-policy tests stay green.",
+    "affected_files": [
+      "agent.py",
+      "tests/test_subprocess_utf8_encoding.py"
+    ],
+    "tags": [
+      "encoding",
+      "windows",
+      "subprocess",
+      "run-tool",
+      "verification-gate"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "correctness"
   }
 ]

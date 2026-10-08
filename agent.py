@@ -1580,6 +1580,13 @@ class Agent:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                # Pin UTF-8 explicitly: without it the child's stdout/stderr
+                # are decoded with the locale codepage (cp1252 on Windows), so
+                # a command emitting UTF-8 (CJK, emoji, git output) comes back
+                # as mojibake or raises UnicodeDecodeError out of communicate()
+                # (decision #114 — every text=True child call must pin this).
+                encoding="utf-8",
+                errors="replace",
                 cwd=self._effective_ws_dir(),
                 creationflags=creationflags,
             )

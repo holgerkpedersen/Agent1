@@ -134,6 +134,58 @@ class TestRunCappedEncoding:
         assert "中" in r.stdout
 
 
+class TestNlpRunEncoding:
+    """The NLP ``run`` tool spawns the shell via subprocess.Popen(text=True).
+
+    That call site is the one the user actually hits (every command the
+    agent runs goes through it), so it gets a behavioural test against the
+    REAL ``Agent._nlp_run``, not just the source-level guard.
+    """
+
+    def test_utf8_child_output_not_mojibaked(self, tmp_path: Path) -> None:
+        from agent import Agent
+
+        # A child script that writes UTF-8 bytes straight to its stdout
+        # buffer, so the bytes on the pipe are UTF-8 regardless of the
+        # parent's locale.  A file (not ``python -c``) is used because the
+        # command runs through the shell, where newlines/quotes would be
+        # re-parsed by cmd.exe.
+        script = tmp_path / "_utf8_child.py"
+        script.write_text(
+            "import sys\n"
+            "sys.stdout.buffer.write('中'.encode('utf-8'))\n"
+            "sys.stdout.buffer.flush()\n",
+            encoding="utf-8",
+        )
+        bot = Agent(workspace=str(tmp_path))
+        cmd = f'"{sys.executable}" "{script}"'
+        out = asyncio.run(bot._nlp_run({"command": cmd}))
+
+        assert "中" in out, f"UTF-8 output mangled by the locale decode: {out!r}"
+        assert MOJIBAKE_MARK not in out
+
+    def test_invalid_byte_does_not_crash_the_run_tool(self, tmp_path: Path) -> None:
+        from agent import Agent
+
+        script = tmp_path / "_badbyte_child.py"
+        script.write_text(
+            "import sys\n"
+            f"sys.stdout.buffer.write({BAD_BYTES!r})\n"
+            "sys.stdout.buffer.flush()\n",
+            encoding="utf-8",
+        )
+        bot = Agent(workspace=str(tmp_path))
+        cmd = f'"{sys.executable}" "{script}"'
+        # Without the encoding pin, communicate() raises UnicodeDecodeError
+        # on a cp1252 locale and _nlp_run returns "Error: ..." instead of the
+        # command's real output.
+        out = asyncio.run(bot._nlp_run({"command": cmd}))
+
+        assert not out.startswith("Error:"), out
+        assert "中" in out
+        assert "[EXIT CODE" not in out
+
+
 class TestProposalGitEncoding:
     def test_non_ascii_output_returned_not_error(
         self, fake_git: Path, tmp_path: Path
@@ -165,11 +217,21 @@ class TestAllTextTrueCallsPinUtf8:
         "tests", "benchmark", "dashboard", ".docs", "skills", "harnessfix_selftest",
     }
 
+    #: Every subprocess entry point that accepts ``text=True`` and would
+    #: therefore decode child output with the locale codepage when no
+    #: explicit ``encoding=`` is given.  ``Popen`` matters most: the NLP
+    #: ``run`` tool (``agent.py`` ``_nlp_run``) spawns the shell through it,
+    #: so a missing pin there mojibakes/crashes every command the agent runs.
+    ENTRY_POINTS = ("run", "Popen", "check_output", "call")
+
     @staticmethod
     def _subprocess_call_bodies(src: str) -> list[str]:
-        """Text of every subprocess.run(...) argument list (paren-matched)."""
+        """Text of every subprocess entry-point argument list (paren-matched)."""
         bodies: list[str] = []
-        for m in re.finditer(r"subprocess\.run\(", src):
+        pattern = r"subprocess\.(?:" + "|".join(
+            TestAllTextTrueCallsPinUtf8.ENTRY_POINTS
+        ) + r")\("
+        for m in re.finditer(pattern, src):
             depth = 1
             i = m.end()
             while i < len(src) and depth:
