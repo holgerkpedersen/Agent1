@@ -55,6 +55,53 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+#: Repo-root ``.env`` consulted for the sync master switch.  Module-level (not
+#: a constant inlined into the functions) so tests can redirect it and stay
+#: independent of the developer's real ``.env``.
+ENV_FILE_PATH = REPO_ROOT / ".env"
+
+
+def _read_env_file_value(key: str) -> str | None:
+    """Value of *key* in the repo ``.env``, or ``None`` if absent/unreadable.
+
+    Same dialect as the rest of the repo (``agent_core.config._load_env_file``,
+    ``agent._read_env_value``, ``conftest._load_env``): ``#`` comments skipped,
+    surrounding quotes and whitespace stripped.
+    """
+    try:
+        text = ENV_FILE_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        env_key, _, value = stripped.partition("=")
+        if env_key.strip() == key:
+            return value.strip().strip("\"'")
+    return None
+
+
+def sync_enabled() -> bool:
+    """True when Kanban sync is switched on — process env, else the repo ``.env``.
+
+    ``.env.example`` documents ``KANBAN_SYNC_ENABLED`` as an ``.env`` setting
+    and tells the operator to set it to ``1``, but nothing in this repo bridges
+    ``.env`` into ``os.environ`` (``agent_core.config._load_env_file`` returns a
+    dict consumed only inside ``load_agent_settings()``; no module calls
+    ``load_dotenv``/``putenv``/``os.environ.update``).  Reading ``os.environ``
+    alone therefore made the documented master switch silently dead: editing
+    ``.env`` did nothing unless the variable was also exported in the shell.
+
+    Resolved the way every other ``.env`` value in this repo is: an explicit
+    process-env export wins, the file is the fallback.
+    """
+    value = os.environ.get("KANBAN_SYNC_ENABLED")
+    if value is None:
+        value = _read_env_file_value("KANBAN_SYNC_ENABLED")
+    return (value or "").strip() == "1"
+
+
 # The queue root is SHARED with the Kanban app.  Both sides must resolve the
 # same physical directory or messages pile up in two disjoint trees that never
 # meet.  ``KANBAN_WORKING_DIR`` is the single source of truth; the default is
@@ -668,7 +715,7 @@ def start_inbound_processor(
     failure is swallowed (logged, not raised): a broken queue must never
     prevent the agent from booting.
     """
-    if os.environ.get("KANBAN_SYNC_ENABLED", "0") != "1":
+    if not sync_enabled():
         return None
     if _BOOT_HANDLES:
         # Reuse the process's first processor — the poller is queue-dir based

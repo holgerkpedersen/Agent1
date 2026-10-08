@@ -47,16 +47,23 @@ def _get_kanban_bridge():
 
 
 def _should_sync() -> bool:
-    """Check if Kanban sync is enabled via environment variable.
+    """Check if Kanban sync is enabled.
+
+    The master switch is resolved by ``kanban_bridge.sync_enabled()`` (process
+    env first, then the repo ``.env``) rather than by reading ``os.environ``
+    here: ``.env.example`` documents ``KANBAN_SYNC_ENABLED`` as an ``.env``
+    setting, and nothing bridges ``.env`` into ``os.environ``, so an
+    os.environ-only gate made the documented switch silently dead.
 
     Best-effort: any failure while resolving the bridge (e.g. the module is
     missing or a broken install) is treated as "sync disabled" rather than
     propagating — issue creation must never fail because of the sync path.
     """
-    if os.environ.get("KANBAN_SYNC_ENABLED", "0") != "1":
-        return False
     try:
-        return _get_kanban_bridge() is not None
+        bridge = _get_kanban_bridge()
+        if bridge is None:
+            return False
+        return bool(bridge.sync_enabled())
     except Exception:
         return False
 
