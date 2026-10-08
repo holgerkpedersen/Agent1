@@ -249,6 +249,62 @@ Three-line wrapper: reads all stdin until Ctrl+Z, sets `_nlp_workspace`, calls `
 
 ---
 
+## Kanban <-> Agent1 Sync: `harnessfix/kanban_bridge.py`
+
+Disk-backed JSONL sync between the issue ledger and the sibling Kanban app
+(`C:\Dev\Kanban`).  Both sides share ONE queue root, so the layout is defined
+in terms of message DIRECTION, not the owning process.
+
+```
+<KANBAN_WORKING_DIR>/
+    queue-agent1-to-kanban/   <- Agent1 writes, Kanban reads
+    |   messages.jsonl        append-only JSONL, one message per line
+    |   offset.txt            reader cursor (lines already consumed)
+    |   seq.txt               writer counter (next sequence number)
+    |   dead_letters/         quarantined poison + malformed lines
+    queue-kanban-to-agent1/   <- Kanban writes, Agent1 reads
+    .card_id_map.json         shared issue-id <-> card-id mapping
+```
+
+Message format: `{seq, ts, op, source_id, target_ref, payload, retry_count, processed}`. Agent1 emits `op`, `source_id` and `payload`; `seq`, `ts`, `retry_count` and `processed` are added by `enqueue()`; `target_ref` is accepted but not currently emitted by Agent1.
+
+| Op | Producer | Consumer | Effect |
+|----|----------|----------|--------|
+| `issue_create` | `issues.make_issue()` | Kanban | Creates a card in the frame matching the issue status |
+| `issue_update` | `issues.promote()` | Kanban | Updates the card's `autonomy_level` after a promotion |
+| `issue_resolve` | `issues.resolve()` | Kanban | Moves the card to Finished / Won't-fix |
+
+### Key functions
+
+| Function | Purpose |
+|----------|---------|
+| `enqueue()` | Append one message, assigning `seq` from `seq.txt` under a per-queue lock |
+| `read_queue()` | Read lines past `offset.txt`; malformed JSON is quarantined, never dropped |
+| `advance_offset()` | Persist the reader cursor under the per-queue lock |
+| `_record_failure()` | Re-queue a failed message at the tail with `retry_count + 1` |
+| `process_inbound()` | Apply all pending messages; the offset ALWAYS advances |
+| `start_inbound_processor()` | Background poller thread |
+| `run_once()` | Single synchronous drain (used by the `--process-in` CLI path (alias `--process`)) |
+
+### Reliability contract
+
+- **The offset always advances** — including on failure.  A poison message is
+  re-queued at the tail with a higher `retry_count`; it never pins the cursor.
+- **Dead-lettering** — after `MAX_RETRIES` (3) attempts a message is written to
+  `dead_letters/seq_<seq>.jsonl`.  `DEAD_LETTER_DIR` is patchable for tests.
+- **Malformed lines are quarantined** — a line that is not JSON can never be
+  retried into success, so it is copied to `dead_letters/` and the cursor moves
+  past it, rather than being logged and lost.
+- **Sync is best-effort** — `_enqueue_sync()` swallows bridge/disk errors, so a
+  broken sync path can never abort issue create / promote / resolve.
+
+### Entry point
+
+`agent.py` → `_start_kanban_inbound()` (around `agent.py:5188`) starts the
+poller when `KANBAN_SYNC_ENABLED=1`.
+
+---
+
 ## NLP Flow Summary
 
 ```

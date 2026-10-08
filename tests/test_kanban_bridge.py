@@ -297,6 +297,74 @@ class TestMakeIssueSync:
             call_args = mock_enqueue.call_args[0][0]
             assert call_args["op"] == "issue_resolve"
 
+    def test_promote_enqueues_issue_update(self):
+        """promote() must push the new autonomy_level to Kanban.
+
+        Pre-fix ``promote()`` mutated ``autonomy_level`` and returned without
+        enqueueing, so the card kept showing the level it had at creation time
+        and a promoted issue looked un-promoted on the board.  Kanban already
+        implements the ``issue_update`` handler, so the op was dead code from
+        this side.
+        """
+        import harnessfix.kanban_bridge as kb
+        with patch.dict(os.environ, {"KANBAN_SYNC_ENABLED": "1"}), \
+             patch.object(kb, 'enqueue') as mock_enqueue, \
+             patch('harnessfix.issues._get_kanban_bridge', return_value=kb):
+            from harnessfix import issues as issue_store
+            issues = [issue_store.make_issue("test", "Test", ["f.py"])]
+            mock_enqueue.reset_mock()
+
+            ok, _msg = issue_store.promote(issues, issues[0]["id"], 2)
+
+            assert ok is True
+            assert mock_enqueue.called, "promote() must enqueue an issue_update"
+            payload = mock_enqueue.call_args[0][0]
+            assert payload["op"] == "issue_update"
+            assert payload["source_id"] == issues[0]["id"]
+            assert payload["payload"]["autonomy_level"] == 2
+
+    def test_promote_invalid_level_does_not_enqueue(self):
+        """An out-of-range level must be rejected before any sync side-effect."""
+        import harnessfix.kanban_bridge as kb
+        with patch.dict(os.environ, {"KANBAN_SYNC_ENABLED": "1"}), \
+             patch.object(kb, 'enqueue') as mock_enqueue:
+            from harnessfix import issues as issue_store
+            issues = [issue_store.make_issue("test", "Test", ["f.py"])]
+            mock_enqueue.reset_mock()
+
+            ok, msg = issue_store.promote(issues, issues[0]["id"], 99)
+
+            assert ok is False
+            assert "invalid autonomy_level" in msg
+            assert not mock_enqueue.called
+            assert issues[0]["autonomy_level"] == issue_store.DEFAULT_AUTONOMY_LEVEL
+
+    def test_promote_no_op_when_sync_disabled(self):
+        """Sync off -> promote() still works and enqueues nothing."""
+        import harnessfix.kanban_bridge as kb
+        with patch.dict(os.environ, {"KANBAN_SYNC_ENABLED": "0"}, clear=False), \
+             patch.object(kb, 'enqueue') as mock_enqueue:
+            from harnessfix import issues as issue_store
+            issues = [issue_store.make_issue("test", "Test", ["f.py"])]
+            mock_enqueue.reset_mock()
+
+            ok, _msg = issue_store.promote(issues, issues[0]["id"], 2)
+
+            assert ok is True
+            assert not mock_enqueue.called
+            assert issues[0]["autonomy_level"] == 2
+
+    def test_promote_survives_enqueue_raising(self):
+        """A broken bridge must not abort the promotion itself."""
+        with patch.dict(os.environ, {"KANBAN_SYNC_ENABLED": "1"}), \
+             patch('harnessfix.issues._get_kanban_bridge') as mock_get:
+            mock_get.return_value.enqueue.side_effect = OSError("disk full")
+            from harnessfix import issues as issue_store
+            issue = issue_store.make_issue("test", "T", ["f.py:1"])
+            ok, _msg = issue_store.promote([issue], issue["id"], 2)
+            assert ok is True
+            assert issue["autonomy_level"] == 2
+
 
 # ---------------------------------------------------------------------------
 # Regression tests for bugs fixed in the kanban bridge rewrite

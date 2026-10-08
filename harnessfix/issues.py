@@ -202,6 +202,12 @@ def promote(
     if it is None:
         return False, f"no such issue {issue_id!r}"
     it["autonomy_level"] = level
+
+    # Enqueue the new level to Kanban if sync is enabled (best-effort
+    # side-effect).  Without this the card keeps showing the level it had when
+    # it was created, so a promoted issue looks un-promoted on the board.
+    _enqueue_sync("issue_update", issue_id, dict(it))
+
     return True, f"promoted {issue_id} to autonomy_level={level}"
 
 
