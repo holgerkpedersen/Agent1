@@ -171,8 +171,12 @@ class EvolutionMetricsScorer:
         Returns the derived per-run score.
         """
         score = score_run(events, self.latency_budget_s, self.penalty_weight)
-        outcome = _run_outcome(events)
-        success = outcome == "completed"
+        # The flag must agree with what the score means (decision #052): a run
+        # that scored above zero DID the task, including a guard-terminated run
+        # that still delivered its answer.  A ``score > 0`` test is exactly the
+        # base>0 condition of ``score_run`` (the latency penalty never reaches
+        # the full base), so the two can never contradict each other.
+        success = score > 0.0
         latency = _run_latency_s(events)
         self._metrics.record(ExecutionMetric(score=score, success=success, latency=latency))
         return score

@@ -178,8 +178,11 @@ def profile_name_for_type(profile_type: ProfileType) -> str:
 
 #: A trace-derived turn quality at or above this value is recorded as a
 #: success; below it, a failure (plan item #4 residual).  score_run() gives
-#: completed runs >= 0.7 (latency-penalized) and incomplete/errored runs
-#: 0.0, so 0.5 separates the two without clipping penalized successes.
+#: completed runs in [0.7, 1.0] (latency-penalized), a guard-terminated run
+#: that still DELIVERED its answer in [0.6, 0.9] (decision #052: the guard
+#: stops the loop, not the answer), and undelivered/incomplete/errored runs
+#: exactly 0.0 — so 0.5 separates the two without clipping penalized
+#: successes.
 QUALITY_SUCCESS_THRESHOLD = 0.5
 
 
@@ -205,8 +208,10 @@ def record_turn_outcome(
     When present it decides the recorded success/failure
     (``quality >= QUALITY_SUCCESS_THRESHOLD``) instead of the caller's
     *success* proxy, so profile weights evolve from real trace outcomes —
-    e.g. a loop that ended ``no_progress`` without a provider error is
-    recorded as the failure it was.  ``None`` keeps the *success* flag.
+    e.g. a loop that ended ``no_progress`` without delivering an answer is
+    recorded as the failure it was, while one that still delivered its
+    synthesis answer counts as the success it was (decision #052).
+    ``None`` keeps the *success* flag.
 
     On success, ``MetricsTracker.record_turn`` is used when the provider
     exposes ``last_response_metrics`` (token/cost accounting) — it already

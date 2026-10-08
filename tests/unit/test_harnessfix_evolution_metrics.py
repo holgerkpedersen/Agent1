@@ -296,6 +296,61 @@ class TestDeliveredRunsInTheQualityWindow:
         assert sc.should_evolve() is True
 
 
+class TestRecordedSuccessFlagTracksTheScore:
+    """The ``ExecutionMetric.success`` flag fed into the window must agree with
+    what the score means (decision #052): a run that scored above zero DID the
+    task, including a guard-terminated run that still delivered its answer.
+
+    Before this fix the flag was ``outcome == "completed"``, so a delivered
+    guard run was recorded as score 0.9 / success=False — a self-contradiction.
+    """
+
+    def _last_success(self, sc) -> bool:
+        return sc._metrics.recent_metrics()[-1].success
+
+    @pytest.mark.parametrize("outcome", ["stuck", "budget_exhausted", "no_progress"])
+    def test_delivered_guard_run_is_recorded_as_success(self, outcome):
+        sc = EvolutionMetricsScorer()
+        sc.record_trace(_guard_run(outcome, LONG_ANSWER))
+        assert sc._metrics.recent_metrics()[-1].score == pytest.approx(0.9)
+        assert self._last_success(sc) is True
+
+    @pytest.mark.parametrize("outcome", ["stuck", "budget_exhausted", "no_progress"])
+    def test_undelivered_guard_run_is_recorded_as_failure(self, outcome):
+        sc = EvolutionMetricsScorer()
+        sc.record_trace(_guard_run(outcome))
+        assert self._last_success(sc) is False
+
+    def test_error_run_is_recorded_as_failure(self):
+        sc = EvolutionMetricsScorer()
+        sc.record_trace(_guard_run(ERROR, LONG_ANSWER))
+        assert self._last_success(sc) is False
+
+    def test_completed_run_is_recorded_as_success(self):
+        sc = EvolutionMetricsScorer()
+        sc.record_trace(_run(COMPLETED))
+        assert self._last_success(sc) is True
+
+    def test_penalised_but_completed_run_is_still_a_success(self):
+        # Huge latency floors the score at 0.7 — still a delivered task.
+        sc = EvolutionMetricsScorer()
+        sc.record_trace(_run(COMPLETED, (100000.0,)))
+        assert self._last_success(sc) is True
+
+    def test_flag_never_contradicts_the_recorded_score(self):
+        for events in (
+            _run(COMPLETED),
+            _run(COMPLETED, (100000.0,)),
+            _run(ERROR),
+            _guard_run("stuck", LONG_ANSWER),
+            _guard_run("stuck"),
+        ):
+            sc = EvolutionMetricsScorer()
+            sc.record_trace(events)
+            m = sc._metrics.recent_metrics()[-1]
+            assert m.success is (m.score > 0.0)
+
+
 class TestReadonlyContract:
     def test_no_file_writes_on_import_or_score(self, tmp_path):
         # Scoring synthetic events must not create/modify any file.
