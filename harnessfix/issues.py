@@ -54,6 +54,16 @@ def _should_sync() -> bool:
     setting, and nothing bridges ``.env`` into ``os.environ``, so an
     os.environ-only gate made the documented switch silently dead.
 
+    Two independent gates must both pass (layered control):
+
+      1. the process-level master switch, resolved by ``sync_enabled()``
+         (process env first, then the repo ``.env``); and
+      2. the *per-board* opt-in on the Kanban side: the ACTIVE board's working
+         copy must carry ``"sync": {"agent1": true}``. While a non-synced board
+         is active we enqueue nothing; its queue is held by the Kanban
+         processor until a synced board becomes active (fail closed — see
+         ``kanban_bridge.active_board_allows_agent1``).
+
     Best-effort: any failure while resolving the bridge (e.g. the module is
     missing or a broken install) is treated as "sync disabled" rather than
     propagating — issue creation must never fail because of the sync path.
@@ -62,7 +72,12 @@ def _should_sync() -> bool:
         bridge = _get_kanban_bridge()
         if bridge is None:
             return False
-        return bool(bridge.sync_enabled())
+        # Layer 1: process-level master switch (env / repo .env).
+        if not bridge.sync_enabled():
+            return False
+        # Layer 2: per-board opt-in, read from disk on every call so a board
+        # switched or toggled in the Kanban UI takes effect immediately.
+        return bool(bridge.active_board_allows_agent1())
     except Exception:
         return False
 

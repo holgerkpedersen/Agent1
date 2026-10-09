@@ -252,9 +252,12 @@ class TestQueueProcessor:
 
 class TestMakeIssueSync:
     def test_make_issue_enqueues_when_enabled(self):
+        # Layer-2 per-board gate is pinned in test_kanban_board_gate.py; stub it
+        # so this test isolates the enqueue mechanics.
         import harnessfix.kanban_bridge as kb
         with patch.dict(os.environ, {"KANBAN_SYNC_ENABLED": "1"}), \
              patch.object(kb, 'enqueue') as mock_enqueue, \
+             patch.object(kb, 'active_board_allows_agent1', lambda *a, **k: True), \
              patch('harnessfix.issues._get_kanban_bridge', return_value=kb):
             from harnessfix import issues as issue_store
             issue_store.make_issue(
@@ -288,6 +291,7 @@ class TestMakeIssueSync:
         import harnessfix.kanban_bridge as kb
         with patch.dict(os.environ, {"KANBAN_SYNC_ENABLED": "1"}), \
              patch.object(kb, 'enqueue') as mock_enqueue, \
+             patch.object(kb, 'active_board_allows_agent1', lambda *a, **k: True), \
              patch('harnessfix.issues._get_kanban_bridge', return_value=kb):
             from harnessfix import issues as issue_store
             issues = [issue_store.make_issue("test", "Test", ["f.py"])]
@@ -309,6 +313,7 @@ class TestMakeIssueSync:
         import harnessfix.kanban_bridge as kb
         with patch.dict(os.environ, {"KANBAN_SYNC_ENABLED": "1"}), \
              patch.object(kb, 'enqueue') as mock_enqueue, \
+             patch.object(kb, 'active_board_allows_agent1', lambda *a, **k: True), \
              patch('harnessfix.issues._get_kanban_bridge', return_value=kb):
             from harnessfix import issues as issue_store
             issues = [issue_store.make_issue("test", "Test", ["f.py"])]

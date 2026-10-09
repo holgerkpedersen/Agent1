@@ -153,6 +153,12 @@ class TestGatesHonourDotenv:
         env = _write_env(tmp_path, "KANBAN_SYNC_ENABLED=1\n")
         monkeypatch.setattr(kb, "ENV_FILE_PATH", env)
 
+        # Layer 2 (per-board opt-in on the Kanban side) has its own dedicated
+        # tests; pin it to True here so this test isolates the .env master
+        # switch. The fixture's temp DATA_DIR has no board files at all, so an
+        # un-stubbed gate would fail-closed and mask what is under test.
+        monkeypatch.setattr(kb, "active_board_allows_agent1", lambda **_: True)
+
         assert issue_store._should_sync() is True
 
     def test_outbound_disabled_when_dotenv_says_zero(self, tmp_path, monkeypatch):

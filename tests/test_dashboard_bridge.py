@@ -32,6 +32,9 @@ def _reset_shared_collector(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(agent, "_shared_metrics_collector", None)
     monkeypatch.setattr(agent_dashboard, "_shared_metrics_collector", None)
+    # main() now also boots the Kanban inbound poller; keep these dashboard
+    # tests from spawning a real one via whatever is in the repo .env.
+    monkeypatch.setattr(agent, "_start_kanban_inbound", lambda: None)
 
 
 def test_shared_collector_is_singleton() -> None:

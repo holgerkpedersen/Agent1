@@ -13,6 +13,7 @@ absorbs the echo.
 """
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -56,6 +57,19 @@ def shared_queue(tmp_path, monkeypatch):
         monkeypatch.setattr(mod, "QUEUE_KANBAN_TO_AGENT1", kb_to_a1)
         monkeypatch.setattr(mod, "CARD_ID_MAP_PATH", id_map)
         monkeypatch.setattr(mod, "DEAD_LETTER_DIR", data / "dead-letter")
+
+    # The shared temp dir stands in for the Kanban app's data directory. Give
+    # it an active board that has opted into agent1 sync — otherwise Agent1's
+    # per-board gate (issues._should_sync layer 2) fails closed and no echo is
+    # ever enqueued, which would collapse the round trip under test.
+    (data / "active.json").write_text(
+        json.dumps({"active": "test-board"}), encoding="utf-8"
+    )
+    (data / "board-test-board.json").write_text(
+        json.dumps({"frames": [], "cards": [], "sync": {"agent1": True}}),
+        encoding="utf-8",
+    )
+
     monkeypatch.setattr(issue_store, "ISSUES_PATH", tmp_path / "issues.json")
     return data
 
@@ -80,6 +94,12 @@ def _app_with_card(monkeypatch, tmp_path, title="Synced card"):
     # The first request binds the live store onto the app's holder.
     client.get("/api/cards")
     store = app.config["LIVE_STORE_HOLDER"]["store"]
+
+    # Opt this board in to agent1 sync so the Kanban-side outbound gate opens
+    # (mirrors what the UI toggle persists). Without it routes_cards._should_
+    # sync() keeps every enqueue closed and no card ever reaches Agent1.
+    store.set_sync_settings({"agent1": True})
+
     frame = Frame(id=uuid.uuid4().hex, title="Issues")
     store.add_frame(frame)
 

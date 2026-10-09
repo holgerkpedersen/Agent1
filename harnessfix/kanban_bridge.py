@@ -102,6 +102,41 @@ def sync_enabled() -> bool:
     return (value or "").strip() == "1"
 
 
+def active_board_allows_agent1(working_dir: str | Path | None = None) -> bool:
+    """Fail-closed check: does the Kanban app's ACTIVE board allow agent1 sync?
+
+    Reads ``<data>/active.json`` (shape ``{"active": "<catalog_id>"}``), then
+    that board's working copy ``board-<catalog_id>.json`` and its top-level
+    ``"sync"`` map. The Kanban app persists the same map from its UI toggle,
+    so both sides of the sync link agree without a restart or shared process
+    state — this function just re-reads what the user last saved.
+
+    Missing files, malformed JSON, non-dict payloads, path-like catalog ids,
+    or an absent/falsy ``agent1`` entry all count as NOT allowed: per-board
+    opt-in is fail-closed by design (sync stays off until explicitly enabled).
+    """
+    root = Path(working_dir) if working_dir else DATA_DIR
+    try:
+        registry = json.loads((root / "active.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    active_id = registry.get("active") if isinstance(registry, dict) else None
+    if not isinstance(active_id, str) or not active_id:
+        return False
+    # Catalog ids are generated tokens / safe slugs; refuse anything that could
+    # escape the data directory (fail closed).
+    if "/" in active_id or "\\" in active_id or ".." in Path(active_id).parts:
+        return False
+    try:
+        board = json.loads((root / f"board-{active_id}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    sync_map = board.get("sync") if isinstance(board, dict) else None
+    if not isinstance(sync_map, dict):
+        return False
+    return bool(sync_map.get("agent1"))
+
+
 # The queue root is SHARED with the Kanban app.  Both sides must resolve the
 # same physical directory or messages pile up in two disjoint trees that never
 # meet.  ``KANBAN_WORKING_DIR`` is the single source of truth; the default is

@@ -41,6 +41,11 @@ def _isolate_boot_handles(tmp_path, monkeypatch):
     monkeypatch.setattr(kb, "QUEUE_KANBAN_TO_AGENT1", data / "queue-kanban-to-agent1")
     monkeypatch.setattr(kb, "QUEUE_AGENT1_TO_KANBAN", data / "queue-agent1-to-kanban")
 
+    # Keep these tests independent of whatever the developer has in the real
+    # repo .env: with KANBAN_SYNC_ENABLED=1 there, every "disabled" case would
+    # start a real poller from dotenv.  Process env still wins per test.
+    monkeypatch.setattr(kb, "ENV_FILE_PATH", tmp_path / "absent.env")
+
     try:
         yield
     finally:

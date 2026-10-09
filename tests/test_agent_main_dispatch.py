@@ -29,6 +29,9 @@ def _no_interactive(monkeypatch: Any) -> list[dict[str, Any]]:
 
     monkeypatch.setattr(agent, "run_interactive", fake_interactive)
     monkeypatch.setattr(agent, "run_dashboard_server", fake_dashboard)
+    # main() now also boots the Kanban inbound poller; these dispatch tests must
+    # not spawn a real one from whatever is in the repo .env.
+    monkeypatch.setattr(agent, "_start_kanban_inbound", lambda: None)
     return calls
 
 
