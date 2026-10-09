@@ -144,6 +144,15 @@ The agent automatically retries on a different provider when the active one is u
 AGENT_LLM_PROVIDERS=opencode:opencode-zen/hy3-free,opencode:opencode-go/deepseek-v4-flash,lmstudio,llama
 ```
 
+When a failover actually happens, the agent prints one line naming the model that answered and what was skipped, so you are never silently answered by a different model than the one you selected:
+
+```
+  [failover] answered by opencode-go/deepseek-v4-flash after lmstudio unreachable
+    skipped [Error: LM Studio unreachable at attempt 0]
+```
+
+The line appears only for the turn that triggered the failover, and is suppressed in `display quiet` mode.
+
 ---
 
 ## Working with the Agent

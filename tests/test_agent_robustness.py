@@ -473,11 +473,142 @@ class TestTransientLlmErrorRetry:
         assert "401" in captured["err"]
 
 
+# ---------------------------------------------------------------------------
+# Failover visibility — which LLM actually answered must be shown in chat
+# ---------------------------------------------------------------------------
+
+class _FakeFailoverProvider:
+    """Stands in for ``FailoverProvider`` on ``bot.llm._provider``."""
+
+    def __init__(self, notice: dict | None) -> None:
+        self.last_failover = notice
+        self.reset_calls = 0
+
+    def reset_failover_notice(self) -> None:
+        self.reset_calls += 1
+        self.last_failover = None
+
+
+def _notice() -> dict:
+    return {
+        "answered_index": 1,
+        "answered_provider": "opencode",
+        "answered_model": "opencode-go/deepseek-v4.1-flash",
+        "attempted": [
+            {"provider": "lmstudio", "model": "llama-4-scout",
+             "error": "[Error: unreachable]"},
+        ],
+    }
+
+
+def test_reset_failover_notice_clears_stale_record() -> None:
+    """A failover from an EARLIER turn must not be reported again: the notice
+    is dropped at turn start, so only the turn that triggered it prints."""
+    bot = Agent(workspace=".")
+    fake = _FakeFailoverProvider(_notice())
+    bot.llm._provider = fake
+    bot._reset_failover_notice()
+    assert fake.reset_calls == 1
+    assert fake.last_failover is None
+
+
+def test_reset_failover_notice_tolerates_a_plain_provider() -> None:
+    """Not every transport is a failover chain — a single provider has no
+    reset method and must not break turn start."""
+    bot = Agent(workspace=".")
+
+    class _Plain:
+        pass
+
+    bot.llm._provider = _Plain()
+    bot._reset_failover_notice()  # must not raise
+
+
+def test_report_failover_prints_the_answering_model(
+    monkeypatch, capsys,
+) -> None:
+    bot = Agent(workspace=".")
+    bot.llm._provider = _FakeFailoverProvider(_notice())
+    monkeypatch.setattr(agent, "_resolve_display_mode",
+                        lambda: AgentDisplayMode.VERBOSE)
+    bot._report_failover()
+    out = capsys.readouterr().out
+    assert "[failover]" in out
+    assert "opencode-go/deepseek-v4.1-flash" in out
+    assert "llama-4-scout" in out  # the skipped provider is named
+    assert "unreachable" in out
+
+
+def test_report_failover_is_silent_in_quiet_mode(
+    monkeypatch, capsys,
+) -> None:
+    """QUIET promises only the final answer — no failover banner."""
+    bot = Agent(workspace=".")
+    bot.llm._provider = _FakeFailoverProvider(_notice())
+    monkeypatch.setattr(agent, "_resolve_display_mode",
+                        lambda: AgentDisplayMode.QUIET)
+    bot._report_failover()
+    assert "[failover]" not in capsys.readouterr().out
+
+
+def test_report_failover_is_silent_when_nothing_failed_over(
+    monkeypatch, capsys,
+) -> None:
+    """A normal turn (first provider healthy) must print nothing."""
+    bot = Agent(workspace=".")
+    bot.llm._provider = _FakeFailoverProvider(None)
+    monkeypatch.setattr(agent, "_resolve_display_mode",
+                        lambda: AgentDisplayMode.VERBOSE)
+    bot._report_failover()
+    assert "[failover]" not in capsys.readouterr().out
+
+
+def test_chat_nlp_reports_failover_after_a_clean_turn(
+    monkeypatch, capsys,
+) -> None:
+    """End-to-end: the loop succeeds but a failover happened DURING it, so the
+    user must be told which model answered instead of silently getting another.
+
+    The notice is set by the LLM call inside the loop (as FailoverProvider
+    does), NOT before the turn — turn start deliberately clears stale records.
+    """
+    bot = Agent(workspace=".")
+    fake = _FakeFailoverProvider(None)
+    bot.llm._provider = fake
+    loop_token = object()
+    loop_calls = {"n": 0}
+
+    async def fake_loop(*args, **kwargs):
+        # Simulate the provider recording a failover while answering — but
+        # only on the FIRST call, so turn 2 has no failover to report.
+        if loop_calls["n"] == 0:
+            fake.last_failover = _notice()
+        loop_calls["n"] += 1
+        return ("Done", [{"role": "assistant", "content": "Done"}],
+                None, loop_token)
+
+    monkeypatch.setattr(bot, "_run_chained_tool_loop", fake_loop)
+    monkeypatch.setattr(bot, "_refresh_system_message", lambda *a, **k: None)
+    monkeypatch.setattr(bot, "_append_user_turn", lambda *a, **k: None)
+    monkeypatch.setattr(bot, "_finish_turn", lambda *a, **k: None)
+    monkeypatch.setattr(bot, "_save_chat_history", lambda *a, **k: None)
+    monkeypatch.setattr(bot, "_save_memory", lambda *a, **k: None)
+    monkeypatch.setattr(agent, "_resolve_display_mode",
+                        lambda: AgentDisplayMode.VERBOSE)
+    asyncio.run(bot.chat_nlp("do it"))
+    out = capsys.readouterr().out
+    assert "[failover]" in out
+    assert "deepseek-v4.1-flash" in out
+    # The notice belongs to the turn that triggered it: a second turn with no
+    # new failover prints nothing.
+    asyncio.run(bot.chat_nlp("again"))
+    assert loop_calls["n"] == 2
+    assert "[failover]" not in capsys.readouterr().out
+
+
 def test_shell_command_hint_is_platform_aware() -> None:
     """The wrong-shell hint must match the CURRENT platform: no Unix tools on
     Windows; no cmd.exe builtins / PowerShell cmdlets on POSIX."""
-    import agent
-
     assert "no Unix tools" in agent._unix_command_hint()
     assert "cmd.exe" in agent._windows_command_hint()
     expected = (

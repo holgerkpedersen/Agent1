@@ -37,6 +37,23 @@ def _provider_type(provider: Any) -> str:
     return _PROVIDER_TYPE_BY_CLASS.get(type(provider).__name__, "")
 
 
+def _provider_label(provider: Any) -> str:
+    """Human-readable name for *provider*, for user-facing failover messages.
+
+    Prefers the routing type (``"lmstudio"``, ``"opencode"``, ...), then a
+    ``name`` attribute, then the de-cased class name — so a provider outside
+    :data:`_PROVIDER_TYPE_BY_CLASS` (a test double, or a new provider class)
+    still yields something the user can read instead of an empty string.
+    """
+    label = _provider_type(provider)
+    if label:
+        return label
+    name = getattr(provider, "name", None)
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return type(provider).__name__
+
+
 #: Providers whose ``chat_stream`` really prints tokens to the console as they
 #: arrive.  The others implement it as a bare ``return await self.chat(...)``
 #: (Opencode/OpenRouter/Lemonade) and print NOTHING.
@@ -548,10 +565,23 @@ class FailoverProvider:
         self._profile_name: str | None = getattr(providers[0], "_profile_name", None)
         #: Metrics of whichever provider actually answered (for reporting).
         self.last_response_metrics: ResponseMetrics | None = None
+        #: Set whenever a failover ACTUALLY happened — a non-first provider
+        #: answered after earlier ones were unreachable.  The agent reads this
+        #: to tell the user which model answered; a log-only warning is
+        #: invisible in the REPL.  Cleared per turn by
+        #: :meth:`reset_failover_notice` so a stale record never re-reports.
+        self.last_failover: dict[str, Any] | None = None
+        #: Providers that failed during the CURRENT chat() call, in order —
+        #: drained into ``last_failover`` when a later provider answers.
+        self._failures: list[tuple[Any, str]] = []
 
     @property
     def providers(self) -> list["LLMProvider"]:
         return self._providers
+
+    def reset_failover_notice(self) -> None:
+        """Drop any pending failover notice (called once per turn)."""
+        self.last_failover = None
 
     def apply_profile(
         self, name: str, temperature: float, max_tokens: int,
@@ -571,6 +601,7 @@ class FailoverProvider:
         disable_thinking: bool = False,
     ) -> str:
         last_error: str | None = None
+        self._failures = []
         for index, provider in enumerate(self._providers):
             try:
                 result = await provider.chat(
@@ -592,6 +623,28 @@ class FailoverProvider:
                         len(self._providers),
                         index,
                     )
+                    # Record WHAT failed over so the agent can surface it in
+                    # the chat (a logger warning is invisible in the REPL).
+                    # Best-effort: never let reporting break the answer.
+                    try:
+                        self.last_failover = {
+                            "answered_index": index,
+                            "answered_provider": _provider_label(provider),
+                            "answered_model": getattr(
+                                provider, "model_name", None
+                            ),
+                            "attempted": [
+                                {
+                                    "provider": _provider_label(p),
+                                    "model": getattr(p, "model_name", None),
+                                    "error": err,
+                                }
+                                for p, err in self._failures
+                            ],
+                        }
+                    except Exception:  # noqa: BLE001 - reporting must not break chat
+                        logger.debug("failover notice capture failed", exc_info=True)
+                    self._failures = []
                     # Persist the working model so subsequent turns start
                     # with the provider that actually answered, instead of
                     # re-promoting the broken one every turn.
@@ -608,6 +661,7 @@ class FailoverProvider:
                             pass
                 return result
             last_error = result
+            self._failures.append((provider, result))
             logger.warning(
                 "LLM provider %d/%d unreachable (%s); failing over to next",
                 index + 1,

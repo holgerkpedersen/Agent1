@@ -323,3 +323,73 @@ def test_build_provider_single_chain_no_failover() -> None:
     provider = build_provider(settings, "laguna-s-2.1")
     assert not isinstance(provider, FailoverProvider)
     assert provider.__class__.__name__ == "LMStudioProvider"
+
+
+# ---------------------------------------------------------------------------
+# Failover notice — what actually answered, for the agent to surface in chat
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_failover_records_which_provider_answered() -> None:
+    """The switch must be RECORDED, not just logged.
+
+    ``FailoverProvider.chat`` only emitted ``logger.warning`` — invisible in
+    the REPL, so the user was silently answered by a different model than the
+    one they selected.  ``last_failover`` now carries the answering provider
+    and every skipped one so the agent can print one line about it.
+    """
+    fp = _make_chain({"lmstudio": {0}})
+    await fp.chat([{"role": "user", "content": "hi"}])
+    notice = fp.last_failover
+    assert notice is not None
+    assert notice["answered_index"] == 1
+    assert notice["answered_model"] == "fake-model"
+    # The skipped provider is named with its error, so the user can see WHY.
+    assert [a["provider"] for a in notice["attempted"]] == ["lmstudio"]
+    assert "unreachable" in notice["attempted"][0]["error"]
+
+
+@pytest.mark.anyio
+async def test_no_failover_leaves_notice_empty() -> None:
+    """The first provider answering must NOT look like a failover — otherwise
+    every normal turn would print a bogus '[failover]' line."""
+    fp = _make_chain({})
+    await fp.chat([{"role": "user", "content": "hi"}])
+    assert fp.last_failover is None
+
+
+@pytest.mark.anyio
+async def test_failover_notice_is_cleared_between_turns() -> None:
+    """A stale notice must not be reported twice: reset_failover_notice()
+    drops it, which the agent calls once per turn."""
+    fp = _make_chain({"lmstudio": {0}})
+    await fp.chat([{"role": "user", "content": "hi"}])
+    assert fp.last_failover is not None
+    fp.reset_failover_notice()
+    assert fp.last_failover is None
+    # A later clean turn (first provider healthy again) stays silent.
+    await fp.chat([{"role": "user", "content": "hi"}])
+    assert fp.last_failover is None
+
+
+@pytest.mark.anyio
+async def test_failover_notice_lists_every_skipped_provider() -> None:
+    """Three providers down, the fourth answers: all three must be listed."""
+    dead = _PayloadProvider("[Error: unreachable]")
+    fp = FailoverProvider(
+        [dead, dead, dead, _PayloadProvider("ok:fourth")], model_name="fake-model"
+    )
+    out = await fp.chat([{"role": "user", "content": "hi"}])
+    assert out == "ok:fourth"
+    assert fp.last_failover is not None
+    assert fp.last_failover["answered_index"] == 3
+    assert len(fp.last_failover["attempted"]) == 3
+
+
+@pytest.mark.anyio
+async def test_all_providers_fail_leaves_no_notice() -> None:
+    """Nothing answered, so there is no failover to report — the caller's
+    llm_error path already surfaces the failure."""
+    fp = _make_chain({"lmstudio": {0}, "opencode": {0}})
+    await fp.chat([{"role": "user", "content": "hi"}])
+    assert fp.last_failover is None

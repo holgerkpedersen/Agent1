@@ -2814,6 +2814,60 @@ class Agent:
         ]
         return final_text, final_messages, (llm_error[0] if llm_error else None), loop
 
+    def _reset_failover_notice(self) -> None:
+        """Drop any pending failover notice on the wrapped provider.
+
+        Called once at turn start so a failover that happened in an EARLIER
+        turn is never reported again (the record would otherwise be stale
+        forever).  No-op when the provider is not a failover chain.
+        """
+        reset = getattr(
+            getattr(self.llm, "_provider", None), "reset_failover_notice", None,
+        )
+        if callable(reset):
+            try:
+                reset()
+            except Exception:  # noqa: BLE001 - observability must not break turns
+                logger.debug("failover notice reset failed (no-op)", exc_info=True)
+
+    def _report_failover(self) -> None:
+        """Print which LLM answered when a failover happened this turn.
+
+        Failover is currently invisible to the user: the switch is only a
+        ``logger.warning`` in :class:`FailoverProvider`, so the REPL silently
+        answers from a different model than the one the user selected — which
+        looks like a hallucination when the answer style changes.  This prints
+        one line naming the model that answered and what was skipped.
+
+        Honours the display-mode contract: suppressed in QUIET, which promises
+        only the final answer.  Never raises — reporting must not kill a turn.
+        """
+        try:
+            notice = getattr(
+                getattr(self.llm, "_provider", None), "last_failover", None,
+            )
+            if not notice:
+                return
+            if _resolve_display_mode() == AgentDisplayMode.QUIET:
+                return
+            answered = notice.get("answered_model") or notice.get(
+                "answered_provider"
+            ) or "next provider"
+            attempted = notice.get("attempted") or []
+            skipped = ", ".join(
+                str(a.get("model") or a.get("provider") or "?") for a in attempted
+            )
+            print(magenta(
+                f"\n  [failover] answered by {answered}"
+                + (f" after {skipped} unreachable" if skipped else "")
+            ))
+            for entry in attempted:
+                err = str(entry.get("error") or "").strip()
+                if err:
+                    print(gray(f"    skipped {err[:160]}"))
+        except Exception:  # noqa: BLE001 - observability must not break turns
+            logger.debug("failover report failed (no-op)", exc_info=True)
+
     def _finish_turn(
         self,
         final_text: str,
@@ -2973,6 +3027,9 @@ class Agent:
         """
         self._refresh_system_message(user_input)
         self._read_streak = 0
+        # A failover notice belongs to the turn that TRIGGERED it: drop any
+        # stale record now so a notice is never reported twice.
+        self._reset_failover_notice()
         # Turn-outcome observability (A3): the input + start time feed the
         # bounded turn log and duration written by _finish_turn.
         self._last_user_input = user_input
@@ -3067,6 +3124,9 @@ class Agent:
         # Tagged continuation notes were stripped inside the chained-loop phase;
         # adopt its final message list as the session history.
         self._chat_history = final_messages
+        # Tell the user which LLM actually answered when a failover happened
+        # this turn (a logger warning is invisible in the REPL).
+        self._report_failover()
         self._finish_turn(
             final_text=final_text,
             llm_error=llm_error,
