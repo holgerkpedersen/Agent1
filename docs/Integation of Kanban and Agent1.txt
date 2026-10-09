@@ -1,0 +1,29 @@
+Integration of Kanban and Agent1
+
+System Message Flow
+Agent1 → C:\Dev\Agent1\data\board-kanban.json → Kanban
+Kanban → C:\Dev\Kanban\data\board-agent1.json → Agent1
+
+The Processes
+Kanban changes
+The user adds a new Kanban Card
+A Create Message is made in  C:\Dev\Kanban\data\board-agent1.json
+The user updates an existing  Kanban Card
+An Update Message is made in  C:\Dev\Kanban\data\board-agent1.json
+The user deletes an existing  Kanban Card
+A Delete Message is made in  C:\Dev\Kanban\data\board-agent1.json
+
+Agent1 changes
+The agent adds a new issue
+A Create Message is made in  C:\Dev\Agent1\data\board-kanban.json
+The agent updates an existing  issue
+An Update Message is made in  C:\Dev\Agent1\data\board-kanban.json
+The agent deletes an existing  issue
+A Delete Message is made in  C:\Dev\Agent1\data\board-kanban.json
+
+
+Agent1 Flow
+Exporting changes to Kanban
+The agent sends CRUD messages to the file C:\Dev\Agent1\data\board-kanban.json
+Importing changes from Kanban
+The agent receives messages from the file C:\Dev\Kanban\data\board-agent1.json. This implies to import open messages sorted in chronological order. For each type of message, we need a handler which will update the C:\Dev\Agent1\.issues.json with the Kanban Card data (disguised as a message text). Each message has an a GUID ID, which is unique. Also a timestamp is saved in the message in the C:\Dev\Agent1\data\board-kanban.json, to indicate the message has been handled, and no longer will be handled..   

@@ -200,6 +200,12 @@ def enqueue(message: dict[str, Any], queue_dir: Path | None = None) -> int:
     """
     if queue_dir is None:
         queue_dir = QUEUE_AGENT1_TO_KANBAN
+    elif isinstance(queue_dir, dict):
+         # This should not happen with correct usage but handles erroneous patching
+         raise TypeError(f"enqueue() argument 'queue_dir' must be Path, not dict")
+
+    if not isinstance(queue_dir, Path):
+        queue_dir = Path(queue_dir)
 
     queue_dir.mkdir(parents=True, exist_ok=True)
     msg_file = queue_dir / "messages.jsonl"

@@ -69,14 +69,18 @@ class LLMAgent:
         (see :meth:`_process_message`) and cleared after the response is produced.
         """
         payload = self._process_message(message)
-        if self._llm_client is not None:
-            response_text = self._llm_client.chat(payload)
-        else:
-            response_text = self._fallback_response()
-        # Clear temporary system messages after response generation.
-        self._pending_temp_systems.clear()
-        self._conversation.append({"role": "assistant", "content": response_text})
-        return response_text
+        try:
+            if self._llm_client is not None:
+                response_text = self._llm_client.chat(payload)
+            else:
+                response_text = self._fallback_response()
+            return response_text
+        finally:
+            # Clear temporary system messages after response generation.
+            self._pending_temp_systems.clear()
+            if 'response_text' in locals():
+                self._conversation.append({"role": "assistant", "content": response_text})
+
 
     def _fallback_response(self) -> str:
         """Return a basic acknowledgement when no LLM client is configured."""

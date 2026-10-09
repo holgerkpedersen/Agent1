@@ -3253,6 +3253,15 @@ class Agent:
         """Clear all agent state."""
         self._history = []
         self._chat_history.clear()
+        if hasattr(self, '_conversation'):
+            self._conversation.clear()
+        self._turn_start_index = 0
+        self._turn_run_id = None
+        self._read_streak = 0
+        self._delegating = False
+        self._active_subagents.clear()
+        self._delegate_counter = 0
+        self._pending_effects = None
         self._original_goal = ""
         self._files_read.clear()
         self._file_mtimes.clear()
