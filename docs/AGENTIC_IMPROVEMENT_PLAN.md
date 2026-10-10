@@ -28,8 +28,16 @@ per decision #079 — no emojis in files.)
    (`Agent._habits_block`, agent.py:2907). The REPL `habits` command
    (`agent_core/commands/habits_cmd.py`, registered at agent.py:4112)
    offers `list / pin / forget / mine / off / on`; `off` flips the
-   `habits_enabled` workspace pref and suppresses the prompt block. The
-   embedding/KG half of this item remains open.
+   `habits_enabled` workspace pref and suppresses the prompt block.
+   STATUS 2026-09-28 (2): the history half landed too —
+   `agent_core/file_history.py` extracts the file paths a chat message
+   mentions, asks the real `harnessfix/history.py` matcher
+   (`file_history()`) what happened to them, and renders one capped
+   **RECENT FILE NOTES** block behind `FILE_HISTORY_MARKER`.
+   `Agent._file_history_block(query)` (agent.py) injects it every turn;
+   `_strip_dynamic_system_blocks` strips/rebuilds it per-turn. An
+   untouched workspace keeps the prompt byte-identical to the baseline.
+   The embedding/KG half of this item remains open.
 3. [S] **Make multillm consensus honest** — `ParallelRun.agree()` derives each
    vote from `_looks_negative()` (first-120-chars heuristic). Replace with a
    structured verdict schema requested in the role prompt, then let

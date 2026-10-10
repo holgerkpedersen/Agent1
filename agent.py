@@ -91,6 +91,7 @@ from agent_core.skills import (
     skill_hint_block,
 )
 from agent_core.habits import HABITS_MARKER, habits_block, load_habits
+from agent_core.file_history import FILE_HISTORY_MARKER, file_notes_block
 from agent_core.memory import (
     MAX_GOAL_CHARS,
     ORIGINAL_GOAL_MARKER,
@@ -2510,6 +2511,7 @@ class Agent:
             + self._skill_index_block()
             + self._habits_block()
             + self._semantic_memory_block(query)
+            + self._file_history_block(query)
             + (plan_mode_system_suffix() if self.is_plan_mode() else ""),
         }
 
@@ -3364,6 +3366,28 @@ class Agent:
             logger.exception('Habits block unavailable:\n')
             return ""
 
+    def _file_history_block(self, query: str | None = None) -> str:
+        """Per-file execution-history block for the chat system prompt.
+
+        The workspace already keeps a trace corpus and an execution ledger
+        (``reports/traces``, ``reports/history/executions.jsonl``); only
+        implement/fix ever read them.  This method makes the same history
+        visible to the conversational loop: the files *query* mentions are
+        looked up with :func:`harnessfix.history.file_history` (the real
+        matcher — a directory arg counts for its direct children) and the
+        most important past events render as one compact block.
+
+        Rebuilt every turn from the current workspace, same contract as
+        :meth:`_habits_block`: empty string when nothing is relevant, so the
+        prompt stays byte-identical to before; never raises — a broken
+        ledger must not kill a chat turn.
+        """
+        try:
+            return file_notes_block(query, self._effective_ws_dir())
+        except Exception:
+            logger.exception('File-history block unavailable:\n')
+            return ""
+
     def _semantic_memory_block(self, query: str | None = None) -> str:
         """Embedding/KG memory block for the chat system prompt.
 
@@ -4153,6 +4177,7 @@ def _strip_dynamic_system_blocks(text: str) -> str:
         SKILL_INDEX_MARKER,
         HABITS_MARKER,
         SEMANTIC_MEMORY_MARKER,
+        FILE_HISTORY_MARKER,
         "\n\nSESSION MODE: PLAN",
     )
     cut = len(text)
