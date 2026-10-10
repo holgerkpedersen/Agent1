@@ -114,6 +114,76 @@ def _hosted_model_id(model_name: str) -> str:
             return model_name[len(prefix):]
     return model_name
 
+
+#: Anthropic Messages content block types we understand.
+def _anthropic_blocks(msg: dict[str, Any], role: str) -> list[dict[str, Any]]:
+    """Convert one OpenAI-shaped *msg* into Anthropic content blocks.
+
+    Text messages become a ``text`` block, ``tool_calls`` on an assistant
+    turn become ``tool_use`` blocks, and a ``tool`` turn becomes the
+    ``tool_result`` block Anthropic expects as a *user* message.
+    """
+    content = msg.get("content")
+    if role == "tool":
+        # The protocol pairs tool output with the tool_use that requested it.
+        if content is None or content == "":
+            return []
+        return [
+            {
+                "type": "tool_result",
+                "tool_use_id": str(msg.get("tool_call_id") or ""),
+                "content": str(content),
+            }
+        ]
+    blocks: list[dict[str, Any]] = []
+    if content:
+        blocks.append({"type": "text", "text": str(content)})
+    if role == "assistant":
+        for call in msg.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+            raw_args = fn.get("arguments") or "{}"
+            try:
+                args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+            except (TypeError, ValueError):
+                # A malformed argument string must not kill the turn — the
+                # tool would fail anyway and the model will see the error.
+                args = {"_raw": str(raw_args)}
+            if not isinstance(args, dict):
+                args = {"_raw": str(raw_args)}
+            blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": str(call.get("id") or ""),
+                    "name": str(fn.get("name") or ""),
+                    "input": args,
+                }
+            )
+    return blocks
+
+
+def _anthropic_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Map OpenAI-style function tool definitions to Anthropic's shape."""
+    out: list[dict[str, Any]] = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        fn = tool.get("function") if isinstance(tool.get("function"), dict) else tool
+        name = fn.get("name")
+        if not name:
+            continue
+        entry: dict[str, Any] = {
+            "name": str(name),
+            "description": str(fn.get("description") or ""),
+            "input_schema": fn.get("parameters")
+            or fn.get("input_schema")
+            # Anthropic rejects a tool without a schema.
+            or {"type": "object", "properties": {}},
+        }
+        out.append(entry)
+    return out
+
 #: Official opencode-zen FREE models are intentionally NOT hardcoded here —
 #: a machine/account may not have them, and the live keyless catalog is the
 #: single source of truth (see _zen_free_fallbacks).  When settings and the
@@ -378,11 +448,19 @@ class OpencodeProvider:
         return headers
 
     def _request(
-        self, method: str, url: str, body: Any = None, timeout: float | None = None
+        self,
+        method: str,
+        url: str,
+        body: Any = None,
+        timeout: float | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> Any:
         data = json.dumps(body).encode("utf-8") if body is not None else None
+        headers = self._headers(body is not None)
+        if extra_headers:
+            headers.update(extra_headers)
         req = urllib.request.Request(
-            url, data=data, headers=self._headers(body is not None), method=method
+            url, data=data, headers=headers, method=method
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
@@ -468,6 +546,13 @@ class OpencodeProvider:
             # 'tool_calls'") — the bare "400: Bad Request" is useless.
             body = _http_error_body(exc)
             detail = body or str(exc.reason)
+            # Anthropic models on the go gateway are ONLY served over the
+            # Anthropic Messages protocol (/messages + x-api-key); the
+            # OpenAI-shaped /chat/completions endpoint answers HTTP 400
+            # ModelProtocolUnsupported for them.  Retry the same turn on
+            # that protocol instead of failing the whole interaction.
+            if exc.code == 400 and "ModelProtocolUnsupported" in detail:
+                return await self._chat_api_anthropic(messages, tools, max_tokens)
             return f"[Error: opencode API request failed: HTTP Error {exc.code}: {detail}]"
         except Exception as exc:
             return f"[Error: opencode API request failed: {exc}]"
@@ -495,6 +580,132 @@ class OpencodeProvider:
         if thinking_err:
             return thinking_err
         return content if content else "(no output)"
+
+    # ------------------------------------------------------------------
+    # Anthropic Messages protocol (Claude models on the go gateway)
+    # ------------------------------------------------------------------
+
+    async def _chat_api_anthropic(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        max_tokens: int | None,
+    ) -> str:
+        """Retry the turn over the Anthropic Messages protocol.
+
+        The gateway answers HTTP 400 ``ModelProtocolUnsupported`` on
+        ``/chat/completions`` for Anthropic models: they are only served by
+        ``POST {api_base}/messages`` authenticated with ``x-api-key`` (live
+        check: same endpoint and key returned 200 there while non-Claude
+        models on ``/chat/completions`` returned 200 too).  The response is
+        mapped back into this provider's OpenAI-shaped contract (plain text,
+        or a JSON string carrying ``tool_calls``) so the agent's tool loop,
+        retry and metrics code stay untouched.
+        """
+        url = f"{self.api_url}/messages"
+        payload = self._anthropic_payload(messages, tools, max_tokens)
+        headers = {
+            # Anthropic protocol auth: the Bearer token is ignored there.
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        try:
+            result = await self._with_retry(
+                lambda: self._request(
+                    "POST", url, payload,
+                    timeout=self._api_timeout, extra_headers=headers,
+                ),
+                label="opencode /messages",
+            )
+        except urllib.error.HTTPError as exc:
+            detail = _http_error_body(exc) or str(exc.reason)
+            return f"[Error: opencode /messages request failed: HTTP Error {exc.code}: {detail}]"
+        except Exception as exc:
+            return f"[Error: opencode /messages request failed: {exc}]"
+        return self._anthropic_result_to_chat(result)
+
+    def _anthropic_payload(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        max_tokens: int | None,
+    ) -> dict[str, Any]:
+        """Translate an OpenAI-shaped chat request into the Anthropic one."""
+        system_bits: list[str] = []
+        out: list[dict[str, Any]] = []
+        for msg in messages:
+            role = str(msg.get("role") or "user")
+            if role == "system":
+                # Messages protocol carries the system prompt separately.
+                system_bits.append(str(msg.get("content") or ""))
+                continue
+            blocks = _anthropic_blocks(msg, role)
+            if not blocks:
+                continue
+            # Anthropic requires alternating user/assistant turns: fold
+            # consecutive same-role turns (e.g. tool results arriving after
+            # a user note) into one message instead of sending duplicates.
+            arole = "user" if role in ("user", "tool") else "assistant"
+            if out and out[-1]["role"] == arole:
+                out[-1]["content"].extend(blocks)
+            else:
+                out.append({"role": arole, "content": blocks})
+        payload: dict[str, Any] = {
+            "model": _hosted_model_id(self.model_name),
+            # The protocol requires an explicit output budget.
+            "max_tokens": int(max_tokens or self.max_tokens or 4096),
+            "messages": out,
+        }
+        if system_bits:
+            payload["system"] = "\n\n".join(system_bits)
+        # NOTE: never send `temperature` on this protocol — the live gateway
+        # answers 400 "`temperature` is deprecated for this model" for Claude.
+        anthropic_tools = _anthropic_tools(tools)
+        if anthropic_tools:
+            payload["tools"] = anthropic_tools
+        return payload
+
+    def _anthropic_result_to_chat(self, result: Any) -> str:
+        """Map an Anthropic Messages response onto this provider's contract."""
+        if not isinstance(result, dict):
+            return "[Error: opencode /messages returned no content]"
+        blocks = result.get("content")
+        if not isinstance(blocks, list):
+            blocks = []
+        text = "".join(
+            str(b.get("text") or "")
+            for b in blocks if isinstance(b, dict) and b.get("type") == "text"
+        )
+        tool_calls = []
+        for block in blocks:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            tool_calls.append(
+                {
+                    # Keep the Anthropic id: the agent echoes it back as
+                    # tool_call_id and the next request needs the matching
+                    # tool_use_id for its tool_result block.
+                    "id": str(block.get("id") or ""),
+                    "type": "function",
+                    "function": {
+                        "name": str(block.get("name") or ""),
+                        "arguments": json.dumps(block.get("input") or {}),
+                    },
+                }
+            )
+        usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+        prompt_tokens = int(usage.get("input_tokens") or 0)
+        completion_tokens = int(usage.get("output_tokens") or 0)
+        self.last_response_metrics = ResponseMetrics(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost=estimate_cost(
+                prompt_tokens, completion_tokens, self.model_name, "opencode"
+            ),
+        )
+        if tool_calls:
+            return json.dumps({"content": text, "tool_calls": tool_calls})
+        return text if text else "[Error: opencode /messages returned an empty response]"
 
     # ------------------------------------------------------------------
     # Server mode (opencode serve session)

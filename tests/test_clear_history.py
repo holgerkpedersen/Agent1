@@ -8,7 +8,7 @@ async def test_clear_history_clears_conversation():
     # We need to mock LLMClient because Agent.__init__ might try to use it 
     # or we need to provide a way for it not to fail during instantiation.
     
-    with patch('agent.LLMClient') as MockClient:
+    with patch('agent.LLMClient'):
         # To avoid the KeyError in get_profile, we'll mock resolve_model and build_transport too
         with patch('agent.resolve_model', return_value="mock-model"), \
              patch('agent.to_windows_path', side_effect=lambda x: x), \

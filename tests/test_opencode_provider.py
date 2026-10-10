@@ -712,3 +712,169 @@ class TestZenFreeFallback:
         out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert "unavailable" in out
         assert "opencode-zen/alt1-free" in out
+
+
+class TestAnthropicMessagesProtocol:
+    """The opencode-go gateway serves Claude models ONLY over the Anthropic
+    Messages protocol (POST {api_base}/messages, ``x-api-key`` auth).  The
+    OpenAI-compatible ``/chat/completions`` endpoint answers HTTP 400
+    ``ModelProtocolUnsupported`` for them — verified live against
+    https://opencode.ai/zen/go/v1 (non-Claude models on the SAME endpoint and
+    key return 200).  The provider must transparently retry such a turn on
+    ``/messages`` and map the response back into the agent's OpenAI-shaped
+    chat contract, otherwise every Claude model is unusable."""
+
+    MODEL = "opencode-go/claude-haiku-5-5"
+
+    @staticmethod
+    def _http_error_with_body(code: int, body: bytes):
+        import urllib.error
+        from io import BytesIO
+        return urllib.error.HTTPError("http://x", code, "Bad Request", {}, BytesIO(body))
+
+    @staticmethod
+    def _protocol_error():
+        return TestAnthropicMessagesProtocol._http_error_with_body(
+            400,
+            json.dumps(
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "ModelProtocolUnsupported",
+                        "message": "Model does not support this protocol.",
+                    },
+                }
+            ).encode(),
+        )
+
+    def _provider(self):
+        return OpencodeProvider(self.MODEL, api_key="sk-test", read_store=False)
+
+    @staticmethod
+    def _anthropic_text(text="hi from claude", blocks=None):
+        content = blocks if blocks is not None else [{"type": "text", "text": text}]
+        return {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "stop_reason": "end_turn",
+            "content": content,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+
+    def test_protocol_unsupported_retries_on_messages_endpoint(self):
+        import asyncio
+        seen = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["url"] = req.full_url
+            seen["x_api_key"] = req.get_header("X-api-key")
+            seen["version"] = req.get_header("Anthropic-version")
+            seen["body"] = json.loads(req.data)
+            if req.full_url.endswith("/chat/completions"):
+                raise self._protocol_error()
+            return _FakeHttp(self._anthropic_text())
+
+        prov = self._provider()
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(
+                prov.chat([{"role": "user", "content": "hi"}], max_tokens=64)
+            )
+        assert out == "hi from claude"
+        assert seen["url"].endswith("/messages")
+        # Anthropic protocol auth: x-api-key, not (only) the Bearer header.
+        assert seen["x_api_key"] == "sk-test"
+        assert seen["version"] == "2023-06-01"
+        # The Anthropic protocol requires an explicit output budget.
+        assert seen["body"]["max_tokens"] == 64
+        # Hosted ids stay unprefixed on the wire.
+        assert seen["body"]["model"] == "claude-haiku-5-5"
+
+    def test_messages_tool_use_becomes_tool_calls(self):
+        import asyncio
+        blocks = [
+            {"type": "text", "text": "let me look"},
+            {"type": "tool_use", "id": "toolu_9", "name": "run",
+             "input": {"command": "ls"}},
+        ]
+
+        def fake_urlopen(req, timeout=None):
+            if req.full_url.endswith("/chat/completions"):
+                raise self._protocol_error()
+            return _FakeHttp(self._anthropic_text(blocks=blocks))
+
+        prov = self._provider()
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "list files"}]))
+        parsed = json.loads(out)
+        assert parsed["content"] == "let me look"
+        call = parsed["tool_calls"][0]
+        # The id must survive: the agent echoes tool_call_id back on the next
+        # turn and Anthropic requires tool_use_id to match the tool_use block.
+        assert call["id"] == "toolu_9"
+        assert call["function"]["name"] == "run"
+        assert json.loads(call["function"]["arguments"]) == {"command": "ls"}
+
+    def test_openai_shape_converted_to_messages_payload(self):
+        import asyncio
+        captured = {}
+        messages = [
+            {"role": "system", "content": "be terse"},
+            {"role": "user", "content": "list files"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "call_1", "type": "function",
+                 "function": {"name": "run", "arguments": '{"path": "."}'}},
+            ]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "a.py"},
+        ]
+        tools = [{"type": "function", "function": {
+            "name": "run", "description": "run a command",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+        }}]
+
+        def fake_urlopen(req, timeout=None):
+            if req.full_url.endswith("/chat/completions"):
+                raise self._protocol_error()
+            captured["body"] = json.loads(req.data)
+            return _FakeHttp(self._anthropic_text())
+
+        prov = self._provider()
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            asyncio.run(prov.chat(messages, tools=tools))
+        body = captured["body"]
+        # Live gateway check: Claude models reject `temperature` on /messages
+        # with "Upstream request failed: `temperature` is deprecated for this
+        # model." — the knob must never be sent on this protocol.
+        assert "temperature" not in body
+        assert body["system"] == "be terse"
+        roles = [m["role"] for m in body["messages"]]
+        assert roles == ["user", "assistant", "user"]
+        assistant_blocks = body["messages"][1]["content"]
+        tool_use = [b for b in assistant_blocks if b["type"] == "tool_use"][0]
+        assert tool_use["id"] == "call_1"
+        assert tool_use["input"] == {"path": "."}
+        result_block = body["messages"][2]["content"][0]
+        assert result_block["type"] == "tool_result"
+        assert result_block["tool_use_id"] == "call_1"
+        assert result_block["content"] == "a.py"
+        assert body["tools"][0]["name"] == "run"
+        assert body["tools"][0]["description"] == "run a command"
+        assert body["tools"][0]["input_schema"] == tools[0]["function"]["parameters"]
+
+    def test_plain_400_does_not_use_messages_endpoint(self):
+        import asyncio
+        urls = []
+
+        def fake_urlopen(req, timeout=None):
+            urls.append(req.full_url)
+            raise self._http_error_with_body(
+                400,
+                json.dumps({"error": {"type": "invalid_request_error",
+                                      "message": "bad request"}}).encode(),
+            )
+
+        prov = self._provider()
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out.startswith("[Error: opencode API request failed: HTTP Error 400")
+        assert urls and all(u.endswith("/chat/completions") for u in urls)

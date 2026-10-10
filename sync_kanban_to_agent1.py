@@ -34,8 +34,10 @@ def sync():
     for msg in messages:
         processed_count += 1
         op = msg.get("op")
-        payload = msg  # The bridge functions seem to take the whole message or the payload part depending on implementation, but usually they expect the dict that contains source_id etc.
-        
+        # The bridge functions take the whole message or the payload part
+        # depending on implementation (the dict holding source_id etc.) — the
+        # per-op calls below pick the right one explicitly.
+
         # Based on previous reads of kanban_bridge.py:
         # _apply_card_create(payload) uses payload.get('id')
         # _apply_card_update(payload) uses payload.get('source_id')
