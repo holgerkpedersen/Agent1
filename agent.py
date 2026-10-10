@@ -2088,6 +2088,26 @@ class Agent:
                 f"  - {v}" for v in gate_result.violations
             )
 
+        # Consensus review gate (opt-in, default off): every configured model
+        # votes on the plan with a structured VERDICT line; only a quorum of
+        # APPROVEs lets it start. Model disagreement blocks — an honest "no"
+        # from models that answered is a real signal. Infrastructure failure
+        # fails OPEN (the note below says so) — a dead server must never
+        # silently block the workflow. See consensus_gate.py.
+        consensus_note = ""
+        from agent_core.plan_execution.consensus_gate import gate_enabled as _gate_on
+        if _gate_on(self.workspace):
+            from agent_core.plan_execution.consensus_gate import review_plan
+            outcome = await review_plan(self, state["plan_text"])
+            note_text = outcome.consensus or outcome.skipped_reason
+            consensus_note = f"\nConsensus gate: {note_text}" if note_text else ""
+            if not outcome.approved:
+                return (
+                    "Plan blocked by the consensus gate." + consensus_note
+                    + "\nThe plan stays proposed. Address the reviewers'"
+                      " concerns and propose again."
+                )
+
         dry_run = args.get("dry_run", False)
 
         plan_dir = Path(state["plan_dir"])
@@ -2100,7 +2120,7 @@ class Agent:
         if dry_run:
             return (
                 f"Plan transitioned to executing (dry-run mode). "
-                f"{len(tasks)} tasks validated."
+                f"{len(tasks)} tasks validated.{consensus_note}"
             )
 
         from agent_core.plan_execution.runner import run_plan
@@ -2124,6 +2144,9 @@ class Agent:
             )
         else:
             report_lines.append("\nAll tasks completed. Use plan_finish to finalize.")
+
+        if consensus_note:
+            report_lines.append(consensus_note.strip())
 
         return "\n".join(report_lines)
 
