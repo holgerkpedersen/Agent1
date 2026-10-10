@@ -30,7 +30,6 @@ import pytest
 from agent_core.llm.workspace_prefs import set_pref
 from agent_core.plan_execution.consensus_gate import (
     CONSUSUS_GATE_PREF,
-    ConsensusGateOutcome,
     gate_enabled,
     review_plan,
 )
