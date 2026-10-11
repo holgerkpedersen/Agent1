@@ -367,3 +367,83 @@ class TestRunToolGate:
         bot._full_run_gate = FullRunGate(".", baseline={"agent_core/llm/tool_loop.py"})
         out = await bot._nlp_tests({"path": "."})
         assert "REFUSED" in out
+
+
+
+# ---------------------------------------------------------------------------
+# FullRunGate.reset — a cleared session must start fresh (plan-audit finding)
+# ---------------------------------------------------------------------------
+
+
+class TestGateReset:
+    """The 2026-10 plan audit found the gate was ghost state: ``clear`` wiped
+    chat history and the memory JSONs, yet a spent full-run budget silently
+    carried into every later session (every subsequent full run refused).
+    These tests pin the reset contract; the wiring through
+    :meth:`Agent.clear_history` is pinned in tests/test_clear_history_gate_reset.py.
+
+    Deliberately standalone: inside ``TestRunToolGate`` an autouse fixture
+    replaces ``changed_real_files`` wholesale and pins the budget env, so these
+    tests own their whole environment explicitly (a mutable fake-git view)
+    instead of inheriting ambient shell/.env state.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _gate_env(self, monkeypatch) -> None:
+        """Deterministic gate env: enabled, hard cap of one full run."""
+        monkeypatch.delenv(GATE_ENV, raising=False)
+        monkeypatch.setenv(MAX_FULL_RUNS_ENV, "1")
+
+    @staticmethod
+    def _fake_git(monkeypatch, state: dict) -> None:
+        """Patch ``changed_real_files`` to a mutable fake git view."""
+        monkeypatch.setattr(
+            pytest_gate, "changed_real_files", lambda root: set(state["files"])
+        )
+
+    def test_reset_zeroes_spent_budget_and_rebaselines(self, monkeypatch) -> None:
+        """A cleared session gets the budget back and a *current* baseline."""
+        self._fake_git(monkeypatch, {"files": {"agent_core/llm/tool_loop.py"}})
+        gate = FullRunGate(".", baseline={"stale_from_last_session.py"})
+        assert "stale_from_last_session.py" in gate._baseline  # ghost pre-reset
+        gate.record_full_run()
+        refusal = gate.check() or ""
+        assert "budget" in refusal.lower(), "spent budget refuses before reset"
+
+        gate.reset()
+
+        assert gate.runs == 0, "reset must hand the per-session budget back"
+        assert gate._baseline == {"agent_core/llm/tool_loop.py"}, (
+            "baseline re-read: current git view replaces the old session's"
+        )
+        assert gate.pending_real_changes() == set()
+
+    def test_reset_lets_a_new_change_earn_a_full_run(self, monkeypatch) -> None:
+        """End-to-end effect of the restored budget: a fresh change earns a run.
+
+        Pre-fix this refused forever — every cleared session inherited the old
+        session's spent budget (the ghost state the plan audit found).
+        """
+        state = {"files": set()}
+        self._fake_git(monkeypatch, state)
+        gate = FullRunGate(".", baseline=set())
+        gate.record_full_run()  # spend the whole budget on this "session"
+        gate.reset()
+
+        state["files"] = {"agent.py"}  # a real change appears after clearing
+        assert gate.check() is None, (
+            f"fresh session + fresh change must earn a full run: {gate.check()}"
+        )
+
+    def test_reset_survives_missing_git(self, monkeypatch) -> None:
+        """Baseline re-read is best effort — a git hiccup must not raise."""
+
+        def _boom(*a, **k):  # noqa: ANN001
+            raise FileNotFoundError("git")
+
+        monkeypatch.setattr(pytest_gate.subprocess, "run", _boom)
+        gate = FullRunGate(".", baseline={"stale.py"})
+        gate.record_full_run()
+        gate.reset()  # must not raise on a dead git
+        assert gate.runs == 0
+        assert gate._baseline == set(), "git failure degrades to an empty baseline"

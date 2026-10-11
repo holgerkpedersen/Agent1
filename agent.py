@@ -3298,6 +3298,15 @@ class Agent:
             os.remove(AGENT_MEMORY_JSON_PATH)
         except OSError as e:
             logger.warning("Could not remove persisted state files: %s", e)
+        # The full-run gate is session state too: its baseline is "changes at
+        # session start" and its budget a per-session cap, so a cleared
+        # session must re-baseline and get the budget back — otherwise every
+        # later session inherits a spent budget (full runs permanently
+        # refused). Best effort: a git hiccup must never break clear itself.
+        try:
+            self._full_run_gate.reset()
+        except Exception:  # pragma: no cover - defensive, gate is in __init__
+            logger.debug("full-run gate reset failed", exc_info=True)
 
     def _decision_constraints_block(self) -> str:
         """Design-decision constraints for the chat system prompt.

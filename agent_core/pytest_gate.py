@@ -413,3 +413,18 @@ class FullRunGate:
     def record_full_run(self) -> None:
         """Record that a full run was spent (the budget is a hard cap)."""
         self._runs += 1
+
+    def reset(self) -> None:
+        """Re-baseline and hand the full-run budget back for a fresh session.
+
+        :meth:`agent.Agent.clear_history` calls this so a cleared session
+        starts with a full budget and a baseline of *current* tracked changes,
+        not the dirty files an earlier session left behind. Without it the
+        gate is ghost state: ``clear`` wipes chat history and the memory
+        JSONs, yet a spent full-run budget silently carries into every later
+        session (every subsequent full run refused). Baseline re-read is best
+        effort — :func:`changed_real_files` already degrades to an empty set
+        when git is unavailable.
+        """
+        self._baseline = changed_real_files(self.root)
+        self._runs = 0
