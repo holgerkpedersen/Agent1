@@ -12,7 +12,7 @@ The gate itself is exercised in tests/test_pytest_full_run_gate.py.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
