@@ -45,6 +45,7 @@ flowchart LR
 ```
 
 Notes:
+
 - `active.json` in the Kanban data dir names the active board (`{"active": "agent1"}`);
   both sides read it, and per-board sync opt-in is stored in the board file's top-level
   `"sync"` map (e.g. `"sync": {"agent1": true}`).
@@ -106,14 +107,12 @@ sequenceDiagram
 Frame title → issue status mapping (`FRAME_TO_STATUS` in `kanban_bridge.py`):
 
 | Kanban frame (column title) | Agent1 issue status |
-|---|---|
-| Issues | open |
-| Planned | planned |
-| On-going | in-progress |
-| Quality & Assurance | reviewing |
-| Finished | resolved |
-
-(There is no mapping for a "Done" frame — moves there fall back to `open`.)
+| --------------------------- | ------------------- |
+| Issues                      | open                |
+| Planned                     | planned             |
+| On-going                    | in-progress         |
+| Quality & Assurance         | reviewing           |
+| Finished                    | resolved            |
 
 ## 4. Agent1 → Kanban: outbound flow
 
@@ -222,12 +221,12 @@ to `queue-kanban-to-agent1\messages.jsonl`.
 
 ## 9. Inbound handler reference (what each op does to `.issues.json`)
 
-| op | handler | effect on issue | requires map hit? |
-|---|---|---|---|
+| op            | handler              | effect on issue                                                                                                                                                                                     | requires map hit?   |
+| ------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
 | `card_create` | `_apply_card_create` | builds + **persists** a new issue (`make_issue` → upsert → save), then `link_ids(issue, card)`; tags `[category]`, `[severity:x]`, `[status:y]`; text split on `\n\n---\n` into evidence / approach | creates the mapping |
-| `card_update` | `_apply_card_update` | updates title / appends `[note]` to evidence / replaces suggested_approach and status; saves ledger | yes (via source_id) |
-| `card_move` | `_apply_card_move` | sets issue `status` from `FRAME_TO_STATUS[frame_title]`; stamps `resolved_at` on resolved/wontfix transitions | yes (via source_id) |
-| `card_delete` | `_apply_card_delete` | resolves the issue with disposition `wontfix`, note "Card deleted from Kanban" | yes (via source_id) |
+| `card_update` | `_apply_card_update` | updates title / appends `[note]` to evidence / replaces suggested_approach and status; saves ledger                                                                                                 | yes (via source_id) |
+| `card_move`   | `_apply_card_move`   | sets issue `status` from `FRAME_TO_STATUS[frame_title]`; stamps `resolved_at` on resolved/wontfix transitions                                                                                       | yes (via source_id) |
+| `card_delete` | `_apply_card_delete` | resolves the issue with disposition `wontfix`, note "Card deleted from Kanban"                                                                                                                      | yes (via source_id) |
 
 ## 10. Boot wiring (who runs the reader)
 
@@ -245,12 +244,12 @@ Manual one-shot processing: `python -m harnessfix.kanban_bridge --process-in` (a
 
 ## 11. Historical defects this design fixed (why the code looks like this)
 
-| Commit | Defect it closed |
-|---|---|
-| `3ae4af9` feat(sync) | Introduced the enqueue hook + bridge |
+| Commit                | Defect it closed                                                                                                                                                                    |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `3ae4af9` feat(sync)  | Introduced the enqueue hook + bridge                                                                                                                                                |
 | `4997765` fix(kanban) | Created issues were never persisted (phantom mappings); moves resolved by frame *id* (never matched, always fell back to "open"); malformed lines re-read forever — now quarantined |
-| `15adbdc` fix(sync) | Inbound poller was never wired into boot — all inbound messages sat unread; now `_start_kanban_inbound()` in `agent.py:main()` |
-| `01e67b2` / `4054853` | `.env` master switch was dead (only env var counted); per-board opt-in added as a second layer, fail-closed |
+| `15adbdc` fix(sync)   | Inbound poller was never wired into boot — all inbound messages sat unread; now `_start_kanban_inbound()` in `agent.py:main()`                                                      |
+| `01e67b2` / `4054853` | `.env` master switch was dead (only env var counted); per-board opt-in added as a second layer, fail-closed                                                                         |
 
 ## 12. Operational checklist (why "the file is not updated")
 
@@ -271,4 +270,5 @@ If you move a card and see no effect on Agent1:
    the Kanban app drains them into its own board state.
 
 ---
+
 *Generated 2026-10-15 from: harnessfix/kanban_bridge.py (full read), harnessfix/issues.py (sync gate + enqueue hook), agent.py (_start_kanban_inbound, main), sync_kanban_to_agent1.py, live data under C:\Dev\Kanban\data (active.json, board-agent1.json with 7 frames / 95 cards, queue seq=12 offset=31, .card_id_map.json with 74 entries).*
