@@ -452,6 +452,19 @@ class TestModelListGoVsZenNoDuplicate:
             lambda self: ["opencode-zen/hy3-free", "opencode-zen/nemotron-3.5-lightning-free",
                           "opencode-zen/claude-opus-5"],
         )
+        # The go block builds a real keyed OpencodeProvider (the zen-mode agent
+        # is never reused for the go catalog), whose list_models() does a live
+        # GET {api_url}/models.  Stub that HTTP boundary so the test is
+        # hermetic (no network / no CI-secret dependency) while the real
+        # list_models() prefixing logic still runs.
+        from agent_core.llm.opencode_provider import OpencodeProvider
+
+        def _fake_request(self, method, url, *args, **kwargs):
+            if url.endswith("/models") and "/zen/go/" in url:
+                return {"data": [{"id": "mimo-v2.5"}, {"id": "glm-5.1"}]}
+            raise OSError(f"network disabled in test: {url}")
+
+        monkeypatch.setattr(OpencodeProvider, "_request", _fake_request)
 
         cmd._list_models(agent)
         out = capsys.readouterr().out
