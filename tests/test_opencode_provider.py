@@ -861,6 +861,140 @@ class TestAnthropicMessagesProtocol:
         assert body["tools"][0]["description"] == "run a command"
         assert body["tools"][0]["input_schema"] == tools[0]["function"]["parameters"]
 
+    # -- tool_use / tool_result pairing (live HTTP 400, 2026-10-13) -------
+
+    @staticmethod
+    def _assert_pairs_ok(messages):
+        """Assert Anthropic's pairing contract over a built /messages payload.
+
+        Every ``tool_use`` needs a ``tool_result`` with the same id in the
+        NEXT message, and no ``tool_result`` may appear without the
+        ``tool_use`` that asked for it — either way round the gateway answers
+        HTTP 400 and the whole turn dies.
+        """
+        prev_use: set = set()
+        for i, m in enumerate(messages):
+            blocks = m["content"]
+            use = {b["id"] for b in blocks if b.get("type") == "tool_use"}
+            res = {b["tool_use_id"] for b in blocks if b.get("type") == "tool_result"}
+            assert res <= prev_use, f"orphan tool_result {res - prev_use} at {i}"
+            following: set = set()
+            if i + 1 < len(messages):
+                following = {
+                    b["tool_use_id"]
+                    for b in messages[i + 1]["content"]
+                    if b.get("type") == "tool_result"
+                }
+            assert use <= following, f"orphan tool_use {use - following} at {i}"
+            prev_use = use
+
+    def _payload(self, messages, tools=None):
+        return self._provider()._anthropic_payload(messages, tools, 64)
+
+    def test_empty_tool_result_is_still_paired(self):
+        """Regression (2026-10-13): ``list_files`` on an EMPTY directory
+        returns "", and dropping that empty tool message orphaned the
+        assistant's ``tool_use`` — every later turn then failed with
+        ``messages.N: `tool_use` ids were found without `tool_result`
+        blocks immediately after: toolu_...``."""
+        import asyncio
+        captured = {}
+        call_id = "toolu_01NTRv86LLhzqqshi28B7xjF"
+        messages = [
+            {"role": "user", "content": "list files"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": call_id, "type": "function",
+                 "function": {"name": "list_files",
+                              "arguments": '{"path": "cur"}'}},
+            ]},
+            {"role": "tool", "tool_call_id": call_id, "content": ""},
+            {"role": "user", "content": "I restarted pop3 service"},
+        ]
+
+        def fake_urlopen(req, timeout=None):
+            if req.full_url.endswith("/chat/completions"):
+                raise self._protocol_error()
+            captured["body"] = json.loads(req.data)
+            return _FakeHttp(self._anthropic_text())
+
+        prov = self._provider()
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            asyncio.run(prov.chat(messages))
+        body = captured["body"]
+        self._assert_pairs_ok(body["messages"])
+        assert [m["role"] for m in body["messages"]] == ["user", "assistant", "user"]
+        user_blocks = body["messages"][2]["content"]
+        # The result leads the message (it must immediately follow the
+        # tool_use); the user's later note rides along behind it.
+        assert user_blocks[0] == {
+            "type": "tool_result", "tool_use_id": call_id,
+            "content": "(no output)",
+        }
+        assert user_blocks[1] == {"type": "text", "text": "I restarted pop3 service"}
+
+    def test_unanswered_tool_use_dropped_from_payload(self):
+        """A tool_use whose result never arrived must be stripped instead of
+        being sent (strict gateways reject the payload outright)."""
+        payload = self._payload([
+            {"role": "user", "content": "list files"},
+            {"role": "assistant", "content": "let me look", "tool_calls": [
+                {"id": "call_lost", "type": "function",
+                 "function": {"name": "list_files", "arguments": "{}"}},
+            ]},
+            {"role": "user", "content": "still there?"},
+        ])
+        self._assert_pairs_ok(payload["messages"])
+        assert [m["role"] for m in payload["messages"]] == ["user", "assistant", "user"]
+        assert payload["messages"][1]["content"] == [
+            {"type": "text", "text": "let me look"}
+        ]
+
+    def test_fully_unanswered_tool_call_leaves_text_only(self):
+        """No text + no answer -> the assistant message disappears entirely,
+        and the two user turns it stood between merge back into one turn."""
+        payload = self._payload([
+            {"role": "user", "content": "list files"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "call_lost", "type": "function",
+                 "function": {"name": "list_files", "arguments": "{}"}},
+            ]},
+            {"role": "user", "content": "still there?"},
+        ])
+        self._assert_pairs_ok(payload["messages"])
+        assert [m["role"] for m in payload["messages"]] == ["user"]
+        assert [b["text"] for b in payload["messages"][0]["content"]] == [
+            "list files", "still there?",
+        ]
+
+    def test_partially_answered_batch_keeps_only_answered_call(self):
+        payload = self._payload([
+            {"role": "user", "content": "compare"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "call_ok", "type": "function",
+                 "function": {"name": "list_files", "arguments": "{}"}},
+                {"id": "call_lost", "type": "function",
+                 "function": {"name": "list_files", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "call_ok", "content": "a.py"},
+        ])
+        self._assert_pairs_ok(payload["messages"])
+        tool_uses = [b for b in payload["messages"][1]["content"]
+                     if b["type"] == "tool_use"]
+        assert [b["id"] for b in tool_uses] == ["call_ok"]
+        assert payload["messages"][2]["content"][0]["tool_use_id"] == "call_ok"
+
+    def test_orphan_tool_result_dropped_from_payload(self):
+        """A result with no matching call (restored/truncated history) is
+        dropped instead of being sent as a bare tool_result."""
+        payload = self._payload([
+            {"role": "user", "content": "hi"},
+            {"role": "tool", "tool_call_id": "call_gone", "content": "stale"},
+            {"role": "assistant", "content": "hello"},
+        ])
+        self._assert_pairs_ok(payload["messages"])
+        blocks = payload["messages"][0]["content"]
+        assert blocks == [{"type": "text", "text": "hi"}]
+
     def test_plain_400_does_not_use_messages_endpoint(self):
         import asyncio
         urls = []

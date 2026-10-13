@@ -115,6 +115,96 @@ def _hosted_model_id(model_name: str) -> str:
     return model_name
 
 
+#: Stand-in for a tool that legitimately produced NO output (e.g. list_files
+#: on an empty directory).  The block itself is mandatory — see
+#: :func:`_anthropic_blocks` — but its text keeps the empty result legible to
+#: the model instead of smuggling a blank string.
+_EMPTY_TOOL_RESULT = "(no output)"
+
+
+def _pair_tool_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop halves of tool exchanges Anthropic would reject (HTTP 400).
+
+    The protocol demands that every ``tool_use`` block have a ``tool_result``
+    block with the SAME id in the IMMEDIATELY following message, and no
+    ``tool_result`` without the ``tool_use`` that asked for it.  History can
+    break either half — trimming cuts a pair, a note lands between a call and
+    its answer, a result never arrives — and one unpaired id fails the whole
+    request (``messages.N: `tool_use` ids were found without `tool_result`
+    blocks immediately after``).
+
+    This runs on the already-folded payload, so a partner can only live in
+    the neighbouring message.  Unpaired blocks are removed, a message left
+    with nothing is removed too, and the two messages a removal can leave
+    adjacent with the same role are merged back into one turn.  Losing one
+    stale exchange is always cheaper than a 400 that kills the turn.
+    """
+    out: list[dict[str, Any]] = []
+    #: tool_use ids kept in the message emitted last (the assistant the next
+    #: user message is allowed to answer); empty after any non-assistant turn.
+    prev_use_ids: set[Any] = set()
+    for i, msg in enumerate(messages):
+        blocks = list(msg.get("content") or [])
+        role = msg.get("role")
+        if role == "assistant":
+            if any(b.get("type") == "tool_use" for b in blocks if isinstance(b, dict)):
+                nxt = messages[i + 1] if i + 1 < len(messages) else None
+                result_ids: set[Any] = set()
+                if isinstance(nxt, dict) and nxt.get("role") == "user":
+                    result_ids = {
+                        b.get("tool_use_id")
+                        for b in (nxt.get("content") or [])
+                        if isinstance(b, dict) and b.get("type") == "tool_result"
+                    }
+                blocks = [
+                    b for b in blocks
+                    if not (isinstance(b, dict) and b.get("type") == "tool_use")
+                    or b.get("id") in result_ids
+                ]
+        elif role == "user":
+            if any(
+                isinstance(b, dict) and b.get("type") == "tool_result" for b in blocks
+            ):
+                # ``prev_use_ids`` comes from the message emitted last; a
+                # ``tool_result`` only survives if its call did.
+                blocks = [
+                    b for b in blocks
+                    if not (isinstance(b, dict) and b.get("type") == "tool_result")
+                    or b.get("tool_use_id") in prev_use_ids
+                ]
+                # A tool_result must IMMEDIATELY follow its tool_use, so keep
+                # results ahead of any user text folded into the same message.
+                blocks = (
+                    [b for b in blocks
+                     if isinstance(b, dict) and b.get("type") == "tool_result"]
+                    + [b for b in blocks
+                       if not (isinstance(b, dict) and b.get("type") == "tool_result")]
+                )
+        else:
+            prev_use_ids = set()
+            out.append(msg)
+            continue
+        if not blocks:
+            prev_use_ids = set()
+            continue
+        # Dropping an unpaired half can leave two messages of the same role
+        # adjacent — something the fold above would never produce — so merge
+        # them back and keep the payload's roles alternating.
+        if out and out[-1].get("role") == role:
+            out[-1] = {"role": role, "content": list(out[-1]["content"]) + blocks}
+        else:
+            out.append({"role": role, "content": blocks})
+        prev_use_ids = (
+            {
+                b.get("id") for b in out[-1]["content"]
+                if isinstance(b, dict) and b.get("type") == "tool_use"
+            }
+            if role == "assistant"
+            else set()
+        )
+    return out
+
+
 #: Anthropic Messages content block types we understand.
 def _anthropic_blocks(msg: dict[str, Any], role: str) -> list[dict[str, Any]]:
     """Convert one OpenAI-shaped *msg* into Anthropic content blocks.
@@ -126,8 +216,19 @@ def _anthropic_blocks(msg: dict[str, Any], role: str) -> list[dict[str, Any]]:
     content = msg.get("content")
     if role == "tool":
         # The protocol pairs tool output with the tool_use that requested it.
+        # An EMPTY result must still produce a tool_result block: dropping it
+        # orphans the assistant's tool_use and the gateway rejects the whole
+        # request with HTTP 400 ("`tool_use` ids were found without
+        # `tool_result` blocks").  Live repro 2026-10-13: list_files on an
+        # empty directory returns "" -> every later turn failed with 400.
         if content is None or content == "":
-            return []
+            return [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": str(msg.get("tool_call_id") or ""),
+                    "content": _EMPTY_TOOL_RESULT,
+                }
+            ]
         return [
             {
                 "type": "tool_result",
@@ -654,7 +755,9 @@ class OpencodeProvider:
             "model": _hosted_model_id(self.model_name),
             # The protocol requires an explicit output budget.
             "max_tokens": int(max_tokens or self.max_tokens or 4096),
-            "messages": out,
+            # Guarantee tool_use/tool_result pairing: an orphan either way
+            # fails the whole request with HTTP 400 (see _pair_tool_blocks).
+            "messages": _pair_tool_blocks(out),
         }
         if system_bits:
             payload["system"] = "\n\n".join(system_bits)
