@@ -183,11 +183,14 @@ class TestChat:
         ):
             out = await prov.chat([{"role": "user", "content": "hi"}], tools=_TOOLS)
         assert out == "hej"
-        payload = json.loads(calls[0].data.decode("utf-8"))
+        # chat() first GETs /models to learn the context window, then POSTs the
+        # chat request; select the POST rather than assuming it is first.
+        chat_req = next(c for c in calls if c.data is not None)
+        payload = json.loads(chat_req.data.decode("utf-8"))
         assert payload["model"] == "qwen3.5-4b-FLM"  # prefix stripped
         assert payload["messages"][0]["content"] == "hi"
         assert payload["tools"][0]["function"]["name"] == "x"
-        assert calls[0].full_url == "http://localhost:13305/api/v1/chat/completions"
+        assert chat_req.full_url == "http://localhost:13305/api/v1/chat/completions"
 
     @pytest.mark.anyio
     async def test_tool_calls_passthrough(self):

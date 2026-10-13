@@ -158,6 +158,32 @@ class LemonadeProvider:
         self.temperature = temperature
         self.max_tokens = max_tokens
 
+    def _fetch_context_limit(self) -> int | None:
+        """Fetch the actual context window (tokens) from the Lemonade server.
+
+        Called lazily on first request when context_limit is unset.
+        Returns the model's ``context_length`` from the ``/models`` endpoint,
+        or None if the server is unreachable. Seeds ``self.context_limit``.
+        """
+        if self.context_limit is not None:
+            return self.context_limit
+        try:
+            models_resp = self._request("GET", f"{self.api_url}/models")
+            if isinstance(models_resp, dict):
+                data = models_resp.get("data")
+                if isinstance(data, list):
+                    # Find the model matching our bare id (without lemonade/ prefix)
+                    bare_id = _http_model_id(self.model_name)
+                    for model in data:
+                        if model.get("id") == bare_id:
+                            ctx_len = model.get("context_length")
+                            if isinstance(ctx_len, int) and ctx_len > 0:
+                                self.context_limit = ctx_len
+                                return ctx_len
+        except Exception:  # noqa: BLE001 - server unreachable, leave None
+            pass
+        return None
+
     # ------------------------------------------------------------------
     # Labeling (once per session, like the other providers)
     # ------------------------------------------------------------------
@@ -240,11 +266,19 @@ class LemonadeProvider:
         self._label()
         from .lmstudio import sanitize_message_roles
 
+        # Cap max_tokens at the model's actual context window to avoid "max length" errors.
+        requested_tokens = max_tokens if max_tokens is not None else self.max_tokens
+        ctx_limit = self._fetch_context_limit()
+        effective_tokens = (
+            requested_tokens
+            if ctx_limit is None
+            else min(requested_tokens, ctx_limit)
+        )
         payload: dict[str, Any] = {
             "model": _http_model_id(self.model_name),
             "messages": sanitize_message_roles(messages),
             "temperature": self.temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
+            "max_tokens": effective_tokens,
         }
         if tools:
             payload["tools"] = tools
