@@ -15,7 +15,7 @@ class DisplayCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "display [verbose|clean|quiet] - Show/set NLP output verbosity"
+        return "display [verbose|clean|quiet|intent] - Show/set NLP output verbosity"
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         from agent_core.config import AgentDisplayMode, load_agent_settings
@@ -36,7 +36,7 @@ class DisplayCommand(Command):
 
         if not args:
             print(f"Display mode is '{current.value}'.")
-            print("Options: verbose (every call + result), clean (reason per call, summarized results), quiet (only final answer).")
+            print("Options: verbose (every call + result), clean (reason per call, summarized results), quiet (only final answer), intent (model's intent + planned calls before each LLM round's tools run).")
             return True
 
         requested = str(args[0]).strip().lower()

@@ -48,6 +48,7 @@ class DisplayMode(str, enum.Enum):
     VERBOSE = "verbose"   # every call + full (truncated) result shown
     CLEAN = "clean"      # reason line per call; results summarized for display only
     QUIET = "quiet"      # tool calls/results hidden; only final answer printed
+    INTENT = "intent"    # per LLM round: model's intent + planned calls shown BEFORE execution, then verbose lines
 
 #: Injected into the history when only a few iterations remain, so the model
 #: starts wrapping up instead of discovering the cap when it is too late.
@@ -840,6 +841,12 @@ class ToolLoopRunner:
             #: human-readable reason in CLEAN mode so bare calls are explained.
             prev_text = str(last_msg.get("content") or "")
 
+            #: INTENT mode: show what the model is about to do BEFORE any tool
+            #: runs — its narration (if any) plus each planned call — so the
+            #: user can follow the agent's plan round by round.
+            if self.display_mode == DisplayMode.INTENT:
+                _print_intent(iteration, prev_text, tool_calls)
+
             # Seed this batch's duplicate detection with the FULL key set of
             # the previous batch: any key re-issued in consecutive batches is
             # a parallel repeat, even when batch N+1 reorders or adds calls.
@@ -1370,6 +1377,31 @@ class ToolLoopRunner:
             return False
         self._seen_progress_keys.add(key)
         return True
+
+
+def _print_intent(iteration: int, narration: str, tool_calls: list[Any]) -> None:
+    """INTENT display: print one block per LLM round before its tool calls run.
+
+    Shows the model's own narration (what it says it is trying to do) and each
+    planned call with its arguments, so the user sees the intent of every LLM
+    interaction in real time instead of only the final answer.
+    """
+    print(f"  {magenta(f'[intent {iteration + 1}]')}")
+    text = " ".join(str(narration or "").split())
+    if text:
+        print(f"    {gray(text[:400])}")
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        func = tc.get("function", {}) or {}
+        name = func.get("name", "") or "?"
+        try:
+            args = json.loads(func.get("arguments", "{}") or "{}")
+            if not isinstance(args, dict):
+                args = {}
+        except (json.JSONDecodeError, TypeError):
+            args = {}
+        print(f"    {yellow('->')} {cyan(name)}({gray(_fmt_args(args))})")
 
 
 def _fmt_args(args: dict[str, Any]) -> str:

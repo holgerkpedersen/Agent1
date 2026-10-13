@@ -1948,6 +1948,37 @@ class TestDisplayModes:
         assert tool_msg["content"] == "full-result-content"  # full payload intact
         assert final_text == "Answer."
 
+    def test_intent_mode_is_parsed_and_shows_intent_before_tool(self, capsys):
+        """INTENT mode prints an [intent] block (narration + planned call) for the
+        LLM round BEFORE the tool executes, and the model still gets the payload."""
+        from agent_core.config import AgentDisplayMode, _parse_display_mode
+        from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
+
+        assert _parse_display_mode("intent") == AgentDisplayMode.INTENT
+
+        fake = _ScriptedLLM([
+            ("read", {"path": "a.py"}),
+            "Answer.",
+        ])
+        order: list[str] = []
+
+        async def execute_tool(name, args):
+            order.append("tool")
+            return "full-result-content"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="intent")
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert runner.display_mode == DisplayMode.INTENT
+        out = capsys.readouterr().out
+        assert "[intent 1]" in out
+        assert "read(path=a.py)" in out
+        # Intent is printed before the tool executes.
+        assert out.index("[intent 1]") < out.index("[tool]")
+        tool_msg = next(m for m in messages if m["role"] == "tool")
+        assert tool_msg["content"] == "full-result-content"
+        assert final_text == "Answer."
+
     def test_clean_folds_narration_preamble_in_chat_nlp(self, tmp_path):
         """In CLEAN mode chat_nlp folds a stray 'I will ...' narration into a
         short preamble so the report reads as one coherent answer."""

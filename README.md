@@ -250,7 +250,7 @@ All config lives in `.env` (see `.env.example` for the full annotated list) and 
 ```
 AGENT_LLM_PROVIDER=opencode        # Provider: opencode | lmstudio | openrouter | llama
 OPENCODE_API_KEY=sk-...            # Cloud API key (or use LM Studio locally)
-AGENT_DISPLAY_MODE=clean           # Tool output: verbose | clean | quiet
+AGENT_DISPLAY_MODE=clean           # Tool output: verbose | clean | quiet | intent
 LOG_LEVEL=INFO                     # Logging: DEBUG | INFO | WARNING | ERROR
 ```
 

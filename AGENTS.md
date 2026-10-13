@@ -11,6 +11,21 @@ currently `qwen/qwen3.8-27b` under `deep-analysis`) to analyze, plan, implement,
 and test code changes in its own workspace. It records every design decision and
 is being extended to audit its own file effects (self-improvement).
 
+## Text encoding: always UTF-8 (hard invariant)
+
+- All text files this project reads or writes (source, config, docs, reports,
+  test fixtures, prompts) are UTF-8 without BOM.
+- Never rely on the platform default. On Windows, `open()`, `Path.read_text()`
+  and `Path.write_text()` default to cp1252 and silently corrupt non-ASCII text.
+  Always pass `encoding="utf-8"` explicitly, including in subprocess text mode
+  (`text=True` needs `encoding="utf-8"`, `errors="replace"` if output is untrusted).
+- Binary data (mail/eml/mbox bytes, TLS files, `tomllib` input, and any file
+  whose bytes must round-trip) stays in `"rb"` / `"wb"`. Never decode and
+  re-encode it.
+- Test fixtures with non-ASCII text are written and read as UTF-8.
+- When adding a new file-I/O call, grep for `open(`, `read_text(`, `write_text(`
+  and check each one has an explicit encoding or is binary.
+
 ## Architecture map
 
 - `agent.py` — entry point; REPL `run_interactive`; the `Agent` class: `chat_nlp`

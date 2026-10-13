@@ -74,6 +74,9 @@ class AgentDisplayMode(str, enum.Enum):
     VERBOSE = "verbose"
     CLEAN = "clean"
     QUIET = "quiet"
+    #: Shows the model's intent (its narration + the planned calls) for EVERY
+    #: LLM round before any tool runs, then the usual verbose call/result lines.
+    INTENT = "intent"
 
 
 @dataclass(frozen=True)

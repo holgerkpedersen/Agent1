@@ -107,6 +107,12 @@ from agent_core.security.allowlist import (
     find_destructive_shell_pattern,
 )
 from agent_core.symbol_intel import collect_definitions, collect_references
+from agent_core.text_encoding import (
+    NonUtf8TextError,
+    UnrepresentableTextError,
+    encode_in_encoding,
+    read_text_preserving,
+)
 from agent_core.commands.read_cmd import ReadCommand
 from agent_core.commands.write_cmd import WriteCommand
 from agent_core.commands.search_cmd import SearchCommand
@@ -1750,12 +1756,14 @@ class Agent:
         old_text = str(args.get("old_text", ""))
         new_text = str(args.get("new_text", ""))
         try:
-            # Context manager guarantees the handle closes even if
-            # save_file_py raises below.
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
+            # Read in the file's own encoding (UTF-8, or legacy cp1252). A file
+            # that cannot be decoded and round-tripped is refused, never
+            # rewritten with U+FFFD substituted for the original bytes.
+            content, encoding = read_text_preserving(path)
         except FileNotFoundError:
             return f"File not found: {path}"
+        except NonUtf8TextError as e:
+            return f"Edit refused: {e}"
         except OSError as e:
             return f"Edit error: {e}"
         if old_text not in content:
@@ -1765,11 +1773,28 @@ class Agent:
             )
         new_content = content.replace(old_text, new_text, 1)
         try:
-            return await self._save_verify_note(
-                path, new_content, f"Edited {path}",
-            )
-        except Exception as e:
+            # Refuse before writing if the new text cannot be encoded in the
+            # file's existing encoding, so a legacy file is never converted.
+            encode_in_encoding(new_content, encoding, path)
+        except UnrepresentableTextError as e:
+            return f"Edit refused: {e}"
+        if encoding == "utf-8":
+            try:
+                return await self._save_verify_note(
+                    path, new_content, f"Edited {path}",
+                )
+            except Exception as e:
+                return f"Edit error: {e}"
+        # Legacy encoding: write in the same encoding, same newline handling
+        # as save_file_py (text mode), so only the encoding is preserved.
+        try:
+            with open(path, "w", encoding=encoding) as f:
+                f.write(new_content)
+        except OSError as e:
             return f"Edit error: {e}"
+        verify = await self._verify_file(path) if path.endswith(".py") else ""
+        self._note_effect(path)
+        return f"Edited {path} (kept {encoding})\n{verify}".strip()
 
     async def _nlp_tests(self, args: dict[str, Any]) -> str:
         """Run pytest/unittest on *path* (bounded by the measured suite budget)."""
