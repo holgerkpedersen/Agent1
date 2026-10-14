@@ -37,6 +37,7 @@ async def run_subprocess_with_timeout(
     injection surface: arguments are validated against metacharacters before being
     passed through.
     """
+    proc: asyncio.subprocess.Process | None = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -60,6 +61,13 @@ async def run_subprocess_with_timeout(
         logger.warning(
             "Subprocess timed out after %ss: %s", timeout_sec, " ".join(cmd)
         )
+        # Kill and reap the child so its pipe transports close before the loop ends.
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
         raise ToolExecutionError(
             "subprocess", f"Timed out after {timeout_sec} seconds"
         ) from e
