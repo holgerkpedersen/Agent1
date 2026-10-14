@@ -28,6 +28,7 @@ WORKSPACE = Path(__file__).resolve().parent.parent
 
 #: The vendored runbook set — each must stay loadable and indexed.
 VENDORED_SKILLS = {
+    "asd-ste100",
     "jev-strategy",
     "requesting-code-review",
     "subagent-orchestration",
@@ -65,6 +66,31 @@ def test_index_block_lists_all_vendored_skills() -> None:
     block = skill_index_block(discover_skills(WORKSPACE))
     for name in sorted(VENDORED_SKILLS):
         assert f"- {name} — " in block, f"{name} missing from the system-prompt index"
+
+
+def test_asd_ste100_skill_loads_with_metadata() -> None:
+    """Regression: asd-ste100 was silently skipped ("unterminated frontmatter
+    block") because its SKILL.md lacked a closing ``---`` and used nested keys
+    that the flat frontmatter parser rejects.  Pin the loaded metadata."""
+    by_name = {skill.name: skill for skill in discover_skills(WORKSPACE)}
+    assert "asd-ste100" in by_name, "asd-ste100 skipped by discovery"
+    skill = by_name["asd-ste100"]
+    assert skill.description.strip()
+    assert "ste100" in skill.tags
+
+
+def test_asd_ste100_frontmatter_is_closed_and_flat() -> None:
+    """The file must open and close its frontmatter block (flat key: value)."""
+    text = (WORKSPACE / "skills" / "asd-ste100" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    lines = text.splitlines()
+    assert lines[0].strip() == "---"
+    closing = [i for i in range(1, len(lines)) if lines[i].strip() == "---"]
+    assert closing, "frontmatter block is not closed with '---'"
+    header = lines[1 : closing[0]]
+    for line in header:
+        assert not line.startswith((" ", "\t")), f"nested key not supported: {line!r}"
 
 
 @pytest.mark.parametrize("skill_name", sorted(VENDORED_SKILLS))

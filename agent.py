@@ -5195,11 +5195,18 @@ def _build_chat_prompt(agent: "Agent", branch: str, now: datetime) -> str:
     plan = bool(plan() if callable(plan) else False)
     mode_tag = "[plan] " if plan else "[build] "
     prompt_color = blue if plan else green
+    # Header only: printed on its own line by run_interactive. The caret is
+    # placed by input() on the following line, so no ANSI or newline text is
+    # ever counted as part of the input prompt.
     return (
         f"\n[{now:%Y-%m-%d %H:%M}] {branch} "
-        f"{prompt_color(mode_tag)}"
-        f"{prompt_color('> ')}"
+        f"{prompt_color(mode_tag.rstrip())}"
     )
+
+
+#: Plain input prompt. Kept free of escape codes and newlines so the terminal
+#: always places the caret after it on the line directly below the header.
+CHAT_INPUT_PROMPT = "> "
 
 
 async def run_interactive() -> None:
@@ -5262,9 +5269,8 @@ async def run_interactive() -> None:
             # Get user input — _interruptible_input uses a background thread
             # so the process can be killed via SIGBREAK on Windows.
             branch = _current_git_branch() or "?"
-            user_input = _interruptible_input(
-                _build_chat_prompt(agent, branch, datetime.now())
-            )
+            print(_build_chat_prompt(agent, branch, datetime.now()))
+            user_input = _interruptible_input(CHAT_INPUT_PROMPT)
             if user_input is None:
                 # Shutdown requested or stdin exhausted
                 agent._save_memory()

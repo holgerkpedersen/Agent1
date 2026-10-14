@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 
 
-from agent import _build_chat_prompt
+from agent import _build_chat_prompt, CHAT_INPUT_PROMPT
 from agent_core.colors import blue, green, _RESET, _ENABLED
 
 
@@ -29,10 +29,12 @@ def test_build_prompt_build_mode_is_green_and_tagged():
     agent = _FakeAgent(plan=False)
     now = datetime.datetime(2025, 1, 2, 3, 4)
     prompt = _build_chat_prompt(agent, "main", now)
-    # Mode tag + cursor are present in the plain text.
-    assert _strip_ansi(prompt) == "\n[2025-01-02 03:04] main [build] > "
+    # Header is one line; the caret prompt is separate (CHAT_INPUT_PROMPT).
+    assert _strip_ansi(prompt) == "\n[2025-01-02 03:04] main [build]"
+    assert CHAT_INPUT_PROMPT == "> "
+    assert "\n" not in CHAT_INPUT_PROMPT and "\033" not in CHAT_INPUT_PROMPT
     if _ENABLED:
-        assert green("[build] ") in prompt
+        assert green("[build]") in prompt
         assert _RESET in prompt
 
 
@@ -40,9 +42,9 @@ def test_build_prompt_plan_mode_is_blue_and_tagged():
     agent = _FakeAgent(plan=True)
     now = datetime.datetime(2025, 1, 2, 3, 4)
     prompt = _build_chat_prompt(agent, "dev", now)
-    assert _strip_ansi(prompt) == "\n[2025-01-02 03:04] dev [plan] > "
+    assert _strip_ansi(prompt) == "\n[2025-01-02 03:04] dev [plan]"
     if _ENABLED:
-        assert blue("[plan] ") in prompt
+        assert blue("[plan]") in prompt
 
 
 def test_build_prompt_plan_vs_build_differ():
