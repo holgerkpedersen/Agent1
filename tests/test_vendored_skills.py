@@ -19,7 +19,9 @@ from pathlib import Path
 import pytest
 
 from agent_core.skills import (
+    SkillError,
     discover_skills,
+    format_skill_page,
     read_skill,
     skill_index_block,
 )
@@ -182,3 +184,81 @@ def test_workspace_without_skills_gets_no_index(tmp_path, monkeypatch) -> None:
     content = _system_prompt_for(tmp_path, tmp_path, monkeypatch)
     assert SKILL_INDEX_MARKER not in content
     assert content == agent_mod._SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Mangled-name recovery (the read_skill self-correction path)
+# ---------------------------------------------------------------------------
+#
+# Regression (2026-10-14): a small model (qwen3.5-9b-FLM) appended a long
+# deterministic digit/hex run -- containing a '+', so the slug check failed --
+# to every read_skill name it generated, and the old rejection
+# ("name '...' is not a slug") named no valid skill, so the model retried the
+# same garbage six times and never loaded a runbook.  A mangled request must
+# now either load the right skill (with a note teaching the exact name) or
+# fail with the closest candidate and the full skill list.
+
+#: The exact garbage suffix from that session's tool calls.
+GARBAGE_SUFFIX = (
+    "20087159643247196853019e+13dcdacddcdeedfbcdfcfbceecafabfdcafeffadfcbaefdcbeaeaffa"
+)
+
+
+@pytest.mark.parametrize("skill_name", sorted(VENDORED_SKILLS))
+def test_skill_name_with_token_garbage_recovers(skill_name: str) -> None:
+    """``<name>-<garbage>`` must load the skill and flag the correction."""
+    mangled = f"{skill_name}-{GARBAGE_SUFFIX}"
+    page = read_skill(WORKSPACE, mangled)
+    assert page.skill.name == skill_name
+    assert page.correction_note == (
+        f"you requested {mangled!r} — loaded {skill_name!r} instead"
+    )
+    rendered = format_skill_page(page)
+    assert rendered.splitlines()[0] == f"[note: {page.correction_note}]"
+
+
+def test_skill_name_with_typo_and_garbage_recovers() -> None:
+    """'jeve-strategy' (one extra letter) + garbage must load 'jev-strategy'."""
+    page = read_skill(WORKSPACE, f"jeve-strategy-{GARBAGE_SUFFIX}")
+    assert page.skill.name == "jev-strategy"
+    assert page.correction_note is not None
+
+
+def test_skill_name_with_typo_alone_recovers() -> None:
+    """A one-letter typo without garbage is a fuzzy match, not an error."""
+    page = read_skill(WORKSPACE, "test-drivrn-development")
+    assert page.skill.name == "test-driven-development"
+    assert page.correction_note is not None
+
+
+def test_truncated_skill_name_recovers() -> None:
+    """A truncated name must load the unique skill that extends it."""
+    page = read_skill(WORKSPACE, "systematic-debug")
+    assert page.skill.name == "systematic-debugging"
+    assert page.correction_note is not None
+
+
+def test_exact_skill_name_has_no_correction_note() -> None:
+    page = read_skill(WORKSPACE, "jev-strategy")
+    assert page.correction_note is None
+    assert not format_skill_page(page).startswith("[note:")
+
+
+def test_unknown_skill_error_lists_available_names() -> None:
+    """An unrecoverable name must hand the model the full valid-name list."""
+    with pytest.raises(SkillError) as excinfo:
+        read_skill(WORKSPACE, "banana-split")
+    message = str(excinfo.value)
+    assert "available skills:" in message
+    for name in sorted(VENDORED_SKILLS):
+        assert name in message, f"{name} missing from the error message"
+    assert "did you mean" not in message, "no near miss here, so no suggestion"
+
+
+def test_unknown_skill_error_suggests_closest_name() -> None:
+    """A near miss below the auto-correct cutoff gets a 'did you mean' hint."""
+    with pytest.raises(SkillError) as excinfo:
+        read_skill(WORKSPACE, "zzzzzzzzzz-development")
+    message = str(excinfo.value)
+    assert "did you mean 'test-driven-development'" in message
+    assert "available skills:" in message
