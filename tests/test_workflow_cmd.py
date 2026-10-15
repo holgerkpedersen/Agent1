@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from agent_core.commands.workflow_cmd import (
-    WorkflowCommand,
     _scan_workspace_context,
     _analysis_flag_gate,
     _extract_decisions_if_any,
