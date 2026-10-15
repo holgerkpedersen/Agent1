@@ -390,3 +390,32 @@ def test_gate_runs_the_real_functional_suite(monkeypatch):
     # The gate invokes pytest as a subprocess (the real functional suite).
     assert "pytest" in args
 
+def test_restore_snapshot_skips_identical_bytes(tmp_path):
+    """A restore must not rewrite bytes that already match the snapshot.
+
+    An identical write still bumps mtime, and a test run must not touch
+    tracked source it does not actually change (regression: every driver
+    test that reached ``_restore_snapshot`` stamped
+    ``agent_core/llm/tool_loop.py`` with a fresh mtime even though the
+    content was byte-identical - the repo file was snapshotted and written
+    back unchanged).
+    """
+    import time
+
+    f = tmp_path / "mod.py"
+    f.write_text("value = 1\n", encoding="utf-8")
+    snap = {f: f.read_bytes()}
+    before = f.stat().st_mtime
+    time.sleep(0.05)
+    drv._restore_snapshot(snap)
+    assert f.stat().st_mtime == before  # skipped: identical bytes
+
+    # A genuinely different file IS rolled back.
+    f.write_text("value = 2\n", encoding="utf-8")
+    drv._restore_snapshot(snap)
+    assert f.read_text(encoding="utf-8") == "value = 1\n"
+
+    # A file absent at snapshot time is removed on restore.
+    f.unlink()
+    drv._restore_snapshot({f: None})
+    assert not f.exists()

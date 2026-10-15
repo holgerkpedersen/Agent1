@@ -432,13 +432,22 @@ def _snapshot_files(files: list[Path]) -> dict[Path, bytes | None]:
 
 
 def _restore_snapshot(snap: dict[Path, bytes | None]) -> None:
-    """Best-effort restore of snapshotted files to their pre-iteration state."""
+    """Best-effort restore of snapshotted files to their pre-iteration state.
+
+    A file whose current bytes already equal the snapshot is left untouched:
+    rewriting identical content would still bump its mtime, and a test run
+    must not even touch tracked source it does not actually change (the real
+    repair target was redirected to a temp copy, so the repo file is usually
+    already byte-identical here).
+    """
     for f, data in snap.items():
         try:
             if data is None:
                 if f.exists():
                     f.unlink()
             else:
+                if f.exists() and f.read_bytes() == data:
+                    continue
                 f.write_bytes(data)
         except OSError:
             pass

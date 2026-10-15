@@ -40,11 +40,39 @@ except Exception:  # noqa: BLE001
     pass
 
 
+@pytest.fixture(scope="session")
+def issues_ledger_sandbox(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Session-shared copy of the real issue ledger, OUTSIDE every tmp_path.
+
+    ``harnessfix.issues.load_issues``/``save_issues`` fall back to the
+    module-level ``ISSUES_PATH`` (repo-root ``.issues.json``) at call time, so
+    the isolation fixture monkeypatches it here.  The copy lives in the
+    session temp base (like ``harnessfix_targets_``), never inside a test's
+    ``tmp_path``: tests treat ``tmp_path`` as an empty/clean project, and an
+    eagerly-written file in it broke ``test_nlp_analyze_empty_directory``
+    (the "empty" dir collected the ledger) and ``TestWarnUncommitted`` (the
+    "clean" git repo showed one untracked file).  One copy per session
+    mirrors HEAD's shared-ledger semantics without touching the developer's
+    real file.
+    """
+    import harnessfix.issues as issues_module
+
+    sandbox = tmp_path_factory.mktemp("issues_ledger") / ".issues.json"
+    live = issues_module.ISSUES_PATH
+    try:
+        if live.is_file():
+            sandbox.write_bytes(live.read_bytes())
+    except OSError:
+        pass
+    return sandbox
+
+
 @pytest.fixture(autouse=True)
 def _isolate_from_real_tree_and_beacons(
     tmp_path: Path,
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
+    issues_ledger_sandbox: Path,
 ) -> None:
     """Keep every test from mutating tracked source or the live beacons.
 
@@ -200,6 +228,23 @@ def _isolate_from_real_tree_and_beacons(
         "PERF_HISTORY_JSON_PATH",
         str(runtime_dir / "perf_history.json"),
     )
+    # Wiki I/O is the same class of leak but git-INVISIBLE: the wiki is
+    # gitignored, and retrieval itself persists ``hit_count`` — so a test that
+    # merely reads wiki notes for prompt context rewrites the developer's
+    # knowledge base (observed: ``test_default_generate_false_when_no_tree_change``
+    # and eight driver tests).  The env var is honored by
+    # ``harnessfix.wiki._sandbox`` for every path inside this repo, and —
+    # unlike a module monkeypatch — survives the subprocess gates the driver
+    # spawns (they inherit the environment).
+    monkeypatch.setenv("HARNESSFIX_WIKI_DIR", str(runtime_dir / "wiki"))
+    # Same for the issue ledger: ``harnessfix.issues.load_issues/save_issues``
+    # fall back to the module-level ``ISSUES_PATH`` (repo-root ``.issues.json``)
+    # at call time, so patching the module attr redirects every caller that
+    # does not pass an explicit path.  The seeded copy lives outside this
+    # test's ``tmp_path`` (see ``issues_ledger_sandbox``).
+    import harnessfix.issues as issues_module
+
+    monkeypatch.setattr(issues_module, "ISSUES_PATH", issues_ledger_sandbox)
 
 
 #: The DEVELOPER's persisted model state — never the test run's.  A test that

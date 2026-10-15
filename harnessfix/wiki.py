@@ -44,6 +44,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WIKI_DIR = REPO_ROOT / "reports" / "wiki"
 WIKI_PATH = WIKI_DIR / "wiki.jsonl"
 
+#: Test-suite override (set by the root conftest via ``monkeypatch.setenv``):
+#: when set, wiki I/O for paths inside THIS repo is redirected into that temp
+#: directory.  Retrieval persists hit counts, so a test that merely READS the
+#: wiki would otherwise mutate the developer's live knowledge base — and the
+#: wiki is gitignored, so such a leak is invisible to ``git status``.
+SANDBOX_ENV = "HARNESSFIX_WIKI_DIR"
+
 #: How many top pages to surface in stats / dashboard.
 TOP_PAGES_LIMIT = 10
 
@@ -70,9 +77,31 @@ def _file_hash(file_stems: Tuple[str, ...]) -> str:
     return h
 
 
+def _sandbox(p: "Path | str") -> Path:
+    """Map *p* into ``SANDBOX_ENV`` when it targets the live repo wiki.
+
+    When the env var is set (tests) and *p* resolves inside this repo, the
+    path is redirected to the sandbox dir — file paths keep their file name,
+    directory paths map to the sandbox root.  Paths outside the repo (fixture
+    tmp dirs) and the unset-env case pass through unchanged, so production
+    behavior is byte-identical.  The redirect is inherited by subprocesses,
+    which a module-level monkeypatch could never reach.
+    """
+    path = Path(p)
+    env = os.environ.get(SANDBOX_ENV)
+    if not env:
+        return path
+    try:
+        path.resolve().relative_to(REPO_ROOT)
+    except (OSError, ValueError):
+        return path
+    env_dir = Path(env)
+    return env_dir / path.name if path.suffix else env_dir
+
+
 def load_wiki(path: Path | None = None) -> List[WikiPage]:
     """Load all wiki pages from disk (fail-open on corrupt/missing)."""
-    p = path or WIKI_PATH
+    p = _sandbox(path or WIKI_PATH)
     if not p.is_file():
         return []
     pages: list[WikiPage] = []
@@ -113,7 +142,7 @@ def _dict_to_page(obj: Dict[str, Any]) -> WikiPage:
 
 def save_wiki(pages: List[WikiPage], path: Path | None = None) -> None:
     """Persist wiki pages atomically (temp + os.replace)."""
-    p = path or WIKI_PATH
+    p = _sandbox(path or WIKI_PATH)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
     lines = [json.dumps(asdict(pg), ensure_ascii=False) for pg in pages]
@@ -217,7 +246,7 @@ def consolidate(
     wiki failure never halts the loop.
     """
     tdir = Path(trace_dir)
-    odir = Path(output_dir) if output_dir else WIKI_DIR
+    odir = _sandbox(Path(output_dir) if output_dir else WIKI_DIR)
     odir.mkdir(parents=True, exist_ok=True)
     wpath = odir / "wiki.jsonl"
 

@@ -339,3 +339,56 @@ class TestDashboardAPI:
         result = stub._autonomous_status()
         assert "wiki" in result
         assert isinstance(result["wiki"], dict)
+
+
+class TestSandbox:
+    """``HARNESSFIX_WIKI_DIR`` keeps in-repo wiki I/O inside a temp dir.
+
+    The root conftest sets the env var for every test, so retrieval hit-count
+    writes and consolidation can never mutate the developer's live wiki
+    (which is gitignored - a leak there is invisible to ``git status``).
+    """
+
+    def test_redirects_paths_inside_repo(self, tmp_path, monkeypatch):
+        import harnessfix.wiki as wiki_mod
+
+        monkeypatch.setenv(wiki_mod.SANDBOX_ENV, str(tmp_path / "kb"))
+        file_out = wiki_mod._sandbox(wiki_mod.WIKI_PATH)
+        assert file_out == tmp_path / "kb" / "wiki.jsonl"
+        dir_out = wiki_mod._sandbox(
+            wiki_mod.REPO_ROOT / "reports" / "harnessfix" / "wiki")
+        assert dir_out == tmp_path / "kb"
+
+    def test_passes_through_outside_repo_and_without_env(
+            self, tmp_path, monkeypatch):
+        import harnessfix.wiki as wiki_mod
+
+        monkeypatch.setenv(wiki_mod.SANDBOX_ENV, str(tmp_path / "kb"))
+        outside = tmp_path / "reports" / "wiki" / "wiki.jsonl"
+        assert wiki_mod._sandbox(outside) == outside  # fixture paths win
+        monkeypatch.delenv(wiki_mod.SANDBOX_ENV, raising=False)
+        assert wiki_mod._sandbox(wiki_mod.WIKI_PATH) == wiki_mod.WIKI_PATH
+
+    def test_default_save_and_load_stay_inside_sandbox(self, tmp_path, monkeypatch):
+        import harnessfix.wiki as wiki_mod
+
+        monkeypatch.setenv(wiki_mod.SANDBOX_ENV, str(tmp_path / "kb"))
+        real_before = (
+            wiki_mod.WIKI_PATH.read_bytes() if wiki_mod.WIKI_PATH.exists()
+            else None
+        )
+        save_wiki([WikiPage(key="k", title="t", lesson="L")])
+        assert (tmp_path / "kb" / "wiki.jsonl").is_file()
+        assert [p.key for p in load_wiki()] == ["k"]
+        real_after = (
+            wiki_mod.WIKI_PATH.read_bytes() if wiki_mod.WIKI_PATH.exists()
+            else None
+        )
+        assert real_after == real_before  # live wiki untouched
+
+    def test_sandbox_is_idempotent(self, tmp_path, monkeypatch):
+        import harnessfix.wiki as wiki_mod
+
+        monkeypatch.setenv(wiki_mod.SANDBOX_ENV, str(tmp_path / "kb"))
+        once = wiki_mod._sandbox(wiki_mod.WIKI_PATH)
+        assert wiki_mod._sandbox(once) == once  # already outside the repo
