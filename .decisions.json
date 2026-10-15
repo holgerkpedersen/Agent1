@@ -2517,5 +2517,84 @@
     "resolved_by": null,
     "status": "active",
     "category": "correctness"
+  },
+  {
+    "id": "117",
+    "date": "2026-10-14T21:18:39+00:00",
+    "title": "Add fallback contract for _turn_quality_score harnessfix getters",
+    "context": "_turn_quality_score references harnessfix.tracing.take_turn_events/drain_turn_events/etc by name with no fallback contract; if harnessfix renames a getter, quality silently degrades to the proxy path (agent.py:750)",
+    "decision": "Wrap each harnessfix tracing getter access in getattr-or-default guards so missing/renamed getters fall back explicitly rather than degrading silently",
+    "rationale": "Direct attribute references without fallbacks create silent degradation paths; defensive access preserves quality scoring even when upstream symbols change",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "robustness",
+      "api-contract",
+      "quality-scoring"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
+  },
+  {
+    "id": "118",
+    "date": "2026-10-14T21:18:39+00:00",
+    "title": "Add retry-on-lock for _record_llm_experience SQLite writes",
+    "context": "_record_llm_experience opens a new SQLite connection per call with timeout=5.0 but never retries on database is locked; concurrent subagents can silently drop experience rows (agent.py)",
+    "decision": "Wrap the INSERT in a retry loop that catches sqlite3.OperationalError \"database is locked\" and reattempts after backoff up to N times before logging failure",
+    "rationale": "Concurrent subagents writing experiences can collide on SQLite locking; retrying with backoff prevents silent row drops without requiring schema changes or external databases",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "production",
+      "sqlite-retry",
+      "concurrency"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
+  },
+  {
+    "id": "119",
+    "date": "2026-10-15T09:42:45+00:00",
+    "title": "Refactor Agent God-Object",
+    "context": "The `Agent` class in `agent.py` is described as a 1500+ line god-object with 50+ methods spanning diverse responsibilities (file I/O, LLM calls, git, plan execution, delegation, signal handling) without clear internal boundaries.",
+    "decision": "Split the monolithic `Agent` class into smaller, cohesive components with clear boundaries.",
+    "rationale": "Improves maintainability, testability, and separation of concerns by reducing the complexity of a single class handling too many responsibilities.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "architecture",
+      "refactoring",
+      "code-quality"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
+  },
+  {
+    "id": "120",
+    "date": "2026-10-15T09:42:45+00:00",
+    "title": "Cache Tool Handler Dictionary",
+    "context": "`_nlp_tool_handlers()` rebuilds a 30-entry dict of bound methods on every tool dispatch call, causing O(n) allocation in a hot loop.",
+    "decision": "Cache the tool handlers dictionary as a property to avoid repeated construction.",
+    "rationale": "Reduces CPU overhead and memory allocation during high-frequency tool dispatching, improving performance.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "performance",
+      "optimization"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   }
 ]
