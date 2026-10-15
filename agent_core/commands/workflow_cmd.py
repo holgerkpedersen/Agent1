@@ -779,6 +779,12 @@ class WorkflowCommand(Command):
         def step_ok(result: str) -> bool:
             return not (result.startswith("[Error") or result.startswith("[LM Studio"))
 
+        # Bind spec_content up-front so _reuse() always has a value to pass
+        # to _specs_match().  It is populated below when a real spec file is
+        # loaded; without this, the free-variable reference inside _reuse()
+        # raises NameError on the --brainstorm path where no spec_file exists.
+        spec_content = ""
+
         def _reuse(name: str, label: str) -> bool:
             """True when *label* can be skipped because its doc already exists.
 

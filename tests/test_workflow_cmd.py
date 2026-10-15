@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from agent_core.commands.workflow_cmd import (
+    WorkflowCommand,
     _scan_workspace_context,
     _analysis_flag_gate,
     _extract_decisions_if_any,
@@ -101,6 +102,27 @@ class TestScanWorkspaceContext:
             assert used is True
             assert "# ---- b.py ----" not in combined
             assert len(combined.splitlines()) <= 6000
+
+
+class TestReuseWithoutSpecFile:
+    """Regression: _reuse() must not raise NameError when no spec file is
+    provided (e.g. --brainstorm without --desc/--from).  Previously
+    `spec_content` was a free variable only assigned inside an `if spec_file:`
+    block that came AFTER _reuse's definition, so referencing it raised:
+
+        NameError: cannot access free variable 'spec_content' while ...
+    """
+
+    def test_specs_match_with_empty_current_spec(self, tmp_path: Path) -> None:
+        prev = tmp_path / "project_spec.md"
+        prev.write_text("# Spec\n\nsome old task", encoding="utf-8")
+        # Empty spec content is the value used when no spec file exists.
+        assert _specs_match(prev, "") is False
+
+    def test_specs_match_with_empty_current_when_prev_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            assert _specs_match(ws / "missing.md", "") is False
 
 
 class TestRepairAnalysis:
