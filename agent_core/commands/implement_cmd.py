@@ -772,6 +772,71 @@ async def _chat_fix_text(agent: Any, msgs: list[dict[str, str]], fname: str, err
     return fixed
 
 
+_OPEN_FENCE_RE = re.compile(r"^```[\w+.-]*[ \t]*(?:\n|\Z)")
+_TAGGED_BLOCK_RE = re.compile(
+    r"\[(FILE|COMPUTE_DIFF):\s*([^\]]+)\]\s*\n?(.*?)(?=\[(?:FILE|PATCH|COMPUTE_DIFF):|\Z)",
+    re.DOTALL,
+)
+
+
+def _strip_block_fences(body: str) -> tuple[str, bool]:
+    """Return ``(code, has_closing_fence)`` for a ``[FILE:]``/``[COMPUTE_DIFF:]`` body.
+
+    Removes one leading opening fence (```` ```python ````) and a trailing
+    closing fence when present.
+    """
+    text = body.strip()
+    m = _OPEN_FENCE_RE.match(text)
+    if m:
+        text = text[m.end():]
+    closed = text.rstrip().endswith("```")
+    if closed:
+        text = text.rstrip()[:-3]
+    return text.rstrip(), closed
+
+
+def _recover_unterminated_blocks(response: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Recover ``[FILE:]``/``[COMPUTE_DIFF:]`` blocks whose closing fence is missing.
+
+    The terminated-fence patterns in ``implement`` silently drop these blocks.
+    Returns ``(file_blocks, compute_diff_blocks)`` as ``(name, code)`` tuples.
+    Blocks with a closing fence are left to the regular patterns; empty bodies
+    (a bare header) are ignored.  Content is not validated here: the caller's
+    compile and rewrite-similarity gates still apply.
+    """
+    files: list[tuple[str, str]] = []
+    diffs: list[tuple[str, str]] = []
+    for tag, name, body in _TAGGED_BLOCK_RE.findall(response):
+        code, closed = _strip_block_fences(body)
+        if closed or not code.strip():
+            continue
+        target = files if tag == "FILE" else diffs
+        target.append((name.strip(), code))
+    return files, diffs
+
+
+def _describe_unparsed_response(response: str | None) -> str:
+    """One-line summary of a batch response that yielded no blocks."""
+    text = response or ""
+    tags = re.findall(r"\[(FILE|PATCH|COMPUTE_DIFF):", text)
+    tail = text[-200:].replace("\n", "\\n")
+    return (
+        f"{len(text)} chars, {text.count('```')} fence marker(s), "
+        f"tags={tags or 'none'}, tail={tail!r}"
+    )
+
+
+def _save_unparsed_response(taskplan_file: str, batch: list[str], response: str | None) -> str:
+    """Write the full unparsed response to ``.implement_unparsed/`` beside the taskplan."""
+    out_dir = Path(os.path.dirname(os.path.realpath(taskplan_file))) / ".implement_unparsed"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    name = re.sub(r"[^\w.-]+", "_", batch[0]) if batch else "batch"
+    path = out_dir / f"{name}_{stamp}.txt"
+    path.write_text(response or "", encoding="utf-8")
+    return str(path)
+
+
 def _apply_file_block(raw_code: str, fpath: str, backup: str) -> tuple[bool, str]:
     """Write an [FILE:] body to *fpath*, py_compile it; roll back on failure."""
     new_code = _FENCE_TAIL_RE.sub('', raw_code.strip()).strip()
@@ -2012,6 +2077,16 @@ class ImplementCommand(Command):
                     if compute_diff_matches:
                         break
 
+            # Blocks without a closing fence were silently dropped by the
+            # patterns above; recover them so the compile and similarity gates
+            # can judge the content instead of retrying the whole batch.
+            if not matches and not patch_matches and not compute_diff_matches:
+                recovered_files, recovered_diffs = _recover_unterminated_blocks(impl_response)
+                if recovered_files or recovered_diffs:
+                    print(f"  Recovered {len(recovered_files) + len(recovered_diffs)} block(s) without a closing fence")
+                matches = recovered_files
+                compute_diff_matches = recovered_diffs
+
             if not matches and not patch_matches and ("<tool_call" in impl_response or "<tool_call>" in impl_response):
                 print("  Detected tool calls, retrying with plain text instruction...")
                 impl_messages.append({"role": "user", "content": "Respond ONLY in [FILE: filename.py] or [PATCH: filename.py] format. No <tool_call> tags."})
@@ -2052,6 +2127,12 @@ class ImplementCommand(Command):
 
             if not matches and not patch_matches:
                 print("  Warning: Could not parse files from batch response")
+                print(f"  Diagnostics: {_describe_unparsed_response(impl_response)}")
+                try:
+                    saved = _save_unparsed_response(taskplan_file, batch, impl_response)
+                    print(f"  Full response saved: {saved}")
+                except OSError as exc:
+                    print(f"  Could not save unparsed response: {exc}")
                 print(f"  Raw response: {str(impl_response)[:500]}")
                 continue
 
@@ -2278,6 +2359,11 @@ class ImplementCommand(Command):
                                 if retry_content:
                                     try:
                                         compile(retry_content, filename, "exec")
+                                        # Set `patched` too: the post-loop line
+                                        # `patched_text = str(patched)` would
+                                        # otherwise overwrite this with the old
+                                        # patch error string.
+                                        patched = retry_content
                                         patched_text = retry_content
                                         ok = True
                                         print(f"  Self-correction succeeded (FILE rewrite) for {filename}")
@@ -2309,6 +2395,7 @@ class ImplementCommand(Command):
                                                     pass
                                         if not ok:
                                             # Use raw content if diff fails
+                                            patched = fallback_content
                                             patched_text = fallback_content
                                             ok = True
                                             print(f"  Self-correction succeeded (code block fallback, raw) for {filename}")
@@ -2368,6 +2455,7 @@ class ImplementCommand(Command):
                                                 pass
                                     if not ok:
                                         # Use raw content
+                                        patched = direct_content
                                         patched_text = direct_content
                                         ok = True
                                         print(f"  Direct generation succeeded (raw) for {filename}")
