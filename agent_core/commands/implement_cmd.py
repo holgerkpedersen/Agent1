@@ -815,6 +815,58 @@ def _recover_unterminated_blocks(response: str) -> tuple[list[tuple[str, str]], 
     return files, diffs
 
 
+#: Batch-response block patterns, shared by the initial parse and every retry
+#: so a retry answer in any of the three documented formats is accepted.
+#: Only fence-terminated and lookahead-terminated variants are listed: an
+#: earlier ``$``-anchored variant let its lazy body backtrack to the LAST
+#: closing fence, collapsing a multi-block response into one over-captured
+#: match whose body contained the other blocks' headers -- every file in the
+#: batch then failed the compile gate.  The plain fence pattern stops at each
+#: block's own first closing fence, so ``findall`` returns every block.
+_FILE_BLOCK_PATTERNS = [
+    r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```',
+    r'\[FILE:\s*([^\]]+)\]\s*\n+(.*?)(?=\[FILE:|\[PATCH:|\[COMPUTE_DIFF:|$)',
+]
+_COMPUTE_DIFF_BLOCK_PATTERNS = [
+    r'\[COMPUTE_DIFF:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```',
+]
+_PATCH_BLOCK_PATTERNS = [
+    r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\[COMPUTE_DIFF:|$)',
+]
+
+
+def _parse_response_blocks(
+    response: str | None, modify_mode: bool,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]], list[tuple[str, str]]]:
+    """Parse ``(file, patch, compute_diff)`` blocks out of one batch response.
+
+    FILE blocks win first, then PATCH (modify mode), then COMPUTE_DIFF -- each
+    kind only when no higher-priority kind matched.  Shared by the initial
+    parse and both retry paths: previously the retries parsed FILE/PATCH only,
+    so a response that followed the retry instruction (which explicitly offers
+    ``[COMPUTE_DIFF: ...]``) could never satisfy the parse loop.
+    """
+    text = response or ""
+    matches: list[tuple[str, str]] = []
+    for pattern in _FILE_BLOCK_PATTERNS:
+        matches = re.findall(pattern, text, re.DOTALL)
+        if matches:
+            break
+    patch_matches: list[tuple[str, str]] = []
+    if modify_mode and not matches:
+        for pattern in _PATCH_BLOCK_PATTERNS:
+            patch_matches = re.findall(pattern, text, re.DOTALL)
+            if patch_matches:
+                break
+    compute_diff_matches: list[tuple[str, str]] = []
+    if not matches and not patch_matches:
+        for pattern in _COMPUTE_DIFF_BLOCK_PATTERNS:
+            compute_diff_matches = re.findall(pattern, text, re.DOTALL)
+            if compute_diff_matches:
+                break
+    return matches, patch_matches, compute_diff_matches
+
+
 def _describe_unparsed_response(response: str | None) -> str:
     """One-line summary of a batch response that yielded no blocks."""
     text = response or ""
@@ -2041,41 +2093,12 @@ class ImplementCommand(Command):
                     file_outcomes[bf] = f"generation failed — {str(impl_response)[:120] or 'no response'}"
                 continue
 
-            file_patterns = [
-                r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```\s*$',
-                r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```',
-                r'\[FILE:\s*([^\]]+)\]\s*\n+(.*?)(?=\[FILE:|\[PATCH:|\[COMPUTE_DIFF:|$)',
-            ]
-            compute_diff_patterns = [
-                r'\[COMPUTE_DIFF:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```\s*$',
-                r'\[COMPUTE_DIFF:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```',
-            ]
-            patch_patterns = [
-                r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\[COMPUTE_DIFF:|$)',
-            ]
-
-            # Try [FILE:] blocks first, then [PATCH:] blocks, then [COMPUTE_DIFF:]
-            matches = []
-            for pattern in file_patterns:
-                matches = list(re.findall(pattern, impl_response, re.DOTALL))
-                if matches:
-                    break
-
-            # In modify mode, also try [PATCH:] blocks for existing files
-            patch_matches = []
-            if modify_mode and not matches:
-                for pattern in patch_patterns:
-                    patch_matches = list(re.findall(pattern, impl_response, re.DOTALL))
-                    if patch_matches:
-                        break
-
-            # Also try [COMPUTE_DIFF:] blocks (full file, we compute diff)
-            compute_diff_matches = []
-            if not matches and not patch_matches:
-                for pattern in compute_diff_patterns:
-                    compute_diff_matches = list(re.findall(pattern, impl_response, re.DOTALL))
-                    if compute_diff_matches:
-                        break
+            # FILE first, then PATCH (modify mode), then COMPUTE_DIFF -- one
+            # shared parser so the initial parse and every retry accept all
+            # three documented formats.
+            matches, patch_matches, compute_diff_matches = _parse_response_blocks(
+                impl_response, modify_mode,
+            )
 
             # Blocks without a closing fence were silently dropped by the
             # patterns above; recover them so the compile and similarity gates
@@ -2087,19 +2110,18 @@ class ImplementCommand(Command):
                 matches = recovered_files
                 compute_diff_matches = recovered_diffs
 
-            if not matches and not patch_matches and ("<tool_call" in impl_response or "<tool_call>" in impl_response):
+            if (
+                not matches
+                and not patch_matches
+                and not compute_diff_matches
+                and ("<tool_call" in impl_response or "<tool_call>" in impl_response)
+            ):
                 print("  Detected tool calls, retrying with plain text instruction...")
-                impl_messages.append({"role": "user", "content": "Respond ONLY in [FILE: filename.py] or [PATCH: filename.py] format. No <tool_call> tags."})
+                impl_messages.append({"role": "user", "content": "Respond ONLY in [FILE: filename.py], [PATCH: filename.py], or [COMPUTE_DIFF: filename.py] format. No <tool_call> tags."})
                 impl_response = await agent.llm.chat(impl_messages, disable_thinking=True)
-                for pattern in file_patterns:
-                    matches = list(re.findall(pattern, impl_response, re.DOTALL))
-                    if matches:
-                        break
-                if modify_mode and not matches:
-                    for pattern in patch_patterns:
-                        patch_matches = list(re.findall(pattern, impl_response, re.DOTALL))
-                        if patch_matches:
-                            break
+                matches, patch_matches, compute_diff_matches = _parse_response_blocks(
+                    impl_response, modify_mode,
+                )
 
             # Transient/empty LLM responses: re-ask for the batch instead of
             # silently dropping the file. Give up only after extra retries.
@@ -2114,18 +2136,12 @@ class ImplementCommand(Command):
                 except Exception as e:
                     print(f"  Retry error: {e}")
                     impl_response = None
-                for pattern in file_patterns:
-                    matches = list(re.findall(pattern, impl_response or "", re.DOTALL))
-                    if matches:
-                        break
-                if modify_mode and not matches:
-                    for pattern in patch_patterns:
-                        patch_matches = list(re.findall(pattern, impl_response or "", re.DOTALL))
-                        if patch_matches:
-                            break
+                matches, patch_matches, compute_diff_matches = _parse_response_blocks(
+                    impl_response, modify_mode,
+                )
                 parse_retries += 1
 
-            if not matches and not patch_matches:
+            if not matches and not patch_matches and not compute_diff_matches:
                 print("  Warning: Could not parse files from batch response")
                 print(f"  Diagnostics: {_describe_unparsed_response(impl_response)}")
                 try:
