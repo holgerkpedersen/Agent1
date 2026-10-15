@@ -1094,41 +1094,49 @@ class Agent:
     def _nlp_tool_handlers(self) -> dict[str, NlpToolHandler]:
         """Name → handler map for every entry in :data:`NLP_TOOL_NAMES`.
 
-        Built per call from bound methods (cheap; keeps handlers testable and
-        avoids stale-closure bugs after ``_nlp_workspace`` changes).
+        Built once per instance and cached (decision 120): the map holds
+        plain ``self``-bound methods that read workspace state at call time,
+        so it cannot go stale after ``_nlp_workspace`` changes, and no caller
+        mutates the returned mapping.
         """
-        return {
-            "analyze": self._nlp_analyze,
-            "definitions": self._nlp_definitions,
-            "diff": self._nlp_diff,
-            "edit": self._nlp_edit,
-            "fix": self._nlp_fix,
-            "git": self._nlp_git,
-            "jev_decide": self._nlp_jev_decide,
-            "list_files": self._nlp_list_files,
-            "merge": self._nlp_merge,
-            "read": self._nlp_read,
-            "read_skill": self._nlp_read_skill,
-            "references": self._nlp_references,
-            "run": self._nlp_run,
-            "search": self._nlp_search,
-            "speculate": self._nlp_speculate,
-            "tests": self._nlp_tests,
-            "web_search": self._nlp_web_search,
-            "write": self._nlp_write,
-            "delegate": self._nlp_delegate,
-            "delegate_batch": self._nlp_delegate_batch,
-            "create_subagent": self._nlp_create_subagent,
-            "run_subagent_task": self._nlp_run_subagent_task,
-            "mcp_tools": self._nlp_mcp_tools,
-            "mcp_call": self._nlp_mcp_call,
-            "get_current_datetime": self._nlp_get_current_datetime,
-            "hue_control": self._nlp_hue_control,
-            "plan_status": self._nlp_plan_status,
-            "plan_start": self._nlp_plan_start,
-            "plan_step": self._nlp_plan_step,
-            "plan_finish": self._nlp_plan_finish,
-        }
+        cache: dict[str, NlpToolHandler] | None = getattr(
+            self, "_handlers_cache", None
+        )
+        if cache is None:
+            cache = {
+                "analyze": self._nlp_analyze,
+                "definitions": self._nlp_definitions,
+                "diff": self._nlp_diff,
+                "edit": self._nlp_edit,
+                "fix": self._nlp_fix,
+                "git": self._nlp_git,
+                "jev_decide": self._nlp_jev_decide,
+                "list_files": self._nlp_list_files,
+                "merge": self._nlp_merge,
+                "read": self._nlp_read,
+                "read_skill": self._nlp_read_skill,
+                "references": self._nlp_references,
+                "run": self._nlp_run,
+                "search": self._nlp_search,
+                "speculate": self._nlp_speculate,
+                "tests": self._nlp_tests,
+                "web_search": self._nlp_web_search,
+                "write": self._nlp_write,
+                "delegate": self._nlp_delegate,
+                "delegate_batch": self._nlp_delegate_batch,
+                "create_subagent": self._nlp_create_subagent,
+                "run_subagent_task": self._nlp_run_subagent_task,
+                "mcp_tools": self._nlp_mcp_tools,
+                "mcp_call": self._nlp_mcp_call,
+                "get_current_datetime": self._nlp_get_current_datetime,
+                "hue_control": self._nlp_hue_control,
+                "plan_status": self._nlp_plan_status,
+                "plan_start": self._nlp_plan_start,
+                "plan_step": self._nlp_plan_step,
+                "plan_finish": self._nlp_plan_finish,
+            }
+            self._handlers_cache = cache
+        return cache
 
     async def _nlp_mcp_tools(self, args: dict[str, Any]) -> str:
         """List MCP tools the user exposed to the LLM (opt-in per server)."""

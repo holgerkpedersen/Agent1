@@ -281,3 +281,30 @@ def test_trim_chat_history_handles_non_system_head() -> None:
     # No system prompt at index 0 → nothing is treated as one; window still bounded.
     assert len(trimmed) <= 60
     assert trimmed[-1]["content"] == "m69"
+
+
+# ---------------------------------------------------------------------------
+# Dispatch-table caching (decision 120: Cache Tool Handler Dictionary)
+# ---------------------------------------------------------------------------
+
+def test_dispatch_table_is_cached_across_calls(agent: Agent) -> None:
+    """Decision 120: the handler map is built once per instance -- the hot
+    dispatch path must not rebuild a 30-entry dict of bound methods."""
+    first = agent._nlp_tool_handlers()
+    second = agent._nlp_tool_handlers()
+    assert first is second
+
+
+def test_cached_handlers_track_workspace_override(
+    agent: Agent, tmp_path: Path
+) -> None:
+    """A cached map must not go stale: bound handlers read _nlp_workspace at
+    call time, so a workspace override made after the cache exists is honored."""
+    (tmp_path / "workspace_probe.txt").write_text("x", encoding="utf-8")
+    handlers = agent._nlp_tool_handlers()
+    agent._nlp_workspace = str(tmp_path)
+    try:
+        listing = asyncio.run(handlers["list_files"]({}))
+    finally:
+        agent._nlp_workspace = None
+    assert "workspace_probe.txt" in listing
