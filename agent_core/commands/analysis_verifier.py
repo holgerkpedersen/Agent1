@@ -33,6 +33,8 @@ _SKIP_DIRS = frozenset({
 _BACKTICK_RE = re.compile(r"`([^`]+)`")
 _FILE_RE = re.compile(r"(?<![\w/])((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.py)(?![\w/])")
 _LINE_RE = re.compile(r"\bline\s*(?:no\.?|#)?\s*(~|≈)?\s*(\d+)", re.IGNORECASE)
+#: A backticked ``path/to/file.py:NNN`` reference (the form the analyze prompt asks for).
+_BACKTICK_FILE_LINE_RE = re.compile(r"((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.py):(\d+)")
 
 _ABSENCE_PHRASES = (
     "does not exist", "doesn't exist",
@@ -49,7 +51,7 @@ _IMPORT_FROM_RE = re.compile(r"^\s*from\s+[\w.]+\s+import\s+([\w,\s]+)")
 _IMPORT_RE = re.compile(r"^\s*import\s+([\w.]+)")
 _CONST_RE = re.compile(r"(_?[A-Z][A-Z0-9_]*)(?:\s*:\s*[^=]+)?\s*=")
 
-_LINE_TOLERANCE_EXACT = 50
+_LINE_TOLERANCE_EXACT = 5
 _LINE_TOLERANCE_APPROX = 50
 
 _STATUS_OK = "ok"
@@ -201,8 +203,23 @@ def _extract_claims(segment: str, seg_start: int) -> list[_Claim]:
 
     for m in _BACKTICK_RE.finditer(segment):
         content = m.group(1)
-        kind = _classify_backtick(content)
         offset = seg_start + m.start()
+        # `agent.py:208` used to fall through to the snippet branch and be
+        # skipped ("no file context"), so stale line refs were never checked.
+        file_line = _BACKTICK_FILE_LINE_RE.fullmatch(content.strip())
+        if file_line:
+            rel = file_line.group(1).replace("\\", "/")
+            claims.append(_Claim(kind="file", text=rel, offset=offset, file=rel, segment_start=seg_start))
+            claims.append(_Claim(
+                kind="line",
+                text=f"{rel}:{file_line.group(2)}",
+                offset=offset,
+                file=rel,
+                line=int(file_line.group(2)),
+                segment_start=seg_start,
+            ))
+            continue
+        kind = _classify_backtick(content)
         if kind == "file":
             rel = content.replace("\\", "/")
             claims.append(_Claim(kind="file", text=rel, offset=offset, file=rel, segment_start=seg_start))
@@ -539,8 +556,10 @@ def _pair_symbol_with_line(claims: list[_Claim]) -> None:
         for lc in lines:
             if lc.file != file or lc.segment_start != c.segment_start:
                 continue
+            # Same-segment is the scope; a long bullet must not hide its own
+            # line ref behind a character-distance cap.
             dist = abs(lc.offset - c.offset)
-            if dist < 200 and (best is None or dist < abs(best.offset - c.offset)):
+            if best is None or dist < abs(best.offset - c.offset):
                 best = lc
         if best is None:
             continue
