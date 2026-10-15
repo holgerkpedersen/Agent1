@@ -147,7 +147,7 @@ def test_check_doc_unknown_kind_raises() -> None:
 
 
 def test_apply_report_is_idempotent_under_recheck(ws: Path) -> None:
-    doc = "Touch `missing_thing.py`.\n"
+    doc = "# Plan\n\nTouch `missing_thing.py`.\n"
     first = check_doc("plan", doc, str(ws))
     written = apply_report(doc, first)
     second = check_doc("plan", written, str(ws))
@@ -275,3 +275,72 @@ class TestWorkflowPlanDocGate:
         # 9 inline write sites (3 branches × plan/entities/taskplan) + 1 def.
         assert src.count("_plan_doc_gate(") >= 10
         assert 'f.write(strip_reasoning(r, mode="light"))' not in src
+
+
+# ---------------------------------------------------------------------------
+# structural validity: fabricated / malformed documents never score clean
+# ---------------------------------------------------------------------------
+
+#: The exact envelope shape a 1.5B branch model produced for the plan prompt
+#: on 2026-10-15 (workflow run 2026-10-15_14-03-37) — a hallucinated tool
+#: result for a foreign training-data path, written verbatim as
+#: ``project_plan.md`` because it contained no backticked paths to check.
+_HALLUCINATED_PLAN_ENVELOPE = """{
+  "status": "success",
+  "type": "text",
+  "filename": "/home/josh56/repos/agent-harness/agent-harness/agent.py",
+  "content": "import os\\nimport sys\\n",
+  "start_line": 1,
+  "total_lines": 115,
+  "truncated": false
+}"""
+
+
+class TestStructuralValidity:
+    def test_tool_result_envelope_flagged_for_every_doc_kind(self, ws: Path) -> None:
+        for kind in ("plan", "taskplan", "entities"):
+            result = check_doc(kind, _HALLUCINATED_PLAN_ENVELOPE, str(ws))
+            assert not result.clean, kind
+            assert any("JSON envelope" in f for f in result.findings), kind
+
+    def test_envelope_gate_halts_in_autonomous_mode(self, ws: Path) -> None:
+        assert _plan_doc_gate(
+            "plan", _HALLUCINATED_PLAN_ENVELOPE, str(ws), force=False,
+        ) is None
+
+    def test_foreign_absolute_path_flagged(self, ws: Path) -> None:
+        result = check_doc(
+            "plan",
+            "# Plan\n\nUpdate `/home/somebody/other_repo/agent.py`.\n",
+            str(ws),
+        )
+        assert not result.clean
+        assert any("outside the workspace" in f for f in result.findings)
+
+    def test_workspace_internal_absolute_path_clean(self, ws: Path) -> None:
+        inside = ws / "existing.py"
+        result = check_doc("plan", f"# Plan\n\nTouch `{inside}`.\n", str(ws))
+        assert result.clean
+
+    def test_fabricated_tool_xml_flagged(self, ws: Path) -> None:
+        result = check_doc(
+            "plan",
+            '# Plan\n\n<definitions path="path/to/thing.py" />\n',
+            str(ws),
+        )
+        assert not result.clean
+        assert any("fabricated tool-call XML" in f for f in result.findings)
+
+    def test_entities_without_fences_flagged(self, ws: Path) -> None:
+        result = check_doc("entities", "no code here at all\n", str(ws))
+        assert not result.clean
+        assert any("no ```python" in f for f in result.findings)
+
+    def test_plan_without_markdown_structure_flagged(self, ws: Path) -> None:
+        result = check_doc("plan", "just a flat paragraph of prose.\n", str(ws))
+        assert not result.clean
+        assert any("no markdown headings" in f for f in result.findings)
+
+    def test_valid_plan_with_headings_stays_clean(self, ws: Path) -> None:
+        content = "# Plan\n\n- Update `existing.py` for speed.\n"
+        assert check_doc("plan", content, str(ws)).clean

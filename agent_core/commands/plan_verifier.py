@@ -18,6 +18,14 @@ This module runs three deterministic checks over freshly generated docs:
 * :func:`verify_entities_doc` — every ```python fence parses (``ast.parse``)
   and no top-level name is defined twice across blocks.
 
+:func:`check_doc` additionally runs a structural validity pass over every
+doc: a hallucinated tool-result JSON envelope, fabricated tool-call XML,
+absolute paths outside the workspace, or a document with no markdown
+structure for its kind is flagged.  Observed live: a 1.5B branch model
+answered the plan prompt with a ``{"status": ..., "filename": "/home/...",
+"content": ...}`` envelope from its training data, and the old gate scored
+it clean (no backticked paths) and wrote it as ``project_plan.md``.
+
 Nothing is ever rewritten: mirroring ``analysis_verifier``, unverifiable
 claims are listed in an appended ``## Verification Report``.  An existing
 report section is stripped before re-checking so repeated gates stay
@@ -26,6 +34,7 @@ idempotent and never verify their own findings as claims.
 from __future__ import annotations
 
 import ast
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,10 +65,24 @@ class PlanCheckResult:
     checked: int = 0
     flagged: int = 0
     findings: list[str] = field(default_factory=list)
+    #: Workflow file name of the checked doc (set by :func:`check_doc`).
+    doc_name: str = ""
 
     @property
     def clean(self) -> bool:
         return self.flagged == 0
+
+    def located(self, finding: str) -> str:
+        """*finding* prefixed with the doc file name it refers to."""
+        return f"{self.doc_name}: {finding}" if self.doc_name else finding
+
+
+#: Workflow file each doc kind is written to (see ``doc_paths.WORKFLOW_DOC_NAMES``).
+_DOC_NAMES = {
+    "plan": "project_plan.md",
+    "taskplan": "project_tasks.md",
+    "entities": "project_entities.md",
+}
 
 
 def _split_report(text: str) -> str:
@@ -228,34 +251,46 @@ def verify_taskplan_doc(text: str, ws: str | Path) -> PlanCheckResult:
 
 
 def verify_entities_doc(text: str, ws: str | Path) -> PlanCheckResult:
-    """Regression-check a generated entities doc: fences parse, names unique."""
+    """Regression-check a generated entities doc: fences parse, names unique.
+
+    Every finding's ``(line N)`` is the line number in the doc itself, not
+    relative to the fenced block, so it can be opened directly.
+    """
     del ws  # entities are checked syntactically, not against the workspace
     result = PlanCheckResult("entities")
-    blocks = _PY_FENCE_RE.findall(_split_report(text))
-    seen_names: dict[str, int] = {}
-    for idx, block in enumerate(blocks, 1):
+    body = _split_report(text)
+    seen_names: dict[str, list[int]] = {}
+    for idx, m in enumerate(_PY_FENCE_RE.finditer(body), 1):
+        block = m.group(1)
+        # Doc line of the block's first body line (1-based).
+        block_line = body.count("\n", 0, m.start(1)) + 1
         result.checked += 1
         try:
             tree = ast.parse(block)
         except SyntaxError as exc:
             result.flagged += 1
+            at = block_line + (exc.lineno or 1) - 1
             result.findings.append(
-                f"python block #{idx} — SyntaxError: {exc.msg} (line {exc.lineno})"
+                f"python block #{idx} — SyntaxError: {exc.msg} (line {at})"
             )
             continue
         for node in tree.body:
             if isinstance(node, (ast.ClassDef, ast.FunctionDef,
                                  ast.AsyncFunctionDef)):
-                seen_names[node.name] = seen_names.get(node.name, 0) + 1
+                names = [(node.name, node.lineno)]
             elif isinstance(node, ast.Assign):
-                for tgt in node.targets:
-                    if isinstance(tgt, ast.Name):
-                        seen_names[tgt.id] = seen_names.get(tgt.id, 0) + 1
-    for name, count in sorted(seen_names.items()):
-        if count > 1:
+                names = [(t.id, node.lineno) for t in node.targets
+                         if isinstance(t, ast.Name)]
+            else:
+                names = []
+            for name, lineno in names:
+                seen_names.setdefault(name, []).append(block_line + lineno - 1)
+    for name, where in sorted(seen_names.items()):
+        if len(where) > 1:
             result.flagged += 1
+            spots = ", ".join(f"line {n}" for n in where)
             result.findings.append(
-                f"`{name}` defined {count}× across entity blocks — keep one"
+                f"`{name}` defined {len(where)}× across entity blocks ({spots}) — keep one"
             )
     return result
 
@@ -267,24 +302,115 @@ _CHECKERS = {
 }
 
 
+#: Envelope keys of a hallucinated tool-result JSON document.
+_JSON_ENVELOPE_KEYS = ("filename", "start_line", "total_lines", "truncated", "type")
+
+#: Pseudo-tool XML a weak model writes INSTEAD of producing the document
+#: (same shape as ``speculate_cmd._FAKE_TOOL_XML_RE``).
+_FABRICATED_XML_RE = re.compile(
+    r"<\s*/?\s*(?:definitions|references|search|web_search|read|read_skill|"
+    r"list_files|diff|tests|file|result|tool_result)\b[^>]*\b"
+    r"(?:path|query|symbol|file|max_results|line)\s*=",
+    re.IGNORECASE,
+)
+
+#: Absolute filesystem paths (POSIX system dirs or Windows drives).
+_ABS_PATH_RE = re.compile(
+    r"(?<![\w])((?:[A-Za-z]:[\\/]|/(?:home|Users|usr|var|etc|opt|tmp)/)"
+    r"[^\s`\"'<>\])|,]+)"
+)
+
+_HEADING_RE = re.compile(r"^#{1,6} ", re.MULTILINE)
+_LIST_RE = re.compile(r"^(?:[-*+] |\d+[.)] )", re.MULTILINE)
+
+
+def _json_tool_envelope(text: str) -> bool:
+    """True when *text* is a whole-document tool-result JSON envelope."""
+    stripped = text.strip()
+    if not stripped.startswith("{") or '"content"' not in stripped:
+        return False
+    try:
+        obj = json.loads(stripped)
+    except ValueError:
+        return any(k in stripped for k in _JSON_ENVELOPE_KEYS)
+    return (
+        isinstance(obj, dict)
+        and isinstance(obj.get("content"), str)
+        and any(k in obj for k in _JSON_ENVELOPE_KEYS)
+    )
+
+
+def _foreign_abs_paths(text: str, ws: Path) -> list[str]:
+    """Absolute paths in *text* that exist neither on disk nor in *ws*."""
+    bad: list[str] = []
+    ws_resolved = ws.resolve()
+    for m in _ABS_PATH_RE.finditer(text):
+        raw = m.group(1)
+        try:
+            candidate = Path(raw)
+            if candidate.exists():
+                continue
+            candidate.resolve().relative_to(ws_resolved)
+            continue  # inside the workspace (new or existing)
+        except (OSError, ValueError):
+            pass
+        bad.append(raw)
+    return bad
+
+
+def _structure_findings(doc_kind: str, text: str, ws: Path) -> list[str]:
+    """Deterministic validity findings shared by every doc kind."""
+    findings: list[str] = []
+    body = _split_report(text)
+    if _json_tool_envelope(text):
+        findings.append(
+            f"document is a hallucinated tool-result JSON envelope, not a "
+            f"{doc_kind} document — regenerate"
+        )
+    if _FABRICATED_XML_RE.search(body):
+        findings.append("fabricated tool-call XML found — not a real document")
+    for bad in _foreign_abs_paths(body, ws):
+        findings.append(f"absolute path outside the workspace: `{bad}`")
+    stripped = body.strip()
+    if doc_kind == "entities":
+        if not any(m.group(1).strip() for m in _PY_FENCE_RE.finditer(stripped)):
+            findings.append("no ```python entity blocks found")
+    elif not (_HEADING_RE.search(stripped) or _LIST_RE.search(stripped)):
+        findings.append(
+            f"no markdown headings or list items found — not a {doc_kind} document"
+        )
+    return findings
+
+
 def check_doc(doc_kind: str, text: str, ws: str | Path) -> PlanCheckResult:
-    """Dispatch to the checker registered for *doc_kind*."""
+    """Dispatch to the checker registered for *doc_kind*.
+
+    The structural validity pass (:func:`_structure_findings`) runs for
+    every kind, so a fabricated or malformed document can never score
+    clean just because it contains no path claims to check.
+    """
     try:
         checker = _CHECKERS[doc_kind]
     except KeyError:
         raise ValueError(f"unknown doc kind: {doc_kind!r}") from None
-    return checker(text, ws)
+    ws_path = Path(ws)
+    result = checker(text, ws_path)
+    for finding in _structure_findings(doc_kind, text, ws_path):
+        result.flagged += 1
+        result.findings.insert(0, finding)
+    result.doc_name = _DOC_NAMES.get(doc_kind, doc_kind)
+    return result
 
 
 def report_section(result: PlanCheckResult) -> str:
     """Render the appended Verification Report for a flagged result."""
-    verified = result.checked - result.flagged
+    verified = max(0, result.checked - result.flagged)
     lines = [
         f"- {result.doc_kind.capitalize()} claims checked: {result.checked}"
         f" — {verified} verified, {result.flagged} flagged."
     ]
     shown = result.findings[:_MAX_REPORT_FINDINGS]
-    lines += [f"- [UNVERIFIED] {f}" for f in shown]
+    lines += [f"- [UNVERIFIED] {result.located(f)}" for f in shown]
     hidden = len(result.findings) - len(shown)
     if hidden > 0:
         lines.append(f"- ... {hidden} more finding(s)")
@@ -300,8 +426,8 @@ def apply_report(text: str, result: PlanCheckResult) -> str:
 
 def summarize(result: PlanCheckResult, label: str) -> None:
     """Print the one-line summary (and findings) for a finished check."""
-    if result.checked:
+    if result.checked or result.flagged:
         status = "clean" if result.clean else f"{result.flagged} flagged"
         print(f"  [{label}] Regression-checked {result.checked} claims ({status})")
     for finding in result.findings[:10]:
-        print(f"    - [UNVERIFIED] {finding}")
+        print(f"    - [UNVERIFIED] {result.located(finding)}")
