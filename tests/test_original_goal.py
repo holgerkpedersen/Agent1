@@ -295,7 +295,7 @@ class TestGoalRecoveryFromRestoredHistory:
             {"role": "user", "content": "senere besked"},
         ]
         bot._original_goal = ""
-        bot._ensure_original_goal("endnu senere besked")
+        bot._ensure_original_goal("an even later message")
         assert bot._original_goal == ""
 
     def test_goal_strips_plan_mode_wrapper(self, bot: Agent) -> None:
@@ -348,3 +348,138 @@ class TestSystemHeadNeverSwallowsTheFirstPrompt:
             m.get("role") == "user" and m.get("content") == GOAL
             for m in bot._chat_history
         )
+
+
+OLD_GOAL = "Compare the benchmark.py outputs with harnessfix results."
+NEW_PROMPT = "Refactor the pytest timeout budget code."
+
+
+class TestGoalRelevanceHelpers:
+    def test_content_tokens_drop_stopwords_and_short_words(self) -> None:
+        assert agent._content_tokens("Refactor the pytest timeout code") == {
+            "refactor", "pytest", "timeout", "code",
+        }
+
+    def test_unrelated_prompts_are_not_related(self, bot: Agent) -> None:
+        assert not bot._prompts_related(
+            NEW_PROMPT, [OLD_GOAL],
+        )
+
+    def test_related_prompts_are_related(self, bot: Agent) -> None:
+        assert bot._prompts_related(
+            "Continue fixing the pytest gate budget",
+            ["Fix the pytest gate budget bug"],
+        )
+
+    def test_short_prompt_is_conservatively_related(self, bot: Agent) -> None:
+        assert bot._prompts_related("continue", [OLD_GOAL])
+
+    def test_empty_prior_texts_are_not_related(self, bot: Agent) -> None:
+        assert not bot._prompts_related(NEW_PROMPT, [])
+
+
+class TestCrossSessionGoalReplacement:
+    """A goal RESTORED from a previous session must not hijack a new,
+    topically unrelated first prompt (observed: a refactor request got
+    steered to an old benchmark-comparison task because the restored
+    ORIGINAL TASK block claimed to be the session's request)."""
+
+    def _revive(self, bot: Agent) -> Agent:
+        bot._append_user_turn(OLD_GOAL, None)
+        bot._save_memory()
+        bot._save_chat_history()
+        return Agent(workspace=bot.workspace)
+
+    def test_restored_goal_is_flagged(self, bot: Agent) -> None:
+        revived = self._revive(bot)
+        assert revived._goal_from_restore
+        assert revived._original_goal.startswith("Compare")
+
+    def test_unrelated_first_prompt_replaces_restored_goal(
+        self, bot: Agent,
+    ) -> None:
+        revived = self._revive(bot)
+        revived._ensure_original_goal(NEW_PROMPT)
+        assert revived._original_goal == NEW_PROMPT[:MAX_GOAL_CHARS]
+        assert not revived._goal_from_restore
+        # Old conversation suspended: nothing but (at most) the system
+        # message stays inline, and the body is archived in memory.
+        assert all(m["role"] == "system" for m in revived._chat_history)
+        assert revived._prior_chat_history
+        assert any(
+            m.get("content") == OLD_GOAL for m in revived._prior_chat_history
+        )
+
+    def test_unrelated_prompt_archives_prior_history_to_disk(
+        self, bot: Agent,
+    ) -> None:
+        revived = self._revive(bot)
+        revived._ensure_original_goal(NEW_PROMPT)
+        prior = (
+            Path(agent.CHAT_HISTORY_JSON_PATH).parent
+            / "chat_history_prior.json"
+        )
+        assert prior.exists()
+        data = json.loads(prior.read_text(encoding="utf-8"))
+        assert any(m.get("content") == OLD_GOAL for m in data)
+
+    def test_related_first_prompt_keeps_restored_goal(
+        self, bot: Agent,
+    ) -> None:
+        bot._append_user_turn("Fix the pytest gate budget bug", None)
+        bot._save_memory()
+        bot._save_chat_history()
+        revived = Agent(workspace=bot.workspace)
+        revived._ensure_original_goal("Continue fixing the pytest gate budget")
+        assert revived._original_goal.startswith("Fix the pytest gate")
+        assert not revived._prior_chat_history
+        assert any(
+            m.get("role") == "user" for m in revived._chat_history
+        ), "related prompt must keep the restored conversation inline"
+
+    def test_short_prompt_keeps_restored_goal(self, bot: Agent) -> None:
+        revived = self._revive(bot)
+        revived._ensure_original_goal("continue")
+        assert revived._original_goal.startswith("Compare")
+
+    def test_second_prompt_never_replaces_the_goal(self, bot: Agent) -> None:
+        bot._append_user_turn("Fix the pytest gate budget bug", None)
+        bot._save_memory()
+        bot._save_chat_history()
+        revived = Agent(workspace=bot.workspace)
+        # First live prompt is related -> verdict made, flag cleared.
+        revived._ensure_original_goal(
+            "Continue fixing the pytest gate budget",
+        )
+        # Even an unrelated SECOND prompt must not replace the goal
+        # (same-session contract: later prompts never replace it).
+        revived._ensure_original_goal(NEW_PROMPT)
+        assert revived._original_goal.startswith("Fix the pytest gate")
+
+    def test_clear_history_resets_restore_flag(self, bot: Agent) -> None:
+        revived = self._revive(bot)
+        assert revived._goal_from_restore
+        revived.clear_history()
+        assert not revived._goal_from_restore
+        assert revived._original_goal == ""
+        assert revived._prior_chat_history == []
+
+    def test_chat_nlp_first_turn_replaces_restored_goal_end_to_end(
+        self, bot: Agent,
+    ) -> None:
+        import asyncio
+
+        revived = self._revive(bot)
+
+        class FakeLLM:
+            async def chat(self, messages, tools=None, **kwargs):
+                return "ok"
+
+        revived.llm = FakeLLM()
+        asyncio.run(revived.chat_nlp(NEW_PROMPT))
+        assert revived._original_goal == NEW_PROMPT[:MAX_GOAL_CHARS]
+        revived._refresh_system_message()
+        prompt = revived._chat_history[0]["content"]
+        assert ORIGINAL_GOAL_MARKER in prompt
+        assert "Refactor the pytest timeout" in prompt
+        assert "Compare the benchmark" not in prompt

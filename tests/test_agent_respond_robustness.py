@@ -11,22 +11,22 @@ def test_respond_clears_temp_messages_even_on_failure():
     client = MagicMock()
     client.chat.side_effect = Exception("LLM Error")
     agent = LLMAgent(llm_client=client)
-    
+
     # Manually inject some temp messages to simulate file context detection
     agent._pending_temp_systems = [{"role": "system", "content": "some context"}]
-    
+
     with pytest.raises(Exception, match="LLM Error"):
         agent.respond("hello")
-    
+
     # Verify that even on failure, temp messages are cleared
     assert len(agent._pending_temp_systems) == 0
 
 def test_respond_appends_to_conversation_on_success():
     client = MockLLMClient()
     agent = LLMAgent(llm_client=client)
-    
+
     response = agent.respond("hello")
-    
+
     assert response == "mock response"
     assert len(agent._conversation) == 2  # user + assistant
     assert agent._conversation[0] == {"role": "user", "content": "hello"}
@@ -35,7 +35,7 @@ def test_respond_appends_to_conversation_on_success():
 def test_respond_fallback_when_no_client():
     agent = LLMAgent(llm_client=None)
     response = agent.respond("hello")
-    
+
     assert response == "I received your message but have no LLM client available."
     assert len(agent._conversation) == 2
     assert agent._conversation[1] == {"role": "assistant", "content": response}

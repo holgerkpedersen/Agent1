@@ -6,7 +6,7 @@ def test_implement_raw_module_does_not_exist():
 
 def test_no_references_to_dead_symbols():
     """
-    Scan core directories for any remaining references to dead symbols 
+    Scan core directories for any remaining references to dead symbols
     to ensure complete removal and prevent regressions.
     """
     search_tokens = ["_implement_raw", "RawImplementCommand"]

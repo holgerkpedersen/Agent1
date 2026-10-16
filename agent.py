@@ -526,6 +526,26 @@ class LLMClient:
         return await self._provider.analyze_code(code)
 
 
+#: Content-word stopwords for the cross-session goal relevance check
+#: (:func:`_content_tokens` / :meth:`Agent._prompts_related`) — glue words
+#: that carry no topic signal, so "refactor the pytest timeout code" vs a
+#: benchmark-comparison goal overlap on nothing topic-bearing.
+_GOAL_TOPIC_STOPWORDS = frozenset({
+    "the", "and", "for", "with", "that", "this", "from", "into", "your",
+    "please", "can", "you", "should", "would", "about", "when", "then",
+    "them", "they", "been", "were", "what", "which", "make", "need",
+    "must", "will", "just", "also", "than", "over", "under", "after",
+    "before", "between", "through", "during", "without", "within",
+    "agent", "session", "task", "prompt", "message", "goal", "user",
+})
+
+#: Minimum fraction of the new prompt's content tokens that must appear in
+#: the restored goal / recent user texts for the two to count as related.
+#: Below it the restored goal is replaced (and history suspended) — the
+#: judgement errs toward giving a NEW request a clean slate.
+_GOAL_RELATED_THRESHOLD = 0.15
+
+
 class Agent:
     """Main agent class with workspace management and tool execution."""
 
@@ -561,6 +581,18 @@ class Agent:
         #: agent_memory.json so a restored session still knows what it was
         #: asked to do.
         self._original_goal: str = ""
+        #: True when ``_original_goal`` was RESTORED (agent_memory.json or the
+        #: previous session's history) rather than pinned from a live prompt of
+        #: THIS session.  The first live prompt then runs a relevance check
+        #: (:meth:`Agent._ensure_original_goal`): an unrelated restored goal is
+        #: replaced and the old conversation suspended, so a stale task can
+        #: never steer a brand-new request.
+        self._goal_from_restore: bool = False
+        #: Body of a restored conversation archived by
+        #: :meth:`Agent._suspend_history_for_new_task` when its goal turned out
+        #: to belong to a different task (in-memory copy; also written to
+        #: chat_history_prior.json next to chat_history.json).
+        self._prior_chat_history: list[dict[str, Any]] = []
         self._history: list[Any] = []
         #: NLP conversation context — persisted to chat_history.json so a new
         #: session continues where the previous one left off.
@@ -1897,7 +1929,7 @@ class Agent:
 
         Supports:
           - list_lights: List all lights (V1)
-          - get_light: Get detailed info for a light (V1)  
+          - get_light: Get detailed info for a light (V1)
           - set_light: Set on/off/brightness/CT (V1)
           - color_capabilities: Get RGB capabilities via V2 API
           - set_color: Set RGB/HSV/XY colors via V2 API
@@ -1956,12 +1988,12 @@ class Agent:
                 light_id = args.get("light_id", "")
                 if not light_id:
                     return "Error: light_id is required for set_color."
-                
-                # Check that at least one RGB/HSV/XY parameter is provided  
+
+                # Check that at least one RGB/HSV/XY parameter is provided
                 has_rgb = "r" in args and "g" in args and "b" in args
                 has_xy = "x" in args or "y" in args
                 has_hsv = "h" in args or "s" in args or "v" in args
-                
+
                 if not has_rgb and not has_xy and not has_hsv:
                     return "Error: set_color requires at least one color parameter (r/g/b, x/y, or h/s/v)."
 
@@ -1990,7 +2022,7 @@ class Agent:
                 light_id = args.get("light_id", "")
                 if not light_id:
                     return "Error: light_id is required for set_color_named."
-                
+
                 name = args.get("name", "")
                 brightness_val = float(args.get("brightness", 100.0))
 
@@ -3083,6 +3115,12 @@ class Agent:
         3. ``_run_chained_tool_loop`` — tool loop + auto-continue chaining.
         4. ``_finish_turn`` — trim/persist history, print the outcome.
         """
+        # Goal/housekeeping FIRST: a restored goal that is unrelated to this
+        # prompt is replaced and the old history suspended BEFORE the system
+        # message is rebuilt, so the ORIGINAL TASK block reflects the live
+        # task (see _ensure_original_goal).  Later phases call it again with
+        # the same input — a no-op once the verdict is made.
+        self._ensure_original_goal(user_input)
         self._refresh_system_message(user_input)
         self._read_streak = 0
         # A failover notice belongs to the turn that TRIGGERED it: drop any
@@ -3321,6 +3359,8 @@ class Agent:
         self._delegate_counter = 0
         self._pending_effects = None
         self._original_goal = ""
+        self._goal_from_restore = False
+        self._prior_chat_history = []
         self._files_read.clear()
         self._file_mtimes.clear()
         self._knowledge_graph.clear()
@@ -3506,20 +3546,131 @@ class Agent:
         it: the point is to pin what the session was *originally* about, which
         is exactly what chat-history compaction drops first.
 
+        Cross-session exception: when the goal was RESTORED (agent_memory.json
+        or the previous session's history, tracked by ``_goal_from_restore``)
+        and the first live prompt of this session is topically unrelated to it
+        (:meth:`_prompts_related` over the goal plus the recent user texts),
+        the restored goal is REPLACED by the live prompt and the old
+        conversation is suspended (:meth:`_suspend_history_for_new_task`).  A
+        stale goal block otherwise steers every answer of the new session away
+        from what the user is actually asking now.
+
         Capped at ``MAX_GOAL_CHARS`` so a first prompt that is itself a file
         dump cannot bloat the system prompt or ``agent_memory.json``.
         """
         if self._original_goal:
+            if self._goal_from_restore and pending_user_input:
+                # One-shot: the relevance verdict applies to the FIRST live
+                # prompt only; later prompts never replace the goal.
+                self._goal_from_restore = False
+                if not self._prompts_related(
+                    pending_user_input,
+                    [self._original_goal, *self._recent_user_texts()],
+                ):
+                    self._original_goal = pending_user_input[:MAX_GOAL_CHARS]
+                    self._suspend_history_for_new_task()
             return
         recovered = _recover_original_goal(self._chat_history)
         if recovered is not None:
             source = recovered
+            if recovered:
+                # Recovered FROM a prior session's history — same one-shot
+                # relevance treatment as a goal restored from memory.
+                self._goal_from_restore = True
         elif pending_user_input:
             source = pending_user_input
         else:
             source = ""
         if source:
             self._original_goal = source[:MAX_GOAL_CHARS]
+
+    def _recent_user_texts(self, limit: int = 10) -> list[str]:
+        """The newest *limit* raw user texts from the current chat history.
+
+        Steering wrappers (plan-mode note, skill hints) are stripped and
+        compaction notes skipped, so the texts are comparable with a live
+        prompt for the relevance check in :meth:`_ensure_original_goal`.
+        """
+        texts: list[str] = []
+        for m in reversed(self._chat_history):
+            if m.get("role") != "user":
+                continue
+            content = m.get("content")
+            if isinstance(content, str):
+                text = content.strip()
+            elif isinstance(content, list):
+                text = " ".join(
+                    str(b.get("text") or "")
+                    for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                ).strip()
+            else:
+                text = ""
+            if text and not _is_compaction_note(text):
+                texts.append(_strip_turn_wrappers(text))
+            if len(texts) >= limit:
+                break
+        texts.reverse()
+        return texts
+
+    def _prompts_related(
+        self,
+        new_prompt: str,
+        prior_texts: list[str],
+        threshold: float = _GOAL_RELATED_THRESHOLD,
+    ) -> bool:
+        """Whether *new_prompt* looks topically related to any prior text.
+
+        Token-overlap heuristic over content words (:func:`_content_tokens`):
+        a short prompt (<2 content tokens, e.g. "continue") is conservatively
+        treated as related so a bare nudge can never evict the goal.
+        """
+        new_tokens = _content_tokens(new_prompt)
+        if len(new_tokens) < 2:
+            return True
+        prior: set[str] = set()
+        for text in prior_texts:
+            prior |= _content_tokens(text or "")
+        if not prior:
+            return False
+        overlap = new_tokens & prior
+        return len(overlap) / len(new_tokens) >= threshold
+
+    def _suspend_history_for_new_task(self) -> None:
+        """Archive a restored conversation whose goal just got replaced.
+
+        The previous session's history belonged to a different task; keeping
+        it inline would let old context steer (and contaminate) the new task.
+        The body is archived in ``_prior_chat_history`` and — best-effort — on
+        disk as ``chat_history_prior.json`` (path derived from the CURRENT
+        ``CHAT_HISTORY_JSON_PATH`` so test monkeypatches are honoured), so
+        nothing is lost.  Only the system message stays inline (rebuilt fresh
+        by ``_refresh_system_message`` on the next turn).  Task-agnostic
+        memory stores (files_read, semantic index, knowledge graph) are kept.
+        """
+        body = [
+            dict(m) for m in self._chat_history if m.get("role") != "system"
+        ]
+        if not body:
+            return
+        system = [
+            dict(m) for m in self._chat_history if m.get("role") == "system"
+        ][:1]
+        self._prior_chat_history = body
+        self._chat_history = system
+        self._turn_start_index = len(self._chat_history)
+        prior_path = os.path.join(
+            os.path.dirname(CHAT_HISTORY_JSON_PATH) or ".",
+            "chat_history_prior.json",
+        )
+        try:
+            with open(prior_path, "w", encoding="utf-8") as f:
+                json.dump(body, f, ensure_ascii=False, indent=2)
+        except OSError:
+            logger.debug(
+                "Could not archive prior chat history to %s", prior_path,
+                exc_info=True,
+            )
 
     def _original_goal_block(self) -> str:
         """The pinned ORIGINAL TASK block for the chat system prompt.
@@ -3643,6 +3794,11 @@ class Agent:
         goal = data.get("original_goal")
         if isinstance(goal, str):
             self._original_goal = goal
+            if goal:
+                # Restored from a PREVIOUS session: the first live prompt of
+                # this session may replace it when topically unrelated
+                # (see _ensure_original_goal).
+                self._goal_from_restore = True
 
     def _save_memory(self) -> None:
         """Persist cross-session memory so the next session resumes with it.
@@ -4810,6 +4966,19 @@ def _message_size(m: dict[str, Any]) -> int:
             total += len(str(func.get("arguments") or ""))
             total += len(str(func.get("name") or ""))
     return total
+
+
+def _content_tokens(text: str) -> set[str]:
+    """Lowercased content words of *text* for the goal relevance check.
+
+    Regex tokens of 3+ chars, minus :data:`_GOAL_TOPIC_STOPWORDS` glue words —
+    the topic-bearing remainder used by :meth:`Agent._prompts_related` to
+    decide whether a restored goal belongs to the live prompt's task.
+    """
+    return {
+        t for t in re.findall(r"[a-z0-9_]{3,}", text.lower())
+        if t not in _GOAL_TOPIC_STOPWORDS
+    }
 
 
 def _compaction_note_goal(text: str) -> str:
