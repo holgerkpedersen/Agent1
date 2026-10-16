@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_core.config import lmstudio_base_url
+from agent_core.constants import DEFAULT_LLAMA_BASE_URL
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -567,7 +568,37 @@ async def score_question(
 # Benchmark Runner
 # ---------------------------------------------------------------------------
 
+#: Provider name -> OpenAI-compatible base URL.  ``lmstudio`` is the default;
+#: ``llama`` is a local llama.cpp llama-server whose canonical base URL is
+#: ``AGENT_LLAMA_URL`` (default ``http://127.0.0.1:8080/v1``, the port the
+#: agent framework already uses for llama.cpp -- decision #014).
+PROVIDER_BASE_URLS: dict[str, str] = {
+    "lmstudio": lmstudio_base_url(),
+    "llama": DEFAULT_LLAMA_BASE_URL,
+}
+DEFAULT_PROVIDER = "lmstudio"
+
+#: Default chat-completions URL; set from --provider/--url in main().
 BASE_URL = f"{lmstudio_base_url()}/chat/completions"
+
+
+def resolve_base_url(provider: str, url: str | None = None) -> str:
+    """Resolve the chat-completions URL for ``provider``.
+
+    An explicit ``url`` always wins.  Otherwise the provider's canonical
+    base URL is used; a bare host:port gets the OpenAI-compatible
+    ``/v1/chat/completions`` suffix appended (llama-server serves under
+    ``/v1``, LM Studio at the root).
+    """
+    if url:
+        base = url.rstrip("/")
+    else:
+        base = PROVIDER_BASE_URLS.get(provider, PROVIDER_BASE_URLS[DEFAULT_PROVIDER]).rstrip("/")
+    if not base.lower().endswith("/chat/completions"):
+        if not base.lower().endswith("/v1"):
+            base = f"{base}/v1"
+        base = f"{base}/chat/completions"
+    return base
 
 
 async def query_model(
@@ -644,7 +675,7 @@ async def query_model(
 
 
 def _probe_endpoint(base_url: str, timeout: float = 5.0) -> None:
-    """Verify the LM Studio endpoint is usable before running the benchmark.
+    """Verify the provider endpoint is usable before running the benchmark.
 
     Sends a minimal chat request; raises BenchmarkError with a clear message if
     the server is down, rejects the request (e.g. no model loaded), or fails to
@@ -685,16 +716,16 @@ def _probe_endpoint(base_url: str, timeout: float = 5.0) -> None:
         if ("no models loaded" in lowered or "model not found" in lowered
                 or "does not exist" in lowered):
             raise BenchmarkError(
-                f"LM Studio has no model available at {base_url}: {detail[:200]}"
+                f"Server has no model available at {base_url}: {detail[:200]}"
             ) from exc
         if exc.code >= 500:
             raise BenchmarkError(
-                f"LM Studio endpoint returned {exc.code} on probe: {base_url}"
+                f"Endpoint {base_url} returned {exc.code} on probe"
             ) from exc
         return
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise BenchmarkError(
-            f"LM Studio endpoint unreachable at {base_url}: {exc}"
+            f"Endpoint unreachable at {base_url}: {exc}"
         ) from exc
     # A server that accepts the connection but never returns valid chat JSON
     # (e.g. a stub/health endpoint) would otherwise make every real query
@@ -706,7 +737,7 @@ def _probe_endpoint(base_url: str, timeout: float = 5.0) -> None:
             raise ValueError("response missing 'choices'")
     except ValueError as exc:
         raise BenchmarkError(
-            f"LM Studio endpoint at {base_url} did not return a chat response: {exc}"
+            f"Endpoint at {base_url} did not return a chat response: {exc}"
         ) from exc
 
 
@@ -1078,8 +1109,17 @@ def parse_args() -> argparse.Namespace:
             "Examples:\n"
             '  python benchmark.py --model qwen2.5-coder-7b\n'
             '  python benchmark.py --model m1 m2 --repetitions 3\n'
+            '  python benchmark.py --provider llama --model qwen3-8b\n'
             '  python benchmark.py --trend qwen2.5-coder-7b\n'
         ),
+    )
+    parser.add_argument(
+        "--provider", type=str, default=DEFAULT_PROVIDER,
+        choices=sorted(PROVIDER_BASE_URLS),
+        help=f"OpenAI-compatible server to benchmark against "
+             f"(default: {DEFAULT_PROVIDER}). 'llama' targets a local "
+             f"llama.cpp llama-server at AGENT_LLAMA_URL "
+             f"(default {DEFAULT_LLAMA_BASE_URL}).",
     )
     parser.add_argument(
         "--model", nargs="+", required=False,
@@ -1111,8 +1151,10 @@ def parse_args() -> argparse.Namespace:
         help="Path to save JSON report",
     )
     parser.add_argument(
-        "--url", type=str, default=BASE_URL,
-        help=f"LM Studio API URL (default: {BASE_URL})",
+        "--url", type=str, default=None,
+        help=f"Override the provider base URL (default per provider: "
+             f"lmstudio={PROVIDER_BASE_URLS['lmstudio']}, "
+             f"llama={PROVIDER_BASE_URLS['llama']})",
     )
     parser.add_argument(
         "--trend", type=str, default=None, metavar="MODEL",
@@ -1134,7 +1176,7 @@ async def main() -> None:
         return
 
     global BASE_URL  # noqa: PLW0603
-    BASE_URL = args.url.rstrip("/")
+    BASE_URL = resolve_base_url(args.provider, args.url)
 
     # Fail fast: probe the endpoint with a short timeout before fanning out
     # across ~125 questions.  Without this, an unreachable LM Studio server
@@ -1167,6 +1209,7 @@ async def main() -> None:
     )
     print(f"  Repetitions:   {args.repetitions}")
     print(f"  Max tokens:    {args.max_tokens} per question")
+    print(f"  Provider:      {args.provider}")
     print(f"  API URL:       {BASE_URL}")
     print()
 
