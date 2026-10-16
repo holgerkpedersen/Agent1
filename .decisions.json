@@ -2596,5 +2596,48 @@
     "resolved_by": null,
     "status": "active",
     "category": ""
+  },
+  {
+    "id": "121",
+    "date": "2026-10-16T08:50:05+00:00",
+    "title": "Signal Handling Strategy",
+    "context": "The analysis notes that `_signal_break` in `agent.py` calls `os._exit(1)` unconditionally, bypassing cleanup, while a `_signal_break_with_cleanup` variant exists. The selection logic in `_install_signal_handlers` risks data loss if the bare handler is triggered.",
+    "decision": "Ensure `_install_signal_handlers` prioritizes the cleanup-aware handler (`_signal_break_with_cleanup`) for all agent lifecycles, or refactor to remove the risky bare handler path entirely.",
+    "rationale": "Prevents silent data loss during abrupt termination by ensuring cleanup logic (saving state, flushing logs) executes before exit.",
+    "affected_files": [
+      "agent.py"
+    ],
+    "tags": [
+      "reliability",
+      "cleanup",
+      "signal-handling"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
+  },
+  {
+    "id": "122",
+    "date": "2026-10-16T09:12:48+00:00",
+    "title": "God-object Agent Class Refactoring",
+    "context": "The `Agent` class in `agent.py` is described as a god-object owning file I/O, LLM providers, sub-agents, git, metrics, memory, skills, habits, plan lifecycle, and signal handling across 60+ methods. The `chat_nlp` method alone orchestrates 4 phases spanning 200+ lines.",
+    "decision": "Decompose the `Agent` class into smaller, single-responsibility modules to separate concerns like 'agent loop', 'tool execution', 'memory management', and 'signal handling'.",
+    "rationale": "Reducing the size of the main agent module improves maintainability, testability, and clarity of module boundaries, preventing the 'spaghetti code' effect of a god-object.",
+    "affected_files": [
+      "agent.py",
+      "agent_core/agent.py",
+      "agent_core/tool_dispatcher.py",
+      "agent_core/mcp/manager.py"
+    ],
+    "tags": [
+      "architecture",
+      "refactoring",
+      "maintainability"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   }
 ]
