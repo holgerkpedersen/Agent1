@@ -1,7 +1,7 @@
 """
 API Endpoints Module for Performance Dashboard
 
-This module defines RESTful API endpoints for managing and retrieving 
+This module defines RESTful API endpoints for managing and retrieving
 performance metrics data including system monitoring, application analytics,
 and historical reporting capabilities.
 """
@@ -14,9 +14,10 @@ from marshmallow import ValidationError
 # Initialize logger (must precede the ImportError fallback below, which logs)
 logger = logging.getLogger(__name__)
 
-# Local imports for models and services
+# Local imports for models and services (importability probe: names are used
+# via module-level access; keep the probe imports even if not referenced here)
 try:
-    from ..models.performance_metrics import MetricType
+    from ..models.performance_metrics import MetricType  # noqa: F401  (probe import)
     from ..services.metrics_service import MetricsService
     from ..services.analytics_service import AnalyticsService
     from ..utils.pagination import paginate_query
@@ -95,7 +96,7 @@ def get_metrics():
         }
 
         # Apply filters and pagination
-        
+
         if not hasattr(service, '_query'):
             # Fallback for mock implementations
             return jsonify({
@@ -109,10 +110,10 @@ def get_metrics():
             }), 200
 
         paginated_results = paginate_query(service._query, page_size=limit, offset=offset)
-        
+
         schema = MetricSchema(many=True)
         serialized_data = schema.dump(paginated_results.items)
-        
+
         return jsonify({
             'data': serialized_data,
             'pagination': {
@@ -169,7 +170,7 @@ def get_aggregated_metrics():
         }
 
         aggregated_data = service.get_aggregated_metrics(aggregation_params)
-        
+
         schema = AggregatedMetricSchema(many=True)
         serialized_data = schema.dump(aggregated_data)
 
@@ -201,7 +202,7 @@ def get_metric_detail(metric_id: int):
     try:
         service = MetricsService()
         metric_record = service.get_metric_by_id(metric_id)
-        
+
         if not metric_record:
             return jsonify({
                 'error': 'not_found',
@@ -228,7 +229,7 @@ def create_metric():
     logger.info("Metric creation requested")
 
     data = request.get_json() or {}
-    
+
     if not data:
         return jsonify({
             'error': 'invalid_input',
@@ -238,10 +239,10 @@ def create_metric():
     try:
         schema = MetricSchema()
         validated_data = schema.load(data)
-        
+
         service = MetricsService()
         created_metric = service.create_metric(validated_data)
-        
+
         if not hasattr(service, 'create_metric'):
             # Fallback behavior
             return jsonify({
@@ -268,7 +269,7 @@ def update_metric(metric_id: int):
     logger.info(f"Metric update requested for ID: {metric_id}")
 
     data = request.get_json() or {}
-    
+
     if not data:
         return jsonify({
             'error': 'invalid_input',
@@ -278,7 +279,7 @@ def update_metric(metric_id: int):
     try:
         service = MetricsService()
         existing_metric = service.get_metric_by_id(metric_id)
-        
+
         if not existing_metric:
             return jsonify({
                 'error': 'not_found',
@@ -287,9 +288,9 @@ def update_metric(metric_id: int):
 
         schema = MetricSchema(partial=True)
         validated_data = schema.load(data, instance=existing_metric)
-        
+
         updated_metric = service.update_metric(metric_id, validated_data)
-        
+
         if not hasattr(service, 'update_metric'):
             # Fallback behavior
             return jsonify({
@@ -318,7 +319,7 @@ def delete_metric(metric_id: int):
     try:
         service = MetricsService()
         existing_metric = service.get_metric_by_id(metric_id)
-        
+
         if not existing_metric:
             return jsonify({
                 'error': 'not_found',
@@ -326,7 +327,7 @@ def delete_metric(metric_id: int):
             }), 404
 
         deletion_result = service.delete_metric(metric_id)
-        
+
         if not hasattr(service, 'delete_metric'):
             # Fallback behavior
             return jsonify({
@@ -352,7 +353,7 @@ def get_dashboards():
     logger.info("Dashboard listing requested")
 
     dashboards_config = current_app.config.get('DASHBOARDS_CONFIG', {})
-    
+
     return jsonify({
         'data': dashboards_config,
         'total_count': len(dashboards_config)
@@ -368,13 +369,13 @@ def get_dashboard_data(dashboard_name: str):
     # Extract time range parameters
     start_time = request.args.get('start_time')
     end_time = request.args.get('end_time')
-    
+
     try:
         analytics_service = AnalyticsService()
         metrics_service = MetricsService()
-        
+
         dashboard_config = current_app.config.get('DASHBOARDS_CONFIG', {}).get(dashboard_name)
-        
+
         if not dashboard_config and not hasattr(analytics_service, 'generate_dashboard_data'):
             # Fallback behavior for development mode
             return jsonify({
@@ -465,12 +466,12 @@ def get_metric_types():
     try:
         # Attempt to import MetricType enum
         from ..models.performance_metrics import MetricType
-        
+
         metric_types = [
             {
                 'name': mt.name,
                 'value': mt.value if hasattr(mt, 'value') else str(mt),
-                'description': getattr(MetricType, '__doc__', '').split('\n')[1].strip() 
+                'description': getattr(MetricType, '__doc__', '').split('\n')[1].strip()
                     if hasattr(MetricType, '__doc__') and len(getattr(MetricType, '__doc__', '').split('\n')) > 1 else None
             } for mt in MetricType
         ]
@@ -506,7 +507,7 @@ def bulk_create_metrics():
     logger.info("Bulk metric creation requested")
 
     data = request.get_json() or {}
-    
+
     if not isinstance(data, list):
         return jsonify({
             'error': 'invalid_input',
@@ -522,7 +523,7 @@ def bulk_create_metrics():
     try:
         schema = MetricSchema(many=True)
         validated_data = schema.load(data)
-        
+
         service = MetricsService()
         if hasattr(service, 'bulk_create_metrics'):
             created_metrics = service.bulk_create_metrics(validated_data)
@@ -654,7 +655,7 @@ def export_metrics():
             'download_url': '/api/v1/export/metrics/download' if hasattr(service, 'export_metrics') else None,
             'exported_at': datetime.utcnow().isoformat()
         })
-        
+
         return response
 
     except AttributeError:

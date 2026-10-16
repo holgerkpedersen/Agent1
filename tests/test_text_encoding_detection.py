@@ -9,7 +9,6 @@ from agent_core.text_encoding import (
     NonUtf8TextError,
     check_utf8_bytes,
     check_utf8_file,
-    read_text_preserving,
     read_text_strict,
 )
 

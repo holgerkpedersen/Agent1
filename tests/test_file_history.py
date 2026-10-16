@@ -36,7 +36,6 @@ from agent_core.file_history import (
 
 def _seed_execution(workspace: Path, command: str, files: list[str], outcome: str = "ok", ts: float | None = None) -> None:
     """Append one structured execution record through the real ledger writer."""
-    from harnessfix.history import append_execution
 
     ledger_dir = workspace / "reports" / "history"
     ledger_dir.mkdir(parents=True, exist_ok=True)

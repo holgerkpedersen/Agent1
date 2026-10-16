@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-from typing import Any
 
 # Import bridge components
 from harnessfix.kanban_bridge import (
@@ -43,16 +42,16 @@ def sync():
         # _apply_card_update(payload) uses payload.get('source_id')
         # _apply_card_move(payload) uses payload.get('source_id')
         # _apply_card_delete(payload) uses payload.get('source_id')
-        
+
         print(f"[{processed_count}/{len(messages)}] Processing op='{op}'")
-        
+
         result = False
         try:
             if op == "card_create":
                 # _apply_card_create expects the card data (the 'payload' part of the message)
                 card_data = msg.get("payload")
                 if not card_data:
-                    print(f"  Error: No payload found in card_create message")
+                    print("  Error: No payload found in card_create message")
                     fail_count += 1
                     continue
                 result = _apply_card_create(card_data)
@@ -71,15 +70,15 @@ def sync():
 
             if result:
                 success_count += 1
-                print(f"  Success")
+                print("  Success")
             else:
                 fail_count += 1
-                print(f"  Failed (returned False)")
+                print("  Failed (returned False)")
         except Exception as e:
             fail_count += 1
             print(f"  Error: {e}")
 
-    print(f"\nSync complete.")
+    print("\nSync complete.")
     print(f"Processed: {processed_count}")
     print(f"Successes: {success_count}")
     print(f"Failures:  {fail_count}")

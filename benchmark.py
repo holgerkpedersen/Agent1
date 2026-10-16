@@ -380,7 +380,7 @@ def _count_syllables(word: str) -> int:
     if (
         word.endswith("e")
         and len(word) > 2
-        and not word[-3:] in ("le", "ve", "ne")
+        and word[-3:] not in ("le", "ve", "ne")
         and count > 1
     ):
         count -= 1

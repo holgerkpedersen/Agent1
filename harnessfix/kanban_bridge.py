@@ -202,7 +202,7 @@ def enqueue(message: dict[str, Any], queue_dir: Path | None = None) -> int:
         queue_dir = QUEUE_AGENT1_TO_KANBAN
     elif isinstance(queue_dir, dict):
          # This should not happen with correct usage but handles erroneous patching
-         raise TypeError(f"enqueue() argument 'queue_dir' must be Path, not dict")
+         raise TypeError("enqueue() argument 'queue_dir' must be Path, not dict")
 
     if not isinstance(queue_dir, Path):
         queue_dir = Path(queue_dir)

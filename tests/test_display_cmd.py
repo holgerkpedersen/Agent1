@@ -5,7 +5,6 @@ directory, so every test runs inside a temporary directory to avoid touching
 the real project ``.env``.
 """
 import asyncio
-import os
 
 import pytest
 
