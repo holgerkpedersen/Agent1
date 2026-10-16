@@ -392,12 +392,37 @@ async def _write_verified_analysis(text: str, analysis_md: str, ws_path: Path) -
     return result.text, result.checked, result.flagged
 
 
-def _analysis_flag_gate(checked: int, flagged: int, force: bool, report_text: str = "") -> bool:
-    """Gate on the analysis verification report before planning.
+#: Report separator appended by ``analysis_verifier.verify_analysis_claims``.
+_ANALYSIS_REPORT_MARKER = "\n\n---\n\n## Verification Report"
 
-    A single unverifiable claim (fabricated file path, symbol, or line) can
-    poison the whole downstream plan, so ANY flagged claim pauses the run for
-    confirmation — unless ``--force`` was given, which only warns.
+#: Max LLM repair rounds for flagged analysis claims before the deterministic
+#: auto-prune fallback runs (each round must strictly reduce the flag count).
+_MAX_ANALYSIS_REPAIR_ROUNDS = 3
+
+#: Auto-prune refuses when flagged lines exceed this fraction of the body —
+#: pruning more than half means the analysis itself is unreliable.
+_PRUNE_GUT_RATIO = 0.5
+
+#: Max LLM repair rounds per workflow plan/entities/taskplan document before
+#: the stage halts instead of reaching the interactive gate.
+_MAX_DOC_REPAIR_ROUNDS = 2
+
+
+def _strip_analysis_report(text: str) -> str:
+    """*text* without a previously appended ``## Verification Report``."""
+    idx = text.find(_ANALYSIS_REPORT_MARKER)
+    if idx == -1:
+        return text
+    return text[:idx].rstrip() + "\n"
+
+
+def _analysis_flag_gate(checked: int, flagged: int, force: bool, report_text: str = "") -> bool:
+    """Final analysis gate — deterministic, never prompts.
+
+    The autonomous pipeline in :func:`_verify_or_repair_gate` already ran the
+    LLM repair loop and the auto-prune fallback before this gate is consulted,
+    so a remaining flag means every automated attempt failed: the run halts
+    (report printed) unless ``--force`` was given, which only warns.
     """
     if flagged <= 0:
         return True
@@ -414,10 +439,11 @@ def _analysis_flag_gate(checked: int, flagged: int, force: bool, report_text: st
     report = report_text.split("## Verification Report", 1)[-1].strip()
     for line in report.splitlines()[:10]:
         print(f"    {line}")
-    # Autonomous mode auto-DENIES (safe default); only an explicit answer or
-    # --force may continue past unverifiable claims.
-    answer = auto_choice("  Continue to planning anyway? (y/N): ", default="n", auto_default="n").strip().lower()
-    return answer in ("y", "yes")
+    print(
+        "  Autonomous gate: repair and auto-prune attempts failed — halting "
+        "(re-run with --force to continue anyway)."
+    )
+    return False
 
 
 async def _repair_analysis(
@@ -427,10 +453,13 @@ async def _repair_analysis(
 
     Feeds the original analysis + its Verification Report + the ground-truth module
     inventory back to the model and asks it to rewrite ONLY the flagged lines with
-    correct paths/symbols/lines. Re-verifies; returns ``(repaired_text, checked,
-    flagged)`` — repaired_text is None when repair did not clear all flags (caller
-    falls back to today's gate). The inventory teaches the model what actually
-    exists so it stops inventing paths that laguna-s-2.1-style models fabricate.
+    correct paths/symbols/lines, then re-verifies.  Returns
+    ``(annotated_text, checked, flagged)`` with the round's ACTUAL outcome —
+    partial progress counts: the caller keeps any round that strictly reduces
+    the flag count (previously a round that left even one flag was discarded,
+    throwing the improvement away).  ``annotated_text`` is None only when the
+    model produced no usable output.  The inventory teaches the model what
+    actually exists so it stops inventing paths that small models fabricate.
     """
     inventory = _module_inventory(ws_path_str) or "(no modules found)"
     report = report_text.split("## Verification Report", 1)[-1].strip()
@@ -457,12 +486,41 @@ async def _repair_analysis(
         return None, 0, 0
     if not repaired or repaired.startswith("[Error") or repaired.startswith("File not found"):
         return None, 0, 0
-    result = await verify_analysis_claims(repaired, Path(ws_path_str))
+    result = await verify_analysis_claims(_strip_analysis_report(repaired), Path(ws_path_str))
     print(
         f"  [analyze] Repair round re-verified {result.checked} claims "
         f"({result.flagged if result.flagged else 'clean'})"
     )
-    return (repaired if result.flagged == 0 else None), result.checked, result.flagged
+    return result.text, result.checked, result.flagged
+
+
+def _prune_flagged_lines(annotated_text: str) -> tuple[str, int] | None:
+    """Drop body lines carrying claims flagged in the Verification Report.
+
+    Deterministic fallback after the LLM repair loop stalls: removes every
+    body line containing a backticked ``[UNVERIFIED]`` token from the report
+    and returns ``(report-free body, removed line count)``.  Returns None
+    when nothing is line-local to prune or when pruning would gut the
+    document (>50% of lines) — the caller then halts instead of planning on
+    an unreliable analysis.  The report itself keeps the audit trail.
+    """
+    idx = annotated_text.find(_ANALYSIS_REPORT_MARKER)
+    if idx == -1:
+        return None
+    body, report = annotated_text[:idx], annotated_text[idx:]
+    tokens = set(
+        re.findall(r"^- \[UNVERIFIED\]\s*`([^`]+)`", report, flags=re.MULTILINE)
+    )
+    if not tokens:
+        return None
+    lines = body.splitlines()
+    kept = [ln for ln in lines if not any(tok in ln for tok in tokens)]
+    removed = len(lines) - len(kept)
+    if removed == 0 or not kept:
+        return None
+    if removed / len(lines) > _PRUNE_GUT_RATIO:
+        return None
+    return "\n".join(kept).rstrip() + "\n", removed
 
 
 def _plan_doc_gate(
@@ -499,32 +557,138 @@ def _plan_doc_gate(
     return apply_report(content, result)
 
 
+#: Per-doc-kind format reminder fed to the doc-repair rounds.
+_KIND_FORMAT_HINTS = {
+    "plan": (
+        "markdown with a heading per category ([FIX]/[FEATURE]/[ARCH]/[OPS]) "
+        "and one bullet per item (priority MUST/SHOULD/COULD)"
+    ),
+    "entities": "ONLY Python code inside a ```python fence — no prose, no headings",
+    "taskplan": (
+        "numbered tasks, one per line: `N. path/to/file.py - short description`, "
+        "every path backtick-wrapped"
+    ),
+}
+
+
+async def _repair_doc_until_clean(
+    agent: "Agent", doc_kind: str, content: str, ws_path: Path | str,
+    rounds: int = _MAX_DOC_REPAIR_ROUNDS,
+) -> str | None:
+    """Repair a flagged workflow doc before it can reach the interactive gate.
+
+    ``_plan_doc_gate`` pauses for confirmation on flagged findings; workflow
+    stages must not ask.  Up to *rounds* LLM rewrites are driven by the
+    deterministic ``check_doc`` findings plus the module inventory.  Returns
+    the clean document, or None when findings survive every round — the
+    caller then halts with a clear message instead of prompting.
+    """
+    inventory = _module_inventory(str(ws_path)) or "(no modules found)"
+    best = content
+    for round_no in range(1, rounds + 1):
+        result = check_doc(doc_kind, best, ws_path)
+        if result.clean:
+            return best
+        print(
+            f"  [{doc_kind}] Repair round {round_no}: {result.flagged} "
+            "finding(s) — rewriting..."
+        )
+        repair_system = (
+            _PATH_VERIFICATION_RULE + "\n\n"
+            f"You are a precise reviewer. This {doc_kind} document failed automated "
+            "regression checks (findings below).\n"
+            "Rewrite the WHOLE document so every finding is resolved, keeping its "
+            "purpose and this format:\n"
+            + _KIND_FORMAT_HINTS.get(doc_kind, "markdown with one item per line")
+            + "\nGround every file path and symbol in the module inventory. "
+            "Output ONLY the corrected document."
+        )
+        repair_user = (
+            f"## Module inventory (ground truth):\n{inventory}\n\n"
+            "## Findings:\n"
+            + "\n".join(f"- {finding}" for finding in result.findings)
+            + f"\n\n## Document:\n{best}"
+        )
+        try:
+            candidate = await agent.llm.chat([
+                {"role": "system", "content": repair_system},
+                {"role": "user", "content": repair_user},
+            ], max_tokens=8000, disable_thinking=True)
+        except Exception as exc:  # pragma: no cover - defensive, never raises
+            print(f"  [{doc_kind}] Repair round failed (non-blocking): {exc}")
+            break
+        if not candidate or candidate.startswith("[Error") or candidate.startswith("File not found"):
+            break
+        best = strip_reasoning(candidate, mode="light")
+    if check_doc(doc_kind, best, ws_path).clean:
+        return best
+    return None
+
+
 async def _verify_or_repair_gate(
     agent: "Agent", analysis_text: str, analysis_md: str, ws_path: Path | str, checked: int,
     flagged: int, report_text: str, force: bool,
 ) -> bool:
-    """Verify gate with an automatic path-existence repair pass (decision #036).
+    """Autonomous verification gate (decision #036, extended to never prompt).
 
-    On any unverifiable claim (and not ``--force``), run one LLM repair round; if it
-    clears all flags the analysis is rewritten in *analysis_md* and planning proceeds
-    without a pause. Otherwise today's confirmation gate applies (``--force`` only
-    warns). Returns True when the run may continue past verification.
+    Resolution order when claims are flagged and ``--force`` was not given:
+
+    1. LLM repair loop — up to :data:`_MAX_ANALYSIS_REPAIR_ROUNDS` rounds,
+       keeping every round that strictly reduces the flag count (partial
+       fixes accumulate instead of being discarded);
+    2. deterministic auto-prune — body lines carrying still-flagged claims
+       are dropped and the pruned text is re-verified (:func:`_prune_flagged_lines`);
+    3. whatever the best attempt is gets persisted to *analysis_md* and
+       :func:`_analysis_flag_gate` decides — clean or pruned-clean continues
+       silently, anything else halts with the report.  No interactive prompt
+       exists on this path.  Returns True when the run may continue to plan.
     """
     ws_path_str = str(ws_path)
-    v_text = report_text
-    v_flagged = flagged
-    if v_flagged > 0 and not force:
+    best_text = report_text
+    best_checked, best_flagged = checked, flagged
+
+    if best_flagged > 0 and not force:
         print("  [analyze] Running path-existence repair pass for flagged claims...")
-        repaired, rep_checked, rep_flagged = await _repair_analysis(
-            agent, analysis_text, v_text, ws_path_str
-        )
-        if repaired is not None:
-            with open(analysis_md, "w", encoding="utf-8") as f:
-                f.write(repaired)
-            print(f"  [analyze] Repair re-verified {rep_checked} claims ({rep_flagged})")
-            v_text = repaired
-            v_flagged = rep_flagged
-    return _analysis_flag_gate(checked, v_flagged, force, report_text=v_text)
+        for round_no in range(1, _MAX_ANALYSIS_REPAIR_ROUNDS + 1):
+            candidate, c_checked, c_flagged = await _repair_analysis(
+                agent, _strip_analysis_report(best_text), best_text, ws_path_str
+            )
+            if candidate is None:
+                break
+            if c_flagged >= best_flagged:
+                print(
+                    f"  [analyze] Repair round {round_no} made no progress "
+                    f"({c_flagged} claim(s) still flagged) — stopping repairs."
+                )
+                break
+            best_text, best_checked, best_flagged = candidate, c_checked, c_flagged
+            if best_flagged == 0:
+                break
+
+        if best_flagged > 0:
+            pruned = _prune_flagged_lines(best_text)
+            if pruned is not None:
+                pruned_body, removed = pruned
+                total = len(_strip_analysis_report(best_text).splitlines())
+                result = await verify_analysis_claims(pruned_body, Path(ws_path_str))
+                print(
+                    f"  [analyze] Auto-pruned {removed} of {total} line(s) carrying "
+                    f"unverifiable claims — re-verified {result.checked} claims "
+                    f"({result.flagged if result.flagged else 'clean'})"
+                )
+                best_text, best_checked, best_flagged = (
+                    result.text, result.checked, result.flagged
+                )
+            else:
+                print(
+                    "  [analyze] Auto-prune skipped — flagged claims are not "
+                    "isolated to removable lines (or pruning would gut the doc)."
+                )
+
+    # Persist the best attempt (clean, repaired, or pruned) for audit.
+    with open(analysis_md, "w", encoding="utf-8") as f:
+        f.write(best_text)
+    return _analysis_flag_gate(best_checked, best_flagged, force, report_text=best_text)
 
 
 async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: str | Path) -> None:
@@ -1029,7 +1193,20 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
-                gated = _plan_doc_gate("plan", strip_reasoning(r, mode="light"), ws_path, force)
+                doc_text = strip_reasoning(r, mode="light")
+                if not force:
+                    repaired_doc = await _repair_doc_until_clean(
+                        agent, "plan", doc_text, ws_path
+                    )
+                    if repaired_doc is None:
+                        print(
+                            "  [plan] Halted — output still failed regression "
+                            "checks after repair rounds (re-run with --force "
+                            "to write anyway)."
+                        )
+                        return True
+                    doc_text = repaired_doc
+                gated = _plan_doc_gate("plan", doc_text, ws_path, force)
                 if gated is None:
                     return True
                 with open(plan_md, "w", encoding="utf-8") as f:
@@ -1050,7 +1227,20 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
-                gated = _plan_doc_gate("entities", strip_reasoning(r, mode="light"), ws_path, force)
+                doc_text = strip_reasoning(r, mode="light")
+                if not force:
+                    repaired_doc = await _repair_doc_until_clean(
+                        agent, "entities", doc_text, ws_path
+                    )
+                    if repaired_doc is None:
+                        print(
+                            "  [entities] Halted — output still failed regression "
+                            "checks after repair rounds (re-run with --force "
+                            "to write anyway)."
+                        )
+                        return True
+                    doc_text = repaired_doc
+                gated = _plan_doc_gate("entities", doc_text, ws_path, force)
                 if gated is None:
                     return True
                 with open(entities_md, "w", encoding="utf-8") as f:
@@ -1085,7 +1275,20 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
-                gated = _plan_doc_gate("taskplan", strip_reasoning(r, mode="light"), ws_path, force)
+                doc_text = strip_reasoning(r, mode="light")
+                if not force:
+                    repaired_doc = await _repair_doc_until_clean(
+                        agent, "taskplan", doc_text, ws_path
+                    )
+                    if repaired_doc is None:
+                        print(
+                            "  [taskplan] Halted — output still failed regression "
+                            "checks after repair rounds (re-run with --force "
+                            "to write anyway)."
+                        )
+                        return True
+                    doc_text = repaired_doc
+                gated = _plan_doc_gate("taskplan", doc_text, ws_path, force)
                 if gated is None:
                     return True
                 with open(tasks_md, "w", encoding="utf-8") as f:
@@ -1152,7 +1355,20 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
-                gated = _plan_doc_gate("plan", strip_reasoning(r, mode="light"), ws_path, force)
+                doc_text = strip_reasoning(r, mode="light")
+                if not force:
+                    repaired_doc = await _repair_doc_until_clean(
+                        agent, "plan", doc_text, ws_path
+                    )
+                    if repaired_doc is None:
+                        print(
+                            "  [plan] Halted — output still failed regression "
+                            "checks after repair rounds (re-run with --force "
+                            "to write anyway)."
+                        )
+                        return True
+                    doc_text = repaired_doc
+                gated = _plan_doc_gate("plan", doc_text, ws_path, force)
                 if gated is None:
                     return True
                 with open(plan_md, "a", encoding="utf-8") as f:
@@ -1175,7 +1391,20 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
-                gated = _plan_doc_gate("entities", strip_reasoning(r, mode="light"), ws_path, force)
+                doc_text = strip_reasoning(r, mode="light")
+                if not force:
+                    repaired_doc = await _repair_doc_until_clean(
+                        agent, "entities", doc_text, ws_path
+                    )
+                    if repaired_doc is None:
+                        print(
+                            "  [entities] Halted — output still failed regression "
+                            "checks after repair rounds (re-run with --force "
+                            "to write anyway)."
+                        )
+                        return True
+                    doc_text = repaired_doc
+                gated = _plan_doc_gate("entities", doc_text, ws_path, force)
                 if gated is None:
                     return True
                 with open(entities_md, "a", encoding="utf-8") as f:
@@ -1209,7 +1438,20 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
-                gated = _plan_doc_gate("taskplan", strip_reasoning(r, mode="light"), ws_path, force)
+                doc_text = strip_reasoning(r, mode="light")
+                if not force:
+                    repaired_doc = await _repair_doc_until_clean(
+                        agent, "taskplan", doc_text, ws_path
+                    )
+                    if repaired_doc is None:
+                        print(
+                            "  [taskplan] Halted — output still failed regression "
+                            "checks after repair rounds (re-run with --force "
+                            "to write anyway)."
+                        )
+                        return True
+                    doc_text = repaired_doc
+                gated = _plan_doc_gate("taskplan", doc_text, ws_path, force)
                 if gated is None:
                     return True
                 with open(tasks_md, "a", encoding="utf-8") as f:
@@ -1301,7 +1543,20 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
-                gated = _plan_doc_gate("plan", strip_reasoning(r, mode="light"), ws_path, force)
+                doc_text = strip_reasoning(r, mode="light")
+                if not force:
+                    repaired_doc = await _repair_doc_until_clean(
+                        agent, "plan", doc_text, ws_path
+                    )
+                    if repaired_doc is None:
+                        print(
+                            "  [plan] Halted — output still failed regression "
+                            "checks after repair rounds (re-run with --force "
+                            "to write anyway)."
+                        )
+                        return True
+                    doc_text = repaired_doc
+                gated = _plan_doc_gate("plan", doc_text, ws_path, force)
                 if gated is None:
                     return True
                 with open(plan_md, "w", encoding="utf-8") as f:
@@ -1322,7 +1577,20 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
-                gated = _plan_doc_gate("entities", strip_reasoning(r, mode="light"), ws_path, force)
+                doc_text = strip_reasoning(r, mode="light")
+                if not force:
+                    repaired_doc = await _repair_doc_until_clean(
+                        agent, "entities", doc_text, ws_path
+                    )
+                    if repaired_doc is None:
+                        print(
+                            "  [entities] Halted — output still failed regression "
+                            "checks after repair rounds (re-run with --force "
+                            "to write anyway)."
+                        )
+                        return True
+                    doc_text = repaired_doc
+                gated = _plan_doc_gate("entities", doc_text, ws_path, force)
                 if gated is None:
                     return True
                 with open(entities_md, "w", encoding="utf-8") as f:
@@ -1355,7 +1623,20 @@ class WorkflowCommand(Command):
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
-                gated = _plan_doc_gate("taskplan", strip_reasoning(r, mode="light"), ws_path, force)
+                doc_text = strip_reasoning(r, mode="light")
+                if not force:
+                    repaired_doc = await _repair_doc_until_clean(
+                        agent, "taskplan", doc_text, ws_path
+                    )
+                    if repaired_doc is None:
+                        print(
+                            "  [taskplan] Halted — output still failed regression "
+                            "checks after repair rounds (re-run with --force "
+                            "to write anyway)."
+                        )
+                        return True
+                    doc_text = repaired_doc
+                gated = _plan_doc_gate("taskplan", doc_text, ws_path, force)
                 if gated is None:
                     return True
                 with open(tasks_md, "w", encoding="utf-8") as f:
