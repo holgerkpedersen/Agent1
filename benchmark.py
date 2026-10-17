@@ -279,14 +279,19 @@ class ModelResult:
 # Scorer
 # ---------------------------------------------------------------------------
 
-def normalize_answer(text: str) -> str:
+def normalize_answer(text: str | None) -> str:
+    if not text:
+        # None (a null "content" from the provider) means no answer —
+        # normalize to "" so answers_match scores it False instead of
+        # crashing the whole run on .strip().
+        return ""
     text = text.strip().lower()
     text = re.sub(r"[^\w\s./]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
-def answers_match(response: str, expected: str) -> bool:
+def answers_match(response: str | None, expected: str) -> bool:
     norm_resp = normalize_answer(response)
     norm_exp = normalize_answer(expected)
 
@@ -643,7 +648,15 @@ async def query_model(
             )
             latency_ms = (time.monotonic() - start) * 1000
             body = json.loads(resp.read().decode("utf-8"))
-            text = body["choices"][0]["message"]["content"]
+            message = body["choices"][0].get("message") or {}
+            text = message.get("content")
+            if not isinstance(text, str):
+                # llama.cpp's OpenAI-compat server returns "content": null
+                # for a pure-reasoning turn or when the token budget runs out
+                # before any visible text.  There is no answer to score —
+                # hand the scorer an empty string instead of None, which
+                # crashed normalize_answer mid-run (AttributeError on .strip).
+                text = ""
             tokens = body.get("usage", {}).get("total_tokens")
             return text, latency_ms, tokens
 

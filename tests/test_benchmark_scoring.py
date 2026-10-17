@@ -15,6 +15,8 @@ from benchmark import (
     load_models_json,
     load_report_snapshots,
     model_accuracy_history,
+    normalize_answer,
+    query_model,
     run_benchmark,
     run_category,
     score_instruction_following,
@@ -377,3 +379,70 @@ class TestProbeEndpoint:
         from benchmark import _probe_endpoint
         # Should not raise.
         _probe_endpoint("http://localhost:1234/v1/chat/completions", timeout=1.0)
+
+
+class TestNullContentResponse:
+    """llama.cpp's OpenAI-compat server returns "content": null for a
+    pure-reasoning turn (or when the token budget runs out before visible
+    text).  Live regression (2026-10-17): the benchmark crashed at
+    repetition 2/question 23 with
+    ``AttributeError: 'NoneType' object has no attribute 'strip'`` in
+    normalize_answer — a null response must score as no-answer, not kill
+    the run."""
+
+    def test_normalize_answer_tolerates_none(self) -> None:
+        assert normalize_answer(None) == ""
+
+    def test_answers_match_none_response_is_false_not_crash(self) -> None:
+        assert not answers_match(None, "42")
+
+    def test_score_question_tolerates_none_response(self) -> None:
+        correct, score = asyncio.run(
+            score_question("What is 2+2?", None, "4", "reasoning"),
+        )
+        assert correct is False
+        assert score == 0.0
+
+    def test_run_category_tolerates_none_response(self) -> None:
+        async def _run() -> None:
+            with patch(
+                "benchmark.query_model",
+                new=AsyncMock(return_value=("", 10.0, 5)),
+            ):
+                cat = await run_category(
+                    "m1", "reasoning", [("What is 2+2?", "4")],
+                )
+            r = cat.results[0]
+            assert r.response == ""
+            assert r.correct is False
+
+        asyncio.run(_run())
+
+    def test_query_model_coerces_null_content_to_empty_string(
+        self, monkeypatch,
+    ) -> None:
+        import json as _json
+        import urllib.request
+
+        class _Ctx:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return _json.dumps({
+                    "choices": [{"message": {"content": None}}],
+                    "usage": {"total_tokens": 7},
+                }).encode("utf-8")
+
+        monkeypatch.setattr(
+            urllib.request, "urlopen", lambda req, timeout=120: _Ctx(),
+        )
+        text, latency_ms, tokens = asyncio.run(
+            query_model("m1", "hi", max_retries=1),
+        )
+        assert text == ""
+        assert tokens == 7
+        assert latency_ms >= 0.0
