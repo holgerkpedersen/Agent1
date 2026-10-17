@@ -56,7 +56,7 @@ exempt = {"_input_executor", "_shutdown_save_memory", "_shutdown_trace_close"}
 ## 2. Four hard constraints
 
 1. **`agent.py` is a public import surface.** Measured: **84** files do
-   `from agent import Agent`, **4** import `LLMClient`, **17** import a private
+   `from agent import Agent`, **5** import `LLMClient`, **17** import a private
    name, and **43** do `import agent`. Every moved name must stay importable from
    `agent` through an explicit re-export.
 
@@ -65,19 +65,28 @@ exempt = {"_input_executor", "_shutdown_save_memory", "_shutdown_trace_close"}
    > *monkeypatch* one on the `agent` module. Both matter, but they are not the
    > same list.
 
-2. **No new module may `import agent` at module level.** Verified: all 43
-   `import agent` sites under `agent_core/` are **function-scope**; the only
-   module-level ones are in `agent_core/tests/` (`test_agent_entrypoint.py:13-14`,
-   `test_plan_workflow.py:34`), which are tests. `agent_core.decisions` and
-   `agent_core.subagent` already import `agent` at call time; a module-level
-   import back would close the cycle.
+2. **No new module may `import agent` at module level.** Verified: under
+   `agent_core/` (non-test code) there are exactly **two** `agent` imports and
+   both are function-scope — `commands/memory_cmd.py:53` (`import agent` inside
+   `_memory_db_path`) and `subagent.py:77` (`from agent import …` inside
+   `__init__`). The module-level ones are all in `agent_core/tests/`
+   (`test_agent_entrypoint.py:13-14`, `test_plan_workflow.py:34`), which are
+   tests, not shipped modules. `agent_core.decisions` and `agent_core.subagent`
+   already import `agent` at call time; a module-level import back would close
+   the cycle.
+
+   > Correction: the previous revision said "all 43 `import agent` sites under
+   > `agent_core/`". That conflated the repo-wide count (**43** files, of which
+   > **30** are module-level) with the `agent_core/` count (**2** files). The
+   > conclusion is unchanged; the evidence was wrong.
 
 3. **Tests monkeypatch configuration on the `agent` module.** `conftest.py` plus
    the test suite do `monkeypatch.setattr(agent, "NAME", …)`. Moving a function
    changes which module a *bare global read* resolves against — see §3.
 
 4. **Every new module needs its own `logger`.** `logger = logging.getLogger(__name__)`
-   lives at `agent.py:15` and **28 of the moving units read it as a bare global**.
+   lives at `agent.py:15` and **31 of the moving units read it as a bare global**
+   (7 module-level functions + 24 `Agent` methods).
    The previous revision never mentioned this. A moved function that keeps
    writing `logger.warning(...)` will raise `NameError`. Each new module must
    define its own logger at the top; `logger` itself **stays** in
@@ -94,17 +103,21 @@ enclosing module is the new one, so a patch on `agent.NAME` is silently ignored
 and the test still passes or fails for the wrong reason.
 
 Verified bare-global reads of test-patched names inside `agent.py`. The last
-column is the number of **test files that patch that name on `agent`**,
-re-measured by scanning `monkeypatch.setattr(agent|agent_mod|…, "NAME", …)`:
+column is the number of **test files that patch that name on `agent`** —
+measured by an `ast` walk of all 487 `.py` files (`backups/` excluded) that
+resolves each file's local alias of the `agent` module (`import agent`,
+`import agent as X`, or a helper such as `agent_module()`) and then counts
+`setattr` / `delattr` / `patch.object(<alias>, "NAME", …)` plus dotted
+`patch("agent.NAME", …)`:
 
 | Name read as a bare global | Read at line(s) | Enclosing function | Files patching |
 | --- | --- | --- | --- |
-| `AGENT_MEMORY_JSON_PATH` | 134, 3222, 3624, 3673, 3677, 3749 | `_signal_break_with_cleanup`, `clear_history`, persistence | **16** |
-| `CHAT_HISTORY_JSON_PATH` | 3221, 3514, 3553, 3602, 3606 | `clear_history`, `_suspend_history_for_new_task`, persistence | **14** |
-| `LLMClient` | 495 | `Agent.__init__` | **6** |
+| `AGENT_MEMORY_JSON_PATH` | 134, 3222, 3624, 3673, 3677, 3749 | `_signal_break_with_cleanup`, `clear_history`, persistence | **17** |
+| `CHAT_HISTORY_JSON_PATH` | 3221, 3514, 3553, 3602, 3606 | `clear_history`, `_suspend_history_for_new_task`, persistence | **16** |
+| `LLMClient` | 495 | `Agent.__init__` | **9** |
 | `TURN_LOG_PATH` | 4219 | `_append_turn_log` | **4** |
 | `_MAX_CHAINED_RUNS` | 2686 | `Agent._run_chained_tool_loop` | **3** |
-| `_resolve_display_mode` | 2481, 2792, 3007, 3053, 3064, 3081, 3300 | `Agent` (7 sites) | **3** |
+| `_resolve_display_mode` | 2481, 2792, 3007, 3053, 3064, 3081, 3300 | `Agent` (7 sites) | **4** |
 | `_start_kanban_inbound` | 5398 | `main` | **3** |
 | `run_interactive` | 5409 | `main` | **3** |
 | `_pytest_full_suite_timeout` | 1463, 1505, 1711 | `Agent` | **2** |
@@ -112,22 +125,48 @@ re-measured by scanning `monkeypatch.setattr(agent|agent_mod|…, "NAME", …)`:
 | `_CONTEXT_AST_THRESHOLD_KB` | 1330, 1333 | `Agent._read_page` | 1 |
 | `_DELEGATE_TIMEOUT_S` | 792, 796, 874, 877 | `Agent` (delegate, parallel) | 1 |
 | `_ENV_FILE_PATH` | 4537 | `_read_env_value` | 1 |
-| `load_agent_settings` | 215, 558, 4019, 4039 | `LLMClient`, `Agent`, `_resolve_stream_fn`, `_resolve_display_mode` | 1 |
-| `resolve_model` | 210, 413 | `LLMClient`, `Agent.__init__` | 1 |
+| `load_agent_settings` | 215, 558, 4019, 4039 | `LLMClient`, `Agent`, `_resolve_stream_fn`, `_resolve_display_mode` | **3** |
+| `resolve_model` | 210, 413 | `LLMClient`, `Agent.__init__` | **3** |
 | `_kill_process_tree` | 1494 | `Agent._nlp_run` | 1 |
 | `_looks_incomplete` | 2683 | `Agent._run_chained_tool_loop` | 1 |
 | `record_full_run_seconds` | 1500, 1518, 1721 | `Agent` | 1 |
 | `decisions_as_system_prompt` | 3248 | `Agent._decision_constraints_block` | 1 |
-| `recommend_profile` | 2993 | `Agent.chat_nlp` | 1 |
-| `ToolLoopRunner` | 2510, 2621, 2816 | `Agent` | 1 |
+| `recommend_profile` | 2993 | `Agent.chat_nlp` | **1** |
+| `ToolLoopRunner` | 2510, 2621, 2816 | `Agent` | **2** |
 | `run_dashboard_server` | 5402 | `main` | 1 |
 | `start_dashboard_thread` | 5407 | `main` | 1 |
 | `_effective_ws_dir` | *not read as a global* | `Agent` method (918–930) | 1 |
 
-> Corrections vs the previous revision: `_MAX_CHAINED_RUNS` 4→**3**,
-> `TURN_LOG_PATH` 3→**4**, `CHAT_HISTORY_JSON_PATH` 13→**14**,
-> `AGENT_MEMORY_JSON_PATH` 15→**16**, `LLMClient` 5→**6**. The other 18 rows
-> were confirmed exactly.
+> **Patch-count provenance.** The `Files patching` column above was re-measured
+> this session by an `ast` walk of all 487 `.py` files (`backups/` excluded);
+> nine rows were raised to the values shown (previously `16`/`14`/`6`/`3`/`1`/
+> `1`/`2`/`1`/`1`, now `17`/`16`/`9`/`4`/`3`/`3`/`1`/`2`/`2`). Raw **site**
+> counts, which matter when a step rewrites a patch site: `AGENT_MEMORY_JSON_PATH`
+> 56, `CHAT_HISTORY_JSON_PATH` 44, `_resolve_display_mode` 12, `LLMClient` 10,
+> `load_agent_settings` 10, `TURN_LOG_PATH` 7, `_pytest_full_suite_timeout` 7,
+> `_MAX_CHAINED_RUNS` 6, `_ENV_FILE_PATH` 6, `ToolLoopRunner` 5, `_start_kanban_inbound`
+> 3, `run_interactive` 3, `resolve_model` 3, `record_full_run_seconds` 3,
+> `_kill_process_tree` 2, `recommend_profile` 2, and 1 each for the rest.
+>
+> **Correction (re-verified).** Two rows were wrong in the previous revision and
+> are fixed above: `record_turn_outcome` is patched in **2** files / 2 sites (it
+> also appears in `tests/test_learning_wiring.py:276`, not just `test_habits.py`),
+> and `recommend_profile` is patched in **1** file (`test_learning_wiring.py`)
+> with **2** sites — the earlier revision put its *site* count in the *files*
+> column. Every other row in both columns re-measures exactly.
+>
+> `_ENV_FILE_PATH` is patched on `pytest_gate` by a further **4** sites in
+> `tests/test_pytest_full_run_gate.py` — a different module, so it does **not**
+> count toward the `agent` surface. `_effective_ws_dir` is patched on `agent` at
+> `tests/test_pytest_full_run_gate.py:288` (the doc's "918-930" is its *definition*).
+>
+> The **14** files that patch a *private* name on `agent` are:
+> `test_agent_dry_refactor`, `test_agent_main_dispatch`, `test_agent_robustness`,
+> `test_dashboard_bridge`, `test_delegate_and_router`, `test_demo_data`,
+> `test_kanban_inbound_boot`, `test_learning_wiring`, `test_pytest_elapsed_budget`,
+> `test_pytest_full_run_gate`, `test_pytest_timeout_injection`,
+> `test_stream_final_answer_wiring`, `test_tool_loop_nlp`,
+> `test_unverified_action_claim`.
 
 Three rows are **new** and were missing entirely:
 
@@ -365,7 +404,7 @@ Both are in `EXPECTED_DEFINITIONS` (`D=True`, `I=False`) → both move to
 `tests/test_speculate_nlp_tool.py` and `tests/test_tool_loop_nlp.py` compare it.
 
 **t08 — `LLMClient`** → `agent_core/llm/client.py` *(deps: t02)*
-Class `LLMClient`, 202–377, 8 methods. Patched by **6** test files (was 5).
+Class `LLMClient`, 202–377, 8 methods. Patched by **9** test files.
 `live()`: `load_agent_settings` (215), `resolve_model` (210).
 `logger`: `LLMClient.__init__` (239).
 
@@ -378,7 +417,7 @@ Move the mutable globals with the functions that write them —
 `_SHUTDOWN_FLAG` (102), `_shutdown_save_memory`, `_shutdown_trace_close`,
 `_input_executor` — so every `global` statement keeps targeting one module.
 ⚠ `_signal_break_with_cleanup` reads `AGENT_MEMORY_JSON_PATH` at 134 → `live()`
-(**16** files patch it, the most-patched name in the suite).
+(**17** files patch it, the most-patched name in the suite).
 The guard exempts the three `None`-initialised placeholders (line 361), so the
 surface edit is smaller than it looks.
 `logger`: `_suppress_and_log`.
@@ -476,7 +515,7 @@ left unassigned:
   (3176–3184), `memory_stats` (3186–3197), `clear_history` (3199–3233)**.
   ⚠ `clear_history` reads `CHAT_HISTORY_JSON_PATH` (3221) **and**
   `AGENT_MEMORY_JSON_PATH` (3222) — the two most-patched names in the suite
-  (14 and 16 files). This method was in no step before; route both through
+  (16 and 17 files). This method was in no step before; route both through
   `live()`.
   ⚠ The heaviest patch surface: `CHAT_HISTORY_JSON_PATH` (5 reads),
   `AGENT_MEMORY_JSON_PATH` (5 reads). **This step is the reason `live()` exists.**
@@ -566,7 +605,7 @@ is what makes each step easy to understand.
 | A moved unit reads `logger` and raises `NameError` | §2 constraint 4: every new module defines its own logger |
 | A constant's readers span several steps (the 3823–3931 block) | §3 constants table: split per step, not as one block |
 | `__file__`-derived path silently points at `agent_core/` | §3 root-path rule: two-level form as in `agent_core/constants.py:11` |
-| A unit belongs to no step (47 did) | §6 ranges are exhaustive; §6 "stay on `Agent`" list is explicit |
+| A unit belongs to no step (47 did) | §6 ranges are **verified exhaustive**: of 162 units (module functions + methods), 152 fall in exactly one step, **0** overlap, and the 10 remaining are all named in the §6 "stay on `Agent`" list. Re-checked by script this session. |
 | Circular import `agent_core.*` → `agent` | `import agent` only inside `live()`, never at module level |
 | Import-time side effects reorder (OpenBLAS, UTF-8 stdout, `_SHELL_NAME`) | Side effects stay in `bootstrap.py`; `_SHELL_NAME` evaluated once |
 | A step changes behaviour while "cleaning up" | Pure-move rule in §4 item 1; behaviour-preserving is the acceptance bar |
