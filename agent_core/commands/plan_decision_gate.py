@@ -2,6 +2,19 @@
 
 Checks proposed plans against decisions.json constraint entries to ensure
 proposed changes don't violate architectural decisions or security constraints.
+
+Matching is boundary-aware, never raw substring
+----------------------------------------------
+Two substring bugs used to make a perfectly safe plan unexecutable, because a
+failed gate aborts the whole run:
+
+* a backticked bare extension such as ``.py`` (prose like "487 ``.py`` files")
+  matched *every* decision-guarded ``*.py`` path, since ``".py" in
+  "agent_core/file_system.py"`` is True. Extensions are not paths, so they are
+  no longer collected (see :func:`_is_path_like`).
+* a three-character decision id such as ``007`` matched inside an unrelated
+  line number (``3007``), flagging "references resolved decision '007'".
+  Ids now match only on a token boundary (see :func:`_references_decision`).
 """
 from __future__ import annotations
 
@@ -11,6 +24,51 @@ from pathlib import Path
 from typing import List, Optional, Any
 
 from .plan_schema import DecisionGateResult
+
+#: A backticked token that is only a file extension (``.py``, ``.md``).
+_EXTENSION_ONLY_RE = re.compile(r"^\.\w+$")
+
+#: Characters that may be part of a decision id, used to keep ``007`` from
+#: matching inside ``3007`` while still matching "decision 007".
+_ID_BOUNDARY = r"[0-9A-Za-z_-]"
+
+
+def _is_path_like(token: str) -> bool:
+    """True when *token* plausibly names a file, not just an extension.
+
+    Rejects ``.py`` (an extension is not a path), blank/whitespace tokens and
+    URLs. This is what stops prose like "487 ``.py`` files" from being read as
+    a reference to every guarded ``.py`` file.
+    """
+    token = token.strip()
+    if not token or re.search(r"\s", token):
+        return False
+    if token.startswith("http") or "." not in token:
+        return False
+    return not _EXTENSION_ONLY_RE.match(token)
+
+
+def _normalize_path(path: str) -> str:
+    """Lowercase, forward-slash, strip a leading ``./``; keep a trailing slash.
+
+    The trailing slash is preserved because it distinguishes a guarded
+    *directory* (which covers everything beneath it) from a guarded *file*.
+    """
+    norm = path.strip().strip("`").lower().replace("\\", "/")
+    while norm.startswith("./"):
+        norm = norm[2:]
+    return norm
+
+
+def _references_decision(decision_id: str, plan_text_lower: str) -> bool:
+    """True when *decision_id* appears in the plan as a whole token.
+
+    Prevents ``007`` from matching inside ``3007`` (or any longer id/number).
+    """
+    if not decision_id:
+        return False
+    pattern = rf"(?<!{_ID_BOUNDARY}){re.escape(decision_id.lower())}(?!{_ID_BOUNDARY})"
+    return re.search(pattern, plan_text_lower) is not None
 
 
 class PlanDecisionGate:
@@ -85,7 +143,7 @@ class PlanDecisionGate:
 
             # Check 2: Ensure no plan contradicts resolved decisions
             resolved_by = decision.get("resolved_by")
-            if resolved_by and resolved_by.lower() in plan_text_lower:
+            if resolved_by and _references_decision(str(resolved_by), plan_text_lower):
                 violations.append(
                     f"Decision {decision_id} ({title}): Plan references resolved decision '{resolved_by}'"
                 )
@@ -97,19 +155,45 @@ class PlanDecisionGate:
         )
 
     def _extract_plan_paths(self, content: str) -> set[str]:
-        """Extract file paths mentioned in the plan."""
+        """Extract file paths mentioned in the plan.
+
+        Backticked tokens that are only an extension (``.py``) are skipped:
+        they name a file *type*, not a file, and would otherwise match every
+        guarded path ending in that extension.
+        """
         paths = set()
         for m in re.finditer(r"`([^`\n]+)`", content):
             token = m.group(1).strip()
-            if "." in token and not token.startswith("http"):
+            if _is_path_like(token):
                 paths.add(token)
         return paths
 
     def _path_matches(self, decision_path: str, plan_paths: set[str]) -> bool:
-        """Check if a decision-guarded path matches any plan path."""
-        decision_norm = decision_path.lower().replace("\\", "/")
+        """Check if a decision-guarded path matches any plan path.
+
+        Matches on path-component boundaries, so a guarded ``agent.py`` does
+        not match ``not_agent.py`` and a guarded ``security/`` directory does
+        not match ``security_notes.md``.
+        """
+        decision_norm = _normalize_path(decision_path)
+        if not decision_norm:
+            return False
+
         for plan_path in plan_paths:
-            plan_norm = plan_path.lower().replace("\\", "/")
-            if decision_norm in plan_norm or plan_norm in decision_norm:
+            plan_norm = _normalize_path(plan_path)
+            if not plan_norm:
+                continue
+            if decision_norm == plan_norm:
+                return True
+            # A guarded DIRECTORY covers every path beneath it.
+            if decision_norm.endswith("/") and plan_norm.startswith(decision_norm):
+                return True
+            # A path mentioned under a guarded directory, or vice versa.
+            if plan_norm.endswith("/") and decision_norm.startswith(plan_norm):
+                return True
+            # Same file named at different depths, e.g. `agent.py` vs
+            # `pkg/agent.py` — require the shorter path to be a suffix at a
+            # component boundary.
+            if plan_norm.endswith("/" + decision_norm) or decision_norm.endswith("/" + plan_norm):
                 return True
         return False
