@@ -67,14 +67,14 @@ class TestBareExtensionIsNotAPath:
     def test_non_paths_rejected(self, token: str) -> None:
         assert _is_path_like(token) is False
 
-    def test_bare_extension_not_collected_as_plan_path(self, gate: PlanDecisionGate) -> None:
+    def test_bare_extension_not_collected(self, gate: PlanDecisionGate) -> None:
         """The exact prose from the taskplan must not yield a ``.py`` plan path."""
-        content = "measured by an `ast` walk of all 487 `.py` files (`backups/` excluded)"
+        content = "measured by an `ast` walk of all 487 `.py` files"
         paths = gate._extract_plan_paths(content)
         assert ".py" not in paths
         assert "backups/" not in paths
 
-    def test_bare_extension_does_not_match_guarded_file(self, gate: PlanDecisionGate) -> None:
+    def test_bare_extension_no_guarded_match(self, gate: PlanDecisionGate) -> None:
         """``.py`` must never be read as touching a guarded .py file."""
         assert gate._path_matches("agent_core/file_system.py", {".py"}) is False
         assert gate._path_matches("agent_core/security/allowlist.py", {".py"}) is False
@@ -104,9 +104,10 @@ class TestPathMatchingIsBoundaryAware:
             is True
         )
 
-    def test_similar_directory_name_does_not_match(self, gate: PlanDecisionGate) -> None:
+    def test_similar_dir_name_no_match(self, gate: PlanDecisionGate) -> None:
         """``security/`` must not match the unrelated ``security_notes.md``."""
-        assert gate._path_matches("agent_core/security/", {"security_notes.md"}) is False
+        paths = {"security_notes.md"}
+        assert gate._path_matches("agent_core/security/", paths) is False
 
     def test_empty_paths_never_match(self, gate: PlanDecisionGate) -> None:
         assert gate._path_matches("", {"agent.py"}) is False
@@ -158,7 +159,7 @@ class TestRealTaskplanPassesGate:
 class TestTruePositivesStillCaught:
     """The fix must not blind the gate to genuine violations."""
 
-    def test_security_guarded_write_is_still_flagged(self, gate: PlanDecisionGate) -> None:
+    def test_security_write_is_still_flagged(self, gate: PlanDecisionGate) -> None:
         bad = "Write `agent_core/security/allowlist.py` and bypass the security guard."
         result = gate.validate(bad)
         assert result.passed is False

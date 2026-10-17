@@ -30,8 +30,6 @@ from __future__ import annotations
 
 import pathlib
 
-import pytest
-
 from agent_core.plan_execution import build_and_validate_graph, parse_plan_tasks
 from agent_core.subagent_roles import get_role
 
@@ -132,12 +130,12 @@ def test_no_self_dependency():
 
 
 def test_plan_passes_the_real_execution_gate():
-    """The exact call ``plan_start`` makes: unknown dep -> ValueError, cycle -> CycleError."""
+    """The exact call ``plan_start`` makes: unknown dep raises, cycle raises."""
     tasks = _tasks()
     graph, order = build_and_validate_graph(tasks)
 
     assert graph.node_count() == len(tasks)
-    assert len(order) == len(tasks), f"topological order {len(order)} != tasks {len(tasks)}"
+    assert len(order) == len(tasks), f"order {len(order)} != tasks {len(tasks)}"
     assert set(order) == {t.id for t in tasks}
 
 
