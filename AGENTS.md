@@ -205,7 +205,7 @@ is being extended to audit its own file effects (self-improvement).
   iteration so any change is a one-step `git revert`.
 - `tests/` — pytest, **2572 collected** (~2 min full run with `--no-cov`;
   `testpaths=["tests"]`).
-- `agent_core/tests/` — entry-point/component test package (31 tests, runs only when
+- `agent_core/tests/` — entry-point/component test package (**148 tests**, runs only when
   targeted: `python -m pytest agent_core/tests -q --no-cov`); reconstructed 2026-08-19
   after the source was deleted uncommitted (decision #058).
 - `.decisions.json` — decision ledger (76 records, gaps ok; latest #077).
