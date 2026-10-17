@@ -1,5 +1,10 @@
 # `agent.py` decomposition — baseline and step log
 
+> **Superseded (steps t03 onward):** `docs/refactor_agent_py_taskplan.md`.
+> The line numbers in the plan below were measured against the 5565-line
+> baseline and are stale after t02 (`agent.py` is now 5416 lines). The step log
+> below is still accurate for t01/t02.
+
 Plan: `.docs/2026-10-16_21-37-29/plan_proposed.md` (13 tasks, 38 dependency edges).
 This file is the working log: one section per step, with the measured numbers
 before and after. Every number below was produced by a command in this session.
