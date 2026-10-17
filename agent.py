@@ -1,166 +1,17 @@
 #!/usr/bin/env python3
 """Agent implementation with workspace management and tool execution.."""
 
-from collections.abc import Iterator
+# The import block, the OPENBLAS_NUM_THREADS default and the stdout/stderr
+# UTF-8 reconfigure live in agent_core.bootstrap (refactor step t02). The
+# star-import respects bootstrap.__all__, which is the exact public surface
+# this block produced at baseline -- see tests/test_agent_module_surface.py.
+# Import order is load-bearing: bootstrap sets OPENBLAS_NUM_THREADS before
+# importing anything that can pull numpy in.
+from agent_core.bootstrap import *  # noqa: F401,F403
 
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, cast
 
-import asyncio
-import concurrent.futures
-import contextlib
-import io
-import json
-import logging
-import os
-import re
-import shlex
-import signal
-import subprocess
-import sys
-import time
-import traceback
-from collections import defaultdict
-from datetime import datetime
-
-from agent_core import to_windows_path
-from agent_core.path_utils import resolve_path, safe_path
-from agent_core.pytest_gate import (
-    DEFAULT_FULL_SUITE_TIMEOUT,
-    FullRunGate,
-    record_full_run_seconds,
-)
-from agent_core.colors import cyan, green, yellow, blue, magenta, gray, red
-from agent_core.constants import (  # noqa: F401
-    resolve_model,
-    CHAT_HISTORY_JSON_PATH,
-    CHAT_HISTORY_TMP_PATH,
-    AGENT_MEMORY_JSON_PATH,
-    AGENT_MEMORY_TMP_PATH,
-    LOOP_NOTE_TAG_KEY,
-    TURN_LOG_PATH,
-)
-from agent_core.config import load_agent_settings, AgentDisplayMode
-from agent_core.file_system import FileSystem
-from agent_core.file_searcher import FileSearcher
-from agent_core.tool_dispatcher import ToolDispatcher
-from agent_core.tool_schemas import NLP_TOOL_SCHEMAS, NLP_TOOL_NAMES
-from agent_core.modes import (
-    MODE_BUILD,
-    check_tool_allowed,
-    filter_tool_schemas,
-    is_plan_mode,
-    plan_mode_system_suffix,
-    plan_mode_turn_note,
-)
-from agent_core.subagent_roles import get_role, role_names
-from agent_core.llm.provider import (
-    get_last_metrics,
-    is_connection_failure,
-    provider_supports_streaming,
-)
-from agent_core.llm.tool_loop import ToolLoopRunner
-from agent_core.llm.learning import (
-    record_turn_outcome,
-    recommend_profile,
-    save_weights as save_meta_policy_weights,
-)
-from agent_core.context_management import CORRELATION_ID_CTX, CorrelationIdContext
-from agent_core.hue.bridge import HueBridge, HueBridgeError
-try:
-    from harnessfix.tracing import TraceWriter, trace_enabled
-except Exception:  # pragma: no cover - tracing degrades gracefully if unavailable
-    TraceWriter = None  # type: ignore[assignment, misc]
-
-    def trace_enabled() -> bool:
-        return False
-
-from agent_core.commands.base import (
-    Command, FlowStopped, chat_stoppable, clear_stop, save_file_py
-)
-from agent_core.commands.registry import CommandRegistry
-from agent_core.decisions import decisions_as_system_prompt
-from agent_core.skills import (
-    DEFAULT_PAGE_LINES,
-    SKILL_INDEX_MARKER,
-    SkillError,
-    discover_skills,
-    format_skill_page,
-    load_skill_index,
-    match_skills_for_input,
-    read_skill,
-    skill_hint_block,
-)
-from agent_core.habits import HABITS_MARKER, habits_block, load_habits
-from agent_core.file_history import FILE_HISTORY_MARKER, file_notes_block
-from agent_core.memory import (
-    MAX_GOAL_CHARS,
-    ORIGINAL_GOAL_MARKER,
-    SEMANTIC_MEMORY_MARKER,
-    load_semantic_memory,
-    original_goal_block,
-    original_goal_from_block,
-    semantic_memory_block,
-    semantic_search_memories,
-)
-from agent_core.security.allowlist import (
-    DESTRUCTIVE_SHELL_PATTERNS,
-    find_destructive_shell_pattern,
-)
-from agent_core.symbol_intel import collect_definitions, collect_references
-from agent_core.text_encoding import (
-    NonUtf8TextError,
-    UnrepresentableTextError,
-    encode_in_encoding,
-    read_text_preserving,
-)
-from agent_core.commands.read_cmd import ReadCommand
-from agent_core.commands.write_cmd import WriteCommand
-from agent_core.commands.search_cmd import SearchCommand
-from agent_core.commands.clear_cmd import ClearCommand
-from agent_core.commands.model_cmd import ModelCommand
-from agent_core.commands.analyze_cmd import AnalyzeCommand
-from agent_core.commands.plan_cmd import PlanCommand
-from agent_core.commands.entities_cmd import EntitiesCommand
-from agent_core.commands.taskplan_cmd import TaskplanCommand
-from agent_core.commands.cleanup_cmd import CleanupCommand
-from agent_core.commands.git_cmd import GitCommand
-from agent_core.commands.implement_cmd import ImplementCommand
-from agent_core.commands.fix_cmd import FixCommand
-from agent_core.commands.workflow_cmd import WorkflowCommand
-from agent_core.commands.optimize_cmd import OptimizeCommand
-from agent_core.commands.paste_cmd import PasteCommand
-from agent_core.commands.paste_image_cmd import PasteImageCommand
-from agent_core.commands.perf_cmd import PerfCommand, PerfTracker
-from agent_core.commands.display_cmd import DisplayCommand
-from agent_core.commands.decide_cmd import DecideCommand
-from agent_core.commands.review_cmd import ReviewCommand
-from agent_core.commands.run_cmd import RunCommand
-from agent_core.commands.self_heal_cmd import SelfHealCommand
-from agent_core.commands.reconstruct_cmd import ReconstructCommand
-from agent_core.commands.multillm_cmd import MultiLlmCommand
-from agent_core.commands.demo_data_cmd import DemoDataCommand
-
-if TYPE_CHECKING:
-    from agent_core.monitoring import MetricsCollector
-    from agent_core.subagent import SubAgent
-
-# Restrict OpenBLAS to a single thread before any numpy import; moving this
-# after the import block is safe because none of the imports above pull numpy
-# in at module-import time.
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-
-# Windows console default codec is cp1252, which cannot encode many Unicode
-# glyphs the UI prints (box-drawing chars, arrows). Reconfigure stdout/stderr
-# to UTF-8 at startup so no print() crashes on non-cp1252 characters.
-for _stream in (sys.stdout, sys.stderr):
-    if _stream is not None:
-        try:
-            _stream.reconfigure(
-                encoding="utf-8", errors="replace"
-            )  # type: ignore[union-attr]
-        except (ValueError, OSError, AttributeError):
-            pass
-
+# logger is owned by agent_core.bootstrap; kept as an alias so existing
+# `agent.logger` references keep resolving.
 logger = logging.getLogger(__name__)
 
 
