@@ -13,7 +13,6 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Iterator
 
 from agent_core.colors import magenta
-from agent_core.constants import load_model_json
 
 if TYPE_CHECKING:
     from agent_core.config import AgentSettings
@@ -61,6 +60,8 @@ class LLMClient:
 
         # Restore active profile from model.json on startup
         try:
+            from agent_core.constants import load_model_json
+
             data = load_model_json()
             prof_name = data.get("profile")
             if prof_name:
@@ -96,6 +97,8 @@ class LLMClient:
 
         if not self._model_name.startswith("llama/"):
             return
+
+        from agent_core.constants import load_model_json
 
         persisted = load_model_json()
         persisted_provider = str(persisted.get("provider") or "")

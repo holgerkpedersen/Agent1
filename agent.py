@@ -1,19 +1,6 @@
-#!/usr/bin/env python3
 """Agent implementation with workspace management and tool execution.."""
-
-# The import block, the OPENBLAS_NUM_THREADS default and the stdout/stderr
-# UTF-8 reconfigure live in agent_core.bootstrap (refactor step t02). The
-# star-import respects bootstrap.__all__, which is the exact public surface
-# this block produced at baseline -- see tests/test_agent_module_surface.py.
-# Import order is load-bearing: bootstrap sets OPENBLAS_NUM_THREADS before
-# importing anything that can pull numpy in.
-from agent_core.bootstrap import *  # noqa: F401,F403
-
-
-# logger is owned by agent_core.bootstrap; kept as an alias so existing
-# `agent.logger` references keep resolving.
+from agent_core.bootstrap import *
 logger = logging.getLogger(__name__)
-
 
 def _escape_json_string_controls(text: str) -> str:
     """Escape raw control characters that appear INSIDE JSON string literals.
@@ -38,7 +25,7 @@ def _escape_json_string_controls(text: str) -> str:
             out.append(ch)
             escaped = False
             continue
-        if ch == "\\":
+        if ch == '\\':
             out.append(ch)
             escaped = True
             continue
@@ -47,12 +34,11 @@ def _escape_json_string_controls(text: str) -> str:
             out.append(ch)
             continue
         code = ord(ch)
-        if code < 0x20:
-            out.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(ch, f"\\u{code:04x}"))
+        if code < 32:
+            out.append({'\n': '\\n', '\r': '\\r', '\t': '\\t'}.get(ch, f'\\u{code:04x}'))
             continue
         out.append(ch)
-    return "".join(out)
-
+    return ''.join(out)
 
 def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
     """Parse a tool-call ``arguments`` string, repairing common model typos.
@@ -75,192 +61,125 @@ def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
         return parsed if isinstance(parsed, dict) else {}
     except (json.JSONDecodeError, TypeError):
         return {}
-
-
-
-# ── Imports from agent_core modules that were stubbed in this file ───────────
-# t00: bootstrap helpers — _suppress_and_log lives in its own module
 from agent_core.suppress_log import _suppress_and_log
-
-# t00: signal handlers, git branch, interruptible input
-# install = public API; _install_signal_handlers kept as alias for call sites
-# interruptible_input = public API; _interruptible_input kept as alias
-# current_git_branch = public API; _current_git_branch kept as alias
-from agent_core.signal_handlers import (
-    _signal_break_with_cleanup,
-    install as _install_signal_handlers,
-    current_git_branch as _current_git_branch,
-    interruptible_input as _interruptible_input,
-)
-
-# t00: shell utilities (shell detection, command hints, subprocess helpers)
-from agent_core.shell_utils import (
-    detect_shell as _detect_shell,
-    shell_name_token as _shell_name_token,
-    current_git_branch as _git_branch,
-    unix_command_hint as _unix_command_hint,
-    windows_command_hint as _windows_command_hint,
-    shell_command_hint as _shell_command_hint,
-    truncate_output as _truncate_output,
-    run_subprocess_captured as _run_subprocess_captured,
-    shape_run_stderr as _shape_run_stderr,
-    blocked_shell_command as _blocked_shell_command,
-    read_env_value as _read_env_value,
-    pytest_full_suite_timeout as _pytest_full_suite_timeout,
-    is_full_pytest_command as _is_full_pytest_command,
-    is_pytest_command as _is_pytest_command,
-    is_subset_pytest_command as _is_subset_pytest_command,
-    SYSTEM_PROMPT,
-)
-
-# t00: json utilities (_read_json_quarantining)
+from agent_core.signal_handlers import _signal_break_with_cleanup, install as _install_signal_handlers, current_git_branch as _current_git_branch, interruptible_input as _interruptible_input
+from agent_core.shell_utils import detect_shell as _detect_shell, shell_name_token as _shell_name_token, current_git_branch as _git_branch, unix_command_hint as _unix_command_hint, windows_command_hint as _windows_command_hint, shell_command_hint as _shell_command_hint, truncate_output as _truncate_output, run_subprocess_captured as _run_subprocess_captured, shape_run_stderr as _shape_run_stderr, blocked_shell_command as _blocked_shell_command, read_env_value as _read_env_value, pytest_full_suite_timeout as _pytest_full_suite_timeout, is_full_pytest_command as _is_full_pytest_command, is_pytest_command as _is_pytest_command, is_subset_pytest_command as _is_subset_pytest_command, SYSTEM_PROMPT as _SYSTEM_PROMPT
 from agent_core.json_utils import _read_json_quarantining
-
-# t00: history compaction (trim, strip, goal recovery, message sizing)
-from agent_core.history_compaction import (
-    _recover_original_goal,
-    _strip_image_blocks,
-    _trim_chat_history,
-    _HISTORY_CHAR_BUDGET,
-    _MAX_CHAT_MESSAGES,
-)
-
-# t00: tool loop helpers (message sizing for token budget)
+from agent_core.history_compaction import _recover_original_goal, _strip_image_blocks, _trim_chat_history, _project_chat_history, _HISTORY_CHAR_BUDGET, _MAX_CHAT_MESSAGES, _HISTORY_TRIM_NOTE, _is_compaction_note, _strip_turn_wrappers, _content_tokens
 from agent_core.llm.tool_loop import _message_size
-
-# t00: run utilities (process tree, kanban, quarantine, claim/incomplete helpers)
-# resolve_stream_fn / resolve_display_mode / final_answer_fallback live here
-# turn_quality_score / begin_trace_turn / append_turn_log / strip_dynamic_system_blocks live here
-from agent_core.run_utils import (
-    _start_kanban_inbound,
-    kill_process_tree as _kill_process_tree,
-    unverified_action_claim as _unverified_action_claim,
-    resolve_stream_fn as _resolve_stream_fn,
-    resolve_display_mode as _resolve_display_mode,
-    final_answer_fallback as _final_answer_fallback,
-    turn_quality_score as _turn_quality_score,
-    begin_trace_turn as _begin_trace_turn,
-    append_turn_log as _append_turn_log,
-    strip_dynamic_system_blocks as _strip_dynamic_system_blocks,
+from agent_core.run_utils import _start_kanban_inbound, kill_process_tree as _kill_process_tree, unverified_action_claim as _unverified_action_claim, resolve_stream_fn as _resolve_stream_fn, resolve_display_mode as _resolve_display_mode, final_answer_fallback as _final_answer_fallback, turn_quality_score as _turn_quality_score, begin_trace_turn as _begin_trace_turn, append_turn_log as _append_turn_log, strip_dynamic_system_blocks as _strip_dynamic_system_blocks
+NlpToolHandler = Callable[..., Awaitable[str]]
+from agent_core.types import _GOAL_RELATED_THRESHOLD
+from agent_core.llm.client import LLMClient
+from agent_core.handlers.nlp_tools import (
+    _nlp_delegate,
+    _nlp_delegate_batch,
+    _run_command_quietly,
+    _effective_ws_dir,
+    _nlp_create_subagent,
+    _nlp_run_subagent_task,
+    _nlp_tool_handlers,
+    _nlp_mcp_tools,
+    _nlp_mcp_call,
+    _nlp_definitions,
+    _nlp_references,
+    _nlp_jev_decide,
+    _nlp_speculate,
+    _nlp_search,
+    _nlp_read,
+    _nlp_read_many,
+    _read_page,
+    _nlp_read_skill,
+    _nlp_list_files,
+    _nlp_fix,
+    _nlp_write,
+    _nlp_run,
+    _nlp_git,
+    _nlp_merge,
+    _nlp_diff,
+    _nlp_edit,
+    _nlp_tests,
+    _nlp_analyze,
+    _nlp_web_search,
+    _nlp_get_current_datetime,
+    _nlp_hue_control,
+    _get_plan_state,
+    _nlp_plan_status,
+    _nlp_plan_start,
+    _nlp_plan_step,
+    _nlp_plan_finish,
 )
 
-# t00: looks_incomplete is defined at module level in this file
-# (imported below after the function definition)
-
-# t00: NlpToolHandler type alias — bound async methods on Agent
-NlpToolHandler = Callable[..., Awaitable[str]]  # type: ignore[misc]
-
-# t00: types
-from agent_core.types import _GOAL_RELATED_THRESHOLD
-
-# t08: LLMClient extracted to agent_core/llm/client.py
-from agent_core.llm.client import LLMClient
+from agent_core.handlers.nlp_tools import (
+    _nlp_delegate,
+    _nlp_delegate_batch,
+    _run_command_quietly,
+    _effective_ws_dir,
+    _nlp_create_subagent,
+    _nlp_run_subagent_task,
+    _nlp_tool_handlers,
+    _nlp_mcp_tools,
+    _nlp_mcp_call,
+    _nlp_definitions,
+    _nlp_references,
+    _nlp_jev_decide,
+    _nlp_speculate,
+    _nlp_search,
+    _nlp_read,
+    _nlp_read_many,
+    _read_page,
+    _nlp_read_skill,
+    _nlp_list_files,
+    _nlp_fix,
+    _nlp_write,
+    _nlp_run,
+    _nlp_git,
+    _nlp_merge,
+    _nlp_diff,
+    _nlp_edit,
+    _nlp_tests,
+    _nlp_analyze,
+    _nlp_web_search,
+    _nlp_get_current_datetime,
+    _nlp_hue_control,
+    _get_plan_state,
+    _nlp_plan_status,
+    _nlp_plan_start,
+    _nlp_plan_step,
+    _nlp_plan_finish,
+)
 
 
 class Agent:
     """Main agent class with workspace management and tool execution."""
-
-    #: Real filesystem path (not a Git-Bash /c/... path) — subprocess cwd must
-    #: be a valid Windows directory, so derive it from this file's location.
     DEFAULT_WORKSPACE = os.path.dirname(os.path.abspath(__file__))
 
-    def __init__(self, workspace: str | None = None, model_name: str | None = None):
-        # Translate Git-Bash-style paths (/c/Dev/...) to Windows paths so that
-        # subprocess cwd and filesystem tools always see a valid directory.
-        self.workspace = os.path.abspath(
-            to_windows_path(workspace or self.DEFAULT_WORKSPACE)
-        )
+    def __init__(self, workspace: str | None=None, model_name: str | None=None):
+        self.workspace = os.path.abspath(to_windows_path(workspace or self.DEFAULT_WORKSPACE))
         self.model_name = resolve_model(model_name)
-
         self._semantic_index: dict[str, set[int]] = defaultdict(set)
         self._files_read: set[str] = set()
         self._file_mtimes: dict[str, float] = {}
-        #: Keeps FULL pytest runs rare and late: a full run is refused unless a
-        #: real source file changed since the baseline, and at most
-        #: AGENT_MAX_FULL_PYTEST_RUNS (default 1) per session may be spent.
         self._full_run_gate = FullRunGate(self.workspace)
-        #: Per-tool-call file effects accumulated while a trace sink is active
-        #: (self-improvement files-affected recording; decision #048 — this is
-        #: None except during a traced chat_nlp loop, so untraced runs are
-        #: byte-identical to before).
         self._pending_effects: list[str] | None = None
         self._knowledge_graph: dict[str, Any] = {}
         self._working_memory: list[Any] = []
-        #: The session's original request (the user's first prompt), pinned
-        #: into the system prompt so chat-history compaction can never drop it
-        #: (see :func:`agent_core.memory.original_goal_block`).  Persisted in
-        #: agent_memory.json so a restored session still knows what it was
-        #: asked to do.
-        self._original_goal: str = ""
-        #: True when ``_original_goal`` was RESTORED (agent_memory.json or the
-        #: previous session's history) rather than pinned from a live prompt of
-        #: THIS session.  The first live prompt then runs a relevance check
-        #: (:meth:`Agent._ensure_original_goal`): an unrelated restored goal is
-        #: replaced and the old conversation suspended, so a stale task can
-        #: never steer a brand-new request.
+        self._original_goal: str = ''
         self._goal_from_restore: bool = False
-        #: Body of a restored conversation archived by
-        #: :meth:`Agent._suspend_history_for_new_task` when its goal turned out
-        #: to belong to a different task (in-memory copy; also written to
-        #: chat_history_prior.json next to chat_history.json).
         self._prior_chat_history: list[dict[str, Any]] = []
         self._history: list[Any] = []
-        #: NLP conversation context — persisted to chat_history.json so a new
-        #: session continues where the previous one left off.
         self._chat_history: list[dict[str, Any]] = self._load_chat_history()
-        #: Index in ``_chat_history`` where the current turn's messages begin
-        #: (reset at the top of every :meth:`chat_nlp` call, before the user
-        #: message is appended).  A restored session's history contains tool
-        #: results from PREVIOUS sessions; per-turn scans such as
-        #: :meth:`_mutating_files_this_turn` must never treat those as files
-        #: changed by the live turn.
         self._turn_start_index: int = len(self._chat_history)
-        #: Run id of the current turn (the turn's correlation id, decision
-        #: #050).  Every experience row written this turn carries it in the
-        #: llm_decisions provenance log, so one turn's decisions are linkable
-        #: as a unit.  ``None`` outside a turn (direct calls, tests).
         self._turn_run_id: str | None = None
-        #: Consecutive ``read`` tool calls in the current turn (read-loop
-        #: guard).  Reset at turn start and by every non-read tool call; when
-        #: it crosses ``_MAX_CONSECUTIVE_READS`` a steering note is appended
-        #: to read results telling the model to stop paging and act.
         self._read_streak: int = 0
-        #: True while a subagent is executing a tool through this parent's
-        #: executor.  Child reads must not inflate the PARENT turn's
-        #: read-loop streak (the steering note would leak into the child's
-        #: tool result); nested delegation restores the previous value.
         self._delegating: bool = False
-        #: Names of currently-running delegated subagents (concurrency cap
-        #: for the ``delegate`` tool — children exist to keep contexts small;
-        #: a pile of running subagents re-creates the pressure they avoid).
         self._active_subagents: set[str] = set()
         self._delegate_counter: int = 0
-        self._nlp_workspace: str | None = None  # workspace override for
-        # NLP tools (set by paste --workspace)
-        #: Session mode ("build" | "plan", see :mod:`agent_core.modes`).
-        #: Plan mode restricts the NLP tool loop to read-only tools so no
-        #: file changes while researching; switched via the ``mode`` command.
+        self._nlp_workspace: str | None = None
         self.mode: str = MODE_BUILD
-
-        #: Cross-session memory (files read, semantic index, knowledge graph,
-        #: working memory) — restored from agent_memory.json so work done in a
-        #: previous session is not forgotten.
         self._load_memory()
-        # A session restored from a history that predates the goal block would
-        # otherwise never capture a goal; fall back to the first user message
-        # already in the loaded history.
         self._ensure_original_goal()
-
-        # Initialize LLM client for AI analysis (LM Studio)
         self.llm = LLMClient(model_name=self.model_name)
-        # Route the client's transport through this Agent's construction seam.
-        # ``build_transport`` is the documented injection point — its docstring
-        # says it "returns the provider object that becomes client._provider",
-        # and tests patch it to swap in a FakeTransport.  Default behaviour is
-        # unchanged: the default build_transport returns exactly what LLMClient
-        # built itself, so this is a no-op on real runs; only a patched seam
-        # changes anything.  Re-apply any restored profile after swapping so
-        # replacing the transport never silently drops the active model profile.
         try:
             _seamed = self.build_transport(self.llm)
             if _seamed is not self.llm._provider:
@@ -271,13 +190,9 @@ class Agent:
                     prof = get_profile(prof_name)
                 self.llm._provider = _seamed
                 if prof_name and prof is not None:
-                    self.llm._provider.apply_profile(
-                        prof_name, prof.temperature, prof.max_tokens,
-                    )
-        except Exception as _seam_err:  # best-effort — never crash construction
-            logger.exception("build_transport seam wiring failed:\n")
-
-        # Initialize extracted components
+                    self.llm._provider.apply_profile(prof_name, prof.temperature, prof.max_tokens)
+        except Exception as _seam_err:
+            logger.exception('build_transport seam wiring failed:\n')
         self.fs = FileSystem(self.workspace)
         self.searcher = FileSearcher(self.workspace)
         self.dispatcher = ToolDispatcher(on_tool=_emit_tool_metrics)
@@ -285,24 +200,18 @@ class Agent:
 
     def _register_tool_handlers(self) -> None:
         """Register tool handlers with the dispatcher."""
-        self.dispatcher.register("read_file", lambda args: self._tool_read_file(**args))
-        self.dispatcher.register(
-            "write_file", lambda args: self._tool_write_file(**args))
-        self.dispatcher.register(
-            "apply_patch", lambda args: self._tool_apply_patch(**args))
-        self.dispatcher.register("edit_file", lambda args: self._tool_edit_file(**args))
-        self.dispatcher.register("search", lambda args: self._tool_search(**args))
-        self.dispatcher.register("search_file", lambda args: self._tool_search(**args))
-        self.dispatcher.register(
-            "list_files", lambda args: self._tool_list_files(**args))
-        self.dispatcher.register(
-            "delete_file", lambda args: self._tool_delete_file(**args))
-        self.dispatcher.register(
-            "analyze_file", lambda args: self._tool_analyze_file(**args))
-        self.dispatcher.register(
-            "llm_analyze", lambda args: self._tool_llm_analyze(**args))
+        self.dispatcher.register('read_file', lambda args: self._tool_read_file(**args))
+        self.dispatcher.register('write_file', lambda args: self._tool_write_file(**args))
+        self.dispatcher.register('apply_patch', lambda args: self._tool_apply_patch(**args))
+        self.dispatcher.register('edit_file', lambda args: self._tool_edit_file(**args))
+        self.dispatcher.register('search', lambda args: self._tool_search(**args))
+        self.dispatcher.register('search_file', lambda args: self._tool_search(**args))
+        self.dispatcher.register('list_files', lambda args: self._tool_list_files(**args))
+        self.dispatcher.register('delete_file', lambda args: self._tool_delete_file(**args))
+        self.dispatcher.register('analyze_file', lambda args: self._tool_analyze_file(**args))
+        self.dispatcher.register('llm_analyze', lambda args: self._tool_llm_analyze(**args))
 
-    def build_transport(self, client: "LLMClient") -> Any:
+    def build_transport(self, client: 'LLMClient') -> Any:
         """Build the transport (provider) that drives this agent's LLM client.
 
         Public construction seam: returns the provider object that becomes
@@ -320,11 +229,7 @@ class Agent:
             settings = None
         return build_provider(settings, client.model_name)
 
-    # ── Sub-agent support ───────────────────────────────────────────────
-    def spawn_subagent(
-        self, name: str, workspace: str | None = None,
-        role: str | None = None,
-    ) -> "SubAgent":
+    def spawn_subagent(self, name: str, workspace: str | None=None, role: str | None=None) -> 'SubAgent':
         """Create a child :class:`SubAgent` sharing this agent's workspace.
 
         The subagent gets its own conversation history so work done there does
@@ -339,9 +244,7 @@ class Agent:
         from agent_core.subagent import SubAgent
         return SubAgent(parent=self, name=name, workspace=workspace, role=role)
 
-    def run_parallel_tasks(
-        self, tasks: list[Callable[[], str]], max_workers: int = 10
-    ) -> list[str]:
+    def run_parallel_tasks(self, tasks: list[Callable[[], str]], max_workers: int=10) -> list[str]:
         """Run *tasks* in parallel threads and collect their string results.
 
         Each task is typically a closure that spawns a :meth:`spawn_subagent`,
@@ -349,21 +252,17 @@ class Agent:
         merge the subagent outputs.
         """
         import concurrent.futures
-
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = [pool.submit(task) for task in tasks]
             results = []
             for future in concurrent.futures.as_completed(futures):
                 try:
                     results.append(future.result())
-                except Exception as exc:  # pragma: no cover - defensive
-                    results.append(f"[task-error] {exc}")
+                except Exception as exc:
+                    results.append(f'[task-error] {exc}')
         return results
 
-    # ── Dashboard data feed (shared MetricsCollector bridge) ────────────
-    def record_demo_activity(
-        self, activity: str = "analyze", latency_ms: float = 120.0
-    ) -> dict[str, float]:
+    def record_demo_activity(self, activity: str='analyze', latency_ms: float=120.0) -> dict[str, float]:
         """Record one synthetic activity into the shared metrics collector.
 
         Mirrors exactly what ``record_command_metrics()`` writes for a real
@@ -372,17 +271,11 @@ class Agent:
         + ``last.command.seconds`` gauge. Returns the written values.
         """
         elapsed_s = max(0.001, latency_ms / 1000.0)
-        # Same three writes as a real command (record_command_metrics) so the
-        # dashboard cannot tell demo data from live data.
         _emit_command_metrics(activity, elapsed_s)
         collector = self.get_metrics_collector()
-        return {
-            "events": 3,
-            "counter": collector.get_counter_value(f"command.{activity}.count"),
-            "elapsed_s": elapsed_s,
-        }
+        return {'events': 3, 'counter': collector.get_counter_value(f'command.{activity}.count'), 'elapsed_s': elapsed_s}
 
-    def get_metrics_collector(self) -> "MetricsCollector":
+    def get_metrics_collector(self) -> 'MetricsCollector':
         """Instance delegate for the process-wide collector (test seam)."""
         return get_metrics_collector()
 
@@ -407,29 +300,23 @@ class Agent:
         (no changes)" message when ``save_file_py`` finds nothing to do.
         """
         if not save_file_py(path, content, auto_yes=True):
-            return f"Skipped {path} (no changes)"
-        verify = await self._verify_file(path) if path.endswith(".py") else ""
+            return f'Skipped {path} (no changes)'
+        verify = await self._verify_file(path) if path.endswith('.py') else ''
         self._note_effect(path)
-        return f"{ok_msg}\n{verify}".strip()
+        return f'{ok_msg}\n{verify}'.strip()
 
     async def _verify_file(self, path: str) -> str:
         """Run py_compile on *path* and return a short verification summary."""
         try:
-            cwd = os.path.abspath(
-                to_windows_path(self._nlp_workspace or self.workspace))
+            cwd = os.path.abspath(to_windows_path(self._nlp_workspace or self.workspace))
             if not os.path.isdir(cwd):
                 cwd = self.workspace
-            r = subprocess.run(
-                [sys.executable, "-m", "py_compile", path],
-                capture_output=True, text=True,
-                encoding="utf-8", errors="replace",
-                cwd=cwd,
-            )
+            r = subprocess.run([sys.executable, '-m', 'py_compile', path], capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=cwd)
         except OSError as e:
-            return f"[verify] py_compile could not run: {e}"
+            return f'[verify] py_compile could not run: {e}'
         if r.returncode == 0:
-            return "[verify] py_compile ✓"
-        return f"[verify] py_compile ✗: {r.stderr.strip()[:300]}"
+            return '[verify] py_compile ✓'
+        return f'[verify] py_compile ✗: {r.stderr.strip()[:300]}'
 
     def _note_effect(self, path: str) -> None:
         """Record one file affected by the current tool call.
@@ -462,8 +349,8 @@ class Agent:
         before calling, so this is a programming-error guard, not a silent
         fallback to a mode the user did not ask for.
         """
-        if mode not in (MODE_BUILD, "plan"):
-            raise ValueError(f"unknown mode: {mode!r}")
+        if mode not in (MODE_BUILD, 'plan'):
+            raise ValueError(f'unknown mode: {mode!r}')
         self.mode = mode
 
     def is_plan_mode(self) -> bool:
@@ -489,1543 +376,166 @@ class Agent:
         cannot take down the whole turn.
         """
         name = name.lower()
-        if name != "read":
+        if name != 'read':
             self._read_streak = 0
         rejection = check_tool_allowed(name, self.mode)
         if rejection:
             return rejection
         handler = self._nlp_tool_handlers().get(name)
         if handler is None:
-            return (
-                f"Unknown tool: {name}. "
-                f"Available: {', '.join(sorted(NLP_TOOL_NAMES))}"
-            )
+            return f"Unknown tool: {name}. Available: {', '.join(sorted(NLP_TOOL_NAMES))}"
         try:
             return await handler(args)
         except Exception as e:
-            logger.exception("NLP tool %r failed", name)
-            return f"{name} error: {e}"
+            logger.exception('NLP tool %r failed', name)
+            return f'{name} error: {e}'
 
     async def _nlp_delegate(self, args: dict[str, Any]) -> str:
-        """Run one task in a role subagent and return its final answer.
-
-        The child gets an isolated history (parent context stays small) and a
-        restricted toolset; its tool calls flow through this parent's
-        executor with ``_delegating`` set so child reads never inflate the
-        parent turn's read-loop streak.  Concurrency is capped at
-        ``_MAX_ACTIVE_SUBAGENTS``; a hung child surfaces as an error after
-        ``_DELEGATE_TIMEOUT_S`` instead of holding the turn hostage.
-        """
-
-        from agent_core.modes import MODE_PLAN, is_plan_mode
-
-        role = str(args.get("role", "")).strip().strip('"').strip("'")
-        task = str(args.get("task", "")).strip()
-        if not role or not task:
-            return "Error: delegate requires 'role' and 'task'."
-
-        spec = get_role(role)
-        if spec is None:
-            return (
-                f"Error: unknown role '{role}'. "
-                f"Available: {', '.join(role_names())}"
-            )
-
-        if len(self._active_subagents) >= _MAX_ACTIVE_SUBAGENTS:
-            return (
-                f"Error: {_MAX_ACTIVE_SUBAGENTS} subagents already running — "
-                "wait for one to finish before delegating again."
-            )
-
-        self._delegate_counter += 1
-        name = f"{spec.name}-{self._delegate_counter}"
-        try:
-            sub = self.spawn_subagent(name, role=role)
-        except Exception as exc:  # defensive: a broken spawn must not kill the turn
-            logger.exception("Delegated subagent %s failed to spawn", name)
-            return f"[delegate:{name}] failed to spawn: {exc}"
-        self._active_subagents.add(name)
-        prev_delegating = self._delegating
-        self._delegating = True
-        try:
-            result = await asyncio.wait_for(
-                sub.respond(task), timeout=_DELEGATE_TIMEOUT_S,
-            )
-        except asyncio.TimeoutError:
-            result = (
-                f"[delegate:{name}] timed out after {_DELEGATE_TIMEOUT_S:.0f}s "
-                "— the task did not finish. Partial context preserved in the "
-                "subagent; retry with a smaller task."
-            )
-        except Exception as exc:  # defensive: a broken child must not kill the turn
-            logger.exception("Delegated subagent %s failed", name)
-            result = f"[delegate:{name}] failed: {exc}"
-        finally:
-            self._delegating = prev_delegating
-            self._active_subagents.discard(name)
-
-        summary = sub.get_context_summary(max_messages=3)
-        reason = getattr(sub, "last_termination_reason", None)
-        reason_note = (
-            "" if reason == "answer"
-            else f", stopped early: {reason or 'unknown'}"
-        )
-        mode_note = ""
-        if is_plan_mode(self.mode):
-            mode_note = (
-                f"\n[plan mode] The '{spec.name}' child was capped to read-only "
-                "(plan-mode parent); it reported findings only."
-                if spec.mode != MODE_PLAN
-                else ""
-            )
-        return (
-            f"{result}\n\n{summary}\n"
-            f"[delegate:{name}] finished ({spec.title}, {sub.mode} mode"
-            f"{reason_note}).{mode_note}"
-        )
+        return await _nlp_delegate(self, args)
 
     async def _nlp_delegate_batch(self, args: dict[str, Any]) -> str:
-        """Fan one task out to several roles in parallel and merge reports.
+        return await _nlp_delegate_batch(self, args)
 
-        Each child still runs alone in its own context; the parent only pays
-        for the merged summaries.  The per-call cap is
-        ``min(len(roles), _MAX_ACTIVE_SUBAGENTS)``.
-        """
-        raw_roles = args.get("roles") or []
-        if not isinstance(raw_roles, list):
-            return "Error: 'roles' must be a list of role names."
-        roles = [str(r).strip() for r in raw_roles if str(r).strip()]
-        task = str(args.get("task", "")).strip()
-        if not roles or not task:
-            return "Error: delegate_batch requires 'roles' (list) and 'task'."
-        unknown = [r for r in roles if get_role(r) is None]
-        if unknown:
-            return (
-                f"Error: unknown role(s): {', '.join(unknown)}. "
-                f"Available: {', '.join(role_names())}"
-            )
-        # Dedupe (preserve order), then cap concurrency. Using `seen.add(r)`
-        # inside a boolean `or` is a fragile idiom (set.add returns None), so we
-        # spell the dedupe out explicitly.
-        seen: set[str] = set()
-        unique_roles: list[str] = []
-        for r in roles:
-            if r not in seen:
-                seen.add(r)
-                unique_roles.append(r)
-        unique_roles = unique_roles[:_MAX_ACTIVE_SUBAGENTS]
-        dropped = len(roles) - len(unique_roles)
-
-        self._delegate_counter += 1
-        batch_id = self._delegate_counter
-
-        async def run_one(role_name: str, idx: int) -> tuple[str, str]:
-            name = f"{role_name}-b{batch_id}-{idx}"
-            try:
-                sub = self.spawn_subagent(name, role=role_name)
-            except Exception as exc:
-                logger.exception("Batch subagent %s failed to spawn", name)
-                return role_name, f"### {role_name}\nfailed to spawn: {exc}"
-            prev = self._delegating
-            self._delegating = True
-            self._active_subagents.add(name)
-            try:
-                res = await asyncio.wait_for(
-                    sub.respond(task), timeout=_DELEGATE_TIMEOUT_S,
-                )
-            except asyncio.TimeoutError:
-                res = (f"timed out after {_DELEGATE_TIMEOUT_S:.0f}s — no result.")
-            except Exception as exc:
-                logger.exception("Batch subagent %s failed", name)
-                res = f"failed: {exc}"
-            finally:
-                self._delegating = prev
-                self._active_subagents.discard(name)
-            reason = getattr(sub, "last_termination_reason", None)
-            reason_note = (
-                "" if reason == "answer" else f" [stopped early: {reason}]"
-            )
-            return role_name, (
-                f"### {role_name}{reason_note}\n"
-                f"{res}\n\n{sub.get_context_summary(max_messages=2)}"
-            )
-
-        results = await asyncio.gather(
-            *(run_one(r, i) for i, r in enumerate(unique_roles))
-        )
-        header = (
-            f"[delegate_batch:{batch_id}] {len(unique_roles)} role(s) on: "
-            f"{task[:120]}{'...' if len(task) > 120 else ''}"
-        )
-        if dropped:
-            header += f" ({dropped} extra role(s) dropped — concurrency cap)"
-        body = "\n\n".join(report for _role, report in results)
-        return f"{header}\n\n{body}"
-
-    async def _run_command_quietly(
-        self, command: Command, args: list[str], done_msg: str,
-    ) -> str:
-        """Run a registered command with stdout captured and return its output.
-
-        Shared by the NLP ``fix`` and ``analyze`` tool handlers so the
-        "capture → execute → fall back when empty" pattern lives in one place.
-        """
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            await command.execute(args, self)
-        return buf.getvalue() or done_msg
+    async def _run_command_quietly(self, command: Command, args: list[str], done_msg: str) -> str:
+        return await _run_command_quietly(self, command, args, done_msg)
 
     def _effective_ws_dir(self) -> str:
-        """Resolve the subprocess cwd for NLP tools.
-
-        The workspace override (``paste --workspace``) wins when it exists;
-        a bad override (e.g. a Git-Bash /c/... path) falls back to the real
-        workspace because subprocess cwd must be an existing directory.
-        """
-        ws_dir = os.path.abspath(
-            to_windows_path(self._nlp_workspace or self.workspace)
-        )
-        if not os.path.isdir(ws_dir):
-            ws_dir = self.workspace
-        return ws_dir
+        return _effective_ws_dir(self)
 
     async def _nlp_create_subagent(self, args: dict[str, Any]) -> str:
-        """Create a persistent subagent for the LLM to reuse."""
-        from agent_core.subagent_roles import get_role, role_names
-        name = str(args.get("name", "")).strip().strip('"').strip("'")
-        role = str(args.get("role", "")).strip().strip('"').strip("'")
-        workspace = args.get("workspace")
-        if not name or not role:
-            return "Error: create_subagent requires 'name' and 'role'."
-        spec = get_role(role)
-        if spec is None:
-            return (
-                f"Error: unknown role '{role}'. "
-                f"Available: {', '.join(role_names())}"
-            )
-        if not hasattr(self, "_subagents"):
-            self._subagents: dict[str, object] = {}
-        if name in self._subagents:
-            return (
-                f"Error: subagent '{name}' already exists. "
-                "Use a different name or reset it first."
-            )
-        sub = self.spawn_subagent(name, workspace=workspace, role=role)
-        self._subagents[name] = sub
-        return (
-            f"Created subagent '{name}' with role '{spec.name}' "
-            f"({spec.title})."
-        )
+        return await _nlp_create_subagent(self, args)
 
     async def _nlp_run_subagent_task(self, args: dict[str, Any]) -> str:
-        """Send a task to an existing named subagent."""
-        name = str(args.get("name", "")).strip().strip('"').strip("'")
-        task = str(args.get("task", "")).strip()
-        if not name or not task:
-            return "Error: run_subagent_task requires 'name' and 'task'."
-        subs = getattr(self, "_subagents", {})
-        sub = subs.get(name)
-        if sub is None:
-            return (
-                f"Error: subagent '{name}' not found. "
-                "Create it with create_subagent first."
-            )
-        result = await sub.respond(task)
-        summary = sub.get_context_summary(max_messages=3)
-        return f"{result}\n\n{summary}"
+        return await _nlp_run_subagent_task(self, args)
 
     def _nlp_tool_handlers(self) -> dict[str, NlpToolHandler]:
-        """Name → handler map for every entry in :data:`NLP_TOOL_NAMES`.
-
-        Built once per instance and cached (decision 120): the map holds
-        plain ``self``-bound methods that read workspace state at call time,
-        so it cannot go stale after ``_nlp_workspace`` changes, and no caller
-        mutates the returned mapping.
-        """
-        cache: dict[str, NlpToolHandler] | None = getattr(
-            self, "_handlers_cache", None
-        )
-        if cache is None:
-            cache = {
-                "analyze": self._nlp_analyze,
-                "definitions": self._nlp_definitions,
-                "diff": self._nlp_diff,
-                "edit": self._nlp_edit,
-                "fix": self._nlp_fix,
-                "git": self._nlp_git,
-                "jev_decide": self._nlp_jev_decide,
-                "list_files": self._nlp_list_files,
-                "merge": self._nlp_merge,
-                "read": self._nlp_read,
-                "read_skill": self._nlp_read_skill,
-                "references": self._nlp_references,
-                "run": self._nlp_run,
-                "search": self._nlp_search,
-                "speculate": self._nlp_speculate,
-                "tests": self._nlp_tests,
-                "web_search": self._nlp_web_search,
-                "write": self._nlp_write,
-                "delegate": self._nlp_delegate,
-                "delegate_batch": self._nlp_delegate_batch,
-                "create_subagent": self._nlp_create_subagent,
-                "run_subagent_task": self._nlp_run_subagent_task,
-                "mcp_tools": self._nlp_mcp_tools,
-                "mcp_call": self._nlp_mcp_call,
-                "get_current_datetime": self._nlp_get_current_datetime,
-                "hue_control": self._nlp_hue_control,
-                "plan_status": self._nlp_plan_status,
-                "plan_start": self._nlp_plan_start,
-                "plan_step": self._nlp_plan_step,
-                "plan_finish": self._nlp_plan_finish,
-            }
-            self._handlers_cache = cache
-        return cache
+        return _nlp_tool_handlers(self)
 
     async def _nlp_mcp_tools(self, args: dict[str, Any]) -> str:
-        """List MCP tools the user exposed to the LLM (opt-in per server)."""
-        from agent_core.mcp.manager import get_manager
-        catalog = get_manager().llm_catalog()
-        if not catalog:
-            return (
-                "No MCP tools available: either no server is connected or none "
-                "is exposed to you. The user opts a server in with "
-                "'mcp expose <name> on'."
-            )
-        lines = ["Available MCP tools (server.tool):"]
-        for server, tools in sorted(catalog.items()):
-            for tool in tools:
-                lines.append(f"  - {server}.{tool}")
-        return "\n".join(lines)
+        return await _nlp_mcp_tools(self, args)
 
     async def _nlp_mcp_call(self, args: dict[str, Any]) -> str:
-        """Invoke an MCP tool on an LLM-exposed server.
-
-        The expose_to_llm gate is re-checked HERE (not just in llm_catalog)
-        so a hallucinated server name can never reach a non-exposed one.
-        Arguments are schema-validated inside the client before anything
-        leaves the process; results are size-capped.
-        """
-        from agent_core.mcp.config import McpConfigError
-        from agent_core.mcp.manager import McpManagerError, get_manager
-        server = str(args.get("server", "")).strip().strip('"').strip("'")
-        tool = str(args.get("tool", "")).strip().strip('"').strip("'")
-        if not server or not tool:
-            return "Error: mcp_call needs both 'server' and 'tool'."
-        manager = get_manager()
-        try:
-            exposed = manager.llm_catalog()
-        except Exception as e:
-            return f"mcp error: {e}"
-        if server not in exposed:
-            return (
-                f"Error: MCP server '{server}' is not exposed to you "
-                f"(exposed: {', '.join(sorted(exposed)) or 'none'}). The user "
-                f"controls exposure with 'mcp expose <name> on'."
-            )
-        arguments = args.get("arguments")
-        if arguments is not None and not isinstance(arguments, dict):
-            return "Error: 'arguments' must be a JSON object."
-        try:
-            # require_exposed=True re-validates the opt-in flag under the
-            # manager lock - no TOCTOU window between gate check and call.
-            return manager.call_tool(server, tool, arguments, require_exposed=True)
-        except McpManagerError as e:
-            return f"mcp error: {e}"
-        except McpConfigError as e:
-            return f"mcp config error: {e}"
-        except Exception as e:
-            return f"mcp error calling {server}.{tool}: {type(e).__name__}: {e}"
+        return await _nlp_mcp_call(self, args)
 
     async def _nlp_definitions(self, args: dict[str, Any]) -> str:
-        """Index a Python file's classes/functions via AST (plan item B-#8)."""
-        path = self._resolve_nlp_path(str(args.get("path", "")).strip('"').strip("'"))
-        if not path.endswith(".py"):
-            return f"Error: definitions needs a .py file, got: {path}"
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                source = f.read()
-        except FileNotFoundError:
-            return f"File not found: {path}"
-        except OSError as e:
-            return f"Definitions error: {e}"
-        self._note_effect(path)
-        return collect_definitions(source, filename=path)
+        return await _nlp_definitions(self, args)
 
     async def _nlp_references(self, args: dict[str, Any]) -> str:
-        """Locate a symbol across workspace .py files (plan item B-#8)."""
-        symbol = str(args.get("symbol", "")).strip().strip('"').strip("'")
-        if not symbol:
-            return "Error: references requires a symbol name."
-        try:
-            max_results = max(1, min(int(args.get("max_results") or 60), 200))
-        except (TypeError, ValueError):
-            max_results = 60
-        self._note_effect(self.workspace)
-        return await asyncio.to_thread(
-            collect_references, symbol, self._effective_ws_dir(), max_results,
-        )
+        return await _nlp_references(self, args)
 
     async def _nlp_jev_decide(self, args: dict[str, Any]) -> str:
-        """Typed probabilistic decision from the dedicated small Jev model.
-
-        The engine is built from ``settings.jev_model`` (never ``self.llm``), so
-        a fast local small model makes yes/no, choice and rubric-score calls
-        without involving the main model.  Failures return an error string; the
-        tool is read-only and therefore allowed in plan mode too.
-        """
-        from agent_core.jev_engine import JevQuestion, build_jev_engine
-
-        kind = str(args.get("kind") or "yesno").strip().lower()
-        text = str(args.get("question") or "").strip()
-        if not text:
-            return "Error: jev_decide requires 'question'."
-        raw_options = args.get("options") or []
-        if isinstance(raw_options, str):
-            raw_options = [o.strip() for o in raw_options.split("|")]
-        options = tuple(str(o).strip() for o in raw_options if str(o).strip())
-        rubric = str(args.get("rubric") or "")
-        state = str(args.get("state") or "")
-        raw_threshold = args.get("threshold")
-        if raw_threshold is None:
-            # B4: calibrated default — once >= 10 labeled decisions exist,
-            # the threshold that best separates correct/incorrect replaces
-            # the hardcoded 0.7 guess; fallback stays 0.7 (never raises).
-            threshold = 0.7
-            try:
-                from harnessfix.jev_telemetry import load_suggested_threshold
-
-                suggestion = load_suggested_threshold(
-                    workspace=getattr(self, "workspace", None),
-                    kind=kind,
-                    min_samples=10,
-                )
-                if suggestion:
-                    threshold = float(suggestion["threshold"])
-            except Exception:  # noqa: BLE001 - calibration must not break the tool
-                threshold = 0.7
-        else:
-            try:
-                threshold = float(raw_threshold)
-            except (TypeError, ValueError):
-                threshold = 0.7
-        threshold = min(1.0, max(0.0, threshold))
-        try:
-            question = JevQuestion(
-                kind=kind, text=text, options=options, rubric=rubric,
-            )
-        except ValueError as exc:
-            return f"Error: {exc}"
-        try:
-            engine = build_jev_engine(
-                threshold=threshold,
-                source="tool",
-                log_workspace=getattr(self, "workspace", None),
-            )
-        except Exception as exc:  # noqa: BLE001 - surface a clear setup error
-            return f"jev_decide error: {exc}"
-        try:
-            result = await engine.decide(question, state)
-        except Exception as exc:  # noqa: BLE001 - never kill the turn
-            return f"jev_decide error: {exc}"
-        return result.summary()
+        return await _nlp_jev_decide(self, args)
 
     async def _nlp_speculate(self, args: dict[str, Any]) -> str:
-        """On-demand speculative deliberation for the LLM.
-
-        Runs the SAME pipeline as the REPL ``speculate`` command — N parallel
-        branches (each carrying this agent's live system prompt and a bounded
-        READ-ONLY tool loop), judge scoring, COMMIT/REFUSE gate — and returns
-        its printed verdict as the tool result, so the main model can get a
-        fast, independently corroborated answer instead of one long reasoning
-        chain.  Branches are hard-capped to ``_BRANCH_TOOLS`` (read-only),
-        which is why this tool is plan-mode safe too: it cannot mutate files.
-
-        Argument validation happens HERE (clear errors for the model); the
-        command's own parsing guards cover the rest (threshold range, branch
-        count).  Output is captured via ``redirect_stdout`` so nothing leaks
-        to the REPL — the verdict exists only in this tool result.
-        """
-        import contextlib
-        import io
-
-        from agent_core.commands.speculate_cmd import SpeculateCommand
-
-        question = str(args.get("question") or "").strip().strip('"').strip("'")
-        if not question:
-            return "Error: speculate requires 'question'."
-        if question.startswith("--"):
-            return (
-                "Error: 'question' must not start with '--' (it would be "
-                "parsed as a command flag)."
-            )
-
-        parts = [question]
-
-        branches = args.get("branches")
-        if branches is not None:
-            try:
-                n = max(1, int(branches))
-            except (TypeError, ValueError):
-                return "Error: 'branches' must be a positive integer."
-            parts += ["--branches", str(n)]
-
-        judge = str(args.get("judge") or "llm").strip().lower()
-        if judge not in ("llm", "jev", "both"):
-            return "Error: 'judge' must be one of: llm, jev, both."
-        parts += ["--judge", judge]
-
-        branch_model = str(args.get("branch_model") or "chat").strip().lower()
-        if branch_model not in ("chat", "jev"):
-            return "Error: 'branch_model' must be one of: chat, jev."
-        if branch_model != "chat":
-            parts += ["--branch-model", branch_model]
-
-        threshold = args.get("threshold")
-        if threshold is not None:
-            try:
-                t = float(threshold)
-            except (TypeError, ValueError):
-                return "Error: 'threshold' must be a number in [0.0, 1.0]."
-            if not 0.0 <= t <= 1.0:
-                return "Error: 'threshold' must be within [0.0, 1.0]."
-            parts += ["--threshold", repr(t)]
-
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            await SpeculateCommand().execute(parts, self)
-        text = buf.getvalue().strip()
-        if not text:
-            return "speculate produced no output."
-        # The committed answer is the point of this tool — give it more room
-        # than a 5k shell dump before truncating.
-        return _truncate_output(text, limit=8000)
+        return await _nlp_speculate(self, args)
 
     async def _nlp_search(self, args: dict[str, Any]) -> str:
-        """Search workspace files for text (first 30 matches)."""
-        query = str(args.get("query", ""))
-        search_path = self._resolve_nlp_path(str(args.get("path") or "."))
-        try:
-            found = await self.searcher.search(query, search_path)
-        except Exception as e:
-            return f"Search error: {e}"
-        if not found or found == "No matches found":
-            return "No files found matching that query."
-        self._note_effect(search_path)
-        lines = found.splitlines()
-        return "\n".join(f"  {line}" for line in lines[:30])
+        return await _nlp_search(self, args)
 
     async def _nlp_read(self, args: dict[str, Any]) -> str:
-        """Read one file (``path``) or several files (``paths``) in one call.
-
-        The ``paths`` array is what lets a model satisfy "read these two files"
-        in a SINGLE tool call instead of refusing ("I can only read one file at
-        a time") or asking the user to re-specify.
-        """
-        raw_paths = args.get("paths")
-        if isinstance(raw_paths, list) and raw_paths:
-            return await self._nlp_read_many(raw_paths, args)
-        if not str(args.get("path", "")).strip():
-            return "Read error: provide 'path' (one file) or 'paths' (a list)."
-        path = self._resolve_nlp_path(str(args.get("path", "")).strip('"').strip("'"))
-        return await self._read_page(path, args, original=args.get("path"))
+        return await _nlp_read(self, args)
 
     async def _nlp_read_many(self, raw_paths: list[Any], args: dict[str, Any]) -> str:
-        """Read several files in one call (the ``paths`` form of ``read``).
-
-        Each file is paged with the same offset/limit as a single read and
-        returned under a ``=== <path> ===`` header.  The call is capped at
-        ``_MAX_READ_FILES`` distinct paths so a runaway model cannot pull the
-        whole workspace into context in one shot.
-        """
-        cleaned: list[str] = []
-        for raw in raw_paths:
-            value = str(raw).strip().strip('"').strip("'")
-            if value and value not in cleaned:
-                cleaned.append(value)
-        if not cleaned:
-            return "Read error: 'paths' must be a non-empty list of file paths."
-        extra = ""
-        if len(cleaned) > _MAX_READ_FILES:
-            extra = (
-                f"\n\n[read capped at {_MAX_READ_FILES} files per call; "
-                f"{len(cleaned) - _MAX_READ_FILES} skipped]"
-            )
-            cleaned = cleaned[:_MAX_READ_FILES]
-        blocks: list[str] = []
-        for raw in cleaned:
-            path = self._resolve_nlp_path(raw)
-            text = await self._read_page(path, args, original=raw)
-            blocks.append(f"=== {raw} ===\n{text}")
-        return "\n\n".join(blocks) + extra
+        return await _nlp_read_many(self, raw_paths, args)
 
     async def _read_page(self, path: str, args: dict[str, Any], original: Any) -> str:
-        """Read *limit* lines of *path* starting at 1-based *offset* (shared
-        by single- and multi-file reads)."""
-        if os.path.isdir(path):
-            return (
-                f"Not a file (directory): {original} — read takes a "
-                "FILE path; use list_files or search for directories."
-            )
-        try:
-            # Paging is LINE-BASED (1-indexed): models and callers pass the
-            # starting line number and a line count, not character offsets —
-            # char offsets kept landing every read in the same short
-            # docstring, causing repeated-read loops.  *limit* is capped so a
-            # single call cannot pull an entire large file into context (the
-            # history trimmer would have to clean up after it next turn).
-            offset = max(1, int(args.get("offset") or 1))
-            limit = max(1, min(int(args.get("limit") or 100), _MAX_READ_LINES))
-        except (TypeError, ValueError):
-            return "Read error: offset/limit must be integers."
-        # AST strategy: a BARE read (no explicit offset/limit) of a large .py
-        # file returns a definition summary instead of full content (saves
-        # context tokens).  An explicit page is ALWAYS honoured — the summary
-        # used to be returned for every offset too, so paging a large file
-        # yielded the same definitions each time and the model looped forever.
-        page_requested = (
-            args.get("offset") is not None or args.get("limit") is not None
-        )
-        if (
-            not page_requested
-            and _CONTEXT_AST_THRESHOLD_KB > 0
-            and path.endswith(".py")
-            and os.path.isfile(path)
-            and os.path.getsize(path) > _CONTEXT_AST_THRESHOLD_KB * 1024
-        ):
-            content = await self.read_file(path, track_read=False)
-            if content.startswith("File not found") or content.startswith("Error"):
-                return content
-            self._note_effect(path)
-            return collect_definitions(content, filename=path) + (
-                "\n\n[Large file: showing a definitions summary. "
-                "Call read with offset=<line> to fetch source lines.]"
-            )
-        content = await self.read_file(path, track_read=False)
-        if content.startswith("File not found") or content.startswith("Error"):
-            return content
-        self._note_effect(path)
-        if not self._delegating:
-            self._read_streak += 1
-        lines = content.splitlines()
-        if offset > len(lines):
-            return f"Offset {offset} is beyond the end of {path} ({len(lines)} lines)."
-        chunk_lines = lines[offset - 1: offset - 1 + limit]
-        chunk = "\n".join(chunk_lines)
-        result = chunk
-        if offset - 1 + limit < len(lines):
-            result = (
-                f"{chunk}\n[truncated — use read with offset="
-                f"{offset + limit} to continue]"
-            )
-        if self._read_streak >= _MAX_CONSECUTIVE_READS:
-            result += _READ_LOOP_NOTE.format(n=self._read_streak)
-        return result
+        return await _read_page(self, path, args, original)
 
     async def _nlp_read_skill(self, args: dict[str, Any]) -> str:
-        """Load one page of a workspace skill body (``read_skill`` tool).
-
-        Reads ``skills/<name>/SKILL.md`` from the effective workspace for a
-        name listed in the system-prompt SKILLS index.  Paging mirrors
-        ``read`` (1-based ``offset``, ``limit`` lines).  Every failure mode —
-        bad/unknown name, unreadable or invalid file, out-of-range offset — is
-        returned as a plain string so a bad call can never break the loop.
-        """
-        name = str(args.get("name", "")).strip()
-        try:
-            offset = max(1, int(args.get("offset") or 1))
-            limit = int(args.get("limit") or DEFAULT_PAGE_LINES)
-        except (TypeError, ValueError):
-            return "Skill error: offset/limit must be integers."
-        try:
-            page = read_skill(
-                self._effective_ws_dir(), name, offset=offset, limit=limit,
-            )
-        except SkillError as exc:
-            return f"Skill error: {exc}"
-        except Exception:
-            logger.exception('read_skill failed:\n')
-            return f"Skill error: could not load skill {name!r}."
-        self._note_effect(str(page.skill.path))
-        return format_skill_page(page)
+        return await _nlp_read_skill(self, args)
 
     async def _nlp_list_files(self, args: dict[str, Any]) -> str:
-        """List up to 50 directory entries, directories marked with ``/``."""
-        raw_path = str(args.get("path") or ".").strip('"').strip("'")
-        path = self._resolve_nlp_path(raw_path)
-        abs_path = path if os.path.isabs(path) else os.path.abspath(path)
-        try:
-            entries = sorted(os.listdir(abs_path))[:50]
-        except NotADirectoryError:
-            return f"Not a directory: {path}"
-        except FileNotFoundError:
-            return f"Directory not found: {path}"
-        except OSError as e:
-            return f"List error: {e}"
-        self._note_effect(path)
-        lines = []
-        for entry in entries:
-            full = os.path.join(abs_path, entry)
-            suffix = "/" if os.path.isdir(full) else ""
-            lines.append(f"  {entry}{suffix}")
-        return "\n".join(lines)
+        return await _nlp_list_files(self, args)
 
     async def _nlp_fix(self, args: dict[str, Any]) -> str:
-        """Run the ``fix`` REPL command on a resolved target file."""
-        resolved_args = [str(a) for a in args.get("args", [])]
-        target = (
-            resolved_args[0] if resolved_args and not resolved_args[0].startswith("--")
-            else None
-        )
-        if target:
-            resolved_args[0] = self._resolve_nlp_path(target)
-        output = await self._run_command_quietly(
-            FixCommand(), resolved_args, "Fix executed. Check the file for changes.",
-        )
-        if resolved_args and not resolved_args[0].startswith("--"):
-            self._note_effect(resolved_args[0])
-        return output
+        return await _nlp_fix(self, args)
 
     async def _nlp_write(self, args: dict[str, Any]) -> str:
-        """Write *content* to *path*; py_compile-verify Python files."""
-        path = self._resolve_nlp_path(str(args.get("path", "")))
-        content = str(args.get("content", ""))
-        try:
-            return await self._save_verify_note(
-                path, content, f"Written {path} ({len(content)} bytes)",
-            )
-        except Exception as e:
-            return f"Write error: {e}"
+        return await _nlp_write(self, args)
 
     async def _nlp_run(self, args: dict[str, Any]) -> str:
-        """Execute one shell command with destructive-pattern blocking,
-        whole-tree timeout kill, and Unix-ism hints."""
-        cmd_to_run = str(args.get("command", "")).strip()
-        # Upper bound: an unbounded model-supplied timeout could stall a turn
-        # for hours; 10 min is the hard ceiling (longer jobs should be split).
-        timeout = max(1, min(int(args.get("timeout") or 120), _MAX_RUN_TIMEOUT_S))
-        if not cmd_to_run:
-            return "Error: run requires a command."
-        is_pytest = _is_pytest_command(cmd_to_run)
-        is_full_run = _is_full_pytest_command(cmd_to_run)
-        if is_full_run:
-            # A full run costs ~2 min and must be EARNED (a real source file
-            # changed) and RARE (one per session by default) - so it happens at
-            # the END of real work, never after a _tmp_* scratch probe.
-            refusal = self._full_run_gate.check()
-            if refusal:
-                return refusal
-        # The suite budget bounds ANY pytest run: a subset selector such as
-        # ``--lf`` can select most of the suite and used to be killed at
-        # whatever timeout the model guessed (typically 300s).  Targeted path
-        # runs and non-pytest commands stay capped by _MAX_RUN_TIMEOUT_S.
-        # This escape hatch is deliberately NOT capped by _MAX_RUN_TIMEOUT_S.
-        if is_full_run or (is_pytest and _is_subset_pytest_command(cmd_to_run)):
-            timeout = max(timeout, int(_pytest_full_suite_timeout()))
-        blocked = _blocked_shell_command(cmd_to_run)
-        if blocked:
-            return f"Error: Dangerous command blocked ({blocked}): {cmd_to_run}"
-        # Windows: start the shell in its own process group so a timeout
-        # can kill the WHOLE tree. Killing only cmd.exe leaves orphaned
-        # children (e.g. a harnessfix.loop python process) running and
-        # holding the captured pipes open — the caller then waits far
-        # beyond the timeout while the "killed" command keeps working.
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-        started = time.monotonic()
-        try:
-            proc = subprocess.Popen(
-                cmd_to_run,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                # Pin UTF-8 explicitly: without it the child's stdout/stderr
-                # are decoded with the locale codepage (cp1252 on Windows), so
-                # a command emitting UTF-8 (CJK, emoji, git output) comes back
-                # as mojibake or raises UnicodeDecodeError out of communicate()
-                # (decision #114 — every text=True child call must pin this).
-                encoding="utf-8",
-                errors="replace",
-                cwd=self._effective_ws_dir(),
-                creationflags=creationflags,
-            )
-            try:
-                output, err = proc.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                _kill_process_tree(proc)
-                output, err = proc.communicate()
-                if is_full_run:
-                    # A killed run proves it lasted AT LEAST this long.  Record
-                    # that lower bound so the next budget grows past the point
-                    # that killed this one, instead of losing the same run again.
-                    record_full_run_seconds(
-                        time.monotonic() - started, completed=False,
-                    )
-                hint = (
-                    f" Measured full-suite budget: "
-                    f"{int(_pytest_full_suite_timeout())}s (pytest)."
-                    if is_pytest
-                    else ""
-                )
-                return (
-                    f"Command timed out after {timeout}s — process tree killed. "
-                    f"For long-running jobs, pass a larger timeout.{hint}"
-                )
-        except Exception as e:
-            return f"Error: {e}"
-        if is_full_run:
-            self._full_run_gate.record_full_run()
-            # Measure, don't guess: the next run's timeout is 1.5x this.
-            record_full_run_seconds(time.monotonic() - started)
-        return _truncate_output(_shape_run_stderr(err, output, proc.returncode))
+        return await _nlp_run(self, args)
 
     async def _nlp_git(self, args: dict[str, Any]) -> str:
-        """Run a whitelisted git subcommand via arg-list execution (no shell)."""
-        subcmd = str(args.get("subcommand") or "status").lower()
-        git_args = str(args.get("args") or "")
-        git_cmds = {
-            "status": ["status"],
-            "diff": ["diff", "--no-color"],
-            "log": ["log", "--oneline", "-15"],
-            "add": ["add"],
-            "commit": ["commit"],
-            "push": ["push"],
-            "pull": ["pull"],
-            "branch": ["branch"],
-            "checkout": ["checkout"],
-            "stash": ["stash"],
-            "show": ["show"],
-            "blame": ["blame"],
-            "remote": ["remote", "-v"],
-            "branches": ["branch", "-a"],
-        }
-        base = git_cmds.get(subcmd)
-        if not base:
-            return (
-                f"Unknown git command: {subcmd}. "
-                f"Available: {', '.join(git_cmds.keys())}"
-            )
-        try:
-            extra = shlex.split(git_args)
-        except ValueError as e:
-            return f"Git error: invalid arguments: {e}"
-        # `git add` needs real paths: a bare "-" (or no args) is a pathspec
-        # error that wastes a call, so answer with the correct form instead.
-        if subcmd == "add" and (not extra or extra == ["-"]):
-            return (
-                "Git error: `git add` needs paths. Use args=\"-A\" to stage all "
-                "changes, or args=\"<path>\" for specific files (a bare '-' is "
-                "not a valid pathspec)."
-            )
-        # A message-less `git commit` opens an editor and blocks until the
-        # 30s timeout (the harness sets no GIT_EDITOR), so answer with the
-        # correct form instead of paying for a hang. Editor-free message
-        # sources: -m/-F, reuse -C/-c, --fixup/--squash, and `--amend
-        # --no-edit`. A bare `--amend` is NOT accepted (it opens the editor).
-        has_message = any(
-            a in ("-m", "--message", "-F", "--file")
-            or a.startswith(("--message=", "-m", "--file="))
-            or a in ("-C", "--reuse-message", "--fixup", "--squash")
-            for a in extra
-        )
-        amend_no_edit = "--amend" in extra and "--no-edit" in extra
-        if subcmd == "commit" and not (extra and (has_message or amend_no_edit)):
-            return (
-                "Git guidance: `git commit` needs a message or it opens an "
-                "editor and hangs. Use subcommand='commit', args='-m \"<message>\"'."
-            )
-        # `git push` only sends committed work: if changes are staged but not
-        # committed, a push leaves them behind — the 2026-09-28 "commit
-        # changes" run pushed an older commit and silently skipped the staged
-        # work. Stop and point at the missing commit instead.
-        if subcmd == "push":
-            staged, _staged_err = _run_subprocess_captured(
-                ["git", "diff", "--cached", "--name-only"],
-                self._effective_ws_dir(), 30, "Git",
-            )
-            staged_files = [
-                ln.strip()
-                for ln in staged.splitlines()
-                if ln.strip() and ln.strip() != "(no output)"
-                and not ln.strip().startswith("[STDERR]")
-            ]
-            if staged_files:
-                listing = ", ".join(staged_files[:5])
-                more = (
-                    "" if len(staged_files) <= 5
-                    else f" (+{len(staged_files) - 5} more)"
-                )
-                return (
-                    f"Git guidance: {len(staged_files)} staged change(s) are "
-                    f"NOT committed yet ({listing}{more}) — `git push` would "
-                    "leave them behind. Commit first with subcommand='commit', "
-                    "args='-m \"<message>\"', then push again."
-                )
-        # Arg-list execution (no shell): shell metacharacters in
-        # model-supplied args become literal git arguments.
-        output, error = _run_subprocess_captured(
-            ["git"] + base + extra, self._effective_ws_dir(), 30, "Git",
-        )
-        return error or output
+        return await _nlp_git(self, args)
 
     async def _nlp_merge(self, args: dict[str, Any]) -> str:
-        """Run a merge through the state-machine module (never interactive).
-
-        ``git merge --continue`` blocks forever on an editor when no
-        ``GIT_EDITOR`` is set, and rejects every argument
-        (``--continue expects no arguments``), so merges are NOT routed
-        through the generic ``git`` tool: :mod:`agent_core.tools.git_merge`
-        owns the state machine, disables the editor, and answers no-op
-        requests with guidance instead of a wasted git call.
-        """
-        from agent_core.tools import git_merge
-
-        return await asyncio.to_thread(
-            git_merge.run_merge, self._effective_ws_dir(), args,
-        )
+        return await _nlp_merge(self, args)
 
     async def _nlp_diff(self, args: dict[str, Any]) -> str:
-        """Show ``git diff --no-color`` for one file (optionally against another)."""
-        file1 = self._resolve_nlp_path(str(args.get("file1", "")))
-        file2 = args.get("file2")
-        if not file1:
-            return "Error: diff requires at least one file."
-        cmd = ["git", "diff", "--no-color", "--"]
-        if file2:
-            cmd += [file1, self._resolve_nlp_path(str(file2))]
-        else:
-            cmd += [file1]
-        output, error = _run_subprocess_captured(
-            cmd, self._effective_ws_dir(), 30, "Diff",
-        )
-        if error:
-            return error
-        return output if output != "(no output)" else "(no differences found)"
+        return await _nlp_diff(self, args)
 
     async def _nlp_edit(self, args: dict[str, Any]) -> str:
-        """Replace the first exact occurrence of *old_text* in a file."""
-        path = self._resolve_nlp_path(str(args.get("path", "")))
-        old_text = str(args.get("old_text", ""))
-        new_text = str(args.get("new_text", ""))
-        try:
-            # Read in the file's own encoding (UTF-8, or legacy cp1252). A file
-            # that cannot be decoded and round-tripped is refused, never
-            # rewritten with U+FFFD substituted for the original bytes.
-            content, encoding = read_text_preserving(path)
-        except FileNotFoundError:
-            return f"File not found: {path}"
-        except NonUtf8TextError as e:
-            return f"Edit refused: {e}"
-        except OSError as e:
-            return f"Edit error: {e}"
-        if old_text not in content:
-            return (
-                f"Text not found in {path}. Make sure old text matches "
-                "exactly (including whitespace)."
-            )
-        new_content = content.replace(old_text, new_text, 1)
-        try:
-            # Refuse before writing if the new text cannot be encoded in the
-            # file's existing encoding, so a legacy file is never converted.
-            encode_in_encoding(new_content, encoding, path)
-        except UnrepresentableTextError as e:
-            return f"Edit refused: {e}"
-        if encoding == "utf-8":
-            try:
-                return await self._save_verify_note(
-                    path, new_content, f"Edited {path}",
-                )
-            except Exception as e:
-                return f"Edit error: {e}"
-        # Legacy encoding: write in the same encoding, same newline handling
-        # as save_file_py (text mode), so only the encoding is preserved.
-        try:
-            with open(path, "w", encoding=encoding) as f:
-                f.write(new_content)
-        except OSError as e:
-            return f"Edit error: {e}"
-        verify = await self._verify_file(path) if path.endswith(".py") else ""
-        self._note_effect(path)
-        return f"Edited {path} (kept {encoding})\n{verify}".strip()
+        return await _nlp_edit(self, args)
 
     async def _nlp_tests(self, args: dict[str, Any]) -> str:
-        """Run pytest/unittest on *path* (bounded by the measured suite budget)."""
-        test_path = self._resolve_nlp_path(str(args.get("path") or "."))
-        framework = str(args.get("framework") or "pytest")
-        #: The full suite takes ~15 minutes here (measured 861.5s), not the
-        #: 2.5 minutes this used to assume - 300s killed whole-suite runs.
-        timeout = 300
-        is_full = (
-            os.path.abspath(test_path) == os.path.abspath(self._effective_ws_dir())
-        )
-        if is_full:
-            # Whole-workspace run: same "earned and rare" gate as the run tool -
-            # no real change means a full pass verifies nothing.
-            refusal = self._full_run_gate.check()
-            if refusal:
-                return refusal
-            self._full_run_gate.record_full_run()
-        if framework == "pytest":
-            # A whole-workspace run gets the measured suite budget; a targeted
-            # path keeps the plain cap so nested/single-file runs stay bounded.
-            if is_full:
-                timeout = max(timeout, int(_pytest_full_suite_timeout()))
-            cmd = [sys.executable, "-m", "pytest", test_path, "-v"]
-        else:
-            cmd = [sys.executable, "-m", "unittest", test_path, "-v"]
-        started = time.monotonic()
-        output, error = _run_subprocess_captured(
-            cmd, self._effective_ws_dir(), timeout, "Tests",
-        )
-        if is_full:
-            timed_out = "timed out after" in (output or "")
-            record_full_run_seconds(
-                time.monotonic() - started, completed=not timed_out,
-            )
-        return error or output
+        return await _nlp_tests(self, args)
 
     async def _nlp_analyze(self, args: dict[str, Any]) -> str:
-        """Run the ``analyze`` REPL command (AI analysis) on an optional path.
-
-        The path may be a FILE or a DIRECTORY (a folder is summarized from a
-        bounded sample of its files); omitting it analyzes the whole workspace.
-        """
-        analyze_args: list[str] = []
-        if args.get("path"):
-            analyze_args = [self._resolve_nlp_path(str(args["path"]))]
-            self._note_effect(analyze_args[0])
-        try:
-            from agent_core.commands.analyze_cmd import AnalyzeCommand
-            return await self._run_command_quietly(
-                AnalyzeCommand(), analyze_args, "Analysis complete."
-            )
-        except Exception as e:
-            return f"Analyze error: {e}"
+        return await _nlp_analyze(self, args)
 
     async def _nlp_web_search(self, args: dict[str, Any]) -> str:
-        """DuckDuckGo search; results are UNTRUSTED (marked by format_results)."""
-        query = str(args.get("query", "")).strip()
-        if not query:
-            return "Error: web_search requires a query."
-        try:
-            from agent_core.tools.web_search import (
-                MAX_RESULTS_LIMIT,
-                format_results,
-                sanitize_query,
-                search_ddg,
-            )
-            max_results = max(
-                1, min(int(args.get("max_results") or 5), MAX_RESULTS_LIMIT))
-            clean_query = sanitize_query(query)
-            hits = search_ddg(clean_query, max_results=max_results)
-            output = format_results(clean_query, hits)
-            return output[:5000]
-        except Exception as e:
-            return f"Web search error: {e}"
+        return await _nlp_web_search(self, args)
 
     async def _nlp_get_current_datetime(self, args: dict[str, Any]) -> str:
-        """Return the current date/time, optionally in a given timezone."""
-        from datetime import datetime
-        import zoneinfo
-        tz_name = args.get("timezone")
-        if tz_name:
-            try:
-                tz = zoneinfo.ZoneInfo(str(tz_name))
-            except (ValueError, zoneinfo.ZoneInfoNotFoundError):
-                return f"Error: unknown timezone '{tz_name}'. Use IANA names like 'UTC' or 'America/New_York'."
-            return datetime.now(tz).isoformat()
-        return datetime.now().isoformat()
+        return await _nlp_get_current_datetime(self, args)
 
     async def _nlp_hue_control(self, args: dict[str, Any]) -> str:
-        """Handle hue_control NLP tool with V1 and V2 API support.
-
-        Supports:
-          - list_lights: List all lights (V1)
-          - get_light: Get detailed info for a light (V1)
-          - set_light: Set on/off/brightness/CT (V1)
-          - color_capabilities: Get RGB capabilities via V2 API
-          - set_color: Set RGB/HSV/XY colors via V2 API
-          - set_color_named: Set color by name (red, blue, etc.) or HSV spec
-
-        For V2 API actions, at least one of r/g/b/x/y/h/s/v must be provided.
-        """
-        action = args.get("action", "list_lights")
-        try:
-            bridge = HueBridge.from_env()
-        except HueBridgeError as exc:
-            return f"Hue Bridge error: {exc}"
-        try:
-            if action == "list_lights":
-                lights = await bridge.list_lights()
-                if not lights:
-                    return "No lights found on the Hue Bridge."
-                lines = []
-                for l in lights:
-                    state = "ON" if l.get("on") else "OFF"
-                    bri = f"{l.get('brightness'):.1f}%" if l.get("brightness") is not None else "?"
-                    lines.append(f"  [{l['id']}] {l['name']} -- {state}, brightness={bri}")
-                return f"Found {len(lights)} light(s):\n" + "\n".join(lines)
-
-            elif action == "get_light":
-                light_id = args.get("light_id", "")
-                if not light_id:
-                    return "Error: light_id is required for get_light."
-                info = await bridge.get_light(light_id)
-                return json.dumps(info, indent=2, default=str)
-
-            elif action == "set_light":
-                light_id = args.get("light_id", "")
-                if not light_id:
-                    return "Error: light_id is required for set_light."
-                light_state: dict[str, Any] = {}
-                if "on" in args:
-                    light_state["on"] = bool(args["on"])
-                if "brightness" in args:
-                    light_state["brightness"] = float(args["brightness"])
-                if "mirek" in args:
-                    light_state["mirek"] = int(args["mirek"])
-                if not light_state:
-                    return "Error: no state changes specified (on, brightness, mirek)."
-                await bridge.set_light(light_id, **light_state)
-                return f"Light {light_id} updated: {light_state}"
-
-            elif action == "color_capabilities":
-                light_id = args.get("light_id", "")
-                if not light_id:
-                    return "Error: light_id is required for color_capabilities."
-                caps = await bridge.get_color_capabilities(light_id)
-                return json.dumps(caps, indent=2, default=str)
-
-            elif action == "set_color":
-                light_id = args.get("light_id", "")
-                if not light_id:
-                    return "Error: light_id is required for set_color."
-
-                # Check that at least one RGB/HSV/XY parameter is provided
-                has_rgb = "r" in args and "g" in args and "b" in args
-                has_xy = "x" in args or "y" in args
-                has_hsv = "h" in args or "s" in args or "v" in args
-
-                if not has_rgb and not has_xy and not has_hsv:
-                    return "Error: set_color requires at least one color parameter (r/g/b, x/y, or h/s/v)."
-
-                kwargs: dict[str, Any] = {}
-                if "r" in args:
-                    kwargs["r"] = int(args["r"])
-                if "g" in args:
-                    kwargs["g"] = int(args["g"])
-                if "b" in args:
-                    kwargs["b"] = int(args["b"])
-                if "x" in args:
-                    kwargs["x"] = float(args["x"])
-                if "y" in args:
-                    kwargs["y"] = float(args["y"])
-                if "h" in args:
-                    kwargs["h"] = int(args["h"])
-                if "s" in args:
-                    kwargs["s"] = float(args["s"])
-                if "v" in args:
-                    kwargs["v"] = float(args["v"])
-
-                await bridge.set_light_color(light_id, **kwargs)
-                return f"Light {light_id} color updated."
-
-            elif action == "set_color_named":
-                light_id = args.get("light_id", "")
-                if not light_id:
-                    return "Error: light_id is required for set_color_named."
-
-                name = args.get("name", "")
-                brightness_val = float(args.get("brightness", 100.0))
-
-                await bridge.set_light_color_named(light_id, name, brightness=brightness_val)
-                return f"Light {light_id} color set to '{name}' at {brightness_val}%."
-
-            else:
-                return f"Error: unknown action '{action}'. Use list_lights, get_light, " \
-                       f"set_light (V1), or color_capabilities/set_color/set_color_named (V2)."
-
-        except HueBridgeError as exc:
-            return f"Hue Bridge error: {exc}"
-
-    # ── Plan workflow NLP tools ─────────────────────────────────────
+        return await _nlp_hue_control(self, args)
 
     async def _get_plan_state(self) -> dict[str, Any]:
-        """Detect current plan status + tasks from the filesystem."""
-        from agent_core.commands.doc_paths import latest_run_dir
-        from agent_core.plan_execution.parser import parse_plan_tasks
-
-        plan_dir = latest_run_dir(self.workspace)
-        if plan_dir is None:
-            return {"status": "none", "error": "No .docs run directory found"}
-
-        plan_file = None
-        status = "none"
-        for candidate, st in [
-            (plan_dir / "plan_executing.md", "executing"),
-            (plan_dir / "plan_proposed.md", "proposed"),
-        ]:
-            if candidate.is_file():
-                plan_file = candidate
-                status = st
-                break
-
-        if plan_file is None:
-            for f in plan_dir.iterdir():
-                if f.name.startswith("plan_executed_"):
-                    status = "executed"
-                    plan_file = f
-                    break
-                elif f.name.startswith("plan_failed_"):
-                    status = "failed"
-                    plan_file = f
-                    break
-
-        if plan_file is None:
-            return {"status": "none", "error": f"No plan file in {plan_dir}"}
-
-        plan_text = plan_file.read_text(encoding="utf-8")
-        tasks = parse_plan_tasks(plan_text, fmt="md")
-
-        return {
-            "status": status,
-            "plan_dir": str(plan_dir),
-            "plan_path": str(plan_file),
-            "plan_text": plan_text,
-            "tasks": tasks,
-        }
+        return await _get_plan_state(self)
 
     async def _nlp_plan_status(self, args: dict[str, Any]) -> str:
-        """Query the current plan's lifecycle status and parsed task list."""
-        state = await self._get_plan_state()
-        if state.get("error"):
-            return f"Plan status: {state['status']}. {state.get('error', '')}"
-
-        tasks = state.get("tasks", [])
-        lines = [
-            f"Plan status: {state['status']}",
-            f"Plan file: {state['plan_path']}",
-            f"Tasks: {len(tasks)}",
-        ]
-        for t in tasks:
-            dep_str = f"  deps: {t.depends_on}" if t.depends_on else ""
-            lines.append(f"  - [{t.id}] ({t.role}) {t.description}{dep_str}")
-        if state["status"] == "executing":
-            lines.append("\nUse plan_step to advance, or plan_finish to complete.")
-        elif state["status"] == "proposed":
-            lines.append("\nUse plan_start to begin execution.")
-        return "\n".join(lines)
+        return await _nlp_plan_status(self, args)
 
     async def _nlp_plan_start(self, args: dict[str, Any]) -> str:
-        """Start plan execution: proposed -> executing, validate, run tasks."""
-        if self.is_plan_mode():
-            return "Error: plan mode is read-only. Run 'mode build' first."
-
-        state = await self._get_plan_state()
-        if state.get("error"):
-            return f"Error: {state['error']}"
-        if state["status"] not in ("proposed",):
-            return f"Error: plan is already '{state['status']}', cannot start."
-        if not state["tasks"]:
-            return "Error: no tasks found in the plan."
-
-        from pathlib import Path
-
-        from agent_core.plan_execution.runner import build_and_validate_graph
-        from agent_core.orchestration.dependency_graph import CycleError
-        from agent_core.subagent_roles import get_role
-        from agent_core.commands.plan_lifecycle import PlanLifecycleManager
-        from agent_core.commands.plan_dry_run import PlanDryRunner
-        from agent_core.commands.plan_decision_gate import PlanDecisionGate
-
-        tasks = state["tasks"]
-
-        for t in tasks:
-            if get_role(t.role) is None:
-                return f"Error: unknown role '{t.role}' for task '{t.id}'"
-
-        try:
-            graph, order = build_and_validate_graph(tasks)
-        except CycleError as exc:
-            return f"Error: dependency cycle detected: {exc.cycle}"
-        except ValueError as exc:
-            return f"Error: {exc}"
-
-        dry_runner = PlanDryRunner()
-        dry_result = dry_runner.validate(state["plan_text"])
-        if not dry_result.valid:
-            return "Dry-run safety gate failed:\n" + "\n".join(
-                f"  - {e}" for e in dry_result.errors
-            )
-
-        decision_gate = PlanDecisionGate(Path(self.workspace))
-        gate_result = decision_gate.validate(state["plan_text"])
-        if not gate_result.passed:
-            return "Decision gate failed - plan violates constraints:\n" + "\n".join(
-                f"  - {v}" for v in gate_result.violations
-            )
-
-        # Consensus review gate (opt-in, default off): every configured model
-        # votes on the plan with a structured VERDICT line; only a quorum of
-        # APPROVEs lets it start. Model disagreement blocks — an honest "no"
-        # from models that answered is a real signal. Infrastructure failure
-        # fails OPEN (the note below says so) — a dead server must never
-        # silently block the workflow. See consensus_gate.py.
-        consensus_note = ""
-        from agent_core.plan_execution.consensus_gate import gate_enabled as _gate_on
-        if _gate_on(self.workspace):
-            from agent_core.plan_execution.consensus_gate import review_plan
-            outcome = await review_plan(self, state["plan_text"])
-            note_text = outcome.consensus or outcome.skipped_reason
-            consensus_note = f"\nConsensus gate: {note_text}" if note_text else ""
-            if not outcome.approved:
-                return (
-                    "Plan blocked by the consensus gate." + consensus_note
-                    + "\nThe plan stays proposed. Address the reviewers'"
-                      " concerns and propose again."
-                )
-
-        dry_run = args.get("dry_run", False)
-
-        plan_dir = Path(state["plan_dir"])
-        lifecycle = PlanLifecycleManager(plan_dir, Path(self.workspace))
-        try:
-            lifecycle.start_plan()
-        except Exception as exc:
-            return f"Error during lifecycle transition: {exc}"
-
-        if dry_run:
-            return (
-                f"Plan transitioned to executing (dry-run mode). "
-                f"{len(tasks)} tasks validated.{consensus_note}"
-            )
-
-        from agent_core.plan_execution.runner import run_plan
-
-        snapshot = await run_plan(self, tasks, plan_dir=str(plan_dir))
-
-        report_lines = [f"Plan execution complete ({len(tasks)} tasks):"]
-        failed = []
-        for t in snapshot["tasks"]:
-            icon = "+" if t["status"] == "completed" else "X"
-            report_lines.append(f"  {icon} [{t['task_id']}] {t['status']}")
-            if t["status"] != "completed":
-                failed.append(t["task_id"])
-
-        if failed:
-            report_lines.append(
-                f"\n{len(failed)} task(s) failed: {', '.join(failed)}"
-            )
-            report_lines.append(
-                "Use plan_finish with success=false to mark the plan as failed."
-            )
-        else:
-            report_lines.append("\nAll tasks completed. Use plan_finish to finalize.")
-
-        if consensus_note:
-            report_lines.append(consensus_note.strip())
-
-        return "\n".join(report_lines)
+        return await _nlp_plan_start(self, args)
 
     async def _nlp_plan_step(self, args: dict[str, Any]) -> str:
-        """Advance the plan by executing the next uncompleted task."""
-        if self.is_plan_mode():
-            return "Error: plan mode is read-only. Run 'mode build' first."
-
-        state = await self._get_plan_state()
-        if state.get("error"):
-            return f"Error: {state['error']}"
-        if state["status"] == "proposed":
-            return (
-                "Error: plan not yet started. "
-                "Use plan_start first."
-            )
-        if state["status"] != "executing":
-            return f"Error: plan is '{state['status']}', cannot step."
-
-        tasks = state["tasks"]
-        if not tasks:
-            return "Error: no tasks in plan."
-
-        from agent_core.plan_execution.runner import build_and_validate_graph
-        from agent_core.orchestration.dependency_graph import CycleError
-
-        try:
-            graph, order = build_and_validate_graph(tasks)
-        except (CycleError, ValueError) as exc:
-            return f"Error: {exc}"
-
-        import re
-        from pathlib import Path
-
-        completed_ids: set[str] = set()
-        report_path = Path(state["plan_dir"]) / "plan_execution_report.md"
-        if report_path.exists():
-            report_text = report_path.read_text(encoding="utf-8")
-            for m in re.finditer(r"\[(\S+)\]\s+completed", report_text):
-                completed_ids.add(m.group(1))
-
-        target_id = args.get("task_id")
-        next_task = None
-        for tid in order:
-            if tid in completed_ids:
-                continue
-            if target_id and tid != target_id:
-                continue
-            next_task = next(t for t in tasks if t.id == tid)
-            break
-
-        if next_task is None:
-            return "No uncompleted tasks remaining. Use plan_finish to finalize."
-
-        unmet = [d for d in next_task.depends_on if d not in completed_ids]
-        if unmet:
-            return (
-                f"Error: task '{next_task.id}' has unmet dependencies: "
-                f"{', '.join(unmet)}"
-            )
-
-        # Collect upstream dependency results so the subagent can use them.
-        dep_results: dict[str, Any] = {}
-        for dep_id in next_task.depends_on:
-            dep_path = Path(state["plan_dir"]) / f"dep_{dep_id}_result.json"
-            if dep_path.exists():
-                try:
-                    dep_results[dep_id] = json.loads(
-                        dep_path.read_text(encoding="utf-8")
-                    )
-                except Exception:
-                    pass
-
-        sub = self.spawn_subagent(
-            name=f"exec-{next_task.id}", role=next_task.role
-        )
-        desc = next_task.description
-        if dep_results:
-            parts = []
-            for dep_id, res in dep_results.items():
-                summary = (
-                    res.get("summary") or res.get("result") or ""
-                ) if isinstance(res, dict) else str(res)
-                parts.append(f"- {dep_id}: {summary}")
-            desc += "\n\nUpstream results from dependencies:\n" + "\n".join(parts)
-        result = await sub.respond(desc)
-
-        # Determine whether the subagent actually succeeded.
-        _TURN_CAP_SENTINEL = "turn cap reached"
-        task_failed = (
-            _TURN_CAP_SENTINEL in result
-            or not result.strip()
-        )
-        status_label = "failed" if task_failed else "completed"
-        report_entry = (
-            f"- [{next_task.id}] {status_label} (role: {next_task.role})"
-        )
-        try:
-            with open(report_path, "a", encoding="utf-8") as f:
-                f.write(report_entry + "\n")
-        except Exception:
-            pass
-
-        remaining = [
-            tid for tid in order
-            if tid not in completed_ids and tid != next_task.id
-        ]
-
-        preview = result[:200] + ("..." if len(result) > 200 else "")
-        lines = [
-            f"Task [{next_task.id}] {status_label} (role: {next_task.role}).",
-            f"Result preview: {preview}",
-        ]
-        if remaining:
-            lines.append(f"\n{len(remaining)} task(s) remaining: {', '.join(remaining)}")
-            lines.append("Call plan_step again for the next task.")
-        else:
-            lines.append("\nAll tasks done. Call plan_finish to finalize.")
-
-        return "\n".join(lines)
+        return await _nlp_plan_step(self, args)
 
     async def _nlp_plan_finish(self, args: dict[str, Any]) -> str:
-        """Complete or fail the current plan."""
-        state = await self._get_plan_state()
-        if state.get("error"):
-            return f"Error: {state['error']}"
-        if state["status"] != "executing":
-            return (
-                f"Error: plan is '{state['status']}', "
-                f"can only finish an executing plan."
-            )
-
-        success = args.get("success", True)
-        reason = args.get("reason", "")
-        from pathlib import Path
-        from agent_core.commands.plan_lifecycle import PlanLifecycleManager
-        plan_dir = Path(state["plan_dir"])
-        lifecycle = PlanLifecycleManager(plan_dir, Path(self.workspace))
-
-        try:
-            if success:
-                dst = lifecycle.finish_plan()
-            else:
-                dst = lifecycle.fail_plan()
-        except Exception as exc:
-            return f"Error during lifecycle transition: {exc}"
-
-        final_status = "executed" if success else "failed"
-        lines = [f"Plan marked as {final_status}.", f"File: {dst}"]
-        if reason:
-            lines.append(f"Reason: {reason}")
-        return "\n".join(lines)
-
-    # ── Internal file-operation helpers ──────────────────────────────
+        return await _nlp_plan_finish(self, args)
 
     async def _tool_read_file(self, path: str, **kwargs: Any) -> str:
         result = await self.fs.read(path)
-        if not result.startswith("File not found") and not result.startswith("Error"):
+        if not result.startswith('File not found') and (not result.startswith('Error')):
             safe = self.fs.safe_path(path)
             self._files_read.add(safe)
             try:
                 self._file_mtimes[safe] = os.path.getmtime(safe)
             except OSError as e:
-                logger.warning("Could not stat %s: %s", safe, e)
+                logger.warning('Could not stat %s: %s', safe, e)
         return result
 
     async def _tool_write_file(self, path: str, content: str, **kwargs: Any) -> str:
         return await self.fs.write(path, content)
 
-    async def _tool_apply_patch(
-        self, path: str, find: str, replace: str, **kwargs: Any,
-    ) -> str:
+    async def _tool_apply_patch(self, path: str, find: str, replace: str, **kwargs: Any) -> str:
         return await self.fs.apply_patch(path, find, replace)
 
     async def _tool_edit_file(self, path: str, content: str, **kwargs: Any) -> str:
         return await self.fs.edit(path, content)
 
-    async def _tool_search(self, query: str, path: str = ".", **kwargs: Any) -> str:
-        search_path = self._resolve_nlp_path(path or ".")
+    async def _tool_search(self, query: str, path: str='.', **kwargs: Any) -> str:
+        search_path = self._resolve_nlp_path(path or '.')
         return await self.searcher.search(query, search_path)
 
-    async def _tool_list_files(
-        self, path: str = ".", pattern: str = "*", **kwargs: Any,
-    ) -> str:
+    async def _tool_list_files(self, path: str='.', pattern: str='*', **kwargs: Any) -> str:
         return await self.fs.list_files(path, pattern)
 
     async def _tool_delete_file(self, path: str, **kwargs: Any) -> str:
         return await self.fs.delete(path)
 
     async def _tool_analyze_file(self, path: str, **kwargs: Any) -> str:
-        return cast(
-            str, await self.llm.analyze_code(await self.read_file(path))
-        )  # type: ignore[redundant-cast]
+        return cast(str, await self.llm.analyze_code(await self.read_file(path)))
 
     async def _tool_llm_analyze(self, path: str, **kwargs: Any) -> str:
         file_content = await self.read_file(path, track_read=False)
-        if file_content.startswith("File not found:") or (
-                file_content.startswith("Error reading file:")
-        ):
-            return f"Could not analyze: {file_content}"
-        return cast(
-            str, await self.llm.analyze_code(file_content)
-        )  # type: ignore[redundant-cast]
+        if file_content.startswith('File not found:') or file_content.startswith('Error reading file:'):
+            return f'Could not analyze: {file_content}'
+        return cast(str, await self.llm.analyze_code(file_content))
 
     async def execute_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
         """Execute a tool by name using the dispatcher."""
@@ -2039,104 +549,78 @@ class Agent:
         """Validate and normalize path in one step."""
         return safe_path(path)
 
-    async def read_file(self, path: str, track_read: bool = True) -> str:
+    async def read_file(self, path: str, track_read: bool=True) -> str:
         local_path = self._safe_path(path)
-
-        # A directory is a common mistake (analyze(path="agent_core/")): on
-        # Windows open() raises PermissionError, which surfaced as an opaque
-        # "Error reading file: [Errno 13]".  Say what is actually wrong.
         if os.path.isdir(local_path):
-            return (
-                f"Not a file (directory): {path} — read/analyze take a FILE "
-                "path; omit the path to analyze the whole workspace, or use "
-                "list_files/search to inspect a directory."
-            )
-
+            return f'Not a file (directory): {path} — read/analyze take a FILE path; omit the path to analyze the whole workspace, or use list_files/search to inspect a directory.'
         try:
             with open(local_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-
             if track_read:
                 self._files_read.add(local_path)
                 try:
                     self._file_mtimes[local_path] = os.path.getmtime(local_path)
                 except OSError as e:
-                    logger.warning("Could not stat %s: %s", local_path, e)
-
+                    logger.warning('Could not stat %s: %s', local_path, e)
             return content
-
         except IsADirectoryError:
-            return f"Not a file (directory): {path}"
+            return f'Not a file (directory): {path}'
         except PermissionError as e:
-            return f"Permission denied reading {path}: {e}"
+            return f'Permission denied reading {path}: {e}'
         except FileNotFoundError:
-            return f"File not found: {path}"
+            return f'File not found: {path}'
         except Exception as e:
-            return f"Error reading file: {e}"
+            return f'Error reading file: {e}'
 
     async def write_file(self, path: str, content: str) -> str:
         local_path = self._safe_path(path)
-
         try:
             dir_name = os.path.dirname(local_path)
             if dir_name:
                 os.makedirs(dir_name, exist_ok=True)
-
             with open(local_path, 'w', encoding='utf-8') as f:
                 f.write(content)
-
-            return f"Successfully wrote to {path}"
+            return f'Successfully wrote to {path}'
         except PermissionError:
-            return f"Permission denied: {path}"
+            return f'Permission denied: {path}'
         except Exception as e:
-            return f"Error writing file: {e}"
+            return f'Error writing file: {e}'
 
     async def apply_patch(self, path: str, find: str, replace: str) -> str:
         local_path = self._safe_path(path)
-
         try:
             with open(local_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-
             if find not in content:
-                return "Pattern not found in file"
-
+                return 'Pattern not found in file'
             count = content.count(find)
             if count > 1:
-                return (
-                    f"Error: find text matches {count} locations. "
-                    "Add more context to make it unique."
-                )
-
+                return f'Error: find text matches {count} locations. Add more context to make it unique.'
             new_content = content.replace(find, replace, 1)
-
             with open(local_path, 'w', encoding='utf-8') as f:
                 f.write(new_content)
-
-            return "Patch applied successfully"
+            return 'Patch applied successfully'
         except PermissionError:
-            return f"Permission denied: {path}"
+            return f'Permission denied: {path}'
         except Exception as e:
-            return f"Error applying patch: {e}"
+            return f'Error applying patch: {e}'
 
     async def edit_file(self, path: str, content: str) -> str:
         local_path = self._safe_path(path)
         try:
             if save_file_py(local_path, content, auto_yes=True):
-                return f"Successfully edited {path}"
-            return f"Skipped {path} (no changes)"
+                return f'Successfully edited {path}'
+            return f'Skipped {path} (no changes)'
         except PermissionError:
-            return f"Permission denied: {path}"
+            return f'Permission denied: {path}'
         except Exception as e:
-            return f"Error editing file: {e}"
+            return f'Error editing file: {e}'
 
     def _build_semantic_index(self, words: list[str], idx: int) -> None:
         """Build semantic index with memory management."""
         MAX_INDEX_SIZE = 10000
-
         if len(self._semantic_index) > MAX_INDEX_SIZE:
             self._cleanup_semantic_index()
-
         for word in words:
             normalized_word = word.lower()
             self._semantic_index[normalized_word].add(idx)
@@ -2145,17 +629,14 @@ class Agent:
         """Remove oldest entries from semantic index."""
         if not self._semantic_index:
             return
-
         items = list(self._semantic_index.items())
         keep_count = max(100, len(items) - 500)
-
         sorted_items = sorted(items, key=lambda x: len(x[1]), reverse=True)
-
         self._semantic_index.clear()
         for word, idx_set in sorted_items[:keep_count]:
             self._semantic_index[word] = idx_set
 
-    async def search_file(self, query: str, path: str | None = None) -> str:
+    async def search_file(self, query: str, path: str | None=None) -> str:
         """Search workspace files for text.
 
         Delegates to the shared :class:`FileSearcher` (excludes git-ignored
@@ -2163,17 +644,11 @@ class Agent:
         the REPL ``search`` command and the NLP ``search`` tool behave alike.
         """
         results = await self.searcher.search(query, path or self.workspace)
-        if not results or results == "No matches found":
-            return "No matches found"
+        if not results or results == 'No matches found':
+            return 'No matches found'
         return results
 
-    # ------------------------------------------------------------------
-    # Turn-pipeline helpers.  chat_nlp delegates to these so each phase —
-    # system-prompt refresh, user-turn append, chained tool loop, finish —
-    # can be read (and tested) in isolation.  Behaviour is unchanged.
-    # ------------------------------------------------------------------
-
-    def _refresh_system_message(self, query: str | None = None) -> None:
+    def _refresh_system_message(self, query: str | None=None) -> None:
         """Ensure history starts with a system message and rebuild its dynamic
         blocks (decision-constraints / skill index / plan-mode suffix).
 
@@ -2189,34 +664,12 @@ class Agent:
         the next turn), not the snapshot taken on the first turn.
         """
         if not self._chat_history:
-            self._chat_history.append({
-                "role": "system",
-                "content": _SYSTEM_PROMPT + (
-                    plan_mode_system_suffix() if self.is_plan_mode() else ""
-                ),
-            })
-        elif self._chat_history[0].get("role") != "system":
-            # A history whose head is NOT a system message (hand-built in a
-            # test, or a corrupt file) must keep that message: rewriting
-            # position 0 would silently swallow the user's first prompt.
-            self._chat_history.insert(0, {"role": "system", "content": _SYSTEM_PROMPT})
-        self._chat_history[0] = {
-            "role": "system",
-            "content": _strip_dynamic_system_blocks(
-                str(self._chat_history[0].get("content") or _SYSTEM_PROMPT)
-            )
-            + self._original_goal_block()
-            + self._decision_constraints_block()
-            + self._skill_index_block()
-            + self._habits_block()
-            + self._semantic_memory_block(query)
-            + self._file_history_block(query)
-            + (plan_mode_system_suffix() if self.is_plan_mode() else ""),
-        }
+            self._chat_history.append({'role': 'system', 'content': _SYSTEM_PROMPT + (plan_mode_system_suffix() if self.is_plan_mode() else '')})
+        elif self._chat_history[0].get('role') != 'system':
+            self._chat_history.insert(0, {'role': 'system', 'content': _SYSTEM_PROMPT})
+        self._chat_history[0] = {'role': 'system', 'content': _strip_dynamic_system_blocks(str(self._chat_history[0].get('content') or _SYSTEM_PROMPT)) + self._original_goal_block() + self._decision_constraints_block() + self._skill_index_block() + self._habits_block() + self._semantic_memory_block(query) + self._file_history_block(query) + (plan_mode_system_suffix() if self.is_plan_mode() else '')}
 
-    def _append_user_turn(
-        self, user_input: str, images: list[str] | None,
-    ) -> None:
+    def _append_user_turn(self, user_input: str, images: list[str] | None) -> None:
         """Append this turn's user message (multimodal when *images* given).
 
         Plan mode (read-only) prepends a steering note telling the model to
@@ -2235,39 +688,23 @@ class Agent:
         wrapper around it.
         """
         self._ensure_original_goal(user_input)
-        if self.is_plan_mode() and not images:
-            # Same visibility contract as every other status print:
-            # suppressed in QUIET mode, which promises only the final answer.
+        if self.is_plan_mode() and (not images):
             if _resolve_display_mode() != AgentDisplayMode.QUIET:
-                print(yellow(
-                    "  [plan mode] Read-only research — mutating tools blocked. "
-                    "Switch back with 'mode build' to apply changes."
-                ))
-            user_input = f"{plan_mode_turn_note()}\n\n{user_input}"
-        hint = "" if images else self._skill_hint_block(user_input)
+                print(yellow("  [plan mode] Read-only research — mutating tools blocked. Switch back with 'mode build' to apply changes."))
+            user_input = f'{plan_mode_turn_note()}\n\n{user_input}'
+        hint = '' if images else self._skill_hint_block(user_input)
         if hint:
-            user_input = f"{hint}\n\n{user_input}"
+            user_input = f'{hint}\n\n{user_input}'
         self._turn_start_index = len(self._chat_history)
         if images:
-            #: OpenAI-format content array: text plus one image_url block per
-            #: base64 data URL, so vision-capable models can see the image(s).
-            #: Blocks are never persisted (see :func:`_strip_image_blocks`).
-            content: Any = [
-                {"type": "text", "text": user_input or "(see the attached image)"},
-            ]
+            content: Any = [{'type': 'text', 'text': user_input or '(see the attached image)'}]
             for img in images:
-                content.append({"type": "image_url", "image_url": {"url": img}})
-            self._chat_history.append({"role": "user", "content": content})
+                content.append({'type': 'image_url', 'image_url': {'url': img}})
+            self._chat_history.append({'role': 'user', 'content': content})
         else:
-            self._chat_history.append({"role": "user", "content": user_input})
+            self._chat_history.append({'role': 'user', 'content': user_input})
 
-    async def _run_chained_tool_loop(
-        self,
-        user_input: str,
-        messages: list[dict[str, Any]],
-        display_mode: AgentDisplayMode,
-        seen_calls: dict[tuple[str, str], int],
-    ) -> tuple[str, list[dict[str, Any]], str | None, ToolLoopRunner]:
+    async def _run_chained_tool_loop(self, user_input: str, messages: list[dict[str, Any]], display_mode: AgentDisplayMode, seen_calls: dict[tuple[str, str], int]) -> tuple[str, list[dict[str, Any]], str | None, ToolLoopRunner]:
         """Run :class:`ToolLoopRunner`, auto-continuing unfinished tasks.
 
         Returns ``(final_text, final_messages, llm_error, loop)``.  *llm_error*
@@ -2287,233 +724,84 @@ class Agent:
         """
         llm_error: list[str] = []
 
-        async def llm_chat_fn(
-            msgs: list[dict[str, Any]], tools: list[dict[str, Any]],
-        ) -> tuple[str, list[dict[str, Any]]]:
+        async def llm_chat_fn(msgs: list[dict[str, Any]], tools: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
             """Call the LLM with tools; parse a JSON tool_calls message back into
             the message list so ToolLoopRunner can execute them."""
             raw = await self.llm.chat(msgs, tools=tools, disable_thinking=True)
-            if raw.strip() == "(no output)":
-                # Providers use "(no output)" for an empty response — treat it
-                # as empty so the loop's forced-synthesis retry / the concrete
-                # fallback message kick in instead of showing cryptic text.
-                raw = ""
-            if raw.startswith("[Error") or raw.startswith("[LM Studio"):
+            if raw.strip() == '(no output)':
+                raw = ''
+            if raw.startswith('[Error') or raw.startswith('[LM Studio'):
                 if not llm_error:
                     llm_error.append(raw)
-                return raw, msgs
+                return (raw, msgs)
             try:
                 parsed = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
                 parsed = None
-            if isinstance(parsed, dict) and parsed.get("tool_calls"):
-                parsed.pop("role", None)
-                for tc in parsed["tool_calls"]:
-                    func = tc.get("function") or {}
-                    args_str = func.get("arguments", "{}")
+            if isinstance(parsed, dict) and parsed.get('tool_calls'):
+                parsed.pop('role', None)
+                for tc in parsed['tool_calls']:
+                    func = tc.get('function') or {}
+                    args_str = func.get('arguments', '{}')
                     try:
                         json.loads(args_str)
                     except (json.JSONDecodeError, TypeError):
-                        # LM Studio sometimes emits literal newlines or unescaped
-                        # chars inside JSON string values; repair by escaping
-                        # control characters where they are actually illegal —
-                        # inside string literals only.  A whole-text replace would
-                        # also mangle the whitespace between tokens of pretty-
-                        # printed output and wipe a valid multi-line payload to {}.
-                        func["arguments"] = json.dumps(
-                            _repair_tool_arguments(args_str), ensure_ascii=False)
+                        func['arguments'] = json.dumps(_repair_tool_arguments(args_str), ensure_ascii=False)
                 updated = list(msgs)
-                updated.append(
-                    {"role": "assistant",
-                     "content": parsed.get("content") or "", **parsed})
-                text = str(parsed.get("content") or "")
-                return text, updated
-            # Plain text answer — the loop terminates.
+                updated.append({'role': 'assistant', 'content': parsed.get('content') or '', **parsed})
+                text = str(parsed.get('content') or '')
+                return (text, updated)
             updated = list(msgs)
-            updated.append({"role": "assistant", "content": raw})
-            return raw, updated
-
-        final_text = ""
+            updated.append({'role': 'assistant', 'content': raw})
+            return (raw, updated)
+        final_text = ''
         final_messages = messages
         continuations = 0
-        #: Last non-empty answer of a chained run — a byte-identical repeat
-        #: means the model is stuck emitting the same incomplete answer.
-        last_answer = ""
-        #: One correlation id per TURN: every chained run of this chat_nlp
-        #: call shares it, so a single task is linkable across its traces
-        #: (decision #050).
+        last_answer = ''
         with CorrelationIdContext() as turn_cid:
-            #: One run id per turn, reused by every experience row this turn
-            #: writes (decision attribution): the llm_decisions provenance log
-            #: and the chat_turn roll-up row share the llm_decision row's id,
-            #: so a whole turn is linkable in one join.
             self._turn_run_id = turn_cid
-            #: Arm turn-scoped trace-event collection (plan item #4 residual):
-            #: every record this turn's runs write is buffered in memory so
-            #: _finish_turn can score the turn with score_run().
             _begin_trace_turn()
             while True:
-                #: Per-run trace writer (one JSONL file per run() invocation,
-                #: decision #029).  AGENT_NO_TRACE=1 disables trace capture.
-                #: Model/profile are stamped on every record so a trace is
-                #: self-describing for review and cross-model comparison
-                #: (decision #050).
-                trace_writer = (
-                    TraceWriter(
-                        meta={
-                            "model": self.model_name,
-                            "profile": getattr(self.llm, "_profile_name", None) or "",
-                        }
-                    )
-                    if (trace_enabled() and TraceWriter is not None)
-                    else None
-                )
+                trace_writer = TraceWriter(meta={'model': self.model_name, 'profile': getattr(self.llm, '_profile_name', None) or ''}) if trace_enabled() and TraceWriter is not None else None
                 if trace_writer is not None:
                     trace_writer.emit_task_begin(user_input)
-                #: Expose active trace writer to the shutdown handler so
-                #: SIGBREAK can flush/close it before exit (decision #049).
                 self._active_trace_writer = trace_writer
-                #: File-effects recording (self-improvement): armed only while a
-                #: trace sink exists — untraced runs stay byte-identical (decision
-                #: #048).  The buffer is drained by _take_trace_effects after each
-                #: tool call and discarded when the run ends.
                 self._pending_effects = [] if trace_writer is not None else None
-                loop = ToolLoopRunner(
-                    max_iterations=150, display_mode=display_mode, trace=trace_writer
-                )
-                final_text, final_messages = await loop.run(
-                    messages=final_messages,
-                    llm_chat_fn=llm_chat_fn,
-                    execute_tool_fn=self._execute_tool_call,
-                    tools=filter_tool_schemas(NLP_TOOL_SCHEMAS, self.mode),
-                    seen_calls=seen_calls,
-                    effects_fn=self._take_trace_effects,
-                    stream_fn=_resolve_stream_fn(self.llm),
-                )
+                loop = ToolLoopRunner(max_iterations=150, display_mode=display_mode, trace=trace_writer)
+                final_text, final_messages = await loop.run(messages=final_messages, llm_chat_fn=llm_chat_fn, execute_tool_fn=self._execute_tool_call, tools=filter_tool_schemas(NLP_TOOL_SCHEMAS, self.mode), seen_calls=seen_calls, effects_fn=self._take_trace_effects, stream_fn=_resolve_stream_fn(self.llm))
                 self._pending_effects = None
                 self._active_trace_writer = None
                 if trace_writer is not None:
                     trace_writer.close()
                 reason = loop.termination_reason
-                #: Record this run's LLM outcome as an experience for the
-                #: self-improvement harness (decision #049/#014): a direct,
-                #: never-raising SQLite write that mirrors MCP record_experience.
                 _run_outcome = 1.0 if not llm_error else 0.0
-                _run_success = bool(not llm_error and reason in ("answer", "cap"))
-                #: Provider telemetry for this run, when the transport reports
-                #: it: latency + tokens land in the llm_decisions provenance
-                #: row so cost/latency can be compared per model later.
-                _metrics = get_last_metrics(getattr(self.llm, "_provider", None))
-                self._record_llm_experience(
-                    action="llm_decision",
-                    outcome=_run_outcome,
-                    context={
-                        "model": self.model_name,
-                        "profile": getattr(self.llm, "_profile_name", None) or "",
-                        "verdict": reason,
-                        "continuations": continuations,
-                        "final_text_len": len(final_text),
-                    },
-                    success=_run_success,
-                    decision_prompt=final_messages,
-                    run_id=self._turn_run_id or CORRELATION_ID_CTX.get() or None,
-                    latency_ms=getattr(_metrics, "latency_ms", None),
-                    token_usage=getattr(_metrics, "total_tokens", None),
-                )
-                # A provider-level failure is not an answer: never auto-continue —
-                # chaining would only re-burn the same broken LLM call.
+                _run_success = bool(not llm_error and reason in ('answer', 'cap'))
+                _metrics = get_last_metrics(getattr(self.llm, '_provider', None))
+                self._record_llm_experience(action='llm_decision', outcome=_run_outcome, context={'model': self.model_name, 'profile': getattr(self.llm, '_profile_name', None) or '', 'verdict': reason, 'continuations': continuations, 'final_text_len': len(final_text)}, success=_run_success, decision_prompt=final_messages, run_id=self._turn_run_id or CORRELATION_ID_CTX.get() or None, latency_ms=getattr(_metrics, 'latency_ms', None), token_usage=getattr(_metrics, 'total_tokens', None))
                 if llm_error:
                     break
-                # A bare answer to an action request with ZERO tool calls is a
-                # claim about repo state the model never observed (2026-09-28:
-                # "commit changes" -> "everything is already committed and
-                # pushed", with no git call ever made).  Re-enter the loop with
-                # a note pointing at the git tool instead of accepting it.
-                unverified = (
-                    reason in ("answer", "no_progress")
-                    and _unverified_action_claim(
-                        user_input, getattr(loop, "tool_calls_made", 0) or 0
-                    )
-                )
-                needs_more = (
-                    reason == "cap"
-                    or unverified
-                    or (
-                        reason in ("answer", "no_progress")
-                        and _looks_incomplete(final_text)
-                    )
-                )
+                unverified = reason in ('answer', 'no_progress') and _unverified_action_claim(user_input, getattr(loop, 'tool_calls_made', 0) or 0)
+                needs_more = reason == 'cap' or unverified or (reason in ('answer', 'no_progress') and _looks_incomplete(final_text))
                 if needs_more and continuations < _MAX_CHAINED_RUNS:
                     if final_text and final_text == last_answer:
-                        # Same incomplete answer twice in a row — the model is
-                        # stuck, not working.  Stop chaining instead of looping.
                         if display_mode != AgentDisplayMode.QUIET:
-                            print(
-                                magenta(
-                                    "\n  [stopped] The model repeated the same answer "
-                                )
-                                + yellow("twice — ending the turn. ")
-                                + gray(
-                                    "Rephrase or ask something more specific to"
-                                    " continue.\n")
-                            )
+                            print(magenta('\n  [stopped] The model repeated the same answer ') + yellow('twice — ending the turn. ') + gray('Rephrase or ask something more specific to continue.\n'))
                         break
                     last_answer = final_text
                     continuations += 1
-                    # An unverified claim gets a targeted note (go look at the
-                    # repo) instead of the generic "continue the task" note,
-                    # which would just invite the same unverified answer again.
                     note = _VERIFY_NOTE if unverified else _CONTINUE_NOTE
                     if display_mode != AgentDisplayMode.QUIET:
-                        why = {
-                            "cap": "iteration budget exhausted",
-                            "answer": "answer signals unfinished work",
-                            "no_progress": "the final answer signals unfinished work",
-                        }.get(reason, reason)
+                        why = {'cap': 'iteration budget exhausted', 'answer': 'answer signals unfinished work', 'no_progress': 'the final answer signals unfinished work'}.get(reason, reason)
                         if unverified:
-                            why = "answer claimed repo state without calling git"
-                        print(
-                            magenta(f"\n  [auto-continue] Run {continuations}: ")
-                            + yellow(f"{why} — continuing automatically.\n")
-                        )
-                    final_messages = list(final_messages) + [
-                        # User role: strict chat templates (qwen Jinja) reject
-                        # system messages mid-conversation.  The tag marks this
-                        # as loop-injected so the strip below cannot confuse it
-                        # with a real user prompt.
-                        {"role": "user", "content": note,
-                         _CONTINUE_NOTE_TAG_KEY: _CONTINUE_NOTE_TAG},
-                    ]
+                            why = 'answer claimed repo state without calling git'
+                        print(magenta(f'\n  [auto-continue] Run {continuations}: ') + yellow(f'{why} — continuing automatically.\n'))
+                    final_messages = list(final_messages) + [{'role': 'user', 'content': note, _CONTINUE_NOTE_TAG_KEY: _CONTINUE_NOTE_TAG}]
                     continue
-                if (
-                        reason in ("stuck", "no_progress")
-                        and display_mode != AgentDisplayMode.QUIET
-                ):
-                    print(
-                        magenta("\n  [stopped] The model stopped making progress ")
-                        + yellow(
-                            (
-                                "stuck on repeated calls"
-                                if reason == "stuck"
-                                else "too many calls without making new progress"
-                            )
-                        )
-                        + gray(
-                            "The answer above is the best it produced — rephrase or"
-                            " ask something more specific to continue.\n")
-                    )
+                if reason in ('stuck', 'no_progress') and display_mode != AgentDisplayMode.QUIET:
+                    print(magenta('\n  [stopped] The model stopped making progress ') + yellow('stuck on repeated calls' if reason == 'stuck' else 'too many calls without making new progress') + gray('The answer above is the best it produced — rephrase or ask something more specific to continue.\n'))
                 break
-
-        # The continuation note is only meant for the run it precedes — strip
-        # every TAGGED loop note before the history is persisted, so a
-        # finished task is not resumed by a future session.  (Tag-based, not
-        # content-based: a user message that merely resembles the note text
-        # must survive.)
-        final_messages = [
-            m for m in final_messages
-            if m.get(_CONTINUE_NOTE_TAG_KEY) != _CONTINUE_NOTE_TAG
-        ]
-        return final_text, final_messages, (llm_error[0] if llm_error else None), loop
+        final_messages = [m for m in final_messages if m.get(_CONTINUE_NOTE_TAG_KEY) != _CONTINUE_NOTE_TAG]
+        return (final_text, final_messages, llm_error[0] if llm_error else None, loop)
 
     def _reset_failover_notice(self) -> None:
         """Drop any pending failover notice on the wrapped provider.
@@ -2522,14 +810,12 @@ class Agent:
         turn is never reported again (the record would otherwise be stale
         forever).  No-op when the provider is not a failover chain.
         """
-        reset = getattr(
-            getattr(self.llm, "_provider", None), "reset_failover_notice", None,
-        )
+        reset = getattr(getattr(self.llm, '_provider', None), 'reset_failover_notice', None)
         if callable(reset):
             try:
                 reset()
-            except Exception:  # noqa: BLE001 - observability must not break turns
-                logger.debug("failover notice reset failed (no-op)", exc_info=True)
+            except Exception:
+                logger.debug('failover notice reset failed (no-op)', exc_info=True)
 
     def _report_failover(self) -> None:
         """Print which LLM answered when a failover happened this turn.
@@ -2544,150 +830,65 @@ class Agent:
         only the final answer.  Never raises — reporting must not kill a turn.
         """
         try:
-            notice = getattr(
-                getattr(self.llm, "_provider", None), "last_failover", None,
-            )
+            notice = getattr(getattr(self.llm, '_provider', None), 'last_failover', None)
             if not notice:
                 return
             if _resolve_display_mode() == AgentDisplayMode.QUIET:
                 return
-            answered = notice.get("answered_model") or notice.get(
-                "answered_provider"
-            ) or "next provider"
-            attempted = notice.get("attempted") or []
-            skipped = ", ".join(
-                str(a.get("model") or a.get("provider") or "?") for a in attempted
-            )
-            print(magenta(
-                f"\n  [failover] answered by {answered}"
-                + (f" after {skipped} unreachable" if skipped else "")
-            ))
+            answered = notice.get('answered_model') or notice.get('answered_provider') or 'next provider'
+            attempted = notice.get('attempted') or []
+            skipped = ', '.join((str(a.get('model') or a.get('provider') or '?') for a in attempted))
+            print(magenta(f'\n  [failover] answered by {answered}' + (f' after {skipped} unreachable' if skipped else '')))
             for entry in attempted:
-                err = str(entry.get("error") or "").strip()
+                err = str(entry.get('error') or '').strip()
                 if err:
-                    print(gray(f"    skipped {err[:160]}"))
-        except Exception:  # noqa: BLE001 - observability must not break turns
-            logger.debug("failover report failed (no-op)", exc_info=True)
+                    print(gray(f'    skipped {err[:160]}'))
+        except Exception:
+            logger.debug('failover report failed (no-op)', exc_info=True)
 
-    def _finish_turn(
-        self,
-        final_text: str,
-        llm_error: str | None,
-        loop: ToolLoopRunner,
-        display_mode: AgentDisplayMode,
-    ) -> None:
+    def _finish_turn(self, final_text: str, llm_error: str | None, loop: ToolLoopRunner, display_mode: AgentDisplayMode) -> None:
         """Bound + persist the conversation and print the turn outcome.
 
         The final answer is ALWAYS printed — in every display mode, including
         QUIET (which only hides intermediate tool output, per the display-mode
         contract: "only the final answer is printed").
         """
-        # Keep the conversation bounded and persist it so the next session
-        # (or a follow-up prompt) can continue the dialogue.
-        self._chat_history = _trim_chat_history(
-            self._chat_history, self._original_goal,
-        )
+        self._chat_history = _trim_chat_history(self._chat_history, self._original_goal)
         mutated_files = self._mutating_files_this_turn()
-        # Harness-layer observability ONLY (decision #014): bounded per-turn
-        # outcome log + first production chat_turn experience.  Every hook
-        # here is try/except-no-op — a broken state dir must never kill a
-        # finished turn (same contract as _record_llm_experience).
         try:
-            started = getattr(self, "_turn_started_at", None)
-            duration = round((datetime.now() - started).total_seconds(), 3) \
-                if started else None
-            tail = str(getattr(self, "_last_user_input", "") or "")[-200:]
-            record = {
-                "ts": datetime.now().isoformat(timespec="seconds"),
-                "user_input_tail": tail,
-                "mutated_files": list(mutated_files or []),
-                "llm_error": bool(llm_error),
-                "duration": duration,
-            }
+            started = getattr(self, '_turn_started_at', None)
+            duration = round((datetime.now() - started).total_seconds(), 3) if started else None
+            tail = str(getattr(self, '_last_user_input', '') or '')[-200:]
+            record = {'ts': datetime.now().isoformat(timespec='seconds'), 'user_input_tail': tail, 'mutated_files': list(mutated_files or []), 'llm_error': bool(llm_error), 'duration': duration}
             _append_turn_log(record)
-            self._record_llm_experience(
-                action="chat_turn",
-                outcome=0.0 if llm_error else (1.0 if mutated_files else 0.7),
-                context={
-                    "plan_mode": bool(self.is_plan_mode()),
-                    "files": list(mutated_files or []),
-                },
-                #: The turn roll-up is attributed to the same model that made
-                #: the turn's decisions, and shares the turn's run id — so the
-                #: llm_decision row and this quality row are one unit in the
-                #: llm_decisions provenance log.
-                decision_prompt=str(getattr(self, "_last_user_input", "") or "") or None,
-                run_id=self._turn_run_id or CORRELATION_ID_CTX.get() or None,
-            )
-            # Meta-policy loop (B2): success/failure under the inferred
-            # task type + active profile, with token/cost metrics from the
-            # provider's last call; evolves+saves weights every 10 turns.
-            # Never raises (same observability contract as above).
-            # Per-turn quality (B3 + plan item #4 residual): with tracing on
-            # and a turn armed, this is the trace-derived score_run() score
-            # of this turn's own events (drained); otherwise the cheap
-            # proxy.  It decides the success/failure fed to the meta-policy,
-            # so profile weights evolve from real trace outcomes.
+            self._record_llm_experience(action='chat_turn', outcome=0.0 if llm_error else 1.0 if mutated_files else 0.7, context={'plan_mode': bool(self.is_plan_mode()), 'files': list(mutated_files or [])}, decision_prompt=str(getattr(self, '_last_user_input', '') or '') or None, run_id=self._turn_run_id or CORRELATION_ID_CTX.get() or None)
             _quality = _turn_quality_score(llm_error, mutated_files)
-            record_turn_outcome(
-                str(getattr(self, "_last_user_input", "") or ""),
-                profile_name=getattr(self.llm, "_profile_name", None),
-                success=not llm_error,
-                latency_seconds=duration,
-                provider=getattr(self.llm, "_provider", None),
-                mutated_files=list(mutated_files or []),
-                quality=_quality,
-            )
-            # Per-turn quality into the harnessfix dashboard: one
-            # `turn`/`quality` event.  Proxy path works with tracing
-            # disabled; whole block is try/except no-op.
+            record_turn_outcome(str(getattr(self, '_last_user_input', '') or ''), profile_name=getattr(self.llm, '_profile_name', None), success=not llm_error, latency_seconds=duration, provider=getattr(self.llm, '_provider', None), mutated_files=list(mutated_files or []), quality=_quality)
             if _quality is not None:
                 from agent_core.monitoring.metrics_file import append_event
-                append_event("turn", "quality", float(_quality))
-        except Exception:  # noqa: BLE001 - observability must not break turns
-            logger.debug("Turn-outcome hooks failed (no-op)", exc_info=True)
+                append_event('turn', 'quality', float(_quality))
+        except Exception:
+            logger.debug('Turn-outcome hooks failed (no-op)', exc_info=True)
         self._save_chat_history()
         self._save_memory()
-
-        clean = re.sub(r'</?tool_call>', '', final_text)
-        clean = re.sub(r'</?function_call>', '', clean)
-
+        clean = re.sub('</?tool_call>', '', final_text)
+        clean = re.sub('</?function_call>', '', clean)
         if llm_error:
-            # A provider-level failure was detected during the run: show the
-            # actual error (not the generic fallback, not a green "answer").
             err = llm_error.strip()
-            print(yellow(
-                "\n  [llm-error] The model did not produce a usable response:"))
-            print(red(f"  {err[:400]}"))
-            if "reasoning" in err.lower():
-                print(
-                    yellow("  The reasoning model exhausted its thinking budget. ")
-                    + gray(
-                        "Switch to a non-reasoning model (model <name>) or retry"
-                        " the request.\n")
-                )
+            print(yellow('\n  [llm-error] The model did not produce a usable response:'))
+            print(red(f'  {err[:400]}'))
+            if 'reasoning' in err.lower():
+                print(yellow('  The reasoning model exhausted its thinking budget. ') + gray('Switch to a non-reasoning model (model <name>) or retry the request.\n'))
             self._nlp_workspace = None
             return
-
         if display_mode == AgentDisplayMode.CLEAN:
-            # Fold any stray "I will ..." narration into a short preamble so the
-            # report reads as one coherent answer (what changed / where / evidence).
-            _NARRATION_PREFIX = re.compile(
-                r"^\s*(i\s+(will|'ll|going\sto|am\ngoing)|let\s+me)\b", re.I,
-            )
+            _NARRATION_PREFIX = re.compile("^\\s*(i\\s+(will|'ll|going\\sto|am\\ngoing)|let\\s+me)\\b", re.I)
             if _NARRATION_PREFIX.match(clean):
-                clean = "Plan: " + clean.strip()
-
+                clean = 'Plan: ' + clean.strip()
         if clean.strip():
-            # A streamed answer already appeared on the console token-by-token
-            # (plan #9): printing it again would show the user the answer twice.
-            # getattr, not attribute access: a loop-like object without the flag
-            # (fakes, older runners) means "not streamed" -> print normally.
-            if not getattr(loop, "final_answer_streamed", False):
+            if not getattr(loop, 'final_answer_streamed', False):
                 print(green(clean))
         else:
-            # No usable answer: tell the user CONCRETELY what the loop did
-            # instead of the cryptic "did not produce a response".
             print(yellow(_final_answer_fallback(loop)))
         if self.is_plan_mode() and clean.strip():
             self._persist_plan_answer(clean)
@@ -2695,8 +896,7 @@ class Agent:
             self._print_self_review_note(mutated_files)
         self._nlp_workspace = None
 
-    async def chat_nlp(self, user_input: str,
-                       images: list[str] | None = None) -> None:
+    async def chat_nlp(self, user_input: str, images: list[str] | None=None) -> None:
         """Process natural language input through a structured tool-calling loop.
 
         The LLM receives native OpenAI-format tool schemas (``NLP_TOOL_SCHEMAS``)
@@ -2726,120 +926,55 @@ class Agent:
         3. ``_run_chained_tool_loop`` — tool loop + auto-continue chaining.
         4. ``_finish_turn`` — trim/persist history, print the outcome.
         """
-        # Goal/housekeeping FIRST: a restored goal that is unrelated to this
-        # prompt is replaced and the old history suspended BEFORE the system
-        # message is rebuilt, so the ORIGINAL TASK block reflects the live
-        # task (see _ensure_original_goal).  Later phases call it again with
-        # the same input — a no-op once the verdict is made.
         self._ensure_original_goal(user_input)
         self._refresh_system_message(user_input)
         self._read_streak = 0
-        # A failover notice belongs to the turn that TRIGGERED it: drop any
-        # stale record now so a notice is never reported twice.
         self._reset_failover_notice()
-        # Turn-outcome observability (A3): the input + start time feed the
-        # bounded turn log and duration written by _finish_turn.
         self._last_user_input = user_input
         self._turn_started_at = datetime.now()
-        # Meta-policy suggestion (B2): at most ONE line when the task's
-        # mapped profile clearly outscores the running one, and only if the
-        # user pinned no profile this session (restored-from-model.json
-        # counts as pinned).  Auto-apply happens only behind the
-        # `profile_auto` workspace pref (default off — no silent sampling
-        # changes, decision #014).  Never raises: a broken pref file must
-        # not kill the turn.
         try:
-            if not getattr(self.llm, "_profile_pinned", False):
-                _suggested = recommend_profile(
-                    user_input, getattr(self.llm, "_profile_name", None),
-                )
+            if not getattr(self.llm, '_profile_pinned', False):
+                _suggested = recommend_profile(user_input, getattr(self.llm, '_profile_name', None))
                 if _suggested:
                     _auto = False
                     try:
                         import pathlib as _pathlib
                         from agent_core.llm.workspace_prefs import get_pref
-                        _auto = get_pref(
-                            _pathlib.Path(self._effective_ws_dir()),
-                            "profile_auto",
-                        ) is True
-                    except Exception:  # noqa: BLE001 - pref file is optional
+                        _auto = get_pref(_pathlib.Path(self._effective_ws_dir()), 'profile_auto') is True
+                    except Exception:
                         _auto = False
                     _quiet = _resolve_display_mode() == AgentDisplayMode.QUIET
                     if _auto:
                         try:
                             from agent_core.llm.model_profiles import get_profile
                             _prof = get_profile(_suggested)
-                            self.llm._provider.apply_profile(
-                                _suggested, _prof.temperature, _prof.max_tokens,
-                            )
+                            self.llm._provider.apply_profile(_suggested, _prof.temperature, _prof.max_tokens)
                             self.llm._profile_name = _suggested
-                        except Exception:  # noqa: BLE001 - never break the turn
-                            logger.debug(
-                                "profile_auto apply failed (no-op)",
-                                exc_info=True,
-                            )
+                        except Exception:
+                            logger.debug('profile_auto apply failed (no-op)', exc_info=True)
                         else:
                             if not _quiet:
-                                print(gray(
-                                    f"  [profile] auto-applied {_suggested}"
-                                    " (profile_auto pref)"))
+                                print(gray(f'  [profile] auto-applied {_suggested} (profile_auto pref)'))
                     elif not _quiet:
-                        print(gray(
-                            f"  [suggest] profile {_suggested} for this task"
-                            " — 'model profile use' or set pref"
-                            " profile_auto"))
-        except Exception:  # noqa: BLE001 - observability must not break turns
-            logger.debug("Profile suggestion failed (no-op)", exc_info=True)
+                        print(gray(f"  [suggest] profile {_suggested} for this task — 'model profile use' or set pref profile_auto"))
+        except Exception:
+            logger.debug('Profile suggestion failed (no-op)', exc_info=True)
         self._append_user_turn(user_input, images)
-        # Pre-trim: bound the history BEFORE the first LLM call so a large
-        # restored session (e.g. 60 messages from chat_history.json) does not
-        # blow the model's prefill budget and trigger an HTTP 500.  The
-        # post-turn trim in _finish_turn still runs for incremental cleanup.
-        self._chat_history = _trim_chat_history(
-            self._chat_history, self._original_goal,
-        )
-        # Snapshot history right after the user turn so a transient LLM failure
-        # can be retried from a clean slate — the failed run's tool messages are
-        # discarded on retry (otherwise the retry would re-feed them and
-        # duplicate work).  Without this the first timeout would end the task.
+        self._chat_history = _trim_chat_history(self._chat_history, self._original_goal)
         history_snapshot = list(self._chat_history)
-
-        final_text, final_messages, llm_error, loop = "", self._chat_history, None, None
+        final_text, final_messages, llm_error, loop = ('', self._chat_history, None, None)
         for attempt in range(1, _LLM_ERROR_MAX_RETRIES + 1):
-            final_text, final_messages, llm_error, loop = (
-                await self._run_chained_tool_loop(
-                    user_input=user_input,
-                    messages=self._chat_history,
-                    display_mode=_resolve_display_mode(),
-                    seen_calls={},
-                )
-            )
-            # Only retry on a TRANSIENT provider failure (timeout/connection).
-            # A permanent error (4xx/auth) must not be retried — it would loop
-            # forever and never surface to the user.
+            final_text, final_messages, llm_error, loop = await self._run_chained_tool_loop(user_input=user_input, messages=self._chat_history, display_mode=_resolve_display_mode(), seen_calls={})
             if not llm_error or not is_connection_failure(llm_error):
                 break
             if attempt < _LLM_ERROR_MAX_RETRIES:
                 self._chat_history = list(history_snapshot)
                 if _resolve_display_mode() != AgentDisplayMode.QUIET:
-                    print(yellow(
-                        f"\n  [retry {attempt}/{_LLM_ERROR_MAX_RETRIES}] LLM call "
-                        f"failed transiently ({llm_error[:120]}); retrying...\n"
-                    ))
-                await asyncio.sleep(_LLM_ERROR_BACKOFF_S * (2 ** (attempt - 1)))
-
-        # Tagged continuation notes were stripped inside the chained-loop phase;
-        # adopt its final message list as the session history.
+                    print(yellow(f'\n  [retry {attempt}/{_LLM_ERROR_MAX_RETRIES}] LLM call failed transiently ({llm_error[:120]}); retrying...\n'))
+                await asyncio.sleep(_LLM_ERROR_BACKOFF_S * 2 ** (attempt - 1))
         self._chat_history = final_messages
-        # Tell the user which LLM actually answered when a failover happened
-        # this turn (a logger warning is invisible in the REPL).
         self._report_failover()
-        self._finish_turn(
-            final_text=final_text,
-            llm_error=llm_error,
-            loop=loop,
-            display_mode=_resolve_display_mode(),
-        )
+        self._finish_turn(final_text=final_text, llm_error=llm_error, loop=loop, display_mode=_resolve_display_mode())
 
     def _mutating_files_this_turn(self) -> list[str]:
         """Files written/edited by this turn (plan item B-#6).
@@ -2854,25 +989,23 @@ class Agent:
         without this boundary the self-review note would list stale files
         after every restart.
         """
-        marker = "[verify] py_compile"
+        marker = '[verify] py_compile'
         files: list[str] = []
         history = self._chat_history
         start = max(0, min(self._turn_start_index, len(history)))
         for idx in range(start, len(history)):
             m = history[idx]
-            if m.get("role") != "tool":
+            if m.get('role') != 'tool':
                 continue
-            content = str(m.get("content") or "")
+            content = str(m.get('content') or '')
             if marker not in content:
                 continue
-            first_line = content.splitlines()[0] if content else ""
-            # Success lines start "Written <path> (N bytes)" / "Edited <path>";
-            # take everything after the verb up to the trailing parenthetical.
-            for prefix in ("Written ", "Edited ", "Skipped "):
+            first_line = content.splitlines()[0] if content else ''
+            for prefix in ('Written ', 'Edited ', 'Skipped '):
                 if first_line.startswith(prefix):
                     path = first_line[len(prefix):]
-                    if path.endswith(")"):
-                        path = path.rsplit("(", 1)[0].strip()
+                    if path.endswith(')'):
+                        path = path.rsplit('(', 1)[0].strip()
                     if path and path not in files:
                         files.append(path)
                     break
@@ -2885,19 +1018,15 @@ class Agent:
         This prints one short nudge listing the changed files so the user
         knows exactly what to double-check (or ask the agent to re-verify).
         """
+
         def _short(f: str) -> str:
             try:
-                return os.path.relpath(f, self.workspace).replace("\\", "/")
+                return os.path.relpath(f, self.workspace).replace('\\', '/')
             except ValueError:
                 return f
-
-        shown = ", ".join(_short(f) for f in mutated_files[:6])
-        more = f" (+{len(mutated_files) - 6} more)" if len(mutated_files) > 6 else ""
-        print(magenta(
-            f"\n  [self-review] This turn changed {len(mutated_files)} file(s): "
-            f"{shown}{more}. py_compile verified syntax only — run 'tests' or "
-            "'git diff' to confirm behaviour."
-        ))
+        shown = ', '.join((_short(f) for f in mutated_files[:6]))
+        more = f' (+{len(mutated_files) - 6} more)' if len(mutated_files) > 6 else ''
+        print(magenta(f"\n  [self-review] This turn changed {len(mutated_files)} file(s): {shown}{more}. py_compile verified syntax only — run 'tests' or 'git diff' to confirm behaviour."))
 
     def _persist_plan_answer(self, plan_text: str) -> None:
         """Save a plan-mode final answer to ``.docs/<ts>/plan_proposed.md``.
@@ -2909,16 +1038,9 @@ class Agent:
         """
         with _suppress_and_log('Could not persist plan-mode answer:\n'):
             from agent_core.commands.doc_paths import new_run_dir
-
-            out = new_run_dir(self.workspace) / "plan_proposed.md"
-            out.write_text(
-                "# Proposed plan\n\n"
-                f"_Generated in plan mode on {datetime.now():%Y-%m-%d %H:%M}. "
-                "Review before applying — switch to build mode to implement._\n\n"
-                f"{plan_text}\n",
-                encoding="utf-8",
-            )
-            print(yellow(f"\n  [plan] Saved to {out}"))
+            out = new_run_dir(self.workspace) / 'plan_proposed.md'
+            out.write_text(f'# Proposed plan\n\n_Generated in plan mode on {datetime.now():%Y-%m-%d %H:%M}. Review before applying — switch to build mode to implement._\n\n{plan_text}\n', encoding='utf-8')
+            print(yellow(f'\n  [plan] Saved to {out}'))
 
     def check_stale_files(self) -> list[str]:
         """Return files whose mtime has changed since last read."""
@@ -2930,7 +1052,7 @@ class Agent:
             except FileNotFoundError:
                 stale.append(path)
             except OSError as e:
-                logger.warning("Could not stat %s: %s", path, e)
+                logger.warning('Could not stat %s: %s', path, e)
         return stale
 
     def invalidate_stale(self) -> int:
@@ -2946,15 +1068,7 @@ class Agent:
     def memory_stats(self) -> dict[str, Any]:
         """Return summary of current memory state."""
         stale = self.check_stale_files()
-        return {
-            "chat_history": len(self._chat_history),
-            "files_read": len(self._files_read),
-            "stale_files": len(stale),
-            "history": len(self._history),
-            "working_memory": len(self._working_memory),
-            "semantic_index": len(self._semantic_index),
-            "knowledge_graph": len(self._knowledge_graph),
-        }
+        return {'chat_history': len(self._chat_history), 'files_read': len(self._files_read), 'stale_files': len(stale), 'history': len(self._history), 'working_memory': len(self._working_memory), 'semantic_index': len(self._semantic_index), 'knowledge_graph': len(self._knowledge_graph)}
 
     def clear_history(self) -> None:
         """Clear all agent state."""
@@ -2969,7 +1083,7 @@ class Agent:
         self._active_subagents.clear()
         self._delegate_counter = 0
         self._pending_effects = None
-        self._original_goal = ""
+        self._original_goal = ''
         self._goal_from_restore = False
         self._prior_chat_history = []
         self._files_read.clear()
@@ -2981,16 +1095,11 @@ class Agent:
             os.remove(CHAT_HISTORY_JSON_PATH)
             os.remove(AGENT_MEMORY_JSON_PATH)
         except OSError as e:
-            logger.warning("Could not remove persisted state files: %s", e)
-        # The full-run gate is session state too: its baseline is "changes at
-        # session start" and its budget a per-session cap, so a cleared
-        # session must re-baseline and get the budget back — otherwise every
-        # later session inherits a spent budget (full runs permanently
-        # refused). Best effort: a git hiccup must never break clear itself.
+            logger.warning('Could not remove persisted state files: %s', e)
         try:
             self._full_run_gate.reset()
-        except Exception:  # pragma: no cover - defensive, gate is in __init__
-            logger.debug("full-run gate reset failed", exc_info=True)
+        except Exception:
+            logger.debug('full-run gate reset failed', exc_info=True)
 
     def _decision_constraints_block(self) -> str:
         """Design-decision constraints for the chat system prompt.
@@ -3004,13 +1113,11 @@ class Agent:
         """
         try:
             if not self._files_read:
-                return ""
-            return decisions_as_system_prompt(
-                self.workspace, sorted(self._files_read),
-            )
+                return ''
+            return decisions_as_system_prompt(self.workspace, sorted(self._files_read))
         except Exception:
             logger.exception('Decision constraints unavailable:\n')
-            return ""
+            return ''
 
     def _skill_index_block(self) -> str:
         """Compact index of workspace skills for the chat system prompt.
@@ -3027,7 +1134,7 @@ class Agent:
             return load_skill_index(self._effective_ws_dir())
         except Exception:
             logger.exception('Skill index unavailable:\n')
-            return ""
+            return ''
 
     def _skill_hint_block(self, user_input: str) -> str:
         """Per-turn skill hint prepended to the user message when a skill matches.
@@ -3045,25 +1152,23 @@ class Agent:
         """
         try:
             skills = discover_skills(self._effective_ws_dir())
-            matched = match_skills_for_input(skills, user_input or "")
+            matched = match_skills_for_input(skills, user_input or '')
             if not matched:
-                return ""
-            # Observability: count the hit + mirror to shared event file.
+                return ''
             try:
                 collector = self.get_metrics_collector()
-                collector.increment_counter("skill.hint.matched")
+                collector.increment_counter('skill.hint.matched')
                 from agent_core.monitoring.metrics_file import append_event as _ae
-                _ae("counter", "skill.hint.matched", 1.0)
+                _ae('counter', 'skill.hint.matched', 1.0)
             except Exception:
-                pass  # metrics must never kill a turn
-            # Status print (suppressed in QUIET mode, same contract as [plan mode]).
+                pass
             if _resolve_display_mode() != AgentDisplayMode.QUIET:
-                names = ", ".join(s.name for s in matched)
-                print(yellow(f"  [skill-hints] matched: {names}"))
+                names = ', '.join((s.name for s in matched))
+                print(yellow(f'  [skill-hints] matched: {names}'))
             return skill_hint_block(matched)
         except Exception:
-            logger.exception("Skill hint unavailable:\n")
-            return ""
+            logger.exception('Skill hint unavailable:\n')
+            return ''
 
     def _habits_block(self) -> str:
         """Mined user-habits block for the chat system prompt.
@@ -3080,9 +1185,9 @@ class Agent:
             return habits_block(load_habits(self._effective_ws_dir()))
         except Exception:
             logger.exception('Habits block unavailable:\n')
-            return ""
+            return ''
 
-    def _file_history_block(self, query: str | None = None) -> str:
+    def _file_history_block(self, query: str | None=None) -> str:
         """Per-file execution-history block for the chat system prompt.
 
         The workspace already keeps a trace corpus and an execution ledger
@@ -3102,9 +1207,9 @@ class Agent:
             return file_notes_block(query, self._effective_ws_dir())
         except Exception:
             logger.exception('File-history block unavailable:\n')
-            return ""
+            return ''
 
-    def _semantic_memory_block(self, query: str | None = None) -> str:
+    def _semantic_memory_block(self, query: str | None=None) -> str:
         """Embedding/KG memory block for the chat system prompt.
 
         Builds a compact block from indexed memories (see
@@ -3128,26 +1233,17 @@ class Agent:
             indexed_memories = load_semantic_memory(self._effective_ws_dir())
             if query and indexed_memories:
                 try:
-                    ranked = semantic_search_memories(
-                        indexed_memories,
-                        query,
-                        k=5,
-                        embedding_service=getattr(
-                            self, "_semantic_embedding_service", None
-                        ),
-                    )
-                except Exception:  # noqa: BLE001 - ranking is best-effort only
+                    ranked = semantic_search_memories(indexed_memories, query, k=5, embedding_service=getattr(self, '_semantic_embedding_service', None))
+                except Exception:
                     ranked = []
                 if ranked:
                     return semantic_memory_block(ranked, query=query, k=5)
             return semantic_memory_block(indexed_memories, k=5)
         except Exception:
             logger.exception('Semantic memory block unavailable:\n')
-            return ""
+            return ''
 
-    def _ensure_original_goal(
-        self, pending_user_input: str | None = None,
-    ) -> None:
+    def _ensure_original_goal(self, pending_user_input: str | None=None) -> None:
         """Record the session's original request once, and only once.
 
         The goal is whatever the user asked FIRST: the first user message
@@ -3171,13 +1267,8 @@ class Agent:
         """
         if self._original_goal:
             if self._goal_from_restore and pending_user_input:
-                # One-shot: the relevance verdict applies to the FIRST live
-                # prompt only; later prompts never replace the goal.
                 self._goal_from_restore = False
-                if not self._prompts_related(
-                    pending_user_input,
-                    [self._original_goal, *self._recent_user_texts()],
-                ):
+                if not self._prompts_related(pending_user_input, [self._original_goal, *self._recent_user_texts()]):
                     self._original_goal = pending_user_input[:MAX_GOAL_CHARS]
                     self._suspend_history_for_new_task()
             return
@@ -3185,17 +1276,15 @@ class Agent:
         if recovered is not None:
             source = recovered
             if recovered:
-                # Recovered FROM a prior session's history — same one-shot
-                # relevance treatment as a goal restored from memory.
                 self._goal_from_restore = True
         elif pending_user_input:
             source = pending_user_input
         else:
-            source = ""
+            source = ''
         if source:
             self._original_goal = source[:MAX_GOAL_CHARS]
 
-    def _recent_user_texts(self, limit: int = 10) -> list[str]:
+    def _recent_user_texts(self, limit: int=10) -> list[str]:
         """The newest *limit* raw user texts from the current chat history.
 
         Steering wrappers (plan-mode note, skill hints) are stripped and
@@ -3204,32 +1293,23 @@ class Agent:
         """
         texts: list[str] = []
         for m in reversed(self._chat_history):
-            if m.get("role") != "user":
+            if m.get('role') != 'user':
                 continue
-            content = m.get("content")
+            content = m.get('content')
             if isinstance(content, str):
                 text = content.strip()
             elif isinstance(content, list):
-                text = " ".join(
-                    str(b.get("text") or "")
-                    for b in content
-                    if isinstance(b, dict) and b.get("type") == "text"
-                ).strip()
+                text = ' '.join((str(b.get('text') or '') for b in content if isinstance(b, dict) and b.get('type') == 'text')).strip()
             else:
-                text = ""
-            if text and not _is_compaction_note(text):
+                text = ''
+            if text and (not _is_compaction_note(text)):
                 texts.append(_strip_turn_wrappers(text))
             if len(texts) >= limit:
                 break
         texts.reverse()
         return texts
 
-    def _prompts_related(
-        self,
-        new_prompt: str,
-        prior_texts: list[str],
-        threshold: float = _GOAL_RELATED_THRESHOLD,
-    ) -> bool:
+    def _prompts_related(self, new_prompt: str, prior_texts: list[str], threshold: float=_GOAL_RELATED_THRESHOLD) -> bool:
         """Whether *new_prompt* looks topically related to any prior text.
 
         Token-overlap heuristic over content words (:func:`_content_tokens`):
@@ -3241,7 +1321,7 @@ class Agent:
             return True
         prior: set[str] = set()
         for text in prior_texts:
-            prior |= _content_tokens(text or "")
+            prior |= _content_tokens(text or '')
         if not prior:
             return False
         overlap = new_tokens & prior
@@ -3259,29 +1339,19 @@ class Agent:
         by ``_refresh_system_message`` on the next turn).  Task-agnostic
         memory stores (files_read, semantic index, knowledge graph) are kept.
         """
-        body = [
-            dict(m) for m in self._chat_history if m.get("role") != "system"
-        ]
+        body = [dict(m) for m in self._chat_history if m.get('role') != 'system']
         if not body:
             return
-        system = [
-            dict(m) for m in self._chat_history if m.get("role") == "system"
-        ][:1]
+        system = [dict(m) for m in self._chat_history if m.get('role') == 'system'][:1]
         self._prior_chat_history = body
         self._chat_history = system
         self._turn_start_index = len(self._chat_history)
-        prior_path = os.path.join(
-            os.path.dirname(CHAT_HISTORY_JSON_PATH) or ".",
-            "chat_history_prior.json",
-        )
+        prior_path = os.path.join(os.path.dirname(CHAT_HISTORY_JSON_PATH) or '.', 'chat_history_prior.json')
         try:
-            with open(prior_path, "w", encoding="utf-8") as f:
+            with open(prior_path, 'w', encoding='utf-8') as f:
                 json.dump(body, f, ensure_ascii=False, indent=2)
         except OSError:
-            logger.debug(
-                "Could not archive prior chat history to %s", prior_path,
-                exc_info=True,
-            )
+            logger.debug('Could not archive prior chat history to %s', prior_path, exc_info=True)
 
     def _original_goal_block(self) -> str:
         """The pinned ORIGINAL TASK block for the chat system prompt.
@@ -3295,11 +1365,7 @@ class Agent:
             return original_goal_block(self._original_goal)
         except Exception:
             logger.exception('Original goal block unavailable:\n')
-            return ""
-
-    # ------------------------------------------------------------------
-    #  Persistent NLP chat history (chat_history.json)
-    # ------------------------------------------------------------------
+            return ''
 
     def _load_chat_history(self) -> list[dict[str, Any]]:
         """Load the persisted NLP conversation from the previous session.
@@ -3309,34 +1375,21 @@ class Agent:
         instead of forgetting it.  A corrupt file is quarantined (see
         :func:`_read_json_quarantining`) instead of being silently dropped.
         """
-        data = _read_json_quarantining(
-            CHAT_HISTORY_JSON_PATH, "chat history",
-        )
+        data = _read_json_quarantining(CHAT_HISTORY_JSON_PATH, 'chat history')
         if not isinstance(data, list):
             return []
-        messages = [
-            m for m in data
-            if isinstance(m, dict) and m.get("role") in (
-                    "system", "user", "assistant", "tool"
-            )
-            # Loop-internal tags never belong in a restored conversation.
-            and _CONTINUE_NOTE_TAG_KEY not in m
-        ]
-        # Sanitize corrupt tool_call arguments from previous sessions
-        # (truncated JSON, literal newlines, etc.) so the API never sees them.
+        messages = [m for m in data if isinstance(m, dict) and m.get('role') in ('system', 'user', 'assistant', 'tool') and (_CONTINUE_NOTE_TAG_KEY not in m)]
         for m in messages:
-            for tc in m.get("tool_calls", []):
-                func = tc.get("function") or {}
-                args_str = func.get("arguments", "{}")
+            for tc in m.get('tool_calls', []):
+                func = tc.get('function') or {}
+                args_str = func.get('arguments', '{}')
                 try:
                     parsed = json.loads(args_str)
                     if not isinstance(parsed, dict):
-                        func["arguments"] = "{}"
+                        func['arguments'] = '{}'
                 except (json.JSONDecodeError, TypeError):
-                    func["arguments"] = "{}"
-        return _project_chat_history(
-            _strip_image_blocks(messages), getattr(self, "_original_goal", ""),
-        )
+                    func['arguments'] = '{}'
+        return _project_chat_history(_strip_image_blocks(messages), getattr(self, '_original_goal', ''))
 
     def _save_chat_history(self) -> None:
         """Persist the NLP conversation so the next session can continue it.
@@ -3349,27 +1402,14 @@ class Agent:
         never leave a half-written JSON that would be silently dropped on the
         next load.
         """
-        payload = json.dumps(
-            _project_chat_history(
-                _strip_image_blocks(self._chat_history), self._original_goal,
-            ),
-            ensure_ascii=False, indent=2,
-        )
-        # Derive the temp file from the CURRENT json path so tests that
-        # monkeypatch CHAT_HISTORY_JSON_PATH keep the atomic-write pair
-        # consistent (a stale module-level tmp path pointing into a
-        # non-existent ~/.agent1/models dir made every save a silent no-op).
-        tmp_path = CHAT_HISTORY_JSON_PATH + ".tmp"
+        payload = json.dumps(_project_chat_history(_strip_image_blocks(self._chat_history), self._original_goal), ensure_ascii=False, indent=2)
+        tmp_path = CHAT_HISTORY_JSON_PATH + '.tmp'
         try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 f.write(payload)
             os.replace(tmp_path, CHAT_HISTORY_JSON_PATH)
         except OSError as e:
-            logger.warning("Failed to save chat history: %s", e)
-
-    # ------------------------------------------------------------------
-    #  Persistent agent memory (agent_memory.json)
-    # ------------------------------------------------------------------
+            logger.warning('Failed to save chat history: %s', e)
 
     def _load_memory(self) -> None:
         """Load cross-session memory from the previous session.
@@ -3381,34 +1421,28 @@ class Agent:
         empty defaults, so the bytes stay inspectable instead of being
         clobbered by the next save.
         """
-        data = _read_json_quarantining(AGENT_MEMORY_JSON_PATH, "agent memory")
+        data = _read_json_quarantining(AGENT_MEMORY_JSON_PATH, 'agent memory')
         if not isinstance(data, dict):
             return
-        files = data.get("files_read")
+        files = data.get('files_read')
         if isinstance(files, list):
             self._files_read = {str(p) for p in files}
-        index = data.get("semantic_index")
+        index = data.get('semantic_index')
         if isinstance(index, dict):
-            self._semantic_index = defaultdict(
-                set,
-                {k: set(v) for k, v in index.items() if isinstance(v, list)},
-            )
-        kg = data.get("knowledge_graph")
+            self._semantic_index = defaultdict(set, {k: set(v) for k, v in index.items() if isinstance(v, list)})
+        kg = data.get('knowledge_graph')
         if isinstance(kg, dict):
             self._knowledge_graph = kg
-        wm = data.get("working_memory")
+        wm = data.get('working_memory')
         if isinstance(wm, list):
             self._working_memory = wm
-        hist = data.get("history")
+        hist = data.get('history')
         if isinstance(hist, list):
             self._history = hist
-        goal = data.get("original_goal")
+        goal = data.get('original_goal')
         if isinstance(goal, str):
             self._original_goal = goal
             if goal:
-                # Restored from a PREVIOUS session: the first live prompt of
-                # this session may replace it when topically unrelated
-                # (see _ensure_original_goal).
                 self._goal_from_restore = True
 
     def _save_memory(self) -> None:
@@ -3416,34 +1450,16 @@ class Agent:
 
         Atomic like :meth:`_save_chat_history` (tmp file + ``os.replace``).
         """
-        data = {
-            "files_read": sorted(self._files_read),
-            "semantic_index": {
-                k: sorted(v) for k, v in self._semantic_index.items()
-            },
-            "knowledge_graph": self._knowledge_graph,
-            "working_memory": self._working_memory,
-            "history": self._history,
-            "original_goal": self._original_goal,
-        }
-        # Derive the temp file from the CURRENT json path (same rule as
-        # _save_chat_history): a stale module-level AGENT_MEMORY_TMP_PATH can
-        # point onto another volume (CI: repo on D:, temp on C:) and
-        # os.replace then dies with WinError 17 / OSError EXDEV.
-        tmp_path = AGENT_MEMORY_JSON_PATH + ".tmp"
+        data = {'files_read': sorted(self._files_read), 'semantic_index': {k: sorted(v) for k, v in self._semantic_index.items()}, 'knowledge_graph': self._knowledge_graph, 'working_memory': self._working_memory, 'history': self._history, 'original_goal': self._original_goal}
+        tmp_path = AGENT_MEMORY_JSON_PATH + '.tmp'
         try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             os.replace(tmp_path, AGENT_MEMORY_JSON_PATH)
         except OSError:
-            logger.warning("Failed to save agent memory:\n%s", traceback.format_exc())
+            logger.warning('Failed to save agent memory:\n%s', traceback.format_exc())
 
-    def _record_llm_experience(
-        self, action: str, outcome: float, context: dict[str, Any] | None = None,
-        success: bool | None = None, decision_llm: str | None = None,
-        decision_prompt: Any = None, run_id: str | None = None,
-        latency_ms: float | None = None, token_usage: int | None = None,
-    ) -> int | None:
+    def _record_llm_experience(self, action: str, outcome: float, context: dict[str, Any] | None=None, success: bool | None=None, decision_llm: str | None=None, decision_prompt: Any=None, run_id: str | None=None, latency_ms: float | None=None, token_usage: int | None=None) -> int | None:
         """Record an LLM decision/outcome into agent_memory.db (experiences).
 
         Mirrors the MCP ``record_experience`` schema so a direct write is
@@ -3494,160 +1510,46 @@ class Agent:
             if success is None:
                 success = 1 if outcome >= 0.5 else 0
             ctx_str = json.dumps(context or {}, ensure_ascii=False, sort_keys=True)
-            ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
             import sqlite3
-
-            from agent_core.memory.attribution import (
-                ensure_attribution_schema, prompt_sha256, record_llm_decision,
-                resolve_decision_llm,
-            )
+            from agent_core.memory.attribution import ensure_attribution_schema, prompt_sha256, record_llm_decision, resolve_decision_llm
             if decision_llm is None:
                 decision_llm = resolve_decision_llm(self)
-            prompt_hash = (
-                prompt_sha256(decision_prompt) if decision_prompt is not None else None
-            )
-            db_path = AGENT_MEMORY_JSON_PATH.replace(".json", ".db")
+            prompt_hash = prompt_sha256(decision_prompt) if decision_prompt is not None else None
+            db_path = AGENT_MEMORY_JSON_PATH.replace('.json', '.db')
             conn = sqlite3.connect(db_path, timeout=5.0)
             try:
-                #: Ensure the schema exists.  No other in-repo code path
-                #: creates these tables (the MCP memory server only
-                #: reads/writes ``experiences``), so without this a fresh
-                #: workspace would silently no-op forever.  Idempotent and
-                #: additive: it creates ``experiences`` with the MCP columns
-                #: first and ALTERs the attribution columns in when a
-                #: pre-existing (MCP-written) table is found.
                 ensure_attribution_schema(conn)
                 if decision_llm is None:
-                    # Unattributable (no model identity available): write the
-                    # plain MCP-shaped row and leave the attribution columns
-                    # NULL rather than inventing an author.
-                    cur = conn.execute(
-                        "INSERT INTO experiences "
-                        "(timestamp, action, outcome, context, success) "
-                        "VALUES (?, ?, ?, ?, ?)",
-                        (ts, action, outcome, ctx_str, 1 if success else 0),
-                    )
+                    cur = conn.execute('INSERT INTO experiences (timestamp, action, outcome, context, success) VALUES (?, ?, ?, ?, ?)', (ts, action, outcome, ctx_str, 1 if success else 0))
                     conn.commit()
                     return int(cur.lastrowid)
-                cur = conn.execute(
-                    "INSERT INTO experiences (timestamp, action, outcome, "
-                    "context, success, decision_llm, decision_prompt_hash, "
-                    "decision_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (ts, action, outcome, ctx_str, 1 if success else 0,
-                     decision_llm, prompt_hash, ts),
-                )
+                cur = conn.execute('INSERT INTO experiences (timestamp, action, outcome, context, success, decision_llm, decision_prompt_hash, decision_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', (ts, action, outcome, ctx_str, 1 if success else 0, decision_llm, prompt_hash, ts))
                 rowid = int(cur.lastrowid)
-                record_llm_decision(
-                    conn, run_id=run_id, model_name=decision_llm,
-                    prompt_sha256=prompt_hash, outcome_experience_id=rowid,
-                    latency_ms=latency_ms, token_usage=token_usage,
-                )
+                record_llm_decision(conn, run_id=run_id, model_name=decision_llm, prompt_sha256=prompt_hash, outcome_experience_id=rowid, latency_ms=latency_ms, token_usage=token_usage)
                 conn.commit()
                 return rowid
             finally:
                 conn.close()
-        except Exception as exc:  # noqa: BLE001 - must never raise per contract
-            logger.debug("Could not record LLM experience (no-op): %s", exc)
+        except Exception as exc:
+            logger.debug('Could not record LLM experience (no-op): %s', exc)
             return None
-
-
-
-
-
-
-
-
-
-#: How many automatic continuation runs chat_nlp may chain before handing
-#: control back to the user.  The model cannot predict its own tool budget,
-#: so instead of stopping mid-task it continues with a fresh budget.  Each
-#: chained run has its own guards (no-progress, stuck, deadline), so a high
-#: cap cannot turn into an infinite loop — it only bounds total work.
 _MAX_CHAINED_RUNS = 6
-
-#: Transient LLM-failure retry for a whole turn.  A single timeout/connection
-#: blip (e.g. the hosted gateway hiccups, or a failover to a slow local model
-#: times out) must NOT destroy an in-flight task — the turn is retried a few
-#: times with backoff.  Only *transient* failures (detected via
-#: :func:`is_connection_failure`) are retried; a permanent 4xx/auth error is
-#: surfaced immediately so it cannot loop forever.  See :meth:`chat_nlp`.
 _LLM_ERROR_MAX_RETRIES = 2
 _LLM_ERROR_BACKOFF_S = 5.0
-
-#: Metadata key marking a loop-INJECTED user note (currently the continuation
-#: note).  Tagged messages are removed from the history when the turn ends.
-#: This replaces fragile content matching, which had a real failure mode: a
-#: user whose prompt is byte-identical to the note text got their message
-#: silently dropped from the conversation.
-_CONTINUE_NOTE_TAG = "continue"
-
-#: Hard ceiling for the NLP ``run`` tool's model-supplied timeout (seconds).
+_CONTINUE_NOTE_TAG = 'continue'
 _MAX_RUN_TIMEOUT_S = 600
-
-#: Hard ceiling for the NLP ``read`` tool's per-call line limit.
 _MAX_READ_LINES = 500
-
-#: Cap on distinct files a single ``read`` call may fetch via the ``paths``
-#: array (multi-file read) — a runaway model must not pull the whole workspace
-#: into context in one shot.
 _MAX_READ_FILES = 10
-
-#: File-size threshold (KB) above which .py files get an AST-based definition
-#: summary instead of full content.  Set via USE_CONTEXT_AST_STRATEGY env var
-#: (default 50).  0 disables the strategy.
-_CONTEXT_AST_THRESHOLD_KB = int(os.environ.get("USE_CONTEXT_AST_STRATEGY", "50"))
-
-#: Consecutive ``read`` calls allowed within one turn before the read-loop
-#: guard starts appending a steering note.  Traces from the 2026-08-25
-#: stalls (a01f1bde / 39a90f8f) show the failure spiral: dozens of sequential
-#: reads balloon the prompt toward the char budget, every later request then
-#: re-processes a huge context, prefill/decode crawl, and the turn ends as
-#: ``stuck``/``no_progress`` after 35+ minutes.  Breaking the read loop at
-#: the source keeps prompts small enough to stay fast.
+_CONTEXT_AST_THRESHOLD_KB = int(os.environ.get('USE_CONTEXT_AST_STRATEGY', '50'))
 _MAX_CONSECUTIVE_READS = 6
-
-_READ_LOOP_NOTE = (
-    "\n[read-loop guard] {n} consecutive reads this turn without acting. "
-    "Stop paging files — each extra page inflates the prompt and slows every "
-    "later call. Work with what you have: use definitions/references/search "
-    "for targeted lookups, or give your answer / take the next action now."
-)
-
-#: Delegation limits for the NLP ``delegate`` tool.  Children exist to KEEP
-#: contexts small — a pile of simultaneously running subagents re-creates
-#: the very pressure they were meant to avoid, so the cap is deliberately
-#: tight and the timeout mirrors the engine stall cap philosophy (a hung
-#: child must surface as an error, not hold the parent turn hostage).
+_READ_LOOP_NOTE = '\n[read-loop guard] {n} consecutive reads this turn without acting. Stop paging files — each extra page inflates the prompt and slows every later call. Work with what you have: use definitions/references/search for targeted lookups, or give your answer / take the next action now.'
 _MAX_ACTIVE_SUBAGENTS = 3
 _DELEGATE_TIMEOUT_S = 600.0
-
-#: Message key marking loop-injected notes (see LOOP_NOTE_TAG_KEY in
-#: agent_core.constants — re-exported here for the chat_nlp loop).
 _CONTINUE_NOTE_TAG_KEY = LOOP_NOTE_TAG_KEY
-
-_CONTINUE_NOTE = (
-    "The previous tool session ended before you finished. A fresh tool budget "
-    "is available now. CONTINUE THE TASK where you left off — use the tools as "
-    "needed, complete the remaining work, then give your final answer. Do not "
-    "describe what remains; do it."
-)
-
-_INCOMPLETE_MARKERS = (
-    "budget", "tool budget", "not finished", "could not", "couldn't",
-    "would need", "needs one more", "needs 1 more", "needs 2 more",
-    "remaining", "unfinished", "incomplete", "exhausted", "ran out",
-    "out of tool", "more tool call", "cannot complete", "still needs",
-    "not covered", "follow-up",
-)
-
-#: Strong completion signals — their presence means the answer is finished
-#: even when a weak marker (budget/remaining/could not) also appears, which
-#: reduces false auto-continues (plan FIX item 21).
-_COMPLETE_MARKERS = (
-    "all done", "is done", "done.", "completed", "finished",
-    "is complete", "fully resolved", "all fixed", "task is complete",
-)
-
+_CONTINUE_NOTE = 'The previous tool session ended before you finished. A fresh tool budget is available now. CONTINUE THE TASK where you left off — use the tools as needed, complete the remaining work, then give your final answer. Do not describe what remains; do it.'
+_INCOMPLETE_MARKERS = ('budget', 'tool budget', 'not finished', 'could not', "couldn't", 'would need', 'needs one more', 'needs 1 more', 'needs 2 more', 'remaining', 'unfinished', 'incomplete', 'exhausted', 'ran out', 'out of tool', 'more tool call', 'cannot complete', 'still needs', 'not covered', 'follow-up')
+_COMPLETE_MARKERS = ('all done', 'is done', 'done.', 'completed', 'finished', 'is complete', 'fully resolved', 'all fixed', 'task is complete')
 
 def _looks_incomplete(text: str) -> bool:
     """Heuristic: did the model's final answer signal unfinished work?
@@ -3657,24 +1559,11 @@ def _looks_incomplete(text: str) -> bool:
     though it contains the word "remaining".
     """
     low = text.lower()
-    if any(marker in low for marker in _COMPLETE_MARKERS):
+    if any((marker in low for marker in _COMPLETE_MARKERS)):
         return False
-    return any(marker in low for marker in _INCOMPLETE_MARKERS)
-
-
-#: Imperative work-order verbs that mean "do this to the repository", as
-#: opposed to asking *about* git.  Word-bounded so "committed"/"pushing" in a
-#: question do not match.
-_ACTION_VERB_RE = re.compile(r"\b(commit|push|stage)\b", re.I)
-
-#: Leading tokens that mark a sentence as a question rather than an order.
-#: "what does commit mean" is a question, "commit the changes" is an order.
-_QUESTION_LEAD_RE = re.compile(
-    r"^\s*(what|why|how|when|where|who|which|is|are|was|were|does|did|do|"
-    r"can|could|should|would|will|has|have|am|explain|tell|show)\b",
-    re.I,
-)
-
+    return any((marker in low for marker in _INCOMPLETE_MARKERS))
+_ACTION_VERB_RE = re.compile('\\b(commit|push|stage)\\b', re.I)
+_QUESTION_LEAD_RE = re.compile('^\\s*(what|why|how|when|where|who|which|is|are|was|were|does|did|do|can|could|should|would|will|has|have|am|explain|tell|show)\\b', re.I)
 
 def _unverified_action_claim(user_input: str, tool_calls_made: int) -> bool:
     """Did the model assert a repository action it never actually performed?
@@ -3690,42 +1579,16 @@ def _unverified_action_claim(user_input: str, tool_calls_made: int) -> bool:
     "is my work already committed?" is asking for an explanation and is left
     alone, because the loop cannot verify the answer to an open question.
     """
-    text = (user_input or "").strip()
+    text = (user_input or '').strip()
     if not text or tool_calls_made > 0:
         return False
     if not _ACTION_VERB_RE.search(text):
         return False
-    # A question is not a work order: do not force tools on "why did my commit
-    # fail?" — that needs an explanation, and an answer is the right output.
-    if "?" in text or _QUESTION_LEAD_RE.match(text):
+    if '?' in text or _QUESTION_LEAD_RE.match(text):
         return False
     return True
-
-
-#: Steering note injected when an action request was answered with no tool
-#: calls.  Tagged like the continuation note so it is stripped from the
-#: persisted history when the turn ends.
-_VERIFY_NOTE = (
-    "You answered without calling a single tool, so you have not verified "
-    "anything about this repository — you cannot know whether changes are "
-    "staged, committed or pushed. Do not assert that state. Call the git tool "
-    "now (subcommand='status' first), then do the work and report what it "
-    "actually returned."
-)
-
-from agent_dashboard import (  # noqa: F401
-    _build_dashboard,
-    _dashboard_port,
-    _default_alert_rules,
-    _emit_command_metrics,
-    _emit_tool_metrics,
-    _shared_metrics_collector,
-    get_metrics_collector,
-    record_command_metrics,
-    run_dashboard_server,
-    start_dashboard_thread,
-)
-
+_VERIFY_NOTE = "You answered without calling a single tool, so you have not verified anything about this repository — you cannot know whether changes are staged, committed or pushed. Do not assert that state. Call the git tool now (subcommand='status' first), then do the work and report what it actually returned."
+from agent_dashboard import _build_dashboard, _dashboard_port, _default_alert_rules, _emit_command_metrics, _emit_tool_metrics, _shared_metrics_collector, get_metrics_collector, record_command_metrics, run_dashboard_server, start_dashboard_thread
 
 def _register_commands(registry: CommandRegistry) -> None:
     """Instantiate every REPL command into *registry* (single registration
@@ -3777,15 +1640,13 @@ def _register_commands(registry: CommandRegistry) -> None:
     from agent_core.commands.help_cmd import HelpCommand
     registry.register(HelpCommand())
 
-
 def _build_registry() -> CommandRegistry:
     """Return a fresh CommandRegistry with every command registered."""
     registry = CommandRegistry()
     _register_commands(registry)
     return registry
 
-
-def _warn_uncommitted(agent: "Agent") -> None:
+def _warn_uncommitted(agent: 'Agent') -> None:
     """Print a reminder when the session leaves uncommitted changes.
 
     AGENTS.md invariant #4: "Commit after every session. Uncommitted work is
@@ -3795,31 +1656,21 @@ def _warn_uncommitted(agent: "Agent") -> None:
     Best-effort and silent outside a git repo; never blocks exit.
     """
     try:
-        r = subprocess.run(
-            ["git", "status", "--porcelain"],
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            cwd=agent.workspace, timeout=10,
-        )
+        r = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=agent.workspace, timeout=10)
         if r.returncode != 0:
-            return  # not a git repo (or git missing) — nothing to say
+            return
         lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
         if not lines:
             return
-        print(yellow(
-            f"\n  [git] {len(lines)} uncommitted change(s) in the workspace — "
-            "commit them now (AGENTS.md invariant #4: uncommitted work is "
-            "unrecoverable). Top offenders:"
-        ))
+        print(yellow(f'\n  [git] {len(lines)} uncommitted change(s) in the workspace — commit them now (AGENTS.md invariant #4: uncommitted work is unrecoverable). Top offenders:'))
         for ln in lines[:5]:
-            print(f"    {ln}")
+            print(f'    {ln}')
         if len(lines) > 5:
-            print(gray(f"    ... and {len(lines) - 5} more"))
+            print(gray(f'    ... and {len(lines) - 5} more'))
     except Exception as e:
-        logger.debug("Uncommitted-changes check skipped: %s", e)
+        logger.debug('Uncommitted-changes check skipped: %s', e)
 
-
-def _build_chat_prompt(agent: "Agent", branch: str, now: datetime) -> str:
+def _build_chat_prompt(agent: 'Agent', branch: str, now: datetime) -> str:
     """Build the interactive chat prompt, colored by session mode.
 
     The prompt reads ``[build]`` in green (full mutating toolset) or
@@ -3827,133 +1678,85 @@ def _build_chat_prompt(agent: "Agent", branch: str, now: datetime) -> str:
     unmistakable at a glance.  Falls back to green/build styling when the
     agent has no ``is_plan_mode`` (defensive — the prompt must always render).
     """
-    plan = getattr(agent, "is_plan_mode", None)
+    plan = getattr(agent, 'is_plan_mode', None)
     plan = bool(plan() if callable(plan) else False)
-    mode_tag = "[plan] " if plan else "[build] "
+    mode_tag = '[plan] ' if plan else '[build] '
     prompt_color = blue if plan else green
-    # Header only: printed on its own line by run_interactive. The caret is
-    # placed by input() on the following line, so no ANSI or newline text is
-    # ever counted as part of the input prompt.
-    return (
-        f"\n[{now:%Y-%m-%d %H:%M}] {branch} "
-        f"{prompt_color(mode_tag.rstrip())}"
-    )
-
-
-#: Plain input prompt. Kept free of escape codes and newlines so the terminal
-#: always places the caret after it on the line directly below the header.
-CHAT_INPUT_PROMPT = "> "
-
+    return f'\n[{now:%Y-%m-%d %H:%M}] {branch} {prompt_color(mode_tag.rstrip())}'
+CHAT_INPUT_PROMPT = '> '
 
 async def run_interactive() -> None:
     """Interactive mode - allows user to input commands."""
-
-    # Create agent instance (resolves persisted model choice from model.json)
     agent = Agent(workspace=Agent.DEFAULT_WORKSPACE)
-
-    banner = blue("=" * 50)
+    banner = blue('=' * 50)
     print(banner)
-    print(blue("Agent Interactive Mode with LM Studio"))
-    print(f"Workspace: {cyan(Agent.DEFAULT_WORKSPACE)}")
+    print(blue('Agent Interactive Mode with LM Studio'))
+    print(f'Workspace: {cyan(Agent.DEFAULT_WORKSPACE)}')
     model_label = agent.llm.model_name
-    profile_part = (
-        f"  |  Profile: {agent.llm._profile_name}"
-        if agent.llm._profile_name else "")
-    print(f"Model: {cyan(model_label)}{gray(profile_part)}")
+    profile_part = f'  |  Profile: {agent.llm._profile_name}' if agent.llm._profile_name else ''
+    print(f'Model: {cyan(model_label)}{gray(profile_part)}')
     try:
         from agent_core.llm.lmstudio import get_models_status
         models = get_models_status()
-        loaded = [m for m in models if m.get("loaded")]
-        status = (
-            f"LM Studio: online ({len(loaded)}/{len(models)} models loaded)"
-            if models else "LM Studio: online")
+        loaded = [m for m in models if m.get('loaded')]
+        status = f'LM Studio: online ({len(loaded)}/{len(models)} models loaded)' if models else 'LM Studio: online'
         print(green(status) if models else yellow(status))
     except Exception:
-        print(yellow("LM Studio: offline"))
-    print(blue("=" * 50))
-    # Single source of truth: the banner derives its command list from the
-    # registry itself (each command's help_text synopsis), so a new or
-    # changed command can never drift from what the banner shows.
+        print(yellow('LM Studio: offline'))
+    print(blue('=' * 50))
     registry = _build_registry()
     for name in sorted(registry.names()):
         cmd = registry.get(name)
         synopsis = cmd.help_text.splitlines()[0].strip() if cmd else name
-        print(f"  {cyan(synopsis)}")
-    # Surface the safe read-only generation path prominently: `propose` (and the
-    # --propose flags on implement/fix) generate a reviewed diff bundle without
-    # ever touching the working tree — the recommended way to try changes.
-    print(gray(
-        "  Tip: `propose <taskplan.md>` (or `implement --propose` / "
-        "`fix --mypy --propose`) generates a reviewed diff bundle; "
-        "it never writes the working tree."))
+        print(f'  {cyan(synopsis)}')
+    print(gray('  Tip: `propose <taskplan.md>` (or `implement --propose` / `fix --mypy --propose`) generates a reviewed diff bundle; it never writes the working tree.'))
     print(f"  {cyan('quit')} - {gray('Exit')}")
-    print(blue("=" * 50))
+    print(blue('=' * 50))
     _register_commands(registry)
-
-    # Set up command registry with simple commands
-    # Warn once per change wave when loaded code changed on disk.
-    from agent_core.commands.freshness import (
-        diff_snapshots,
-        format_stale_warning,
-        loaded_module_fingerprints,
-    )
+    from agent_core.commands.freshness import diff_snapshots, format_stale_warning, loaded_module_fingerprints
     _code_snapshot = loaded_module_fingerprints(__file__)
     _install_signal_handlers(agent)
-
     while True:
         try:
-            # Get user input — _interruptible_input uses a background thread
-            # so the process can be killed via SIGBREAK on Windows.
-            branch = _current_git_branch() or "?"
+            branch = _current_git_branch() or '?'
             print(_build_chat_prompt(agent, branch, datetime.now()))
             user_input = _interruptible_input(CHAT_INPUT_PROMPT)
             if user_input is None:
-                # Shutdown requested or stdin exhausted
                 agent._save_memory()
                 save_meta_policy_weights()
                 _warn_uncommitted(agent)
                 break
             if not user_input:
                 continue
-
-            # Check for quit command
-            if user_input.lower() in ["quit", "exit", "q"]:
+            if user_input.lower() in ['quit', 'exit', 'q']:
                 agent._save_memory()
                 save_meta_policy_weights()
                 _warn_uncommitted(agent)
-                print(green("Goodbye!"))
+                print(green('Goodbye!'))
                 break
-
-            # Warn once per change wave when loaded code changed on disk.
             _stale_files = diff_snapshots(_code_snapshot)
             if _stale_files:
                 print(yellow(format_stale_warning(_stale_files)))
                 _code_snapshot = loaded_module_fingerprints(__file__)
-
-            # Parse and execute commands
             try:
                 parts = shlex.split(user_input, posix=False)
             except ValueError:
                 parts = user_input.split(maxsplit=20)
             command = parts[0].lower()
-
-            # Try commands from registry (driven by the registry itself so
-            # newly registered commands are dispatched without touching the
-            # whitelist here — "review" fell through to chat_nlp once).
             if command in registry.names():
                 import time as _time
                 _start = _time.perf_counter()
-                print(f"  [cmd] {cyan(command)} running...")
+                print(f'  [cmd] {cyan(command)} running...')
                 clear_stop()
-                _llm = getattr(agent, "llm", None)
-                _chat = getattr(_llm, "chat", None)
+                _llm = getattr(agent, 'llm', None)
+                _chat = getattr(_llm, 'chat', None)
                 if _llm is not None and _chat is not None:
                     _llm.chat = chat_stoppable(_chat)
                 try:
                     try:
                         await registry.execute(command, parts[1:], agent)
                     except FlowStopped:
-                        print(yellow("  Flow stopped by user."))
+                        print(yellow('  Flow stopped by user.'))
                 finally:
                     if _llm is not None and _chat is not None:
                         _llm.chat = _chat
@@ -3962,48 +1765,29 @@ async def run_interactive() -> None:
                 PerfTracker.record(command, elapsed, user_input)
                 record_command_metrics(command, elapsed)
                 continue
-
             else:
                 await agent.chat_nlp(user_input)
         except KeyboardInterrupt:
-            print(yellow(
-                "\nInterrupted — the current run was stopped. Use 'quit' to"
-                " exit."))
+            print(yellow("\nInterrupted — the current run was stopped. Use 'quit' to exit."))
         except EOFError:
             if not sys.stdin.isatty():
-                print(yellow("\n[stdin] Input stream ended — shutting down."))
+                print(yellow('\n[stdin] Input stream ended — shutting down.'))
             agent._save_memory()
             save_meta_policy_weights()
             _warn_uncommitted(agent)
             break
 
-
-
-
-
 async def main() -> None:
     """Main entry point - runs interactive mode or the web dashboard."""
-    # Start the Kanban inbound poller before any mode branches: Agent1's
-    # outbound producers (issues.make_issue/resolve) only run inside this
-    # process, so this is where the reply queue must be drained.  Gated on
-    # KANBAN_SYNC_ENABLED=1 and idempotent per process; a sync failure is
-    # logged and never blocks boot.
     _start_kanban_inbound()
-    if "--serve" in sys.argv:
-        # run_dashboard_server() is synchronous (ThreadingHTTPServer.serve_forever);
-        # awaiting it raised "object NoneType can't be used in 'await' expression".
+    if '--serve' in sys.argv:
         run_dashboard_server()
         return
-    if "--dashboard" in sys.argv:
-        # Interactive REPL + live web dashboard in the same process: the REPL
-        # feeds get_metrics_collector(), the daemon thread serves it.
+    if '--dashboard' in sys.argv:
         start_dashboard_thread(_dashboard_port())
-    # No --serve flag: fall back to the classic interactive CLI.
     await run_interactive()
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nInterrupted.")
+        print('\nInterrupted.')

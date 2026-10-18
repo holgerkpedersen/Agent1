@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import logging
 import traceback
+from contextlib import contextmanager
 from typing import Iterator
 
 logger = logging.getLogger(__name__)
 
 
+@contextmanager
 def _suppress_and_log(label: str) -> Iterator[None]:
     """Run the block, logging (not propagating) any exception.
 

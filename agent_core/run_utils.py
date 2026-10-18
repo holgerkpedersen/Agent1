@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 if TYPE_CHECKING:
     from agent_core.config import AgentDisplayMode
 
+from agent_core.llm.provider import provider_supports_streaming
+
 logger = logging.getLogger(__name__)
 
 # ── Kanban inbound ───────────────────────────────────────────────────────────
@@ -66,15 +68,42 @@ def kill_process_tree(proc: subprocess.Popen[Any]) -> None:
 
 
 def resolve_stream_fn(
-    stream: bool, display_mode: "AgentDisplayMode"
+    stream: bool | Any, display_mode: "AgentDisplayMode" | None = None
 ) -> Callable[..., Any] | None:
-    """Return the appropriate streaming function for the display mode, or None."""
-    try:
-        if stream:
+    """Return the appropriate streaming function, or None.
+
+    Supports two calling conventions:
+    * ``resolve_stream_fn(stream: bool, display_mode: AgentDisplayMode)`` — new
+      generic API: return the stream function when *stream* is True.
+    * ``resolve_stream_fn(llm)`` — legacy API preserved while call sites and
+      tests migrate: checks ``settings.stream_final_answer`` and the LLM
+      provider's real streaming capability.
+    """
+    # Legacy single-argument LLM call: not a bool and no display_mode supplied.
+    if display_mode is None and not isinstance(stream, bool):
+        llm = stream
+        try:
+            # Access via module attribute so tests/monkeypatches can replace it.
+            from agent_core import config as _config_module
+            settings = _config_module.load_agent_settings()
+            if not getattr(settings, "stream_final_answer", False):
+                return None
+        except Exception:
+            return None
+        provider = getattr(llm, "_provider", None)
+        if not provider_supports_streaming(provider):
+            return None
+        try:
             from agent_core.llm.streaming import stream_chat_sync
             return stream_chat_sync
-    except ImportError:
-        pass
+        except ImportError:
+            return None
+    if stream:
+        try:
+            from agent_core.llm.streaming import stream_chat_sync
+            return stream_chat_sync
+        except ImportError:
+            pass
     return None
 
 
@@ -144,22 +173,32 @@ def append_turn_log(record: dict[str, Any]) -> None:
 
 
 def strip_dynamic_system_blocks(text: str) -> str:
-    """Strip [habits], [file history], [semantic memory] blocks from a prompt.
+    """Remove previously injected dynamic blocks from a system prompt.
 
-    Used when reparsing a system prompt that may have been contaminated with
-    stale dynamic blocks after a history compaction.
+    ``chat_nlp`` rebuilds the constraints block (decision ledger), original
+    goal, skill index, habits, semantic memory, file history, and plan-mode
+    suffix on every turn; without stripping, a long-lived session would
+    accumulate one stale copy of each block per turn.  The BASE prompt -
+    everything before the first dynamic marker - is what survives.
     """
-    import re
-
-    # Match [habits], [file history], [semantic memory] section markers
-    patterns = [
-        r"\[habits\].*?(?=\n\[|\Z)",
-        r"\[file history\].*?(?=\n\[|\Z)",
-        r"\[semantic memory\].*?(?=\n\[|\Z)",
-    ]
-    for pat in patterns:
-        text = re.sub(pat, "", text, flags=re.IGNORECASE | re.DOTALL)
-    return text.strip()
+    markers = (
+        "\n\nCRITICAL DESIGN CONSTRAINTS",
+        "\n\nSESSION MODE: PLAN",
+        "\n\nORIGINAL TASK",
+        "\n\nSKILLS (on-demand procedural knowledge)",
+        "\n\nUSER HABITS",
+        "\n\nSEMANTIC MEMORY",
+        "\n\nRECENT FILE NOTES",
+        "\n\n[habits]",
+        "\n\n[file history]",
+        "\n\n[semantic memory]",
+    )
+    cut = len(text)
+    for marker in markers:
+        pos = text.find(marker)
+        if pos != -1:
+            cut = min(cut, pos)
+    return text[:cut]
 
 
 # ── Action claim helper ──────────────────────────────────────────────────────

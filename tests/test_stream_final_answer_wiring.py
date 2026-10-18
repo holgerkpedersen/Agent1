@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 import agent as agent_mod
+import agent_core.config as _config_mod
 from agent_core.config import AgentDisplayMode, AgentSettings, load_agent_settings
 from agent_core.llm import provider as provider_mod
 from agent_core.llm.lemonade_provider import LemonadeProvider
@@ -115,7 +116,7 @@ def _settings(**overrides) -> AgentSettings:
 def test_resolver_returns_none_when_setting_is_off(monkeypatch) -> None:
     """Default: OFF -> no streaming, so behaviour is byte-identical."""
     monkeypatch.setattr(
-        agent_mod, "load_agent_settings",
+        _config_mod, "load_agent_settings",
         lambda: _settings(stream_final_answer=False),
     )
     llm = _llm_with(_bare(LMStudioProvider))
@@ -124,7 +125,7 @@ def test_resolver_returns_none_when_setting_is_off(monkeypatch) -> None:
 
 def test_resolver_returns_callable_when_opted_in_and_capable(monkeypatch) -> None:
     monkeypatch.setattr(
-        agent_mod, "load_agent_settings",
+        _config_mod, "load_agent_settings",
         lambda: _settings(stream_final_answer=True),
     )
     llm = _llm_with(_bare(LMStudioProvider))
@@ -144,7 +145,7 @@ def test_resolver_returns_none_on_non_streaming_provider(
     """THE regression guard: opted in, but the provider prints nothing — so the
     caller must keep printing the answer itself (otherwise: no answer at all)."""
     monkeypatch.setattr(
-        agent_mod, "load_agent_settings",
+        _config_mod, "load_agent_settings",
         lambda: _settings(stream_final_answer=True),
     )
     assert agent_mod._resolve_stream_fn(_llm_with(provider)) is None
@@ -161,7 +162,7 @@ def test_resolver_survives_settings_failure(monkeypatch) -> None:
 
 def test_resolver_handles_llm_without_provider_attribute(monkeypatch) -> None:
     monkeypatch.setattr(
-        agent_mod, "load_agent_settings",
+        _config_mod, "load_agent_settings",
         lambda: _settings(stream_final_answer=True),
     )
 
@@ -268,7 +269,7 @@ def test_chat_nlp_streams_final_answer_and_prints_it_once(
     )
     monkeypatch.setattr(agent_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl"))
     monkeypatch.setattr(
-        agent_mod, "load_agent_settings",
+        _config_mod, "load_agent_settings",
         lambda: _settings(stream_final_answer=True),
     )
     monkeypatch.setattr(
@@ -347,7 +348,7 @@ def test_chat_nlp_does_not_stream_when_not_opted_in(
     )
     monkeypatch.setattr(agent_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl"))
     monkeypatch.setattr(
-        agent_mod, "load_agent_settings",
+        _config_mod, "load_agent_settings",
         lambda: _settings(stream_final_answer=False),
     )
     monkeypatch.setattr(
@@ -428,7 +429,7 @@ def test_chained_runs_each_stream_their_own_answer_without_a_double_print(
     )
     monkeypatch.setattr(agent_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl"))
     monkeypatch.setattr(
-        agent_mod, "load_agent_settings",
+        _config_mod, "load_agent_settings",
         lambda: _settings(stream_final_answer=True),
     )
     monkeypatch.setattr(

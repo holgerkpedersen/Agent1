@@ -6,11 +6,10 @@ regardless of how agent.py is refactored.
 """
 from __future__ import annotations
 
-import os
 import signal
 import subprocess
 import sys
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 # ── State ────────────────────────────────────────────────────────────────────
 
@@ -61,8 +60,25 @@ def _shutdown_trace_close() -> None:
         pass
 
 
-def install() -> None:
-    """Install SIGINT/SIGBREAK handlers with cleanup on Ctrl-C."""
+def install(agent: Optional[Any] = None) -> None:
+    """Install SIGINT/SIGBREAK handlers with cleanup on Ctrl-C.
+
+    When an *agent* instance is provided, its cleanup callbacks (``_save_memory``
+    and closing the active trace writer) are wired onto the ``agent`` module as
+    ``_shutdown_save_memory`` / ``_shutdown_trace_close`` — the attributes
+    ``_signal_break_with_cleanup`` invokes before exiting.
+    """
+    if agent is not None:
+        import agent as agent_module
+
+        def _close_active_trace() -> None:
+            tw = getattr(agent, "_active_trace_writer", None)
+            if tw is not None:
+                tw.close()
+
+        setattr(agent_module, "_shutdown_save_memory", agent._save_memory)
+        setattr(agent_module, "_shutdown_trace_close", _close_active_trace)
+
     if sys.platform == "win32":
         signal.signal(signal.SIGBREAK, _signal_break_with_cleanup)
     else:
