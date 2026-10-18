@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 
 import agent as agent_mod
+import agent_core.constants as _constants_mod
 from agent_core.commands.habits_cmd import HabitsCommand
 from agent_core.config import AgentDisplayMode
 from agent_core.habits import (
@@ -284,7 +285,7 @@ def test_finish_turn_writes_turn_log_and_experience_row(
     bot = _make_agent(ws, tmp_path, monkeypatch)
     # The turn log must land in tmp_path, not the live state dir.
     monkeypatch.setattr(
-        agent_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl")
+        _constants_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl")
     )
     # Isolate the two sibling observability hooks (covered by C2 tests):
     # avoid mutating global METRICS state and appending to the repo-root

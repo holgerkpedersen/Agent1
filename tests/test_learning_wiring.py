@@ -75,7 +75,7 @@ def _sandbox_learning(tmp_path: Path, monkeypatch) -> MetricsTracker:
 
 def _finish(bot, monkeypatch, tmp_path, *, final_text, llm_error, user_input):
     """Run the real _finish_turn with observability I/O pointed at tmp_path."""
-    monkeypatch.setattr(agent_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl"))
+    monkeypatch.setattr(constants, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl"))
     quality_events: list = []
     monkeypatch.setattr(
         metrics_file, "append_event",

@@ -67,17 +67,28 @@ def kill_process_tree(proc: subprocess.Popen[Any]) -> None:
 # ── Stream / display helpers ─────────────────────────────────────────────────
 
 
+async def _stream_via_llm(llm: Any, messages: list[dict[str, Any]]) -> str:
+    """Await the LLM's ``chat_stream`` and return the complete text."""
+    return await llm.chat_stream(messages)
+
+
 def resolve_stream_fn(
-    stream: bool | Any, display_mode: "AgentDisplayMode" | None = None
+    stream: bool | Any,
+    display_mode: "AgentDisplayMode" | None = None,
+    *,
+    llm: Any | None = None,
 ) -> Callable[..., Any] | None:
-    """Return the appropriate streaming function, or None.
+    """Return the streaming function for this LLM/configuration, or None.
 
     Supports two calling conventions:
-    * ``resolve_stream_fn(stream: bool, display_mode: AgentDisplayMode)`` — new
-      generic API: return the stream function when *stream* is True.
+    * ``resolve_stream_fn(stream: bool, display_mode, llm=llm)`` — explicit
+      boolean gate; the LLM must be supplied as a keyword argument.
     * ``resolve_stream_fn(llm)`` — legacy API preserved while call sites and
       tests migrate: checks ``settings.stream_final_answer`` and the LLM
       provider's real streaming capability.
+
+    Returns ``None`` when streaming is disabled, the provider does not really
+    print tokens as they arrive, or no LLM is available.
     """
     # Legacy single-argument LLM call: not a bool and no display_mode supplied.
     if display_mode is None and not isinstance(stream, bool):
@@ -93,17 +104,14 @@ def resolve_stream_fn(
         provider = getattr(llm, "_provider", None)
         if not provider_supports_streaming(provider):
             return None
-        try:
-            from agent_core.llm.streaming import stream_chat_sync
-            return stream_chat_sync
-        except ImportError:
+        from functools import partial
+        return partial(_stream_via_llm, llm)
+    if stream and llm is not None:
+        provider = getattr(llm, "_provider", None)
+        if not provider_supports_streaming(provider):
             return None
-    if stream:
-        try:
-            from agent_core.llm.streaming import stream_chat_sync
-            return stream_chat_sync
-        except ImportError:
-            pass
+        from functools import partial
+        return partial(_stream_via_llm, llm)
     return None
 
 
@@ -133,40 +141,97 @@ def final_answer_fallback() -> str:
 def turn_quality_score(
     llm_error: str | None,
     mutated_files: list[str],
-) -> float:
-    """Score the quality of a turn (0.0–1.0) based on error and mutations.
+) -> float | None:
+    """B3: per-turn quality score in [0,1] for the shared metrics log.
 
-    Lower scores indicate problems; 1.0 is perfect.
+    With harnessfix tracing enabled and a turn armed via ``begin_turn()``
+    (the tool-loop caller arms it once per turn), the turn's own trace
+    events are drained and scored with ``score_run`` -- one turn is never
+    scored from another turn's events.  A provider error always scores
+    0.0, whatever the trace recorded.  Otherwise the cheap proxy:
+    ``llm_error`` -> 0.0, mutated files -> 0.8, clean turn -> 0.7.
+    Never raises; returns ``None`` only if the check itself fails
+    (nothing is recorded then).
     """
-    score = 1.0
-    if llm_error:
-        score -= 0.4
-    if mutated_files:
-        score -= min(0.2, len(mutated_files) * 0.05)
-    return max(0.0, score)
+    try:
+        from harnessfix.tracing import trace_enabled
+
+        if trace_enabled():
+            import harnessfix.tracing as _tr
+
+            events: list[dict[str, Any]] | None = None
+            for _name in ("take_turn_events", "drain_turn_events",
+                          "current_turn_events", "turn_events"):
+                _getter = getattr(_tr, _name, None)
+                if callable(_getter):
+                    events = _getter()
+                    if events:
+                        break
+            if llm_error:
+                return 0.0
+            if events:
+                from harnessfix.evolution_metrics import score_run
+
+                return float(score_run(events))
+        if llm_error:
+            return 0.0
+        if mutated_files:
+            return 0.8
+        return 0.7
+    except Exception:  # noqa: BLE001 - observability must not break turns
+        return None
 
 
 # ── Trace helpers ───────────────────────────────────────────────────────────
 
 
 def begin_trace_turn(turn_id: str | None = None) -> None:
-    """Begin a new trace turn, if tracing is enabled."""
+    """Arm turn-scoped trace-event collection for the coming turn.
+
+    Plan item #4 residual: the turn's own trace events are buffered in
+    memory (``harnessfix.tracing``) so :func:`turn_quality_score` can feed
+    them to ``score_run`` at turn end.  Degrades to a no-op when harnessfix
+    (or the API) is unavailable; never raises.
+    """
     try:
-        from agent_core.monitoring.trace_writer import TraceWriter
-        if TraceWriter.is_enabled():
-            TraceWriter.get_instance().begin_turn(turn_id)
-    except Exception:
-        pass
+        import harnessfix.tracing as _tr
+
+        starter = getattr(_tr, "begin_turn", None) or getattr(_tr, "start_turn", None)
+        if callable(starter):
+            starter()
+    except Exception:  # noqa: BLE001 - observability must not break turns
+        logger.debug("Could not arm trace turn (no-op)", exc_info=True)
 
 
 def append_turn_log(record: dict[str, Any]) -> None:
-    """Append a turn log record (used by _finish_turn)."""
+    """Append one turn-outcome line to ``turn_log.jsonl`` (bounded, atomic-ish).
+
+    Harness-layer observability only (decision #014): the log feeds habit
+    mining and is rewritten to its newest 500 lines whenever it grows past
+    that bound, so it can never bloat the state dir.  Never raises - a broken
+    or missing state dir must not break a finished turn.
+    """
     try:
-        from agent_core.monitoring.trace_writer import TraceWriter
-        if TraceWriter.is_enabled():
-            TraceWriter.get_instance().append_turn_log(record)
-    except Exception:
-        pass
+        import json
+        import os
+        from agent_core import constants as _constants_module
+        path = _constants_module.TURN_LOG_PATH
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        lines: list[str] = []
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                lines = [ln for ln in fh.read().splitlines() if ln.strip()]
+        lines.append(json.dumps(record, ensure_ascii=False, default=str))
+        if len(lines) > 500:
+            lines = lines[-500:]
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001 - observability must not break turns
+        logger.debug("Could not append turn log (no-op)", exc_info=True)
 
 
 # ── Dynamic system blocks ─────────────────────────────────────────────────────
