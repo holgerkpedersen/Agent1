@@ -194,7 +194,9 @@ def _make_agent(tmp_path: Path, monkeypatch) -> "agent_mod.Agent":
     monkeypatch.setattr(
         agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
     )
-    monkeypatch.setattr(_constants_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl"))
+    monkeypatch.setattr(
+        _constants_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl")
+    )
     return agent_mod.Agent(workspace=str(workspace))
 
 
@@ -268,7 +270,9 @@ def test_chat_nlp_streams_final_answer_and_prints_it_once(
     monkeypatch.setattr(
         agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
     )
-    monkeypatch.setattr(_constants_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl"))
+    monkeypatch.setattr(
+        _constants_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl")
+    )
     monkeypatch.setattr(
         _config_mod, "load_agent_settings",
         lambda: _settings(stream_final_answer=True),
@@ -347,7 +351,9 @@ def test_chat_nlp_does_not_stream_when_not_opted_in(
     monkeypatch.setattr(
         agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
     )
-    monkeypatch.setattr(_constants_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl"))
+    monkeypatch.setattr(
+        _constants_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl")
+    )
     monkeypatch.setattr(
         _config_mod, "load_agent_settings",
         lambda: _settings(stream_final_answer=False),
@@ -428,7 +434,9 @@ def test_chained_runs_each_stream_their_own_answer_without_a_double_print(
     monkeypatch.setattr(
         agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
     )
-    monkeypatch.setattr(_constants_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl"))
+    monkeypatch.setattr(
+        _constants_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl")
+    )
     monkeypatch.setattr(
         _config_mod, "load_agent_settings",
         lambda: _settings(stream_final_answer=True),
