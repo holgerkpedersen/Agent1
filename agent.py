@@ -1,5 +1,11 @@
 """Agent implementation with workspace management and tool execution.."""
 from agent_core.bootstrap import *
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent_core.monitoring import MetricsCollector
+    from agent_core.subagent import SubAgent
+
 logger = logging.getLogger(__name__)
 
 def _escape_json_string_controls(text: str) -> str:
