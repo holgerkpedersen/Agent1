@@ -11,6 +11,9 @@ r03 (file effects helpers → `agent_core/agent_effects.py`).
 r04 (turn-loop core → `agent_core/turn_loop.py`; `TraceWriter`/`trace_enabled`/
 `ToolLoopRunner`/`_resolve_display_mode`/`record_turn_outcome` resolved lazily
 from the `agent` module so test monkeypatching keeps working).
+r05 (prompt block builders → `agent_core/prompts/context_blocks.py`;
+monkeypatched `decisions_as_system_prompt`/`CHAT_HISTORY_JSON_PATH`/
+`_resolve_display_mode`/`_effective_ws_dir` resolved lazily from `agent`).
 
 ---
 
@@ -64,7 +67,7 @@ Extract `_run_chained_tool_loop`, `_finish_turn`, `_reset_failover_notice`, `_re
 
 Target: `agent_core/turn_loop.py`.
 
-### r05 — Prompt block builders → `agent_core/prompts/context_blocks.py`
+### r05 — Prompt block builders → `agent_core/prompts/context_blocks.py` (DONE)
 
 Extract `_decision_constraints_block`, `_skill_index_block`, `_skill_hint_block`,
 `_habits_block`, `_file_history_block`, `_semantic_memory_block`, `_original_goal_block`,
