@@ -14,6 +14,9 @@ from the `agent` module so test monkeypatching keeps working).
 r05 (prompt block builders → `agent_core/prompts/context_blocks.py`;
 monkeypatched `decisions_as_system_prompt`/`CHAT_HISTORY_JSON_PATH`/
 `_resolve_display_mode`/`_effective_ws_dir` resolved lazily from `agent`).
+r06 (memory persistence → `agent_core/memory/persistence.py`; persisted-state
+paths resolved lazily from `agent`; the 3 pre-existing mypy errors of
+`_record_llm_experience` moved with the code).
 
 ---
 
@@ -76,7 +79,7 @@ Extract `_decision_constraints_block`, `_skill_index_block`, `_skill_hint_block`
 
 Target: `agent_core/prompts/context_blocks.py`.
 
-### r06 — Memory persistence → `agent_core/memory/persistence.py`
+### r06 — Memory persistence → `agent_core/memory/persistence.py` (DONE)
 
 Extract `_load_chat_history`, `_save_chat_history`, `_load_memory`, `_save_memory`,
 `_persist_plan_answer`, `memory_stats`, `clear_history`, `_record_llm_experience`
