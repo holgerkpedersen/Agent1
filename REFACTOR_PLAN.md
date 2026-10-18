@@ -8,6 +8,9 @@
 `Agent._nlp_*` methods are thin delegates; surface test updated).
 r02 (file tool wrappers → `agent_core/agent_files.py`; same delegate pattern).
 r03 (file effects helpers → `agent_core/agent_effects.py`).
+r04 (turn-loop core → `agent_core/turn_loop.py`; `TraceWriter`/`trace_enabled`/
+`ToolLoopRunner`/`_resolve_display_mode`/`record_turn_outcome` resolved lazily
+from the `agent` module so test monkeypatching keeps working).
 
 ---
 
@@ -53,7 +56,7 @@ Extract `_resolve_nlp_path`, `_save_verify_note`, `_verify_file`, `_note_effect`
 
 Target: `agent_core/agent_effects.py`.
 
-### r04 — Tool-loop core → `agent_core/turn_loop.py`
+### r04 — Tool-loop core → `agent_core/turn_loop.py` (DONE)
 
 Extract `_run_chained_tool_loop`, `_finish_turn`, `_reset_failover_notice`, `_report_failover`,
 `_mutating_files_this_turn`, `_print_self_review_note`, `check_stale_files`, `invalidate_stale`
