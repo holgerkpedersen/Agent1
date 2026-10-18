@@ -17,6 +17,10 @@ monkeypatched `decisions_as_system_prompt`/`CHAT_HISTORY_JSON_PATH`/
 r06 (memory persistence → `agent_core/memory/persistence.py`; persisted-state
 paths resolved lazily from `agent`; the 3 pre-existing mypy errors of
 `_record_llm_experience` moved with the code).
+r07 (REPL/CLI layer → `agent_core/cli/interactive.py`; `main` resolves
+`run_interactive`/`run_dashboard_server`/`start_dashboard_thread`/
+`_dashboard_port`/`_start_kanban_inbound` lazily from `agent` so the
+dispatch tests' monkeypatches keep working; `Agent` imported lazily).
 
 ---
 
@@ -87,7 +91,7 @@ Extract `_load_chat_history`, `_save_chat_history`, `_load_memory`, `_save_memor
 
 Target: `agent_core/memory/persistence.py`.
 
-### r07 — REPL / CLI layer → `agent_core/cli/interactive.py`
+### r07 — REPL / CLI layer → `agent_core/cli/interactive.py` (DONE)
 
 Extract `run_interactive`, `main`, `_register_commands`, `_build_registry`,
 `_warn_uncommitted`, `_build_chat_prompt`, `_looks_incomplete`, `_unverified_action_claim`
