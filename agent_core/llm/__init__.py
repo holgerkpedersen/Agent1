@@ -5,6 +5,7 @@ from .tool_loop import ToolLoopRunner
 from .lmstudio import LMStudioProvider
 from .llama_provider import LlamaProvider
 from .openrouter_provider import OpenRouterProvider
+from .client import LLMClient
 
 __all__ = [
     "LLMProvider",
@@ -15,4 +16,5 @@ __all__ = [
     "LMStudioProvider",
     "LlamaProvider",
     "OpenRouterProvider",
+    "LLMClient",
 ]

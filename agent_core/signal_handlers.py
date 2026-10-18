@@ -1,0 +1,109 @@
+"""Signal handling, git branch detection, and interruptible input.
+
+Extracted from agent.py as the first t00 concern (step t01).
+Kept as a separate module so the signal handler has a stable import path
+regardless of how agent.py is refactored.
+"""
+from __future__ import annotations
+
+import os
+import signal
+import subprocess
+import sys
+from typing import Callable, Optional
+
+# ── State ────────────────────────────────────────────────────────────────────
+
+_shutdown_flag: bool = False
+_input_executor: Optional[Callable[[], str]] = None
+
+
+def _signal_break() -> None:
+    """Called on SIGINT/SIGBREAK before the interpreter exits."""
+    global _shutdown_flag
+    _shutdown_flag = True
+
+
+def _signal_break_with_cleanup(signum: int, frame) -> None:
+    """Signal handler that also saves memory and chat history."""
+    global _shutdown_flag
+    _shutdown_flag = True
+    try:
+        import agent
+
+        agent._shutdown_save_memory()  # type: ignore[attr-defined]
+        agent._shutdown_trace_close()  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    sys.exit(128 + signum)
+
+
+def _shutdown_save_memory() -> None:
+    """Save agent memory (chat history, semantic memory)."""
+    try:
+        import agent
+
+        ag: Optional[agent.Agent] = getattr(agent, "_shared_agent", None)  # type: ignore[attr-defined]
+        if ag is not None:
+            ag._save_memory()  # type: ignore[attr-defined]
+            ag._save_chat_history()  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
+def _shutdown_trace_close() -> None:
+    """Close any open trace writer."""
+    try:
+        from agent_core.monitoring.trace_writer import close_trace_writer
+
+        close_trace_writer()
+    except Exception:
+        pass
+
+
+def install() -> None:
+    """Install SIGINT/SIGBREAK handlers with cleanup on Ctrl-C."""
+    if sys.platform == "win32":
+        signal.signal(signal.SIGBREAK, _signal_break_with_cleanup)
+    else:
+        signal.signal(signal.SIGINT, _signal_break_with_cleanup)
+
+
+# ── Git branch ───────────────────────────────────────────────────────────────
+
+
+def current_git_branch(cwd: str | None = None) -> str:
+    """Return the name of the current Git branch, or 'HEAD' if detached."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=cwd,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return "HEAD"
+
+
+# ── Interruptible input ─────────────────────────────────────────────────────
+
+
+def interruptible_input(prompt: str = "", executor: Callable[[], str] | None = None) -> str:
+    """Read a line of input, supporting cancellation via Ctrl-C.
+
+    On Windows the default input() is used; the executor parameter allows
+    tests or custom run loops to supply an alternate source.
+    """
+    global _input_executor
+    if executor is not None:
+        _input_executor = executor
+    if _input_executor is not None:
+        return _input_executor()
+    try:
+        return input(prompt)  # type: ignore[func-returns-value]
+    except (KeyboardInterrupt, EOFError):
+        raise
