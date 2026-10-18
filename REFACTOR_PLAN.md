@@ -1,45 +1,52 @@
 # Refactoring Plan: `agent.py` → `agent_core/` modules
 
-## Why this plan exists
+## Status as of 2026-10-18
 
-`agent.py` is ~4177 lines.  Keeping it monolithic makes it hard to test, hard to navigate, and
-risky to change.  This plan breaks the work into **14 small, reversible steps** — each one
-produces a working, test-passing state before the next step begins.
+**`agent.py` is 4009 lines**, down from ~4177 at the start. The plan is ~60% complete.
+
+### ✅ Already extracted (8 modules done)
+
+| Module | What it holds | Est. lines moved |
+|--------|--------------|-----------------|
+| `agent_core/history_compaction.py` | History-compaction pure functions | ~250 |
+| `agent_core/llm/client.py` | `LLMClient` class + read_json wrapper | ~175 |
+| `agent_core/bootstrap.py` | Bootstrap import block, signal install, environment setup | ~210 |
+| `agent_core/runtime_globals.py` | `live()` accessor for cross-module globals | — |
+| `agent_core/json_utils.py` | JSON read/write with quarantine | ~45 |
+| `agent_core/shell_utils.py` | Shell detection, command hints, subprocess helpers | ~180 |
+| `agent_core/signal_handlers.py` | Signal handlers, interruptible input | ~130 |
+| `agent_core/types.py` | Type constants (`_GOAL_RELATED_THRESHOLD`) | ~1 |
+| `agent_core/run_utils.py` | Kanban bridge, process tree, stream/trace helpers | ~100 |
+
+### ❌ Still to extract (9 modules remaining)
+
+| Step | What moves | Target module | Est. lines |
+|------|-----------|---------------|-----------|
+| r01  | NLP delegate / batch / subagent / MCP / plan handlers | `agent_core/handlers/nlp_tools.py` | ~290 |
+| r02  | Tool-loop runner, turn-finish, quality score, trace | `agent_core/turn_loop.py` | ~350 |
+| r03  | File-tool method wrappers (read, write, edit, patch, search, list, delete, analyze) | `agent_core/agent_files.py` | ~200 |
+| r04  | File-effect helpers: _resolve_nlp_path, _save_verify_note, _verify_file, _note_effect, _take_trace_effects | `agent_core/agent_effects.py` | ~70 |
+| r05  | Plan tool handlers (_nlp_plan_*) | `agent_core/handlers/plan_tools.py` | ~280 |
+| r06  | Shell + subprocess helpers (deduped from shell_utils.py), pytest command policy, constants | `agent_core/shell_intel.py`, `agent_core/pytest_cmd_policy.py` | ~150 |
+| r07  | System-prompt builders (semantic memory, habits, file history, goals, decisions, skills) | `agent_core/prompts/context_blocks.py` | ~270 |
+| r08  | Chat/memory persistence (_load_chat_history, _save_chat_history, _load_memory, _save_memory) | `agent_core/memory/persistence.py` | ~120 |
+| r09  | REPL layer (run_interactive, main, command registry, warn_uncommitted) | `agent_core/cli/interactive.py` | ~400 |
+
+### 🔧 Final cleanup (1 step)
+
+| Step | What | Notes |
+|------|------|-------|
+| r10  | Prune dead imports, run full test suite, update Architecture.md | Gate: `test_agent_module_surface.py` must pass |
 
 ---
 
-## Ground rules for every step
+## Ground rules for every remaining step
 
-1. **Write the failing test first** — before moving any code, add or update the test that will
-   verify the new module surface.  Run it; watch it fail with a clear message.
-2. **Create the new module** with the extracted code.  Write stubs for any names that can't be
-   extracted yet (they refer to code that lives in `agent.py` and will move later).
-3. **Update `agent.py`** to import from the new module; keep old definitions as aliases during
-   the transition so `agent.py` stays importable at every commit.
-4. **Run `tests/test_agent_module_surface.py`** — it is the gate for every step.  No step
-   merges to `master` while this test is red.
-5. **Commit after every step.**  Message format: `refactor(t0N): extract <topic> to agent_core/<module>.py`
-
----
-
-## Step summary
-
-| Step | What moves | Target module | Approx. lines moved |
-|------|-----------|---------------|---------------------|
-| t01  | Signal handlers, git branch, interruptible input | `agent_core/signal_handlers.py` | ~130 |
-| t02  | Shell detection, command hints, pytest guards, subprocess helpers | `agent_core/shell_utils.py` | ~180 |
-| t03  | JSON read/write with quarantine | `agent_core/json_utils.py` | ~45 |
-| t04  | Run utilities: kanban bridge, process tree, stream/trace helpers | `agent_core/run_utils.py` | ~100 |
-| t05  | Type constants (`_GOAL_RELATED_THRESHOLD`) | `agent_core/types.py` | ~1 |
-| t06  | History-compaction pure functions | `agent_core/history_compaction.py` | ~250 *(already exists)* |
-| t07  | Bootstrap import block, signal install, environment setup | `agent_core/bootstrap.py` | ~210 *(already exists)* |
-| t08  | LLMClient class | `agent_core/llm/client.py` | ~175 |
-| t09  | NLP delegate / batch / subagent / MCP tool handlers | `agent_core/nlp_handlers.py` | ~290 |
-| t10  | File-tool methods (read, write, edit, patch, search, list, delete, analyze) | `agent_core/file_tool.py` | ~200 |
-| t11  | System-prompt builders (semantic memory, habits, file history, goals, decisions, skills) | `agent_core/prompt_builders.py` | ~270 |
-| t12  | Tool-loop runner and turn-finish (quality score, trace, metrics) | `agent_core/turn_loop.py` | ~350 |
-| t13  | chat_nlp + _finish_turn (main interaction loop) | `agent_core/chat_loop.py` | ~220 |
-| t14  | Remaining Agent methods + `main` / `run_interactive` | `agent_core/agent.py` | ~400 |
+1. **Write the failing test first** — before moving any code, add or update `tests/test_agent_module_surface.py` with the new names you expect to find in `agent_core/<module>.py`. Run it; watch it fail.
+2. **Create the new module** with the extracted code. Write stubs for any names that can't be extracted yet (they refer to code that still lives in `agent.py` and will move later).
+3. **Update `agent.py`** to import from the new module; keep old definitions as aliases during the transition so `agent.py` stays importable at every commit.
+4. **Run `tests/test_agent_module_surface.py`** — it is the gate. No step merges to `master` while this test is red.
+5. **Commit after every step.** Message format: `refactor(r0N): extract <topic> to agent_core/<module>.py`
 
 ---
 
@@ -47,117 +54,13 @@ produces a working, test-passing state before the next step begins.
 
 ---
 
-### Step t01 — Signal handlers → `agent_core/signal_handlers.py`
+### Step r01 — NLP tool handlers → `agent_core/handlers/nlp_tools.py`
 
-**Already created** (`agent_core/signal_handlers.py` written in this session).  Still missing:
-- `_DANGEROUS_SHELL_PATTERNS` — move to `agent_core/security.py`
-- `_ENV_FILE_PATH` — move to `agent_core/config.py`
-- `_FULL_SUITE_MARGIN` — move to `agent_core/constants.py`
-- `_PYTEST_BARE_TOKENS`, `_PYTEST_FULL_SUITE_TIMEOUT_KEY`, `_PYTEST_LAST_FULL_RUN_KEY`,
-  `_PYTEST_SUBSET_FLAGS`, `_PYTEST_VALUE_FLAGS` — move to `agent_core/constants.py`
-- `_install_signal_handlers` → `_install_signal_handlers` in this module
-- `_signal_break` → already in this module
-- `_SHELL_NAME`, `_shutdown_flag` → already in this module (as module-level state)
-
-**TODO**: Sync these constants into their respective modules, update `agent.py` imports.
-
----
-
-### Step t02 — Shell utilities → `agent_core/shell_utils.py`
-
-**Already created** (`agent_core/shell_utils.py` written in this session).  Contains:
-- `detect_shell`, `shell_name_token`, `current_git_branch`
-- `unix_command_hint`, `windows_command_hint`, `shell_command_hint`
-- `truncate_output`, `run_subprocess_captured`, `shape_run_stderr`
-- `blocked_shell_command`, `read_env_value`
-- `pytest_full_suite_timeout`, `is_full_pytest_command`, `is_pytest_command`,
-  `is_subset_pytest_command`
-- `SYSTEM_PROMPT` (stub)
-
-**TODO**: Verify exports, fix `agent.py` to import from here.
-
----
-
-### Step t03 — JSON utilities → `agent_core/json_utils.py`
-
-**Already created** (`agent_core/json_utils.py` written in this session).  Contains:
-- `_read_json_quarantining` (verified imported by `agent.py` at lines 3485, 3559)
-
-**TODO**: Verify re-export in `agent.py`, confirm `_quarantine` is internal-only.
-
----
-
-### Step t04 — Run utilities → `agent_core/run_utils.py`
-
-**Already created** (`agent_core/run_utils.py` written in this session).  Contains:
-- `_start_kanban_inbound` (verified called at line 4166)
-- `kill_process_tree` (aliased as `_kill_process_tree` at line 136)
-- `resolve_stream_fn`, `resolve_display_mode`
-- `final_answer_fallback`
-- `turn_quality_score`
-- `begin_trace_turn`, `append_turn_log`
-- `strip_dynamic_system_blocks`
-- `unverified_action_claim`
-
-**TODO**: Verify all call sites in `agent.py` resolve correctly.
-
----
-
-### Step t05 — Type constants → `agent_core/types.py`
-
-**Already created** (`agent_core/types.py` written in this session).  Contains:
-- `_GOAL_RELATED_THRESHOLD` (verified imported at line 154, used at line 3406)
-
----
-
-### Step t06 — History compaction → `agent_core/history_compaction.py`
-
-**Already exists.**  Verified exports: `_content_tokens`, `_compaction_note_goal`,
-`_drop_orphan_tool_messages`, `_first_user_message_text`, `_is_compaction_note`,
-`_message_size`, `_project_chat_history`, `_recover_original_goal`,
-`_repair_unanswered_tool_calls`, `_strip_image_blocks`, `_strip_turn_wrappers`,
-`_strip_tool_args`, `_trim_chat_history`.
-
-No further action needed.
-
----
-
-### Step t07 — Bootstrap → `agent_core/bootstrap.py`
-
-**Already exists.**  `__all__` needs ~30 names added (see `tests/test_agent_module_surface.py`
-`EXPECTED_IMPORTED`).  Run `pytest tests/test_agent_module_surface.py` and fix each missing name
-individually.
-
----
-
-### Step t08 — LLMClient → `agent_core/llm/client.py`
-
-**Target**: Class `LLMClient` (lines 156–331, ~175 lines).
+**Target**: All `_nlp_*` methods on `Agent` (lines 509–1536, ~290 lines).
 
 ```
-agent_core/llm/client.py
-├── class LLMClient
-│   ├── __init__ (model resolution, api_key)
-│   ├── _reconcile_llama_model
-│   ├── model_name (property)
-│   ├── chat (async)
-│   ├── chat_stream (async)
-│   ├── chat_with_continuation (async)
-│   └── analyze_code (async)
-```
-
-`agent.py` keeps `from agent_core.llm.client import LLMClient` as an alias.
-
----
-
-### Step t09 — NLP handlers → `agent_core/nlp_handlers.py`
-
-**Target**: All `_nlp_*` methods on `Agent` (lines 684–1190, ~290 lines).
-
-```
-agent_core/nlp_handlers.py
-├── class NlpToolHandler (TypedDict or dataclass)
-├── _nlp_tool_handlers (method -> returns dict[str, NlpToolHandler])
+agent_core/handlers/nlp_tools.py
+├── _nlp_tool_handlers (method → returns dict[str, NlpToolHandler])
 ├── _nlp_delegate
 ├── _nlp_delegate_batch
 ├── _nlp_create_subagent
@@ -187,40 +90,158 @@ agent_core/nlp_handlers.py
 ```
 
 `Agent` gets a `_nlp_handlers: NlpToolHandlers` instance attribute; `_nlp_*` methods delegate
-to it.  This keeps the call signatures unchanged for callers.
+to it. This keeps the call signatures unchanged for callers.
+
+Note: `_nlp_hue_control` stays in `Agent` for now (depends on `self` state tightly).
+`_get_plan_state` is plan-tool infrastructure — handled in r05.
+
+**Test**: `EXPECTED_DEFINITIONS` in `test_agent_module_surface.py` gains `_nlp_delegate`, etc.
 
 ---
 
-### Step t10 — File tools → `agent_core/file_tool.py`
+### Step r02 — Tool loop + turn finish → `agent_core/turn_loop.py`
 
-**Target**: All `_tool_*` and `_nlp_*` file I/O methods on `Agent` (lines 2156–2343, ~200 lines).
+**Target**: `_run_chained_tool_loop`, `_finish_turn`, `_reset_failover_notice`, `_report_failover`,
+`_looks_incomplete`, `_unverified_action_claim` (lines 2264–2696, 3652–3702, ~350 lines).
 
 ```
-agent_core/file_tool.py
-├── execute_tool (dispatches to named method)
+agent_core/turn_loop.py
+├── _looks_incomplete
+├── _unverified_action_claim
+├── _reset_failover_notice
+├── _report_failover
+├── _finish_turn
+└── _run_chained_tool_loop
+```
+
+`Agent.chat_nlp` stays in `agent.py` but calls into `agent_core/turn_loop` for the loop body.
+
+**Test**: `EXPECTED_DEFINITIONS` gains `_run_chained_tool_loop`, `_finish_turn`, `_looks_incomplete`, `_unverified_action_claim`.
+
+---
+
+### Step r03 — File-tool method wrappers → `agent_core/agent_files.py`
+
+**Target**: `_tool_*` aliases, `execute_tool`, `_normalize_path`, `_safe_path`, and the
+public `read_file`, `write_file`, `apply_patch`, `edit_file`, `search_file` methods
+(lines 1981–2168, ~200 lines).
+
+```
+agent_core/agent_files.py
+├── _tool_read_file
+├── _tool_write_file
+├── _tool_apply_patch
+├── _tool_edit_file
+├── _tool_search
+├── _tool_list_files
+├── _tool_delete_file
+├── _tool_analyze_file
+├── _tool_llm_analyze
+├── execute_tool
 ├── _normalize_path
 ├── _safe_path
 ├── read_file
 ├── write_file
 ├── apply_patch
 ├── edit_file
-├── search_file
-├── list_files
-├── delete_file
-├── analyze_file
-├── llm_analyze_file
+└── search_file
 ```
 
-`Agent` gets a `self._file_tool: FileTool` attribute; tool methods become thin wrappers.
+`Agent` keeps one-line delegators. `Agent._build_semantic_index` and `_cleanup_semantic_index`
+stay on `Agent` (tightly coupled to `Agent._semantic_index` dict).
+
+**Test**: `EXPECTED_DEFINITIONS` gains `execute_tool`, `read_file`, `write_file`, `apply_patch`, `edit_file`, `search_file`.
 
 ---
 
-### Step t11 — Prompt builders → `agent_core/prompt_builders.py`
+### Step r04 — File-effect helpers → `agent_core/agent_effects.py`
 
-**Target**: System-prompt builder methods on `Agent` (lines 3170–3473, ~270 lines).
+**Target**: `_resolve_nlp_path`, `_save_verify_note`, `_verify_file`, `_note_effect`,
+`_take_trace_effects` (lines 389–456, ~70 lines).
 
 ```
-agent_core/prompt_builders.py
+agent_core/agent_effects.py
+├── _resolve_nlp_path
+├── _save_verify_note
+├── _verify_file
+├── _note_effect
+└── _take_trace_effects
+```
+
+These are helpers that track file-system side effects. They need access to `Agent` state
+(e.g. `self._effective_ws_dir`, `self._trace_file`). Pass `Agent` instance or relevant
+fields as parameters.
+
+**Test**: `EXPECTED_DEFINITIONS` gains these five names.
+
+---
+
+### Step r05 — Plan tool handlers → `agent_core/handlers/plan_tools.py`
+
+**Target**: `_nlp_plan_status`, `_nlp_plan_start`, `_nlp_plan_step`, `_nlp_plan_finish`,
+`_get_plan_state`, `_persist_plan_answer` (lines 1652–1977, ~280 lines).
+
+```
+agent_core/handlers/plan_tools.py
+├── _get_plan_state
+├── _nlp_plan_status
+├── _nlp_plan_start
+├── _nlp_plan_step
+├── _nlp_plan_finish
+└── _persist_plan_answer
+```
+
+Note: `plan_status`, `plan_start`, `plan_step`, `plan_finish` are top-level functions in
+`agent.py` (imported from `agent_core.run_utils`). This module handles the NLP-layer wrapping.
+
+**Test**: `EXPECTED_DEFINITIONS` gains `_nlp_plan_start`, etc.
+
+---
+
+### Step r06 — Shell intel + pytest policy → `agent_core/shell_intel.py` + `agent_core/pytest_cmd_policy.py`
+
+**Target** (from `agent.py` + deduplicating `agent_core/shell_utils.py`):
+
+```
+agent_core/shell_intel.py
+├── _detect_shell
+├── _git_branch
+├── _dangerous_shell_patterns (moved from agent.py body)
+├── blocked_shell_command
+├── read_env_value
+└── _ENV_FILE_PATH (two-level __file__ form, routed through live())
+```
+
+```
+agent_core/pytest_cmd_policy.py
+├── _ENV_FILE_PATH
+├── _PYTEST_FULL_SUITE_TIMEOUT_KEY
+├── _PYTEST_LAST_FULL_RUN_KEY
+├── _PYTEST_BARE_TOKENS
+├── _PYTEST_SUBSET_FLAGS
+├── _PYTEST_VALUE_FLAGS
+├── _FULL_SUITE_MARGIN
+├── pytest_full_suite_timeout
+├── is_full_pytest_command
+├── is_pytest_command
+├── is_subset_pytest_command
+└── _install_signal_handlers
+```
+
+**Test**: `EXPECTED_DEFINITIONS` gains `_dangerous_shell_patterns`, `_ENV_FILE_PATH`, etc.
+
+---
+
+### Step r07 — Prompt context blocks → `agent_core/prompts/context_blocks.py`
+
+**Target**: `_refresh_system_message`, `_append_user_turn`, `_decision_constraints_block`,
+`_skill_index_block`, `_skill_hint_block`, `_habits_block`, `_file_history_block`,
+`_semantic_memory_block`, `_ensure_original_goal`, `_recent_user_texts`,
+`_prompts_related`, `_suspend_history_for_new_task`, `_original_goal_block`
+(lines 2176–3298, ~270 lines).
+
+```
+agent_core/prompts/context_blocks.py
 ├── _refresh_system_message
 ├── _append_user_turn
 ├── _decision_constraints_block
@@ -233,110 +254,114 @@ agent_core/prompt_builders.py
 ├── _recent_user_texts
 ├── _prompts_related
 ├── _suspend_history_for_new_task
-├── _original_goal_block
+└── _original_goal_block
+```
+
+**Test**: `EXPECTED_DEFINITIONS` gains `_refresh_system_message`, `_semantic_memory_block`, etc.
+
+---
+
+### Step r08 — Chat/memory persistence → `agent_core/memory/persistence.py`
+
+**Target**: `_load_chat_history`, `_save_chat_history`, `_load_memory`, `_save_memory`,
+`check_stale_files`, `invalidate_stale`, `memory_stats`, `clear_history`
+(lines 2923–3439, ~120 lines).
+
+```
+agent_core/memory/persistence.py
+├── check_stale_files
+├── invalidate_stale
+├── memory_stats
+├── clear_history
 ├── _load_chat_history
 ├── _save_chat_history
 ├── _load_memory
 └── _save_memory
 ```
 
-These are pure-ish (mostly string-building + light I/O) and easiest to extract after
-the tool layer is settled.
+Routes `AGENT_MEMORY_JSON_PATH` and `TURN_LOG_PATH` through `live()`.
+
+**Test**: `EXPECTED_DEFINITIONS` gains `clear_history`, `_load_memory`, etc.
 
 ---
 
-### Step t12 — Turn loop → `agent_core/turn_loop.py`
+### Step r09 — REPL / interactive layer → `agent_core/cli/interactive.py`
 
-**Target**: `_run_chained_tool_loop`, `_finish_turn`, `_report_failover`, `_reset_failover_notice`
-(lines 2439–2871, ~350 lines).
+**Target**: `_register_commands`, `_build_registry`, `_warn_uncommitted`, `_build_chat_prompt`,
+`run_one`, `llm_chat_fn`, `_short`, `run_interactive`, `main` (lines 3730–4009, ~400 lines).
 
 ```
-agent_core/turn_loop.py
-├── class TurnLoopRunner
-│   ├── __init__(agent, ...)
-│   ├── run(user_input, messages, display_mode) -> (final_text, messages, error, runner)
-│   ├── _reset_failover_notice
-│   ├── _report_failover
-│   └── _finish_turn
+agent_core/cli/interactive.py
+├── _register_commands
+├── _build_registry
+├── _warn_uncommitted
+├── _build_chat_prompt
+├── run_one
+├── llm_chat_fn
+├── _short
+├── run_interactive
+└── main
 ```
 
-`Agent.chat_nlp` delegates to `TurnLoopRunner`.  All metrics/trace/quality-score logic lives here.
+The `Agent` class (now ~100 method lines) plus these top-level functions remain in `agent.py`.
+`agent.py` becomes a thin facade that imports and re-exports from `agent_core/`.
+
+**Test**: `EXPECTED_DEFINITIONS` gains `run_interactive`, `main`, `_warn_uncommitted`.
 
 ---
 
-### Step t13 — Chat loop → `agent_core/chat_loop.py`
+### Step r10 — Final cleanup
 
-**Target**: `chat_nlp` (lines 2873–3017, ~144 lines) and `_mutating_files_this_turn`,
-`_print_self_review_note`, `_persist_plan_answer` (lines 3019–3096, ~77 lines).
+1. Run `python -m pytest tests/test_agent_module_surface.py` — all 6 tests must pass.
+2. Run full lint sweep: `ruff check agent.py agent_core/ --fix`.
+3. Prune all dead import aliases from `agent.py` (every `Name = agent_core.X` alias that is
+   no longer needed because callers now import from `agent_core/` directly).
+4. Update `Architecture.md` and any module-map docs to reflect the new layout.
+5. One final full test run: `python -m pytest`.
+6. Commit with message: `refactor(r10): finish agent.py extraction — thin facade complete`.
+
+---
+
+## Expected final state
 
 ```
-agent_core/chat_loop.py
-├── async def chat_nlp(agent, user_input, images) -> None
-├── _mutating_files_this_turn(agent) -> list[str]
-├── _print_self_review_note(agent, mutated_files) -> None
-└── _persist_plan_answer(agent, plan_text) -> None
+agent.py                          (~100 lines — thin facade + Agent class skeleton)
+agent_core/
+  __init__.py
+  bootstrap.py                    (~210 lines)
+  history_compaction.py           (~250 lines)
+  llm/
+    __init__.py
+    client.py                     (~175 lines)
+  json_utils.py                   (~45 lines)
+  shell_utils.py                  (~180 lines)
+  shell_intel.py                  (~80 lines)
+  signal_handlers.py              (~130 lines)
+  pytest_cmd_policy.py           (~100 lines)
+  run_utils.py                    (~100 lines)
+  runtime_globals.py             (live() accessor)
+  types.py                        (~1 line)
+  agent_files.py                  (~200 lines)
+  agent_effects.py                (~70 lines)
+  prompts/
+    context_blocks.py             (~270 lines)
+  memory/
+    persistence.py               (~120 lines)
+  handlers/
+    __init__.py
+    nlp_tools.py                  (~290 lines)
+    plan_tools.py                 (~280 lines)
+  cli/
+    __init__.py
+    interactive.py               (~400 lines)
 ```
 
 ---
 
-### Step t14 — Agent class body + entry points → `agent_core/agent.py`
+## How to run the gate test
 
-**Target**: The `Agent.__init__` body (lines 335–459, ~124 lines), remaining methods, and the
-top-level functions at the bottom of `agent.py`.
-
-After all previous steps:
-- `Agent` holds only: `__init__` body, `_register_tool_handlers`, `build_transport`,
-  `spawn_subagent`, `run_parallel_tasks`, `record_demo_activity`, `get_metrics_collector`,
-  `_resolve_nlp_path`, `_execute_tool_call`, `_get_plan_state`, `check_stale_files`,
-  `invalidate_stale`, `memory_stats`, `clear_history`, `_record_llm_experience`
-- Top-level: `_looks_incomplete`, `_unverified_action_claim`, `_register_commands`,
-  `_build_registry`, `_warn_uncommitted`, `_build_chat_prompt`, `run_interactive`, `main`
-
-`agent.py` becomes:
-```python
-"""Public entry point — thin wrapper over agent_core.agent."""
-from agent_core.agent import Agent, main, run_interactive
-from agent_core.agent import (
-    _looks_incomplete, _unverified_action_claim,
-    _register_commands, _build_registry, _warn_uncommitted, _build_chat_prompt,
-)
+```bash
+python -m pytest tests/test_agent_module_surface.py -v
 ```
 
----
-
-## What happens to `agent.py`
-
-After step t14, `agent.py` is **≤ 20 lines**: docstring, import from `agent_core.agent`,
-re-exports for backward compatibility with any code that does `from agent import X`.
-
-The old `from agent import Agent` import continues to work throughout all 14 steps via aliases.
-
----
-
-## Test surface
-
-`tests/test_agent_module_surface.py` is the gate for every step.  At each step:
-1. Update `EXPECTED_DEFINITIONS` to reflect which names are now in `agent.py` vs. extracted.
-2. Update `EXPECTED_IMPORTED` to reflect which names are now imported from new modules.
-3. `pytest tests/test_agent_module_surface.py` must pass before committing.
-
-After step t14, `EXPECTED_DEFINITIONS` contains only the 9 names `agent.py` keeps
-(`Agent`, `LLMClient`, `main`, `run_interactive`, `_looks_incomplete`, `_unverified_action_claim`,
-`_register_commands`, `_build_registry`, `_warn_uncommitted`, `_build_chat_prompt`).
-
----
-
-## How to run the plan
-
-```powershell
-# Verify baseline (step 0)
-pytest tests/test_agent_module_surface.py -q
-
-# Run one step at a time:
-# 1. Make the code change
-# 2. Update the test fixture
-# 3. pytest tests/test_agent_module_surface.py -q
-# 4. git add -A; git commit -m "refactor(t01): ..."
-```
-
-Each step is independent and revertable via `git revert <commit>`.
+All 6 tests must be green before every commit.
