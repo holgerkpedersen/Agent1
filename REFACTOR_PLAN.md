@@ -2,7 +2,11 @@
 
 ## Status as of 2026-10-18
 
-**`agent.py` is 4002 lines.** This plan splits it into focused modules.
+**`agent.py` is 1799 lines.** This plan splits it into focused modules.
+
+**Done:** r01 (NLP tool handlers → `agent_core/handlers/nlp_tools.py`;
+`Agent._nlp_*` methods are thin delegates; surface test updated).
+r02 (file tool wrappers → `agent_core/agent_files.py`; same delegate pattern).
 
 ---
 
@@ -18,7 +22,7 @@
 
 ## Remaining extraction steps
 
-### r01 — NLP tool handlers → `agent_core/handlers/nlp_tools.py`
+### r01 — NLP tool handlers → `agent_core/handlers/nlp_tools.py` (DONE)
 
 Extract all `async def _nlp_*` methods on `Agent` that delegate to sub-systems:
 `_nlp_delegate`, `_nlp_delegate_batch`, `_nlp_create_subagent`, `_nlp_run_subagent_task`,
@@ -33,7 +37,7 @@ Also extract `_nlp_plan_status`, `_nlp_plan_start`, `_nlp_plan_step`, `_nlp_plan
 
 Target: `agent_core/handlers/nlp_tools.py` (~320 lines).
 
-### r02 — File tool wrappers → `agent_core/agent_files.py`
+### r02 — File tool wrappers → `agent_core/agent_files.py` (DONE)
 
 Extract `_tool_read_file`, `_tool_write_file`, `_tool_apply_patch`, `_tool_edit_file`,
 `_tool_search`, `_tool_list_files`, `_tool_delete_file`, `_tool_analyze_file`,

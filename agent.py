@@ -116,43 +116,19 @@ from agent_core.handlers.nlp_tools import (
     _nlp_plan_finish,
 )
 
-from agent_core.handlers.nlp_tools import (
-    _nlp_delegate,
-    _nlp_delegate_batch,
-    _run_command_quietly,
-    _effective_ws_dir,
-    _nlp_create_subagent,
-    _nlp_run_subagent_task,
-    _nlp_tool_handlers,
-    _nlp_mcp_tools,
-    _nlp_mcp_call,
-    _nlp_definitions,
-    _nlp_references,
-    _nlp_jev_decide,
-    _nlp_speculate,
-    _nlp_search,
-    _nlp_read,
-    _nlp_read_many,
-    _read_page,
-    _nlp_read_skill,
-    _nlp_list_files,
-    _nlp_fix,
-    _nlp_write,
-    _nlp_run,
-    _nlp_git,
-    _nlp_merge,
-    _nlp_diff,
-    _nlp_edit,
-    _nlp_tests,
-    _nlp_analyze,
-    _nlp_web_search,
-    _nlp_get_current_datetime,
-    _nlp_hue_control,
-    _get_plan_state,
-    _nlp_plan_status,
-    _nlp_plan_start,
-    _nlp_plan_step,
-    _nlp_plan_finish,
+from agent_core.agent_files import (
+    _tool_read_file,
+    _tool_write_file,
+    _tool_apply_patch,
+    _tool_edit_file,
+    _tool_search,
+    _tool_list_files,
+    _tool_delete_file,
+    _tool_analyze_file,
+    _tool_llm_analyze,
+    execute_tool,
+    _normalize_path,
+    _safe_path,
 )
 
 
@@ -505,55 +481,43 @@ class Agent:
         return await _nlp_plan_finish(self, args)
 
     async def _tool_read_file(self, path: str, **kwargs: Any) -> str:
-        result = await self.fs.read(path)
-        if not result.startswith('File not found') and (not result.startswith('Error')):
-            safe = self.fs.safe_path(path)
-            self._files_read.add(safe)
-            try:
-                self._file_mtimes[safe] = os.path.getmtime(safe)
-            except OSError as e:
-                logger.warning('Could not stat %s: %s', safe, e)
-        return result
+        return await _tool_read_file(self, path, **kwargs)
 
     async def _tool_write_file(self, path: str, content: str, **kwargs: Any) -> str:
-        return await self.fs.write(path, content)
+        return await _tool_write_file(self, path, content, **kwargs)
 
     async def _tool_apply_patch(self, path: str, find: str, replace: str, **kwargs: Any) -> str:
-        return await self.fs.apply_patch(path, find, replace)
+        return await _tool_apply_patch(self, path, find, replace, **kwargs)
 
     async def _tool_edit_file(self, path: str, content: str, **kwargs: Any) -> str:
-        return await self.fs.edit(path, content)
+        return await _tool_edit_file(self, path, content, **kwargs)
 
     async def _tool_search(self, query: str, path: str='.', **kwargs: Any) -> str:
-        search_path = self._resolve_nlp_path(path or '.')
-        return await self.searcher.search(query, search_path)
+        return await _tool_search(self, query, path, **kwargs)
 
     async def _tool_list_files(self, path: str='.', pattern: str='*', **kwargs: Any) -> str:
-        return await self.fs.list_files(path, pattern)
+        return await _tool_list_files(self, path, pattern, **kwargs)
 
     async def _tool_delete_file(self, path: str, **kwargs: Any) -> str:
-        return await self.fs.delete(path)
+        return await _tool_delete_file(self, path, **kwargs)
 
     async def _tool_analyze_file(self, path: str, **kwargs: Any) -> str:
-        return cast(str, await self.llm.analyze_code(await self.read_file(path)))
+        return await _tool_analyze_file(self, path, **kwargs)
 
     async def _tool_llm_analyze(self, path: str, **kwargs: Any) -> str:
-        file_content = await self.read_file(path, track_read=False)
-        if file_content.startswith('File not found:') or file_content.startswith('Error reading file:'):
-            return f'Could not analyze: {file_content}'
-        return cast(str, await self.llm.analyze_code(file_content))
+        return await _tool_llm_analyze(self, path, **kwargs)
 
     async def execute_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
         """Execute a tool by name using the dispatcher."""
-        return await self.dispatcher.execute(tool_name, arguments)
+        return await execute_tool(self, tool_name, arguments)
 
     def _normalize_path(self, path: str) -> str:
         """Normalize and validate paths with security checks."""
-        return resolve_path(path)
+        return _normalize_path(self, path)
 
     def _safe_path(self, path: str) -> str:
         """Validate and normalize path in one step."""
-        return safe_path(path)
+        return _safe_path(self, path)
 
     async def read_file(self, path: str, track_read: bool=True) -> str:
         local_path = self._safe_path(path)
