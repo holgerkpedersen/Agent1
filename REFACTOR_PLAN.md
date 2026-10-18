@@ -7,6 +7,7 @@
 **Done:** r01 (NLP tool handlers → `agent_core/handlers/nlp_tools.py`;
 `Agent._nlp_*` methods are thin delegates; surface test updated).
 r02 (file tool wrappers → `agent_core/agent_files.py`; same delegate pattern).
+r03 (file effects helpers → `agent_core/agent_effects.py`).
 
 ---
 
@@ -45,7 +46,7 @@ Extract `_tool_read_file`, `_tool_write_file`, `_tool_apply_patch`, `_tool_edit_
 
 Target: `agent_core/agent_files.py`.
 
-### r03 — File effects helpers → `agent_core/agent_effects.py`
+### r03 — File effects helpers → `agent_core/agent_effects.py` (DONE)
 
 Extract `_resolve_nlp_path`, `_save_verify_note`, `_verify_file`, `_note_effect`,
 `_take_trace_effects` (~70 lines).

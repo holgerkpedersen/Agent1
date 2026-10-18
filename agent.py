@@ -131,6 +131,14 @@ from agent_core.agent_files import (
     _safe_path,
 )
 
+from agent_core.agent_effects import (
+    _resolve_nlp_path,
+    _save_verify_note,
+    _verify_file,
+    _note_effect,
+    _take_trace_effects,
+)
+
 
 class Agent:
     """Main agent class with workspace management and tool execution."""
@@ -262,67 +270,19 @@ class Agent:
         return get_metrics_collector()
 
     def _resolve_nlp_path(self, path: str) -> str:
-        """Resolve a path for NLP tool use, honouring _nlp_workspace if set.
-
-        Relative paths are resolved against the effective workspace (never the
-        process CWD), so tools stay scoped to the agent's workspace.
-        """
-        import os as _os
-        base = self._nlp_workspace or self.workspace
-        if not _os.path.isabs(path):
-            return _os.path.normpath(_os.path.join(base, path))
-        return path
+        return _resolve_nlp_path(self, path)
 
     async def _save_verify_note(self, path: str, content: str, ok_msg: str) -> str:
-        """Persist *content*, py_compile-verify .py files, note the effect.
-
-        Shared tail of the NLP ``write`` and ``edit`` tool handlers so both
-        produce byte-identical success output (message + verification line)
-        and identical trace-effect bookkeeping.  Returns the "Skipped …
-        (no changes)" message when ``save_file_py`` finds nothing to do.
-        """
-        if not save_file_py(path, content, auto_yes=True):
-            return f'Skipped {path} (no changes)'
-        verify = await self._verify_file(path) if path.endswith('.py') else ''
-        self._note_effect(path)
-        return f'{ok_msg}\n{verify}'.strip()
+        return await _save_verify_note(self, path, content, ok_msg)
 
     async def _verify_file(self, path: str) -> str:
-        """Run py_compile on *path* and return a short verification summary."""
-        try:
-            cwd = os.path.abspath(to_windows_path(self._nlp_workspace or self.workspace))
-            if not os.path.isdir(cwd):
-                cwd = self.workspace
-            r = subprocess.run([sys.executable, '-m', 'py_compile', path], capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=cwd)
-        except OSError as e:
-            return f'[verify] py_compile could not run: {e}'
-        if r.returncode == 0:
-            return '[verify] py_compile ✓'
-        return f'[verify] py_compile ✗: {r.stderr.strip()[:300]}'
+        return await _verify_file(self, path)
 
     def _note_effect(self, path: str) -> None:
-        """Record one file affected by the current tool call.
-
-        Only active while ``_pending_effects`` is armed (i.e. inside a traced
-        chat_nlp run, decision #048) — otherwise this is a no-op cost-free
-        guard, so untraced agent behaviour is unchanged.
-        """
-        if self._pending_effects is None:
-            return
-        abs_path = os.path.abspath(to_windows_path(str(path)))
-        if abs_path not in self._pending_effects:
-            self._pending_effects.append(abs_path)
+        _note_effect(self, path)
 
     def _take_trace_effects(self, name: str, args: dict[str, Any]) -> list[str]:
-        """``effects_fn`` for ToolLoopRunner: drain this tool call's effects.
-
-        Returns the files affected by the just-executed tool call and resets
-        the buffer for the next one.  Never raises (guarded by the loop too).
-        """
-        effects = list(self._pending_effects or [])
-        if self._pending_effects is not None:
-            self._pending_effects.clear()
-        return effects
+        return _take_trace_effects(self, name, args)
 
     def set_mode(self, mode: str) -> None:
         """Switch the session mode (``build`` | ``plan``).
