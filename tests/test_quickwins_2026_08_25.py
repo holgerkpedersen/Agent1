@@ -15,7 +15,12 @@ from pathlib import Path
 import pytest
 
 import agent
-from agent import Agent, _HISTORY_CHAR_BUDGET, _MAX_CHAT_MESSAGES, _trim_chat_history
+from agent import Agent
+from agent_core.history_compaction import (
+    _HISTORY_CHAR_BUDGET,
+    _MAX_CHAT_MESSAGES,
+    _trim_chat_history,
+)
 from agent_core.commands.multillm_cmd import MultiLlmCommand
 from agent_core.llm.parallel import ParallelResult, ParallelRun
 

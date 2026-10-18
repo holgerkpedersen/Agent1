@@ -77,127 +77,81 @@ def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
         return {}
 
 
-@contextlib.contextmanager
-def _suppress_and_log(label: str) -> Iterator[None]:
-    """Run the block, logging (not propagating) any exception.
 
-    Centralises the "best-effort: log and continue" pattern so call sites have
-    a single, duplication-proof handler instead of an inline ``except Exception``
-    that an edit can accidentally clone.
-    """
-    try:
-        yield
-    except Exception:  # noqa: BLE001 - deliberate best-effort swallow
-        logger.warning("%s\n%s", label, traceback.format_exc())
+# ── Imports from agent_core modules that were stubbed in this file ───────────
+# t00: bootstrap helpers — _suppress_and_log lives in its own module
+from agent_core.suppress_log import _suppress_and_log
 
+# t00: signal handlers, git branch, interruptible input
+# install = public API; _install_signal_handlers kept as alias for call sites
+# interruptible_input = public API; _interruptible_input kept as alias
+# current_git_branch = public API; _current_git_branch kept as alias
+from agent_core.signal_handlers import (
+    _signal_break_with_cleanup,
+    install as _install_signal_handlers,
+    current_git_branch as _current_git_branch,
+    interruptible_input as _interruptible_input,
+)
 
-#: Handler signature for the NLP tool dispatch table: each handler receives the
-#: parsed JSON arguments and returns a string result for the model.
-NlpToolHandler = Callable[[dict[str, Any]], Awaitable[str]]
+# t00: shell utilities (shell detection, command hints, subprocess helpers)
+from agent_core.shell_utils import (
+    detect_shell as _detect_shell,
+    shell_name_token as _shell_name_token,
+    current_git_branch as _git_branch,
+    unix_command_hint as _unix_command_hint,
+    windows_command_hint as _windows_command_hint,
+    shell_command_hint as _shell_command_hint,
+    truncate_output as _truncate_output,
+    run_subprocess_captured as _run_subprocess_captured,
+    shape_run_stderr as _shape_run_stderr,
+    blocked_shell_command as _blocked_shell_command,
+    read_env_value as _read_env_value,
+    pytest_full_suite_timeout as _pytest_full_suite_timeout,
+    is_full_pytest_command as _is_full_pytest_command,
+    is_pytest_command as _is_pytest_command,
+    is_subset_pytest_command as _is_subset_pytest_command,
+    SYSTEM_PROMPT,
+)
 
-# ── Interruptible input (so background processes can be killed) ──────────
-# On Windows, input() is a C-level blocking call that can't be interrupted by
-# signals.  A daemon thread reads stdin while the main thread polls with a
-# timeout, allowing SIGBREAK / shutdown flags to be checked periodically.
-_SHUTDOWN_FLAG = False
-_input_executor: concurrent.futures.ThreadPoolExecutor | None = None
+# t00: json utilities (_read_json_quarantining)
+from agent_core.json_utils import _read_json_quarantining
 
+# t00: history compaction (trim, strip, goal recovery, message sizing)
+from agent_core.history_compaction import (
+    _recover_original_goal,
+    _strip_image_blocks,
+    _trim_chat_history,
+    _HISTORY_CHAR_BUDGET,
+    _MAX_CHAT_MESSAGES,
+)
 
-def _signal_break(sig: int, frame: Any) -> None:
-    """SIGBREAK handler — set flag so the REPL loop can exit."""
-    global _SHUTDOWN_FLAG
-    _SHUTDOWN_FLAG = True
-    # Force-exit if the REPL is stuck in input() — the flag alone isn't enough
-    # because input() won't return until the next keypress on Windows.
-    os._exit(1)
+# t00: tool loop helpers (message sizing for token budget)
+from agent_core.llm.tool_loop import _message_size
 
+# t00: run utilities (process tree, kanban, quarantine, claim/incomplete helpers)
+# resolve_stream_fn / resolve_display_mode / final_answer_fallback live here
+# turn_quality_score / begin_trace_turn / append_turn_log / strip_dynamic_system_blocks live here
+from agent_core.run_utils import (
+    _start_kanban_inbound,
+    kill_process_tree as _kill_process_tree,
+    unverified_action_claim as _unverified_action_claim,
+    resolve_stream_fn as _resolve_stream_fn,
+    resolve_display_mode as _resolve_display_mode,
+    final_answer_fallback as _final_answer_fallback,
+    turn_quality_score as _turn_quality_score,
+    begin_trace_turn as _begin_trace_turn,
+    append_turn_log as _append_turn_log,
+    strip_dynamic_system_blocks as _strip_dynamic_system_blocks,
+)
 
-# Shutdown-cleanup callbacks — set by _install_signal_handlers when an Agent
-# instance is available, so the SIGBREAK handler can persist memory and flush
-# traces before exiting (decision #049 / workflow 2026-08-21).
-_shutdown_save_memory = None
-_shutdown_trace_close = None
+# t00: looks_incomplete is defined at module level in this file
+# (imported below after the function definition)
 
+# t00: NlpToolHandler type alias — bound async methods on Agent
+NlpToolHandler = Callable[..., Awaitable[str]]  # type: ignore[misc]
 
-def _signal_break_with_cleanup(sig: int, frame: Any) -> None:
-    """SIGBREAK handler that performs best-effort cleanup before exit.
-
-    Saves agent memory (cross-session state) and flushes/closes the active
-    trace writer so in-flight tool-call effects are not lost from
-    ``reports/traces/*.jsonl``.  Each step is guarded — a failing hook logs
-    and continues rather than masking the shutdown itself.
-    """
-    global _SHUTDOWN_FLAG
-    _SHUTDOWN_FLAG = True
-    from agent_core.security.shutdown import safe_signal_break_handler
-    safe_signal_break_handler(
-        memory_path=str(AGENT_MEMORY_JSON_PATH),
-        trace_writer_close=_shutdown_trace_close,
-        save_memory_fn=_shutdown_save_memory,
-    )
-
-
-def _install_signal_handlers(agent: Optional["Agent"] = None) -> None:
-    """Register SIGBREAK (Windows Ctrl+Break / taskkill) for clean shutdown.
-
-    When an *agent* instance is provided, the handler performs cleanup
-    (memory save + trace flush) before exiting — replacing the bare
-    ``os._exit(1)`` that previously skipped these hooks.
-    """
-    global _shutdown_save_memory, _shutdown_trace_close
-    if agent is not None:
-        _shutdown_save_memory = agent._save_memory
-        # trace_writer_close is set dynamically per-run in chat_nlp;
-        # we use a closure that closes whichever writer is active.
-        def _close_active_trace() -> None:
-            tw = getattr(agent, "_active_trace_writer", None)
-            if tw is not None:
-                tw.close()
-        _shutdown_trace_close = _close_active_trace
-        handler = _signal_break_with_cleanup
-    else:
-        handler = _signal_break
-    if hasattr(signal, "SIGBREAK"):
-        signal.signal(signal.SIGBREAK, handler)
-
-
-def _current_git_branch() -> str | None:
-    """Return the current git branch name, or ``None`` if not a git
-    repo / unavailable."""
-    try:
-        head = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".git", "HEAD")
-        if os.path.exists(head):
-            with open(head, encoding="utf-8", errors="ignore") as fh:
-                ref = fh.read().strip()
-            if ref.startswith("ref:"):
-                return ref.split("/", 2)[-1]
-        return None
-    except Exception:
-        return None
-
-
-def _interruptible_input(prompt: str) -> str | None:
-    """Read a line from stdin using a background thread.
-
-    Returns the stripped input string, or ``None`` when stdin is exhausted or
-    shutdown was requested.  On interactive terminals this behaves identically
-    to ``input()``; for piped / background processes it allows the main thread
-    to break out when a signal arrives.
-    """
-    global _input_executor
-    if _input_executor is None:
-        _input_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-
-    future = _input_executor.submit(input, prompt)
-    while not _SHUTDOWN_FLAG:
-        try:
-            return future.result(timeout=0.5).strip()
-        except concurrent.futures.TimeoutError:
-            continue
-        except (EOFError, KeyboardInterrupt):
-            return None
-    return None
-
+# t00: types
+from agent_core.types import _GOAL_RELATED_THRESHOLD
 
 class LLMClient:
     """Thin wrapper around an LLM provider for backward compatibility.
@@ -376,13 +330,6 @@ class LLMClient:
         """Analyze code using LLM."""
         return await self._provider.analyze_code(code)
 
-
-
-#: Minimum fraction of the new prompt's content tokens that must appear in
-#: the restored goal / recent user texts for the two to count as related.
-#: Below it the restored goal is replaced (and history suspended) — the
-#: judgement errs toward giving a NEW request a clean slate.
-_GOAL_RELATED_THRESHOLD = 0.15
 
 
 class Agent:
@@ -3780,32 +3727,6 @@ class Agent:
 
 
 
-def _read_json_quarantining(path: str, label: str) -> Any:
-    """Read JSON from *path*, quarantining corrupt bytes instead of dropping.
-
-    Returns the parsed object, or ``None`` when the file is missing.  When
-    the file exists but is unreadable/corrupt (truncated by an old non-atomic
-    writer, encoding damage, ...), it is renamed to ``<path>.bad-<timestamp>``
-    so the bytes stay inspectable, and ``None`` is returned.  Without this,
-    the next save would silently clobber the only evidence of what was lost.
-    """
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return None
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        quarantine = f"{path}.bad-{stamp}"
-        try:
-            os.replace(path, quarantine)
-        except OSError:
-            logger.warning("Failed to quarantine corrupt %s at %s", label, path)
-        else:
-            logger.warning(
-                "Corrupt %s file moved to %s", label, quarantine,
-            )
-        return None
 
 
 
@@ -3967,736 +3888,6 @@ _VERIFY_NOTE = (
     "actually returned."
 )
 
-
-def _resolve_stream_fn(
-    llm: Any,
-) -> Callable[[list[dict[str, Any]]], Awaitable[str]] | None:
-    """Return the streaming final-answer callable for *llm*, or None (plan #9).
-
-    Opt-in and capability-gated, both deliberately:
-
-    * ``AGENT_STREAM_FINAL_ANSWER`` (default false) — streaming changes what the
-      console shows, so an existing run must stay byte-identical unless the
-      user asks for it (same contract as the other display settings, #048).
-    * ``provider_supports_streaming`` — Opencode/OpenRouter/Lemonade implement
-      ``chat_stream`` as a bare ``return await self.chat(...)`` that prints
-      NOTHING.  On those, the returned text has not appeared on screen, so
-      treating it as "already shown" would make ``_finish_turn`` skip its print
-      and show the user no answer at all.
-
-    Never raises: any failure here just means "no streaming", i.e. the
-    pre-existing blocking behaviour.
-    """
-    try:
-        settings = load_agent_settings()
-        if not getattr(settings, "stream_final_answer", False):
-            return None
-    except Exception:  # noqa: BLE001 - settings failure must not break a turn
-        return None
-    provider = getattr(llm, "_provider", None) or llm
-    if not provider_supports_streaming(provider):
-        return None
-    stream = getattr(llm, "chat_stream", None)
-    if not callable(stream):
-        return None
-    return cast("Callable[[list[dict[str, Any]]], Awaitable[str]]", stream)
-
-
-def _resolve_display_mode() -> AgentDisplayMode:
-    """Resolve the agent's display mode from settings/env.
-
-    Falls back to VERBOSE (current behaviour) when no value is configured, so
-    existing REPL output and tests are unchanged by default."""
-    try:
-        return load_agent_settings().display_mode
-    except Exception:
-        raw = os.environ.get("AGENT_DISPLAY_MODE", "").strip().lower() or "verbose"
-        try:
-            return AgentDisplayMode(raw)
-        except ValueError:
-            return AgentDisplayMode.VERBOSE
-
-#: Destructive shell patterns the ``run`` tool refuses (word-boundary,
-#: case-insensitive) — the command injection surface of the NLP loop.
-#:
-#: The policy has ONE owner now: ``agent_core.security.allowlist`` (plan #16).
-#: This name is an alias of the shared object, kept so existing callers and
-#: tests keep working while there is no second copy to drift out of sync.
-_DANGEROUS_SHELL_PATTERNS = DESTRUCTIVE_SHELL_PATTERNS
-
-
-def _unix_command_hint() -> str:
-    """Return a hint appended to run results when a Unix-ism fails on
-    Windows (tail/grep/ls/mypy-as-command are not available in cmd.exe)."""
-    return (
-        f"\nHint: this shell ({_detect_shell()}) has no Unix tools like tail/grep/ls, "
-        "and installed Python tools must be called as 'python -m <tool>'. Use Python "
-        "one-liners (python -c \"...\") or the built-in tools — run output is"
-        " truncated "
-        "automatically, so pipes like '2>&1 | tail -40' are neither needed nor"
-        " supported."
-    )
-
-
-def _windows_command_hint() -> str:
-    """Return a hint when a cmd.exe builtin / PowerShell cmdlet fails on a
-    POSIX shell (Linux/macOS) — the mirror of :func:`_unix_command_hint`."""
-    return (
-        f"\nHint: this shell ({_detect_shell()}) is POSIX — there are no cmd.exe "
-        "builtins (dir/type/findstr/copy/del/where) and no PowerShell cmdlets "
-        "(Get-ChildItem/Select-String/Get-Content). Use ls/cat/grep/find, or a "
-        "Python one-liner (python -c \"...\"); run output is auto-truncated."
-    )
-
-
-def _shell_command_hint() -> str:
-    """The wrong-shell-command hint for the CURRENT platform (Unix-ism on
-    Windows, Windows-ism on POSIX)."""
-    return _unix_command_hint() if os.name == "nt" else _windows_command_hint()
-
-
-def _final_answer_fallback(loop: "ToolLoopRunner") -> str:
-    """Concrete stand-in when the model produced no usable answer.
-
-    Instead of the cryptic "did not produce a response", report what the loop
-    actually did (budget spent, tools used, last action, termination reason)
-    so the user can react concretely — especially in QUIET mode, where tool
-    noise is hidden and this is the only signal.
-    """
-    used = ", ".join(
-        f"{tool}x{count}"
-        for tool, count in sorted(loop.tools_used.items(), key=lambda kv: -kv[1])
-    )
-    return (
-        f"The model made {loop.tool_calls_made} tool call(s) over "
-        f"{loop.iterations_used} iteration(s) but produced no final answer "
-        f"(terminated: {loop.termination_reason}). "
-        f"Tools used: {used or 'none'}. Last action: {loop.last_tool_call or '-'}. "
-        "Rephrase or ask something more specific to continue."
-    )
-
-
-def _kill_process_tree(proc: "subprocess.Popen[Any]") -> None:
-    """Kill *proc* and its whole child tree (Windows: taskkill /T /F).
-
-    A plain kill only terminates the shell; the orphaned children keep
-    running and hold the captured pipes open.  Best effort — never raises.
-    """
-    try:
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                capture_output=True,
-                timeout=10,
-            )
-        else:
-            proc.kill()
-    except Exception:
-        logger.warning(
-            "Failed to kill process tree for PID %s", getattr(proc, "pid", "?")
-        )
-
-
-def _git_branch() -> str:
-    """Return the current Git branch name, or ``"(unknown)"`` if not available."""
-    try:
-        result = subprocess.run(  # noqa: S603
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8", errors="replace",
-            timeout=5,
-            check=False,
-        )
-        branch = result.stdout.strip()
-        if branch:
-            return branch
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return "(unknown)"
-
-
-def _turn_quality_score(llm_error: str | None, mutated_files: list[str]) -> float | None:
-    """B3: per-turn quality score in [0,1] for the shared metrics log.
-
-    With harnessfix tracing enabled and a turn armed via ``begin_turn()``
-    (the tool-loop caller arms it once per turn), the turn's own trace
-    events are drained and scored with ``score_run`` — one turn is never
-    scored from another turn's events.  A provider error always scores
-    0.0, whatever the trace recorded.  Otherwise the cheap proxy:
-    ``llm_error`` -> 0.0, mutated files -> 0.8, clean turn -> 0.7.
-    Never raises; returns ``None`` only if the check itself fails
-    (nothing is recorded then).
-    """
-    try:
-        from harnessfix.tracing import trace_enabled
-
-        if trace_enabled():
-            import harnessfix.tracing as _tr
-
-            events: list[dict[str, Any]] | None = None
-            #: Prefer the DRAINING getters: a peek-only getter would leave the
-            #: turn's events buffered and leak them into the next turn's score.
-            for _name in ("take_turn_events", "drain_turn_events",
-                          "current_turn_events", "turn_events"):
-                _getter = getattr(_tr, _name, None)
-                if callable(_getter):
-                    events = _getter()
-                    if events:
-                        break
-            if llm_error:
-                return 0.0
-            if events:
-                from harnessfix.evolution_metrics import score_run
-
-                return float(score_run(events))
-            # Traced but no turn-scoped events: fall through to the proxy
-            # rather than scoring the entire session.
-        if llm_error:
-            return 0.0
-        if mutated_files:
-            return 0.8
-        return 0.7
-    except Exception:  # noqa: BLE001 - observability must not break turns
-        return None
-
-
-def _begin_trace_turn() -> None:
-    """Arm turn-scoped trace-event collection for the coming turn.
-
-    Plan item #4 residual: the turn's own trace events are buffered in
-    memory (``harnessfix.tracing``) so :func:`_turn_quality_score` can feed
-    them to ``score_run`` at turn end.  Degrades to a no-op when harnessfix
-    (or the API) is unavailable; never raises.
-    """
-    try:
-        import harnessfix.tracing as _tr
-
-        starter = getattr(_tr, "begin_turn", None) or getattr(_tr, "start_turn", None)
-        if callable(starter):
-            starter()
-    except Exception:  # noqa: BLE001 - observability must not break turns
-        logger.debug("Could not arm trace turn (no-op)", exc_info=True)
-
-
-def _append_turn_log(record: dict[str, Any]) -> None:
-    """Append one turn-outcome line to ``turn_log.jsonl`` (bounded, atomic-ish).
-
-    Harness-layer observability only (decision #014): the log feeds habit
-    mining and is rewritten to its newest 500 lines whenever it grows past
-    that bound, so it can never bloat the state dir.  Never raises — a broken
-    or missing state dir must not break a finished turn.
-    """
-    try:
-        path = TURN_LOG_PATH
-        parent = os.path.dirname(path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        lines: list[str] = []
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                lines = [ln for ln in fh.read().splitlines() if ln.strip()]
-        lines.append(json.dumps(record, ensure_ascii=False))
-        if len(lines) > 500:
-            lines = lines[-500:]
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines) + "\n")
-        os.replace(tmp, path)
-    except Exception:  # noqa: BLE001 - observability must not break turns
-        logger.debug("Could not append turn log (no-op)", exc_info=True)
-
-
-def _strip_dynamic_system_blocks(text: str) -> str:
-    """Remove previously injected dynamic blocks from a system prompt.
-
-    ``chat_nlp`` rebuilds the constraints block (decision ledger) and the
-    plan-mode suffix on every turn; without stripping, a long-lived session
-    would accumulate one stale block per turn.  The BASE prompt — everything
-    before the first dynamic marker — is what survives.
-    """
-    markers = (
-        ORIGINAL_GOAL_MARKER,
-        "\n\nCRITICAL DESIGN CONSTRAINTS",
-        SKILL_INDEX_MARKER,
-        HABITS_MARKER,
-        SEMANTIC_MEMORY_MARKER,
-        FILE_HISTORY_MARKER,
-        "\n\nSESSION MODE: PLAN",
-    )
-    cut = len(text)
-    for marker in markers:
-        pos = text.find(marker)
-        if pos != -1:
-            cut = min(cut, pos)
-    return text[:cut]
-
-
-def _detect_shell() -> str:
-    """Return a human-readable name for the shell the run tool will use.
-
-    Delegates to :func:`agent_core.subprocess_utils.shell_info` which walks
-    the process tree to find the *actual* user shell, even when the run-tool
-    injects ``cmd.exe`` as an intermediary.
-    """
-    from agent_core.subprocess_utils import shell_info
-    info = shell_info()
-    name = info["name"].lower()
-    if name in ("powershell", "powershell.exe", "pwsh.exe"):
-        return "PowerShell"
-    if name in ("cmd", "cmd.exe"):
-        return "cmd.exe (Windows Command Prompt)"
-    if name in ("bash", "sh", "zsh", "fish", "dash", "ash", "ksh"):
-        return f"{name} (or the default POSIX shell)"
-    return info["name"]
-
-
-def _shell_name_token() -> str:
-    """Return a short machine-readable shell identifier.
-
-    One of ``bash``, ``cmd``, or ``powershell`` — the canonical names used in
-    system-prompt instructions so the LLM gets an unambiguous statement of its
-    execution environment.  Derived from the real detected shell, not from
-    environment variables.
-    """
-    from agent_core.subprocess_utils import shell_info
-    info = shell_info()
-    name = info["name"].lower()
-    if name in ("powershell", "powershell.exe", "pwsh.exe"):
-        return "powershell"
-    if name in ("cmd", "cmd.exe"):
-        return "cmd"
-    return "bash"
-
-
-#: Explicit shell identity propagated to the LLM system prompt.
-#: Derived from the real detected shell via shell_info() — no env var needed.
-_SHELL_NAME: str = _shell_name_token()
-
-
-#: System prompt for the NLP tool loop, built once at import time (the only
-#: dynamic piece is the detected shell name).  Kept as a module constant so
-#: chat_nlp stays focused on the loop itself and the prompt lives in one
-#: greppable place.
-_SYSTEM_PROMPT = (
-    "You are a senior coding assistant working inside this project workspace.\n"
-    "The user speaks natural language; you have tools to search, read, write, "
-    "edit, run, and test the code.\n"
-    "You also talk normally: for greetings, small talk, or general questions "
-    "that do not need the workspace, reply directly in text without calling "
-    "any tool.\n\n"
-    "WORKING METHOD:\n"
-    "1. Understand the request.\n"
-    "2. Take concrete action with the tools — never just describe what you "
-    "would do. If you intend to read, search, edit or run something, call the tool.\n"
-    "3. After a write/edit, a py_compile verification summary is returned "
-    "automatically — report it.\n"
-    "4. Finish with a short report: what you changed, where, and the "
-    "verification/test evidence.\n\n"
-    "RULES:\n"
-    f"You are running inside SHELL_NAME={_SHELL_NAME} ({_detect_shell()}). "
-    "This is a hard constraint: on Windows (cmd/PowerShell) there is NO "
-    "tail/grep/ls/cat/sed/awk/wc/find; on POSIX there are NO cmd.exe builtins "
-    "(dir/type/findstr/copy/del/where) and NO PowerShell cmdlets "
-    "(Get-ChildItem/Select-String/Get-Content). Use Python one-liners "
-    "(python -c \"...\") or the built-in tools instead of shell pipes — never "
-    "construct commands that mix Unix and Windows syntax in a single invocation.\n"
-    f"- The shell for the run tool is: {_detect_shell()}. On Windows there "
-    "are NO Unix tools (tail/head/grep/ls/cat/sed/awk/wc) and no piping to "
-    "them — use dir/type/findstr/more, PowerShell cmdlets, or Python "
-    "one-liners (python -c \"...\"). Run output is truncated to 5000 chars "
-    "automatically, so '2>&1 | tail -40' is neither needed nor supported. The "
-    "run tool reports non-zero exit codes as [EXIT CODE: N] at the end of its "
-    "output — read it from there, never chain '...; echo $?' (the model cannot "
-    "see $? afterwards).\n"
-    "- Python's sys.exitcode is only set at interpreter exit — use "
-    "sys.exit(). Shell test tools ship with pytest (scripts exit non-zero "
-    "on failure).\n"
-    "- You have an effectively unlimited tool budget: do not rush, do not "
-    "stop early, and do not plan around a budget. Take as many tool calls "
-    "as the task needs — but make steady progress: when exploration is "
-    "done, actually edit/write/fix instead of only reading.\n"
-    "- read returns up to 5000 chars per call by default — never request "
-    "tiny slices (limit < 1000). Read big chunks and continue with the "
-    "offset hint; avoid many small read calls.\n"
-    "- For 'where is X used/defined?' use references (one call) instead of "
-    "search + reads. To orient inside a large file, call definitions first, "
-    "then read only the line window you need — do not page blindly.\n"
-    "- Prefer targeted edits over rewriting whole files.\n"
-    "- If a tool fails, read the error and try a different approach.\n"
-    "- When the request is ambiguous, make a reasonable assumption and state it, "
-    "or ask one clarifying question before acting.\n"
-    "- Never assert facts about this repo that you have not verified with a "
-    "tool. project_plan.md / project_tasks.md are HISTORICAL phase docs and "
-    "may be outdated — verify claims against the actual code.\n"
-    f"- You are currently on Git branch: {_git_branch()}.\n"
-    "- Git: call the git tool with subcommand='status' FIRST, before staging or "
-    "committing. Stage everything with subcommand='add', args='-A' — a bare "
-    "'-' is NOT a pathspec and will fail. Commit with subcommand='commit', "
-    "args='-m \"message\"'. A request to \"commit changes\" means the FULL "
-    "sequence status -> add -A -> commit -m -> (only if asked) push; never "
-    "push alone, because `git push` only sends commits and would silently "
-    "leave staged work behind. Never invent flags.\n"
-    "- Verify numbers (e.g. how many tests exist) with the tests tool or git "
-    "log before claiming them.\n"
-    "- NEVER claim a repository state you have not observed with a tool this "
-    "turn. Output the user saw in the terminal is NOT in your context — `git "
-    "status` typed as a chat command is executed by the REPL and printed to "
-    "stdout, so you never see it. If you called no tool, you do not know what "
-    "is staged, committed or pushed. Call the git tool before stating it; an "
-    "unverified \"already committed and pushed\" is a fabrication.\n"
-    "- If a search finds nothing in source files, state that the symbol does "
-    "not exist in the current code — never repeat the same search.\n"
-    "- A failing test is a real signal: fix the implementation — never weaken "
-    "or delete an assertion just to make it pass. Only change a test if the "
-    "test itself is demonstrably wrong, and say why.\n"
-    "- Every bug fix ships a permanent regression test in tests/ (pytest). "
-    "Delete scratch scripts (_tmp_*.py) before finishing.\n"
-    "- Verify fixes against the REAL code path (import the actual function), "
-    "not a copied simulation of it.\n"
-    "- Be concise. Answer in the user's language.\n"
-    "\nSAFETY — AVOID FATAL CHANGES:\n"
-    "- Never make unnecessary fatal changes: no `rm -rf`, no `git reset "
-    "--hard`, no `git clean -f`, no force push, no deleting or overwriting "
-    "files wholesale when a targeted edit will do.\n"
-    "- Prefer the smallest targeted edit that solves the problem; keep diffs "
-    "reviewable. When a change would be irreversible or destructive, STOP "
-    "and ask the user first.\n"
-    "- Destructive commands are blocked by the harness — never try to work "
-    "around the block; report it instead.\n"
-    "- IMPORTANT: If the user message is a greeting (hi, hello, hey, etc.) "
-    "or small talk, reply with a short text greeting. Do NOT call any tools."
-    "\n\nJEV DECISION ENGINE (fast, cheap, typed — use it for judgements):\n"
-    "You have jev_decide: a dedicated non-thinking small model that answers "
-    "TYPED questions with probabilities instead of prose. kind='yesno' (the "
-    "question is a proposition -> P(yes)/P(no) plus TRUE/FALSE/UNKNOWN), "
-    "kind='choice' (put the candidates in options -> a probability "
-    "distribution), kind='score' (put the rubric in rubric -> 0-100 plus "
-    "spread). Pass the evidence you already gathered in 'state' and set "
-    "'threshold' (default 0.7). It is read-only and runs on a local small "
-    "model, so it is fast and cheap — far cheaper than another reasoning pass.\n"
-    "- Act on a yesno only when the decision is TRUE (P >= threshold); "
-    "otherwise treat it as undecided and say so — never overclaim a guess.\n"
-    "- Prefer it over guessing for bounded judgements: is this true / risky / "
-    "needed? which of A/B/C is the best target? how well does this draft meet "
-    "the rubric?\n"
-    "- Do NOT use it for open-ended generation, code, or explanations — you "
-    "write those yourself. It is a decision model, not a writer.\n"
-    "\nSPECULATE — parallel grounded answers on demand:\n"
-    "You have speculate: it runs N independent speculative branches in "
-    "parallel (each reasons as you do and may call read-only tools to ground "
-    "itself), judge-scores every branch, and COMMITs only the best when it "
-    "meets the threshold — otherwise it REFUSES with the reasons. Use it when "
-    "a fast corroborated answer beats your own long chain of thought: "
-    "'where/what/how' questions about this repo (branches bring back file:line "
-    "evidence), or any question where independent opinions are worth more than "
-    "one. Speed knobs: judge='jev' scores on the dedicated small model; "
-    "branch_model='jev' runs the WHOLE deliberation on it (fastest, but weak "
-    "at grounding repo questions); fewer branches = faster. Read-only and "
-    "allowed in plan mode."
-    "\n\nMANAGER WORKFLOW (for complex tasks):\n"
-    "1. Analyze if the task benefits from parallel specialists.\n"
-    "2. Use create_subagent to spawn specialists (e.g. one for research, one for coding).\n"
-    "3. Use run_subagent_task to assign work to each.\n"
-    "4. Collect results and synthesize the final answer."
-)
-
-
-def _truncate_output(output: str | None, limit: int = 5000) -> str:
-    """Cap shell output for the model's context: head + tail around a marker.
-
-    Shared by the ``run``, ``git``, ``diff`` and ``tests`` NLP tools so every
-    subprocess result is bounded identically (the system prompt promises
-    "run output is truncated to 5000 chars automatically").
-
-    ``output`` may be ``None`` when a subprocess produced no stdout; it is
-    treated as an empty string in that case.
-    """
-    if output is None:
-        output = ""
-    if len(output) > limit:
-        half = limit // 2
-        return output[:half] + "\n... [truncated] ...\n" + output[-half:]
-    return output if output else "(no output)"
-
-
-def _run_subprocess_captured(
-    cmd: list[str], cwd: str, timeout: float, label: str,
-) -> tuple[str, str | None]:
-    """Run *cmd* (arg-list, no shell), capture stdout+stderr, bound the result.
-
-    Shared by the ``git``/``diff``/``tests`` NLP tools: identical timeout,
-    stderr tagging ("[STDERR]\n…") and 5000-char truncation everywhere.
-    Returns ``(output, error)`` — *error* is ``"<label> error: …"`` when the
-    process could not be launched or timed out, else None.
-    """
-    try:
-        r = subprocess.run(
-            cmd, capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            cwd=cwd, timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return f"{label} timed out after {int(timeout)}s", None
-    except Exception as e:
-        return "", f"{label} error: {e}"
-    output = r.stdout
-    if r.stderr:
-        output += f"\n[STDERR]\n{r.stderr}"
-    return _truncate_output(output), None
-
-
-def _shape_run_stderr(err: str | None, output: str | None, returncode: int | None) -> str:
-    """Append stderr (plus Unix-ism hints) to ``run``-tool output.
-
-    Shared by the ``run`` NLP tool so its stderr handling lives in one
-    testable place instead of being inlined in the handler.
-
-    When the command returns a non-zero exit code, the code is appended so
-    the model can observe it directly — no need to capture it via shell
-    pipelines (which often fail on Windows).
-
-    ``output`` may be ``None`` when a subprocess produced no stdout; it is
-    normalised to ``""`` up front.
-    """
-    if output is None:
-        output = ""
-    if not err:
-        # cmd.exe silently fails whole pipelines (rc 255, no output)
-        # when a pipe element or command does not exist.
-        if os.name == "nt" and returncode == 255 and not output:
-            return output + _shell_command_hint()
-        if returncode is not None and returncode != 0:
-            output += f"\n[EXIT CODE: {returncode}]"
-        return output
-    output += f"\n[STDERR]\n{err}"
-    if re.search(r"is not recognized|not found|command not found", err, re.I):
-        output += _shell_command_hint()
-    if returncode is not None and returncode != 0:
-        output += f"\n[EXIT CODE: {returncode}]"
-    return output
-
-
-def _blocked_shell_command(command: str) -> str | None:
-    """Return a description of the first policy violation in *command*.
-
-    Delegates to the shared TIER-1 policy (plan #16):
-    ``allowlist.find_destructive_shell_pattern`` — the destructive block-list
-    that every execution path shares.  The NLP ``run`` tool deliberately does
-    NOT apply the strict structural scan: it keeps ``shell=True`` and must
-    still execute pipes (``... 2>&1 | ...``), which cmd.exe fails silently and
-    which the tool surfaces as a wrong-shell Hint (pinned by
-    ``tests/test_tool_loop_nlp.py::TestRunToolShellAwareness``).  Adding the
-    metacharacter gate here would delete that diagnostic.
-    """
-    return find_destructive_shell_pattern(command)
-
-
-#: Repo-root .env consulted for the full-pytest budget (conftest reads it too).
-_ENV_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-_PYTEST_FULL_SUITE_TIMEOUT_KEY = "PYTEST_FULL_SUITE_TIMEOUT"
-_PYTEST_LAST_FULL_RUN_KEY = "PYTEST_LAST_FULL_RUN_SECONDS"
-#: Must match conftest._FULL_SUITE_MARGIN so tool and watchdog agree; the
-#: authoritative copy lives in agent_core.pytest_gate.
-_FULL_SUITE_MARGIN = 0.50
-
-
-def _read_env_value(key: str) -> str:
-    """Budget value for *key*: process env wins, else the repo .env."""
-    if key in os.environ:
-        return os.environ[key].strip()
-    try:
-        with open(_ENV_FILE_PATH, "r", encoding="utf-8") as fh:
-            for line in fh:
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#") or "=" not in stripped:
-                    continue
-                env_key, _, val = stripped.partition("=")
-                if env_key.strip() == key:
-                    return val.strip()
-    except OSError:
-        pass
-    return ""
-
-
-def _pytest_full_suite_timeout() -> float:
-    """Timeout (seconds) to grant a pytest run.
-
-    The model regularly guesses a timeout (often 300-600s) for
-    ``python -m pytest ...``, which is below the suite's real cost — the run
-    tool then killed it mid-suite and the whole run was wasted.  Reuse the SAME
-    budget conftest's watchdog enforces:
-    ``max(PYTEST_FULL_SUITE_TIMEOUT, PYTEST_LAST_FULL_RUN_SECONDS * 1.5)``,
-    read from the process env then the repo ``.env``.  The floor comes from
-    measurement (a real full run took 861.5s here, 608s in CI), not from taste
-    — see :data:`agent_core.pytest_gate.DEFAULT_FULL_SUITE_TIMEOUT`.
-    """
-    try:
-        floor = float(
-            _read_env_value(_PYTEST_FULL_SUITE_TIMEOUT_KEY)
-            or DEFAULT_FULL_SUITE_TIMEOUT
-        )
-    except ValueError:
-        floor = DEFAULT_FULL_SUITE_TIMEOUT
-    try:
-        last = float(_read_env_value(_PYTEST_LAST_FULL_RUN_KEY) or 0.0)
-    except ValueError:
-        last = 0.0
-    return max(floor, last * (1.0 + _FULL_SUITE_MARGIN))
-
-
-#: Tokens that are part of the interpreter/pytest invocation itself, not a path.
-_PYTEST_BARE_TOKENS = {
-    "python", "python2", "python3", "py", "pytest", "py.test", "m", "set",
-    "call", "&", "&&", "|", "||", ";",
-}
-
-#: pytest options that consume the FOLLOWING token as their value.  Without
-#: this the value (``no:cacheprovider`` in ``-p no:cacheprovider``, ``not slow``
-#: in ``-m "not slow"``, ``4`` in ``-n 4``) is mistaken for a test path, the
-#: command is misclassified as TARGETED, and a full run is killed at the 600s
-#: default instead of the suite budget.  Values attached with ``=`` are handled
-#: by the generic flag check.
-_PYTEST_VALUE_FLAGS = {
-    "-p", "-k", "-m", "-o", "-c", "-n", "-W", "-r",
-    "--deselect", "--ignore", "--ignore-glob", "--maxfail", "--tb",
-    "--durations", "--rootdir", "--confcutdir", "--basetemp", "--junitxml",
-    "--junit-prefix", "--log-level", "--log-file", "--log-format", "--dist",
-    "--import-mode", "--cache-dir", "--override-ini", "--numprocesses",
-    "--lfnf", "--last-failed-no-failures",
-}
-
-
-#: Flags that SELECT A SUBSET, so the invocation is not a full run: ``--lf``
-#: / ``--nf`` (only failed / only new) and ``--testmon`` (only what changed).
-#: Without this, ``pytest --lf`` looked like a full run and got both the suite
-#: budget and the full-run gate - i.e. the cheap lanes were penalised exactly
-#: like the expensive one.  Mirrors conftest._SUBSET_FLAGS.
-_PYTEST_SUBSET_FLAGS = {
-    "--lf", "--last-failed", "--lfnf", "--last-failed-no-failures",
-    "--nf", "--new-first", "--failed-first", "--testmon",
-}
-
-
-def _is_full_pytest_command(command: str) -> bool:
-    """True when *command* invokes pytest with no explicit test path.
-
-    Mirrors conftest's definition of a full run: no positional path at all, or
-    the whole test tree spelled out (``tests`` / ``tests/`` / ``.`` — the
-    configured ``testpaths``).  Spelling the suite explicitly (``pytest
-    tests/``) used to be misread as a targeted run, so it got the 120s default
-    instead of the suite budget and was killed mid-run.  A subset selector
-    (``--lf`` / ``--nf`` / ``--testmon``) is NOT a full run.  Segments without
-    pytest, ``K=V`` assignments and redirections (``2>&1``, ``>nul``) are
-    ignored; values consumed by :data:`_PYTEST_VALUE_FLAGS` are not paths;
-    any other positional token marks a targeted run.
-    """
-    for segment in re.split(r"&&|\|\||[;|]", command):
-        try:
-            tokens = shlex.split(segment, posix=True)
-        except ValueError:
-            tokens = segment.split()
-        if not any(t in ("pytest", "py.test") for t in tokens):
-            continue
-        skip_next = False
-        for token in tokens:
-            if skip_next:
-                skip_next = False
-                continue
-            if token in _PYTEST_SUBSET_FLAGS:
-                # Checked BEFORE the value-flag list: ``--lfnf`` is in both and
-                # is boolean in pytest, so it must not swallow the next token.
-                return False  # runs a subset, not the suite
-            if token in _PYTEST_VALUE_FLAGS:
-                skip_next = True
-                continue
-            if token.startswith("-"):
-                continue
-            if token in _PYTEST_BARE_TOKENS or "=" in token:
-                continue
-            if re.match(r"^\d*>&?\S*$", token):
-                continue
-            if token.replace("\\", "/").rstrip("/") in ("tests", "."):
-                continue  # the whole test tree spelled out is still a full run
-            return False
-        return True
-    return False
-
-
-def _is_pytest_command(command: str) -> bool:
-    """True when *command* invokes pytest at all (full, subset or targeted).
-
-    The whole-suite budget bounds the cost of ANY pytest invocation — a subset
-    can select most of the suite — so every pytest command gets it as its
-    timeout floor.  Targeted path runs are the exception (see
-    :func:`_is_subset_pytest_command`); non-pytest commands stay capped.
-    """
-    for segment in re.split(r"&&|\|\||[;|]", command):
-        try:
-            tokens = shlex.split(segment, posix=True)
-        except ValueError:
-            tokens = segment.split()
-        if any(t in ("pytest", "py.test") for t in tokens):
-            return True
-    return False
-
-
-def _is_subset_pytest_command(command: str) -> bool:
-    """True for a pytest run limited by a SUBSET selector, not by a path.
-
-    ``pytest --lf`` / ``--nf`` / ``--testmon`` is not a full run (the
-    full-run gate stays off), but it still selects from the whole suite and
-    can cost as much as one — so it deserves the same timeout floor.  This is
-    the reported bug: ``python -m pytest --lf -q --no-cov`` was killed at the
-    model's guessed 300s because it matched neither the full-run path nor a
-    targeted path.
-    """
-    for segment in re.split(r"&&|\|\||[;|]", command):
-        try:
-            tokens = shlex.split(segment, posix=True)
-        except ValueError:
-            tokens = segment.split()
-        if not any(t in ("pytest", "py.test") for t in tokens):
-            continue
-        if any(t in _PYTEST_SUBSET_FLAGS for t in tokens):
-            return True
-    return False
-# ---------------------------------------------------------------------------
-# Chat-history compaction (t03).
-#
-# Moved to agent_core/history_compaction.py; re-exported here so existing
-# imports and test monkeypatches on ``agent`` (e.g.
-# ``monkeypatch.setattr(agent, "_trim_chat_history", ...)``) keep working.
-# The functions in that module are pure over the message list and read no
-# patched globals, so a patch on ``agent`` is the whole story for them.
-from agent_core.history_compaction import (  # noqa: F401
-    _MAX_CHAT_MESSAGES,
-    _HISTORY_CHAR_BUDGET,
-    _HISTORY_TRIM_NOTE,
-    _HISTORY_TRIM_GOAL_CAP,
-    _GOAL_TOPIC_STOPWORDS,
-    _drop_orphan_tool_messages,
-    _repair_unanswered_tool_calls,
-    _strip_tool_args,
-    _message_size,
-    _content_tokens,
-    _compaction_note_goal,
-    _is_compaction_note,
-    _strip_turn_wrappers,
-    _recover_original_goal,
-    _first_user_message_text,
-    _trim_chat_history,
-    _strip_image_blocks,
-    _project_chat_history,
-)
-
-
-
-# ---------------------------------------------------------------------------
-# Shared metrics plumbing / dashboard entry points.
-#
-# Moved to agent_dashboard.py; re-exported here so existing imports and test
-# monkeypatches on ``agent`` (e.g. ``monkeypatch.setattr(agent, "_shared_metrics_collector", None)``) continue to work — the functions below reference this module's binding of that name, which is the same object imported from agent_dashboard.
 from agent_dashboard import (  # noqa: F401
     _build_dashboard,
     _dashboard_port,
@@ -4962,22 +4153,7 @@ async def run_interactive() -> None:
             break
 
 
-def _start_kanban_inbound() -> None:
-    """Start the Kanban → Agent1 inbound poller for this process, if enabled.
 
-    Best-effort by contract: the import is lazy (harnessfix is optional for
-    some entry points) and every failure is logged rather than raised, because
-    an optional integration must never stop the agent from starting.
-    """
-    try:
-        from harnessfix.kanban_bridge import start_inbound_processor
-    except ImportError as exc:  # pragma: no cover - harnessfix always present
-        logger.warning("Kanban sync unavailable (import failed): %s", exc)
-        return
-    try:
-        start_inbound_processor()
-    except Exception as exc:  # noqa: BLE001 - never crash boot on sync failure
-        logger.error("Kanban inbound processor failed to start: %s", exc)
 
 
 async def main() -> None:

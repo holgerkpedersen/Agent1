@@ -28,7 +28,8 @@ needs_pil = pytest.mark.skipif(
     reason="pillow not installed — vision tests need 'pip install -e .[vision]'",
 )
 
-from agent import Agent, _strip_image_blocks
+from agent import Agent
+from agent_core.history_compaction import _strip_image_blocks
 from agent_core.commands.paste_image_cmd import (
     PasteImageCommand,
     encode_image_file,

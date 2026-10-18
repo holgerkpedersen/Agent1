@@ -1,117 +1,109 @@
-# agent.py Refactor Task Plan
+# agent.py Refactoring Task Plan
 
-Goal: reduce `agent.py` from ~5008 lines to manageable modules (<500 lines each).
-
----
-
-## What is already done (committed in HEAD)
-
-| Step | What | File | Approx saved |
-|------|------|------|-------------|
-| t02  | Extract import bootstrap + OPENBLAS_NUM_THREADS + UTF-8 stdout reconfigure | `agent_core/bootstrap.py` | ~100 |
-| t03  | Extract history compaction (trim, repair, strip wrappers) | `agent_core/history_compaction.py` | ~461 |
+**File:** `C:\Dev\Agent1\agent.py` (~5 558 lines)  
+**Goal:** Split it into focused, reviewable modules under `agent_core/`.  
+**Strategy:** One step per commit. Each step: isolate a chunk, create a new module, re-export from `agent.py`, update `tests/test_agent_module_surface.py` frozen lists. Never break the import surface.
 
 ---
 
-## Remaining steps to execute
+## Phase 1 — Bootstrap and Utilities (already partially done)
 
-### t04 — Extract Agent `__init__` groupings
-Group `Agent.__init__` attributes into nested dataclasses / sub-objects
-(LLMConfig fields → `_llm`, FileSystem fields → `_fs`, etc.).
-Target: `agent.py` loses ~80 lines.
+> **Note:** The `from agent_core.bootstrap import *` block and several helper imports are already in place. Phase 1 cleans up what remains.
 
-### t05 — Extract system-prompt block methods
-Move these to `agent_core/system_prompt.py`:
-`_decision_constraints_block`, `_skill_index_block`, `_skill_hint_block`,
-`_habits_block`, `_file_history_block`, `_semantic_memory_block`,
-`_ensure_original_goal`, `_original_goal_block`.
-Target: `agent.py` loses ~200 lines.
-
-### t06 — Extract experience / memory methods
-Move to `agent_core/experience.py`:
-`_record_llm_experience`, `_load_memory`, `_save_memory`,
-`_suspend_history_for_new_task`, `_prompts_related`, `_recent_user_texts`.
-Target: `agent.py` loses ~180 lines.
-
-### t07 — Extract NLP tool-handler methods
-Move all `async def _nlp_*` methods to `agent_core/agent_nlp.py`.
-Target: `agent.py` loses ~1500 lines.
-
-### t08 — Extract file-operation methods
-Move `tool_read_file`, `tool_write_file`, `tool_apply_patch`, `tool_search`,
-`read_file`, `write_file`, `apply_patch`, `search_file` to `agent_core/agent_files.py`.
-Target: `agent.py` loses ~250 lines.
-
-### t09 — Extract the tool-loop / display class
-Move `chat_nlp`, `_run_chained_tool_loop`, `_finish_turn`, `_report_failover`,
-`_reset_failover_notice` to `agent_core/agent_loop.py` as `AgentLoop(agent)`.
-Target: `agent.py` loses ~450 lines.
-
-### t10 — Extract top-level utility functions
-Group free functions into thematic modules:
-- `agent_core/signal_handlers.py` — `_signal_break`, `_signal_break_with_cleanup`, `_install_signal_handlers`
-- `agent_core/shell_utils.py` — `_detect_shell`, `_shell_name_token`, `_unix_command_hint`, `_windows_command_hint`, `_shell_command_hint`, `_blocked_shell_command`
-- `agent_core/subprocess_utils.py` — `_run_subprocess_captured`, `_shape_run_stderr`, `_kill_process_tree`
-- `agent_core/json_utils.py` — `_escape_json_string_controls`, `_repair_tool_arguments`, `_read_json_quarantining`, `_looks_incomplete`
-- `agent_core/logging_utils.py` — `_begin_trace_turn`, `_append_turn_log`, `_strip_dynamic_system_blocks`
-- `agent_core/cli_utils.py` — `_current_git_branch`, `_git_branch`, `_interruptible_input`, `_warn_uncommitted`
-Target: `agent.py` loses ~400 lines.
-
-### t11 — Extract CLI entry point
-Move `run_interactive`, `_start_kanban_inbound`, `async def main` to
-`agent_core/run_interactive.py`. `agent.py` keeps `if __name__ == "__main__"`
-just calling `asyncio.run(main())`.
-Target: `agent.py` loses ~150 lines.
-
-### t12 — Extract command registry
-Move `_register_commands`, `_build_registry` to `agent_core/commands/__init__.py`.
-Target: `agent.py` loses ~80 lines.
-
-### t13 — Extract LLM client wrapper
-Move `LLMClient` and `_build_llm_client` to `agent_core/llm/client.py`.
-Target: `agent.py` loses ~200 lines.
-
-### t14 — Extract pytest policy
-Move pytest-gate logic to `agent_core/pytest_cmd_policy.py`.
-Target: `agent.py` loses ~200 lines.
-
-### t15 — Final cleanup pass
-After all extractions:
-1. Remove stub wrappers that only delegate to extracted modules.
-2. Check for circular imports (agent_core → agent → agent_core).
-3. Run `python -m pytest tests/ -q`.
-4. Verify `import agent` still works.
-5. Target: `agent.py` < 600 lines.
+| Step | What to move | Target module | What's already there |
+|------|-------------|---------------|---------------------|
+| **t01** | `_escape_json_string_controls` | `agent_core/json_helpers.py` | `_read_json_quarantining` |
+| **t02** | `OPENBLAS_NUM_THREADS = ...`, `sys.stdout.reconfigure(...)`, `sys.stderr.reconfigure(...)` | `agent_core/bootstrap.py` (consolidate) | Star-import already covers bootstrap |
+| **t03** | Constants: `_LLM_ERROR_BACKOFF_S`, `_LLM_ERROR_MAX_RETRIES`, `_MAX_RUN_TIMEOUT_S`, `_MAX_CHAINED_RUNS`, `_MAX_ACTIVE_SUBAGENTS`, `_DELEGATE_TIMEOUT_S`, `_MAX_READ_FILES`, `_MAX_READ_LINES`, `_MAX_CONSECUTIVE_READS`, `_ACTION_VERB_RE`, `_INCOMPLETE_MARKERS`, `_COMPLETE_MARKERS`, `_QUESTION_LEAD_RE`, `_CONTEXT_AST_THRESHOLD_KB` | `agent_core/constants.py` | Already has a `constants.py` with some constants |
+| **t04** | `_looks_incomplete` | `agent_core/text_policy.py` | — |
 
 ---
 
-## Summary of target sizes
+## Phase 2 — Chat History and Goal Management
 
-| File / Module | Target lines |
-|--------------|-------------|
-| `agent.py` (entry point + Agent class + stubs) | < 600 |
-| `agent_core/bootstrap.py` | ~100 (done) |
-| `agent_core/history_compaction.py` | ~461 (done) |
-| `agent_core/system_prompt.py` | ~200 (new) |
-| `agent_core/experience.py` | ~180 (new) |
-| `agent_core/agent_nlp.py` | ~1500 (new) |
-| `agent_core/agent_files.py` | ~250 (new) |
-| `agent_core/agent_loop.py` | ~450 (new) |
-| `agent_core/signal_handlers.py` | ~50 (new) |
-| `agent_core/shell_utils.py` | ~80 (new) |
-| `agent_core/subprocess_utils.py` | ~60 (new) |
-| `agent_core/json_utils.py` | ~50 (new) |
-| `agent_core/logging_utils.py` | ~50 (new) |
-| `agent_core/cli_utils.py` | ~40 (new) |
-| `agent_core/run_interactive.py` | ~150 (new) |
-| `agent_core/commands/__init__.py` | ~80 (new) |
-| `agent_core/llm/client.py` | ~200 (new) |
-| `agent_core/pytest_cmd_policy.py` | ~200 (new) |
+| Step | What to move | Target module | What's already there |
+|------|-------------|---------------|---------------------|
+| **t05** | `ORIGINAL_GOAL_MARKER`, `_strip_dynamic_system_blocks`, `_build_chat_prompt` | `agent_core/chat_prompt.py` | — |
+| **t06** | `CHAT_HISTORY_JSON_PATH`, `CHAT_HISTORY_TMP_PATH`, `_save_chat_history`, `_load_chat_history` | `agent_core/file_history.py` | Already exists (`FILE_HISTORY_MARKER`) |
+| **t07** | `_HISTORY_CHAR_BUDGET`, `_MAX_CHAT_MESSAGES`, `_trim_chat_history`, `_strip_image_blocks`, `_recover_original_goal`, `_HISTORY_TRIM_GOAL_CAP`, `_HISTORY_TRIM_NOTE`, `_content_tokens`, `_project_chat_history`, `_compaction_note_goal`, `_first_user_message_text`, `_is_compaction_note`, `_drop_orphan_tool_messages` | `agent_core/history_compaction.py` | Already exists |
+| **t08** | `_original_goal`, `_ensure_original_goal`, `_clear_history` (Agent methods) | `agent_core/original_goal.py` | — |
 
 ---
 
-## Verification gates (after each step)
-1. `python -c "import agent"` — must not raise
-2. `python -m pytest tests/ -q` — must pass
-3. `python -m mypy agent.py` — must be clean (or baseline-acceptable)
-4. `agent.py` line count — shrinking monotonically
+## Phase 3 — Agent Core: `Agent` Class
+
+| Step | What to move | Target module | What's already there |
+|------|-------------|---------------|---------------------|
+| **t09** | `Agent.__init__`, `_register_commands`, `_build_registry` | `agent_core/agent_init.py` | — |
+| **t10** | `Agent.chat_nlp`, `_run_chained_tool_loop`, `_execute_tool_call`, `_repair_tool_arguments` | `agent_core/agent_chat.py` | — |
+| **t11** | `Agent.run_interactive`, `_interruptible_input` | `agent_core/agent_interactive.py` | — |
+| **t12** | `Agent.main`, signal handlers (`_signal_break`, `_install_signal_handlers`) | `agent_core/agent_main.py` | — |
+
+---
+
+## Phase 4 — NLP Tool Handlers
+
+| Step | What to move | Target module | What's already there |
+|------|-------------|---------------|---------------------|
+| **t13** | `_nlp_tool_handlers` dict + all `_nlp_*` bound methods | `agent_core/tool_handlers.py` | — |
+| **t14** | Decision ledger: `_append_turn_log`, `_begin_trace_turn`, `_turn_quality_score`, `_finish_turn` | `agent_core/agent_decisions.py` | — |
+
+---
+
+## Phase 5 — Shell and Git Helpers
+
+| Step | What to move | Target module | What's already there |
+|------|-------------|---------------|---------------------|
+| **t15** | `_detect_shell`, `_shell_name_token`, `_unix_command_hint`, `_windows_command_hint`, `_blocked_shell_command`, `_shell_command_hint` | `agent_core/shell_detection.py` | — |
+| **t16** | `_run_subprocess_captured`, `_kill_process_tree`, `_shape_run_stderr` | `agent_core/subprocess_utils.py` | Already exists in `agent_core/subprocess_utils.py` |
+| **t17** | `_git_branch`, `_current_git_branch`, `_warn_uncommitted` | `agent_core/git_status.py` | — |
+
+---
+
+## Phase 6 — Entrypoint and Dashboard
+
+| Step | What to move | Target module | What's already there |
+|------|-------------|---------------|---------------------|
+| **t18** | Dashboard: `_build_dashboard`, `_dashboard_port`, `_start_kanban_inbound` | `agent_dashboard.py` | Already exists |
+| **t19** | `main`, `run_interactive` (top-level), `CHAT_INPUT_PROMPT` | `agent_core/entrypoint.py` | — |
+
+---
+
+## Phase 7 — Cleanup
+
+| Step | Action |
+|------|--------|
+| **t20** | Replace `from agent_core.bootstrap import *` with explicit imports for every name still used by `agent.py`. Remove `# noqa: F401,F403`. |
+| **t21** | Run full test suite. Update `tests/test_agent_module_surface.py` frozen lists (`EXPECTED_DEFINITIONS`, `EXPECTED_IMPORTED`) to reflect the final clean surface. All `from agent import _thing` test imports should point to the canonical module (e.g., `from agent_core.history_compaction import _trim_chat_history`). |
+| **t22** | Delete `agent.py` and rename the last refactor step to `agent.py`, keeping only re-exports and the `Agent` class stub that wires everything together. |
+
+---
+
+## Rules for every step
+
+1. **Create the new module** with the extracted code.
+2. **Add it to `agent_core/__init__.py`** `__all__` if it should be public.
+3. **Add a re-export** in `agent.py` so existing `from agent import _x` calls keep working.
+4. **Update frozen lists** in `tests/test_agent_module_surface.py` in the same commit.
+5. **Run the affected test files** (never the full suite mid-refactor).
+6. **Commit message format:** `refactor(tXX): move <names> to agent_core/<module>.py`
+
+---
+
+## Dependency order (no forward references)
+
+```
+t01 → t03 → t04 → t02
+                ↓
+t05 → t06 → t07 → t08
+                ↓
+t09 → t10 → t11 → t12 → t13 → t14
+                                   ↓
+t15 → t16 → t17 → t18 → t19 → t20 → t21 → t22
+```
+
+> **t02** (bootstrap consolidation) depends on **t01** (json helpers extracted first) so the import order is safe.
+
+---
+
+*This plan was written based on static analysis of `agent.py`. The actual step boundaries may shift as each chunk is extracted and the import graph is verified.*

@@ -1,16 +1,15 @@
-"""Shared best-effort exception suppressor.
+"""Best-effort suppression context manager extracted from agent.py (step t10-suppress).
 
-Centralizes the "log and swallow" pattern so inline
-``except Exception: logger.<level>(..., traceback.format_exc())`` blocks can
-collapse to a single ``with _suppress_and_log(label):``. The definition lives in
-this stdlib-only module to avoid a circular import between ``agent`` and the rest
-of ``agent_core``. The issues detector deliberately skips this function's own
-body (this module is the sink, not a finding).
+One function::
+
+    _suppress_and_log(label)  — run block, log (never propagate) any exception
+
+Exported from agent_core.bootstrap.__all__ so existing call sites in agent.py
+keep working without adding their own import.
 """
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import traceback
 from typing import Iterator
@@ -18,17 +17,12 @@ from typing import Iterator
 logger = logging.getLogger(__name__)
 
 
-@contextlib.contextmanager
 def _suppress_and_log(label: str) -> Iterator[None]:
     """Run the block, logging (not propagating) any exception.
 
-    Use as a context manager around best-effort work that must not abort the
-    surrounding flow even if it fails::
-
-        with _suppress_and_log("could not flush telemetry"):
-            send_telemetry()
-
-    The exception is logged at WARNING with its traceback and then swallowed.
+    Centralises the "best-effort: log and continue" pattern so call sites have
+    a single, duplication-proof handler instead of an inline ``except Exception``
+    that an edit can accidentally clone.
     """
     try:
         yield

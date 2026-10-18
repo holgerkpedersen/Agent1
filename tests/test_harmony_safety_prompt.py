@@ -10,7 +10,7 @@ unnecessary fatal changes".  These tests pin:
   * the payload wiring in ``LlamaProvider._build_payload``,
   * the safety rules in ``agent._SYSTEM_PROMPT`` itself.
 """
-from agent import _SYSTEM_PROMPT
+from agent_core.shell_utils import SYSTEM_PROMPT as _SYSTEM_PROMPT
 from agent_core.llm.harmony import (
     HARMONY_GIT_ADDENDUM,
     HARMONY_SAFETY_ADDENDUM,
