@@ -140,6 +140,36 @@ def resolve_display_mode() -> "AgentDisplayMode":
     return _parse_display_mode(os.environ.get("AGENT_DISPLAY_MODE"), AgentDisplayMode.VERBOSE)
 
 
+#: Appended to the system prompt when the session display mode is INTENT so
+#: the model narrates its intent (a one-line what/why) with EVERY tool-call
+#: round.  Models rarely volunteer narration with tool_calls — the display
+#: falls back to heuristic per-call explanations when a round arrives bare —
+#: but the prompt nudge gets a real narration most of the time.
+_INTENT_SYSTEM_SUFFIX = (
+    "\n\nINTENT DISPLAY MODE is ON. Before every tool call, write ONE short "
+    "sentence (at most ~20 words) saying what you are about to do and why. "
+    "Keep it to a single line and put it in the message content alongside "
+    "the tool calls. Do not repeat the tool arguments — they are shown "
+    "separately."
+)
+
+
+def intent_mode_system_suffix() -> str:
+    """Appended to the system prompt when the session display mode is INTENT.
+
+    Empty string in every other mode.  ``agent._refresh_system_message``
+    rebuilds the dynamic blocks each turn, so a mid-session
+    ``display intent`` starts steering on the next turn.
+    """
+    try:
+        from agent_core.config import AgentDisplayMode
+        if resolve_display_mode() is AgentDisplayMode.INTENT:
+            return _INTENT_SYSTEM_SUFFIX
+    except Exception:
+        pass
+    return ""
+
+
 def final_answer_fallback() -> str:
     """Return the fallback text when no final answer is available."""
     return "(no answer produced)"
@@ -259,6 +289,7 @@ def strip_dynamic_system_blocks(text: str) -> str:
     markers = (
         "\n\nCRITICAL DESIGN CONSTRAINTS",
         "\n\nSESSION MODE: PLAN",
+        "\n\nINTENT DISPLAY MODE",
         "\n\nORIGINAL TASK",
         "\n\nSKILLS (on-demand procedural knowledge)",
         "\n\nUSER HABITS",

@@ -212,6 +212,7 @@ EXPECTED_IMPORTED = frozenset(
     "_safe_path",
     "_git_branch",
     "_install_signal_handlers",
+    "_intent_mode_system_suffix",
     "_interruptible_input",
     "_ENV_FILE_PATH",
     "_FULL_SUITE_MARGIN",

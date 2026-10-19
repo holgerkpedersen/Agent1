@@ -109,7 +109,7 @@ from agent_core.pytest_cmd_policy import (
 from agent_core.json_utils import _read_json_quarantining
 from agent_core.history_compaction import _recover_original_goal, _strip_image_blocks, _trim_chat_history, _project_chat_history, _HISTORY_CHAR_BUDGET, _MAX_CHAT_MESSAGES, _HISTORY_TRIM_NOTE, _is_compaction_note, _strip_turn_wrappers, _content_tokens
 from agent_core.llm.tool_loop import _message_size
-from agent_core.run_utils import _start_kanban_inbound, kill_process_tree as _kill_process_tree, unverified_action_claim as _unverified_action_claim, resolve_stream_fn as _resolve_stream_fn, resolve_display_mode as _resolve_display_mode, final_answer_fallback as _final_answer_fallback, turn_quality_score as _turn_quality_score, begin_trace_turn as _begin_trace_turn, append_turn_log as _append_turn_log, strip_dynamic_system_blocks as _strip_dynamic_system_blocks
+from agent_core.run_utils import _start_kanban_inbound, kill_process_tree as _kill_process_tree, unverified_action_claim as _unverified_action_claim, resolve_stream_fn as _resolve_stream_fn, resolve_display_mode as _resolve_display_mode, final_answer_fallback as _final_answer_fallback, turn_quality_score as _turn_quality_score, begin_trace_turn as _begin_trace_turn, append_turn_log as _append_turn_log, strip_dynamic_system_blocks as _strip_dynamic_system_blocks, intent_mode_system_suffix as _intent_mode_system_suffix
 NlpToolHandler = Callable[..., Awaitable[str]]
 from agent_core.types import _GOAL_RELATED_THRESHOLD
 from agent_core.llm.client import LLMClient
@@ -668,10 +668,10 @@ class AgentCore:
         the next turn), not the snapshot taken on the first turn.
         """
         if not self._chat_history:
-            self._chat_history.append({'role': 'system', 'content': _SYSTEM_PROMPT + (plan_mode_system_suffix() if self.is_plan_mode() else '')})
+            self._chat_history.append({'role': 'system', 'content': _SYSTEM_PROMPT + (plan_mode_system_suffix() if self.is_plan_mode() else '') + _intent_mode_system_suffix()})
         elif self._chat_history[0].get('role') != 'system':
             self._chat_history.insert(0, {'role': 'system', 'content': _SYSTEM_PROMPT})
-        self._chat_history[0] = {'role': 'system', 'content': _strip_dynamic_system_blocks(str(self._chat_history[0].get('content') or _SYSTEM_PROMPT)) + self._original_goal_block() + self._decision_constraints_block() + self._skill_index_block() + self._habits_block() + self._semantic_memory_block(query) + self._file_history_block(query) + (plan_mode_system_suffix() if self.is_plan_mode() else '')}
+        self._chat_history[0] = {'role': 'system', 'content': _strip_dynamic_system_blocks(str(self._chat_history[0].get('content') or _SYSTEM_PROMPT)) + self._original_goal_block() + self._decision_constraints_block() + self._skill_index_block() + self._habits_block() + self._semantic_memory_block(query) + self._file_history_block(query) + (plan_mode_system_suffix() if self.is_plan_mode() else '') + _intent_mode_system_suffix()}
 
     def _append_user_turn(self, user_input: str, images: list[str] | None) -> None:
         """Append this turn's user message (multimodal when *images* given).
@@ -1003,6 +1003,7 @@ __all__ = (
     '_git_branch',
     '_habits_block',
     '_install_signal_handlers',
+    '_intent_mode_system_suffix',
     '_interruptible_input',
     '_is_compaction_note',
     '_is_full_pytest_command',

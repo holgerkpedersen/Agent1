@@ -137,7 +137,12 @@ class SubAgent:
             return raw, updated
 
         assert self.role_spec is not None
-        runner = ToolLoopRunner(max_iterations=self.role_spec.max_turns)
+        from agent_core.run_utils import resolve_display_mode
+
+        runner = ToolLoopRunner(
+            max_iterations=self.role_spec.max_turns,
+            display_mode=resolve_display_mode(),
+        )
         final_text, _final_messages = await runner.run(
             msgs, llm_chat_fn, self._execute_tool_call, tools=schemas,
         )

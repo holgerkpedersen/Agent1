@@ -52,10 +52,14 @@ class _ScriptedLLM:
             }
             return json.dumps(message)
         if isinstance(step, tuple):
-            tool_name, args = step
+            if len(step) == 3:
+                tool_name, args, narration = step
+            else:
+                tool_name, args = step
+                narration = ""
             message = {
                 "role": "assistant",
-                "content": "",
+                "content": narration,
                 "tool_calls": [{
                     "id": "call_1",
                     "type": "function",
@@ -1978,6 +1982,78 @@ class TestDisplayModes:
         tool_msg = next(m for m in messages if m["role"] == "tool")
         assert tool_msg["content"] == "full-result-content"
         assert final_text == "Answer."
+
+    def test_intent_bare_tool_calls_get_short_why_lines(self, capsys):
+        """A bare tool-call round (no narration — the common case) still
+        explains every planned call with a short ``why:`` line."""
+        from agent_core.llm.tool_loop import ToolLoopRunner
+
+        fake = _ScriptedLLM([
+            ("read", {"path": "a.py"}),
+            "Answer.",
+        ])
+
+        async def execute_tool(name, args):
+            return "ok"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="intent")
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        assert "[intent 1]" in out
+        assert "read(path=a.py)" in out
+        assert "why: to inspect a.py" in out
+
+    def test_intent_narration_is_printed_in_full(self, capsys):
+        """When the model DID write narration, it is the intent explanation
+        and must be printed in full — never truncated — with no heuristic
+        ``why:`` lines duplicating it."""
+        from agent_core.llm.tool_loop import ToolLoopRunner
+
+        long_note = (
+            "I will read the file to check its structure before editing. "
+            + "padding " * 400
+        )
+        assert len(long_note) > 1200  # the old display cut narration at 1200
+        fake = _ScriptedLLM([
+            ("read", {"path": "a.py"}, long_note),
+            "Answer.",
+        ])
+
+        async def execute_tool(name, args):
+            return "ok"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="intent")
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        assert "[intent 1]" in out
+        # Tail of the narration is present -> nothing was cut off.
+        assert long_note.split()[-1] in out
+        assert "why:" not in out
+
+    def test_intent_block_printed_for_every_llm_round(self, capsys):
+        """INTENT mode writes one block per LLM round, not just the first."""
+        from agent_core.llm.tool_loop import ToolLoopRunner
+
+        fake = _ScriptedLLM([
+            ("read", {"path": "a.py"}),
+            ("search", {"query": "symbol"}),
+            "Answer.",
+        ])
+
+        async def execute_tool(name, args):
+            return "ok"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="intent")
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        assert "[intent 1]" in out
+        assert "[intent 2]" in out
+        assert out.index("[intent 1]") < out.index("[intent 2]")
+        # Round 2 is also explained (bare call -> heuristic why).
+        assert "why: to locate 'symbol' in the workspace" in out
 
     def test_clean_folds_narration_preamble_in_chat_nlp(self, tmp_path):
         """In CLEAN mode chat_nlp folds a stray 'I will ...' narration into a

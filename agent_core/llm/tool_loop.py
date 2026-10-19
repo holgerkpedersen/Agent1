@@ -1382,14 +1382,15 @@ class ToolLoopRunner:
 def _print_intent(iteration: int, narration: str, tool_calls: list[Any]) -> None:
     """INTENT display: print one block per LLM round before its tool calls run.
 
-    Shows the model's own narration (what it says it is trying to do) and each
-    planned call with its arguments, so the user sees the intent of every LLM
-    interaction in real time instead of only the final answer.
+    Shows the model's own narration (printed in FULL — never truncated) and
+    each planned call with its arguments.  When the model wrote no narration
+    (a bare tool-call round — the common case), every planned call gets a
+    short ``why:`` line so no intent is ever an unexplained bare call.
     """
     print(f"  {magenta(f'[intent {iteration + 1}]')}")
-    text = " ".join(str(narration or "").split())
+    text = " ".join(_narration_text(narration).split())
     if text:
-        print(f"    {gray(text[:1200])}")
+        print(f"    {gray(text)}")
     for tc in tool_calls:
         if not isinstance(tc, dict):
             continue
@@ -1402,6 +1403,23 @@ def _print_intent(iteration: int, narration: str, tool_calls: list[Any]) -> None
         except (json.JSONDecodeError, TypeError):
             args = {}
         print(f"    {yellow('->')} {cyan(name)}({gray(_fmt_args(args))})")
+        if not text:
+            print(f"      {gray('why: ' + _short_intent_why(name, args))}")
+
+
+def _narration_text(content: Any) -> str:
+    """Flatten an assistant message *content* (str or multimodal list) to text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text") or ""))
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(p for p in parts if p)
+    return str(content or "") if content is not None else ""
 
 
 def _fmt_args(args: dict[str, Any]) -> str:
@@ -1429,33 +1447,42 @@ def _derive_reason(tool_name: str, args: dict[str, Any], prior_text: str | None)
     if prior_text:
         first = " ".join(prior_text.split())[:260]
         return f"{tool_name}({_fmt_args(args)}) — {first}"
-    # Heuristic fallback keyed on the tool name + args.
+    return f"{tool_name}({_fmt_args(args)}) — {_short_intent_why(tool_name, args)}"
+
+
+def _short_intent_why(tool_name: str, args: dict[str, Any]) -> str:
+    """Short explanation for ONE planned call when the model wrote no narration.
+
+    Heuristic keyed on the tool name + arguments.  Shared by INTENT mode (the
+    per-call ``why:`` line) and CLEAN mode's :func:`_derive_reason` fallback,
+    so a bare tool call always carries an explanation in both modes.
+    """
     arg_summary = _fmt_args(args) or ""
     if tool_name == "read":
         path = str(args.get("path", ""))[:60]
-        return f"read({arg_summary}) — to inspect {path}"
+        return f"to inspect {path}"
     if tool_name == "search":
         query = str(args.get("query", ""))[:60]
-        return f"search({arg_summary}) — to locate '{query}' in the workspace"
+        return f"to locate '{query}' in the workspace"
     if tool_name == "list_files":
         path = str(args.get("path", "."))[:60]
-        return f"list_files({arg_summary}) — to enumerate {path}"
+        return f"to enumerate {path}"
     if tool_name == "write":
         path = str(args.get("path", ""))[:60]
-        return f"write({arg_summary}) — to create/update {path}"
+        return f"to create/update {path}"
     if tool_name == "edit":
         path = str(args.get("path", ""))[:60]
-        return f"edit({arg_summary}) — to patch {path}"
+        return f"to patch {path}"
     if tool_name in ("run", "git", "tests"):
         target = arg_summary or "(command)"
-        return f"{tool_name}({arg_summary}) — to execute/verify {target}"
+        return f"to execute/verify {target}"
     if tool_name == "diff":
         file1 = str(args.get("file1", ""))[:60]
-        return f"diff({arg_summary}) — to compare changes in {file1}"
+        return f"to compare changes in {file1}"
     if tool_name == "analyze":
         target = arg_summary or "(code)"
-        return f"analyze({arg_summary}) — to review {target}"
-    return f"{tool_name}({arg_summary}) — model action"
+        return f"to review {target}"
+    return "model action"
 
 
 def _summarize_result(tool_name: str, result_str: str) -> str:

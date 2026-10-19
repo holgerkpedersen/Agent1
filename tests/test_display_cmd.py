@@ -158,3 +158,42 @@ class TestResolveDisplayMode:
         assert resolve_display_mode() is AgentDisplayMode.VERBOSE
         monkeypatch.setenv("AGENT_DISPLAY_MODE", "nonsense")
         assert resolve_display_mode() is AgentDisplayMode.VERBOSE
+
+
+class TestIntentSystemSuffix:
+    """``intent_mode_system_suffix`` steers the model to narrate a one-line
+    intent with every tool-call round when (and only when) INTENT mode is on.
+
+    History: the display showed whatever narration the model produced — but
+    models rarely write content with tool_calls, so the intent block was
+    usually a bare call list.  The suffix nudges the model; the display's
+    per-call ``why:`` fallback covers rounds that still arrive bare.
+    """
+
+    def test_suffix_present_when_intent_mode(self, sandbox, monkeypatch):
+        from agent_core.run_utils import intent_mode_system_suffix
+
+        monkeypatch.setenv("AGENT_DISPLAY_MODE", "intent")
+        text = intent_mode_system_suffix()
+        assert "INTENT DISPLAY MODE" in text
+        assert "ONE short" in text
+
+    def test_suffix_empty_in_other_modes(self, sandbox, monkeypatch):
+        from agent_core.run_utils import intent_mode_system_suffix
+
+        monkeypatch.setenv("AGENT_DISPLAY_MODE", "verbose")
+        assert intent_mode_system_suffix() == ""
+        monkeypatch.setenv("AGENT_DISPLAY_MODE", "clean")
+        assert intent_mode_system_suffix() == ""
+        monkeypatch.setenv("AGENT_DISPLAY_MODE", "quiet")
+        assert intent_mode_system_suffix() == ""
+
+    def test_strip_removes_intent_suffix_no_accumulation(self, sandbox, monkeypatch):
+        from agent_core.run_utils import (
+            _INTENT_SYSTEM_SUFFIX,
+            strip_dynamic_system_blocks,
+        )
+
+        monkeypatch.setenv("AGENT_DISPLAY_MODE", "intent")
+        text = "BASE PROMPT" + _INTENT_SYSTEM_SUFFIX
+        assert strip_dynamic_system_blocks(text) == "BASE PROMPT"
