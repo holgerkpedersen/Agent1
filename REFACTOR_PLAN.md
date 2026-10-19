@@ -99,7 +99,7 @@ Extract `run_interactive`, `main`, `_register_commands`, `_build_registry`,
 
 Target: `agent_core/cli/interactive.py`.
 
-### r08 — Stub Agent → `agent_core/agent.py`
+### r08 — Stub Agent → `agent_core/agent.py` (DONE)
 
 After steps r01–r07, `agent.py` holds only the `Agent` class body: `__init__`, `_register_tool_handlers`,
 `build_transport`, `spawn_subagent`, `run_parallel_tasks`, `record_demo_activity`,
@@ -108,6 +108,12 @@ After steps r01–r07, `agent.py` holds only the `Agent` class body: `__init__`,
 `Agent` via a thin alias at the top of `agent_core/__init__.py`.
 
 Target: `agent_core/agent.py`.
+
+Done: the class moved to `agent_core/agent.py` as `AgentCore` (kept as `Agent`
+alias); `agent.py` is a thin shim re-exporting `agent_core.agent`. Also
+completes taskplan step t06 (`agent_core/pytest_cmd_policy.py`, restored from
+the pre-`ac9a3df` inline block — the classification/budget tests were failing at
+baseline).
 
 ### r09 — Final cleanup
 

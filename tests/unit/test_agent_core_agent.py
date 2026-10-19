@@ -1,11 +1,11 @@
-"""Tests for agent_core.agent — LLMAgent and its file-context integration."""
+"""Tests for agent_core.llm_agent — LLMAgent and its file-context integration."""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
 
-from agent_core.agent import LLMAgent
+from agent_core.llm_agent import LLMAgent
 
 
 # ---------------------------------------------------------------------------

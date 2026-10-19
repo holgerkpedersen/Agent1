@@ -11,7 +11,7 @@ import re
 import shlex
 import subprocess
 import sys
-from typing import Optional
+from typing import Any, Optional
 
 # ── Shell detection ─────────────────────────────────────────────────────────
 
@@ -136,12 +136,45 @@ def run_subprocess_captured(
         return -1, "", str(exc)
 
 
-def shape_run_stderr(stderr: str) -> str:
-    """Clean up stderr for display (remove ANSI codes, normalize newlines)."""
+def shape_run_stderr(
+    stderr: Any,
+    output: Any = None,
+    returncode: Any = None,
+) -> str:
+    """Clean up run-tool output for display.
+
+    Combines the captured *output* with cleaned *stderr* (ANSI codes
+    stripped, newlines normalised) and — when *returncode* is non-zero —
+    appends ``[EXIT CODE: N]`` so the model can read the exit code
+    directly; ``None``/``0`` returncodes add no marker.  A non-zero
+    returncode with no output at all is the Windows cmd.exe whole-pipeline
+    failure path, so the result also carries a hint about Unix-style
+    pipes.  Called with only *stderr*, *output*/*returncode* default and
+    the result is the cleaned stderr string alone.
+    """
     # Remove ANSI escape codes
     ansi_escape = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
-    cleaned = ansi_escape.sub("", stderr)
-    return cleaned.strip()
+    cleaned = ansi_escape.sub("", stderr or "").strip()
+    out = "" if output is None else str(output)
+    result = f"{out}\n{cleaned}" if cleaned else out
+    if returncode is None or returncode == 0:
+        return result
+    result = f"{result}\n[EXIT CODE: {returncode}]"
+    if (
+        not out.strip()
+        and not cleaned
+        and returncode == 255
+        and os.name == "nt"
+    ):
+        # The Windows cmd.exe whole-pipeline failure path: a `|` runs each
+        # stage separately and only the LAST stage's code survives, so an
+        # early failure surfaces as 255 with no output at all.
+        result += (
+            "\nNote: a pipeline (|) runs each stage in a separate process;"
+            " on Windows the exit code is the LAST stage's. On Unix-like"
+            " shells use 'set -o pipefail' to surface a failing stage."
+        )
+    return result
 
 
 def blocked_shell_command(command: str, shell_name: str | None = None) -> bool:

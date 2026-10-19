@@ -24,6 +24,8 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
+from agent_core.shell_utils import run_subprocess_captured as _shell_run_subprocess_captured
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from agent import Agent
 
@@ -133,17 +135,40 @@ def _blocked_shell_command(cmd: str) -> Any:
 
 
 def _shape_run_stderr(err: Any, output: Any, returncode: Any) -> str:
-    # The underlying helper only normalises stderr; output/returncode are legacy.
-    return _agent_module_attr("_shape_run_stderr")(err)
+    # The agent-module-visible seam: combines output + cleaned stderr and
+    # appends the [EXIT CODE: N] marker for non-zero returncodes.
+    return _agent_module_attr("_shape_run_stderr")(err, output, returncode)
 
 
-def _run_subprocess_captured(cmd: list[str], cwd: str, timeout: int, label: str):
-    # shell_utils.run_subprocess_captured returns (code, stdout, stderr);
-    # legacy nlp_tools callers expect (stdout, stderr).
-    _code, output, error = _agent_module_attr("_run_subprocess_captured")(
+def _run_subprocess_captured(
+    cmd: list[str],
+    cwd: str = ".",
+    timeout: int = 60,
+    label: str = "Run",
+):
+    """Shared subprocess capture used by the nlp git/tests/diff handlers.
+
+    This is the agent-module-visible seam (``agent._run_subprocess_captured``):
+    it takes the handler *label* and returns ``(output, error_message)`` —
+    on success *output* carries the captured stdout with ``[STDERR]`` lines
+    tagged in, an empty run rendered as ``(no output)`` and the whole thing
+    truncated; on failure *error_message* carries ``<label> timed out after
+    Ns`` or ``<label> error: ...`` (the strings
+    tests/test_agent_dry_refactor.py asserts on).
+    """
+    code, output, error = _shell_run_subprocess_captured(
         cmd, cwd=cwd, timeout=timeout
     )
-    return output, error
+    if code == -1:
+        if error and error.lower().startswith("timed out"):
+            return f"{label} timed out after {timeout}s", None
+        return "", f"{label} error: {error}"
+    output = output or ""
+    if error:
+        output = (output + "\n" if output else "") + f"[STDERR] {error}"
+    if not output.strip():
+        output = "(no output)"
+    return _agent_module_attr("_truncate_output")(output), None
 
 
 def _kill_process_tree(proc: Any) -> None:

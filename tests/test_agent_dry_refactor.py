@@ -99,10 +99,17 @@ def test_run_subprocess_captured_timeout_message() -> None:
 
 
 def test_nlp_git_tool_uses_shared_runner() -> None:
-    """The git handler must go through the shared capture helper."""
+    """The git handler must go through the shared capture helper.
+
+    The handlers live in ``agent_core.handlers.nlp_tools``; the
+    ``Agent._nlp_*`` methods are one-line delegates, so the structural
+    check inspects the real handler implementation.
+    """
     import inspect
 
-    src = inspect.getsource(agent.Agent._nlp_git)
+    from agent_core.handlers import nlp_tools
+
+    src = inspect.getsource(nlp_tools._nlp_git)
     assert "_run_subprocess_captured(" in src
     assert "subprocess.run(" not in src
 
@@ -110,7 +117,9 @@ def test_nlp_git_tool_uses_shared_runner() -> None:
 def test_nlp_tests_tool_uses_shared_runner() -> None:
     import inspect
 
-    src = inspect.getsource(agent.Agent._nlp_tests)
+    from agent_core.handlers import nlp_tools
+
+    src = inspect.getsource(nlp_tools._nlp_tests)
     assert "_run_subprocess_captured(" in src
 
 
@@ -144,9 +153,13 @@ def test_save_verify_note_skips_when_no_changes(tmp_path) -> None:
 def test_nlp_write_and_edit_use_shared_tail() -> None:
     import inspect
 
-    for method in (agent.Agent._nlp_write, agent.Agent._nlp_edit):
-        src = inspect.getsource(method)
-        assert "_save_verify_note(" in src, method.__name__
+    from agent_core.handlers import nlp_tools
+
+    # The Agent._nlp_* methods are one-line delegates; the handlers resolve
+    # the shared tail through _agent_attr(agent, "_save_verify_note").
+    for handler in (nlp_tools._nlp_write, nlp_tools._nlp_edit):
+        src = inspect.getsource(handler)
+        assert '"_save_verify_note"' in src, handler.__name__
 
 
 def test_nlp_edit_rewrites_file_end_to_end(tmp_path) -> None:
@@ -214,8 +227,10 @@ def test_chat_nlp_uses_system_prompt_constant() -> None:
 
     # The system prompt must come from the shared module constant — now built
     # inside _refresh_system_message (chat_nlp's first pipeline phase).
+    # The dict is built with unquoted keys since the AST-based prompt builder
+    # landed, so match the key/value pair, not the JSON-style quoting.
     src = inspect.getsource(agent.Agent._refresh_system_message)
-    assert '"content": _SYSTEM_PROMPT' in src
+    assert "'content': _SYSTEM_PROMPT" in src
     # ...and chat_nlp must delegate to that phase instead of inlining a prompt.
     loop_src = inspect.getsource(agent.Agent.chat_nlp)
     assert "_refresh_system_message(" in loop_src

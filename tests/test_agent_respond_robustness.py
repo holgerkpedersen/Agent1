@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock
-from agent_core.agent import LLMAgent
+from agent_core.llm_agent import LLMAgent
 
 class MockLLMClient:
     def chat(self, messages: list[dict[str, str]]) -> str:

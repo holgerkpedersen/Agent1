@@ -1389,7 +1389,7 @@ def _print_intent(iteration: int, narration: str, tool_calls: list[Any]) -> None
     print(f"  {magenta(f'[intent {iteration + 1}]')}")
     text = " ".join(str(narration or "").split())
     if text:
-        print(f"    {gray(text[:400])}")
+        print(f"    {gray(text[:1200])}")
     for tc in tool_calls:
         if not isinstance(tc, dict):
             continue

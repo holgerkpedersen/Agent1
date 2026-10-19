@@ -36,30 +36,9 @@ import importlib
 import io
 
 # Names agent.py's own body defines (functions, classes, module constants).
-EXPECTED_DEFINITIONS = frozenset(
-    (
-    "Agent",
-    "NlpToolHandler",
-    "_CONTEXT_AST_THRESHOLD_KB",
-    "_CONTINUE_NOTE",
-    "_CONTINUE_NOTE_TAG",
-    "_CONTINUE_NOTE_TAG_KEY",
-    "_DELEGATE_TIMEOUT_S",
-    "_LLM_ERROR_BACKOFF_S",
-    "_LLM_ERROR_MAX_RETRIES",
-    "_MAX_ACTIVE_SUBAGENTS",
-    "_MAX_CHAINED_RUNS",
-    "_MAX_CONSECUTIVE_READS",
-    "_MAX_READ_FILES",
-    "_MAX_READ_LINES",
-    "_MAX_RUN_TIMEOUT_S",
-    "_READ_LOOP_NOTE",
-    "_VERIFY_NOTE",
-    "_escape_json_string_controls",
-    "_repair_tool_arguments",
-    "logger",
-    )
-)
+# r08: agent.py is a thin shim — its body defines NOTHING; the whole surface
+# is re-exported (star import of agent_core.agent.__all__ + explicit blocks).
+EXPECTED_DEFINITIONS = frozenset()
 
 # Names agent.py exposes through imports (``import x``, ``from y import z``,
 # and everything re-exported by agent_core.bootstrap.__all__).
@@ -67,7 +46,9 @@ EXPECTED_IMPORTED = frozenset(
     (
     "AGENT_MEMORY_JSON_PATH",
     "AGENT_MEMORY_TMP_PATH",
+    "Agent",
     "AgentDisplayMode",
+    "AgentCore",
     "AnalyzeCommand",
     "Any",
     "Awaitable",
@@ -109,6 +90,7 @@ EXPECTED_IMPORTED = frozenset(
     "NLP_TOOL_NAMES",
     "NLP_TOOL_SCHEMAS",
     "NonUtf8TextError",
+    "NlpToolHandler",
     "ORIGINAL_GOAL_MARKER",
     "OptimizeCommand",
     "Optional",
@@ -137,13 +119,30 @@ EXPECTED_IMPORTED = frozenset(
     "WriteCommand",
     "_ACTION_VERB_RE",
     "_COMPLETE_MARKERS",
+    "_CONTEXT_AST_THRESHOLD_KB",
+    "_CONTINUE_NOTE",
+    "_CONTINUE_NOTE_TAG",
+    "_CONTINUE_NOTE_TAG_KEY",
+    "_DELEGATE_TIMEOUT_S",
+    "_escape_json_string_controls",
     "_GOAL_RELATED_THRESHOLD",
     "_HISTORY_CHAR_BUDGET",
     "_HISTORY_TRIM_NOTE",
     "_INCOMPLETE_MARKERS",
+    "_LLM_ERROR_BACKOFF_S",
+    "_LLM_ERROR_MAX_RETRIES",
+    "_MAX_ACTIVE_SUBAGENTS",
+    "_MAX_CHAINED_RUNS",
     "_MAX_CHAT_MESSAGES",
+    "_MAX_CONSECUTIVE_READS",
+    "_MAX_READ_FILES",
+    "_MAX_READ_LINES",
+    "_MAX_RUN_TIMEOUT_S",
     "_QUESTION_LEAD_RE",
+    "_READ_LOOP_NOTE",
+    "_repair_tool_arguments",
     "_SYSTEM_PROMPT",
+    "_VERIFY_NOTE",
     "_append_turn_log",
     "_begin_trace_turn",
     "_blocked_shell_command",
