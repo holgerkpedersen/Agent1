@@ -238,7 +238,7 @@ class TestSubagentCommand:
         llm = sub.llm
         assert isinstance(llm, _ScriptedLLMClient)
         llm.script = ["echo answer"]
-        a._subagents = {"r1": sub}  # type: ignore[attr-defined]
+        a._subagents = {"r1": sub}
         asyncio.run(_registry_with_subagent().execute(
             "subagent", ["run", "r1", "do", "stuff"], a))
         out = capsys.readouterr().out
@@ -254,7 +254,7 @@ class TestSubagentCommand:
         assert isinstance(llm, _ScriptedLLMClient)
         llm.script = ["hi"]
         asyncio.run(sub.respond("hello"))
-        a._subagents = {"r2": sub}  # type: ignore[attr-defined]
+        a._subagents = {"r2": sub}
         asyncio.run(_registry_with_subagent().execute(
             "subagent", ["list"], a))
         assert "role=None" not in capsys.readouterr().out

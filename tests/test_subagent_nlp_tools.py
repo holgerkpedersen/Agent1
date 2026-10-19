@@ -38,6 +38,19 @@ def _make_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Agent:
     return Agent(workspace=str(tmp_path), model_name="test-model")
 
 
+def test_fresh_agent_declares_subagents_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: ``_subagents`` is declared in ``AgentCore.__init__``.
+
+    It used to be lazy-bootstrapped at each use site with an annotated
+    assignment to a non-self target (``agent._subagents: dict[...] = {}``),
+    which PEP 526 forbids and mypy flags as [misc].
+    """
+    a = _make_agent(tmp_path, monkeypatch)
+    assert a._subagents == {}
+
+
 def test_create_subagent_handler(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -238,6 +238,13 @@ class AgentCore:
         self._read_streak: int = 0
         self._delegating: bool = False
         self._active_subagents: set[str] = set()
+        #: Named SubAgents created via the ``create_subagent`` NLP tool or the
+        #: ``subagent`` REPL command, keyed by name.  Declared HERE (not
+        #: lazy-bootstrapped at each use site): PEP 526 forbids an annotated
+        #: assignment to a non-``self`` target, so
+        #: ``agent._subagents: dict[...] = {}`` in the handlers was a mypy
+        #: [misc] error and left ``AgentCore`` without the attribute at all.
+        self._subagents: "dict[str, SubAgent]" = {}
         self._delegate_counter: int = 0
         self._nlp_workspace: str | None = None
         self.mode: str = MODE_BUILD

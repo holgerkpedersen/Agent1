@@ -426,8 +426,10 @@ async def _nlp_create_subagent(agent: "Agent", args: dict[str, Any]) -> str:
             f"Error: unknown role '{role}'. "
             f"Available: {', '.join(role_names())}"
         )
-    if not hasattr(agent, "_subagents"):
-        agent._subagents: dict[str, object] = {}
+    # ``AgentCore.__init__`` owns ``_subagents`` (declared there, not
+    # lazy-bootstrapped here: PEP 526 forbids annotated assignment to a
+    # non-self target — ``agent._subagents: dict[...] = {}`` was a mypy [misc]
+    # error and left the attribute undeclared on the class).
     if name in agent._subagents:
         return (
             f"Error: subagent '{name}' already exists. "

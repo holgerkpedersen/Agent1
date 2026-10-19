@@ -58,9 +58,8 @@ class SubAgentCommand(Command):
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
-        if not hasattr(agent, "_subagents"):
-            agent._subagents: dict[str, object] = {}
-
+        # ``AgentCore.__init__`` declares ``_subagents``; no lazy bootstrap
+        # needed here (PEP 526 forbids annotated assignment to non-self).
         parts = [a for a in args if a.strip()]
         if not parts:
             print(self.help_text)
