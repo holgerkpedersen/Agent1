@@ -170,9 +170,34 @@ def intent_mode_system_suffix() -> str:
     return ""
 
 
-def final_answer_fallback() -> str:
-    """Return the fallback text when no final answer is available."""
-    return "(no answer produced)"
+def final_answer_fallback(loop: Any = None) -> str:
+    """Return the fallback text when no final answer is available.
+
+    When given a ``ToolLoopRunner`` (or anything with the same attributes),
+    report the work the loop *did* do -- tool-call count, per-tool tally, the
+    last call, iterations used and the termination reason -- so the user sees
+    a concrete status instead of a bare "(no answer produced)".
+    """
+    if loop is None:
+        return "(no answer produced)"
+    calls = getattr(loop, "tool_calls_made", 0)
+    if not calls:
+        return "(no answer produced)"
+    tools_used: dict[str, int] = dict(getattr(loop, "tools_used", {}) or {})
+    tally = ", ".join(f"{name}x{count}" for name, count in sorted(tools_used.items()))
+    parts = [
+        f"No final answer was produced, but the loop did real work: "
+        f"{calls} tool call(s) over {getattr(loop, 'iterations_used', 0)} iteration(s)"
+    ]
+    if tally:
+        parts.append(f"tools used: {tally}")
+    last = getattr(loop, "last_tool_call", None)
+    if last:
+        parts.append(f"Last action: {last}")
+    reason = getattr(loop, "termination_reason", None)
+    if reason:
+        parts.append(f"stopped: {reason}")
+    return "; ".join(parts) + "."
 
 
 # ── Turn quality ─────────────────────────────────────────────────────────────

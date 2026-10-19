@@ -47,9 +47,12 @@ class TestRunTimeout:
         assert "timed out after 1s" in out
         assert "tree" in out
         if os_name() == "nt":
-            # Windows: the tree is killed via taskkill /T /F.
+            # Windows: the tree is killed via taskkill /T /F.  Assert the
+            # flags as a set — the implementation's flag order is not API.
             assert captured["taskkill"][0] == "taskkill"
-            assert captured["taskkill"][3] == "/T"  # tree kill
+            assert "/F" in captured["taskkill"]      # force
+            assert "/T" in captured["taskkill"]      # tree kill
+            assert "/PID" in captured["taskkill"]
             assert "4242" in captured["taskkill"]
             # The shell runs in its own process group on Windows.
             assert captured["kwargs"]["creationflags"] == subprocess.CREATE_NEW_PROCESS_GROUP

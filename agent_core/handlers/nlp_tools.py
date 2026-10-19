@@ -25,6 +25,7 @@ import time
 from typing import TYPE_CHECKING, Any, Callable
 
 from agent_core.shell_utils import run_subprocess_captured as _shell_run_subprocess_captured
+from agent_core.pytest_cmd_policy import pytest_flag_conflict as _pytest_flag_conflict
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from agent import Agent
@@ -975,6 +976,13 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
     blocked = _blocked_shell_command(cmd_to_run)
     if blocked:
         return f"Error: Dangerous command blocked ({blocked}): {cmd_to_run}"
+    # Known-bad pytest flag combos crash pytest itself (INTERNALERROR) rather
+    # than producing a usage error the model could self-correct from.  Refuse
+    # with an actionable message instead of burning a turn on a stack trace.
+    if is_pytest:
+        conflict = _pytest_flag_conflict(cmd_to_run)
+        if conflict:
+            return f"Error: {conflict}"
     # Windows: start the shell in its own process group so a timeout
     # can kill the WHOLE tree. Killing only cmd.exe leaves orphaned
     # children (e.g. a harnessfix.loop python process) running and
