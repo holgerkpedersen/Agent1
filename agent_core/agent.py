@@ -107,7 +107,7 @@ from agent_core.pytest_cmd_policy import (
     _pytest_full_suite_timeout,
 )
 from agent_core.json_utils import _read_json_quarantining
-from agent_core.history_compaction import _recover_original_goal, _strip_image_blocks, _trim_chat_history, _project_chat_history, _HISTORY_CHAR_BUDGET, _MAX_CHAT_MESSAGES, _HISTORY_TRIM_NOTE, _is_compaction_note, _strip_turn_wrappers, _content_tokens
+from agent_core.history_compaction import _recover_original_goal, _strip_image_blocks, _trim_chat_history, _project_chat_history, _drop_orphan_tool_messages, _repair_unanswered_tool_calls, _HISTORY_CHAR_BUDGET, _MAX_CHAT_MESSAGES, _HISTORY_TRIM_NOTE, _is_compaction_note, _strip_turn_wrappers, _content_tokens
 from agent_core.llm.tool_loop import _message_size
 from agent_core.run_utils import _start_kanban_inbound, kill_process_tree as _kill_process_tree, unverified_action_claim as _unverified_action_claim, resolve_stream_fn as _resolve_stream_fn, resolve_display_mode as _resolve_display_mode, final_answer_fallback as _final_answer_fallback, turn_quality_score as _turn_quality_score, begin_trace_turn as _begin_trace_turn, append_turn_log as _append_turn_log, strip_dynamic_system_blocks as _strip_dynamic_system_blocks, intent_mode_system_suffix as _intent_mode_system_suffix
 NlpToolHandler = Callable[..., Awaitable[str]]
@@ -993,6 +993,7 @@ __all__ = (
     '_current_git_branch',
     '_decision_constraints_block',
     '_detect_shell',
+    '_drop_orphan_tool_messages',
     '_effective_ws_dir',
     '_ensure_original_goal',
     '_escape_json_string_controls',
@@ -1061,6 +1062,7 @@ __all__ = (
     '_record_llm_experience',
     '_recover_original_goal',
     '_repair_tool_arguments',
+    '_repair_unanswered_tool_calls',
     '_report_failover',
     '_reset_failover_notice',
     '_resolve_display_mode',
