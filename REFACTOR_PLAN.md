@@ -125,6 +125,26 @@ baseline).
 
 Target: `agent.py` shrinks to a thin re-export shim.
 
+Progress (2026-10-19):
+
+- Dead-alias audit done: scanned all 504 .py files for references to each of
+  the 285 names in the frozen `__all__` — only ONE true dead alias exists
+  (`_git_branch`, an unused `current_git_branch as _git_branch` alias). It is
+  DEFERRED: it sits inside the line-92 import that a concurrent session is
+  actively editing (platform-hint rename); pruning it after that work lands
+  is a one-line cleanup. All other names are used in-place or re-exported
+  for the frozen monkeypatch surface.
+- `agent_core/__init__.py`: lazy `__getattr__` exports of `Agent`/`AgentCore`
+  (commit cc1da58) — `from agent_core import Agent` works without eager
+  importing the LLM stack.
+- `Architecture.md`: module map + post-refactor layout (commit cc1da58).
+- Empty `__all__` stubs: none exist (audited).
+- History-compaction helpers re-exported through the agent surface
+  (commit 1f8b9da) — restores 3 pre-existing-baseline test failures.
+- REMAINING: one earned full-suite run before push (gate budget; the tree
+  currently carries another session's in-flight work, so run it on a clean
+  tree at push time).
+
 ---
 
 ## What NOT to extract (already done)
