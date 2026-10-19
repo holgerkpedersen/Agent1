@@ -116,18 +116,28 @@ def resolve_stream_fn(
 
 
 def resolve_display_mode() -> "AgentDisplayMode":
-    """Return the display mode from agent settings or default."""
+    """Return the agent's display mode from settings/env (default: verbose).
+
+    Reads ``AGENT_DISPLAY_MODE`` via :func:`load_agent_settings` (process env
+    wins, then the ``.env`` found from the cwd upward — so ``display intent``
+    in the REPL takes effect on the next turn), falling back to a direct env
+    parse when settings are unavailable, and finally ``VERBOSE``.
+
+    Always returns a real ``AgentDisplayMode`` member.  The t00 extraction
+    shipped a ``getattr(settings, "display_mode", AgentDisplayMode.ANSI)``
+    whose default referenced a nonexistent member: arguments evaluate before
+    ``getattr`` runs, so every call raised ``AttributeError``, was swallowed,
+    and returned ``0`` — which ``ToolLoopRunner`` mapped to VERBOSE, silently
+    killing intent/quiet/clean while every test kept passing (they patch the
+    resolver instead of calling it).
+    """
+    from agent_core.config import AgentDisplayMode, _parse_display_mode, load_agent_settings
+
     try:
-        from agent_core.config import AgentDisplayMode, load_agent_settings
-        settings = load_agent_settings()
-        return getattr(settings, "display_mode", AgentDisplayMode.ANSI)
+        return load_agent_settings().display_mode
     except Exception:
-        pass
-    try:
-        from agent_core.config import AgentDisplayMode
-        return AgentDisplayMode.ANSI
-    except Exception:
-        return 0  # type: ignore[return-value]
+        logger.debug("load_agent_settings failed in resolve_display_mode", exc_info=True)
+    return _parse_display_mode(os.environ.get("AGENT_DISPLAY_MODE"), AgentDisplayMode.VERBOSE)
 
 
 def final_answer_fallback() -> str:

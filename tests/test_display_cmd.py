@@ -97,3 +97,64 @@ def test_current_mode_falls_back_to_verbose_on_invalid_env(sandbox, monkeypatch,
     monkeypatch.setenv("AGENT_DISPLAY_MODE", "nonsense")
     assert _run([]) is True
     assert "Display mode is 'verbose'." in capsys.readouterr().out
+
+
+class TestResolveDisplayMode:
+    """Regression tests for ``agent_core.run_utils.resolve_display_mode``.
+
+    ``chat_nlp`` feeds this value straight into ``ToolLoopRunner``, so a bad
+    return silently forces VERBOSE for every mode while ``display`` keeps
+    reporting the mode as set.  History: the t00 import-block extraction
+    replaced agent.py's original ``_resolve_display_mode`` with
+    ``getattr(settings, "display_mode", AgentDisplayMode.ANSI)`` — ``ANSI`` was
+    never a member, arguments evaluate before ``getattr`` runs, so every call
+    raised ``AttributeError``, was swallowed, and returned ``0`` (mapped to
+    VERBOSE by the loop).  intent/quiet/clean were dead while every test kept
+    passing because they monkeypatch the resolver instead of calling it.
+    """
+
+    def test_env_intent_resolves_to_intent_member(self, sandbox, monkeypatch):
+        from agent_core.config import AgentDisplayMode
+        from agent_core.run_utils import resolve_display_mode
+
+        monkeypatch.setenv("AGENT_DISPLAY_MODE", "intent")
+        assert resolve_display_mode() is AgentDisplayMode.INTENT
+
+    def test_agent_shim_alias_returns_real_mode(self, sandbox, monkeypatch):
+        import agent
+        from agent_core.config import AgentDisplayMode
+
+        monkeypatch.setenv("AGENT_DISPLAY_MODE", "intent")
+        assert agent._resolve_display_mode() is AgentDisplayMode.INTENT
+
+    def test_loop_runner_receives_intent_from_real_resolver(self, sandbox, monkeypatch):
+        from agent_core.config import AgentDisplayMode
+        from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
+        from agent_core.run_utils import resolve_display_mode
+
+        monkeypatch.setenv("AGENT_DISPLAY_MODE", "intent")
+        mode = resolve_display_mode()
+        assert isinstance(mode, AgentDisplayMode)  # never a sentinel like 0
+        loop = ToolLoopRunner(max_iterations=1, display_mode=mode)
+        assert loop.display_mode is DisplayMode.INTENT
+
+    def test_settings_failure_falls_back_to_env_not_sentinel(self, sandbox, monkeypatch):
+        import agent_core.config as cfg
+        from agent_core.config import AgentDisplayMode
+        from agent_core.run_utils import resolve_display_mode
+
+        def boom(*a, **k):
+            raise RuntimeError("settings unavailable")
+
+        monkeypatch.setattr(cfg, "load_agent_settings", boom)
+        monkeypatch.setenv("AGENT_DISPLAY_MODE", "quiet")
+        assert resolve_display_mode() is AgentDisplayMode.QUIET
+
+    def test_missing_and_invalid_env_default_to_verbose(self, sandbox, monkeypatch):
+        from agent_core.config import AgentDisplayMode
+        from agent_core.run_utils import resolve_display_mode
+
+        # sandbox clears AGENT_DISPLAY_MODE and cwd has no .env
+        assert resolve_display_mode() is AgentDisplayMode.VERBOSE
+        monkeypatch.setenv("AGENT_DISPLAY_MODE", "nonsense")
+        assert resolve_display_mode() is AgentDisplayMode.VERBOSE
