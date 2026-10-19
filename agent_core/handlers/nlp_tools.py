@@ -481,7 +481,11 @@ def _nlp_tool_handlers(agent: "Agent") -> dict[str, NlpToolHandler]:
             "jev_decide": lambda a: _nlp_jev_decide(agent, a),
             "list_files": lambda a: _nlp_list_files(agent, a),
             "merge": lambda a: _nlp_merge(agent, a),
-            "read": lambda a: _nlp_read(agent, a),
+            # Late-bound through the Agent attribute so tests (and any
+            # subclass) that patch Agent._nlp_read intercept this route.
+            # The module-level function reference bypassed the patch and
+            # the dispatcher's exception containment (test_handler_exception_is_contained).
+            "read": lambda a: agent._nlp_read(a),
             "read_skill": lambda a: _nlp_read_skill(agent, a),
             "references": lambda a: _nlp_references(agent, a),
             "run": lambda a: _nlp_run(agent, a),
