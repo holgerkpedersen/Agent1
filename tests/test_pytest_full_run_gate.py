@@ -368,6 +368,58 @@ class TestRunToolGate:
         out = await bot._nlp_tests({"path": "."})
         assert "REFUSED" in out
 
+    @pytest.mark.asyncio
+    async def test_tests_tool_spends_budget_only_after_completion(
+        self, bot: Agent, monkeypatch
+    ) -> None:
+        # Regression: the tests tool used to record the full run BEFORE the
+        # subprocess started, so a timeout or launch failure permanently
+        # burned the one-shot budget.  Only a completed run spends it
+        # (parity with _nlp_run).
+        bot._full_run_gate = FullRunGate(".", baseline=set())
+        monkeypatch.setattr(
+            "agent_core.handlers.nlp_tools._run_subprocess_captured",
+            lambda cmd, cwd=".", timeout=60, label="Run": ("2580 passed", None),
+        )
+        out = await bot._nlp_tests({"path": "."})
+        assert "REFUSED" not in out
+        assert bot._full_run_gate.runs == 1
+        # Second whole-workspace attempt in the same session: refused.
+        again = await bot._nlp_tests({"path": "."})
+        assert "REFUSED" in again
+
+    @pytest.mark.asyncio
+    async def test_tests_tool_timeout_does_not_spend_budget(
+        self, bot: Agent, monkeypatch
+    ) -> None:
+        bot._full_run_gate = FullRunGate(".", baseline=set())
+        monkeypatch.setattr(
+            "agent_core.handlers.nlp_tools._run_subprocess_captured",
+            lambda cmd, cwd=".", timeout=60, label="Run": (
+                f"{label} timed out after {timeout}s",
+                None,
+            ),
+        )
+        out = await bot._nlp_tests({"path": "."})
+        assert "timed out after" in out
+        assert bot._full_run_gate.runs == 0
+
+    @pytest.mark.asyncio
+    async def test_tests_tool_launch_error_does_not_spend_budget(
+        self, bot: Agent, monkeypatch
+    ) -> None:
+        bot._full_run_gate = FullRunGate(".", baseline=set())
+        monkeypatch.setattr(
+            "agent_core.handlers.nlp_tools._run_subprocess_captured",
+            lambda cmd, cwd=".", timeout=60, label="Run": (
+                "",
+                f"{label} error: python not found",
+            ),
+        )
+        out = await bot._nlp_tests({"path": "."})
+        assert "error:" in out
+        assert bot._full_run_gate.runs == 0
+
 
 
 # ---------------------------------------------------------------------------

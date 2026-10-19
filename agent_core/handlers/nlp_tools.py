@@ -1234,11 +1234,13 @@ async def _nlp_tests(agent: "Agent", args: dict[str, Any]) -> str:
     )
     if is_full:
         # Whole-workspace run: same "earned and rare" gate as the run tool -
-        # no real change means a full pass verifies nothing.
+        # no real change means a full pass verifies nothing.  Check BEFORE
+        # running, but spend the budget only AFTER (see below): recording
+        # first burned the one-shot budget even when the run then timed out
+        # or failed to launch, unlike _nlp_run which records on completion.
         refusal = agent._full_run_gate.check()
         if refusal:
             return refusal
-        agent._full_run_gate.record_full_run()
     if framework == "pytest":
         # A whole-workspace run gets the measured suite budget; a targeted
         # path keeps the plain cap so nested/single-file runs stay bounded.
@@ -1251,8 +1253,13 @@ async def _nlp_tests(agent: "Agent", args: dict[str, Any]) -> str:
     output, error = _run_subprocess_captured(
         cmd, _effective_ws_dir(agent), timeout, "Tests",
     )
-    if is_full:
+    if is_full and error is None:
         timed_out = "timed out after" in (output or "")
+        if not timed_out:
+            # The run completed - only now is the one-shot budget spent
+            # (parity with _nlp_run, which records after communicate()).
+            agent._full_run_gate.record_full_run()
+        # A killed run still proves it lasted AT LEAST this long.
         record_full_run_seconds(
             time.monotonic() - started, completed=not timed_out,
         )
