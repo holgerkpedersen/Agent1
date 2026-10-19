@@ -49,6 +49,49 @@ def current_git_branch(cwd: str | None = None) -> str:
 
 
 # ── Command hints ────────────────────────────────────────────────────────────
+#: Destructive shell block-list (TIER-1).  One owner: the shared security
+#: module.  agent.py re-exports this as the legacy ``_DANGEROUS_SHELL_PATTERNS``
+#: alias, so a rename here must keep that alias working.
+from agent_core.security.allowlist import DESTRUCTIVE_SHELL_PATTERNS
+
+# Two distinct hint families live here — do not conflate them:
+#  * platform_hints (zero-arg): static text about what the CURRENT shell
+#    lacks, appended to failed run results. Contract asserted by
+#    tests/test_agent_robustness.py::test_shell_command_hint_is_platform_aware
+#    (zero-arg calls; "no Unix tools" on Windows, "cmd.exe" on POSIX).
+#    These were the original inline agent.py hints and were lost when the
+#    import block was rewritten at ac9a3df.
+#  * command translation maps (take a command string): suggest the
+#    equivalent command on the other OS.
+
+
+def platform_unix_hint() -> str:
+    """Hint appended to run results when a Unix-ism fails on Windows
+    (tail/grep/ls/mypy-as-command are not available in the current shell)."""
+    return (
+        f"\nHint: this shell ({detect_shell()}) has no Unix tools like tail/grep/ls, "
+        "and installed Python tools must be called as 'python -m <tool>'. Use Python "
+        'one-liners (python -c "...") or the built-in tools — run output is truncated '
+        "automatically, so pipes like '2>&1 | tail -40' are neither needed nor supported."
+    )
+
+
+def platform_windows_hint() -> str:
+    """Hint appended to run results when a Windows-ism fails on POSIX
+    (cmd.exe builtins and PowerShell cmdlets are not available there)."""
+    return (
+        f"\nHint: this shell ({detect_shell()}) has no cmd.exe builtins "
+        "(dir/type/findstr/copy/del/where) and no PowerShell cmdlets "
+        "(Get-ChildItem/Select-String/Get-Content). Use Python one-liners "
+        '(python -c "...") or the built-in tools.'
+    )
+
+
+def platform_shell_command_hint() -> str:
+    """Return the platform-appropriate static hint for the CURRENT shell."""
+    if os.name == "nt":
+        return platform_unix_hint()
+    return platform_windows_hint()
 
 
 def unix_command_hint(command: str) -> str:
@@ -90,7 +133,11 @@ def windows_command_hint(command: str) -> str:
 
 
 def shell_command_hint(command: str) -> str:
-    """Return a platform-appropriate hint for the given command."""
+    """Return a command-specific translation hint for *command*.
+
+    Distinct from :func:`platform_shell_command_hint`, which takes no
+    argument and returns the static hint about the CURRENT shell.
+    """
     if sys.platform == "win32":
         return windows_command_hint(command)
     return unix_command_hint(command)
@@ -99,14 +146,48 @@ def shell_command_hint(command: str) -> str:
 # ── Subprocess helpers ───────────────────────────────────────────────────────
 
 
-def truncate_output(text: str, max_lines: int = 200, max_bytes: int = 50_000) -> str:
-    """Truncate output to max_lines and max_bytes, appending a marker."""
-    lines = text.splitlines()
-    if len(lines) > max_lines:
-        text = "\n".join(lines[:max_lines]) + f"\n... [{len(lines) - max_lines} more lines]"
-    if len(text) > max_bytes:
-        text = text[:max_bytes] + f"\n... [{len(text) - max_bytes} more bytes]"
-    return text
+def truncate_output(
+    text: str | None,
+    max_lines: int = 200,
+    max_bytes: int = 50_000,
+    keep: int = 2500,
+) -> str:
+    """Truncate output, keeping the head and tail, with a marker in between.
+
+    Empty/None output becomes the ``(no output)`` placeholder: a subprocess
+    that produced nothing yields ``None`` from ``communicate()``, and the
+    agent's run tool needs a non-empty string so the LLM can tell "ran,
+    printed nothing" from "output was lost".
+
+    Long output keeps ``keep`` characters at each end (the tail matters —
+    pytest failures end at the summary line) and collapses the middle into
+    the ``... [truncated] ...`` marker.  The middle is measured in
+    characters, not lines: a mid-section that is one giant line (no
+    newlines) must not survive the cap.  The result is always strictly
+    shorter than the input — the marker counts against the budget.
+    """
+    if not text:
+        return "(no output)"
+    if len(text) <= max_bytes and len(text) <= 2 * keep:
+        # Short enough to pass through — subject to the line cap only.
+        lines = text.splitlines()
+        if len(lines) > max_lines:
+            dropped = len(lines) - max_lines
+            return (
+                "\n".join(lines[:max_lines])
+                + f"\n... [truncated] ... [{dropped} more lines]"
+            )
+        return text
+
+    # Char-based head/tail split.  Reserve room for the marker so the
+    # result is guaranteed shorter than the input.
+    dropped = len(text) - 2 * keep
+    marker = f"\n... [truncated] ... [{dropped} chars omitted]\n"
+    budget = len(text) - len(marker)
+    half = max(budget // 2, 1)
+    head = text[:half]
+    tail = text[-half:]
+    return head + marker + tail
 
 
 def run_subprocess_captured(
@@ -136,6 +217,16 @@ def run_subprocess_captured(
         return -1, "", str(exc)
 
 
+#: cmd.exe's wording when a command name is not on PATH.
+_COMMAND_NOT_FOUND_RE = re.compile(
+    r"is not recognized as an internal or external command", re.I
+)
+#: POSIX shells' wording for the same failure.
+_COMMAND_NOT_FOUND_UNIX_RE = re.compile(
+    r"(command not found|No such file or directory)", re.I
+)
+
+
 def shape_run_stderr(
     stderr: Any,
     output: Any = None,
@@ -146,10 +237,20 @@ def shape_run_stderr(
     Combines the captured *output* with cleaned *stderr* (ANSI codes
     stripped, newlines normalised) and — when *returncode* is non-zero —
     appends ``[EXIT CODE: N]`` so the model can read the exit code
-    directly; ``None``/``0`` returncodes add no marker.  A non-zero
-    returncode with no output at all is the Windows cmd.exe whole-pipeline
-    failure path, so the result also carries a hint about Unix-style
-    pipes.  Called with only *stderr*, *output*/*returncode* default and
+    directly; ``None``/``0`` returncodes add no marker.
+
+    A non-zero returncode also gets a shell Hint (the run tool's
+    shell-awareness contract, pinned by
+    ``tests/test_tool_loop_nlp.py::TestRunToolShellAwareness``):
+
+    * the shell's "command not found" wording → the static
+      :func:`platform_shell_command_hint` text, so the model learns which
+      shell it is on and what it lacks;
+    * the Windows cmd.exe whole-pipeline failure (rc 255, no output at
+      all) → the static hint PLUS a note that ``|`` runs each stage in a
+      separate process.
+
+    Called with only *stderr*, *output*/*returncode* default and
     the result is the cleaned stderr string alone.
     """
     # Remove ANSI escape codes
@@ -160,6 +261,11 @@ def shape_run_stderr(
     if returncode is None or returncode == 0:
         return result
     result = f"{result}\n[EXIT CODE: {returncode}]"
+    # Shell-awareness hints (only on failure, so a passing command stays clean).
+    if _COMMAND_NOT_FOUND_RE.search(cleaned) or (
+        os.name != "nt" and _COMMAND_NOT_FOUND_UNIX_RE.search(cleaned)
+    ):
+        result += platform_shell_command_hint()
     if (
         not out.strip()
         and not cleaned
@@ -169,7 +275,7 @@ def shape_run_stderr(
         # The Windows cmd.exe whole-pipeline failure path: a `|` runs each
         # stage separately and only the LAST stage's code survives, so an
         # early failure surfaces as 255 with no output at all.
-        result += (
+        result += platform_shell_command_hint() + (
             "\nNote: a pipeline (|) runs each stage in a separate process;"
             " on Windows the exit code is the LAST stage's. On Unix-like"
             " shells use 'set -o pipefail' to surface a failing stage."
@@ -177,17 +283,19 @@ def shape_run_stderr(
     return result
 
 
-def blocked_shell_command(command: str, shell_name: str | None = None) -> bool:
-    """Return True if the command is blocked (destructive) in the current shell."""
-    from agent_core.security.allowlist import DESTRUCTIVE_SHELL_PATTERNS
+def blocked_shell_command(command: str, shell_name: str | None = None) -> str | None:
+    """Return the description of the first destructive pattern in *command*,
+    or ``None`` when it is safe.
 
-    if shell_name is None:
-        shell_name = detect_shell()
-    lower = command.lower()
-    for pattern, _description in DESTRUCTIVE_SHELL_PATTERNS:
-        if pattern.search(lower):
-            return True
-    return False
+    Delegates to the shared TIER-1 scanner
+    (:func:`agent_core.security.allowlist.find_destructive_shell_pattern`) —
+    the destructive block-list has ONE owner.  The strict structural scan
+    (pipes, chaining) is deliberately NOT applied here: the NLP ``run``
+    dev-shell must still execute pipelines.
+    """
+    from agent_core.security.allowlist import find_destructive_shell_pattern
+
+    return find_destructive_shell_pattern(command)
 
 
 # ── Environment helpers ──────────────────────────────────────────────────────
@@ -239,6 +347,12 @@ def is_subset_pytest_command(args: list[str] | str) -> bool:
 
 # ── SYSTEM_PROMPT ───────────────────────────────────────────────────────────
 
+
+#: Shell name for the system prompt, evaluated ONCE at import time (the
+#: frozen ``agent._SHELL_NAME`` surface — tests/test_tool_loop_nlp.py
+#: ::TestRunToolShellAwareness asserts it equals _shell_name_token() and
+#: appears as "SHELL_NAME=..." inside _SYSTEM_PROMPT).
+SHELL_NAME: str = shell_name_token()
 
 SYSTEM_PROMPT = (
     "You are a senior coding assistant working inside this project workspace.\n"

@@ -39,15 +39,20 @@ def _read_json_quarantining(
 
 
 def _quarantine(path: str | os.PathLike[str]) -> None:
-    """Move a corrupted file aside with a timestamp suffix."""
+    """Move a corrupted file aside with a timestamp suffix.
+
+    Naming contract: the quarantine is ``<path>.bad-<timestamp>`` — the
+    ``.bad-`` prefix is asserted by tests/test_agent_robustness.py,
+    test_habits.py and test_semantic_memory_block.py (they glob
+    ``*.bad-*``).  Renaming this suffix breaks those tests.
+    """
     path = os.fspath(path)
     if not os.path.exists(path):
         return
-    base, ext = os.path.splitext(path)
     import time
 
-    suffix = f".corrupt.{int(time.time() * 1000)}{ext}"
+    stamp = int(time.time() * 1000)
     try:
-        os.rename(path, base + suffix)
+        os.rename(path, f"{path}.bad-{stamp}")
     except Exception:
         pass

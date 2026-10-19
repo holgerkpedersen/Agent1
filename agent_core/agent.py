@@ -89,7 +89,7 @@ def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
 from agent_core.suppress_log import _suppress_and_log
 from agent_core.signal_handlers import _signal_break_with_cleanup, install as _install_signal_handlers, current_git_branch as _current_git_branch, interruptible_input as _interruptible_input
 from agent_core.handlers.nlp_tools import _run_subprocess_captured
-from agent_core.shell_utils import detect_shell as _detect_shell, shell_name_token as _shell_name_token, current_git_branch as _git_branch, unix_command_hint as _unix_command_hint, windows_command_hint as _windows_command_hint, shell_command_hint as _shell_command_hint, truncate_output as _truncate_output, run_subprocess_captured as _shell_run_subprocess_captured, shape_run_stderr as _shape_run_stderr, blocked_shell_command as _blocked_shell_command, SYSTEM_PROMPT as _SYSTEM_PROMPT
+from agent_core.shell_utils import detect_shell as _detect_shell, shell_name_token as _shell_name_token, SHELL_NAME as _SHELL_NAME, current_git_branch as _git_branch, platform_unix_hint as _unix_command_hint, platform_windows_hint as _windows_command_hint, platform_shell_command_hint as _shell_command_hint, DESTRUCTIVE_SHELL_PATTERNS as _DANGEROUS_SHELL_PATTERNS, truncate_output as _truncate_output, run_subprocess_captured as _shell_run_subprocess_captured, shape_run_stderr as _shape_run_stderr, blocked_shell_command as _blocked_shell_command, SYSTEM_PROMPT as _SYSTEM_PROMPT
 # Pytest command policy (taskplan t06): the full/targeted/subset classifier and
 # the suite timeout budget.  Restored from agent.py — the ac9a3df import-block
 # rewrite deleted the inline block and left shell_utils' naive list-based
@@ -968,6 +968,7 @@ __all__ = (
     '_CONTINUE_NOTE',
     '_CONTINUE_NOTE_TAG',
     '_CONTINUE_NOTE_TAG_KEY',
+    '_DANGEROUS_SHELL_PATTERNS',
     '_DELEGATE_TIMEOUT_S',
     '_ENV_FILE_PATH',
     '_FULL_SUITE_MARGIN',
@@ -984,6 +985,7 @@ __all__ = (
     '_MAX_READ_LINES',
     '_MAX_RUN_TIMEOUT_S',
     '_READ_LOOP_NOTE',
+    '_SHELL_NAME',
     '_SYSTEM_PROMPT',
     '_VERIFY_NOTE',
     '_append_turn_log',
