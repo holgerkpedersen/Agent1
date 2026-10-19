@@ -89,7 +89,23 @@ def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
 from agent_core.suppress_log import _suppress_and_log
 from agent_core.signal_handlers import _signal_break_with_cleanup, install as _install_signal_handlers, current_git_branch as _current_git_branch, interruptible_input as _interruptible_input
 from agent_core.handlers.nlp_tools import _run_subprocess_captured
-from agent_core.shell_utils import detect_shell as _detect_shell, shell_name_token as _shell_name_token, current_git_branch as _git_branch, unix_command_hint as _unix_command_hint, windows_command_hint as _windows_command_hint, shell_command_hint as _shell_command_hint, truncate_output as _truncate_output, run_subprocess_captured as _shell_run_subprocess_captured, shape_run_stderr as _shape_run_stderr, blocked_shell_command as _blocked_shell_command, read_env_value as _read_env_value, pytest_full_suite_timeout as _pytest_full_suite_timeout, is_full_pytest_command as _is_full_pytest_command, is_pytest_command as _is_pytest_command, is_subset_pytest_command as _is_subset_pytest_command, SYSTEM_PROMPT as _SYSTEM_PROMPT
+from agent_core.shell_utils import detect_shell as _detect_shell, shell_name_token as _shell_name_token, current_git_branch as _git_branch, unix_command_hint as _unix_command_hint, windows_command_hint as _windows_command_hint, shell_command_hint as _shell_command_hint, truncate_output as _truncate_output, run_subprocess_captured as _shell_run_subprocess_captured, shape_run_stderr as _shape_run_stderr, blocked_shell_command as _blocked_shell_command, SYSTEM_PROMPT as _SYSTEM_PROMPT
+# Pytest command policy (taskplan t06): the full/targeted/subset classifier and
+# the suite timeout budget.  Restored from agent.py — the ac9a3df import-block
+# rewrite deleted the inline block and left shell_utils' naive list-based
+# classifier as the effective one, which misclassified BOTH directions when the
+# run tool passed it a command STRING (see pytest_cmd_policy module docstring).
+# Tests monkeypatch ``agent._ENV_FILE_PATH``/``agent._pytest_full_suite_timeout``,
+# so these names must live on the shim with call-time lookups in the policy.
+from agent_core.pytest_cmd_policy import (
+    _ENV_FILE_PATH,
+    _FULL_SUITE_MARGIN,
+    _read_env_value,
+    _is_full_pytest_command,
+    _is_pytest_command,
+    _is_subset_pytest_command,
+    _pytest_full_suite_timeout,
+)
 from agent_core.json_utils import _read_json_quarantining
 from agent_core.history_compaction import _recover_original_goal, _strip_image_blocks, _trim_chat_history, _project_chat_history, _HISTORY_CHAR_BUDGET, _MAX_CHAT_MESSAGES, _HISTORY_TRIM_NOTE, _is_compaction_note, _strip_turn_wrappers, _content_tokens
 from agent_core.llm.tool_loop import _message_size
@@ -953,6 +969,8 @@ __all__ = (
     '_CONTINUE_NOTE_TAG',
     '_CONTINUE_NOTE_TAG_KEY',
     '_DELEGATE_TIMEOUT_S',
+    '_ENV_FILE_PATH',
+    '_FULL_SUITE_MARGIN',
     '_GOAL_RELATED_THRESHOLD',
     '_HISTORY_CHAR_BUDGET',
     '_HISTORY_TRIM_NOTE',

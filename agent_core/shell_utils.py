@@ -201,39 +201,40 @@ def read_env_value(key: str, default: str = "") -> str:
 # ── Pytest helpers ──────────────────────────────────────────────────────────
 
 
-def pytest_full_suite_timeout() -> int:
-    """Return the pytest full-suite timeout in seconds from the environment."""
-    default = 300
-    try:
-        from agent_core.constants import DEFAULT_FULL_SUITE_TIMEOUT
-        return DEFAULT_FULL_SUITE_TIMEOUT
-    except ImportError:
-        pass
-    return int(os.environ.get("PYTEST_FULL_SUITE_TIMEOUT", str(default)))
+def pytest_full_suite_timeout() -> float:
+    """Return the pytest full-suite timeout budget in seconds.
+
+    Delegates to :mod:`agent_core.pytest_cmd_policy` (process env wins, else
+    the repo ``.env``, ``max(floor, last_run * 1.5)``) so the tool timeout and
+    conftest's watchdog share ONE budget implementation.
+    """
+    from agent_core import pytest_cmd_policy
+    return pytest_cmd_policy._pytest_full_suite_timeout()
 
 
-def is_full_pytest_command(args: list[str]) -> bool:
-    """Return True if the pytest invocation is a whole-suite run."""
-    if not args:
-        return False
-    # Full suite: bare 'pytest' or 'pytest tests/' with no --lf/--only flags
-    no_target = len(args) <= 1 or (len(args) == 2 and args[1].startswith("-"))
-    has_full_markers = any(a in args for a in ["tests/", "--all", "-m=", "--rootdir="])
-    return no_target or has_full_markers
+def is_full_pytest_command(args: list[str] | str) -> bool:
+    """Return True if the pytest invocation is a whole-suite run.
+
+    Delegates to :func:`agent_core.pytest_cmd_policy._is_full_pytest_command`
+    (segment/shlex based).  The old inline check here was list membership over
+    ``args`` — when the run tool passed a command STRING, ``"tests/" in args``
+    became a substring test and any targeted ``tests/test_x.py::test_y`` was
+    misclassified as a full run (see the policy module docstring).
+    """
+    from agent_core import pytest_cmd_policy
+    return pytest_cmd_policy._is_full_pytest_command(args)
 
 
-def is_pytest_command(args: list[str]) -> bool:
-    """Return True if the command is any pytest invocation."""
-    if not args:
-        return False
-    return "pytest" in args[0] or args[0].endswith("pytest")
+def is_pytest_command(args: list[str] | str) -> bool:
+    """Return True if the command is any pytest invocation (delegates to policy)."""
+    from agent_core import pytest_cmd_policy
+    return pytest_cmd_policy._is_pytest_command(args)
 
 
-def is_subset_pytest_command(args: list[str]) -> bool:
+def is_subset_pytest_command(args: list[str] | str) -> bool:
     """Return True if the pytest invocation targets a subset (not full suite)."""
-    if not is_pytest_command(args):
-        return False
-    return is_full_pytest_command(args) is False
+    from agent_core import pytest_cmd_policy
+    return pytest_cmd_policy._is_subset_pytest_command(args)
 
 
 # ── SYSTEM_PROMPT ───────────────────────────────────────────────────────────

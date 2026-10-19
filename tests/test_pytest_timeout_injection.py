@@ -94,6 +94,11 @@ class TestFullPytestDetection:
             # A real path AFTER a value-taking option is still targeted.
             "python -m pytest -m \"not slow\" tests/test_x.py",
             "python -m pytest -p no:cacheprovider tests/test_x.py",
+            # REPL incident: a QUOTED path::nodeid under tests/ plus value
+            # flags, redirection and a pipe — the "tests/" substring used to
+            # make this a "full run" and the budget gate refused it.
+            "python -m pytest \"tests/test_pytest_full_run_gate.py::TestRunToolGate::test_targeted_runs_never_gated\" -q --no-cov -p no:cacheprovider --tb=short -o addopts=\"\" 2>&1 | more +0",
+            "python -m pytest tests/test_x.py::test_y -q --no-cov",
         ],
     )
     def test_targeted_runs_not_misdetected(self, command: str) -> None:

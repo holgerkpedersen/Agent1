@@ -213,6 +213,8 @@ EXPECTED_IMPORTED = frozenset(
     "_git_branch",
     "_install_signal_handlers",
     "_interruptible_input",
+    "_ENV_FILE_PATH",
+    "_FULL_SUITE_MARGIN",
     "_is_full_pytest_command",
     "_is_pytest_command",
     "_is_subset_pytest_command",
