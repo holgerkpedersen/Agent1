@@ -41,4 +41,20 @@ __all__ = [
     "FileSystem",
     "FileSearcher",
     "ToolDispatcher",
+    "Agent",
+    "AgentCore",
 ]
+
+
+def __getattr__(name):
+    """Lazy exports: ``Agent``/``AgentCore`` pull in the full agent stack.
+
+    Resolved on first access only, so lightweight submodule imports
+    (``import agent_core.path_utils`` etc.) never drag in the LLM layer
+    or risk circular imports through this package root.
+    """
+    if name in ("Agent", "AgentCore"):
+        from .agent import Agent, AgentCore
+
+        return Agent if name == "Agent" else AgentCore
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

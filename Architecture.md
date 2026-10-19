@@ -10,7 +10,8 @@ Agent1 is a Python AI agent framework with LLM integration via LM Studio (local)
 │                                                                  │
 │  ┌─────────────┐   ┌──────────────┐   ┌──────────────────────┐   │
 │  │   LLM Layer │   │  Agent Core  │   │   Command Layer      │   │
-│  │  (lmstudio) │──>│  (agent.py)  │<──│  (commands/)         │   │
+│  │  (lmstudio) │──>│ (agent_core/ │<──│  (commands/)         │   │
+│  │             │   │  agent.py)   │   │                      │   │
 │  └─────────────┘   └──────┬───────┘   └──────────────────────┘   │
 │                           │                                      │
 │         ┌─────────────────┼─────────────────┐                    │
@@ -69,14 +70,38 @@ KNOWN_MODELS = {
 
 Models carry flags (`thinking`, `tool_calling`) that influence payload construction. `tool_calling=False` suppresses Laguna's native tool call output via `tool_choice: "none"`.
 
-## 2. Agent Core (`agent.py`)
+## 2. Agent Core (`agent_core/agent.py`)
 
 The `Agent` class is the central orchestrator. It composes extracted components and delegates operations.
+
+Since refactor steps r01–r09 (see `REFACTOR_PLAN.md`), the monolithic root
+`agent.py` is a **thin compatibility shim**: it star-imports
+`agent_core.agent` (class `AgentCore`, exposed as `Agent`) plus the REPL/CLI
+layer and dashboard helpers, so `import agent` and every test monkeypatch on
+the `agent` module keep working unchanged. The real code lives in the modules
+below:
+
+### Module map (post-refactor)
+
+| Module                                   | Extracted in | Role                                                       |
+| ---------------------------------------- | ------------ | ---------------------------------------------------------- |
+| `agent.py`                               | r08          | Thin re-export shim (frozen surface via `__all__`)          |
+| `agent_core/agent.py`                    | r08          | `AgentCore` class: chat loop glue, memory fields, subagents |
+| `agent_core/handlers/nlp_tools.py`       | r01          | One `_nlp_*` handler per NLP tool + dispatch table          |
+| `agent_core/agent_files.py`              | r02          | File tool wrappers (`_tool_read_file`, `_tool_write_file`…) |
+| `agent_core/agent_effects.py`            | r03          | File-effects helpers (trace affected-files bookkeeping)     |
+| `agent_core/turn_loop.py`                | r04          | Tool-loop turn orchestration (`chat_nlp` internals)         |
+| `agent_core/prompts/context_blocks.py`   | r05          | System-prompt block builders (decisions, habits, skills…)   |
+| `agent_core/memory/persistence.py`       | r06          | `chat_history.json` / `agent_memory.json` load + save       |
+| `agent_core/cli/interactive.py`          | r07          | REPL loop, command registry wiring, dashboard bootstrap     |
+| `agent_core/history_compaction.py`       | (pre-r01)    | Pure history trim/project/repair functions                  |
+| `agent_core/run_utils.py`                | (pre-r01)    | Display-mode resolver, intent/plan system suffixes          |
+| `agent_core/pytest_cmd_policy.py`        | r08 (t06)    | Pytest full-run classifier + per-session budget             |
 
 ### Constructor
 
 ```python
-class Agent:
+class AgentCore:  # re-exported as Agent by the agent.py shim
     def __init__(self, workspace, model_name):
         self.fs = FileSystem(workspace)       # file I/O
         self.searcher = FileSearcher()        # file search
