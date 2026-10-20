@@ -166,8 +166,7 @@ except Exception:  # pragma: no cover - tracing degrades gracefully if unavailab
         return False
 
 if TYPE_CHECKING:
-    from agent_core.monitoring import MetricsCollector
-    from agent_core.subagent import SubAgent
+    pass
 
 # Windows console default codec is cp1252, which cannot encode many Unicode
 # glyphs the UI prints (box-drawing chars, arrows). Reconfigure stdout/stderr

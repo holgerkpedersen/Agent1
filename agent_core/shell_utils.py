@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import os
 import re
-import shlex
 import subprocess
 import sys
-from typing import Any, Optional
+from typing import Any
 
 # ── Shell detection ─────────────────────────────────────────────────────────
 
@@ -54,7 +53,7 @@ def current_git_branch(cwd: str | None = None) -> str:
 #: Destructive shell block-list (TIER-1).  One owner: the shared security
 #: module.  agent.py re-exports this as the legacy ``_DANGEROUS_SHELL_PATTERNS``
 #: alias, so a rename here must keep that alias working.
-from agent_core.security.allowlist import DESTRUCTIVE_SHELL_PATTERNS
+from agent_core.security.allowlist import DESTRUCTIVE_SHELL_PATTERNS  # noqa: F401  re-exported by agent_core.agent
 
 # Two distinct hint families live here — do not conflate them:
 #  * platform_hints (zero-arg): static text about what the CURRENT shell

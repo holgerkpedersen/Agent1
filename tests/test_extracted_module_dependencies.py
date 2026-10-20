@@ -23,7 +23,6 @@ runtime, are exempt.
 
 import ast
 import builtins
-import inspect
 import io
 import os
 

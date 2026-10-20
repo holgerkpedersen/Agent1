@@ -10,7 +10,7 @@ import os
 import signal
 import subprocess
 import sys
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from agent_core.config import AgentDisplayMode
