@@ -28,8 +28,9 @@ rechecked after the commits above.
 
 1. Coordinate with the other agent before any push. Confirm they are not editing
    the same files (`agent_core/agent.py`, `agent_core/commands/*`, `agent_core/handlers/nlp_tools.py`).
-2. Review `bb07e4c` (the `l` -> `ln` rename). Revert with a new commit if unwanted;
-   no hard reset without explicit approval.
+2. DONE: Reviewed `bb07e4c` (the `l` -> `ln` rename). Ruff (E741, F821, F841,
+   E402, F811) is clean on the 7 touched source files, and 109 tests in the 6
+   related test files pass. Keep it; revert with a new commit only if needed.
 3. Run the full suite once more at the end of the batch (not per commit).
 4. E501 package-wide, one module per commit, one concern per commit.
 5. Remaining E402 (50 repo-wide) and the deferred backlog (E702, F401, E731, F402,
