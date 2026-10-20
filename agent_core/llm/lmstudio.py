@@ -498,6 +498,12 @@ class LMStudioProvider:
         #: Models whose LM Studio TOOL path crashes the engine (once detected,
         #: their requests omit tools entirely — LM Studio's own chat sends none).
         self._tools_unsupported: set[str] = set()
+        #: Real context window (tokens) of the ACTIVE model, extracted once
+        #: from the native /api/v1/models catalog (loaded-instance config,
+        #: else the model's max_context_length).  Read by
+        #: context_budget.provider_context_limit; None until probed/unknown.
+        self.context_limit: int | None = None
+        self._context_probed = False
 
     def apply_profile(
         self, name: str, temperature: float, max_tokens: int,
@@ -510,6 +516,35 @@ class LMStudioProvider:
         self._profile_name = name
         self.temperature = temperature
         self.max_tokens = max_tokens
+
+    def context_length(self) -> int | None:
+        """Fetch (once per provider instance) and cache the model's real
+        context window in tokens.
+
+        Reads the native ``/api/v1/models`` catalog via
+        :func:`get_models_status` (which prefers the LOADED instance's
+        ``config.context_length`` — what the server will actually enforce
+        for our requests — and falls back to the catalog entry's
+        ``max_context_length``).  Fail-soft and never raises: any error just
+        leaves the budget fallback to the conservative default, so context
+        extraction can never break a chat call.
+        """
+        if self.context_limit is not None:
+            return self.context_limit
+        if self._context_probed:
+            return None
+        self._context_probed = True
+        try:
+            for entry in get_models_status():
+                if str(entry.get("key")) != self.model_name:
+                    continue
+                value = int(entry.get("context_length") or 0)
+                if value > 0:
+                    self.context_limit = value
+                    return self.context_limit
+        except Exception:  # noqa: BLE001 - extraction must never break chat
+            pass
+        return None
 
     def _build_payload(
         self,
@@ -770,6 +805,13 @@ class LMStudioProvider:
           ``bad allocation`` / ``channel error``) is retried WITHOUT tools,
           then remembered for the session (LM Studio's own chat sends no tools).
         """
+        # One-time context-window extraction (native /api/v1/models): feeds
+        # context_budget.provider_context_limit so the tool loop can bound
+        # its in-run compaction to this model's REAL window.  Guarded by
+        # _context_probed — a single localhost call per provider instance,
+        # and a failure (server down) is remembered, not retried per chat.
+        if self.context_limit is None and not self._context_probed:
+            self.context_length()
         # A model already known to break the engine's tool path skips tools
         # entirely — sending them would just fail again.
         use_tools = None if self.model_name in self._tools_unsupported else tools

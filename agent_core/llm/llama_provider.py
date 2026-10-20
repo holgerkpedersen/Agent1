@@ -176,6 +176,11 @@ class LlamaProvider:
         #: so this is the only id valid for the request ``model`` field.
         #: Cleared (refreshed) whenever the server reports "model not found".
         self._cached_server_model_id: str | None = None
+        #: Real context window (tokens) of the loaded model; filled lazily
+        #: from GET /props (``default_generation_settings.n_ctx``).  Read by
+        #: context_budget.provider_context_limit; None until probed/unknown.
+        self.context_limit: int | None = None
+        self._context_probed = False
 
     def apply_profile(self, name: str, temperature: float, max_tokens: int) -> None:
         """Activate a named profile (temperature/max_tokens)."""
@@ -225,6 +230,46 @@ class LlamaProvider:
             if ids:
                 self._cached_server_model_id = ids[0]
                 return self._cached_server_model_id
+        except Exception:
+            return None
+        return None
+
+    def context_length(self) -> int | None:
+        """Fetch and cache the running server's real context window (tokens).
+
+        Reads ``default_generation_settings.n_ctx`` from ``GET /props`` (the
+        value llama-server will actually enforce — set via ``-c`` at launch,
+        independent of the GGUF's training context).  Falls back to the
+        ``meta.n_ctx`` field of ``GET /v1/models``.  Fail-soft and never
+        raises: any error leaves ``context_limit`` as None.  Probed at most
+        once per provider instance.
+        """
+        if self.context_limit is not None:
+            return self.context_limit
+        if self._context_probed:
+            return None
+        self._context_probed = True
+        from .llama_server import _http_json, _server_base_url
+        try:
+            base = _server_base_url(self.api_url)
+            status, body = _http_json("GET", f"{base}/props", timeout=5.0)
+            if status == 200 and isinstance(body, dict):
+                gen = body.get("default_generation_settings")
+                value = int(gen.get("n_ctx") or 0) if isinstance(gen, dict) else 0
+                if value > 0:
+                    self.context_limit = value
+                    return self.context_limit
+            # Older builds / different entrypoints: meta.n_ctx per model.
+            status, body = _http_json("GET", f"{self.api_url}/models", timeout=5.0)
+            if status == 200 and isinstance(body, dict):
+                for m in (body.get("data") or []):
+                    if not isinstance(m, dict):
+                        continue
+                    meta = m.get("meta")
+                    value = int(meta.get("n_ctx") or 0) if isinstance(meta, dict) else 0
+                    if value > 0:
+                        self.context_limit = value
+                        return self.context_limit
         except Exception:
             return None
         return None
@@ -372,6 +417,11 @@ class LlamaProvider:
     ) -> str:
         """Non-streaming chat completion.  Returns text content (or an
         ``[Error: ...]`` string on failure — never raises to callers)."""
+        # Probe the server's real context window once (fail-soft) so the
+        # tool loop's in-run compaction can bound prompts to what this
+        # llama-server instance actually accepts (context_budget).
+        if self.context_limit is None and not self._context_probed:
+            self.context_length()
         payload = self._build_payload(
             messages, tools, override_max_tokens=max_tokens, disable_thinking=disable_thinking,
         )

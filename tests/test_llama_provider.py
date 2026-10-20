@@ -741,3 +741,73 @@ class TestCachePrompt:
         payload = prov._build_payload(
             [{"role": "user", "content": "hi"}], stream=True)
         assert payload.get("cache_prompt") is True
+
+
+class TestContextLengthExtraction:
+    """Extract the server's REAL context window from GET /props.
+
+    Feeds ``context_budget.provider_context_limit`` (the ``context_limit``
+    attribute contract) so the tool loop can bound its in-run compaction to
+    what the running llama-server actually accepts (set via ``-c`` at launch,
+    independent of the GGUF's training context).
+    """
+
+    def test_n_ctx_from_props_cached_once(self, monkeypatch) -> None:
+        from agent_core.llm import llama_server
+        calls: list[str] = []
+
+        def fake_http(method, url, payload=None, timeout=None):
+            calls.append(url)
+            if url.endswith("/props"):
+                return 200, {"default_generation_settings": {"n_ctx": 262_144}}
+            return 500, None
+
+        monkeypatch.setattr(llama_server, "_http_json", fake_http)
+        prov = LlamaProvider(model_name="llama/x", api_url="http://h/v1")
+        assert prov.context_length() == 262_144
+        assert prov.context_limit == 262_144
+        # Cached: a second call does not hit the server again.
+        assert prov.context_length() == 262_144
+        assert len(calls) == 1
+
+    def test_models_meta_fallback_when_props_lacks_n_ctx(self, monkeypatch) -> None:
+        from agent_core.llm import llama_server
+
+        def fake_http(method, url, payload=None, timeout=None):
+            if url.endswith("/props"):
+                return 200, {"total_slots": 1}  # no n_ctx
+            if url.endswith("/models"):
+                return 200, {"data": [
+                    {"id": "m", "meta": {"n_ctx": 32_768}}]}
+            return 500, None
+
+        monkeypatch.setattr(llama_server, "_http_json", fake_http)
+        prov = LlamaProvider(model_name="llama/x", api_url="http://h/v1")
+        assert prov.context_length() == 32_768
+
+    def test_extraction_is_failsoft_and_probed_once(self, monkeypatch) -> None:
+        from agent_core.llm import llama_server
+
+        def boom(method, url, payload=None, timeout=None):
+            raise RuntimeError("server down")
+
+        monkeypatch.setattr(llama_server, "_http_json", boom)
+        prov = LlamaProvider(model_name="llama/x", api_url="http://h/v1")
+        assert prov.context_length() is None
+        assert prov.context_limit is None
+        # The failure is remembered — never re-probed per chat call.
+        assert prov.context_length() is None
+        assert prov._context_probed is True
+
+    def test_provider_context_limit_contract(self, monkeypatch) -> None:
+        from agent_core.llm import llama_server
+        from agent_core.llm.context_budget import provider_context_limit
+        monkeypatch.setattr(
+            llama_server, "_http_json",
+            lambda *a, **k: (
+                200, {"default_generation_settings": {"n_ctx": 65_536}}),
+        )
+        prov = LlamaProvider(model_name="llama/x", api_url="http://h/v1")
+        assert provider_context_limit(prov) is None  # not probed yet
+        prov.context_length()
+        assert provider_context_limit(prov) == 65_536

@@ -11,6 +11,7 @@ never split an assistant/tool pair, and never drop the live (pending) tail.
 import json
 from typing import Any
 
+import pytest
 
 from agent_core.llm.tool_loop import (
     GUARD_COMPACT,
@@ -18,6 +19,7 @@ from agent_core.llm.tool_loop import (
     _compact_messages,
     _split_for_compaction,
     _summarize_payload,
+    _total_chars,
     _SUMMARIZE_MAX_CHARS,
     _IN_LOOP_CHAR_BUDGET,
 )
@@ -286,10 +288,16 @@ class TestSummarizePayloadCap:
         Asserted on the SUMMARIZER call specifically (identified by its system
         prompt) -- the main loop call legitimately still carries the live tail,
         so a blanket max-over-all-calls bound would measure the wrong thing.
+
+        The dropped prefix must be DROPPABLE (not the newest tail): a
+        newest-tail giant is handled by the shrink fallback, which has nothing
+        to summarise.  Two ~40KB reads do that: the first is still under the
+        50KB budget when it lands, the second pushes the list over, and the
+        split drops the older one -- via the summarize strategy.
         """
         script = [
-            ("read", {"path": "big.py"}),
-            ("read", {"path": "small.py"}),
+            ("read", {"path": "med.py"}),
+            ("read", {"path": "med2.py"}),
             "Done.",
         ]
         fake = _ScriptedLLM(script)
@@ -308,13 +316,13 @@ class TestSummarizePayloadCap:
                 )
                 # Answer the summarizer directly: delegating to the scripted
                 # fake would consume a scripted step meant for the main loop.
-                return "SUMMARY: big.py was read."
+                return "SUMMARY: med.py was read."
             return await orig_chat(messages, tools, **kwargs)
 
         fake.chat = spy_chat
 
         async def execute_tool(name, args):
-            return "w" * 400_000 if args.get("path") == "big.py" else "small"
+            return "w" * 40_000
 
         runner = ToolLoopRunner(
             max_iterations=10, in_loop_compact=True, compact_strategy="summarize",
@@ -322,8 +330,8 @@ class TestSummarizePayloadCap:
         )
         _loop_runner_sync(runner, fake, execute_tool)
         assert summarizer_prompts, "the summarizer must have been invoked"
-        # The dropped prefix was ~400KB; the summarizer prompt must be capped.
-        assert max(summarizer_prompts) < 400_000, summarizer_prompts
+        # The dropped prefix was ~40KB; the summarizer prompt must be capped.
+        assert max(summarizer_prompts) < 40_000, summarizer_prompts
         assert max(summarizer_prompts) <= _SUMMARIZE_MAX_CHARS + 5_000, summarizer_prompts
 
 
@@ -393,6 +401,146 @@ class TestInLoopCompaction:
         guards = [e for e in sink.events if e.get("kind") == "guard_triggered"
                   and e.get("guard") == GUARD_COMPACT]
         assert not guards
+
+
+class TestShrinkFallback:
+    """The no-refusal guarantee (2026-10-20 context-overflow fix).
+
+    A newest-tail giant tool result used to make ``_split_for_compaction``
+    refuse (``keep_from >= len(rest)``) and compaction return the list
+    UNTOUCHED, so the prompt grew monotonically until the provider rejected
+    it (435,937 tokens > 262,144 context).  The shrink fallback reduces
+    contents in place instead — never dropping a message, never changing
+    roles or tool_call_ids.
+    """
+
+    def _newest_giant_history(self, size: int = 400_000) -> list[dict[str, Any]]:
+        return [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "calling",
+             "tool_calls": [{"id": "t0", "type": "function",
+                             "function": {"name": "run", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "t0", "content": "x" * size},
+        ]
+
+    def test_giant_newest_result_is_shrunk_not_bypassed(self):
+        msgs = self._newest_giant_history()
+        budget = 20_000
+        out, note = _compact_messages(msgs, 80, budget, None)
+        assert note is not None and note.startswith("CONTEXT NOTE:")
+        # The budget now holds (small slack for the appended note).
+        assert _total_chars(out) <= budget + 500
+        # Nothing was dropped: same roles, same count (+ note), ids intact.
+        assert [m["role"] for m in out[:len(msgs)]] == [m["role"] for m in msgs]
+        assert out[3].get("tool_call_id") == "t0"
+        assert "truncated" in str(out[3].get("content"))
+        # System prompt and task prompt untouched.
+        assert out[0]["content"] == "system"
+        assert out[1]["content"] == "task"
+
+    def test_under_bound_stays_byte_identical(self):
+        msgs = self._newest_giant_history(size=100)
+        out, note = _compact_messages(msgs, 80, 20_000, None)
+        assert note is None
+        assert out is msgs
+
+    def test_oversized_write_args_stripped_to_valid_json(self):
+        # The giant write announcement is the NEWEST exchange (no result yet
+        # — auto-continue/chained-run shape): dropping is impossible, so the
+        # shrink path must strip the whole-file arguments to valid JSON.
+        msgs = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "writing",
+             "tool_calls": [{"id": "w0", "type": "function",
+                             "function": {"name": "write",
+                                          "arguments": json.dumps(
+                                              {"path": "f.py",
+                                               "content": "w" * 30_000})}}]},
+        ]
+        out, note = _compact_messages(msgs, 80, 10_000, None)
+        assert note is not None
+        assert _total_chars(out) <= 10_500
+        args = out[2]["tool_calls"][0]["function"]["arguments"]
+        parsed = json.loads(args)  # the gateway requires VALID JSON
+        assert parsed.get("_truncated") is True
+
+    def test_pairing_survives_shrink(self):
+        msgs = self._newest_giant_history()
+        out, _note = _compact_messages(msgs, 80, 20_000, None)
+        announced = {
+            str(tc.get("id"))
+            for m in out
+            if m.get("role") == "assistant"
+            for tc in (m.get("tool_calls") or [])
+        }
+        answered = {
+            str(m.get("tool_call_id"))
+            for m in out
+            if m.get("role") == "tool"
+        }
+        assert announced == answered
+
+    def test_impossible_budget_raises_clear_error(self):
+        msgs = self._newest_giant_history(size=100)
+        with pytest.raises(RuntimeError, match="cannot fit"):
+            _compact_messages(msgs, 80, 100, None)
+
+
+class TestBudgetGuaranteeInRun:
+    """End-to-end: no llm call may ever receive an over-budget prompt."""
+
+    def test_giant_result_never_reaches_llm_over_budget(self):
+        # The 2026-10-20 failure shape: one giant tool result, iteration cap
+        # hit immediately after — including the FORCED final synthesis call,
+        # which the top-of-loop check cannot see.
+        script = [("run", {"command": "ruff check ."}), "Final answer."]
+        fake = _ScriptedLLM(script)
+        sink = _TraceSink()
+
+        async def execute_tool(name, args):
+            return "e" * 400_000
+
+        runner = ToolLoopRunner(
+            max_iterations=1, display_mode="quiet", in_loop_compact=True,
+            compact_strategy="note", compact_char_budget=20_000, trace=sink,
+        )
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+        budget = runner.compact_char_budget
+        assert fake.calls, "the loop must have called the llm"
+        for sent in fake.calls:
+            assert _total_chars(sent) <= budget + 1_000, (
+                "an llm call received an over-budget prompt")
+        assert final_text == "Final answer."
+        # The shrink note was stripped from the persisted history at run end.
+        assert not any(
+            str(m.get("content") or "").startswith("CONTEXT NOTE:")
+            for m in messages
+        )
+
+
+class TestContextDerivedBudget:
+    """The in-run budget is derived from the model's REAL context window."""
+
+    def test_small_window_tightens_budget(self):
+        runner = ToolLoopRunner(context_limit_tokens=4_000)
+        assert runner.context_limit_tokens == 4_000
+        assert runner.compact_char_budget < 15_000
+        assert runner.compact_char_budget >= 4_000
+
+    def test_huge_window_keeps_anti_bloat_default(self):
+        runner = ToolLoopRunner(context_limit_tokens=262_144)
+        assert runner.compact_char_budget == max(4_000, _IN_LOOP_CHAR_BUDGET)
+
+    def test_explicit_budget_wins(self):
+        runner = ToolLoopRunner(
+            compact_char_budget=9_999, context_limit_tokens=262_144)
+        assert runner.compact_char_budget == 9_999
+
+    def test_unknown_window_keeps_default(self):
+        assert ToolLoopRunner().compact_char_budget == max(
+            4_000, _IN_LOOP_CHAR_BUDGET)
 
 
 class _TraceSink:

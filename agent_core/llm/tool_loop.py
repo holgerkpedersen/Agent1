@@ -10,6 +10,7 @@ import time
 from typing import Any, Awaitable, Callable
 
 from agent_core.constants import LOOP_NOTE_TAG_KEY
+from agent_core.llm.context_budget import char_budget_for_limit
 from agent_core.llm.provider import is_provider_error
 from harnessfix.tracing import (
     GUARD_BUDGET,
@@ -240,6 +241,14 @@ GUARD_COMPACT = "in_loop_compact"
 _IN_LOOP_MAX_MESSAGES = 80
 #: ~150k chars ≈ ~37k tokens — leaves plenty of headroom under the 600k
 #: context window for the system prompt, the live tool calls, and generation.
+#: When the model's REAL context window is known (``context_limit_tokens``,
+#: extracted from the provider — e.g. LM Studio's native /models
+#: ``max_context_length``), the effective budget is
+#: ``min(this, char_budget_for_limit(window))``: a small NPU window shrinks
+#: the budget so the prompt always fits, while a huge window keeps this
+#: anti-bloat default (a 1M-token window must not legitimise megabyte
+#: prompts that make every iteration's prefill crawl into the socket
+#: timeout).
 _IN_LOOP_CHAR_BUDGET = 150_000
 
 #: Injected as a "user" message (strict chat templates reject mid-conversation
@@ -271,6 +280,24 @@ _SUMMARIZE_INSTRUCTION = (
 #: tool result produced a 400KB summarize prompt (the timeout this feature
 #: exists to prevent).
 _SUMMARIZE_MAX_CHARS = 20_000
+
+#: Note used when the no-refusal SHRINK fallback ran (instead of the regular
+#: drop-a-prefix note): nothing was dropped, older contents were truncated
+#: IN PLACE, so the wording must say so and promise the rest is intact.
+_COMPACT_SHRINK_NOTE = (
+    "CONTEXT NOTE: the working set exceeded the context budget; the largest "
+    "older tool outputs were truncated in place (re-run a tool if you need "
+    "their full output again). The task prompt and recent messages are intact."
+)
+
+#: Messages at or below this size are never worth shrinking (stubbing them
+#: saves nothing and would only destroy information).
+_SHRINK_MIN_CHARS = 1_000
+
+#: Last-resort keep size for the NEWEST exchange's contents (its bytes are
+#: what the model is answering from right now — truncating them is a final
+#: fallback, never a first move).
+_SHRINK_NEWEST_KEEP = 2_000
 
 
 def _message_size(message: dict[str, Any]) -> int:
@@ -380,10 +407,36 @@ def _compact_messages(
     content prefix, so a real message that merely starts with "CONTEXT NOTE:"
     survives) is replaced rather than stacked, so the note does not grow stale
     and is not double-counted.
+
+    No-refusal guarantee: when a prefix cannot be dropped because the NEWEST
+    tail alone exceeds ``char_budget`` (a single giant tool result — the case
+    that used to make compaction return the list UNTOUCHED and let the prompt
+    grow to 435k tokens), the shrink fallback truncates older contents in
+    place instead of doing nothing.
     """
     dropped, kept_full = _split_for_compaction(messages, max_messages, char_budget)
     if dropped is None:
-        return messages, None
+        if (
+            len(messages) <= max_messages
+            and _total_chars(messages) <= char_budget
+        ):
+            # Under both bounds — the common case.  Byte-identical no-op.
+            return messages, None
+        shrunk, changed = _shrink_to_budget(messages, char_budget)
+        if not changed:
+            return messages, None
+        shrunk = [
+            m for m in shrunk
+            if m.get(LOOP_NOTE_TAG_KEY) != _COMPACT_NOTE_TAG
+        ]
+        return (
+            shrunk + [{
+                "role": "user",
+                "content": _COMPACT_SHRINK_NOTE,
+                LOOP_NOTE_TAG_KEY: _COMPACT_NOTE_TAG,
+            }],
+            _COMPACT_SHRINK_NOTE,
+        )
     kept_full = [
         m for m in kept_full
         if m.get(LOOP_NOTE_TAG_KEY) != _COMPACT_NOTE_TAG
@@ -399,6 +452,148 @@ def _compact_messages(
         }],
         note,
     )
+
+
+def _strip_oversized_tool_args(message: dict[str, Any]) -> dict[str, Any]:
+    """Return *message* with >500-char tool-call arguments replaced by a
+    valid-JSON placeholder.
+
+    Same contract as ``history_compaction._strip_tool_args`` (the gateway
+    requires VALID JSON arguments and rejects a half-cut "[truncated]"
+    string); a ``write`` call carrying a whole file in its arguments is one
+    of the largest things that can sit in the live list.
+    """
+    tcs = message.get("tool_calls")
+    if not tcs or not isinstance(tcs, list):
+        return message
+    stripped: list[Any] = []
+    for tc in tcs:
+        if not isinstance(tc, dict):
+            stripped.append(tc)
+            continue
+        func = tc.get("function") or {}
+        args = func.get("arguments") or ""
+        if isinstance(args, str) and len(args) > 500:
+            func = {
+                **func,
+                "arguments": json.dumps(
+                    {"_truncated": True, "_original_len": len(args)}),
+            }
+            stripped.append({**tc, "function": func})
+        else:
+            stripped.append(tc)
+    return {**message, "tool_calls": stripped}
+
+
+def _shrink_content(content: Any, keep: int) -> Any:
+    """Truncate *content* (str or multimodal list) to roughly *keep* chars."""
+    if isinstance(content, str):
+        if len(content) <= keep:
+            return content
+        return (
+            content[:keep]
+            + f"...[truncated {len(content) - keep} chars to fit context]"
+        )
+    if isinstance(content, list):
+        try:
+            kb = len(json.dumps(content, default=str)) // 1024
+        except Exception:  # pragma: no cover - defensive
+            kb = 0
+        return f"[truncated multimodal content ~{kb} KB to fit context]"
+    return content
+
+
+def _shrink_to_budget(
+    messages: list[dict[str, Any]], char_budget: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Shrink message CONTENTS until ``_total_chars(messages) <= char_budget``.
+
+    The no-refusal fallback behind :func:`_compact_messages`: when dropping a
+    closed prefix cannot help (the newest tail alone is over budget), reduce
+    the bytes of older eligible messages instead of leaving the list
+    untouched.  Guarantees:
+
+    * nothing is ever DROPPED — same message count, same roles, same
+      ``tool_call_id``s, so the chat-template pairing contract holds by
+      construction;
+    * the leading system prompt, the first user message, and (until the last
+      resort) the newest exchange (last assistant + everything after it) are
+      never touched;
+    * older oversized messages are stubbed first, oldest-first; oversized
+      tool-call arguments are replaced with a valid-JSON placeholder.
+
+    Returns ``(messages, changed)``.  Raises ``RuntimeError`` only when even
+    the fully-shrunk list cannot fit (absurd budget, or a system prompt
+    alone over budget) — a clear failure instead of a guaranteed HTTP 400.
+    """
+    msgs = list(messages)
+    if _total_chars(msgs) <= char_budget:
+        return msgs, False
+    start = 1 if msgs and msgs[0].get("role") == "system" else 0
+    head, body = msgs[:start], msgs[start:]
+    first_user = next(
+        (i for i, m in enumerate(body) if m.get("role") == "user"), None)
+    last_assistant = next(
+        (i for i in range(len(body) - 1, -1, -1)
+         if body[i].get("role") == "assistant"),
+        None,
+    )
+    newest_start = last_assistant if last_assistant is not None else len(body)
+    changed = False
+
+    def _total() -> int:
+        return _total_chars(head) + _total_chars(body)
+
+    # Phase 1: older eligible messages, oldest first.  Args first (cheap,
+    # keeps identifying info), then stub contents of still-oversized ones.
+    for i in range(len(body)):
+        if _total() <= char_budget:
+            return head + body, changed
+        if i == first_user or i >= newest_start:
+            continue
+        if _message_size(body[i]) <= _SHRINK_MIN_CHARS:
+            continue
+        stripped = _strip_oversized_tool_args(body[i])
+        content = stripped.get("content")
+        if isinstance(content, str) and len(content) > _SHRINK_MIN_CHARS:
+            kb = max(1, len(content) // 1024)
+            stripped = {
+                **stripped,
+                "content": (
+                    f"[truncated {kb} KB message — dropped to fit context; "
+                    "re-run the tool if needed]"
+                ),
+            }
+        elif content is not None and not isinstance(content, str):
+            stripped = {
+                **stripped, "content": _shrink_content(content, 0)}
+        if stripped != body[i]:
+            body[i] = stripped
+            changed = True
+
+    # Phase 2 (last resort): the newest exchange itself — truncate contents
+    # (never drop), strip oversized args.
+    for i in range(newest_start, len(body)):
+        if _total() <= char_budget:
+            return head + body, changed
+        stripped = _strip_oversized_tool_args(body[i])
+        content = stripped.get("content")
+        if content is not None:
+            stripped = {
+                **stripped,
+                "content": _shrink_content(content, _SHRINK_NEWEST_KEEP),
+            }
+        if stripped != body[i]:
+            body[i] = stripped
+            changed = True
+
+    if _total() > char_budget:
+        raise RuntimeError(
+            f"prompt cannot fit the context budget of {char_budget} chars "
+            f"even after shrinking (system prompt + task prompt + newest "
+            f"exchange alone are over it)"
+        )
+    return head + body, changed
 
 
 def _is_path_miss(result_str: str) -> bool:
@@ -478,7 +673,8 @@ class ToolLoopRunner:
         in_loop_compact: bool = True,
         compact_strategy: str = "note",
         compact_max_messages: int = _IN_LOOP_MAX_MESSAGES,
-        compact_char_budget: int = _IN_LOOP_CHAR_BUDGET,
+        compact_char_budget: int | None = None,
+        context_limit_tokens: int | None = None,
     ):
         self.max_iterations = max_iterations
         #: In-run context compaction (decision #B-5-compact): drop the oldest
@@ -493,7 +689,24 @@ class ToolLoopRunner:
         self.compact_strategy = compact_strategy if compact_strategy in (
             "off", "note", "summarize") else "note"
         self.compact_max_messages = max(8, compact_max_messages)
-        self.compact_char_budget = max(4_000, compact_char_budget)
+        #: Char budget resolution order: an explicit ``compact_char_budget``
+        #: always wins; otherwise the model's REAL context window
+        #: (``context_limit_tokens``, extracted from the provider — see
+        #: ``context_budget.provider_context_limit``) gives the hard ceiling
+        #: via ``char_budget_for_limit``; the proven anti-bloat default
+        #: applies when it is TIGHTER (a huge window must not reintroduce the
+        #: slow-prefill socket timeout) or when the window is unknown.
+        if compact_char_budget is not None:
+            resolved_budget = max(4_000, compact_char_budget)
+        elif context_limit_tokens:
+            resolved_budget = max(
+                4_000, min(_IN_LOOP_CHAR_BUDGET,
+                           char_budget_for_limit(context_limit_tokens)))
+        else:
+            resolved_budget = max(4_000, _IN_LOOP_CHAR_BUDGET)
+        self.compact_char_budget = resolved_budget
+        #: The extracted context window (tokens), for observability/tests.
+        self.context_limit_tokens = context_limit_tokens
         #: Number of final iterations where the model is warned (and
         #: steered) toward producing a text answer before the cap hits.
         self.deadline_window = max(1, min(deadline_window, max_iterations))
@@ -1250,6 +1463,8 @@ class ToolLoopRunner:
             )
             current_messages.append({"role": "user", "content": note})
             injected_notes.append(note)
+            current_messages = self._ensure_char_budget(
+                current_messages, injected_notes)
             response_text, updated_messages = await self._forced_final_answer(
                 current_messages, llm_chat_fn, iteration
             )
@@ -1262,6 +1477,8 @@ class ToolLoopRunner:
             # re-run the same failing transport instead of the fallback.
             if not response_text or response_text.strip() == "(no output)":
                 current_messages.append({"role": "user", "content": _FORCED_SYNTHESIS_RETRY})
+                current_messages = self._ensure_char_budget(
+                    current_messages, injected_notes)
                 response_text, updated_messages = await llm_chat_fn(current_messages, [])
                 current_messages = updated_messages
                 self._emit_synthesis_response(iteration, response_text)
@@ -1296,6 +1513,30 @@ class ToolLoopRunner:
             ]
         self.iterations_used = min(iteration + 1, self.max_iterations)
         return final_text, current_messages
+
+    def _ensure_char_budget(
+        self,
+        messages: list[dict[str, Any]],
+        injected_notes: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Guarantee *messages* fits the in-run char budget before a send.
+
+        Covers the send sites the top-of-loop check cannot see — the forced
+        final-answer paths, where a giant tool result appended just before
+        the cap/stuck break would otherwise ship an overflowing prompt.  A
+        shrink note is appended to *injected_notes* when given, so the
+        run-end strip keeps it out of the persisted history.
+        """
+        if (
+            len(messages) <= self.compact_max_messages
+            and _total_chars(messages) <= self.compact_char_budget
+        ):
+            return messages
+        compacted, note = _compact_messages(
+            messages, self.compact_max_messages, self.compact_char_budget, None)
+        if note and injected_notes is not None and note not in injected_notes:
+            injected_notes.append(note)
+        return compacted
 
     async def _forced_final_answer(
         self,

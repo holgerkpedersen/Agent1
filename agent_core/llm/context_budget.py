@@ -51,6 +51,23 @@ def provider_context_limit(provider: Any) -> int | None:
     return value if value > 0 else None
 
 
+def char_budget_for_limit(
+    limit_tokens: int,
+    *,
+    reserve_tokens: int = 1024,
+    safety: float = 0.8,
+) -> int:
+    """Character budget for a KNOWN context window (tokens).
+
+    The extraction primitive: turn a model's real max context size into the
+    character budget a caller may safely fill.  ``reserve_tokens`` leaves room
+    for generation; ``safety`` additionally under-fills because the
+    chars-per-token ratio is an estimate.
+    """
+    usable = max(0, int(limit_tokens) - max(0, reserve_tokens))
+    return int(usable * CHARS_PER_TOKEN * max(0.0, min(1.0, safety)))
+
+
 def char_budget_for(
     provider: Any,
     *,
@@ -61,8 +78,7 @@ def char_budget_for(
     limit = provider_context_limit(provider)
     if limit is None:
         return None
-    usable = max(0, limit - max(0, reserve_tokens))
-    return int(usable * CHARS_PER_TOKEN * max(0.0, min(1.0, safety)))
+    return char_budget_for_limit(limit, reserve_tokens=reserve_tokens, safety=safety)
 
 
 def trim_messages_to_context(
@@ -113,6 +129,7 @@ __all__: list[str] = [
     "CHARS_PER_TOKEN",
     "TRIM_NOTE",
     "char_budget_for",
+    "char_budget_for_limit",
     "estimate_tokens",
     "provider_context_limit",
     "trim_messages_to_context",

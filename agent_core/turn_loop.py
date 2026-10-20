@@ -20,6 +20,7 @@ from agent_core.bootstrap import CORRELATION_ID_CTX, CorrelationIdContext, get_l
 from agent_core.colors import gray, green, magenta, red, yellow
 from agent_core.config import AgentDisplayMode
 from agent_core.history_compaction import _trim_chat_history
+from agent_core.llm.context_budget import provider_context_limit
 from agent_core.modes import filter_tool_schemas
 from agent_core.run_utils import (
     append_turn_log as _append_turn_log,
@@ -106,7 +107,15 @@ async def _run_chained_tool_loop(agent: "Agent", user_input: str, messages: list
                 trace_writer.emit_task_begin(user_input)
             agent._active_trace_writer = trace_writer
             agent._pending_effects = [] if trace_writer is not None else None
-            loop = mod.ToolLoopRunner(max_iterations=150, display_mode=display_mode, trace=trace_writer)
+            # Extract the model's REAL context window (providers opt in via a
+            # `context_limit` attribute — LM Studio from the native /models
+            # catalog, Lemonade from its /models) so in-loop compaction
+            # bounds the prompt to what this model can actually accept.
+            _ctx_tokens = provider_context_limit(getattr(agent.llm, '_provider', None))
+            loop = mod.ToolLoopRunner(
+                max_iterations=150, display_mode=display_mode, trace=trace_writer,
+                context_limit_tokens=_ctx_tokens,
+            )
             final_text, final_messages = await loop.run(messages=final_messages, llm_chat_fn=llm_chat_fn, execute_tool_fn=getattr(agent, '_execute_tool_call'), tools=filter_tool_schemas(NLP_TOOL_SCHEMAS, agent.mode), seen_calls=seen_calls, effects_fn=getattr(agent, '_take_trace_effects'), stream_fn=_resolve_stream_fn(agent.llm))
             agent._pending_effects = None
             agent._active_trace_writer = None

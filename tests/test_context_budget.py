@@ -5,6 +5,7 @@ from agent_core.llm.context_budget import (
     CHARS_PER_TOKEN,
     TRIM_NOTE,
     char_budget_for,
+    char_budget_for_limit,
     estimate_tokens,
     provider_context_limit,
     trim_messages_to_context,
@@ -33,6 +34,28 @@ class TestEstimates:
         budget = char_budget_for(_P(1000), reserve_tokens=0, safety=1.0)
         assert budget == int(1000 * CHARS_PER_TOKEN)
         assert char_budget_for(_P(None)) is None
+
+
+class TestCharBudgetForLimit:
+    """The extraction primitive: real window (tokens) -> safe char budget."""
+
+    def test_scales_with_window(self):
+        small = char_budget_for_limit(4_000)
+        big = char_budget_for_limit(262_144)
+        assert 0 < small < big
+
+    def test_respects_reserve_and_safety(self):
+        full = char_budget_for_limit(10_000, reserve_tokens=0, safety=1.0)
+        assert full == int(10_000 * CHARS_PER_TOKEN)
+        reserved = char_budget_for_limit(
+            10_000, reserve_tokens=2_000, safety=1.0)
+        assert reserved == int(8_000 * CHARS_PER_TOKEN)
+
+    def test_char_budget_for_delegates_to_limit(self):
+        assert char_budget_for(_P(65536)) == char_budget_for_limit(65536)
+
+    def test_never_negative(self):
+        assert char_budget_for_limit(100, reserve_tokens=1_000) == 0
 
 
 class TestTrimming:

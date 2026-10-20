@@ -440,3 +440,50 @@ class TestEnsureModelLoaded:
         assert ok is False
         assert msg == "not found"
 
+
+class TestContextLimitExtraction:
+    """Extract the model's REAL max context size from the native /models API.
+
+    Feeds ``context_budget.provider_context_limit`` (the ``context_limit``
+    attribute contract) so the tool loop can bound its in-run compaction to
+    what the loaded model can actually accept.
+    """
+
+    def test_context_length_extracted_once_and_cached(self, monkeypatch) -> None:
+        provider = _provider("qwen/qwen3.8-27b")
+        calls: list[int] = []
+
+        def fake_status():
+            calls.append(1)
+            return [{"key": "qwen/qwen3.8-27b", "loaded": True,
+                     "context_length": 262_144}]
+
+        monkeypatch.setattr(_lmstudio_mod, "get_models_status", fake_status)
+        assert provider.context_length() == 262_144
+        assert provider.context_limit == 262_144
+        # Cached: a second call does not hit the server again.
+        assert provider.context_length() == 262_144
+        assert len(calls) == 1
+
+    def test_extraction_is_failsoft_and_probed_once(self, monkeypatch) -> None:
+        provider = _provider("qwen/qwen3.8-27b")
+
+        def boom():
+            raise RuntimeError("server down")
+
+        monkeypatch.setattr(_lmstudio_mod, "get_models_status", boom)
+        assert provider.context_length() is None
+        assert provider.context_limit is None
+        # The failure is remembered — never re-probed per chat call.
+        assert provider.context_length() is None
+        assert provider._context_probed is True
+
+    def test_model_absent_from_catalog_is_failsoft(self, monkeypatch) -> None:
+        provider = _provider("qwen/qwen3.8-27b")
+        monkeypatch.setattr(
+            _lmstudio_mod, "get_models_status",
+            lambda: [{"key": "some-other-model", "context_length": 8_192}],
+        )
+        assert provider.context_length() is None
+        assert provider.context_limit is None
+
