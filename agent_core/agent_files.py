@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 
 async def _tool_read_file(agent: "Agent", path: str, **kwargs: Any) -> str:
     result = await agent.fs.read(path)
-    if not result.startswith('File not found') and (not result.startswith('Error')):
+    if not result.startswith('File not found') and (
+        not result.startswith('Error')
+    ):
         safe = agent.fs.safe_path(path)
         agent._files_read.add(safe)
         try:
@@ -32,24 +34,34 @@ async def _tool_read_file(agent: "Agent", path: str, **kwargs: Any) -> str:
     return result
 
 
-async def _tool_write_file(agent: "Agent", path: str, content: str, **kwargs: Any) -> str:
+async def _tool_write_file(
+    agent: "Agent", path: str, content: str, **kwargs: Any
+) -> str:
     return await agent.fs.write(path, content)
 
 
-async def _tool_apply_patch(agent: "Agent", path: str, find: str, replace: str, **kwargs: Any) -> str:
+async def _tool_apply_patch(
+    agent: "Agent", path: str, find: str, replace: str, **kwargs: Any
+) -> str:
     return await agent.fs.apply_patch(path, find, replace)
 
 
-async def _tool_edit_file(agent: "Agent", path: str, content: str, **kwargs: Any) -> str:
+async def _tool_edit_file(
+    agent: "Agent", path: str, content: str, **kwargs: Any
+) -> str:
     return await agent.fs.edit(path, content)
 
 
-async def _tool_search(agent: "Agent", query: str, path: str = '.', **kwargs: Any) -> str:
+async def _tool_search(
+    agent: "Agent", query: str, path: str = '.', **kwargs: Any
+) -> str:
     search_path = getattr(agent, '_resolve_nlp_path')(path or '.')
     return await agent.searcher.search(query, search_path)
 
 
-async def _tool_list_files(agent: "Agent", path: str = '.', pattern: str = '*', **kwargs: Any) -> str:
+async def _tool_list_files(
+    agent: "Agent", path: str = '.', pattern: str = '*', **kwargs: Any
+) -> str:
     return await agent.fs.list_files(path, pattern)
 
 
@@ -63,12 +75,16 @@ async def _tool_analyze_file(agent: "Agent", path: str, **kwargs: Any) -> str:
 
 async def _tool_llm_analyze(agent: "Agent", path: str, **kwargs: Any) -> str:
     file_content = await getattr(agent, 'read_file')(path, track_read=False)
-    if file_content.startswith('File not found:') or file_content.startswith('Error reading file:'):
+    if file_content.startswith('File not found:') or file_content.startswith(
+        'Error reading file:'
+    ):
         return f'Could not analyze: {file_content}'
     return await agent.llm.analyze_code(file_content)
 
 
-async def execute_tool(agent: "Agent", tool_name: str, arguments: dict[str, Any]) -> str:
+async def execute_tool(
+    agent: "Agent", tool_name: str, arguments: dict[str, Any]
+) -> str:
     """Execute a tool by name using the dispatcher."""
     return await agent.dispatcher.execute(tool_name, arguments)
 
