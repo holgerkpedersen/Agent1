@@ -26,7 +26,7 @@ class PlanLifecycleManager:
 
     def start_plan(self) -> Path:
         """Transition a plan from PROPOSED to EXECUTING.
-        
+
         Renames plan_proposed.md to plan_executing.md.
         Returns the new path.
         """
@@ -42,7 +42,7 @@ class PlanLifecycleManager:
 
     def finish_plan(self) -> Path:
         """Transition a plan from EXECUTING to EXECUTED.
-        
+
         Renames plan_executing.md to plan_executed_<timestamp>.md.
         Returns the new path.
         """

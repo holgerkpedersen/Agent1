@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class FileSystem:
     """Handles file I/O operations with path normalization.
-    
+
     Extracted from Agent class to separate file system concerns.
     """
 

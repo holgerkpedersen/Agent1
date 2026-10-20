@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 class CommandRegistry:
     """Registry for managing and dispatching commands.
-    
+
     Follows Open/Closed Principle - new commands can be registered
     without modifying existing code.
     """
@@ -33,7 +33,7 @@ class CommandRegistry:
 
     async def execute(self, name: str, args: list[str], agent: 'Agent') -> bool:
         """Execute a command by name.
-        
+
         Returns:
             True to continue REPL, False to exit
         """

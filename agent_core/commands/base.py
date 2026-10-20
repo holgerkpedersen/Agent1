@@ -393,7 +393,7 @@ def save_file_py(fpath: str, content: str, auto_yes: bool = True) -> bool:
 
 class Command(ABC):
     """Abstract base class for interactive commands.
-    
+
     All commands must implement execute() and provide a help text.
     """
     @property
@@ -411,11 +411,11 @@ class Command(ABC):
     @abstractmethod
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         """Execute the command.
-        
+
         Args:
             args: Arguments after the command name
             agent: Agent instance for LLM/file operations
-            
+
         Returns:
             True to continue REPL, False to exit
         """

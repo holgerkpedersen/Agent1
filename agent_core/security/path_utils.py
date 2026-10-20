@@ -27,7 +27,7 @@ def normalize_path(workspace_root: Path, target_path: str) -> Path:
     """Resolve *target_path* relative to *workspace_root*.
 
     The result is guaranteed to be strictly inside *workspace_root* (or equal).
-    
+
     Parameters
     ----------
     workspace_root:

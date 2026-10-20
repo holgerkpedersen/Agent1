@@ -472,7 +472,7 @@ def resolve_model_name(query: str) -> str | None:
 
 class LMStudioProvider:
     """Concrete LLM provider for LM Studio.
-    
+
     Implements LLMProvider protocol for communicating with LM Studio's
     OpenAI-compatible API endpoint.
     """

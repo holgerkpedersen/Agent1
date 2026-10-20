@@ -13,7 +13,7 @@ Usage::
     await bridge.set_light_color("3", r=255, g=0, b=0)              # Red (V2 API)
 
 The library supports both V1 and V2 APIs:
-- V1: on/off, brightness, color temperature (CT/mirek) – for white+CT bulbs  
+- V1: on/off, brightness, color temperature (CT/mirek) – for white+CT bulbs
 - V2: Full RGB color control via xy or hs coordinates – for RGB/RGBA bulbs
 """
 
@@ -213,7 +213,7 @@ class HueBridge:
 
     Methods:
         list_lights()           - List all lights (V1 API)
-        get_light(light_id)     - Get light info (V1 API)  
+        get_light(light_id)     - Get light info (V1 API)
         set_light(...)          - Set on/off/brightness/CT (V1 API)
         get_color_capabilities() - Get V2 color capabilities
         set_light_color(...)    - Set RGB/HSV/XY colors (V2 API)
@@ -551,7 +551,7 @@ class HueBridge:
 
         Supports multiple ways to specify color:
         - RGB: r (0-255), g (0-255), b (0-255)
-        - XY: x (0-1), y (0-1) - CIE xy chromaticity coordinates  
+        - XY: x (0-1), y (0-1) - CIE xy chromaticity coordinates
         - HSV: h (0-360 hue degrees), s (0-100 saturation%), v (0-100 value%)
 
         At least one color parameter must be specified.

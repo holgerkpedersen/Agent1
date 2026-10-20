@@ -27,7 +27,7 @@ class Snapshot:
 
 class StateMachine:
     """
-    A deterministic state machine supporting snapshots and rollbacks 
+    A deterministic state machine supporting snapshots and rollbacks
     to facilitate safe mutation testing and state recovery.
     """
 

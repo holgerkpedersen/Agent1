@@ -20,17 +20,17 @@ CORRELATION_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
 class CorrelationIdContext:
     """
     Context manager for safely setting and resetting correlation IDs.
-    
+
     Ensures that the correlation ID is isolated to the current execution scope
     (thread, asyncio task, or greenlet). Properly cleans up tokens even if an
     exception occurs within the context block.
-    
+
     Usage:
         with CorrelationIdContext("req-123") as cid:
             print(f"Current ID: {CORRELATION_ID_CTX.get()}")  # req-123
-            
+
         assert CORRELATION_ID_CTX.get() == ""  # Restored to default
-    
+
     For thread pools / executors, propagate context explicitly:
         ctx = copy_correlation_context()
         loop.run_in_executor(executor, ctx.run, target_func)
@@ -59,11 +59,11 @@ class CorrelationIdContext:
 def copy_correlation_context() -> contextvars.Context:
     """
     Capture the current execution context including correlation ID.
-    
+
     Returns a snapshot of the active context variables that can be used to
     propagate state into new threads, processes, or asyncio tasks using
     `ctx.run(callable)`.
-    
+
     Example for ThreadPoolExecutor:
         ctx = copy_correlation_context()
         executor.submit(ctx.run, worker_function)

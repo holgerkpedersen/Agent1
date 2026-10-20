@@ -5,7 +5,7 @@ from typing import Callable, Awaitable, Any
 
 class ToolDispatcher:
     """Dispatches tool calls to registered handlers.
-    
+
     Replaces the if/elif chain in Agent.execute_tool with a registry pattern.
     Follows Open/Closed Principle - new tools can be added without modifying
     existing code.
@@ -21,7 +21,7 @@ class ToolDispatcher:
 
     def register(self, name: str, handler: Callable[..., Awaitable[str]]) -> None:
         """Register a tool handler.
-        
+
         Args:
             name: Tool name (e.g., 'read_file', 'write_file')
             handler: Async function that takes (args: dict) and returns result string
@@ -30,11 +30,11 @@ class ToolDispatcher:
 
     async def execute(self, tool_name: str, args: dict[str, Any]) -> str:
         """Execute a tool by name.
-        
+
         Args:
             tool_name: Name of the tool to execute
             args: Arguments dictionary for the tool
-            
+
         Returns:
             Tool execution result as string
         """

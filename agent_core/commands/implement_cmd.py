@@ -563,7 +563,7 @@ def _topological_sort_groups(groups: list[tuple[str, list[tuple[str, str, str]]]
 
 def _build_fix_prompt(err: str, current_code: str, fname: str, prefer_file: bool = False) -> list[dict[str, str]]:
     """Build a strategy-specific fix prompt with relevant code window only.
-    
+
     If prefer_file is True (e.g. after a patch failure), tell the LLM to use [FILE:] format.
     """
     lines = current_code.split("\n")
@@ -627,7 +627,7 @@ def _build_fix_prompt(err: str, current_code: str, fname: str, prefer_file: bool
 
 def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors: list[tuple[str, str, str]], prefer_file: bool = False) -> list[dict[str, str]]:
     """Build a prompt for fixing a root cause class with downstream error context.
-    
+
     Shows the LLM:
     1. The class definition that needs fixing
     2. The downstream errors that will be fixed by this change

@@ -95,15 +95,15 @@ def workspace_path(path: str) -> str:
 
 def normalize_path(raw: str, workspace_root: Path, follow_symlinks: bool = True) -> Path:
     """Validate and resolve a path strictly within the given workspace boundary.
-    
+
     Args:
         raw: The input path string to validate.
         workspace_root: The absolute root directory allowed for operations.
         follow_symlinks: If False, symlink traversal is rejected entirely.
-        
+
     Returns:
         Resolved absolute Path guaranteed to be within workspace_root.
-        
+
     Raises:
         FileOperationError: If input is empty or not a string.
         SecurityViolationError: If path escapes boundary or violates symlink policy.
@@ -134,7 +134,7 @@ def normalize_path(raw: str, workspace_root: Path, follow_symlinks: bool = True)
 
 class WorkspaceSandbox:
     """Context manager enforcing secure path resolution within an isolated workspace.
-    
+
     Usage:
         with WorkspaceSandbox("./sandbox", follow_symlinks=False) as sandbox:
             safe_path = sandbox.resolve_path("data/file.txt")
