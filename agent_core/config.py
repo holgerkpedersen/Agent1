@@ -89,12 +89,16 @@ class AgentSettings:
     search_command_timeout_sec: float = SEARCH_COMMAND_TIMEOUT
     compilation_check_timeout_sec: float = COMPILATION_CHECK_TIMEOUT
     display_mode: AgentDisplayMode = field(
-        default_factory=lambda: _parse_display_mode(os.environ.get("AGENT_DISPLAY_MODE"))
+        default_factory=lambda: _parse_display_mode(
+            os.environ.get("AGENT_DISPLAY_MODE")
+        )
     )
     #: LLM provider selection (decision #009/#010): lmstudio (default) or
     #: opencode.  A model prefix ("opencode-go/...") overrides this.
     llm_provider: str = field(
-        default_factory=lambda: os.environ.get("AGENT_LLM_PROVIDER", "lmstudio").strip().lower()
+        default_factory=lambda: (
+            os.environ.get("AGENT_LLM_PROVIDER", "lmstudio").strip().lower()
+        )
     )
     #: Ordered LLM provider fallback chain (decision #013).  When the active
     #: provider loses connectivity, the agent fails over to the next entry in
@@ -116,11 +120,15 @@ class AgentSettings:
     #: and local tiers are tried before paid cloud models.  Set via
     #: ``AGENT_FAILOVER_STRATEGY``.
     failover_strategy: str = field(
-        default_factory=lambda: os.environ.get("AGENT_FAILOVER_STRATEGY", "ordered").strip().lower()
+        default_factory=lambda: (
+            os.environ.get("AGENT_FAILOVER_STRATEGY", "ordered").strip().lower()
+        )
     )
     #: opencode server connection (decision #008 configured provider).
     opencode_server_url: str = field(
-        default_factory=lambda: os.environ.get("OPENCODE_SERVER_URL", DEFAULT_OPENCODE_SERVER_URL)
+        default_factory=lambda: os.environ.get(
+            "OPENCODE_SERVER_URL", DEFAULT_OPENCODE_SERVER_URL
+        )
     )
     opencode_password: str = field(
         default_factory=lambda: os.environ.get("OPENCODE_SERVER_PASSWORD", "")
@@ -133,7 +141,9 @@ class AgentSettings:
     #: store) the provider uses direct API mode with NATIVE tool calling
     #: instead of a local opencode server.
     opencode_api_url: str = field(
-        default_factory=lambda: os.environ.get("OPENCODE_API_URL", DEFAULT_OPENCODE_API_BASE)
+        default_factory=lambda: os.environ.get(
+            "OPENCODE_API_URL", DEFAULT_OPENCODE_API_BASE
+        )
     )
     opencode_api_key: str = field(
         default_factory=lambda: os.environ.get("OPENCODE_API_KEY", "")
@@ -143,7 +153,9 @@ class AgentSettings:
     #: ``llama-server`` over the standard /v1/chat/completions protocol
     #: instead of LM Studio.  Override with AGENT_LLAMA_URL.
     llama_base_url: str = field(
-        default_factory=lambda: os.environ.get("AGENT_LLAMA_URL", DEFAULT_LLAMA_BASE_URL)
+        default_factory=lambda: os.environ.get(
+            "AGENT_LLAMA_URL", DEFAULT_LLAMA_BASE_URL
+        )
     )
     #: Extra CLI args passed to ``llama-server`` when the agent auto-launches
     #: or relaunches it (e.g. "--gpu-layers 999 --ctx-size 262144").  These are
@@ -160,10 +172,15 @@ class AgentSettings:
     #: URL with OPENROUTER_API_URL (e.g. a proxy); the key resolves from
     #: OPENROUTER_API_KEY first, then the secure store.
     openrouter_api_url: str = field(
-        default_factory=lambda: os.environ.get("OPENROUTER_API_URL", DEFAULT_OPENROUTER_API_BASE)
+        default_factory=lambda: os.environ.get(
+            "OPENROUTER_API_URL", DEFAULT_OPENROUTER_API_BASE
+        )
     )
     openrouter_api_key: str = field(
-        default_factory=lambda: os.environ.get("OPENROUTER_API_KEY", "") or _store_secret("OPENROUTER_API_KEY")
+        default_factory=lambda: (
+            os.environ.get("OPENROUTER_API_KEY", "")
+            or _store_secret("OPENROUTER_API_KEY")
+        )
     )
     #: Default OpenRouter model (persisted model choice in model.json wins).
     #: The owner only uses the FREE tier, so the default is a free model; the
@@ -181,7 +198,9 @@ class AgentSettings:
     #: /v1/chat/completions protocol.  Override the base URL with
     #: ``LEMONADE_API_URL`` (Lemonade's default port varies by release).
     lemonade_api_url: str = field(
-        default_factory=lambda: os.environ.get("LEMONADE_API_URL", DEFAULT_LEMONADE_API_BASE)
+        default_factory=lambda: os.environ.get(
+            "LEMONADE_API_URL", DEFAULT_LEMONADE_API_BASE
+        )
     )
     #: Optional default Lemonade/NPU model (bare id, e.g. ``qwen3.5-4b-FLM``).
     #: Used only when the user switches to the lemonade provider without naming
@@ -232,7 +251,9 @@ class AgentSettings:
     )
     #: Sampling temperature for Jev branches (>0 gives vote diversity).
     jev_temperature: float = field(
-        default_factory=lambda: _parse_float(os.environ.get("AGENT_JEV_TEMPERATURE"), 0.7)
+        default_factory=lambda: _parse_float(
+            os.environ.get("AGENT_JEV_TEMPERATURE"), 0.7
+        )
     )
     #: Output cap per Jev sample.  An upper bound: a non-thinking model (the
     #: default ``qwen2.5-coder-1.5b-instruct``) stops right after the verdict
@@ -353,7 +374,8 @@ def _validate_settings(settings: AgentSettings) -> None:
 
     if not isinstance(settings.workspace_root, Path):
         raise ConfigurationError(
-            f"workspace_root must be a Path instance, got {type(settings.workspace_root).__name__}"
+            f"workspace_root must be a Path instance, "
+            f"got {type(settings.workspace_root).__name__}"
         )
 
     if not settings.workspace_root.exists():
@@ -382,7 +404,8 @@ def _validate_settings(settings: AgentSettings) -> None:
 
     if settings.llm_provider not in _LLM_PROVIDERS:
         raise ConfigurationError(
-            f"llm_provider must be one of {', '.join(_LLM_PROVIDERS)}, got '{settings.llm_provider}'"
+            f"llm_provider must be one of {', '.join(_LLM_PROVIDERS)}, "
+            f"got '{settings.llm_provider}'"
         )
 
     invalid_providers = tuple(
@@ -486,7 +509,9 @@ def _parse_bool(value: str | None, default: bool = False) -> bool:
     return default
 
 
-def _parse_display_mode(value: str | None, default: AgentDisplayMode = AgentDisplayMode.VERBOSE) -> AgentDisplayMode:
+def _parse_display_mode(
+    value: str | None, default: AgentDisplayMode = AgentDisplayMode.VERBOSE
+) -> AgentDisplayMode:
     """Safely parse the display mode from a string."""
     if value is None:
         return default
@@ -508,7 +533,8 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         AGENT_MAX_CONCURRENT_TOOLS -> max_concurrent_tools (int)
         AGENT_SEARCH_COMMAND_TIMEOUT_SEC -> search_command_timeout_sec (float)
         AGENT_COMPILATION_CHECK_TIMEOUT_SEC -> compilation_check_timeout_sec (float)
-        AGENT_DISPLAY_MODE -> display_mode (AgentDisplayMode: verbose|clean|quiet, default verbose)
+        AGENT_DISPLAY_MODE -> display_mode
+        (AgentDisplayMode: verbose|clean|quiet, default verbose)
         AGENT_STREAM_FINAL_ANSWER -> stream_final_answer (bool, default false)
     """
     env_vars = _load_env_file(env_path)
@@ -521,7 +547,9 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
             merged[key] = os.environ[key]
 
     # AGENT_DISPLAY_MODE may also live in the .env file (merged already covers it).
-    display_mode_raw = os.environ.get("AGENT_DISPLAY_MODE") or env_vars.get("AGENT_DISPLAY_MODE")
+    display_mode_raw = os.environ.get("AGENT_DISPLAY_MODE") or env_vars.get(
+        "AGENT_DISPLAY_MODE"
+    )
 
     workspace_root_str = merged.get("AGENT_WORKSPACE_ROOT")
     workspace_root = Path(workspace_root_str) if workspace_root_str else Path.cwd()
@@ -548,35 +576,110 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         workspace_root=workspace_root,
         llm_api_url=merged.get("AGENT_LLM_API_URL") or lmstudio_base_url(),
         max_concurrent_tools=_parse_int(merged.get("AGENT_MAX_CONCURRENT_TOOLS"), 5),
-        search_command_timeout_sec=_parse_float(merged.get("AGENT_SEARCH_COMMAND_TIMEOUT_SEC"), SEARCH_COMMAND_TIMEOUT),
-        compilation_check_timeout_sec=_parse_float(merged.get("AGENT_COMPILATION_CHECK_TIMEOUT_SEC"), COMPILATION_CHECK_TIMEOUT),
+        search_command_timeout_sec=_parse_float(
+            merged.get("AGENT_SEARCH_COMMAND_TIMEOUT_SEC"),
+            SEARCH_COMMAND_TIMEOUT,
+        ),
+        compilation_check_timeout_sec=_parse_float(
+            merged.get("AGENT_COMPILATION_CHECK_TIMEOUT_SEC"),
+            COMPILATION_CHECK_TIMEOUT,
+        ),
         display_mode=_parse_display_mode(display_mode_raw, AgentDisplayMode.VERBOSE),
         llm_provider=llm_provider,
         llm_providers=llm_providers,
-        opencode_server_url=os.environ.get("OPENCODE_SERVER_URL") or env_vars.get("OPENCODE_SERVER_URL") or DEFAULT_OPENCODE_SERVER_URL,
-        opencode_password=os.environ.get("OPENCODE_SERVER_PASSWORD") or env_vars.get("OPENCODE_SERVER_PASSWORD") or _store_secret("OPENCODE_SERVER_PASSWORD"),
-        opencode_model=os.environ.get("AGENT_OPENCODE_MODEL") or env_vars.get("AGENT_OPENCODE_MODEL") or DEFAULT_OPENCODE_MODEL,
-        opencode_api_url=os.environ.get("OPENCODE_API_URL") or env_vars.get("OPENCODE_API_URL") or DEFAULT_OPENCODE_API_BASE,
-        opencode_api_key=os.environ.get("OPENCODE_API_KEY") or env_vars.get("OPENCODE_API_KEY") or _store_secret("OPENCODE_API_KEY"),
-        llama_base_url=os.environ.get("AGENT_LLAMA_URL") or env_vars.get("AGENT_LLAMA_URL") or DEFAULT_LLAMA_BASE_URL,
-        llama_extra_args=os.environ.get("AGENT_LLAMA_EXTRA_ARGS") or env_vars.get("AGENT_LLAMA_EXTRA_ARGS") or "",
-        openrouter_api_url=os.environ.get("OPENROUTER_API_URL") or env_vars.get("OPENROUTER_API_URL") or DEFAULT_OPENROUTER_API_BASE,
-        openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or env_vars.get("OPENROUTER_API_KEY") or _store_secret("OPENROUTER_API_KEY"),
-        openrouter_model=os.environ.get("AGENT_OPENROUTER_MODEL") or env_vars.get("AGENT_OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL,
-        lemonade_api_url=os.environ.get("LEMONADE_API_URL") or env_vars.get("LEMONADE_API_URL") or DEFAULT_LEMONADE_API_BASE,
-        lemonade_model=os.environ.get("AGENT_LEMONADE_MODEL") or env_vars.get("AGENT_LEMONADE_MODEL") or "",
-        failover_strategy=os.environ.get("AGENT_FAILOVER_STRATEGY", "ordered").strip().lower(),
+        opencode_server_url=(
+            os.environ.get("OPENCODE_SERVER_URL")
+            or env_vars.get("OPENCODE_SERVER_URL")
+            or DEFAULT_OPENCODE_SERVER_URL
+        ),
+        opencode_password=(
+            os.environ.get("OPENCODE_SERVER_PASSWORD")
+            or env_vars.get("OPENCODE_SERVER_PASSWORD")
+            or _store_secret("OPENCODE_SERVER_PASSWORD")
+        ),
+        opencode_model=(
+            os.environ.get("AGENT_OPENCODE_MODEL")
+            or env_vars.get("AGENT_OPENCODE_MODEL")
+            or DEFAULT_OPENCODE_MODEL
+        ),
+        opencode_api_url=(
+            os.environ.get("OPENCODE_API_URL")
+            or env_vars.get("OPENCODE_API_URL")
+            or DEFAULT_OPENCODE_API_BASE
+        ),
+        opencode_api_key=(
+            os.environ.get("OPENCODE_API_KEY")
+            or env_vars.get("OPENCODE_API_KEY")
+            or _store_secret("OPENCODE_API_KEY")
+        ),
+        llama_base_url=(
+            os.environ.get("AGENT_LLAMA_URL")
+            or env_vars.get("AGENT_LLAMA_URL")
+            or DEFAULT_LLAMA_BASE_URL
+        ),
+        llama_extra_args=(
+            os.environ.get("AGENT_LLAMA_EXTRA_ARGS")
+            or env_vars.get("AGENT_LLAMA_EXTRA_ARGS")
+            or ""
+        ),
+        openrouter_api_url=(
+            os.environ.get("OPENROUTER_API_URL")
+            or env_vars.get("OPENROUTER_API_URL")
+            or DEFAULT_OPENROUTER_API_BASE
+        ),
+        openrouter_api_key=(
+            os.environ.get("OPENROUTER_API_KEY")
+            or env_vars.get("OPENROUTER_API_KEY")
+            or _store_secret("OPENROUTER_API_KEY")
+        ),
+        openrouter_model=(
+            os.environ.get("AGENT_OPENROUTER_MODEL")
+            or env_vars.get("AGENT_OPENROUTER_MODEL")
+            or DEFAULT_OPENROUTER_MODEL
+        ),
+        lemonade_api_url=(
+            os.environ.get("LEMONADE_API_URL")
+            or env_vars.get("LEMONADE_API_URL")
+            or DEFAULT_LEMONADE_API_BASE
+        ),
+        lemonade_model=(
+            os.environ.get("AGENT_LEMONADE_MODEL")
+            or env_vars.get("AGENT_LEMONADE_MODEL")
+            or ""
+        ),
+        failover_strategy=(
+            os.environ.get("AGENT_FAILOVER_STRATEGY", "ordered").strip().lower()
+        ),
         jev_model=(
             os.environ.get("AGENT_JEV_MODEL")
             or env_vars.get("AGENT_JEV_MODEL")
             or _persisted_jev_model()
             or DEFAULT_JEV_MODEL
         ),
-        jev_provider=(os.environ.get("AGENT_JEV_PROVIDER") or env_vars.get("AGENT_JEV_PROVIDER") or "").strip().lower(),
-        jev_samples=_parse_int(os.environ.get("AGENT_JEV_SAMPLES") or env_vars.get("AGENT_JEV_SAMPLES"), 5),
-        jev_temperature=_parse_float(os.environ.get("AGENT_JEV_TEMPERATURE") or env_vars.get("AGENT_JEV_TEMPERATURE"), 0.7),
-        jev_max_tokens=_parse_int(os.environ.get("AGENT_JEV_MAX_TOKENS") or env_vars.get("AGENT_JEV_MAX_TOKENS"), 512),
-        jev_timeout=_parse_float(os.environ.get("AGENT_JEV_TIMEOUT") or env_vars.get("AGENT_JEV_TIMEOUT"), 60.0),
+        jev_provider=(
+            os.environ.get("AGENT_JEV_PROVIDER")
+            or env_vars.get("AGENT_JEV_PROVIDER")
+            or ""
+        ).strip().lower(),
+        jev_samples=_parse_int(
+            os.environ.get("AGENT_JEV_SAMPLES")
+            or env_vars.get("AGENT_JEV_SAMPLES"),
+            5,
+        ),
+        jev_temperature=_parse_float(
+            os.environ.get("AGENT_JEV_TEMPERATURE")
+            or env_vars.get("AGENT_JEV_TEMPERATURE"),
+            0.7,
+        ),
+        jev_max_tokens=_parse_int(
+            os.environ.get("AGENT_JEV_MAX_TOKENS")
+            or env_vars.get("AGENT_JEV_MAX_TOKENS"),
+            512,
+        ),
+        jev_timeout=_parse_float(
+            os.environ.get("AGENT_JEV_TIMEOUT") or env_vars.get("AGENT_JEV_TIMEOUT"),
+            60.0,
+        ),
         stream_final_answer=_parse_bool(
             os.environ.get("AGENT_STREAM_FINAL_ANSWER")
             or env_vars.get("AGENT_STREAM_FINAL_ANSWER"),
