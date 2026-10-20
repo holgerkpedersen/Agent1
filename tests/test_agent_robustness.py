@@ -161,7 +161,7 @@ class TestToolArgumentCaps:
         monkeypatch.chdir(tmp_path)
         bot = Agent(workspace=str(tmp_path))
         out = asyncio.run(bot._nlp_read({"path": str(big), "offset": 1, "limit": 10 ** 6}))
-        body_lines = [l for l in out.splitlines() if l.startswith("line_")]
+        body_lines = [ln for ln in out.splitlines() if ln.startswith("line_")]
         assert len(body_lines) == agent._MAX_READ_LINES
         assert "[truncated" in out
 

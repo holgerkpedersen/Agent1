@@ -63,7 +63,7 @@ def test_existing_display_line_is_replaced_not_duplicated(sandbox):
     assert _run(["intent"]) is True
     lines = (sandbox / ".env").read_text(encoding="utf-8").splitlines()
     assert lines.count("AGENT_DISPLAY_MODE=intent") == 1
-    assert not any(l == "AGENT_DISPLAY_MODE=quiet" for l in lines)
+    assert not any(ln == "AGENT_DISPLAY_MODE=quiet" for ln in lines)
     assert "FOO=1" in lines and "BAR=2" in lines
 
 

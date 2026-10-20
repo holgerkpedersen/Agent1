@@ -126,7 +126,7 @@ def main() -> int:
     dirty = _git_status_porcelain()
     if dirty:
         msg = (
-            f"git tree has {len([l for l in dirty.splitlines() if l.strip()])} "
+            f"git tree has {len([ln for ln in dirty.splitlines() if ln.strip()])} "
             "uncommitted change(s) — invariant 4 (commit after every session)"
         )
         (errors if strict else warnings).append(msg)

@@ -691,7 +691,7 @@ def _cosmetic_only(old_lines: list[str], new_lines: list[str]) -> bool:
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             continue
-        if [l.strip() for l in old_lines[i1:i2]] != [l.strip() for l in new_lines[j1:j2]]:
+        if [ln.strip() for ln in old_lines[i1:i2]] != [ln.strip() for ln in new_lines[j1:j2]]:
             return False
     return True
 
@@ -1062,8 +1062,8 @@ def _fix_regex_in_loop(wl: list[str], idx: int, line: int, basename: str, findin
 
     known: list[tuple[int, str, str, bool]] = []
     _ID_COMPILE_ASSIGN_RE = re.compile(r"^(\s*)([A-Za-z_]\w*)\s*=\s*re\.compile\((.+)\)\s*$")
-    for i, l in enumerate(wl):
-        m = _ID_COMPILE_ASSIGN_RE.match(l)
+    for i, ln in enumerate(wl):
+        m = _ID_COMPILE_ASSIGN_RE.match(ln)
         if not m or i >= loop_start:
             continue
         d_indent = len(m.group(1))
@@ -1102,8 +1102,8 @@ def _fix_regex_in_loop(wl: list[str], idx: int, line: int, basename: str, findin
     else:
         existing = set()
         _RE_1 = re.compile(r"\b_RE_(\d+)\s*=")
-        for l in wl:
-            m = _RE_1.search(l)
+        for ln in wl:
+            m = _RE_1.search(ln)
             if m:
                 existing.add(int(m.group(1)))
         n = 1
@@ -2208,8 +2208,8 @@ class OptimizeCommand(Command):
                             if attempt == 0:
                                 print(f"    Raw model output: {raw[:300]}")
                             snippet = "\n".join(
-                                f"  {i + 1:4d} | {l}"
-                                for i, l in enumerate(work_lines[max(0, line - 4):line + 3], start=max(0, line - 4))
+                                f"  {i + 1:4d} | {ln}"
+                                for i, ln in enumerate(work_lines[max(0, line - 4):line + 3], start=max(0, line - 4))
                             )
                             feedback = (
                                 f"Your patch could not be applied: {patched[:200]}\n"

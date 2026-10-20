@@ -160,7 +160,7 @@ def test_subagent_context_summary_max_messages(tmp_path: Path, monkeypatch: pyte
     # Should only show last 2 pairs (4 messages).
     assert "context summary" in summary
     # Count the number of lines with "> " or "< " prefix.
-    lines = [l for l in summary.split("\n") if l.startswith("  >") or l.startswith("  <")]
+    lines = [ln for ln in summary.split("\n") if ln.startswith("  >") or ln.startswith("  <")]
     assert len(lines) <= 4  # max 2 pairs
 
 

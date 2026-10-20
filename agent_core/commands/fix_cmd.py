@@ -1188,7 +1188,7 @@ def _type_context(lines: list[str], err: str, error_line: int) -> str:
     found = list(dict.fromkeys(x for x in (_extract(ln) for ln in body) if x))
     if not found:
         return ""
-    return "Types in scope (from annotations/assignments/imports):\n" + "\n".join(f"  {l}" for l in found) + "\n"
+    return "Types in scope (from annotations/assignments/imports):\n" + "\n".join(f"  {ln}" for ln in found) + "\n"
 
 
 def _shared_type_hint(errs: list[str]) -> str:

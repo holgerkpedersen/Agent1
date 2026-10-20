@@ -62,7 +62,7 @@ def test_compile_trace_builds_graph_with_expected_steps(tmp_path):
 
 def test_provenance_link_from_result_to_reusing_call(tmp_path):
     graph = compile_trace(_write_failed_trace(tmp_path))
-    prov = [l for l in graph.links if l.kind == "provenance"]
+    prov = [ln for ln in graph.links if ln.kind == "provenance"]
     assert prov, "expected at least one provenance link"
     target = graph.step(prov[0].target)
     assert target is not None and target.payload.get("tool") == "edit"
@@ -72,16 +72,16 @@ def test_provenance_link_from_result_to_reusing_call(tmp_path):
 
 def test_control_flow_links_for_guard_and_stuck_cycle(tmp_path):
     graph = compile_trace(_write_failed_trace(tmp_path))
-    ctrl = [l for l in graph.links if l.kind == "control_flow"]
+    ctrl = [ln for ln in graph.links if ln.kind == "control_flow"]
     # guard->next link plus stuck-cycle links exist.
-    assert any(l.detail.startswith("step follows injected guard") for l in ctrl)
-    assert any("stuck cycle" in l.detail for l in ctrl)
+    assert any(ln.detail.startswith("step follows injected guard") for ln in ctrl)
+    assert any("stuck cycle" in ln.detail for ln in ctrl)
 
 
 def test_infer_links_is_deterministic_and_capped(tmp_path):
     graph = compile_trace(_write_failed_trace(tmp_path, "det-a"))
     again = compile_trace(_write_failed_trace(tmp_path, "det-b"))
-    assert [l.link_id for l in graph.links] == [l.link_id for l in again.links]
+    assert [ln.link_id for ln in graph.links] == [ln.link_id for ln in again.links]
     assert len(graph.links) <= 40
     # Every link refers to real step indices.
     indexes = {s.index for s in graph.steps}

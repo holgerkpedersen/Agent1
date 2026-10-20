@@ -176,7 +176,7 @@ class TestRegexHoistPreservesFlags:
             """
         )
         wl = code.split("\n")
-        target = next(i for i, l in enumerate(wl) if "re.match(r'^" in l)
+        target = next(i for i, ln in enumerate(wl) if "re.match(r'^" in ln)
         hunk = _fix_regex_in_loop(wl, target, target + 1, "t.py", {"suggestion": ""})
         assert hunk is not None
         # A NEW local definition must be added for the second function —

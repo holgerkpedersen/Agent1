@@ -91,7 +91,7 @@ _REQUIRED_HEADINGS = [
 def validate_plan_markdown(content: str) -> tuple[bool, List[str]]:
     """Verify that plan markdown follows the required schema."""
     errors = []
-    lines = [l.strip() for l in content.splitlines() if l.strip()]
+    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
 
     # Check required headings
     found_headings = set()

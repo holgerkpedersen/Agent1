@@ -1371,10 +1371,10 @@ async def _nlp_hue_control(agent: "Agent", args: dict[str, Any]) -> str:
             if not lights:
                 return "No lights found on the Hue Bridge."
             lines = []
-            for l in lights:
-                state = "ON" if l.get("on") else "OFF"
-                bri = f"{l.get('brightness'):.1f}%" if l.get("brightness") is not None else "?"
-                lines.append(f"  [{l['id']}] {l['name']} -- {state}, brightness={bri}")
+            for ln in lights:
+                state = "ON" if ln.get("on") else "OFF"
+                bri = f"{ln.get('brightness'):.1f}%" if ln.get("brightness") is not None else "?"
+                lines.append(f"  [{ln['id']}] {ln['name']} -- {state}, brightness={bri}")
             return f"Found {len(lights)} light(s):\n" + "\n".join(lines)
 
         elif action == "get_light":

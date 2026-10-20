@@ -122,7 +122,7 @@ async def test_list_lights_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
     lights = await bridge.list_lights()
     assert len(lights) == 2
-    by_id = {l["id"]: l for l in lights}
+    by_id = {ln["id"]: ln for ln in lights}
     assert by_id["1"]["name"] == "Lampe 1"
     assert by_id["1"]["on"] is True
     # bri=203 → round(203/254*100, 1) = 79.9

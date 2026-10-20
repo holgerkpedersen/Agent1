@@ -459,7 +459,7 @@ def score_instruction_following(prompt: str, response: str) -> float:
 
     # Syllable count for haiku (improved estimator)
     if "haiku" in pl and "5-7-5" in pl:
-        lines = [l.strip() for l in rl.split("\n") if l.strip()]
+        lines = [ln.strip() for ln in rl.split("\n") if ln.strip()]
         if len(lines) == 3:
             syllables = [_count_line_syllables(line) for line in lines]
             if not (

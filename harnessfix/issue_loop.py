@@ -435,8 +435,8 @@ def _ensure_suppress_import(src: str) -> str:
     lines = src.splitlines(keepends=True)
     sep = "\r\n" if "\r\n" in src else "\n"
     ins = 0
-    for i, l in enumerate(lines):
-        if l.lstrip().startswith("from __future__"):
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith("from __future__"):
             ins = i + 1
             break
     lines[ins:ins] = [f"from agent_core.suppress_log import _suppress_and_log{sep}"]
