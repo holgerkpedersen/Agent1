@@ -1,41 +1,37 @@
 # Next Steps — Plan (branch: master)
 
-## Current state (verified)
+## Current state (verified with git log / ruff this session)
 
-Local commits, NOT pushed (the other agent owns push):
-- `468d25d` chore(agent): wrap remaining long lines in agent_core/agent.py (E501)
-  — E501 in agent.py is 0.
-- `7277ffa` refactor(agent): replace bootstrap star import with explicit names
-  — `from agent_core.bootstrap import *` replaced by an explicit list of the
-  136 names in `bootstrap.__all__`. Module namespace verified identical
-  before/after (no missing, no added names).
-- `119099b` fix(agent): drop duplicate logger and TYPE_CHECKING from explicit import
-  — removed two F811 redefinitions introduced by the explicit list.
+Local commits, NOT pushed (the other agent owns push). Oldest first:
+- `468d25d`, `ab93510`, `7412dec` — E501 wrapping in `agent_core/agent.py`.
+- `7277ffa` refactor(agent): replace bootstrap star import with explicit names.
+- `119099b` fix(agent): drop duplicate logger and TYPE_CHECKING redefinitions (F811).
+- `a6f48a9` fix(lmstudio): run context probe in worker thread so parallel calls
+  do not serialize. Fixes the previously failing
+  `tests/test_parallel_llm.py::TestParallelConcurrency::test_blocking_providers_do_not_serialize`.
+  Full suite after this fix: 3797 passed, 7 skipped, 0 failed.
+- `d19625c` refactor(agent): move helpers below imports — E402 in `agent.py` is 0.
+  About 181 targeted tests pass.
+- `bb07e4c` refactor(lint): rename ambiguous loop variable `l` to `ln` in 13 files
+  (E741). Only targeted tests (~474) were run, not the full suite. Review this one
+  first.
 
-Verification:
-- `ruff --select F403,F405,F811,F821,F401` on agent.py: clean.
-- `tests/test_agent_module_surface.py` + `tests/test_agent_dry_refactor.py`: 24 passed.
-- Full suite (`python -m pytest -q --no-cov`): 3795 passed, 7 skipped, 1 failed.
-  - Failure: `tests/test_parallel_llm.py::TestParallelConcurrency::test_blocking_providers_do_not_serialize`
-    (elapsed ~4.6s vs < 0.35s). It FAILS ON HEAD TOO (stashed the change,
-    re-ran: 4.69s), so it is pre-existing and not caused by the import change.
-    Needs its own investigation (likely `run_parallel` not using
-    `asyncio.to_thread` for the blocking `urlopen` path).
+Working tree: clean. Branch: 8 commits ahead of `origin/master`.
 
-Advisory lint in agent.py: 20 E402 (module-level imports after code). Pre-existing;
-they come from the import block being split around helper definitions.
+Repo-wide lint still open (ruff): E501 about 2,670 lines; E402 50 (outside agent.py).
+Other rules in the deferred backlog (E702, F401, E731, F402, F811, F841) were not
+rechecked after the commits above.
 
 ## Next steps, in order
 
-1. Investigate the failing parallel test (pre-existing). Start at
-   `agent_core/llm/parallel.py` — confirm blocking provider calls are dispatched
-   via `asyncio.to_thread`. Fix the implementation, do not weaken the assertion.
-   Add/keep a regression test.
-2. Consolidate the E402 imports in `agent_core/agent.py` by moving the late
-   imports up into the top import block (verify namespace identical, as above).
-3. Package-wide E501 (~1560 lines) — one module at a time, one concern per commit.
-4. Deferred backlog (coordinate first): E702 (14), F401 (38), E731 (22),
-   E741 (13), F402 (9), F811 (15), F841 (11).
+1. Coordinate with the other agent before any push. Confirm they are not editing
+   the same files (`agent_core/agent.py`, `agent_core/commands/*`, `agent_core/handlers/nlp_tools.py`).
+2. Review `bb07e4c` (the `l` -> `ln` rename). Revert with a new commit if unwanted;
+   no hard reset without explicit approval.
+3. Run the full suite once more at the end of the batch (not per commit).
+4. E501 package-wide, one module per commit, one concern per commit.
+5. Remaining E402 (50 repo-wide) and the deferred backlog (E702, F401, E731, F402,
+   F811, F841). Coordinate first.
 
 ## Rules of engagement (multi-agent repo)
 
