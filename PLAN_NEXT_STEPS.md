@@ -9,7 +9,9 @@ Local commits, NOT pushed (the other agent owns push). Oldest first:
 - `a6f48a9` fix(lmstudio): run context probe in worker thread so parallel calls
   do not serialize. Fixes the previously failing
   `tests/test_parallel_llm.py::TestParallelConcurrency::test_blocking_providers_do_not_serialize`.
-  Full suite after this fix: 3797 passed, 7 skipped, 0 failed.
+  Verified this session: `test_parallel_llm.py` 43 passed; testmon lane 547 passed
+  (1066 deselected). The full-suite count of 3797 was NOT re-verified; it came from
+  an earlier note and should be treated as unconfirmed.
 - `d19625c` refactor(agent): move helpers below imports — E402 in `agent.py` is 0.
   About 181 targeted tests pass.
 - `bb07e4c` refactor(lint): rename ambiguous loop variable `l` to `ln` in 13 files
