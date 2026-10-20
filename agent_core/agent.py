@@ -5,7 +5,6 @@ re-exports this module (plus the CLI layer) so ``import agent``,
 ``python -m agent`` and every monkeypatch on the ``agent`` module keep
 working unchanged.
 """
-"""Agent implementation with workspace management and tool execution.."""
 from agent_core.bootstrap import (  # explicit names (was: import *)
     AGENT_MEMORY_JSON_PATH,
     AGENT_MEMORY_TMP_PATH,
@@ -144,84 +143,6 @@ from agent_core.bootstrap import (  # explicit names (was: import *)
 )
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from agent_core.monitoring import MetricsCollector
-    from agent_core.subagent import SubAgent
-
-logger = logging.getLogger(__name__)
-
-
-def _agent_mod() -> Any:
-    """The ``agent`` shim module, resolved lazily.
-
-    Names that tests monkeypatch on ``agent`` (``LLMClient``, ``FileSystem``,
-    ``_resolve_display_mode``, ...) are read through it, so patching the shim
-    keeps reaching this class exactly as it did when the class lived in
-    ``agent.py``.
-    """
-    import agent as _agent_mod
-    return _agent_mod
-
-def _escape_json_string_controls(text: str) -> str:
-    """Escape raw control characters that appear INSIDE JSON string literals.
-
-    A whole-text ``str.replace("\\n", "\\\\n")`` cannot repair these payloads:
-    pretty-printed model output has legitimate newlines BETWEEN tokens, and the
-    same blind replace mangles those (or still leaves an unescaped newline in a
-    value), so the parse fails and the call's arguments get wiped to ``{}``.
-    A small state machine escapes only where control chars are actually illegal
-    — inside string values — leaving inter-token whitespace untouched.
-    """
-    out: list[str] = []
-    in_string = False
-    escaped = False
-    for ch in text:
-        if not in_string:
-            if ch == '"':
-                in_string = True
-            out.append(ch)
-            continue
-        if escaped:
-            out.append(ch)
-            escaped = False
-            continue
-        if ch == '\\':
-            out.append(ch)
-            escaped = True
-            continue
-        if ch == '"':
-            in_string = False
-            out.append(ch)
-            continue
-        code = ord(ch)
-        if code < 32:
-            out.append({'\n': '\\n', '\r': '\\r', '\t': '\\t'}.get(ch,
-                f'\\u{code:04x}'))
-            continue
-        out.append(ch)
-    return ''.join(out)
-
-def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
-    """Parse a tool-call ``arguments`` string, repairing common model typos.
-
-    Models (LM Studio in particular) occasionally emit raw control characters —
-    unescaped newlines/tabs inside JSON string values.  We escape those ONLY
-    inside string literals and retry; anything still unparseable degrades to
-    ``{}`` so a malformed payload never aborts the loop (the model sees an
-    empty-args result note instead of a crash).
-    """
-    if not isinstance(args_str, str) or not args_str.strip():
-        return {}
-    try:
-        parsed = json.loads(args_str)
-        return parsed if isinstance(parsed, dict) else {}
-    except (json.JSONDecodeError, TypeError):
-        pass
-    try:
-        parsed = json.loads(_escape_json_string_controls(args_str))
-        return parsed if isinstance(parsed, dict) else {}
-    except (json.JSONDecodeError, TypeError):
-        return {}
 from agent_core.suppress_log import _suppress_and_log
 from agent_core.signal_handlers import (
     _signal_break_with_cleanup,
@@ -289,7 +210,6 @@ from agent_core.run_utils import (
     strip_dynamic_system_blocks as _strip_dynamic_system_blocks,
     intent_mode_system_suffix as _intent_mode_system_suffix,
 )
-NlpToolHandler = Callable[..., Awaitable[str]]
 from agent_core.types import _GOAL_RELATED_THRESHOLD
 from agent_core.llm.client import LLMClient
 from agent_dashboard import (
@@ -394,6 +314,87 @@ from agent_core.memory.persistence import (
     _save_memory,
     _record_llm_experience,
 )
+
+
+if TYPE_CHECKING:
+    from agent_core.monitoring import MetricsCollector
+    from agent_core.subagent import SubAgent
+
+logger = logging.getLogger(__name__)
+
+
+def _agent_mod() -> Any:
+    """The ``agent`` shim module, resolved lazily.
+
+    Names that tests monkeypatch on ``agent`` (``LLMClient``, ``FileSystem``,
+    ``_resolve_display_mode``, ...) are read through it, so patching the shim
+    keeps reaching this class exactly as it did when the class lived in
+    ``agent.py``.
+    """
+    import agent as _agent_mod
+    return _agent_mod
+
+def _escape_json_string_controls(text: str) -> str:
+    """Escape raw control characters that appear INSIDE JSON string literals.
+
+    A whole-text ``str.replace("\\n", "\\\\n")`` cannot repair these payloads:
+    pretty-printed model output has legitimate newlines BETWEEN tokens, and the
+    same blind replace mangles those (or still leaves an unescaped newline in a
+    value), so the parse fails and the call's arguments get wiped to ``{}``.
+    A small state machine escapes only where control chars are actually illegal
+    — inside string values — leaving inter-token whitespace untouched.
+    """
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    for ch in text:
+        if not in_string:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+            continue
+        if escaped:
+            out.append(ch)
+            escaped = False
+            continue
+        if ch == '\\':
+            out.append(ch)
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = False
+            out.append(ch)
+            continue
+        code = ord(ch)
+        if code < 32:
+            out.append({'\n': '\\n', '\r': '\\r', '\t': '\\t'}.get(ch,
+                f'\\u{code:04x}'))
+            continue
+        out.append(ch)
+    return ''.join(out)
+
+def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
+    """Parse a tool-call ``arguments`` string, repairing common model typos.
+
+    Models (LM Studio in particular) occasionally emit raw control characters —
+    unescaped newlines/tabs inside JSON string values.  We escape those ONLY
+    inside string literals and retry; anything still unparseable degrades to
+    ``{}`` so a malformed payload never aborts the loop (the model sees an
+    empty-args result note instead of a crash).
+    """
+    if not isinstance(args_str, str) or not args_str.strip():
+        return {}
+    try:
+        parsed = json.loads(args_str)
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        pass
+    try:
+        parsed = json.loads(_escape_json_string_controls(args_str))
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+NlpToolHandler = Callable[..., Awaitable[str]]
 
 
 class AgentCore:
