@@ -124,7 +124,9 @@ ignore = ["E741"]
 
 [tool.coverage.run]
 source = ["agent_core"]
-branch = true
+# Branch coverage is off: pytest-testmon refuses to run with pytest-cov when
+# it is on (testmon_core.setup_coverage raises TestmonException).
+branch = false
 
 [tool.coverage.report]
 show_missing = true
