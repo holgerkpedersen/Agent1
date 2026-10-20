@@ -810,8 +810,10 @@ class LMStudioProvider:
         # its in-run compaction to this model's REAL window.  Guarded by
         # _context_probed — a single localhost call per provider instance,
         # and a failure (server down) is remembered, not retried per chat.
+        # The probe is a BLOCKING httpx GET: run it in a worker thread so it
+        # never stalls the event loop (same reason as _make_request below).
         if self.context_limit is None and not self._context_probed:
-            self.context_length()
+            await asyncio.to_thread(self.context_length)
         # A model already known to break the engine's tool path skips tools
         # entirely — sending them would just fail again.
         use_tools = None if self.model_name in self._tools_unsupported else tools

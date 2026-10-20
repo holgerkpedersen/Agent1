@@ -110,8 +110,12 @@ class TestParallelConcurrency:
         def factory(settings, model_name):
             return LMStudioProvider(model_name)
 
+        # The LM Studio context probe is a separate localhost HTTP GET; stub it
+        # so this test measures only the chat round-trips (the probe itself is
+        # covered by test_context_probe_runs_off_event_loop).
         with patch("agent_core.llm.parallel.build_provider", side_effect=factory), \
-             patch("urllib.request.urlopen", side_effect=_slow_urlopen):
+             patch("urllib.request.urlopen", side_effect=_slow_urlopen), \
+             patch("agent_core.llm.lmstudio.get_models_status", return_value=[]):
             start = time.monotonic()
             run = asyncio.run(run_parallel(
                 [{"role": "user", "content": "hi"}],
@@ -123,6 +127,41 @@ class TestParallelConcurrency:
         assert elapsed < 0.35, f"blocking calls were serialized: {elapsed:.3f}s"
         assert all(r.ok for r in run.results)
         assert all(r.text == "blocking answer" for r in run.results)
+
+    def test_context_probe_runs_off_event_loop(self):
+        """Regression: LMStudioProvider.chat() used to call the BLOCKING
+        context_length() probe (httpx.get) directly on the event loop before
+        dispatching the request to a worker thread, serializing run_parallel.
+        The probe must run in a worker thread so the loop stays free."""
+        import threading
+
+        from agent_core.llm.lmstudio import LMStudioProvider
+
+        loop_thread = {}
+
+        def _probe_records_thread():
+            loop_thread["probe"] = threading.get_ident()
+            return []
+
+        def _fake_urlopen(req, timeout=None):
+            body = json.dumps({
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }).encode()
+            return io.BytesIO(body)
+
+        async def _main():
+            loop_thread["loop"] = threading.get_ident()
+            provider = LMStudioProvider("laguna-s-2.1")
+            with patch("agent_core.llm.lmstudio.get_models_status",
+                       side_effect=_probe_records_thread), \
+                 patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                return await provider.chat([{"role": "user", "content": "hi"}])
+
+        asyncio.run(_main())
+        assert loop_thread["probe"] != loop_thread["loop"], (
+            "context probe ran on the event loop thread (blocks parallel calls)"
+        )
 
     def test_concurrency_cap_serializes(self):
         """With concurrency=1 the two 0.2s calls take ~0.4s."""
