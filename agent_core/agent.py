@@ -60,7 +60,8 @@ def _escape_json_string_controls(text: str) -> str:
             continue
         code = ord(ch)
         if code < 32:
-            out.append({'\n': '\\n', '\r': '\\r', '\t': '\\t'}.get(ch, f'\\u{code:04x}'))
+            out.append({'\n': '\\n', '\r': '\\r', '\t': '\\t'}.get(ch,
+                f'\\u{code:04x}'))
             continue
         out.append(ch)
     return ''.join(out)
@@ -265,7 +266,8 @@ class AgentCore:
     DEFAULT_WORKSPACE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     def __init__(self, workspace: str | None=None, model_name: str | None=None):
-        self.workspace = os.path.abspath(_agent_mod().to_windows_path(workspace or self.DEFAULT_WORKSPACE))
+        self.workspace = os.path.abspath(_agent_mod().to_windows_path(workspace
+            or self.DEFAULT_WORKSPACE))
         self.model_name = _agent_mod().resolve_model(model_name)
         self._semantic_index: dict[str, set[int]] = defaultdict(set)
         self._files_read: set[str] = set()
@@ -308,7 +310,8 @@ class AgentCore:
                     prof = get_profile(prof_name)
                 self.llm._provider = _seamed
                 if prof_name and prof is not None:
-                    self.llm._provider.apply_profile(prof_name, prof.temperature, prof.max_tokens)
+                    self.llm._provider.apply_profile(prof_name, prof.temperature,
+                        prof.max_tokens)
         except Exception as _seam_err:
             logger.exception('build_transport seam wiring failed:\n')
         self.fs = _agent_mod().FileSystem(self.workspace)
@@ -319,15 +322,21 @@ class AgentCore:
     def _register_tool_handlers(self) -> None:
         """Register tool handlers with the dispatcher."""
         self.dispatcher.register('read_file', lambda args: self._tool_read_file(**args))
-        self.dispatcher.register('write_file', lambda args: self._tool_write_file(**args))
-        self.dispatcher.register('apply_patch', lambda args: self._tool_apply_patch(**args))
+        self.dispatcher.register('write_file',
+            lambda args: self._tool_write_file(**args))
+        self.dispatcher.register('apply_patch',
+            lambda args: self._tool_apply_patch(**args))
         self.dispatcher.register('edit_file', lambda args: self._tool_edit_file(**args))
         self.dispatcher.register('search', lambda args: self._tool_search(**args))
         self.dispatcher.register('search_file', lambda args: self._tool_search(**args))
-        self.dispatcher.register('list_files', lambda args: self._tool_list_files(**args))
-        self.dispatcher.register('delete_file', lambda args: self._tool_delete_file(**args))
-        self.dispatcher.register('analyze_file', lambda args: self._tool_analyze_file(**args))
-        self.dispatcher.register('llm_analyze', lambda args: self._tool_llm_analyze(**args))
+        self.dispatcher.register('list_files',
+            lambda args: self._tool_list_files(**args))
+        self.dispatcher.register('delete_file',
+            lambda args: self._tool_delete_file(**args))
+        self.dispatcher.register('analyze_file',
+            lambda args: self._tool_analyze_file(**args))
+        self.dispatcher.register('llm_analyze',
+            lambda args: self._tool_llm_analyze(**args))
 
     def build_transport(self, client: 'LLMClient') -> Any:
         """Build the transport (provider) that drives this agent's LLM client.
@@ -399,7 +408,9 @@ class AgentCore:
         elapsed_s = max(0.001, latency_ms / 1000.0)
         _emit_command_metrics(activity, elapsed_s)
         collector = self.get_metrics_collector()
-        return {'events': 3, 'counter': collector.get_counter_value(f'command.{activity}.count'), 'elapsed_s': elapsed_s}
+        return {'events': 3,
+            'counter': collector.get_counter_value(f'command.{activity}.count'),
+                'elapsed_s': elapsed_s}
 
     def get_metrics_collector(self) -> 'MetricsCollector':
         """Instance delegate for the process-wide collector (test seam)."""
@@ -461,7 +472,8 @@ class AgentCore:
             return rejection
         handler = self._nlp_tool_handlers().get(name)
         if handler is None:
-            return f"Unknown tool: {name}. Available: {', '.join(sorted(NLP_TOOL_NAMES))}"
+            return (f"Unknown tool: {name}. "
+                    f"Available: {', '.join(sorted(NLP_TOOL_NAMES))}")
         try:
             return await handler(args)
         except Exception as e:
@@ -628,7 +640,10 @@ class AgentCore:
     async def read_file(self, path: str, track_read: bool=True) -> str:
         local_path = self._safe_path(path)
         if os.path.isdir(local_path):
-            return f'Not a file (directory): {path} — read/analyze take a FILE path; omit the path to analyze the whole workspace, or use list_files/search to inspect a directory.'
+            return (f'Not a file (directory): {path} '
+                f'— read/analyze take a FILE path; '
+                f'omit the path to analyze the whole workspace, '
+                f'or use list_files/search to inspect a directory.')
         try:
             with open(local_path, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -671,7 +686,8 @@ class AgentCore:
                 return 'Pattern not found in file'
             count = content.count(find)
             if count > 1:
-                return f'Error: find text matches {count} locations. Add more context to make it unique.'
+                return (f'Error: find text matches {count} locations. '
+                        'Add more context to make it unique.')
             new_content = content.replace(find, replace, 1)
             with open(local_path, 'w', encoding='utf-8') as f:
                 f.write(new_content)
@@ -740,10 +756,23 @@ class AgentCore:
         the next turn), not the snapshot taken on the first turn.
         """
         if not self._chat_history:
-            self._chat_history.append({'role': 'system', 'content': _SYSTEM_PROMPT + (plan_mode_system_suffix() if self.is_plan_mode() else '') + _intent_mode_system_suffix()})
+            self._chat_history.append({'role': 'system',
+                'content': _SYSTEM_PROMPT + (plan_mode_system_suffix()
+                    if self.is_plan_mode() else '') + _intent_mode_system_suffix()})
         elif self._chat_history[0].get('role') != 'system':
             self._chat_history.insert(0, {'role': 'system', 'content': _SYSTEM_PROMPT})
-        self._chat_history[0] = {'role': 'system', 'content': _strip_dynamic_system_blocks(str(self._chat_history[0].get('content') or _SYSTEM_PROMPT)) + self._original_goal_block() + self._decision_constraints_block() + self._skill_index_block() + self._habits_block() + self._semantic_memory_block(query) + self._file_history_block(query) + (plan_mode_system_suffix() if self.is_plan_mode() else '') + _intent_mode_system_suffix()}
+        self._chat_history[0] = {'role': 'system',
+            'content': _strip_dynamic_system_blocks(
+                    str(self._chat_history[0].get('content')
+                    or _SYSTEM_PROMPT))
+                + self._original_goal_block()
+                + self._decision_constraints_block()
+                + self._skill_index_block()
+                + self._habits_block()
+                + self._semantic_memory_block(query)
+                + self._file_history_block(query)
+                + (plan_mode_system_suffix() if self.is_plan_mode() else '')
+                + _intent_mode_system_suffix()}
 
     def _append_user_turn(self, user_input: str, images: list[str] | None) -> None:
         """Append this turn's user message (multimodal when *images* given).
@@ -766,22 +795,27 @@ class AgentCore:
         self._ensure_original_goal(user_input)
         if self.is_plan_mode() and (not images):
             if _agent_mod()._resolve_display_mode() != AgentDisplayMode.QUIET:
-                print(yellow("  [plan mode] Read-only research — mutating tools blocked. Switch back with 'mode build' to apply changes."))
+                print(yellow("  [plan mode] Read-only research — mutating tools "
+                    "blocked. Switch back with 'mode build' to apply changes."))
             user_input = f'{plan_mode_turn_note()}\n\n{user_input}'
         hint = '' if images else self._skill_hint_block(user_input)
         if hint:
             user_input = f'{hint}\n\n{user_input}'
         self._turn_start_index = len(self._chat_history)
         if images:
-            content: Any = [{'type': 'text', 'text': user_input or '(see the attached image)'}]
+            content: Any = [{'type': 'text', 'text': user_input
+                or '(see the attached image)'}]
             for img in images:
                 content.append({'type': 'image_url', 'image_url': {'url': img}})
             self._chat_history.append({'role': 'user', 'content': content})
         else:
             self._chat_history.append({'role': 'user', 'content': user_input})
 
-    async def _run_chained_tool_loop(self, user_input: str, messages: list[dict[str, Any]], display_mode: AgentDisplayMode, seen_calls: dict[tuple[str, str], int]) -> tuple[str, list[dict[str, Any]], str | None, ToolLoopRunner]:
-        return await _run_chained_tool_loop(self, user_input, messages, display_mode, seen_calls)
+    async def _run_chained_tool_loop(self, user_input: str, messages: list[dict[str,
+        Any]], display_mode: AgentDisplayMode, seen_calls: dict[tuple[str, str],
+            int]) -> tuple[str, list[dict[str, Any]], str | None, ToolLoopRunner]:
+        return await _run_chained_tool_loop(self, user_input, messages, display_mode,
+            seen_calls)
 
     def _reset_failover_notice(self) -> None:
         _reset_failover_notice(self)
@@ -832,47 +866,66 @@ class AgentCore:
         self._turn_started_at = datetime.now()
         try:
             if not getattr(self.llm, '_profile_pinned', False):
-                _suggested = _agent_mod().recommend_profile(user_input, getattr(self.llm, '_profile_name', None))
+                _suggested = _agent_mod().recommend_profile(user_input,
+                    getattr(self.llm, '_profile_name', None))
                 if _suggested:
                     _auto = False
                     try:
                         import pathlib as _pathlib
                         from agent_core.llm.workspace_prefs import get_pref
-                        _auto = get_pref(_pathlib.Path(self._effective_ws_dir()), 'profile_auto') is True
+                        _auto = get_pref(_pathlib.Path(self._effective_ws_dir()),
+                            'profile_auto') is True
                     except Exception:
                         _auto = False
-                    _quiet = _agent_mod()._resolve_display_mode() == AgentDisplayMode.QUIET
+                    _quiet = (_agent_mod()._resolve_display_mode()
+                              == AgentDisplayMode.QUIET)
                     if _auto:
                         try:
                             from agent_core.llm.model_profiles import get_profile
                             _prof = get_profile(_suggested)
-                            self.llm._provider.apply_profile(_suggested, _prof.temperature, _prof.max_tokens)
+                            self.llm._provider.apply_profile(_suggested,
+                                _prof.temperature, _prof.max_tokens)
                             self.llm._profile_name = _suggested
                         except Exception:
-                            logger.debug('profile_auto apply failed (no-op)', exc_info=True)
+                            logger.debug('profile_auto apply failed (no-op)',
+                                exc_info=True)
                         else:
                             if not _quiet:
-                                print(gray(f'  [profile] auto-applied {_suggested} (profile_auto pref)'))
+                                print(gray(
+                                    f'  [profile] auto-applied {_suggested} '
+                                    f'(profile_auto pref)'))
                     elif not _quiet:
-                        print(gray(f"  [suggest] profile {_suggested} for this task — 'model profile use' or set pref profile_auto"))
+                        print(gray(f"  [suggest] profile {_suggested}"
+                            f" for this task — 'model profile use'"
+                            f" or set pref profile_auto"))
         except Exception:
             logger.debug('Profile suggestion failed (no-op)', exc_info=True)
         self._append_user_turn(user_input, images)
         self._chat_history = _trim_chat_history(self._chat_history, self._original_goal)
         history_snapshot = list(self._chat_history)
-        final_text, final_messages, llm_error, loop = ('', self._chat_history, None, None)
+        final_text, final_messages, llm_error, loop = ('', self._chat_history, None,
+            None)
         for attempt in range(1, _LLM_ERROR_MAX_RETRIES + 1):
-            final_text, final_messages, llm_error, loop = await self._run_chained_tool_loop(user_input=user_input, messages=self._chat_history, display_mode=_agent_mod()._resolve_display_mode(), seen_calls={})
+            final_text, final_messages, llm_error, loop = (
+                await self._run_chained_tool_loop(
+                    user_input=user_input,
+                    messages=self._chat_history,
+                    display_mode=_agent_mod()._resolve_display_mode(),
+                    seen_calls={}))
             if not llm_error or not is_connection_failure(llm_error):
                 break
             if attempt < _LLM_ERROR_MAX_RETRIES:
                 self._chat_history = list(history_snapshot)
                 if _agent_mod()._resolve_display_mode() != AgentDisplayMode.QUIET:
-                    print(yellow(f'\n  [retry {attempt}/{_LLM_ERROR_MAX_RETRIES}] LLM call failed transiently ({llm_error[:120]}); retrying...\n'))
+                    print(yellow(
+                        f'\n  [retry {attempt}/{_LLM_ERROR_MAX_RETRIES}] '
+                        f'LLM call failed transiently ({llm_error[:120]}); '
+                        f'retrying...\n'))
                 await asyncio.sleep(_LLM_ERROR_BACKOFF_S * 2 ** (attempt - 1))
         self._chat_history = final_messages
         self._report_failover()
-        self._finish_turn(final_text=final_text, llm_error=llm_error, loop=loop, display_mode=_agent_mod()._resolve_display_mode())
+        self._finish_turn(final_text=final_text, llm_error=llm_error, loop=loop,
+            display_mode=_agent_mod()._resolve_display_mode())
 
     def _mutating_files_this_turn(self) -> list[str]:
         return _mutating_files_this_turn(self)
@@ -942,8 +995,13 @@ class AgentCore:
     def _save_memory(self) -> None:
         _save_memory(self)
 
-    def _record_llm_experience(self, action: str, outcome: float, context: dict[str, Any] | None=None, success: bool | None=None, decision_llm: str | None=None, decision_prompt: Any=None, run_id: str | None=None, latency_ms: float | None=None, token_usage: int | None=None) -> int | None:
-        return _record_llm_experience(self, action, outcome, context, success, decision_llm, decision_prompt, run_id, latency_ms, token_usage)
+    def _record_llm_experience(self, action: str, outcome: float, context: dict[str,
+        Any] | None=None, success: bool | None=None, decision_llm: str | None=None,
+            decision_prompt: Any=None, run_id: str | None=None,
+                latency_ms: float | None=None,
+                    token_usage: int | None=None) -> int | None:
+        return _record_llm_experience(self, action, outcome, context, success,
+            decision_llm, decision_prompt, run_id, latency_ms, token_usage)
 _MAX_CHAINED_RUNS = 6
 _LLM_ERROR_MAX_RETRIES = 2
 _LLM_ERROR_BACKOFF_S = 5.0
@@ -953,12 +1011,25 @@ _MAX_READ_LINES = 500
 _MAX_READ_FILES = 10
 _CONTEXT_AST_THRESHOLD_KB = int(os.environ.get('USE_CONTEXT_AST_STRATEGY', '50'))
 _MAX_CONSECUTIVE_READS = 6
-_READ_LOOP_NOTE = '\n[read-loop guard] {n} consecutive reads this turn without acting. Stop paging files — each extra page inflates the prompt and slows every later call. Work with what you have: use definitions/references/search for targeted lookups, or give your answer / take the next action now.'
+_READ_LOOP_NOTE = ('\n[read-loop guard] {n} consecutive reads this turn '
+                   'without acting. '
+    'Stop paging files — each extra page inflates the prompt '
+    'and slows every later call. '
+    'Work with what you have: '
+    'use definitions/references/search '
+    'for targeted lookups, or give your answer / take the next action now.')
 _MAX_ACTIVE_SUBAGENTS = 3
 _DELEGATE_TIMEOUT_S = 600.0
 _CONTINUE_NOTE_TAG_KEY = LOOP_NOTE_TAG_KEY
-_CONTINUE_NOTE = 'The previous tool session ended before you finished. A fresh tool budget is available now. CONTINUE THE TASK where you left off — use the tools as needed, complete the remaining work, then give your final answer. Do not describe what remains; do it.'
-_VERIFY_NOTE = "You answered without calling a single tool, so you have not verified anything about this repository — you cannot know whether changes are staged, committed or pushed. Do not assert that state. Call the git tool now (subcommand='status' first), then do the work and report what it actually returned."
+_CONTINUE_NOTE = ('The previous tool session ended before you finished. A fresh tool '
+    'budget is available now. CONTINUE THE TASK where you left off — use the tools as '
+        'needed, complete the remaining work, then give your final answer. Do not '
+            'describe what remains; do it.')
+_VERIFY_NOTE = ("You answered without calling a single tool, so you have not verified "
+    "anything about this repository — you cannot know whether changes are staged, "
+        "committed or pushed. Do not assert that state. Call the git tool now "
+            "(subcommand='status' first), then do the work and report what it actually "
+                "returned.")
 
 
 # Public alias: the class was renamed AgentCore; agent.py exposes it as Agent.
