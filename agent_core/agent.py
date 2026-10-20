@@ -87,9 +87,28 @@ def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
     except (json.JSONDecodeError, TypeError):
         return {}
 from agent_core.suppress_log import _suppress_and_log
-from agent_core.signal_handlers import _signal_break_with_cleanup, install as _install_signal_handlers, current_git_branch as _current_git_branch, interruptible_input as _interruptible_input
+from agent_core.signal_handlers import (
+    _signal_break_with_cleanup,
+    install as _install_signal_handlers,
+    current_git_branch as _current_git_branch,
+    interruptible_input as _interruptible_input,
+)
 from agent_core.handlers.nlp_tools import _run_subprocess_captured
-from agent_core.shell_utils import detect_shell as _detect_shell, shell_name_token as _shell_name_token, SHELL_NAME as _SHELL_NAME, platform_unix_hint as _unix_command_hint, platform_windows_hint as _windows_command_hint, platform_shell_command_hint as _shell_command_hint, DESTRUCTIVE_SHELL_PATTERNS as _DANGEROUS_SHELL_PATTERNS, truncate_output as _truncate_output, shape_run_stderr as _shape_run_stderr, blocked_shell_command as _blocked_shell_command, run_shell_command as _run_shell_command, parse_ps_exit_marker as _parse_ps_exit_marker, SYSTEM_PROMPT as _SYSTEM_PROMPT
+from agent_core.shell_utils import (
+    detect_shell as _detect_shell,
+    shell_name_token as _shell_name_token,
+    SHELL_NAME as _SHELL_NAME,
+    platform_unix_hint as _unix_command_hint,
+    platform_windows_hint as _windows_command_hint,
+    platform_shell_command_hint as _shell_command_hint,
+    DESTRUCTIVE_SHELL_PATTERNS as _DANGEROUS_SHELL_PATTERNS,
+    truncate_output as _truncate_output,
+    shape_run_stderr as _shape_run_stderr,
+    blocked_shell_command as _blocked_shell_command,
+    run_shell_command as _run_shell_command,
+    parse_ps_exit_marker as _parse_ps_exit_marker,
+    SYSTEM_PROMPT as _SYSTEM_PROMPT,
+)
 # Pytest command policy (taskplan t06): the full/targeted/subset classifier and
 # the suite timeout budget.  Restored from agent.py — the ac9a3df import-block
 # rewrite deleted the inline block and left shell_utils' naive list-based
@@ -107,13 +126,41 @@ from agent_core.pytest_cmd_policy import (
     _pytest_full_suite_timeout,
 )
 from agent_core.json_utils import _read_json_quarantining
-from agent_core.history_compaction import _recover_original_goal, _strip_image_blocks, _trim_chat_history, _project_chat_history, _drop_orphan_tool_messages, _repair_unanswered_tool_calls, _HISTORY_CHAR_BUDGET, _MAX_CHAT_MESSAGES, _HISTORY_TRIM_NOTE, _is_compaction_note, _strip_turn_wrappers, _content_tokens
+from agent_core.history_compaction import (
+    _recover_original_goal,
+    _strip_image_blocks,
+    _trim_chat_history,
+    _project_chat_history,
+    _drop_orphan_tool_messages,
+    _repair_unanswered_tool_calls,
+    _HISTORY_CHAR_BUDGET,
+    _MAX_CHAT_MESSAGES,
+    _HISTORY_TRIM_NOTE,
+    _is_compaction_note,
+    _strip_turn_wrappers,
+    _content_tokens,
+)
 from agent_core.llm.tool_loop import _message_size
-from agent_core.run_utils import _start_kanban_inbound, kill_process_tree as _kill_process_tree, resolve_stream_fn as _resolve_stream_fn, resolve_display_mode as _resolve_display_mode, final_answer_fallback as _final_answer_fallback, turn_quality_score as _turn_quality_score, begin_trace_turn as _begin_trace_turn, append_turn_log as _append_turn_log, strip_dynamic_system_blocks as _strip_dynamic_system_blocks, intent_mode_system_suffix as _intent_mode_system_suffix
+from agent_core.run_utils import (
+    _start_kanban_inbound,
+    kill_process_tree as _kill_process_tree,
+    resolve_stream_fn as _resolve_stream_fn,
+    resolve_display_mode as _resolve_display_mode,
+    final_answer_fallback as _final_answer_fallback,
+    turn_quality_score as _turn_quality_score,
+    begin_trace_turn as _begin_trace_turn,
+    append_turn_log as _append_turn_log,
+    strip_dynamic_system_blocks as _strip_dynamic_system_blocks,
+    intent_mode_system_suffix as _intent_mode_system_suffix,
+)
 NlpToolHandler = Callable[..., Awaitable[str]]
 from agent_core.types import _GOAL_RELATED_THRESHOLD
 from agent_core.llm.client import LLMClient
-from agent_dashboard import _emit_command_metrics, _emit_tool_metrics, get_metrics_collector
+from agent_dashboard import (
+    _emit_command_metrics,
+    _emit_tool_metrics,
+    get_metrics_collector,
+)
 from agent_core.handlers.nlp_tools import (
     _nlp_delegate,
     _nlp_delegate_batch,
