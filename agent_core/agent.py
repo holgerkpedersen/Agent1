@@ -300,7 +300,10 @@ class AgentCore:
             settings = None
         return build_provider(settings, client.model_name)
 
-    def spawn_subagent(self, name: str, workspace: str | None=None, role: str | None=None) -> 'SubAgent':
+    def spawn_subagent(self,
+        name: str,
+        workspace: str | None=None,
+        role: str | None=None) -> 'SubAgent':
         """Create a child :class:`SubAgent` sharing this agent's workspace.
 
         The subagent gets its own conversation history so work done there does
@@ -315,7 +318,9 @@ class AgentCore:
         from agent_core.subagent import SubAgent
         return SubAgent(parent=self, name=name, workspace=workspace, role=role)
 
-    def run_parallel_tasks(self, tasks: list[Callable[[], str]], max_workers: int=10) -> list[str]:
+    def run_parallel_tasks(self,
+        tasks: list[Callable[[], str]],
+        max_workers: int=10) -> list[str]:
         """Run *tasks* in parallel threads and collect their string results.
 
         Each task is typically a closure that spawns a :meth:`spawn_subagent`,
@@ -333,7 +338,10 @@ class AgentCore:
                     results.append(f'[task-error] {exc}')
         return results
 
-    def record_demo_activity(self, activity: str='analyze', latency_ms: float=120.0) -> dict[str, float]:
+    def record_demo_activity(self,
+        activity: str='analyze',
+        latency_ms: float=120.0) -> dict[str,
+        float]:
         """Record one synthetic activity into the shared metrics collector.
 
         Mirrors exactly what ``record_command_metrics()`` writes for a real
@@ -419,7 +427,10 @@ class AgentCore:
     async def _nlp_delegate_batch(self, args: dict[str, Any]) -> str:
         return await _nlp_delegate_batch(self, args)
 
-    async def _run_command_quietly(self, command: Command, args: list[str], done_msg: str) -> str:
+    async def _run_command_quietly(self,
+        command: Command,
+        args: list[str],
+        done_msg: str) -> str:
         return await _run_command_quietly(self, command, args, done_msg)
 
     def _effective_ws_dir(self) -> str:
@@ -527,7 +538,11 @@ class AgentCore:
     async def _tool_write_file(self, path: str, content: str, **kwargs: Any) -> str:
         return await _tool_write_file(self, path, content, **kwargs)
 
-    async def _tool_apply_patch(self, path: str, find: str, replace: str, **kwargs: Any) -> str:
+    async def _tool_apply_patch(self,
+        path: str,
+        find: str,
+        replace: str,
+        **kwargs: Any) -> str:
         return await _tool_apply_patch(self, path, find, replace, **kwargs)
 
     async def _tool_edit_file(self, path: str, content: str, **kwargs: Any) -> str:
@@ -536,7 +551,10 @@ class AgentCore:
     async def _tool_search(self, query: str, path: str='.', **kwargs: Any) -> str:
         return await _tool_search(self, query, path, **kwargs)
 
-    async def _tool_list_files(self, path: str='.', pattern: str='*', **kwargs: Any) -> str:
+    async def _tool_list_files(self,
+        path: str='.',
+        pattern: str='*',
+        **kwargs: Any) -> str:
         return await _tool_list_files(self, path, pattern, **kwargs)
 
     async def _tool_delete_file(self, path: str, **kwargs: Any) -> str:
@@ -724,7 +742,9 @@ class AgentCore:
     def _report_failover(self) -> None:
         _report_failover(self)
 
-    def _finish_turn(self, final_text: str, llm_error: str | None, loop: ToolLoopRunner, display_mode: AgentDisplayMode) -> None:
+    def _finish_turn(self, final_text: str, llm_error: str | None,
+        loop: ToolLoopRunner,
+        display_mode: AgentDisplayMode) -> None:
         _finish_turn(self, final_text, llm_error, loop, display_mode)
 
     async def chat_nlp(self, user_input: str, images: list[str] | None=None) -> None:
@@ -852,7 +872,9 @@ class AgentCore:
     def _recent_user_texts(self, limit: int=10) -> list[str]:
         return _recent_user_texts(self, limit)
 
-    def _prompts_related(self, new_prompt: str, prior_texts: list[str], threshold: float=_GOAL_RELATED_THRESHOLD) -> bool:
+    def _prompts_related(self, new_prompt: str,
+        prior_texts: list[str],
+        threshold: float=_GOAL_RELATED_THRESHOLD) -> bool:
         return _prompts_related(self, new_prompt, prior_texts, threshold)
 
     def _suspend_history_for_new_task(self) -> None:
