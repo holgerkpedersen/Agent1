@@ -135,6 +135,18 @@ def _blocked_shell_command(cmd: str) -> Any:
     return _agent_module_attr("_blocked_shell_command")(cmd)
 
 
+def _run_shell_command(cmd: str) -> list[str]:
+    # The run tool's shell selector: argv that executes *cmd* in the shell the
+    # system prompt advertises (see agent_core/shell_utils.run_shell_command).
+    return _agent_module_attr("_run_shell_command")(cmd)
+
+
+def _parse_ps_exit_marker(result: str) -> tuple[str, Any]:
+    # Strip the PowerShell exit-code marker line from captured stdout and
+    # return (cleaned, code) — see shell_utils.parse_ps_exit_marker.
+    return _agent_module_attr("_parse_ps_exit_marker")(result)
+
+
 def _shape_run_stderr(err: Any, output: Any, returncode: Any) -> str:
     # The agent-module-visible seam: combines output + cleaned stderr and
     # appends the [EXIT CODE: N] marker for non-zero returncodes.
@@ -996,10 +1008,15 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
     # beyond the timeout while the "killed" command keeps working.
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     started = time.monotonic()
+    # Run the command in the shell the system prompt ADVERTISES, not whatever
+    # subprocess's shell=True picks (on Windows that is always cmd.exe — so a
+    # model told SHELL_NAME=powershell got cmd.exe and its PowerShell cmdlets
+    # died as 'is not recognized').  See shell_utils.run_shell_command.
+    run_argv = _run_shell_command(cmd_to_run)
     try:
         proc = subprocess.Popen(
-            cmd_to_run,
-            shell=True,
+            run_argv,
+            shell=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -1041,8 +1058,15 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
         agent._full_run_gate.record_full_run()
         # Measure, don't guess: the next run's timeout is 1.5x this.
         record_full_run_seconds(time.monotonic() - started)
+    # PowerShell's -Command runs a statement list, so the process exit code is
+    # the LAST statement's (the marker), not the user command's.  The marker
+    # carries the real code; when it is present it wins over proc.returncode.
+    exit_code = proc.returncode
+    output, marker_code = _parse_ps_exit_marker(output)
+    if marker_code is not None:
+        exit_code = marker_code
     return _truncate_output(
-        _shape_run_stderr(err, output, proc.returncode)
+        _shape_run_stderr(err, output, exit_code)
     )
 
 

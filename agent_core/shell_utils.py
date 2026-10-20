@@ -15,11 +15,31 @@ from typing import Any
 # ── Shell detection ─────────────────────────────────────────────────────────
 
 
+#: Environment variables that prove cmd.exe is the ACTIVE shell for this
+#: process.  PowerShell sets these on startup; cmd.exe does not.  ``PSModulePath``
+#: alone is not proof — it is inherited by a cmd.exe launched from a PowerShell
+#: window (and by VS Code's integrated terminal), so it over-reports PowerShell.
+_PS_SESSION_ENV = ("PSModulePath", "Microsoft.PowerShell.ExecutionPath")
+
+
 def detect_shell() -> str:
-    """Return the current shell name ('powershell', 'cmd', 'bash', ...)."""
-    if sys.platform == "win32":
-        ps_module = os.environ.get("PSModulePath", "")
-        if ps_module:
+    """Return the shell the run tool will actually execute commands in.
+
+    Must stay in sync with :func:`run_shell_command` — this string is what the
+    system prompt advertises (``SHELL_NAME=...``) and what the failure hints
+    name, so a divergence means the model is told one shell and gets another.
+    """
+    override = (os.environ.get("AGENT1_SHELL") or "").strip().lower()
+    if override:
+        # 'none'/'off'/'raw'/'default' = plain shell=True, i.e. cmd.exe on
+        # Windows and sh elsewhere.
+        if override in ("none", "off", "raw", "default"):
+            return "cmd" if os.name == "nt" else "sh"
+        return override
+    if os.name == "nt":
+        # PowerShell is only the run shell when a PowerShell *session* is
+        # active; a cmd.exe that merely inherited PSModulePath is cmd.exe.
+        if any(os.environ.get(v) for v in _PS_SESSION_ENV):
             return "powershell"
         return "cmd"
     return os.environ.get("SHELL", "bash").split("/")[-1]
@@ -28,6 +48,178 @@ def detect_shell() -> str:
 def shell_name_token() -> str:
     """Return a short token for the current shell, used in prompts."""
     return detect_shell()
+
+
+def run_shell_command(command: str) -> list[str]:
+    """Return the subprocess argv that runs *command* in the advertised shell.
+
+    The system prompt tells the model it is on ``SHELL_NAME=powershell`` and
+    the shell-specific hints in this module are chosen from :func:`detect_shell`.
+    ``subprocess`` with ``shell=True`` ignores all of that: on Windows it always
+    uses ``%ComSpec%`` (cmd.exe).  So a model that follows the prompt and pipes
+    with a PowerShell cmdlet — ``... | Select-Object -Last 5`` — is executed by
+    cmd.exe, which does not know that name, and the failure is blamed on the
+    hint.  Running the command through the advertised shell removes the
+    mismatch: the advertised shell and the executing shell become one.
+
+    Resolution order, most trustworthy first:
+
+    1. ``AGENT1_SHELL`` — explicit override (``powershell``, ``pwsh``, ``cmd``,
+       ``bash``, ``sh``, ``zsh``, ``none``).
+    2. Windows: PowerShell only when a PowerShell *session* variable is present
+       (see :data:`_PS_SESSION_ENV`); otherwise cmd.exe, matching what
+       ``shell=True`` would have done.
+    3. POSIX: ``$SHELL``, falling back to ``sh``.
+
+    The argv is list-form so the command reaches the shell as ONE argument —
+    no extra quoting layer. Two adaptations are needed because PowerShell is a
+    *statement-list* shell, not a command-line shell:
+
+    * ``& "C:\\Program Files\\...\\python.exe" -c ...`` is a syntax error there
+      (cmd.exe and POSIX sh accept it), so an absolute executable path is
+      rewritten with the call operator ``&`` — see :data:`_CALL_PATH_RE`.
+    * the process exit code is the LAST statement's, so a bare
+      ``python -c "sys.exit(3)"; echo done`` exits 0. The real code is
+      recovered by emitting a ``__AGENT1_EXIT__:<code>`` marker line (from
+      ``$LASTEXITCODE``, falling back to ``$?`` for cmdlet-level failures),
+      which :func:`parse_ps_exit_marker` strips back out.
+    """
+    override = (os.environ.get("AGENT1_SHELL") or "").strip().lower()
+    if override in ("none", "off", "raw", "default"):
+        return [command]
+    if override in ("powershell", "pwsh"):
+        return [_pwsh_argv(override), *_PS_ARGS, "-Command", _ps_command(command)]
+    if override:
+        return [override, "-c", command]
+
+    if os.name == "nt":
+        # Only PowerShell gets the -Command wrapper; cmd.exe keeps the plain
+        # string so existing behaviour is unchanged when it is the shell.
+        if any(os.environ.get(v) for v in _PS_SESSION_ENV):
+            return [_pwsh_argv("powershell"), *_PS_ARGS, "-Command", _ps_command(command)]
+        return [command]
+
+    shell = (os.environ.get("SHELL") or "sh").strip() or "sh"
+    return [shell, "-c", command]
+
+
+#: PowerShell flags for non-interactive, fast, editor-free execution.
+_PS_ARGS = ("-NoProfile", "-NonInteractive")
+#: Force UTF-8 on the console streams so piped output matches the
+#: ``encoding="utf-8"`` the caller decodes with (Windows console tools write
+#: UTF-16 records to a pipe; the agent decodes UTF-8, so an unpinned console
+#: turns piped non-ASCII output into mojibake).
+_PS_UTF8_PREAMBLE = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+#: An absolute executable path at the start of a command — the shape cmd.exe
+#: and POSIX sh accept, and PowerShell rejects.  Quotes are optional; a drive
+#: letter is required, and ``-c`` must follow, so a quoted path used as an
+#: argument ("git commit -m ...") is never rewritten.
+_CALL_PATH_RE = re.compile(
+    r'^(?:"(?P<dq>[A-Za-z]:[\\/][^"]+)"'
+    r"|'(?P<sq>[A-Za-z]:[\\/][^']+)'"
+    r"|(?P<bare>[A-Za-z]:[\\/][^\s]+))"
+)
+
+
+def _ps_command(command: str) -> str:
+    """Build the PowerShell ``-Command`` string for *command*."""
+    return _PS_UTF8_PREAMBLE + _ps_call_operator(command) + _PS_EXIT_SNIPPET
+
+
+def _ps_call_operator(command: str) -> str:
+    """Prefix an absolute leading executable path with PowerShell's ``&``.
+
+    ``"C:\\Program Files\\Python312\\python.exe" -c "print(1)"`` is what the
+    prompt and the tests hand the run tool (the quoting is needed for the
+    space in the path). PowerShell parses a leading quoted string as a
+    statement, not a call, and fails with ``UnexpectedToken '-c'``. ``&`` makes
+    it a call. An already-prefixed command (``& "C:\\..."``) is left alone.
+    """
+    stripped = command.lstrip()
+    if stripped.startswith("&"):
+        return command
+    match = _CALL_PATH_RE.match(stripped)
+    if not match:
+        return command
+    return "& " + stripped
+
+
+def _pwsh_argv(name: str) -> str:
+    """Resolve the PowerShell executable for a bare name ('powershell'/'pwsh')."""
+    if name == "pwsh":
+        return "pwsh"
+    root = os.environ.get("SYSTEMROOT") or r"C:\Windows"
+    return os.path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+
+
+#: Marker PowerShell emits so the exit code of the user's command survives
+#: the statement-list process exit code.  Emitted with ``Write-Host`` into the
+#: information stream, which ``-Command`` merges into the SUCCESS stream
+#: (stdout) — NOT stderr, where it would pollute the stderr-shaping path.
+#: The expansion is a ``+`` string concatenation on purpose: under the
+#: single-quoted form PowerShell 5.1 handed back the literal
+#: ``__AGENT1_EXIT__:$LASTEXITCODE`` in an earlier probe.
+#: ``$LASTEXITCODE`` alone is NOT a reliable code: it is $null whenever no
+#: native command ran — e.g. the user's command was a cmdlet that failed to
+#: resolve (CommandNotFoundException) or any cmdlet-level error — so the
+#: snippet captures ``$?`` (success of the user's command, snapshotted
+#: immediately) and falls back to 0/1 from it.  Without that fallback the
+#: marker line was empty (no digits to parse) and the process exit code was
+#: the trailing ``Write-Host``'s 0, which silenced the failure Hint.
+_PS_EXIT_MARKER = "__AGENT1_EXIT__:"
+_PS_EXIT_SNIPPET = (
+    '; $__a1_ok = $?'
+    '; $__a1_ec = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE }'
+    ' elseif ($__a1_ok) { 0 } else { 1 }'
+    '; Write-Host ("' + _PS_EXIT_MARKER + '" + ($__a1_ec + ""))'
+)
+
+
+def parse_ps_exit_marker(result: str) -> tuple[str, int | None]:
+    """Split the PowerShell exit-code marker out of captured *result*.
+
+    PowerShell's ``-Command`` runs a statement list: the process exit code is
+    the LAST statement's, so ``python -c "sys.exit(3)"; echo done`` exits 0 and
+    the real code of the user's command is lost.  :func:`run_shell_command`
+    appends a ``Write-Host ("__AGENT1_EXIT__:" + <code>)`` snippet so the
+    code survives in the output; this function removes the marker line and
+    returns ``(cleaned_output, code)``.
+
+    The marker line is ALWAYS stripped when present, even when it carries no
+    digits (a killed shell, a truncated snippet): a leaked marker line would
+    pollute the output the model reads.  When the marker is glued to real
+    output on the same line (a child wrote bytes without a trailing newline,
+    e.g. ``中__AGENT1_EXIT__:0``), only the marker token + digits are removed —
+    never the content before them.
+
+    When no marker is present (the ``AGENT1_SHELL=none`` / cmd.exe / POSIX
+    paths, a shell that died before emitting it, or a timeout kill) the code is
+    ``None`` and the caller falls back to the process returncode.
+    """
+    marker = _PS_EXIT_MARKER
+    idx = result.rfind(marker)
+    if idx < 0:
+        return result, None
+    tail = result[idx + len(marker):]
+    digits = ""
+    for ch in tail:
+        if ch.isdigit():
+            digits += ch
+        else:
+            break
+    code = int(digits) if digits else None
+    end = idx + len(marker) + len(digits)
+    at_line_start = idx == 0 or result[idx - 1] == "\n"
+    line_is_marker_only = end == len(result) or result[end] == "\n"
+    if at_line_start and line_is_marker_only:
+        # The marker occupies its own line — drop the whole line, including
+        # one trailing newline ("foo\n<MARK>1\n" -> "foo\n", "<MARK>1\nfoo"
+        # -> "foo").
+        if end < len(result):
+            end += 1
+    # Glued to output on the same line: remove only token + digits.
+    cleaned = result[:idx] + result[end:]
+    return cleaned, code
 
 
 def current_git_branch(cwd: str | None = None) -> str:
@@ -218,13 +410,21 @@ def run_subprocess_captured(
         return -1, "", str(exc)
 
 
-#: cmd.exe's wording when a command name is not on PATH.
-_COMMAND_NOT_FOUND_RE = re.compile(
-    r"is not recognized as an internal or external command", re.I
+#: Whitespace-stripped "command not found" needles, matched against a copy of
+#: stderr with ALL whitespace removed.  PowerShell wraps its error text at
+#: console width, and the break can land INSIDE a word ("of a c\nmdlet") —
+#: even a space-normalised copy then reads "c mdlet" and misses.  Removing
+#: all whitespace makes the match immune to any wrap position.
+#: cmd.exe: "is not recognized as an internal or external command";
+#: PowerShell: "is not recognized as the name of a cmdlet";
+#: POSIX: "command not found" / "No such file or directory".
+_CMD_NOT_FOUND_NEEDLES = (
+    "isnotrecognizedasaninternalorexternalcommand",
+    "isnotrecognizedasthenameofacmdlet",
 )
-#: POSIX shells' wording for the same failure.
-_COMMAND_NOT_FOUND_UNIX_RE = re.compile(
-    r"(command not found|No such file or directory)", re.I
+_CMD_NOT_FOUND_UNIX_NEEDLES = (
+    "commandnotfound",
+    "nosuchfileordirectory",
 )
 
 
@@ -263,8 +463,12 @@ def shape_run_stderr(
         return result
     result = f"{result}\n[EXIT CODE: {returncode}]"
     # Shell-awareness hints (only on failure, so a passing command stays clean).
-    if _COMMAND_NOT_FOUND_RE.search(cleaned) or (
-        os.name != "nt" and _COMMAND_NOT_FOUND_UNIX_RE.search(cleaned)
+    # Match on a whitespace-STRIPPED copy: PowerShell wraps its stderr at
+    # console width and the break can land mid-word ("c\nmdlet").
+    nospace = re.sub(r"\s+", "", cleaned).lower()
+    if any(n in nospace for n in _CMD_NOT_FOUND_NEEDLES) or (
+        os.name != "nt"
+        and any(n in nospace for n in _CMD_NOT_FOUND_UNIX_NEEDLES)
     ):
         result += platform_shell_command_hint()
     if (

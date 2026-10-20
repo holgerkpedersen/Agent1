@@ -89,7 +89,7 @@ def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
 from agent_core.suppress_log import _suppress_and_log
 from agent_core.signal_handlers import _signal_break_with_cleanup, install as _install_signal_handlers, current_git_branch as _current_git_branch, interruptible_input as _interruptible_input
 from agent_core.handlers.nlp_tools import _run_subprocess_captured
-from agent_core.shell_utils import detect_shell as _detect_shell, shell_name_token as _shell_name_token, SHELL_NAME as _SHELL_NAME, current_git_branch as _git_branch, platform_unix_hint as _unix_command_hint, platform_windows_hint as _windows_command_hint, platform_shell_command_hint as _shell_command_hint, DESTRUCTIVE_SHELL_PATTERNS as _DANGEROUS_SHELL_PATTERNS, truncate_output as _truncate_output, shape_run_stderr as _shape_run_stderr, blocked_shell_command as _blocked_shell_command, SYSTEM_PROMPT as _SYSTEM_PROMPT
+from agent_core.shell_utils import detect_shell as _detect_shell, shell_name_token as _shell_name_token, SHELL_NAME as _SHELL_NAME, current_git_branch as _git_branch, platform_unix_hint as _unix_command_hint, platform_windows_hint as _windows_command_hint, platform_shell_command_hint as _shell_command_hint, DESTRUCTIVE_SHELL_PATTERNS as _DANGEROUS_SHELL_PATTERNS, truncate_output as _truncate_output, shape_run_stderr as _shape_run_stderr, blocked_shell_command as _blocked_shell_command, run_shell_command as _run_shell_command, parse_ps_exit_marker as _parse_ps_exit_marker, SYSTEM_PROMPT as _SYSTEM_PROMPT
 # Pytest command policy (taskplan t06): the full/targeted/subset classifier and
 # the suite timeout budget.  Restored from agent.py — the ac9a3df import-block
 # rewrite deleted the inline block and left shell_utils' naive list-based
@@ -1079,6 +1079,8 @@ __all__ = (
     '_resolve_stream_fn',
     '_run_chained_tool_loop',
     '_run_command_quietly',
+    '_parse_ps_exit_marker',
+    '_run_shell_command',
     '_run_subprocess_captured',
     '_safe_path',
     '_save_chat_history',

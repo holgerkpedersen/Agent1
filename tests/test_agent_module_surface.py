@@ -212,6 +212,8 @@ EXPECTED_IMPORTED = frozenset(
     "_reset_failover_notice",
     "_run_chained_tool_loop",
     "_run_command_quietly",
+    "_run_shell_command",
+    "_parse_ps_exit_marker",
     "_effective_ws_dir",
     "_safe_path",
     "_git_branch",

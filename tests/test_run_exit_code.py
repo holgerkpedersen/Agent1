@@ -80,3 +80,85 @@ class TestExitCodeEndToEnd:
         out = self._run(tmp_path, "print(12345)")
         assert "[EXIT CODE" not in out
         assert "12345" in out
+
+    def test_nlp_run_unknown_command_exit_code_and_hint(self, tmp_path) -> None:
+        # CommandNotFoundException is a CMDLET-level failure: $LASTEXITCODE
+        # stays $null, so the marker snippet must fall back to $? — otherwise
+        # the code was 0 (the trailing Write-Host's) and the Hint never fired.
+        import os
+        import pytest
+        from agent_core.shell_utils import detect_shell
+        if os.name != "nt" or detect_shell() != "powershell":
+            pytest.skip("PowerShell session only")
+        bot = Agent(workspace=str(tmp_path))
+        out = asyncio.run(
+            bot._nlp_run({"command": "definitely_not_a_real_command_9k2f"}))
+        assert "[EXIT CODE: 1]" in out
+        assert "Hint" in out
+        assert "__AGENT1_EXIT__" not in out
+
+
+class TestPsExitMarker:
+    """parse_ps_exit_marker: strip the PowerShell marker, recover the code."""
+
+    def test_own_line_marker_stripped_with_code(self) -> None:
+        from agent_core.shell_utils import parse_ps_exit_marker
+        out, code = parse_ps_exit_marker("hello\n__AGENT1_EXIT__:3\n")
+        assert out == "hello\n"
+        assert code == 3
+
+    def test_first_line_marker_stripped(self) -> None:
+        from agent_core.shell_utils import parse_ps_exit_marker
+        out, code = parse_ps_exit_marker("__AGENT1_EXIT__:1\nfoo")
+        assert out == "foo"
+        assert code == 1
+
+    def test_marker_glued_to_output_keeps_output(self) -> None:
+        # A child that writes bytes WITHOUT a trailing newline leaves the
+        # marker glued on the same line ("中__AGENT1_EXIT__:0").  Only the
+        # token+digits may be removed — never the content before them.
+        from agent_core.shell_utils import parse_ps_exit_marker
+        out, code = parse_ps_exit_marker("中__AGENT1_EXIT__:0\n")
+        assert "中" in out
+        assert code == 0
+
+    def test_empty_marker_line_stripped_code_none(self) -> None:
+        # $LASTEXITCODE was $null (no digits): the line must still go.
+        from agent_core.shell_utils import parse_ps_exit_marker
+        out, code = parse_ps_exit_marker("err text\n__AGENT1_EXIT__:\n")
+        assert "__AGENT1_EXIT__" not in out
+        assert "err text" in out
+        assert code is None
+
+    def test_no_marker_passthrough(self) -> None:
+        from agent_core.shell_utils import parse_ps_exit_marker
+        assert parse_ps_exit_marker("plain") == ("plain", None)
+
+
+class TestShellHintWordings:
+    """The command-not-found Hint must fire for BOTH cmd.exe and PowerShell,
+    including PowerShell's console-width wraps that split wording mid-word."""
+
+    def test_powershell_wording_hint(self) -> None:
+        err = ("The term 'nope' is not recognized as the name of a cmdlet, "
+               "function, script file, or operable program.")
+        out = _shape_run_stderr(err, "", 1)
+        assert "Hint" in out
+
+    def test_powershell_wrapped_midword_hint(self) -> None:
+        # PowerShell wraps stderr at console width: "of a c\nmdlet".
+        err = ("The term 'nope' is not recognized as the name of a c\n"
+               "mdlet, function, script file, or operable program.")
+        out = _shape_run_stderr(err, "", 1)
+        assert "Hint" in out
+
+    def test_cmd_exe_wording_still_hinted(self) -> None:
+        err = ("'nope' is not recognized as an internal or external command, "
+               "operable program or batch file.")
+        out = _shape_run_stderr(err, "", 1)
+        assert "Hint" in out
+
+    def test_no_hint_on_success(self) -> None:
+        err = ("The term 'nope' is not recognized as the name of a cmdlet.")
+        out = _shape_run_stderr(err, "", 0)
+        assert "Hint" not in out
