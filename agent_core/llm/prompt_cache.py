@@ -1,7 +1,6 @@
-from __future__ import annotations
-
 """Versioned prompt template storage backed by db_io."""
 
+from __future__ import annotations
 
 from typing import Optional, Any
 
