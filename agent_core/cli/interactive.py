@@ -53,7 +53,11 @@ from agent_core.bootstrap import (
 )
 from agent_dashboard import record_command_metrics
 from agent_core.colors import blue, cyan, gray, green, yellow
-from agent_core.signal_handlers import current_git_branch as _current_git_branch, install as _install_signal_handlers, interruptible_input as _interruptible_input
+from agent_core.signal_handlers import (
+    current_git_branch as _current_git_branch,
+    install as _install_signal_handlers,
+    interruptible_input as _interruptible_input,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from agent import Agent
@@ -70,10 +74,22 @@ def _agent_mod() -> Any:
     import agent as _agent_mod
     return _agent_mod
 
-_INCOMPLETE_MARKERS = ('budget', 'tool budget', 'not finished', 'could not', "couldn't", 'would need', 'needs one more', 'needs 1 more', 'needs 2 more', 'remaining', 'unfinished', 'incomplete', 'exhausted', 'ran out', 'out of tool', 'more tool call', 'cannot complete', 'still needs', 'not covered', 'follow-up')
-_COMPLETE_MARKERS = ('all done', 'is done', 'done.', 'completed', 'finished', 'is complete', 'fully resolved', 'all fixed', 'task is complete')
+_INCOMPLETE_MARKERS = (
+    'budget', 'tool budget', 'not finished', 'could not', "couldn't",
+    'would need', 'needs one more', 'needs 1 more', 'needs 2 more',
+    'remaining', 'unfinished', 'incomplete', 'exhausted', 'ran out',
+    'out of tool', 'more tool call', 'cannot complete', 'still needs',
+    'not covered', 'follow-up',
+)
+_COMPLETE_MARKERS = (
+    'all done', 'is done', 'done.', 'completed', 'finished', 'is complete',
+    'fully resolved', 'all fixed', 'task is complete',
+)
 _ACTION_VERB_RE = re.compile('\\b(commit|push|stage)\\b', re.I)
-_QUESTION_LEAD_RE = re.compile('^\\s*(what|why|how|when|where|who|which|is|are|was|were|does|did|do|can|could|should|would|will|has|have|am|explain|tell|show)\\b', re.I)
+_QUESTION_LEAD_RE = re.compile(
+    '^\\s*(what|why|how|when|where|who|which|is|are|was|were|does|did|do|can|could|should|would|will|has|have|am|explain|tell|show)\\b',
+    re.I,
+)
 CHAT_INPUT_PROMPT = '> '
 
 
@@ -182,13 +198,19 @@ def _warn_uncommitted(agent: 'Agent') -> None:
     Best-effort and silent outside a git repo; never blocks exit.
     """
     try:
-        r = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=agent.workspace, timeout=10)
+        r = subprocess.run(
+            ['git', 'status', '--porcelain'],
+            capture_output=True, text=True, encoding='utf-8',
+            errors='replace', cwd=agent.workspace, timeout=10,
+        )
         if r.returncode != 0:
             return
         lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
         if not lines:
             return
-        print(yellow(f'\n  [git] {len(lines)} uncommitted change(s) in the workspace — commit them now (AGENTS.md invariant #4: uncommitted work is unrecoverable). Top offenders:'))
+        print(yellow(f'\n  [git] {len(lines)} uncommitted change(s) in the workspace '
+        f'— commit them now (AGENTS.md invariant #4: uncommitted work is '
+        f'unrecoverable). Top offenders:'))
         for ln in lines[:5]:
             print(f'    {ln}')
         if len(lines) > 5:
@@ -221,13 +243,19 @@ async def run_interactive() -> None:
     print(blue('Agent Interactive Mode with LM Studio'))
     print(f'Workspace: {cyan(Agent.DEFAULT_WORKSPACE)}')
     model_label = agent.llm.model_name
-    profile_part = f'  |  Profile: {agent.llm._profile_name}' if agent.llm._profile_name else ''
+    profile_part = (
+        f'  |  Profile: {agent.llm._profile_name}'
+        if agent.llm._profile_name else ''
+    )
     print(f'Model: {cyan(model_label)}{gray(profile_part)}')
     try:
         from agent_core.llm.lmstudio import get_models_status
         models = get_models_status()
         loaded = [m for m in models if m.get('loaded')]
-        status = f'LM Studio: online ({len(loaded)}/{len(models)} models loaded)' if models else 'LM Studio: online'
+        status = (
+            f'LM Studio: online ({len(loaded)}/{len(models)} models loaded)'
+            if models else 'LM Studio: online'
+        )
         print(green(status) if models else yellow(status))
     except Exception:
         print(yellow('LM Studio: offline'))
@@ -237,11 +265,19 @@ async def run_interactive() -> None:
         cmd = registry.get(name)
         synopsis = cmd.help_text.splitlines()[0].strip() if cmd else name
         print(f'  {cyan(synopsis)}')
-    print(gray('  Tip: `propose <taskplan.md>` (or `implement --propose` / `fix --mypy --propose`) generates a reviewed diff bundle; it never writes the working tree.'))
+    print(gray(
+        '  Tip: `propose <taskplan.md>` (or `implement --propose` / '
+        '`fix --mypy --propose`) generates a reviewed diff bundle; '
+        'it never writes the working tree.'
+    ))
     print(f"  {cyan('quit')} - {gray('Exit')}")
     print(blue('=' * 50))
     _register_commands(registry)
-    from agent_core.commands.freshness import diff_snapshots, format_stale_warning, loaded_module_fingerprints
+    from agent_core.commands.freshness import (
+        diff_snapshots,
+        format_stale_warning,
+        loaded_module_fingerprints,
+    )
     _code_snapshot = loaded_module_fingerprints(__file__)
     _install_signal_handlers(agent)
     while True:
@@ -296,7 +332,8 @@ async def run_interactive() -> None:
             else:
                 await agent.chat_nlp(user_input)
         except KeyboardInterrupt:
-            print(yellow("\nInterrupted — the current run was stopped. Use 'quit' to exit."))
+            print(yellow("\nInterrupted "
+                "— the current run was stopped. Use 'quit' to exit."))
         except EOFError:
             if not sys.stdin.isatty():
                 print(yellow('\n[stdin] Input stream ended — shutting down.'))
