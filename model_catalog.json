@@ -5,7 +5,6 @@
     "openrouter_model": "openrouter/meta-llama/llama-3.1-8b-instruct:free",
     "jev_model": "qwen2.5-coder-1.5b-instruct",
     "llm_chain": [
-      "opencode:opencode-zen/mimo-v2.5-free",
       "opencode:opencode-go/deepseek-v4-flash",
       "openrouter",
       "lmstudio",

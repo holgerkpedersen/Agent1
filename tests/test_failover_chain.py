@@ -39,8 +39,15 @@ def _no_model_persist(monkeypatch):
 #: provider order AND the pinned go model.  Deriving the expectation from it
 #: (instead of a duplicated literal) keeps this test from drifting out of sync
 #: whenever a new opencode-go model becomes the default.
+#: The go slot is selected by provider prefix, not by position: the free-tier
+#: zen entry was removed from the default chain, so the go model is the only
+#: "opencode:opencode-go/..." entry.
 DEFAULT_CHAIN = tuple(DEFAULT_LLM_CHAIN)
-_GO_MODEL = DEFAULT_CHAIN[1].split(":", 1)[1]
+_GO_MODEL = next(
+    entry.split(":", 1)[1]
+    for entry in DEFAULT_CHAIN
+    if entry.startswith("opencode:opencode-go/")
+)
 
 
 def _settings(llm_providers: tuple[str, ...]) -> AgentSettings:
@@ -130,7 +137,15 @@ def test_active_zen_model_drives_zen_slot_only() -> None:
 
 
 def test_active_go_model_drives_go_slot_only() -> None:
-    settings = _settings(DEFAULT_CHAIN)
+    # Explicit zen-inclusive chain: the default chain carries only the go
+    # entry (the free-tier zen entry was removed), so the zen slot is pinned
+    # by an explicit "opencode:<free model>" entry here.
+    settings = _settings((
+        f"opencode:{_default_zen_free_model()}",
+        f"opencode:{_GO_MODEL}",
+        "lmstudio",
+        "llama",
+    ))
     provider = build_provider(settings, "opencode-go/gpt-oss")
     # The selected model's slot is promoted to the front (tried first), so the
     # go slot carries the active selection; the zen slot keeps its default.
@@ -157,12 +172,12 @@ def test_provider_override_moves_entry_to_front_preserving_override() -> None:
     assert [type(p).__name__ for p in provider.providers] == [
         "LlamaProvider",
         "OpencodeProvider",
-        "OpencodeProvider",
         "OpenRouterProvider",
         "LMStudioProvider",
     ]
-    # The zen slot override is preserved (not collapsed to bare 'opencode').
-    assert provider.providers[1].model_name == _default_zen_free_model()
+    # The go slot's per-entry model override is preserved (not collapsed to
+    # bare 'opencode') across the reorder.
+    assert provider.providers[1].model_name == _GO_MODEL
 
 
 def test_zen_exhaustion_triggers_failover_to_go() -> None:

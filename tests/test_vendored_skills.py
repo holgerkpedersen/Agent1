@@ -134,6 +134,11 @@ def _system_prompt_for(workspace: Path, tmp_path: Path, monkeypatch) -> str:
     monkeypatch.setattr(
         agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
     )
+    # Isolate from the developer's .env: AGENT_DISPLAY_MODE=intent appends the
+    # INTENT narration suffix, which must not leak into the byte-identical
+    # baseline comparison.
+    monkeypatch.delenv("AGENT_DISPLAY_MODE", raising=False)
+    monkeypatch.chdir(tmp_path)
     bot = agent_mod.Agent(workspace=str(workspace))
     bot._refresh_system_message()
     return bot._chat_history[0]["content"]

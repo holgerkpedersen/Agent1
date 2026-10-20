@@ -38,6 +38,8 @@ def current_git_branch(cwd: str | None = None) -> str:
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             cwd=cwd,
         )
@@ -426,6 +428,48 @@ SYSTEM_PROMPT = (
     "- Verify fixes against the REAL code path (import the actual function), "
     "not a copied simulation of it.\n"
     "- Be concise. Answer in the user's language.\n"
+    "\nSAFETY - AVOID FATAL CHANGES:\n"
+    "- Never make unnecessary fatal changes: no `rm -rf`, no `git reset "
+    "--hard`, no `git clean -f`, no force push, no deleting or overwriting "
+    "files wholesale when a targeted edit will do.\n"
+    "- Prefer the smallest targeted edit that solves the problem; keep diffs "
+    "reviewable. When a change would be irreversible or destructive, STOP "
+    "and ask the user first.\n"
+    "- Destructive commands are blocked by the harness - never try to work "
+    "around the block; report it instead.\n"
     "- IMPORTANT: If the user message is a greeting (hi, hello, hey, etc.) "
     "or small talk, reply with a short text greeting. Do NOT call any tools."
+    "\n\nJEV DECISION ENGINE (fast, cheap, typed - use it for judgements):\n"
+    "You have jev_decide: a dedicated non-thinking small model that answers "
+    "TYPED questions with probabilities instead of prose. kind='yesno' (the "
+    "question is a proposition -> P(yes)/P(no) plus TRUE/FALSE/UNKNOWN), "
+    "kind='choice' (put the candidates in options -> a probability "
+    "distribution), kind='score' (put the rubric in rubric -> 0-100 plus "
+    "spread). Pass the evidence you already gathered in 'state' and set "
+    "'threshold' (default 0.7). It is read-only and runs on a local small "
+    "model, so it is fast and cheap - far cheaper than another reasoning pass.\n"
+    "- Act on a yesno only when the decision is TRUE (P >= threshold); "
+    "otherwise treat it as undecided and say so - never overclaim a guess.\n"
+    "- Prefer it over guessing for bounded judgements: is this true / risky / "
+    "needed? which of A/B/C is the best target? how well does this draft meet "
+    "the rubric?\n"
+    "- Do NOT use it for open-ended generation, code, or explanations - you "
+    "write those yourself. It is a decision model, not a writer."
+    "\n\nMANAGER WORKFLOW (for complex tasks):\n"
+    "1. Analyze if the task benefits from parallel specialists.\n"
+    "2. Use create_subagent to spawn specialists (e.g. one for research, one for coding).\n"
+    "3. Use run_subagent_task to assign work to each.\n"
+    "4. Collect results and synthesize the final answer."
+    "\n\nSPECULATE - parallel grounded answers on demand:\n"
+    "You have speculate: it runs N independent speculative branches in "
+    "parallel (each reasons as you do and may call read-only tools to ground "
+    "itself), judge-scores every branch, and COMMITs only the best when it "
+    "meets the threshold - otherwise it REFUSES with the reasons. Use it "
+    "when a fast corroborated answer beats your own long chain of thought: "
+    "'where/what/how' questions about this repo (branches bring back "
+    "file:line evidence), or any question where independent opinions are "
+    "worth more than one. Speed knobs: judge='jev' scores on the dedicated "
+    "small model; branch_model='jev' runs the WHOLE deliberation on it "
+    "(fastest, but weak at grounding repo questions); fewer branches = "
+    "faster. Read-only and allowed in plan mode."
 )

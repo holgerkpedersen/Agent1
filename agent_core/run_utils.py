@@ -23,16 +23,21 @@ logger = logging.getLogger(__name__)
 
 
 def _start_kanban_inbound() -> None:
-    """Start the inbound kanban bridge processor.
+    """Start the Kanban -> Agent1 inbound poller for this process, if enabled.
 
-    Delegates to kanban_bridge.start_inbound_processor() so the agent
-    picks up tasks handed to it via the kanban file.
+    Best-effort by contract: the import is lazy (harnessfix is optional for
+    some entry points) and every failure is logged rather than raised, because
+    an optional integration must never stop the agent from starting.
     """
     try:
-        from agent_core.orchestration.kanban_bridge import start_inbound_processor
+        from harnessfix.kanban_bridge import start_inbound_processor
+    except ImportError as exc:  # pragma: no cover - harnessfix always present
+        logger.warning("Kanban sync unavailable (import failed): %s", exc)
+        return
+    try:
         start_inbound_processor()
-    except ImportError:
-        logger.debug("kanban_bridge not available — running without inbound processor")
+    except Exception as exc:  # noqa: BLE001 - never crash boot on sync failure
+        logger.error("Kanban inbound processor failed to start: %s", exc)
 
 
 # ── Process tree ─────────────────────────────────────────────────────────────

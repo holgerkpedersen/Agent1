@@ -59,6 +59,11 @@ def _make_agent(workspace: Path, tmp_path: Path, monkeypatch) -> "agent_mod.Agen
     monkeypatch.setattr(
         agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
     )
+    # Isolate from the developer's .env: AGENT_DISPLAY_MODE=intent appends the
+    # INTENT narration suffix, which must not leak into the byte-identical
+    # baseline comparison.
+    monkeypatch.delenv("AGENT_DISPLAY_MODE", raising=False)
+    monkeypatch.chdir(tmp_path)
     return agent_mod.Agent(workspace=str(workspace))
 
 

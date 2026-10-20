@@ -95,6 +95,8 @@ def current_git_branch(cwd: str | None = None) -> str:
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             cwd=cwd,
         )
