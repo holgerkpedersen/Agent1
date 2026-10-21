@@ -242,15 +242,17 @@ def test_real_corpus_matches_pre050_labels():
     (reports/ is gitignored and not part of CI).
     """
     corpus = Path("reports/traces")
-    if not corpus.is_dir():
-        pytest.skip("trace corpus not present (reports/ is gitignored)")
-
-
     expected = {
         "bug": ["0f7793", "536848", "9acf2d", "b5b264"],
         "noise": ["17131c", "9c89a2", "demo-h", "demo-s",
                   "e0b03b", "f00b30", "f1b432", "fc5199"],
     }
+    labelled = [p for p in (corpus.glob("*.jsonl") if corpus.is_dir() else [])
+                if any(p.stem.startswith(pre)
+                       for pres in expected.values() for pre in pres)]
+    if not labelled:
+        pytest.skip("labelled traces not present (reports/traces is gitignored)")
+
     actual: dict[str, list[str]] = {"bug": [], "noise": []}
     for p in corpus.glob("*.jsonl"):
         found = False

@@ -107,7 +107,12 @@ def _looks_like_path(token: str) -> bool:
 
 
 def _norm(path: str) -> str:
-    return path.strip().replace("\\", "/").lstrip("./")
+    # Strip only a leading "./" prefix. lstrip("./") would also eat the root
+    # "/" of an absolute POSIX path and turn it into a workspace-relative one.
+    normalized = path.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
 
 
 def _resolve(ws: Path, rel: str) -> Path:

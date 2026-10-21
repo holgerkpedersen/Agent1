@@ -275,8 +275,8 @@ def platform_windows_hint() -> str:
     return (
         f"\nHint: this shell ({detect_shell()}) has no cmd.exe builtins "
         "(dir/type/findstr/copy/del/where) and no PowerShell cmdlets "
-        "(Get-ChildItem/Select-String/Get-Content). Use Python one-liners "
-        '(python -c "...") or the built-in tools.'
+        "(Get-ChildItem/Select-String/Get-Content). Use ls/cat/grep/find, "
+        'Python one-liners (python -c "...") or the built-in tools.'
     )
 
 

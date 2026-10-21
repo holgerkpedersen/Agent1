@@ -54,17 +54,23 @@ def kill_process_tree(proc: subprocess.Popen[Any]) -> None:
                 timeout=10,
             )
         else:
-            # On POSIX, kill the whole process group
+            # On POSIX, kill the whole process group, but only when the child
+            # leads its own group. Otherwise getpgid() returns the agent's own
+            # group and killpg would signal the agent itself.
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                pgid = os.getpgid(proc.pid)
+                if pgid == proc.pid:
+                    os.killpg(pgid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
             except Exception as exc:
                 logger.debug("killpg failed: %s", exc)
-                try:
-                    proc.terminate()
-                except ProcessLookupError:
-                    pass
+            # Always finish with a direct kill of the child: Popen.kill() is
+            # a no-op on an exited child, and covers every branch above.
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
     except Exception as exc:
         logger.debug("kill_process_tree failed: %s", exc)
 
