@@ -98,6 +98,14 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         except ValueError:
             length = -1
         if not 0 <= length <= self._MCP_MAX_BODY:
+            # Drain (bounded) the rejected body and close the connection:
+            # answering while the request body is still in flight leaves
+            # unread bytes on the socket, and on Windows the abort that
+            # follows can reach the client before the 413 response does
+            # (WinError 10053 in urllib).  Closing makes the close explicit
+            # instead of relying on the OS teardown.
+            self.close_connection = True
+            self._drain_request_body(length)
             self.send_error(413, "Body too large")
             return
         try:
@@ -264,6 +272,21 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             "wiki": wiki_stats,
             "server_time": now,
         }
+
+    def _drain_request_body(self, length: int) -> None:
+        """Read and discard up to ``_MCP_MAX_BODY`` bytes of request body.
+
+        Used on the 413 path: leaving the rejected body in the socket buffer
+        makes the connection's teardown an abort on Windows, which can reach
+        the client before the response does.  The drain is bounded so a
+        hostile Content-Length cannot make us read unbounded data.
+        """
+        remaining = min(max(length, 0), self._MCP_MAX_BODY)
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 8192))
+            if not chunk:
+                break
+            remaining -= len(chunk)
 
     def _send_json(self, data: Dict[str, Any]) -> None:
         body = json.dumps(data).encode("utf-8")
