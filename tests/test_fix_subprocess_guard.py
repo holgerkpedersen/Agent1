@@ -7,6 +7,7 @@ the NLP fix handler captured stdout — a cold mypy cache or a wedged child
 child goes through ``_run_capped``, which kills on expiry, reports on stderr
 (NOT captured by redirect_stdout) and returns an empty failure result.
 """
+
 from __future__ import annotations
 
 import re
@@ -37,7 +38,9 @@ class TestRunCapped:
         assert r.returncode != 0
         assert r.stdout == ""
 
-    def test_timeout_reports_on_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_timeout_reports_on_stderr(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         _run_capped(
             [sys.executable, "-c", "import time; time.sleep(30)"],
             timeout_s=1,

@@ -11,6 +11,7 @@ REPL / chat loop.  ``agent`` re-exports every public symbol here so existing
 imports (``import agent; agent.record_command_metrics(...)``) continue to work
 unchanged.
 """
+
 from __future__ import annotations
 
 import logging
@@ -169,9 +170,7 @@ def start_dashboard_thread(port: int = 8081) -> Optional["ThreadingHTTPServer"]:
         try:
             httpd.serve_forever()
         except Exception:
-            logger.warning(
-                "Silenced exception in start_dashboard_thread"
-            )
+            logger.warning("Silenced exception in start_dashboard_thread")
 
     threading.Thread(target=_serve, name="agent1-dashboard", daemon=True).start()
     print(f"  Dashboard: http://localhost:{port}  (Ctrl+C to stop)")

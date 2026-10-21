@@ -8,6 +8,7 @@ repeated runs stay apart.  ``.docs/`` is git-ignored (see .gitignore).
 Readers (implement / fix / decide) use :func:`find_doc` to locate the newest
 copy: latest run folder first, workspace root second (legacy files).
 """
+
 from __future__ import annotations
 
 import os
@@ -112,7 +113,9 @@ def find_input(workspace: str | Path, path: str) -> str:
     return found if found else abs_path
 
 
-def resolve_output(workspace: str | Path, out_arg: str, sibling_of: str | None = None) -> str:
+def resolve_output(
+    workspace: str | Path, out_arg: str, sibling_of: str | None = None
+) -> str:
     """Resolve a command output argument.
 
     - Explicit paths (relative with a directory, or absolute) are respected

@@ -20,6 +20,7 @@ The implementation (``agent_core/memory/attribution.py`` +
 5. The whole path NEVER raises — a bad/locked DB degrades to a silent no-op.
 6. The analytics helpers answer "which model's memories are better?".
 """
+
 from __future__ import annotations
 
 import json
@@ -97,9 +98,12 @@ def _decisions(db: Path) -> list[tuple]:
 def _table_exists(db: Path, table: str) -> bool:
     conn = _connect(db)
     try:
-        return conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-        ).fetchone() is not None
+        return (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()
+            is not None
+        )
     finally:
         conn.close()
 
@@ -107,6 +111,7 @@ def _table_exists(db: Path, table: str) -> bool:
 # --------------------------------------------------------------------------
 # prompt_sha256 — canonical, tag-insensitive identity of the decision input
 # --------------------------------------------------------------------------
+
 
 class TestPromptHash:
     def test_is_deterministic_and_hex_sha256(self) -> None:
@@ -148,18 +153,22 @@ class TestPromptHash:
 # Schema — additive, MCP-compatible, idempotent
 # --------------------------------------------------------------------------
 
+
 class TestAttributionSchema:
     def test_mcp_columns_are_first_and_appended_columns_are_nullable(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
         Agent(workspace=str(tmp_path))._record_llm_experience(
-            action="llm_decision", outcome=1.0)
+            action="llm_decision", outcome=1.0
+        )
 
         cols = _columns(_db_path_for(mem))
-        assert cols[:len(_MCP_EXPERIENCE_COLUMNS)] == _MCP_EXPERIENCE_COLUMNS
-        assert [c[0] for c in cols[len(_MCP_EXPERIENCE_COLUMNS):]] == [
+        assert cols[: len(_MCP_EXPERIENCE_COLUMNS)] == _MCP_EXPERIENCE_COLUMNS
+        assert [c[0] for c in cols[len(_MCP_EXPERIENCE_COLUMNS) :]] == [
             name for name, _ in ATTRIBUTION_COLUMNS
         ]
 
@@ -168,7 +177,7 @@ class TestAttributionSchema:
             info = conn.execute("PRAGMA table_info(experiences)").fetchall()
         finally:
             conn.close()
-        for row in info[len(_MCP_EXPERIENCE_COLUMNS):]:
+        for row in info[len(_MCP_EXPERIENCE_COLUMNS) :]:
             assert row[3] == 0, f"{row[1]} must be nullable for pre-existing rows"
 
     def test_declared_column_tuples_match_the_created_table(self) -> None:
@@ -188,8 +197,14 @@ class TestAttributionSchema:
         finally:
             conn.close()
         assert [n for n, _ in _columns(db, "llm_decisions")] == [
-            "id", "run_id", "model_name", "prompt_sha256",
-            "outcome_experience_id", "latency_ms", "token_usage", "timestamp",
+            "id",
+            "run_id",
+            "model_name",
+            "prompt_sha256",
+            "outcome_experience_id",
+            "latency_ms",
+            "token_usage",
+            "timestamp",
         ]
 
     def test_migration_is_idempotent_and_preserves_existing_rows(
@@ -219,7 +234,9 @@ class TestAttributionSchema:
         assert rows == [("mcp_written", None, None)]
 
     def test_preexisting_agent_row_gains_attribution_columns(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """An existing agent-written DB is migrated in place, not reset."""
         mem = tmp_path / "agent_memory.json"
@@ -240,7 +257,8 @@ class TestAttributionSchema:
 
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
         Agent(workspace=str(tmp_path))._record_llm_experience(
-            action="new_row", outcome=1.0)
+            action="new_row", outcome=1.0
+        )
 
         rows = _attributed_rows(db)
         assert rows[0] == ("old_row", None, None, None)
@@ -251,6 +269,7 @@ class TestAttributionSchema:
 # --------------------------------------------------------------------------
 # Stamping — the real write path
 # --------------------------------------------------------------------------
+
 
 class TestDecisionStamping:
     def test_row_is_stamped_with_the_agents_model(
@@ -268,32 +287,41 @@ class TestDecisionStamping:
         assert ts and len(ts) == 19 and ts[10] == "T"
 
     def test_explicit_decision_llm_overrides_the_agent_default(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
         bot = Agent(workspace=str(tmp_path))
 
         bot._record_llm_experience(
-            action="a", outcome=1.0, decision_llm="some/other-model")
+            action="a", outcome=1.0, decision_llm="some/other-model"
+        )
 
         assert _attributed_rows(_db_path_for(mem))[0][1] == "some/other-model"
 
     def test_prompt_hash_is_stored_and_matches_prompt_sha256(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
         bot = Agent(workspace=str(tmp_path))
 
         bot._record_llm_experience(
-            action="a", outcome=1.0, decision_prompt="the question asked")
+            action="a", outcome=1.0, decision_prompt="the question asked"
+        )
 
         assert _attributed_rows(_db_path_for(mem))[0][2] == prompt_sha256(
-            "the question asked")
+            "the question asked"
+        )
 
     def test_no_prompt_stores_null_hash_not_the_empty_string_hash(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
@@ -306,7 +334,9 @@ class TestDecisionStamping:
         assert stored != prompt_sha256("")
 
     def test_one_provenance_row_per_attributed_experience(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """The invariant: |llm_decisions| == |experiences with decision_llm|."""
         mem = tmp_path / "agent_memory.json"
@@ -314,19 +344,33 @@ class TestDecisionStamping:
         bot = Agent(workspace=str(tmp_path))
 
         first = bot._record_llm_experience(
-            action="llm_decision", outcome=1.0, decision_prompt="p1",
-            run_id="run-1", latency_ms=12.5, token_usage=99)
+            action="llm_decision",
+            outcome=1.0,
+            decision_prompt="p1",
+            run_id="run-1",
+            latency_ms=12.5,
+            token_usage=99,
+        )
         second = bot._record_llm_experience(
-            action="chat_turn", outcome=0.7, run_id="run-1")
+            action="chat_turn", outcome=0.7, run_id="run-1"
+        )
 
         decisions = _decisions(_db_path_for(mem))
         assert len(decisions) == 2
         assert decisions[0] == (
-            "run-1", bot.model_name, prompt_sha256("p1"), first, 12.5, 99)
+            "run-1",
+            bot.model_name,
+            prompt_sha256("p1"),
+            first,
+            12.5,
+            99,
+        )
         assert decisions[1] == ("run-1", bot.model_name, None, second, None, None)
 
     def test_provenance_row_links_back_to_its_experience_rowid(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
@@ -341,14 +385,17 @@ class TestUnattributableRows:
     """No model identity -> record NO author and NO provenance row."""
 
     def test_missing_model_identity_leaves_columns_null(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
         bot = Agent(workspace=str(tmp_path))
 
-        with patch("agent_core.memory.attribution.resolve_decision_llm",
-                   return_value=None):
+        with patch(
+            "agent_core.memory.attribution.resolve_decision_llm", return_value=None
+        ):
             rowid = bot._record_llm_experience(action="a", outcome=1.0)
 
         assert rowid is not None
@@ -356,23 +403,26 @@ class TestUnattributableRows:
         assert _decisions(_db_path_for(mem)) == []
 
     def test_unattributable_row_keeps_the_mcp_column_shape(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """An unattributed insert must still be readable by the MCP server."""
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
         bot = Agent(workspace=str(tmp_path))
 
-        with patch("agent_core.memory.attribution.resolve_decision_llm",
-                   return_value=None):
+        with patch(
+            "agent_core.memory.attribution.resolve_decision_llm", return_value=None
+        ):
             bot._record_llm_experience(
-                action="a", outcome=0.9, context={"k": "v"}, success=True)
+                action="a", outcome=0.9, context={"k": "v"}, success=True
+            )
 
         conn = _connect(_db_path_for(mem))
         try:
             row = conn.execute(
-                "SELECT timestamp, action, outcome, context, success "
-                "FROM experiences"
+                "SELECT timestamp, action, outcome, context, success FROM experiences"
             ).fetchone()
         finally:
             conn.close()
@@ -385,6 +435,7 @@ class TestUnattributableRows:
 # --------------------------------------------------------------------------
 # resolve_decision_llm — identity fallback chain
 # --------------------------------------------------------------------------
+
 
 class TestResolveDecisionLlm:
     def test_prefers_the_agents_own_model_name(self) -> None:
@@ -413,9 +464,12 @@ class TestResolveDecisionLlm:
 # Never raises — the observability contract
 # --------------------------------------------------------------------------
 
+
 class TestNeverRaises:
     def test_unwritable_db_path_is_a_silent_no_op(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """A directory in place of the DB file must not break the turn."""
         mem = tmp_path / "agent_memory.json"
@@ -428,7 +482,9 @@ class TestNeverRaises:
         assert bot._record_llm_experience(action="a", outcome=1.0) is None
 
     def test_out_of_range_outcome_is_rejected_without_writing(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
@@ -459,6 +515,7 @@ class TestNeverRaises:
 # Analytics — "which model's memories are better?"
 # --------------------------------------------------------------------------
 
+
 def _seed(db: Path, rows: list[tuple]) -> None:
     """rows: (action, outcome, success, decision_llm)."""
     conn = _connect(db)
@@ -480,12 +537,15 @@ class TestAttributionAnalytics:
         self, tmp_path: Path
     ) -> None:
         db = tmp_path / "m.db"
-        _seed(db, [
-            ("a", 1.0, 1, "model-a"),
-            ("a", 0.0, 0, "model-a"),
-            ("a", 1.0, 1, "model-b"),
-            ("a", 1.0, 1, None),  # unattributed: credited to nobody
-        ])
+        _seed(
+            db,
+            [
+                ("a", 1.0, 1, "model-a"),
+                ("a", 0.0, 0, "model-a"),
+                ("a", 1.0, 1, "model-b"),
+                ("a", 1.0, 1, None),  # unattributed: credited to nobody
+            ],
+        )
 
         by_llm = experiences_by_llm(db)
         assert by_llm == [
@@ -495,11 +555,14 @@ class TestAttributionAnalytics:
 
     def test_success_rate_by_model(self, tmp_path: Path) -> None:
         db = tmp_path / "m.db"
-        _seed(db, [
-            ("a", 1.0, 1, "good"),
-            ("a", 1.0, 1, "good"),
-            ("a", 0.0, 0, "bad"),
-        ])
+        _seed(
+            db,
+            [
+                ("a", 1.0, 1, "good"),
+                ("a", 1.0, 1, "good"),
+                ("a", 0.0, 0, "bad"),
+            ],
+        )
 
         rates = {r["decision_llm"]: r for r in success_rate_by_model(db)}
         assert rates["good"]["success_rate"] == pytest.approx(1.0)
@@ -513,16 +576,17 @@ class TestAttributionAnalytics:
             ensure_attribution_schema(conn)
             for latency in (0.0, 50.0, 199.9, 200.0, 1000.0):
                 conn.execute(
-                    "INSERT INTO llm_decisions (latency_ms) VALUES (?)", (latency,))
+                    "INSERT INTO llm_decisions (latency_ms) VALUES (?)", (latency,)
+                )
             conn.commit()
         finally:
             conn.close()
 
         assert decision_latency_histogram(db, bucket_ms=100.0) == [
-            {"bucket_ms": 0, "count": 2},      # 0.0 and 50.0
-            {"bucket_ms": 100, "count": 1},    # 199.9
-            {"bucket_ms": 200, "count": 1},    # 200.0
-            {"bucket_ms": 1000, "count": 1},   # 1000.0
+            {"bucket_ms": 0, "count": 2},  # 0.0 and 50.0
+            {"bucket_ms": 100, "count": 1},  # 199.9
+            {"bucket_ms": 200, "count": 1},  # 200.0
+            {"bucket_ms": 1000, "count": 1},  # 1000.0
         ]
 
     def test_latency_histogram_ignores_null_latencies(self, tmp_path: Path) -> None:
@@ -542,10 +606,13 @@ class TestAttributionAnalytics:
         self, tmp_path: Path
     ) -> None:
         db = tmp_path / "m.db"
-        _seed(db, [
-            ("a", 1.0, 1, "model-a"),
-            ("a", 0.7, 1, None),
-        ])
+        _seed(
+            db,
+            [
+                ("a", 1.0, 1, "model-a"),
+                ("a", 0.7, 1, None),
+            ],
+        )
 
         summary = attribution_summary(db)
         assert summary["experiences"] == 2
@@ -559,9 +626,12 @@ class TestAttributionAnalytics:
 # End-to-end: the real chat_turn write is attributed and shares the run id
 # --------------------------------------------------------------------------
 
+
 class TestTurnRowIsAttributed:
     def test_finish_turn_row_carries_model_and_run_id(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """The real ``_finish_turn`` path stamps the turn roll-up row."""
         from agent_core.config import AgentDisplayMode
@@ -584,13 +654,15 @@ class TestTurnRowIsAttributed:
         assert prompt_hash == prompt_sha256("what changed?")
 
         decisions = _decisions(db)
-        assert any(d[0] == "turn-cid-123" and d[1] == bot.model_name
-                   for d in decisions), decisions
+        assert any(
+            d[0] == "turn-cid-123" and d[1] == bot.model_name for d in decisions
+        ), decisions
 
 
 # --------------------------------------------------------------------------
 # Cross-module: the Memory MCP server must still read an attributed table
 # --------------------------------------------------------------------------
+
 
 class TestMemoryServerCompatibility:
     """The real server, driven for real, over a table this code wrote.
@@ -610,8 +682,11 @@ class TestMemoryServerCompatibility:
         db = _db_path_for(mem)
         bot = Agent(workspace=str(tmp_path))
         bot._record_llm_experience(
-            action="llm_decision", outcome=1.0, context={"note": "attributed row"},
-            decision_prompt="the question")
+            action="llm_decision",
+            outcome=1.0,
+            context={"note": "attributed row"},
+            decision_prompt="the question",
+        )
         bot._record_llm_experience(action="chat_turn", outcome=0.0, success=False)
         monkeypatch.setattr(memory, "_db_path", lambda: str(db))
         return db
@@ -637,7 +712,8 @@ class TestMemoryServerCompatibility:
         assert "llm_decision" in out
 
     def test_server_search_finds_a_harness_written_attributed_row(
-        self, wired_db: Path,
+        self,
+        wired_db: Path,
     ) -> None:
         """The FTS index self-heals over the widened table (no triggers)."""
         from mcp_servers import memory
@@ -648,7 +724,8 @@ class TestMemoryServerCompatibility:
         assert "llm_decision" in out
 
     def test_server_can_append_its_own_row_after_attribution_columns_exist(
-        self, wired_db: Path,
+        self,
+        wired_db: Path,
     ) -> None:
         """The server's column-named INSERT keeps working on the widened table."""
         from mcp_servers import memory

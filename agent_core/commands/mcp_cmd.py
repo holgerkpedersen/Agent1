@@ -18,12 +18,14 @@ Safety notes: ``add``/``remove``/``expose`` are the ONLY ways configuration
 changes (human REPL actions); tool arguments must be valid JSON; results are
 size-capped by the client layer.
 """
+
 from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING, Any
 
 from .base import Command
+
 if TYPE_CHECKING:
     from agent import Agent
 from agent_core.mcp.config import (
@@ -91,18 +93,21 @@ class MCPCommand(Command):
             return
         print(f"  {len(rows)} MCP server(s):")
         for r in rows:
-            mark = {"connected": "+", "error": "x", "stopped": "-"}.get(
-                r["state"], "?")
+            mark = {"connected": "+", "error": "x", "stopped": "-"}.get(r["state"], "?")
             extra = f"  [{r['detail']}]" if r["detail"] else ""
             llm = "  llm-exposed" if r["expose_to_llm"] else ""
-            print(f"   [{mark}] {r['name']} ({r['transport']}) "
-                  f"state={r['state']} tools={r['tool_count']}{llm}{extra}")
+            print(
+                f"   [{mark}] {r['name']} ({r['transport']}) "
+                f"state={r['state']} tools={r['tool_count']}{llm}{extra}"
+            )
 
     def _add(self, args: list[str]) -> None:
         if len(args) < 3:
-            print("  usage: mcp add <name> stdio <command...>"
-                  " | mcp add <name> http <url> [--header K=V]"
-                  " [--env K=V] [--timeout N]")
+            print(
+                "  usage: mcp add <name> stdio <command...>"
+                " | mcp add <name> http <url> [--header K=V]"
+                " [--env K=V] [--timeout N]"
+            )
             return
         name, transport = args[0], args[1].lower()
         raw: dict[str, Any] = {}
@@ -133,16 +138,22 @@ class MCPCommand(Command):
             if len(url_parts) != 1:
                 print("  usage: mcp add <name> http <url> [flags]")
                 return
-            raw = {"transport": "http", "url": url_parts[0],
-                   "headers": headers, "env": env, "timeout_s": timeout}
+            raw = {
+                "transport": "http",
+                "url": url_parts[0],
+                "headers": headers,
+                "env": env,
+                "timeout_s": timeout,
+            }
         cfg = validate_entry(name, raw)
         configs = self._manager.configured()
         existed = name in configs
         configs[name] = cfg
         self._manager.save_config(configs)
         verb = "updated" if existed else "added"
-        print(f"  [mcp] {verb} '{name}' ({cfg.transport}). "
-              f"Connect it: mcp connect {name}")
+        print(
+            f"  [mcp] {verb} '{name}' ({cfg.transport}). Connect it: mcp connect {name}"
+        )
 
     def _remove(self, args: list[str]) -> None:
         if not args:
@@ -159,16 +170,18 @@ class MCPCommand(Command):
         print(f"  [mcp] removed '{name}'")
 
     def _connect(self, args: list[str]) -> None:
-        targets = (sorted(self._manager.configured()) if args and args[0] == "all"
-                   else args[:1])
+        targets = (
+            sorted(self._manager.configured())
+            if args and args[0] == "all"
+            else args[:1]
+        )
         if not targets:
             print("  usage: mcp connect <name>|all")
             return
         for name in targets:
             try:
                 st = self._manager.connect(name)
-                print(f"  [mcp] {name}: {st['state']} "
-                      f"({st['tool_count']} tools)")
+                print(f"  [mcp] {name}: {st['state']} ({st['tool_count']} tools)")
             except Exception as exc:
                 print(f"  [mcp] {name}: FAILED - {exc}")
 
@@ -176,16 +189,15 @@ class MCPCommand(Command):
         if not args or (args[0] != "all" and len(args) != 1):
             print("  usage: mcp disconnect <name>|all")
             return
-        names = (sorted(self._manager.configured()) if args[0] == "all"
-                 else args[:1])
+        names = sorted(self._manager.configured()) if args[0] == "all" else args[:1]
         for name in names:
             self._manager.disconnect(name, _silent=True)
             print(f"  [mcp] {name}: disconnected")
 
     def _tools(self, args: list[str]) -> None:
         servers = args[:1] or sorted(
-            n for n, s in
-            ((r["name"], r) for r in self._manager.status())
+            n
+            for n, s in ((r["name"], r) for r in self._manager.status())
             if s["state"] == "connected"
         )
         for server in servers:
@@ -196,8 +208,7 @@ class MCPCommand(Command):
                 continue
             print(f"  {server}: {len(tools)} tool(s)")
             for t in tools:
-                schema = json.dumps(t.get("inputSchema", {}),
-                                    ensure_ascii=False)
+                schema = json.dumps(t.get("inputSchema", {}), ensure_ascii=False)
                 desc = t["description"][:70]
                 print(f"   - {t['name']}: {desc}")
                 print(f"       schema: {schema[:120]}")
@@ -223,8 +234,9 @@ class MCPCommand(Command):
         res = self._manager.resources_list(args[0])
         print(f"  {args[0]}: {len(res)} resource(s)")
         for r in res:
-            print(f"   - {r.get('uri')}  {r.get('name', '')}"
-                  f"  ({r.get('mimeType', '?')})")
+            print(
+                f"   - {r.get('uri')}  {r.get('name', '')}  ({r.get('mimeType', '?')})"
+            )
 
     def _read(self, args: list[str]) -> None:
         if len(args) < 2:
@@ -234,8 +246,10 @@ class MCPCommand(Command):
 
     def _expose(self, args: list[str]) -> None:
         if not args or args[0] in ("-h", "--help"):
-            print("  usage: mcp expose <name> on|off"
-                  "  (opt server tools into the LLM bridge; default off)")
+            print(
+                "  usage: mcp expose <name> on|off"
+                "  (opt server tools into the LLM bridge; default off)"
+            )
             return
         name = args[0]
         state = args[1].lower() if len(args) > 1 else ""
@@ -249,6 +263,9 @@ class MCPCommand(Command):
         cfg: McpServerConfig = configs[name]
         cfg.expose_to_llm = state == "on"
         self._manager.save_config(configs)
-        scope = ("the LLM can now call its tools via mcp_call"
-                 if cfg.expose_to_llm else "hidden from the LLM again")
+        scope = (
+            "the LLM can now call its tools via mcp_call"
+            if cfg.expose_to_llm
+            else "hidden from the LLM again"
+        )
         print(f"  [mcp] {name}: LLM exposure {state} ({scope})")

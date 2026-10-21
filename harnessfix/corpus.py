@@ -3,6 +3,7 @@
 Collecting, compiling, diagnosing and layer-grouping a corpus of trace files.
 Kept separate from loop.py so each module stays small and testable.
 """
+
 from __future__ import annotations
 
 from collections import Counter

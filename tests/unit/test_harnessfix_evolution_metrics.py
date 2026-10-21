@@ -2,6 +2,7 @@
 
 Hermetic: no real trace files are touched — synthetic event dicts only.
 """
+
 import pytest
 
 from harnessfix.evolution_metrics import (
@@ -57,7 +58,9 @@ class TestScoreRun:
 
     def test_custom_budget_and_weight(self):
         # budget 10s, weight 0.5, 5s latency => penalty 0.25 => 0.75
-        assert score_run(_run(COMPLETED, (5.0,)), latency_budget_s=10.0, penalty_weight=0.5) == pytest.approx(0.75)
+        assert score_run(
+            _run(COMPLETED, (5.0,)), latency_budget_s=10.0, penalty_weight=0.5
+        ) == pytest.approx(0.75)
 
 
 class TestWindowedAverage:
@@ -89,14 +92,15 @@ class TestShouldEvolve:
     def test_boundary_at_threshold(self):
         # Average exactly at threshold must NOT trigger evolution.
         sc = EvolutionMetricsScorer(threshold=0.7)
-        # 0.7 exactly: one completed (1.0) + one failed (0.0) => 0.5? use two completed-ish.
+        # 0.7 exactly: one completed (1.0) + one failed (0.0) => 0.5?
+        # use two completed-ish.
         # Build average == 0.7 precisely: 0.7 and 0.7.
         sc.record_trace(_run(COMPLETED, (9.0,)))  # 1 - 9/30*0.3 = 1-0.09 = 0.91
         sc.record_trace(_run(COMPLETED, (23.33333333,)))  # ~0.7667 -> avg ~0.838
         # Instead assert the documented boundary rule directly:
         sc2 = EvolutionMetricsScorer(threshold=0.7)
         sc2.record_trace(_run(COMPLETED, (0.0,)))  # 1.0
-        sc2.record_trace(_run(ERROR))              # 0.0  -> avg 0.5 < 0.7 -> evolve
+        sc2.record_trace(_run(ERROR))  # 0.0  -> avg 0.5 < 0.7 -> evolve
         assert sc2.should_evolve() is True
         sc3 = EvolutionMetricsScorer(threshold=0.7)
         sc3.record_trace(_run(COMPLETED, (0.0,)))  # 1.0 -> avg 1.0 >= 0.7 -> no evolve
@@ -105,6 +109,7 @@ class TestShouldEvolve:
 
 def _write_trace_file(tmp_path, name, events):
     import json
+
     p = tmp_path / f"{name}.jsonl"
     p.write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8")
     return p
@@ -112,20 +117,36 @@ def _write_trace_file(tmp_path, name, events):
 
 def _events(outcome, duration=0.0, task_id="t"):
     return [
-        {"kind": "task_begin", "task_id": task_id,
-         "layer": LAYER_VERIFICATION, "user_input": "x"},
-        {"kind": "tool_result", "task_id": task_id,
-         "layer": LAYER_EXECUTION, "duration_s": duration},
-        {"kind": "loop_end", "task_id": task_id,
-         "layer": LAYER_OBSERVABILITY, "outcome": outcome},
+        {
+            "kind": "task_begin",
+            "task_id": task_id,
+            "layer": LAYER_VERIFICATION,
+            "user_input": "x",
+        },
+        {
+            "kind": "tool_result",
+            "task_id": task_id,
+            "layer": LAYER_EXECUTION,
+            "duration_s": duration,
+        },
+        {
+            "kind": "loop_end",
+            "task_id": task_id,
+            "layer": LAYER_OBSERVABILITY,
+            "outcome": outcome,
+        },
     ]
 
 
 def _stub_events(task_id="stub"):
     """A single task_begin with no loop_end — an aborted noise stub."""
     return [
-        {"kind": "task_begin", "task_id": task_id,
-         "layer": LAYER_VERIFICATION, "user_input": "x"},
+        {
+            "kind": "task_begin",
+            "task_id": task_id,
+            "layer": LAYER_VERIFICATION,
+            "user_input": "x",
+        },
     ]
 
 
@@ -147,11 +168,19 @@ class TestLoadCorpusStubFilter:
     def test_terse_completed_run_is_counted(self, tmp_path):
         # A genuinely finished run with < MIN_ACTIVITY_EVENTS events still
         # carries loop_end, so it IS evidence and must be kept.
-        _write_trace_file(tmp_path, "terse", [
-            _stub_events("terse")[0],
-            {"kind": "loop_end", "task_id": "terse",
-             "layer": LAYER_OBSERVABILITY, "outcome": "completed"},
-        ])
+        _write_trace_file(
+            tmp_path,
+            "terse",
+            [
+                _stub_events("terse")[0],
+                {
+                    "kind": "loop_end",
+                    "task_id": "terse",
+                    "layer": LAYER_OBSERVABILITY,
+                    "outcome": "completed",
+                },
+            ],
+        )
         sc = EvolutionMetricsScorer(window_size=50)
         assert sc.load_corpus(tmp_path) == 1
         assert sc.windowed_average() == pytest.approx(1.0)
@@ -176,31 +205,56 @@ class TestLoadCorpusStubFilter:
         assert sc.should_evolve() is False
 
 
-def _guard_run(outcome, answer: str = "", duration: float | None = None,
-               task_id="t") -> list[dict]:
+def _guard_run(
+    outcome, answer: str = "", duration: float | None = None, task_id="t"
+) -> list[dict]:
     """A guard-terminated run: tool work, an LLM answer, then loop_end.
 
     Mirrors what the real loop emits when a guard (stuck / budget_exhausted /
     no_progress) stops the loop AFTER the forced-synthesis answer.
     """
     events = [
-        {"kind": "task_begin", "task_id": task_id,
-         "layer": LAYER_VERIFICATION, "user_input": "x"},
+        {
+            "kind": "task_begin",
+            "task_id": task_id,
+            "layer": LAYER_VERIFICATION,
+            "user_input": "x",
+        },
     ]
     if duration is not None:
-        events.append({"kind": "tool_result", "task_id": task_id,
-                       "layer": LAYER_EXECUTION, "duration_s": duration})
+        events.append(
+            {
+                "kind": "tool_result",
+                "task_id": task_id,
+                "layer": LAYER_EXECUTION,
+                "duration_s": duration,
+            }
+        )
     if answer:
-        events.append({"kind": "llm_response", "task_id": task_id,
-                       "layer": LAYER_OBSERVABILITY, "text": answer})
-    events.append({"kind": "loop_end", "task_id": task_id,
-                   "layer": LAYER_OBSERVABILITY, "outcome": outcome})
+        events.append(
+            {
+                "kind": "llm_response",
+                "task_id": task_id,
+                "layer": LAYER_OBSERVABILITY,
+                "text": answer,
+            }
+        )
+    events.append(
+        {
+            "kind": "loop_end",
+            "task_id": task_id,
+            "layer": LAYER_OBSERVABILITY,
+            "outcome": outcome,
+        }
+    )
     return events
 
 
 #: Comfortably above MIN_FINAL_ANSWER_CHARS (80) — a real synthesis answer.
-LONG_ANSWER = "Here is the fix I applied: I changed the guard to resume " \
-              "instead of restarting, and I verified it with pytest."
+LONG_ANSWER = (
+    "Here is the fix I applied: I changed the guard to resume "
+    "instead of restarting, and I verified it with pytest."
+)
 
 
 class TestDeliveredGuardTerminatedRuns:
@@ -242,8 +296,9 @@ class TestDeliveredGuardTerminatedRuns:
 
     def test_interrupted_run_with_an_answer_still_scores_zero(self):
         # No loop_end at all (crash/kill/provider loss, decision #052).
-        events = [e for e in _guard_run("stuck", LONG_ANSWER)
-                  if e["kind"] != "loop_end"]
+        events = [
+            e for e in _guard_run("stuck", LONG_ANSWER) if e["kind"] != "loop_end"
+        ]
         assert score_run(events) == 0.0
 
     def test_latency_penalty_applies_on_top_of_the_delivered_base(self):
@@ -276,8 +331,15 @@ class TestFinalAnswerThresholdIsSharedWithHtir:
         # An early long answer followed by a terse closing response means the
         # run did NOT deliver (the closing text is what the user got).
         events = _guard_run("stuck", LONG_ANSWER)
-        events.insert(-1, {"kind": "llm_response", "task_id": "t",
-                           "layer": LAYER_OBSERVABILITY, "text": "Hmm."})
+        events.insert(
+            -1,
+            {
+                "kind": "llm_response",
+                "task_id": "t",
+                "layer": LAYER_OBSERVABILITY,
+                "text": "Hmm.",
+            },
+        )
         assert score_run(events) == 0.0
 
 

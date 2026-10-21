@@ -69,12 +69,14 @@ class HabitsCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return ('habits [list|pin "<text>"|forget <n>|mine|off|on] - Workspace '
-                "user-habit ledger")
+        return (
+            'habits [list|pin "<text>"|forget <n>|mine|off|on] - Workspace '
+            "user-habit ledger"
+        )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         workspace = pathlib.Path(agent._effective_ws_dir())
-        sub = (args[0].lower() if args else "list")
+        sub = args[0].lower() if args else "list"
 
         if sub == "pin":
             text = " ".join(args[1:]).strip()
@@ -105,14 +107,18 @@ class HabitsCommand(Command):
             traces = _trace_records(workspace)
             mined = mine_habits(history, traces)
             # Keep pinned habits; replace the mined ones.
-            pinned = [h for h in load_habits(workspace)
-                      if isinstance(h, dict) and h.get("category") == "pinned"]
-            merged = pinned + [h for h in mined
-                               if h.get("category") != "pinned"]
+            pinned = [
+                h
+                for h in load_habits(workspace)
+                if isinstance(h, dict) and h.get("category") == "pinned"
+            ]
+            merged = pinned + [h for h in mined if h.get("category") != "pinned"]
             save_habits(workspace, merged)
-            print(f"  Mined {len(mined)} habit(s) from "
-                  f"{len(history)} message(s) + {len(traces)} trace record(s); "
-                  f"ledger now has {len(merged)}.")
+            print(
+                f"  Mined {len(mined)} habit(s) from "
+                f"{len(history)} message(s) + {len(traces)} trace record(s); "
+                f"ledger now has {len(merged)}."
+            )
             return True
 
         if sub in ("off", "on"):
@@ -121,9 +127,14 @@ class HabitsCommand(Command):
 
                 set_pref(workspace, "habits_enabled", sub == "on")
                 state = "enabled" if sub == "on" else "disabled"
-                print(f"  Habits {state}. "
-                      + ("Prompt block restored next turn."
-                         if sub == "on" else "Prompt block suppressed."))
+                print(
+                    f"  Habits {state}. "
+                    + (
+                        "Prompt block restored next turn."
+                        if sub == "on"
+                        else "Prompt block suppressed."
+                    )
+                )
             except Exception:  # noqa: BLE001 - pref write must not kill the REPL
                 logger.exception("Could not toggle habits_enabled:\n")
                 print("  Could not update the habits_enabled preference.")

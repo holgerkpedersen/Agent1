@@ -18,6 +18,7 @@ merge, always runs non-interactively (``GIT_EDITOR`` no-op +
 ``GIT_MERGE_AUTOEDIT=no``), never passes arguments to ``--continue``, and
 answers no-op requests with guidance instead of a wasted git call.
 """
+
 from __future__ import annotations
 
 import os
@@ -29,21 +30,26 @@ import pytest
 
 from agent_core.tools import git_merge
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("git") is None, reason="git not installed"
-)
+pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 
 
 # ---------------------------------------------------------------------------
 # Real-repo helpers
 # ---------------------------------------------------------------------------
 
+
 def _git(cwd: Path, *args: str, env: dict[str, str] | None = None):
     e = dict(os.environ)
     e.update(env or {})
     return subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", env=e, timeout=60,
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=e,
+        timeout=60,
         stdin=subprocess.DEVNULL,
     )
 
@@ -91,11 +97,15 @@ def _merge_head_present(d: Path) -> bool:
 # argv construction — the consistency contract
 # ---------------------------------------------------------------------------
 
+
 class TestBuildMergeArgv:
     def test_start_always_passes_no_edit(self) -> None:
         """No editor may ever open: every start is non-interactive."""
         assert git_merge.build_merge_argv("start", branch="feature") == [
-            "git", "merge", "--no-edit", "feature",
+            "git",
+            "merge",
+            "--no-edit",
+            "feature",
         ]
 
     def test_continue_takes_no_arguments(self) -> None:
@@ -110,28 +120,48 @@ class TestBuildMergeArgv:
 
     def test_strategy_and_strategy_option_flags(self) -> None:
         argv = git_merge.build_merge_argv(
-            "start", branch="feature", strategy="ort", strategy_option="theirs",
+            "start",
+            branch="feature",
+            strategy="ort",
+            strategy_option="theirs",
         )
         assert argv == [
-            "git", "merge", "--no-edit", "-s", "ort", "-X", "theirs", "feature",
+            "git",
+            "merge",
+            "--no-edit",
+            "-s",
+            "ort",
+            "-X",
+            "theirs",
+            "feature",
         ]
 
     def test_ff_flags(self) -> None:
         assert "--ff-only" in git_merge.build_merge_argv(
-            "start", branch="b", ff="only",
+            "start",
+            branch="b",
+            ff="only",
         )
         assert "--no-ff" in git_merge.build_merge_argv(
-            "start", branch="b", ff="no",
+            "start",
+            branch="b",
+            ff="no",
         )
         # "auto" (the default) adds nothing.
         assert "--ff-only" not in git_merge.build_merge_argv(
-            "start", branch="b", ff="auto",
+            "start",
+            branch="b",
+            ff="auto",
         )
 
     def test_message_and_squash_and_no_commit(self) -> None:
         argv = git_merge.build_merge_argv(
-            "start", branch="b", message="merge b", squash=True,
-            no_commit=True, allow_unrelated=True,
+            "start",
+            branch="b",
+            message="merge b",
+            squash=True,
+            no_commit=True,
+            allow_unrelated=True,
         )
         assert "-m" in argv and "merge b" in argv
         assert "--squash" in argv
@@ -156,13 +186,16 @@ class TestBuildMergeArgv:
     def test_flag_shaped_strategy_option_is_refused(self) -> None:
         with pytest.raises(ValueError):
             git_merge.build_merge_argv(
-                "start", branch="b", strategy_option="--squash",
+                "start",
+                branch="b",
+                strategy_option="--squash",
             )
 
 
 # ---------------------------------------------------------------------------
 # Non-interactive environment
 # ---------------------------------------------------------------------------
+
 
 class TestMergeEnvironment:
     def test_environment_disables_every_editor(self) -> None:
@@ -186,6 +219,7 @@ class TestMergeEnvironment:
 # ---------------------------------------------------------------------------
 # Action normalisation
 # ---------------------------------------------------------------------------
+
 
 class TestNormalizeAction:
     @pytest.mark.parametrize(
@@ -215,6 +249,7 @@ class TestNormalizeAction:
 # Conflict parsing
 # ---------------------------------------------------------------------------
 
+
 class TestConflictParsing:
     def test_parses_names_and_ignores_blank_lines(self) -> None:
         out = "src/a.py\n\n src/b.py \n"
@@ -228,6 +263,7 @@ class TestConflictParsing:
 # ---------------------------------------------------------------------------
 # Real-repo behaviour: status
 # ---------------------------------------------------------------------------
+
 
 class TestStatusAction:
     def test_reports_no_merge_in_progress(self, clean_repo: Path) -> None:
@@ -249,6 +285,7 @@ class TestStatusAction:
 # Real-repo behaviour: start
 # ---------------------------------------------------------------------------
 
+
 class TestStartAction:
     def test_clean_merge_completes(self, tmp_path: Path) -> None:
         d = _init_repo(tmp_path / "r")
@@ -263,7 +300,8 @@ class TestStartAction:
 
     def test_conflict_reports_files_and_next_step(self, conflict_repo: Path) -> None:
         out = git_merge.run_merge(
-            conflict_repo, {"action": "start", "branch": "feature"},
+            conflict_repo,
+            {"action": "start", "branch": "feature"},
         )
         assert "f.txt" in out
         assert "conflict" in out.lower()
@@ -272,18 +310,21 @@ class TestStartAction:
         assert _merge_head_present(conflict_repo) is True
 
     def test_start_without_branch_is_guidance_not_git_error(
-        self, clean_repo: Path,
+        self,
+        clean_repo: Path,
     ) -> None:
         out = git_merge.run_merge(clean_repo, {"action": "start"})
         assert "branch" in out.lower()
         assert "not something we can merge" not in out
 
     def test_start_while_in_progress_does_not_call_git(
-        self, conflict_repo: Path,
+        self,
+        conflict_repo: Path,
     ) -> None:
         git_merge.run_merge(conflict_repo, {"action": "start", "branch": "feature"})
         out = git_merge.run_merge(
-            conflict_repo, {"action": "start", "branch": "feature"},
+            conflict_repo,
+            {"action": "start", "branch": "feature"},
         )
         assert "already in progress" in out.lower()
         assert "unmerged files" not in out
@@ -292,13 +333,15 @@ class TestStartAction:
 
     def test_unknown_branch_reports_git_message(self, clean_repo: Path) -> None:
         out = git_merge.run_merge(
-            clean_repo, {"action": "start", "branch": "nope"},
+            clean_repo,
+            {"action": "start", "branch": "nope"},
         )
         assert "not something we can merge" in out
 
     def test_typo_strategy_is_caught_before_git(self, clean_repo: Path) -> None:
         out = git_merge.run_merge(
-            clean_repo, {"action": "start", "branch": "main", "strategy": "nope"},
+            clean_repo,
+            {"action": "start", "branch": "main", "strategy": "nope"},
         )
         assert "nope" in out
         # Helpful: lists what git actually accepts.
@@ -306,16 +349,22 @@ class TestStartAction:
         assert "Could not find merge strategy" not in out
 
     def test_strategy_option_theirs_resolves_content(self, conflict_repo: Path) -> None:
-        out = git_merge.run_merge(conflict_repo, {
-            "action": "start", "branch": "feature", "strategy_option": "theirs",
-        })
+        out = git_merge.run_merge(
+            conflict_repo,
+            {
+                "action": "start",
+                "branch": "feature",
+                "strategy_option": "theirs",
+            },
+        )
         assert _merge_head_present(conflict_repo) is False
         assert (conflict_repo / "f.txt").read_text(encoding="utf-8") == "theirs\n"
         assert "conflict" not in out.lower()
 
     def test_ff_only_refuses_diverged_history(self, conflict_repo: Path) -> None:
         out = git_merge.run_merge(
-            conflict_repo, {"action": "start", "branch": "feature", "ff": "only"},
+            conflict_repo,
+            {"action": "start", "branch": "feature", "ff": "only"},
         )
         assert "fatal" in out.lower() or "not possible" in out.lower()
         assert _merge_head_present(conflict_repo) is False
@@ -327,7 +376,8 @@ class TestStartAction:
         _commit(d, "g.txt", "g\n")
         _git(d, "checkout", "-q", "main")
         out = git_merge.run_merge(
-            d, {"action": "start", "branch": "b3", "squash": True},
+            d,
+            {"action": "start", "branch": "b3", "squash": True},
         )
         assert _merge_head_present(d) is False
         status = _git(d, "status", "--porcelain").stdout
@@ -342,12 +392,18 @@ class TestStartAction:
         _git(d, "remote", "add", "o", str(other))
         _git(d, "fetch", "-q", "o")
         refused = git_merge.run_merge(
-            d, {"action": "start", "branch": "o/main"},
+            d,
+            {"action": "start", "branch": "o/main"},
         )
         assert "unrelated histories" in refused.lower()
-        out = git_merge.run_merge(d, {
-            "action": "start", "branch": "o/main", "allow_unrelated": True,
-        })
+        out = git_merge.run_merge(
+            d,
+            {
+                "action": "start",
+                "branch": "o/main",
+                "allow_unrelated": True,
+            },
+        )
         # The flag did its job: the refusal is gone and z.txt was merged in.
         assert "unrelated histories" not in out.lower()
         assert "fatal" not in out.lower()
@@ -359,16 +415,20 @@ class TestStartAction:
 # Real-repo behaviour: continue / abort / quit  (the hang regressions)
 # ---------------------------------------------------------------------------
 
+
 class TestContinueAction:
     def test_continue_after_resolution_completes_without_hanging(
-        self, conflict_repo: Path,
+        self,
+        conflict_repo: Path,
     ) -> None:
         """The headline bug: bare ``git merge --continue`` blocks on the editor."""
         git_merge.run_merge(conflict_repo, {"action": "start", "branch": "feature"})
         (conflict_repo / "f.txt").write_text("resolved\n", encoding="utf-8")
         _git(conflict_repo, "add", "-A")
         out = git_merge.run_merge(
-            conflict_repo, {"action": "continue"}, timeout=30,
+            conflict_repo,
+            {"action": "continue"},
+            timeout=30,
         )
         assert "timed out" not in out.lower()
         assert _merge_head_present(conflict_repo) is False
@@ -377,7 +437,8 @@ class TestContinueAction:
         assert (conflict_repo / "f.txt").read_text(encoding="utf-8") == "resolved\n"
 
     def test_continue_with_unresolved_conflicts_is_refused(
-        self, conflict_repo: Path,
+        self,
+        conflict_repo: Path,
     ) -> None:
         git_merge.run_merge(conflict_repo, {"action": "start", "branch": "feature"})
         out = git_merge.run_merge(conflict_repo, {"action": "continue"})
@@ -387,7 +448,8 @@ class TestContinueAction:
         assert _merge_head_present(conflict_repo) is True
 
     def test_continue_without_merge_in_progress_is_friendly(
-        self, clean_repo: Path,
+        self,
+        clean_repo: Path,
     ) -> None:
         out = git_merge.run_merge(clean_repo, {"action": "continue"})
         assert "no merge in progress" in out.lower()
@@ -399,9 +461,15 @@ class TestContinueAction:
         git_merge.run_merge(conflict_repo, {"action": "start", "branch": "feature"})
         (conflict_repo / "f.txt").write_text("resolved\n", encoding="utf-8")
         _git(conflict_repo, "add", "-A")
-        out = git_merge.run_merge(conflict_repo, {
-            "action": "continue", "branch": "feature", "args": "--no-edit",
-        }, timeout=30)
+        out = git_merge.run_merge(
+            conflict_repo,
+            {
+                "action": "continue",
+                "branch": "feature",
+                "args": "--no-edit",
+            },
+            timeout=30,
+        )
         assert "expects no arguments" not in out
         assert _merge_head_present(conflict_repo) is False
 
@@ -416,14 +484,16 @@ class TestAbortAndQuit:
         assert (conflict_repo / "f.txt").read_text(encoding="utf-8") == "ours\n"
 
     def test_abort_without_merge_in_progress_is_friendly(
-        self, clean_repo: Path,
+        self,
+        clean_repo: Path,
     ) -> None:
         out = git_merge.run_merge(clean_repo, {"action": "abort"})
         assert "no merge in progress" in out.lower()
         assert "fatal" not in out.lower()
 
     def test_quit_clears_state_without_restoring(
-        self, conflict_repo: Path,
+        self,
+        conflict_repo: Path,
     ) -> None:
         git_merge.run_merge(conflict_repo, {"action": "start", "branch": "feature"})
         out = git_merge.run_merge(conflict_repo, {"action": "quit"})
@@ -435,6 +505,7 @@ class TestAbortAndQuit:
 # Output hygiene + validation
 # ---------------------------------------------------------------------------
 
+
 class TestOutputAndValidation:
     def test_unknown_action_lists_valid_actions(self, clean_repo: Path) -> None:
         out = git_merge.run_merge(clean_repo, {"action": "teleport"})
@@ -444,13 +515,15 @@ class TestOutputAndValidation:
 
     def test_output_is_bounded(self, clean_repo: Path) -> None:
         out = git_merge.run_merge(
-            clean_repo, {"action": "start", "branch": "x" * 4000},
+            clean_repo,
+            {"action": "start", "branch": "x" * 4000},
         )
         assert len(out) <= 6000
 
     def test_invocation_is_echoed_for_audit(self, conflict_repo: Path) -> None:
         out = git_merge.run_merge(
-            conflict_repo, {"action": "start", "branch": "feature"},
+            conflict_repo,
+            {"action": "start", "branch": "feature"},
         )
         assert "git merge" in out
 
@@ -459,13 +532,12 @@ class TestOutputAndValidation:
 # Wiring: schema, dispatch, plan mode
 # ---------------------------------------------------------------------------
 
+
 class TestMergeToolWiring:
     def _schema(self) -> dict:
         from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
 
-        return next(
-            s for s in NLP_TOOL_SCHEMAS if s["function"]["name"] == "merge"
-        )
+        return next(s for s in NLP_TOOL_SCHEMAS if s["function"]["name"] == "merge")
 
     def test_merge_is_advertised(self) -> None:
         from agent_core.tool_schemas import NLP_TOOL_NAMES
@@ -475,8 +547,7 @@ class TestMergeToolWiring:
     def test_schema_teaches_continue_without_arguments(self) -> None:
         schema = self._schema()
         blob = (
-            schema["function"]["description"]
-            + str(schema["function"]["parameters"])
+            schema["function"]["description"] + str(schema["function"]["parameters"])
         ).lower()
         assert "continue" in blob
         assert "status" in blob
@@ -510,13 +581,12 @@ class TestMergeToolWiring:
         from agent import Agent
 
         agent = Agent(workspace=str(conflict_repo))
-        out = asyncio.run(
-            agent._nlp_merge({"action": "start", "branch": "feature"})
-        )
+        out = asyncio.run(agent._nlp_merge({"action": "start", "branch": "feature"}))
         assert "f.txt" in out
 
     def test_handler_is_reachable_via_execute_tool_call(
-        self, conflict_repo: Path,
+        self,
+        conflict_repo: Path,
     ) -> None:
         """The dispatcher, not just the method, must route 'merge'."""
         import asyncio
@@ -524,8 +594,11 @@ class TestMergeToolWiring:
         from agent import Agent
 
         agent = Agent(workspace=str(conflict_repo))
-        out = asyncio.run(agent._execute_tool_call(
-            "merge", {"action": "start", "branch": "feature"},
-        ))
+        out = asyncio.run(
+            agent._execute_tool_call(
+                "merge",
+                {"action": "start", "branch": "feature"},
+            )
+        )
         assert "f.txt" in out
         assert _merge_head_present(conflict_repo) is True

@@ -4,6 +4,7 @@ Usage:
   python -m harnessfix.dashboard --traces reports/traces --diagnoses reports/harnessfix/diagnoses --limit 10
   python -m harnessfix.dashboard --traces reports/traces --diagnoses reports/harnessfix/diagnoses --task <task_id>
 """
+
 from __future__ import annotations
 
 import argparse
@@ -56,7 +57,12 @@ def _summarize_trace(path: Path) -> dict[str, Any]:
         return {"task_id": path.stem, "error": "invalid"}
     task_id = str(events[0].get("task_id", path.stem))
     outcome = _outcome_of(events)
-    failed = sum(1 for e in events if e.get("kind") in ("tool_error",) or (e.get("kind") == "loop_end" and e.get("outcome") not in ("completed",)))
+    failed = sum(
+        1
+        for e in events
+        if e.get("kind") in ("tool_error",)
+        or (e.get("kind") == "loop_end" and e.get("outcome") not in ("completed",))
+    )
     # Count guard triggers for quick health signal
     guards = sum(1 for e in events if e.get("kind") == "guard_triggered")
     # Task identity (decision #050): prompt + model from the task_begin event.
@@ -131,17 +137,25 @@ def _event_line(index: int, ev: dict[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             bits.append(f"{field}={value[:cap]!r}")
             break
-    marker = "FAIL" if kind == "tool_error" else ("GUARD" if kind == "guard_triggered" else "")
+    marker = (
+        "FAIL"
+        if kind == "tool_error"
+        else ("GUARD" if kind == "guard_triggered" else "")
+    )
     line = f"[{index:>3}] {layer:<20} {kind:<16} {' '.join(bits)}"
     return f"{line}  <-- {marker}" if marker else line
 
 
-def _explain_task(events: list[dict[str, Any]], summary: dict[str, Any], diag: dict[str, Any] | None) -> list[str]:
+def _explain_task(
+    events: list[dict[str, Any]], summary: dict[str, Any], diag: dict[str, Any] | None
+) -> list[str]:
     """Build a short human-readable explanation of what happened in the task."""
     lines: list[str] = []
     outcome = summary["outcome"]
     if outcome == "completed":
-        lines.append(f"The task completed after {summary['events']} trace events with no unresolved failure.")
+        lines.append(
+            f"The task completed after {summary['events']} trace events with no unresolved failure."
+        )
     elif outcome == "incomplete":
         lines.append("The trace is still open: no loop_end event was recorded yet.")
     else:
@@ -151,11 +165,17 @@ def _explain_task(events: list[dict[str, Any]], summary: dict[str, Any], diag: d
                 reason = str(ev.get("termination_reason", ""))
                 break
         suffix = f" (termination reason: {reason})" if reason else ""
-        lines.append(f"The loop terminated with outcome {outcome!r}{suffix} after {summary['events']} trace events.")
+        lines.append(
+            f"The loop terminated with outcome {outcome!r}{suffix} after {summary['events']} trace events."
+        )
 
-    failures = [(i, ev) for i, ev in enumerate(events) if ev.get("kind") == "tool_error"]
+    failures = [
+        (i, ev) for i, ev in enumerate(events) if ev.get("kind") == "tool_error"
+    ]
     guards = [ev for ev in events if ev.get("kind") == "guard_triggered"]
-    dupes = sum(1 for ev in events if ev.get("kind") == "tool_call" and ev.get("duplicate"))
+    dupes = sum(
+        1 for ev in events if ev.get("kind") == "tool_call" and ev.get("duplicate")
+    )
 
     for i, ev in failures[:3]:
         lines.append(
@@ -168,10 +188,14 @@ def _explain_task(events: list[dict[str, Any]], summary: dict[str, Any], diag: d
         names = ", ".join(str(ev.get("guard", "?")) for ev in guards)
         lines.append(f"Lifecycle guard(s) fired: {names}.")
     if dupes:
-        lines.append(f"The model repeated an already-executed tool call {dupes} time(s) (duplicate flag).")
+        lines.append(
+            f"The model repeated an already-executed tool call {dupes} time(s) (duplicate flag)."
+        )
     affected = summary.get("affected_files") or []
     if affected:
-        lines.append(f"Files touched: {', '.join(affected[:8])}{' …' if len(affected) > 8 else ''}.")
+        lines.append(
+            f"Files touched: {', '.join(affected[:8])}{' …' if len(affected) > 8 else ''}."
+        )
 
     if diag and diag.get("layer"):
         lines.append(
@@ -232,7 +256,9 @@ def _show_task(traces_dir: Path, diag_dir: Path, task_id: str, as_json: bool) ->
     if affected:
         print(f"  affected   : {len(affected)} file(s) — {', '.join(affected[:6])}")
     if diag and diag.get("layer"):
-        print(f"  diagnosis  : {diag['layer']} — {diag.get('mechanism', '?')}  (confidence {diag.get('confidence', 'n/a')})")
+        print(
+            f"  diagnosis  : {diag['layer']} — {diag.get('mechanism', '?')}  (confidence {diag.get('confidence', 'n/a')})"
+        )
         evidence = diag.get("evidence") or []
         if evidence:
             print(f"  evidence   : {', '.join(str(e) for e in evidence)}")
@@ -262,7 +288,9 @@ def _quality_report(
     whether evolution should trigger, and per-run scores for the inspected
     traces (most recent first).  Unreadable traces are skipped.
     """
-    files = sorted(traces_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = sorted(
+        traces_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
     if limit is not None:
         files = files[:limit]
     scorer = EvolutionMetricsScorer(window_size=window_size, threshold=threshold)
@@ -278,15 +306,20 @@ def _quality_report(
         if not is_countable_events(events):
             continue
         task_id = str(events[0].get("task_id", p.stem))
-        per_run.append({
-            "task_id": task_id,
-            "score": scorer.record_trace(events),
-            "outcome": next(
-                (str(e.get("outcome", "completed")) for e in reversed(events)
-                 if e.get("kind") == "loop_end"),
-                "incomplete",
-            ),
-        })
+        per_run.append(
+            {
+                "task_id": task_id,
+                "score": scorer.record_trace(events),
+                "outcome": next(
+                    (
+                        str(e.get("outcome", "completed"))
+                        for e in reversed(events)
+                        if e.get("kind") == "loop_end"
+                    ),
+                    "incomplete",
+                ),
+            }
+        )
     # Report newest-first.
     per_run.reverse()
     return {
@@ -347,11 +380,25 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, OSError):
         print("Silenced exception in dashboard.py:304")
 
-    parser = argparse.ArgumentParser(prog="harnessfix.dashboard", description="Print a short dashboard of recent traces/diagnoses")
-    parser.add_argument("--traces", type=Path, default=TRACE_DIR, help="trace directory")
-    parser.add_argument("--diagnoses", type=Path, default=Path("reports/harnessfix/diagnoses"), help="diagnoses directory")
-    parser.add_argument("--limit", type=int, default=10, help="how many recent traces to show")
-    parser.add_argument("--json", action="store_true", help="output JSON instead of table")
+    parser = argparse.ArgumentParser(
+        prog="harnessfix.dashboard",
+        description="Print a short dashboard of recent traces/diagnoses",
+    )
+    parser.add_argument(
+        "--traces", type=Path, default=TRACE_DIR, help="trace directory"
+    )
+    parser.add_argument(
+        "--diagnoses",
+        type=Path,
+        default=Path("reports/harnessfix/diagnoses"),
+        help="diagnoses directory",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=10, help="how many recent traces to show"
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="output JSON instead of table"
+    )
     parser.add_argument(
         "--task",
         type=str,
@@ -426,13 +473,17 @@ def main(argv: list[str] | None = None) -> int:
         print("-" * 100)
         print(f"  page count       : {report['page_count']}")
         print(f"  total evidence    : {report['total_evidence']}")
-        print(f"  coverage          : {report.get('coverage', 0.0)}% (diagnosed layers with wiki pages)")
+        print(
+            f"  coverage          : {report.get('coverage', 0.0)}% (diagnosed layers with wiki pages)"
+        )
         print(f"  avg hit count     : {avg_hits:.2f}")
         print(f"  last consolidated : {when or '—'}")
         print("-" * 100)
         top = report.get("top_pages", [])
         if top:
-            print(f"{'key':<48} {'hits':>5} {'evidence':>9} {'layer':<22} lesson (first 60 chars)")
+            print(
+                f"{'key':<48} {'hits':>5} {'evidence':>9} {'layer':<22} lesson (first 60 chars)"
+            )
             print("-" * 100)
             for pg in top:
                 lesson = str(pg.get("lesson_preview", "") or "").replace("\n", " ")[:60]
@@ -448,7 +499,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.task is not None:
         return _show_task(args.traces, args.diagnoses, args.task, as_json=args.json)
 
-    files = sorted(args.traces.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)[: args.limit]
+    files = sorted(
+        args.traces.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True
+    )[: args.limit]
     rows = []
     layer_counter: Counter[str] = Counter()
     for p in files:
@@ -456,15 +509,17 @@ def main(argv: list[str] | None = None) -> int:
         diag = _load_diagnosis(args.diagnoses, s["task_id"])
         if diag and diag.get("layer"):
             layer_counter[diag["layer"]] += 1
-        rows.append({
-            "task_id": s.get("task_id"),
-            "path": s.get("path"),
-            "events": s.get("events"),
-            "outcome": s.get("outcome"),
-            "failed_signals": s.get("failed_signals"),
-            "guards": s.get("guards"),
-            "diagnosis": diag,
-        })
+        rows.append(
+            {
+                "task_id": s.get("task_id"),
+                "path": s.get("path"),
+                "events": s.get("events"),
+                "outcome": s.get("outcome"),
+                "failed_signals": s.get("failed_signals"),
+                "guards": s.get("guards"),
+                "diagnosis": diag,
+            }
+        )
 
     if args.json:
         out = {
@@ -479,7 +534,9 @@ def main(argv: list[str] | None = None) -> int:
     # Header
     print(f"HarnessFix dashboard — {len(rows)} recent traces from {args.traces}")
     print("-" * 130)
-    print(f"{'task_id':<36} {'outcome':<14} {'events':>6} {'failed':>6} {'guards':>6} {'aff':>4} {'model':<16} {'layer':<18} mechanism")
+    print(
+        f"{'task_id':<36} {'outcome':<14} {'events':>6} {'failed':>6} {'guards':>6} {'aff':>4} {'model':<16} {'layer':<18} mechanism"
+    )
     print("-" * 130)
     for r in rows:
         s = r
@@ -493,7 +550,9 @@ def main(argv: list[str] | None = None) -> int:
         model = (s.get("model") or "")[:14]
         layer = diag.get("layer") if diag else ""
         mech = (diag.get("mechanism") or "")[:60] if diag else ""
-        print(f"{tid:<36} {outcome:<14} {events:>6} {failed:>6} {guards:>6} {aff:>4} {model:<16} {layer:<18} {mech}")
+        print(
+            f"{tid:<36} {outcome:<14} {events:>6} {failed:>6} {guards:>6} {aff:>4} {model:<16} {layer:<18} {mech}"
+        )
 
     if layer_counter:
         print("\nLayer distribution (diagnosed failures):")

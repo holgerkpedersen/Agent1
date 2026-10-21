@@ -38,7 +38,9 @@ class LLMClient:
     """
 
     def __init__(
-        self, model_name: str | None = None, api_key: str | None = None,
+        self,
+        model_name: str | None = None,
+        api_key: str | None = None,
     ) -> None:
         from agent_core.config import load_agent_settings
         from agent_core.constants import resolve_model
@@ -66,14 +68,17 @@ class LLMClient:
             prof_name = data.get("profile")
             if prof_name:
                 from agent_core.llm.model_profiles import get_profile
+
                 profile = get_profile(prof_name)
                 self._profile_name = prof_name
                 self._profile_pinned = True
                 self._provider.apply_profile(
-                    prof_name, profile.temperature, profile.max_tokens,
+                    prof_name,
+                    profile.temperature,
+                    profile.max_tokens,
                 )
         except Exception as _prof_err:
-            logger.exception('Failed to restore active profile from model.json:\n')
+            logger.exception("Failed to restore active profile from model.json:\n")
             self._profile_name = None
 
         # Make the llama-server actually serve the requested model
@@ -103,10 +108,12 @@ class LLMClient:
         persisted = load_model_json()
         persisted_provider = str(persisted.get("provider") or "")
         provider_setting = (
-            getattr(settings, "llm_provider", "lmstudio") if settings
-            else "lmstudio"
+            getattr(settings, "llm_provider", "lmstudio") if settings else "lmstudio"
         )
-        if provider_for(self._model_name, provider_setting, persisted_provider) != "llama":
+        if (
+            provider_for(self._model_name, provider_setting, persisted_provider)
+            != "llama"
+        ):
             return
 
         provider = self._provider
@@ -130,7 +137,9 @@ class LLMClient:
                 return
 
             bare_name = self._model_name.removeprefix("llama/")
-            _info(f"  [llama] ensuring '{self._model_name}' is served by llama-server...")
+            _info(
+                f"  [llama] ensuring '{self._model_name}' is served by llama-server..."
+            )
 
             served = llama_server.list_served_models(api_url)
             if served:
@@ -143,19 +152,25 @@ class LLMClient:
                         f"  [llama] Server serving '{current_served_model}', "
                         f"attempting to ensure '{bare_name}' is served..."
                     )
-                    ok, msg = llama_server.ensure_model_served(api_url, self._model_name)
+                    ok, msg = llama_server.ensure_model_served(
+                        api_url, self._model_name
+                    )
                     if ok:
                         served_after = llama_server.list_served_models(api_url)
                         if served_after and served_after[0] == bare_name:
                             provider._cached_server_model_id = served_after[0]
-                            _info(f"  [llama] Successfully ensured '{bare_name}' is served.")
+                            _info(
+                                f"  [llama] Successfully ensured '{bare_name}' is served."
+                            )
                         else:
                             _info(
                                 f"  [llama] WARNING: ensure_model_served reported "
                                 f"success, but model not found in list: {msg}"
                             )
                     else:
-                        _info(f"  [llama] WARNING: could not ensure model served: {msg}")
+                        _info(
+                            f"  [llama] WARNING: could not ensure model served: {msg}"
+                        )
             else:
                 _info(
                     f"  [llama] No model currently served. "
@@ -213,20 +228,24 @@ class LLMClient:
 
             stripped = full_response.rstrip()
             if stripped and not stripped.endswith(
-                ('```', '}', ')', ']', '"', "'", '.', '\n')
+                ("```", "}", ")", "]", '"', "'", ".", "\n")
             ):
-                print(magenta(
-                    f"\n[auto-resume] Truncated ({len(result)} chars), "
-                    f"continuing ({i+1}/{max_continues})..."
-                ))
+                print(
+                    magenta(
+                        f"\n[auto-resume] Truncated ({len(result)} chars), "
+                        f"continuing ({i + 1}/{max_continues})..."
+                    )
+                )
                 current_messages.append({"role": "assistant", "content": result})
-                current_messages.append({
-                    "role": "user",
-                    "content": (
-                        "Continue exactly where you stopped. "
-                        "Output the remaining code without repeating anything."
-                    ),
-                })
+                current_messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Continue exactly where you stopped. "
+                            "Output the remaining code without repeating anything."
+                        ),
+                    }
+                )
                 continue
             else:
                 break

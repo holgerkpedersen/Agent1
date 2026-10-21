@@ -1,8 +1,8 @@
 """Canonical logging config tests (plan ARCH items 7-8): the root-level
 logging_config is a pure re-export of agent_core.logging_config, and the
 correlation context scopes async-safe IDs."""
-import logging
 
+import logging
 
 
 def test_root_module_is_pure_reexport():
@@ -54,7 +54,8 @@ def test_log_file_handler_writes_json(tmp_path):
     log_file = tmp_path / "agent.log"
     setup_logging(level=logging.DEBUG, mode="prod", log_file=log_file)
     file_handlers = [
-        h for h in logging.getLogger().handlers
+        h
+        for h in logging.getLogger().handlers
         if isinstance(h, logging.FileHandler) and h.baseFilename == str(log_file)
     ]
     assert len(file_handlers) == 1

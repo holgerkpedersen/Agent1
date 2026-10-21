@@ -12,6 +12,7 @@ from agent_core.llm_agent import LLMAgent
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_agent(**kwargs: object) -> LLMAgent:
     """Return an LLMAgent with an optional stub LLM client."""
     llm = kwargs.get("llm")
@@ -30,6 +31,7 @@ def _stub_llm(response: str = "ok") -> MagicMock:
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
+
 
 class TestConstruction:
     """LLMAgent instantiates cleanly with or without a client."""
@@ -53,6 +55,7 @@ class TestConstruction:
 # _detect_file_keywords
 # ---------------------------------------------------------------------------
 
+
 class TestDetectFileKeywords:
     """Keyword detection delegates to the file-context interface."""
 
@@ -66,12 +69,15 @@ class TestDetectFileKeywords:
         agent._file_context_interface.process_request.return_value = ["ctx1"]
         result = agent._detect_file_keywords("see /foo.py")
         assert result == ["ctx1"]
-        agent._file_context_interface.process_request.assert_called_once_with("see /foo.py")
+        agent._file_context_interface.process_request.assert_called_once_with(
+            "see /foo.py"
+        )
 
 
 # ---------------------------------------------------------------------------
 # _insert_temp_system_messages  (the optimize fix target)
 # ---------------------------------------------------------------------------
+
 
 class TestInsertTempSystemMessages:
     """Temporary system messages are inserted with correct ordering."""
@@ -107,6 +113,7 @@ class TestInsertTempSystemMessages:
 # _process_message
 # ---------------------------------------------------------------------------
 
+
 class TestProcessMessage:
     """_process_message records the user message and assembles the payload."""
 
@@ -140,6 +147,7 @@ class TestProcessMessage:
 # ---------------------------------------------------------------------------
 # respond
 # ---------------------------------------------------------------------------
+
 
 class TestRespond:
     """respond() generates a reply and clears temporary system messages."""
@@ -181,6 +189,7 @@ class TestRespond:
 # ---------------------------------------------------------------------------
 # _fallback_response
 # ---------------------------------------------------------------------------
+
 
 class TestFallbackResponse:
     def test_returns_nonempty_string(self) -> None:

@@ -17,8 +17,8 @@ from tool_router import (
 def _router() -> ToolRouter:
     router = ToolRouter()
     schemas = {schema["name"] for schema in router.get_schemas()}
-    assert "run_command" in schemas, (
-        "shell_command route should exist: " + ", ".join(sorted(schemas))
+    assert "run_command" in schemas, "shell_command route should exist: " + ", ".join(
+        sorted(schemas)
     )
     return router
 
@@ -60,7 +60,9 @@ def test_tool_router_rejects_disallowed_shell_command() -> None:
     assert "not in the allowed command list" in str(exc_info.value)
 
 
-def test_tool_router_rejects_unsafe_shell_command_even_if_binary_is_registered() -> None:
+def test_tool_router_rejects_unsafe_shell_command_even_if_binary_is_registered() -> (
+    None
+):
     probe = "tool-router-unsafe-probe"
     allowlist.register_command(probe)
     try:

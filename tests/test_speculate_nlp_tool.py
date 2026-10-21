@@ -85,12 +85,14 @@ def test_speculate_handler_dispatch_registered():
 def test_schema_documents_the_speed_knobs():
     from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
 
-    schema = next(
-        s for s in NLP_TOOL_SCHEMAS if s["function"]["name"] == "speculate"
-    )
+    schema = next(s for s in NLP_TOOL_SCHEMAS if s["function"]["name"] == "speculate")
     params = schema["function"]["parameters"]
     assert set(params["properties"]) >= {
-        "question", "branches", "judge", "branch_model", "threshold",
+        "question",
+        "branches",
+        "judge",
+        "branch_model",
+        "threshold",
     }
     assert params["required"] == ["question"]
     # The model must be told the fast paths exist.
@@ -111,32 +113,24 @@ def test_requires_a_question():
 
 def test_rejects_flag_like_question():
     # A question starting with '--' would be eaten as a command flag.
-    out = asyncio.run(
-        _bare_agent()._nlp_speculate({"question": "--branches 2"})
-    )
+    out = asyncio.run(_bare_agent()._nlp_speculate({"question": "--branches 2"}))
     assert "command flag" in out
 
 
 def test_rejects_unknown_judge():
-    out = asyncio.run(
-        _bare_agent()._nlp_speculate({"question": "q", "judge": "vibes"})
-    )
+    out = asyncio.run(_bare_agent()._nlp_speculate({"question": "q", "judge": "vibes"}))
     assert "llm, jev, both" in out
 
 
 def test_rejects_unknown_branch_model():
     out = asyncio.run(
-        _bare_agent()._nlp_speculate(
-            {"question": "q", "branch_model": "quantum"}
-        )
+        _bare_agent()._nlp_speculate({"question": "q", "branch_model": "quantum"})
     )
     assert "chat, jev" in out
 
 
 def test_rejects_threshold_out_of_range():
-    out = asyncio.run(
-        _bare_agent()._nlp_speculate({"question": "q", "threshold": 2})
-    )
+    out = asyncio.run(_bare_agent()._nlp_speculate({"question": "q", "threshold": 2}))
     assert "[0.0, 1.0]" in out
 
 
@@ -177,28 +171,29 @@ def test_tool_passes_speed_knobs_to_the_command(monkeypatch):
         return True
 
     monkeypatch.setattr(
-        speculate_cmd.SpeculateCommand, "execute", fake_execute, raising=True,
+        speculate_cmd.SpeculateCommand,
+        "execute",
+        fake_execute,
+        raising=True,
     )
-    out = asyncio.run(_bare_agent()._nlp_speculate({
-        "question": "q?",
-        "branches": 5,
-        "judge": "jev",
-        "branch_model": "jev",
-        "threshold": 0.42,
-    }))
+    out = asyncio.run(
+        _bare_agent()._nlp_speculate(
+            {
+                "question": "q?",
+                "branches": 5,
+                "judge": "jev",
+                "branch_model": "jev",
+                "threshold": 0.42,
+            }
+        )
+    )
     assert "fake run" in out
     args = seen["args"]
     assert args[0] == "q?"
     assert "--branches" in args and args[args.index("--branches") + 1] == "5"
     assert "--judge" in args and args[args.index("--judge") + 1] == "jev"
-    assert (
-        "--branch-model" in args
-        and args[args.index("--branch-model") + 1] == "jev"
-    )
-    assert (
-        "--threshold" in args
-        and float(args[args.index("--threshold") + 1]) == 0.42
-    )
+    assert "--branch-model" in args and args[args.index("--branch-model") + 1] == "jev"
+    assert "--threshold" in args and float(args[args.index("--threshold") + 1]) == 0.42
 
 
 def test_system_prompt_steers_the_agent_to_speculate():

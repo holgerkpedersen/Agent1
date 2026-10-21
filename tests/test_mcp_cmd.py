@@ -3,6 +3,7 @@
 Drives the REAL command class against a manager pointed at a temp mcp.json,
 with output captured.  The repo-root mcp.json is never touched.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -17,8 +18,10 @@ from agent_core.commands.mcp_cmd import MCPCommand
 from agent_core.mcp.config import save_mcp_servers, validate_entry
 from agent_core.mcp.manager import McpManager, get_manager
 
-FIXTURE = [sys.executable,
-           str(Path(__file__).parent / "fixtures" / "fake_mcp_server.py")]
+FIXTURE = [
+    sys.executable,
+    str(Path(__file__).parent / "fixtures" / "fake_mcp_server.py"),
+]
 
 
 @pytest.fixture()
@@ -31,9 +34,15 @@ def cmd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MCPCommand:
     developer's task list (five orphans observed, one per connecting test).
     """
     path = tmp_path / "mcp.json"
-    cfgs = {"fake": validate_entry("fake", {
-        "transport": "stdio", "command": FIXTURE,
-    })}
+    cfgs = {
+        "fake": validate_entry(
+            "fake",
+            {
+                "transport": "stdio",
+                "command": FIXTURE,
+            },
+        )
+    }
     save_mcp_servers(cfgs, path)
     mgr = McpManager(config_path=path)
     monkeypatch.setattr("agent_core.commands.mcp_cmd.get_manager", lambda: mgr)
@@ -64,8 +73,17 @@ class TestStatusAndConfig:
         assert configs["local2"].command == FIXTURE
 
     def test_add_http_with_headers(self, cmd: MCPCommand) -> None:
-        run(cmd, "add", "remote", "http", "https://example.com/mcp",
-            "--header", "Authorization=secret:tok", "--timeout", "45")
+        run(
+            cmd,
+            "add",
+            "remote",
+            "http",
+            "https://example.com/mcp",
+            "--header",
+            "Authorization=secret:tok",
+            "--timeout",
+            "45",
+        )
         cfg = cmd._manager.configured()["remote"]
         assert cfg.url == "https://example.com/mcp"
         assert cfg.headers["Authorization"] == "secret:tok"
@@ -134,10 +152,12 @@ class TestExposeToggle:
 class TestRegistryIntegration:
     def test_command_registered_in_agent_registry(self) -> None:
         import agent
+
         registry = agent._build_registry()
         assert registry.get("mcp") is not None
 
     def test_singleton_manager_is_shared_with_dashboard_bridge(self) -> None:
         # The dashboard API must observe the same connections the REPL makes.
         from agent_core.mcp import manager as m
+
         assert get_manager() is m.get_manager()

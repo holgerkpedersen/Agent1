@@ -123,12 +123,13 @@ class DecideCommand(Command):
         category = _extract_flag(args, "--category") or None
 
         if not title:
-            self.error("Title required: decide \"title\" --why \"...\" --what \"...\"")
+            self.error('Title required: decide "title" --why "..." --what "..."')
             return True
 
         ws = str(Path(agent.workspace).resolve())
         record = add_decision(
-            ws, title,
+            ws,
+            title,
             context=context,
             decision=decision,
             affected_files=files,
@@ -152,8 +153,14 @@ class DecideCommand(Command):
         tags = [tag] if tag else None
         files = [file] if file else None
 
-        results = find_decisions(ws, tags=tags, files=files, keyword=keyword,
-                                 status=status, category=category)
+        results = find_decisions(
+            ws,
+            tags=tags,
+            files=files,
+            keyword=keyword,
+            status=status,
+            category=category,
+        )
         if not results:
             print("No decisions found.")
             return True
@@ -170,10 +177,15 @@ class DecideCommand(Command):
 
         # --open: active decisions with unresolved contradictions
         if show_open:
-            results = [d for d in results
-                       if d.get("status", STATUS_ACTIVE) == STATUS_ACTIVE
-                       and any(c.get("status") not in ("resolved", "superseded")
-                               for c in d.get("contradictions", []))]
+            results = [
+                d
+                for d in results
+                if d.get("status", STATUS_ACTIVE) == STATUS_ACTIVE
+                and any(
+                    c.get("status") not in ("resolved", "superseded")
+                    for c in d.get("contradictions", [])
+                )
+            ]
 
         print(f"{len(results)} decision(s):")
         print("-" * 60)
@@ -210,9 +222,20 @@ class DecideCommand(Command):
         if not record:
             print(f"Decision #{decision_id} not found.")
             return True
-        for key in ["id", "date", "title", "context", "decision", "rationale",
-                     "affected_files", "tags", "contradictions", "resolved_by",
-                     "status", "category"]:
+        for key in [
+            "id",
+            "date",
+            "title",
+            "context",
+            "decision",
+            "rationale",
+            "affected_files",
+            "tags",
+            "contradictions",
+            "resolved_by",
+            "status",
+            "category",
+        ]:
             val = record.get(key, "")
             if isinstance(val, list):
                 val = ", ".join(val)
@@ -257,10 +280,7 @@ class DecideCommand(Command):
 
         # Fast contradiction check with pre-filtering
         print("\nChecking for contradictions...")
-        new_decision_data = {
-            "tags": [],
-            "affected_files": _extract_file_refs(text)
-        }
+        new_decision_data = {"tags": [], "affected_files": _extract_file_refs(text)}
         result = await check_contradictions_fast(agent, new_decision_data, text, ws)
         print(result)
         return True
@@ -289,7 +309,7 @@ class DecideCommand(Command):
 
     async def _cmd_link(self, args: list[str], agent: "Agent") -> bool:
         if len(args) < 2:
-            self.error("Usage: decide link <id1> <id2> --why \"reason\"")
+            self.error('Usage: decide link <id1> <id2> --why "reason"')
             return True
         id1, id2 = args[0], args[1]
         reason = _extract_flag(args[2:], "--why")
@@ -372,22 +392,28 @@ class DecideCommand(Command):
                         print("Silenced exception in decide_cmd.py:315")
 
         warned = [
-            i for i in selected
+            i
+            for i in selected
             if 0 <= i < len(candidates) and candidates[i].get("warnings")
         ]
         if warned and not auto_choice(
             f"  {len(warned)} candidate(s) carry unverified claims — "
             "record them anyway? (y/N): ",
-            default="n", auto_default="n",
+            default="n",
+            auto_default="n",
         ).strip().lower().startswith("y"):
             for i in warned:
-                print(f"  Skipped: {candidates[i].get('title', 'Untitled')} (unverified claims)")
+                print(
+                    f"  Skipped: {candidates[i].get('title', 'Untitled')} (unverified claims)"
+                )
             selected = [i for i in selected if i not in warned]
 
         for idx in selected:
             if 0 <= idx < len(candidates):
                 c = candidates[idx]
-                rationale = input(f"  Rationale for '{c['title']}' (optional): ").strip()
+                rationale = input(
+                    f"  Rationale for '{c['title']}' (optional): "
+                ).strip()
                 record = add_decision(
                     ws,
                     c["title"],
@@ -402,8 +428,7 @@ class DecideCommand(Command):
 
         return True
 
-
-# ── review ───────────────────────────────────────────────────────────
+    # ── review ───────────────────────────────────────────────────────────
 
     async def _cmd_review(self, args: list[str], agent: "Agent") -> bool:
         """Ledger health check: stale affected_files, open contradictions,
@@ -456,7 +481,9 @@ class DecideCommand(Command):
             print("No meta_warnings.")
 
         if strict and error_count:
-            print(f"\nFAIL: {error_count} issue(s) found (stale + open contradictions).")
+            print(
+                f"\nFAIL: {error_count} issue(s) found (stale + open contradictions)."
+            )
             return True
 
         if strict and not error_count and not meta_flags:
@@ -476,7 +503,9 @@ class DecideCommand(Command):
             return True
         decision_id, new_status = args[0], args[1]
         if new_status not in _STATUSES:
-            self.error(f"Invalid status '{new_status}'. Use: active, superseded, archived")
+            self.error(
+                f"Invalid status '{new_status}'. Use: active, superseded, archived"
+            )
             return True
         ws = str(Path(agent.workspace).resolve())
         decisions = load_decisions(ws)
@@ -526,4 +555,5 @@ def _extract_list(args: list[str], flag: str) -> list[str]:
 
 def _extract_file_refs(text: str) -> list[str]:
     import re
+
     return re.findall(r"[\w/\\-]+\.py", text)

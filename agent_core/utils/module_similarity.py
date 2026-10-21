@@ -7,6 +7,7 @@ embeddings backend can be enabled via ``AGENT_EMBEDDING_MODEL``; it is only
 used when the probe succeeds, and never silently replaces TF-IDF — the gate
 reports exactly which signal fired and with what evidence.
 """
+
 from __future__ import annotations
 
 import json
@@ -50,9 +51,18 @@ def _walk_production_py(ws: str) -> list[tuple[str, str]]:
     """(rel_path, abs_path) pairs for every production .py file."""
     out: list[tuple[str, str]] = []
     for root, dirs, files in os.walk(ws):
-        dirs[:] = [d for d in dirs if d not in (
-            ".git", "__pycache__", ".pytest_cache", "backups", ".docs",
-        )]
+        dirs[:] = [
+            d
+            for d in dirs
+            if d
+            not in (
+                ".git",
+                "__pycache__",
+                ".pytest_cache",
+                "backups",
+                ".docs",
+            )
+        ]
         for f in files:
             if not f.endswith(".py") or f == "__init__.py":
                 continue
@@ -67,27 +77,158 @@ def _walk_production_py(ws: str) -> list[tuple[str, str]]:
 #: files is unchanged — deterministic reuse, identical precision.
 _CORPUS_CACHE: dict[str, tuple[float, "_Corpus"]] = {}
 
-_STOPWORDS = frozenset({
-    "the", "a", "an", "and", "or", "of", "to", "in", "for", "on", "with",
-    "as", "by", "at", "from", "is", "are", "was", "were", "be", "been",
-    "this", "that", "these", "those", "it", "its", "their", "there", "here",
-    "which", "who", "whom", "what", "when", "where", "why", "how", "all",
-    "any", "both", "each", "few", "more", "most", "other", "some", "such",
-    "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very",
-    "will", "would", "can", "could", "should", "may", "might", "must", "shall",
-    "do", "does", "did", "has", "have", "had", "into", "over", "under",
-    "between", "through", "during", "before", "after", "above", "below",
-    "use", "used", "using", "provide", "provides", "make", "makes", "make",
-    "via", "per", "etc", "e.g", "i.e", "one", "two", "new", "file", "files",
-    "code", "module", "modules", "class", "function", "return", "returns",
-})
+_STOPWORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "to",
+        "in",
+        "for",
+        "on",
+        "with",
+        "as",
+        "by",
+        "at",
+        "from",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "their",
+        "there",
+        "here",
+        "which",
+        "who",
+        "whom",
+        "what",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "any",
+        "both",
+        "each",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "nor",
+        "not",
+        "only",
+        "own",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "will",
+        "would",
+        "can",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "do",
+        "does",
+        "did",
+        "has",
+        "have",
+        "had",
+        "into",
+        "over",
+        "under",
+        "between",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "use",
+        "used",
+        "using",
+        "provide",
+        "provides",
+        "make",
+        "makes",
+        "make",
+        "via",
+        "per",
+        "etc",
+        "e.g",
+        "i.e",
+        "one",
+        "two",
+        "new",
+        "file",
+        "files",
+        "code",
+        "module",
+        "modules",
+        "class",
+        "function",
+        "return",
+        "returns",
+    }
+)
 
-_PY_KEYWORDS = frozenset({
-    "and", "as", "assert", "async", "await", "break", "class", "continue",
-    "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
-    "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass",
-    "raise", "return", "try", "while", "with", "yield", "true", "false", "none",
-})
+_PY_KEYWORDS = frozenset(
+    {
+        "and",
+        "as",
+        "assert",
+        "async",
+        "await",
+        "break",
+        "class",
+        "continue",
+        "def",
+        "del",
+        "elif",
+        "else",
+        "except",
+        "finally",
+        "for",
+        "from",
+        "global",
+        "if",
+        "import",
+        "in",
+        "is",
+        "lambda",
+        "nonlocal",
+        "not",
+        "or",
+        "pass",
+        "raise",
+        "return",
+        "try",
+        "while",
+        "with",
+        "yield",
+        "true",
+        "false",
+        "none",
+    }
+)
 
 _GENERIC_TOKENS = _GENERIC_NAME_TOKENS | _STOPWORDS | _PY_KEYWORDS
 
@@ -154,7 +295,11 @@ class _Corpus:
         self.terms: list[str] = sorted(vocab)
         self.term_to_idx = {t: i for i, t in enumerate(self.terms)}
         self.idf = self._build_idf()
-        self.matrix = np.vstack([self._tfidf(t) for t in self.tokenized]) if self.terms else np.zeros((0, 0))
+        self.matrix = (
+            np.vstack([self._tfidf(t) for t in self.tokenized])
+            if self.terms
+            else np.zeros((0, 0))
+        )
 
     def _build_idf(self) -> np.ndarray:
         n = len(self.tokenized)
@@ -196,6 +341,7 @@ class _EmbeddingBackend:
 
     def __init__(self) -> None:
         from agent_core.config import lmstudio_base_url
+
         self.model = os.environ.get("AGENT_EMBEDDING_MODEL", "")
         self.base_url = lmstudio_base_url()
         self._available: bool | None = None
@@ -274,14 +420,16 @@ class ModuleSimilarity:
         best, best_score = top[0]
         second = top[1][1] if len(top) > 1 else 0.0
         if best_score >= TFIDF_THRESHOLD and (best_score - second) >= MARGIN:
-            findings.append(SimilarityFinding(
-                file=planned.path,
-                existing=best,
-                score=best_score,
-                kind="tfidf",
-                evidence=f"TF-IDF top-1 {best_score:.3f} (runner-up {second:.3f}, "
-                         f"threshold {TFIDF_THRESHOLD})",
-            ))
+            findings.append(
+                SimilarityFinding(
+                    file=planned.path,
+                    existing=best,
+                    score=best_score,
+                    kind="tfidf",
+                    evidence=f"TF-IDF top-1 {best_score:.3f} (runner-up {second:.3f}, "
+                    f"threshold {TFIDF_THRESHOLD})",
+                )
+            )
         return findings
 
     def _embedding_findings(self, planned: PlannedModule) -> list[SimilarityFinding]:
@@ -307,14 +455,16 @@ class ModuleSimilarity:
         self.embedding_used = True
         findings: list[SimilarityFinding] = []
         if best_score >= EMBED_THRESHOLD and (best_score - second) >= MARGIN:
-            findings.append(SimilarityFinding(
-                file=planned.path,
-                existing=self.corpus.paths[best_idx],
-                score=best_score,
-                kind="embedding",
-                evidence=f"embedding top-1 {best_score:.3f} (runner-up {second:.3f}, "
-                         f"threshold {EMBED_THRESHOLD})",
-            ))
+            findings.append(
+                SimilarityFinding(
+                    file=planned.path,
+                    existing=self.corpus.paths[best_idx],
+                    score=best_score,
+                    kind="embedding",
+                    evidence=f"embedding top-1 {best_score:.3f} (runner-up {second:.3f}, "
+                    f"threshold {EMBED_THRESHOLD})",
+                )
+            )
         return findings
 
     def find_duplicates(self, planned: list[PlannedModule]) -> list[SimilarityFinding]:

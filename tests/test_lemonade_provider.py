@@ -5,6 +5,7 @@ XDNA NPU (via FastFlowLM / Ryzen AI LLM) or the iGPU.  It is wired in as a
 first-class provider: model ids are namespaced ``lemonade/<id>``, routing /
 persistence / ``model list`` all agree, and transport failures fail over.
 """
+
 from __future__ import annotations
 
 import json
@@ -71,6 +72,7 @@ def _capturing_urlopen(response: bytes, calls: list):
 #  provider_for routing
 # ---------------------------------------------------------------------------
 
+
 class TestRouting:
     def test_lemonade_prefix_routes_to_lemonade(self):
         assert provider_for("lemonade/qwen3.5-4b-FLM") == "lemonade"
@@ -95,6 +97,7 @@ class TestRouting:
 #  build_provider
 # ---------------------------------------------------------------------------
 
+
 def _multi_settings():
     return SimpleNamespace(
         llm_provider="lmstudio",
@@ -116,7 +119,8 @@ def _multi_settings():
 class TestBuildProvider:
     def test_builds_lemonade_provider(self):
         s = SimpleNamespace(
-            llm_provider="lemonade", llm_providers=("lemonade",),
+            llm_provider="lemonade",
+            llm_providers=("lemonade",),
             failover_strategy="ordered",
             lemonade_api_url="http://localhost:13305/api/v1",
             lemonade_model="qwen3.5-4b-FLM",
@@ -160,8 +164,11 @@ class TestBuildProvider:
         s = _multi_settings()
         prov = build_provider(s, "something-bare", provider_override="lemonade")
         concrete = next(
-            (p for p in getattr(prov, "providers", [prov])
-             if isinstance(p, LemonadeProvider)),
+            (
+                p
+                for p in getattr(prov, "providers", [prov])
+                if isinstance(p, LemonadeProvider)
+            ),
             None,
         )
         assert concrete is not None
@@ -171,6 +178,7 @@ class TestBuildProvider:
 # ---------------------------------------------------------------------------
 #  chat / payload / tool calls
 # ---------------------------------------------------------------------------
+
 
 class TestChat:
     @pytest.mark.anyio
@@ -195,8 +203,13 @@ class TestChat:
     @pytest.mark.anyio
     async def test_tool_calls_passthrough(self):
         prov = _provider()
-        tool_calls = [{"id": "c1", "type": "function",
-                       "function": {"name": "read", "arguments": "{}"}}]
+        tool_calls = [
+            {
+                "id": "c1",
+                "type": "function",
+                "function": {"name": "read", "arguments": "{}"},
+            }
+        ]
         body = _chat_response("", tool_calls=tool_calls)
         with patch("urllib.request.urlopen", side_effect=_capturing_urlopen(body, [])):
             out = await prov.chat([{"role": "user", "content": "hi"}])
@@ -298,6 +311,7 @@ class TestChat:
 #  list_models / health_check
 # ---------------------------------------------------------------------------
 
+
 class TestCatalog:
     def test_list_models_namespaced(self):
         prov = _provider()
@@ -331,6 +345,7 @@ class TestCatalog:
 #  config
 # ---------------------------------------------------------------------------
 
+
 class TestResidency:
     def test_context_length_reads_server_window(self):
         prov = _provider()
@@ -351,9 +366,11 @@ class TestResidency:
                 return _FakeResponse(
                     b'{"status":"success","model_name":"qwen3.5-4b-FLM"}'
                 )
-            return _FakeResponse(json.dumps(
-                {"data": [{"id": "qwen3.5-4b-FLM", "context_length": 65536}]}
-            ).encode())
+            return _FakeResponse(
+                json.dumps(
+                    {"data": [{"id": "qwen3.5-4b-FLM", "context_length": 65536}]}
+                ).encode()
+            )
 
         with patch("urllib.request.urlopen", side_effect=fake):
             ok, note = prov.ensure_model_loaded()
@@ -361,8 +378,8 @@ class TestResidency:
         assert prov.context_limit == 65536
         load_calls = [c for c in calls if c.full_url.endswith("/load")]
         assert (
-            load_calls and
-            json.loads(load_calls[0].data)["model_name"] == "qwen3.5-4b-FLM"
+            load_calls
+            and json.loads(load_calls[0].data)["model_name"] == "qwen3.5-4b-FLM"
         )
 
     def test_ensure_model_loaded_unreachable(self):
@@ -442,6 +459,7 @@ class TestConfig:
 #  model command integration
 # ---------------------------------------------------------------------------
 
+
 def _agent(current: str):
     return SimpleNamespace(
         llm=SimpleNamespace(model_name=current, _provider=None),
@@ -500,7 +518,8 @@ class TestModelCommandLemonade:
 
         monkeypatch.setattr(cmd, "_switch_model", fake_switch)
         monkeypatch.setattr(
-            cmd, "_fetch_models",
+            cmd,
+            "_fetch_models",
             lambda: (_ for _ in ()).throw(AssertionError("must not touch LM Studio")),
         )
         await cmd._load_model(["lemonade/qwen3.5-4b-FLM"], _agent("qwen/qwen3.5-9b"))

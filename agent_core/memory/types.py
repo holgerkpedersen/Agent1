@@ -3,6 +3,7 @@
 Moved verbatim from the retired ``src/agent1.core`` namespace so the memory
 stack is self-contained inside ``agent_core``.
 """
+
 import logging  # noqa: E402
 from datetime import datetime  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -27,7 +28,9 @@ import time  # noqa: E402
 
 class SQLiteStorage:
     def __init__(self, db_path: str = ":memory:") -> None:
-        self._conn: sqlite3.Connection = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn: sqlite3.Connection = sqlite3.connect(
+            db_path, check_same_thread=False
+        )
         self._setup_schema()
 
     def _setup_schema(self) -> None:
@@ -45,11 +48,19 @@ class SQLiteStorage:
 
     def store(self, key: str, data: Dict[str, Any]) -> None:
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT OR REPLACE INTO memory_entries (id, agent_id, timestamp, data, tags)
             VALUES (?, ?, ?, ?, ?)
-        """, (key, str(data.get("agent_id", "unknown")),
-              time.strftime("%Y-%m-%dT%H:%M:%S"), json.dumps(data), ""))
+        """,
+            (
+                key,
+                str(data.get("agent_id", "unknown")),
+                time.strftime("%Y-%m-%dT%H:%M:%S"),
+                json.dumps(data),
+                "",
+            ),
+        )
         self._conn.commit()
 
     def retrieve(self, key: str) -> Optional[Dict[str, Any]]:
@@ -90,6 +101,7 @@ class EmbeddingService:
         if self._backend is None:
             try:
                 from agent_core.utils.module_similarity import _EmbeddingBackend
+
                 self._backend = _EmbeddingBackend()
             except Exception:
                 # Fail-open: backend unavailable but service still works
@@ -118,7 +130,9 @@ class VectorDatabase:
 
     def add_vector(self, vector: np.ndarray, metadata: Dict[str, Any]) -> int:
         if len(vector) != self._dimension:
-            raise ValueError(f"Vector dimension mismatch: expected {self._dimension}, got {len(vector)}")
+            raise ValueError(
+                f"Vector dimension mismatch: expected {self._dimension}, got {len(vector)}"
+            )
         normalized_vector = vector / (np.linalg.norm(vector) + 1e-8)
         vector_id = self._next_id
         self._vectors[vector_id] = normalized_vector
@@ -126,7 +140,9 @@ class VectorDatabase:
         self._next_id += 1
         return vector_id
 
-    def search_similar(self, query_vector: np.ndarray, k: int = 5) -> List[Dict[str, Any]]:
+    def search_similar(
+        self, query_vector: np.ndarray, k: int = 5
+    ) -> List[Dict[str, Any]]:
         normalized_query = query_vector / (np.linalg.norm(query_vector) + 1e-8)
         results: List[tuple[float, int]] = []
         for vid, vec in self._vectors.items():
@@ -140,7 +156,7 @@ class VectorDatabase:
                 result_item = {
                     "metadata": self._id_to_metadata[idx],
                     "similarity_score": similarity,
-                    "vector_id": idx
+                    "vector_id": idx,
                 }
                 top_results.append(result_item)
         return top_results
@@ -245,9 +261,7 @@ def semantic_memory_block(
     )
 
 
-def original_goal_block(
-    goal: str | None, *, max_chars: int = MAX_GOAL_CHARS
-) -> str:
+def original_goal_block(goal: str | None, *, max_chars: int = MAX_GOAL_CHARS) -> str:
     """Inject the session's ORIGINAL TASK block into the system prompt.
 
     The chat-history projection trims the OLDEST body messages
@@ -267,12 +281,7 @@ def original_goal_block(
     text = " ".join(str(goal).split())[:max_chars].strip()
     if not text:
         return ""
-    block = (
-        ORIGINAL_GOAL_MARKER
-        + "\n"
-        + text
-        + ORIGINAL_GOAL_SUFFIX
-    )
+    block = ORIGINAL_GOAL_MARKER + "\n" + text + ORIGINAL_GOAL_SUFFIX
     assert block.startswith(ORIGINAL_GOAL_MARKER)  # marker contract
     return block
 
@@ -307,6 +316,7 @@ def original_goal_from_block(
 # ---------------------------------------------------------------------------
 # Persistence (workspace-local .semantic_memory.json)
 # ---------------------------------------------------------------------------
+
 
 def _semantic_memory_path(workspace: str | Path) -> Path:
     """The workspace's ``.semantic_memory.json`` ledger path."""

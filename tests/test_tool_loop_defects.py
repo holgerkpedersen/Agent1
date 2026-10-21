@@ -39,6 +39,7 @@ import agent as agent_module
 # Helpers (same scripting convention as tests/test_tool_loop_fanout.py)
 # ---------------------------------------------------------------------------
 
+
 class _ScriptedLLM:
     """Fake LLM returning a fixed sequence of responses.
 
@@ -69,14 +70,16 @@ class _ScriptedLLM:
                     tool_name, args = item
                 else:
                     tool_name, args = item, {}
-                tool_calls.append({
-                    "id": f"call_{i}",
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(args),
-                    },
-                })
+                tool_calls.append(
+                    {
+                        "id": f"call_{i}",
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(args),
+                        },
+                    }
+                )
             msg = {"role": "assistant", "content": "", "tool_calls": tool_calls}
             return json.dumps(msg)
         # Single tool call
@@ -85,14 +88,16 @@ class _ScriptedLLM:
             msg = {
                 "role": "assistant",
                 "content": "",
-                "tool_calls": [{
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(args),
-                    },
-                }],
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(args),
+                        },
+                    }
+                ],
             }
             return json.dumps(msg)
         # Plain text answer
@@ -110,28 +115,32 @@ def _make_llm_chat_fn(fake_llm):
             parsed.pop("role", None)
             updated = list(messages)
             updated.append(
-                {"role": "assistant",
-                 "content": parsed.get("content") or "", **parsed})
+                {"role": "assistant", "content": parsed.get("content") or "", **parsed}
+            )
             return str(parsed.get("content") or ""), updated
         updated = list(messages)
         updated.append({"role": "assistant", "content": raw})
         return raw, updated
+
     return llm_chat_fn
 
 
 def _run_sync(runner, fake_llm, execute_tool, **kwargs):
-    return asyncio.run(runner.run(
-        messages=[{"role": "user", "content": "go"}],
-        llm_chat_fn=_make_llm_chat_fn(fake_llm),
-        execute_tool_fn=execute_tool,
-        tools=[],  # tools not needed for a scripted LLM
-        **kwargs,
-    ))
+    return asyncio.run(
+        runner.run(
+            messages=[{"role": "user", "content": "go"}],
+            llm_chat_fn=_make_llm_chat_fn(fake_llm),
+            execute_tool_fn=execute_tool,
+            tools=[],  # tools not needed for a scripted LLM
+            **kwargs,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
 # A. Multi-line tool arguments must survive the repair path (agent.py)
 # ---------------------------------------------------------------------------
+
 
 def test_repair_tool_arguments_multiline_string_value():
     """Pretty-printed payload with an unescaped newline INSIDE a string value —
@@ -144,14 +153,17 @@ def test_repair_tool_arguments_multiline_string_value():
 
 
 def test_repair_tool_arguments_valid_json_unchanged():
-    assert agent_module._repair_tool_arguments(
-        '{"a": 1, "b": [2]}') == {"a": 1, "b": [2]}
+    assert agent_module._repair_tool_arguments('{"a": 1, "b": [2]}') == {
+        "a": 1,
+        "b": [2],
+    }
 
 
 def test_repair_tool_arguments_single_line_raw_newline_still_works():
     """The case the old whole-text replace could fix must keep working."""
-    assert agent_module._repair_tool_arguments(
-        '{"cmd": "echo hi\nexit"}') == {"cmd": "echo hi\nexit"}
+    assert agent_module._repair_tool_arguments('{"cmd": "echo hi\nexit"}') == {
+        "cmd": "echo hi\nexit"
+    }
 
 
 def test_repair_tool_arguments_tab_and_cr_inside_string():
@@ -181,6 +193,7 @@ def test_repair_tool_arguments_escaped_quotes_not_misread():
 # B. Mixed duplicate/pending batches keep announcement order (tool_loop.py)
 # ---------------------------------------------------------------------------
 
+
 def test_duplicate_and_pending_batch_keep_announcement_order():
     """When an assistant batch mixes a pending call with a duplicate of the
     previous batch, every tool message must still follow its assistant message
@@ -194,24 +207,27 @@ def test_duplicate_and_pending_batch_keep_announcement_order():
             return "file content for /tmp/x.py"
         return f"search results: {args.get('query')}"
 
-    llm = _ScriptedLLM([
-        [("search", {"query": "alpha"})],  # batch 1
-        # batch 2: read is pending (executes via fan-out), search duplicates
-        # the previous batch (handled during pre-check, never re-executed).
-        [("read", {"path": "/tmp/x.py"}), ("search", {"query": "alpha"})],
-        "done",
-    ])
+    llm = _ScriptedLLM(
+        [
+            [("search", {"query": "alpha"})],  # batch 1
+            # batch 2: read is pending (executes via fan-out), search duplicates
+            # the previous batch (handled during pre-check, never re-executed).
+            [("read", {"path": "/tmp/x.py"}), ("search", {"query": "alpha"})],
+            "done",
+        ]
+    )
     runner = ToolLoopRunner(max_iterations=8, display_mode="quiet")
     final_text, messages = _run_sync(runner, llm, execute)
 
     assert final_text == "done"
     batch2 = [
-        m for m in messages
+        m
+        for m in messages
         if m.get("role") == "assistant" and len(m.get("tool_calls", [])) == 2
     ]
     assert len(batch2) == 1
     announced = [tc["id"] for tc in batch2[0]["tool_calls"]]
-    after = messages[messages.index(batch2[0]) + 1:]
+    after = messages[messages.index(batch2[0]) + 1 :]
     tool_ids = [m.get("tool_call_id") for m in after if m.get("role") == "tool"]
     assert tool_ids[:2] == announced, (
         f"tool messages out of announcement order: {tool_ids} vs {announced}"
@@ -227,14 +243,13 @@ def test_duplicate_and_pending_batch_keep_announcement_order():
 # C. Compaction must not drop legitimate "CONTEXT NOTE:" content (tool_loop.py)
 # ---------------------------------------------------------------------------
 
+
 def test_compact_keeps_legit_context_note_content():
     """A real user prompt that merely STARTS with 'CONTEXT NOTE:' must survive
     in-loop compaction — only tagged agent notes are replaced."""
     legit = {
         "role": "user",
-        "content": (
-            "CONTEXT NOTE: investigate the failing build first, then fix it."
-        ),
+        "content": ("CONTEXT NOTE: investigate the failing build first, then fix it."),
     }
     msgs = [{"role": "system", "content": "sys prompt"}]
     msgs.append(legit)
@@ -282,36 +297,59 @@ def test_sanitize_message_roles_repairs_unanswered_tool_calls():
     msgs = [
         {"role": "system", "content": "s"},
         {"role": "user", "content": "u"},
-        {"role": "assistant", "content": "text survives",
-         "tool_calls": [{"id": "c1", "type": "function",
-                         "function": {"name": "web_search", "arguments": "{}"}},
-                        {"id": "c2", "type": "function",
-                         "function": {"name": "read", "arguments": "{}"}}]},
+        {
+            "role": "assistant",
+            "content": "text survives",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "web_search", "arguments": "{}"},
+                },
+                {
+                    "id": "c2",
+                    "type": "function",
+                    "function": {"name": "read", "arguments": "{}"},
+                },
+            ],
+        },
         {"role": "tool", "tool_call_id": "c1", "content": "ok"},
-        {"role": "assistant", "content": "",
-         "tool_calls": [{"id": "ghost", "type": "function",
-                         "function": {"name": "read", "arguments": "{}"}}]},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "ghost",
+                    "type": "function",
+                    "function": {"name": "read", "arguments": "{}"},
+                }
+            ],
+        },
     ]
     out = sanitize_message_roles(msgs)
     announced = {
         str(tc["id"])
-        for m in out if m.get("role") == "assistant"
+        for m in out
+        if m.get("role") == "assistant"
         for tc in (m.get("tool_calls") or [])
     }
-    answered = {
-        str(m.get("tool_call_id")) for m in out if m.get("role") == "tool"
-    }
+    answered = {str(m.get("tool_call_id")) for m in out if m.get("role") == "tool"}
     assert announced <= answered
     assert announced == {"c1"}
     # Text preserved; the empty orphan assistant is gone.
     assert any(m.get("content") == "text survives" for m in out)
-    assert not any(m.get("role") == "assistant" and not m.get("content")
-                   and not m.get("tool_calls") for m in out)
+    assert not any(
+        m.get("role") == "assistant"
+        and not m.get("content")
+        and not m.get("tool_calls")
+        for m in out
+    )
 
 
 # ---------------------------------------------------------------------------
 # D. Path-miss recovery must not leak listing effects (tool_loop.py)
 # ---------------------------------------------------------------------------
+
 
 class _MemorySink:
     """In-memory TraceSink collecting every emitted event."""
@@ -348,15 +386,18 @@ def test_path_miss_recovery_effects_discarded():
         buf.clear()
         return drained
 
-    llm = _ScriptedLLM([
-        [("read", {"path": "/tmp/missing.txt"})],  # path miss -> hidden listing
-        [("write", {"path": "/tmp/out.txt"})],     # the next real call
-        "done",
-    ])
+    llm = _ScriptedLLM(
+        [
+            [("read", {"path": "/tmp/missing.txt"})],  # path miss -> hidden listing
+            [("write", {"path": "/tmp/out.txt"})],  # the next real call
+            "done",
+        ]
+    )
     sink = _MemorySink()
     runner = ToolLoopRunner(max_iterations=8, display_mode="quiet")
     final_text, _messages = _run_sync(
-        runner, llm, execute, trace=sink, effects_fn=effects_fn)
+        runner, llm, execute, trace=sink, effects_fn=effects_fn
+    )
 
     assert final_text == "done"
     assert listing_dirs, "expected the recovery to list a parent directory"
@@ -376,6 +417,7 @@ def test_path_miss_recovery_effects_discarded():
 # E. Reused runners must not leak run state across run() calls (tool_loop.py)
 # ---------------------------------------------------------------------------
 
+
 def test_runner_state_resets_between_runs():
     """Stats, termination reason and the mutated-file record describe THIS run —
     a second run() on the same runner instance must start from a clean slate."""
@@ -385,14 +427,16 @@ def test_runner_state_resets_between_runs():
 
     runner = ToolLoopRunner(max_iterations=8, display_mode="quiet")
     t1, _m1 = _run_sync(
-        runner, _ScriptedLLM([("read", {"path": "/a.py"}), "done"]), execute)
+        runner, _ScriptedLLM([("read", {"path": "/a.py"}), "done"]), execute
+    )
     assert t1 == "done"
     assert runner.tool_calls_made == 1
     assert runner.termination_reason == "answer"
 
     # Second run on the SAME runner instance: nothing may accumulate.
     llm2 = _ScriptedLLM(
-        [("read", {"path": "/b.py"}), ("search", {"query": "q"}), "done"])
+        [("read", {"path": "/b.py"}), ("search", {"query": "q"}), "done"]
+    )
     t2, _m2 = _run_sync(runner, llm2, execute)
     assert t2 == "done"
     # Without the reset this would be 3 (1 from run 1 + 2 from run 2).

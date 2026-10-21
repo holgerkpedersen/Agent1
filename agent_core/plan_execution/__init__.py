@@ -5,6 +5,7 @@ a planner produces a ``.docs/<ts>/plan_proposed.md`` (persisted by
 ``Agent._persist_plan_answer``), and ``plan exec`` turns its ``## Tasks`` block
 into dependency-aware work dispatched to role-gated, isolated subagents.
 """
+
 from __future__ import annotations
 
 from .parser import PlanTask, parse_plan_tasks

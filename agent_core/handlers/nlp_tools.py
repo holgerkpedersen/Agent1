@@ -10,6 +10,7 @@ are resolved lazily from the ``agent`` module; anything missing raises
 ``NotImplementedError`` and is replaced with a proper import once the full
 chain of extractions is done.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -24,7 +25,9 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from agent_core.shell_utils import run_subprocess_captured as _shell_run_subprocess_captured
+from agent_core.shell_utils import (
+    run_subprocess_captured as _shell_run_subprocess_captured,
+)
 from agent_core.pytest_cmd_policy import pytest_flag_conflict as _pytest_flag_conflict
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -37,6 +40,7 @@ NlpToolHandler = Callable[..., Any]
 
 
 # ── Stub layer ──────────────────────────────────────────────────────────────
+
 
 def _stub_missing(name: str) -> NotImplementedError:
     """Build the error raised by an unresolved cross-reference stub."""
@@ -68,6 +72,7 @@ def _agent_module_attr(name: str) -> Any:
 
 
 # ── agent.py module-level constants (resolved lazily) ───────────────────────
+
 
 def _const(name: str) -> Any:
     return _agent_module_attr(name)
@@ -110,6 +115,7 @@ def DEFAULT_PAGE_LINES() -> Any:
 
 
 # ── agent.py module-level functions (resolved lazily) ───────────────────────
+
 
 def _truncate_output(text: str, limit: int = 5000) -> str:
     return _agent_module_attr("_truncate_output")(text, max_lines=limit)
@@ -169,9 +175,7 @@ def _run_subprocess_captured(
     Ns`` or ``<label> error: ...`` (the strings
     tests/test_agent_dry_refactor.py asserts on).
     """
-    code, output, error = _shell_run_subprocess_captured(
-        cmd, cwd=cwd, timeout=timeout
-    )
+    code, output, error = _shell_run_subprocess_captured(cmd, cwd=cwd, timeout=timeout)
     if code == -1:
         if error and error.lower().startswith("timed out"):
             return f"{label} timed out after {timeout}s", None
@@ -234,6 +238,7 @@ def record_full_run_seconds(seconds: float, completed: bool = True) -> None:
 
 # ── Extracted handlers ──────────────────────────────────────────────────────
 
+
 async def _nlp_delegate(agent: "Agent", args: dict[str, Any]) -> str:
     """Run one task in a role subagent and return its final answer.
 
@@ -255,10 +260,7 @@ async def _nlp_delegate(agent: "Agent", args: dict[str, Any]) -> str:
 
     spec = get_role(role)
     if spec is None:
-        return (
-            f"Error: unknown role '{role}'. "
-            f"Available: {', '.join(role_names())}"
-        )
+        return f"Error: unknown role '{role}'. Available: {', '.join(role_names())}"
 
     if len(agent._active_subagents) >= _MAX_ACTIVE_SUBAGENTS():
         return (
@@ -278,7 +280,8 @@ async def _nlp_delegate(agent: "Agent", args: dict[str, Any]) -> str:
     agent._delegating = True
     try:
         result = await asyncio.wait_for(
-            sub.respond(task), timeout=_DELEGATE_TIMEOUT_S(),
+            sub.respond(task),
+            timeout=_DELEGATE_TIMEOUT_S(),
         )
     except asyncio.TimeoutError:
         result = (
@@ -296,8 +299,7 @@ async def _nlp_delegate(agent: "Agent", args: dict[str, Any]) -> str:
     summary = sub.get_context_summary(max_messages=3)
     reason = getattr(sub, "last_termination_reason", None)
     reason_note = (
-        "" if reason == "answer"
-        else f", stopped early: {reason or 'unknown'}"
+        "" if reason == "answer" else f", stopped early: {reason or 'unknown'}"
     )
     mode_note = ""
     if is_plan_mode(agent.mode):
@@ -345,7 +347,7 @@ async def _nlp_delegate_batch(agent: "Agent", args: dict[str, Any]) -> str:
         if r not in seen:
             seen.add(r)
             unique_roles.append(r)
-    unique_roles = unique_roles[:_MAX_ACTIVE_SUBAGENTS()]
+    unique_roles = unique_roles[: _MAX_ACTIVE_SUBAGENTS()]
     dropped = len(roles) - len(unique_roles)
 
     agent._delegate_counter += 1
@@ -363,10 +365,11 @@ async def _nlp_delegate_batch(agent: "Agent", args: dict[str, Any]) -> str:
         agent._active_subagents.add(name)
         try:
             res = await asyncio.wait_for(
-                sub.respond(task), timeout=_DELEGATE_TIMEOUT_S(),
+                sub.respond(task),
+                timeout=_DELEGATE_TIMEOUT_S(),
             )
         except asyncio.TimeoutError:
-            res = (f"timed out after {_DELEGATE_TIMEOUT_S():.0f}s — no result.")
+            res = f"timed out after {_DELEGATE_TIMEOUT_S():.0f}s — no result."
         except Exception as exc:
             logger.exception("Batch subagent %s failed", name)
             res = f"failed: {exc}"
@@ -374,17 +377,13 @@ async def _nlp_delegate_batch(agent: "Agent", args: dict[str, Any]) -> str:
             agent._delegating = prev
             agent._active_subagents.discard(name)
         reason = getattr(sub, "last_termination_reason", None)
-        reason_note = (
-            "" if reason == "answer" else f" [stopped early: {reason}]"
-        )
+        reason_note = "" if reason == "answer" else f" [stopped early: {reason}]"
         return role_name, (
             f"### {role_name}{reason_note}\n"
             f"{res}\n\n{sub.get_context_summary(max_messages=2)}"
         )
 
-    results = await asyncio.gather(
-        *(run_one(r, i) for i, r in enumerate(unique_roles))
-    )
+    results = await asyncio.gather(*(run_one(r, i) for i, r in enumerate(unique_roles)))
     header = (
         f"[delegate_batch:{batch_id}] {len(unique_roles)} role(s) on: "
         f"{task[:120]}{'...' if len(task) > 120 else ''}"
@@ -396,7 +395,10 @@ async def _nlp_delegate_batch(agent: "Agent", args: dict[str, Any]) -> str:
 
 
 async def _run_command_quietly(
-    agent: "Agent", command: Any, args: list[str], done_msg: str,
+    agent: "Agent",
+    command: Any,
+    args: list[str],
+    done_msg: str,
 ) -> str:
     """Run a registered command with stdout captured and return its output.
 
@@ -416,9 +418,7 @@ def _effective_ws_dir(agent: "Agent") -> str:
     a bad override (e.g. a Git-Bash /c/... path) falls back to the real
     workspace because subprocess cwd must be an existing directory.
     """
-    ws_dir = os.path.abspath(
-        to_windows_path(agent._nlp_workspace or agent.workspace)
-    )
+    ws_dir = os.path.abspath(to_windows_path(agent._nlp_workspace or agent.workspace))
     if not os.path.isdir(ws_dir):
         ws_dir = agent.workspace
     return ws_dir
@@ -427,6 +427,7 @@ def _effective_ws_dir(agent: "Agent") -> str:
 async def _nlp_create_subagent(agent: "Agent", args: dict[str, Any]) -> str:
     """Create a persistent subagent for the LLM to reuse."""
     from agent_core.subagent_roles import get_role, role_names
+
     name = str(args.get("name", "")).strip().strip('"').strip("'")
     role = str(args.get("role", "")).strip().strip('"').strip("'")
     workspace = args.get("workspace")
@@ -434,10 +435,7 @@ async def _nlp_create_subagent(agent: "Agent", args: dict[str, Any]) -> str:
         return "Error: create_subagent requires 'name' and 'role'."
     spec = get_role(role)
     if spec is None:
-        return (
-            f"Error: unknown role '{role}'. "
-            f"Available: {', '.join(role_names())}"
-        )
+        return f"Error: unknown role '{role}'. Available: {', '.join(role_names())}"
     # ``AgentCore.__init__`` owns ``_subagents`` (declared there, not
     # lazy-bootstrapped here: PEP 526 forbids annotated assignment to a
     # non-self target — ``agent._subagents: dict[...] = {}`` was a mypy [misc]
@@ -449,10 +447,7 @@ async def _nlp_create_subagent(agent: "Agent", args: dict[str, Any]) -> str:
         )
     sub = agent.spawn_subagent(name, workspace=workspace, role=role)
     agent._subagents[name] = sub
-    return (
-        f"Created subagent '{name}' with role '{spec.name}' "
-        f"({spec.title})."
-    )
+    return f"Created subagent '{name}' with role '{spec.name}' ({spec.title})."
 
 
 async def _nlp_run_subagent_task(agent: "Agent", args: dict[str, Any]) -> str:
@@ -465,8 +460,7 @@ async def _nlp_run_subagent_task(agent: "Agent", args: dict[str, Any]) -> str:
     sub = subs.get(name)
     if sub is None:
         return (
-            f"Error: subagent '{name}' not found. "
-            "Create it with create_subagent first."
+            f"Error: subagent '{name}' not found. Create it with create_subagent first."
         )
     result = await sub.respond(task)
     summary = sub.get_context_summary(max_messages=3)
@@ -481,9 +475,7 @@ def _nlp_tool_handlers(agent: "Agent") -> dict[str, NlpToolHandler]:
     so it cannot go stale after ``_nlp_workspace`` changes, and no caller
     mutates the returned mapping.
     """
-    cache: dict[str, NlpToolHandler] | None = getattr(
-        agent, "_handlers_cache", None
-    )
+    cache: dict[str, NlpToolHandler] | None = getattr(agent, "_handlers_cache", None)
     if cache is None:
         cache = {
             "analyze": lambda a: _nlp_analyze(agent, a),
@@ -528,6 +520,7 @@ def _nlp_tool_handlers(agent: "Agent") -> dict[str, NlpToolHandler]:
 async def _nlp_mcp_tools(agent: "Agent", args: dict[str, Any]) -> str:
     """List MCP tools the user exposed to the LLM (opt-in per server)."""
     from agent_core.mcp.manager import get_manager
+
     catalog = get_manager().llm_catalog()
     if not catalog:
         return (
@@ -552,6 +545,7 @@ async def _nlp_mcp_call(agent: "Agent", args: dict[str, Any]) -> str:
     """
     from agent_core.mcp.config import McpConfigError
     from agent_core.mcp.manager import McpManagerError, get_manager
+
     server = str(args.get("server", "")).strip().strip('"').strip("'")
     tool = str(args.get("tool", "")).strip().strip('"').strip("'")
     if not server or not tool:
@@ -611,7 +605,10 @@ async def _nlp_references(agent: "Agent", args: dict[str, Any]) -> str:
         max_results = 60
     _agent_attr(agent, "_note_effect")(agent.workspace)
     return await asyncio.to_thread(
-        collect_references, symbol, _effective_ws_dir(agent), max_results,
+        collect_references,
+        symbol,
+        _effective_ws_dir(agent),
+        max_results,
     )
 
 
@@ -661,7 +658,10 @@ async def _nlp_jev_decide(agent: "Agent", args: dict[str, Any]) -> str:
     threshold = min(1.0, max(0.0, threshold))
     try:
         question = JevQuestion(
-            kind=kind, text=text, options=options, rubric=rubric,
+            kind=kind,
+            text=text,
+            options=options,
+            rubric=rubric,
         )
     except ValueError as exc:
         return f"Error: {exc}"
@@ -755,9 +755,7 @@ async def _nlp_speculate(agent: "Agent", args: dict[str, Any]) -> str:
 async def _nlp_search(agent: "Agent", args: dict[str, Any]) -> str:
     """Search workspace files for text (first 30 matches)."""
     query = str(args.get("query", ""))
-    search_path = _agent_attr(agent, "_resolve_nlp_path")(
-        str(args.get("path") or ".")
-    )
+    search_path = _agent_attr(agent, "_resolve_nlp_path")(str(args.get("path") or "."))
     try:
         found = await agent.searcher.search(query, search_path)
     except Exception as e:
@@ -810,7 +808,7 @@ async def _nlp_read_many(
             f"\n\n[read capped at {_MAX_READ_FILES()} files per call; "
             f"{len(cleaned) - _MAX_READ_FILES()} skipped]"
         )
-        cleaned = cleaned[:_MAX_READ_FILES()]
+        cleaned = cleaned[: _MAX_READ_FILES()]
     blocks: list[str] = []
     for raw in cleaned:
         path = _agent_attr(agent, "_resolve_nlp_path")(raw)
@@ -845,9 +843,7 @@ async def _read_page(
     # context tokens).  An explicit page is ALWAYS honoured — the summary
     # used to be returned for every offset too, so paging a large file
     # yielded the same definitions each time and the model looped forever.
-    page_requested = (
-        args.get("offset") is not None or args.get("limit") is not None
-    )
+    page_requested = args.get("offset") is not None or args.get("limit") is not None
     if (
         not page_requested
         and _CONTEXT_AST_THRESHOLD_KB() > 0
@@ -872,13 +868,12 @@ async def _read_page(
     lines = content.splitlines()
     if offset > len(lines):
         return f"Offset {offset} is beyond the end of {path} ({len(lines)} lines)."
-    chunk_lines = lines[offset - 1: offset - 1 + limit]
+    chunk_lines = lines[offset - 1 : offset - 1 + limit]
     chunk = "\n".join(chunk_lines)
     result = chunk
     if offset - 1 + limit < len(lines):
         result = (
-            f"{chunk}\n[truncated — use read with offset="
-            f"{offset + limit} to continue]"
+            f"{chunk}\n[truncated — use read with offset={offset + limit} to continue]"
         )
     if agent._read_streak >= _MAX_CONSECUTIVE_READS():
         result += _READ_LOOP_NOTE().format(n=agent._read_streak)
@@ -902,12 +897,15 @@ async def _nlp_read_skill(agent: "Agent", args: dict[str, Any]) -> str:
         return "Skill error: offset/limit must be integers."
     try:
         page = read_skill(
-            _effective_ws_dir(agent), name, offset=offset, limit=limit,
+            _effective_ws_dir(agent),
+            name,
+            offset=offset,
+            limit=limit,
         )
     except SkillError() as exc:
         return f"Skill error: {exc}"
     except Exception:
-        logger.exception('read_skill failed:\n')
+        logger.exception("read_skill failed:\n")
         return f"Skill error: could not load skill {name!r}."
     _agent_attr(agent, "_note_effect")(str(page.skill.path))
     return format_skill_page(page)
@@ -941,13 +939,17 @@ async def _nlp_fix(agent: "Agent", args: dict[str, Any]) -> str:
 
     resolved_args = [str(a) for a in args.get("args", [])]
     target = (
-        resolved_args[0] if resolved_args and not resolved_args[0].startswith("--")
+        resolved_args[0]
+        if resolved_args and not resolved_args[0].startswith("--")
         else None
     )
     if target:
         resolved_args[0] = _agent_attr(agent, "_resolve_nlp_path")(target)
     output = await _run_command_quietly(
-        agent, FixCommand(), resolved_args, "Fix executed. Check the file for changes.",
+        agent,
+        FixCommand(),
+        resolved_args,
+        "Fix executed. Check the file for changes.",
     )
     if resolved_args and not resolved_args[0].startswith("--"):
         _agent_attr(agent, "_note_effect")(resolved_args[0])
@@ -960,7 +962,9 @@ async def _nlp_write(agent: "Agent", args: dict[str, Any]) -> str:
     content = str(args.get("content", ""))
     try:
         return await _agent_attr(agent, "_save_verify_note")(
-            path, content, f"Written {path} ({len(content)} bytes)",
+            path,
+            content,
+            f"Written {path} ({len(content)} bytes)",
         )
     except Exception as e:
         return f"Write error: {e}"
@@ -1040,7 +1044,8 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
                 # that lower bound so the next budget grows past the point
                 # that killed this one, instead of losing the same run again.
                 record_full_run_seconds(
-                    time.monotonic() - started, completed=False,
+                    time.monotonic() - started,
+                    completed=False,
                 )
             hint = (
                 f" Measured full-suite budget: "
@@ -1065,9 +1070,7 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
     output, marker_code = _parse_ps_exit_marker(output)
     if marker_code is not None:
         exit_code = marker_code
-    return _truncate_output(
-        _shape_run_stderr(err, output, exit_code)
-    )
+    return _truncate_output(_shape_run_stderr(err, output, exit_code))
 
 
 async def _nlp_git(agent: "Agent", args: dict[str, Any]) -> str:
@@ -1092,10 +1095,7 @@ async def _nlp_git(agent: "Agent", args: dict[str, Any]) -> str:
     }
     base = git_cmds.get(subcmd)
     if not base:
-        return (
-            f"Unknown git command: {subcmd}. "
-            f"Available: {', '.join(git_cmds.keys())}"
-        )
+        return f"Unknown git command: {subcmd}. Available: {', '.join(git_cmds.keys())}"
     try:
         extra = shlex.split(git_args)
     except ValueError as e:
@@ -1104,7 +1104,7 @@ async def _nlp_git(agent: "Agent", args: dict[str, Any]) -> str:
     # error that wastes a call, so answer with the correct form instead.
     if subcmd == "add" and (not extra or extra == ["-"]):
         return (
-            "Git error: `git add` needs paths. Use args=\"-A\" to stage all "
+            'Git error: `git add` needs paths. Use args="-A" to stage all '
             "changes, or args=\"<path>\" for specific files (a bare '-' is "
             "not a valid pathspec)."
         )
@@ -1132,20 +1132,20 @@ async def _nlp_git(agent: "Agent", args: dict[str, Any]) -> str:
     if subcmd == "push":
         staged, _staged_err = _run_subprocess_captured(
             ["git", "diff", "--cached", "--name-only"],
-            _effective_ws_dir(agent), 30, "Git",
+            _effective_ws_dir(agent),
+            30,
+            "Git",
         )
         staged_files = [
             ln.strip()
             for ln in staged.splitlines()
-            if ln.strip() and ln.strip() != "(no output)"
+            if ln.strip()
+            and ln.strip() != "(no output)"
             and not ln.strip().startswith("[STDERR]")
         ]
         if staged_files:
             listing = ", ".join(staged_files[:5])
-            more = (
-                "" if len(staged_files) <= 5
-                else f" (+{len(staged_files) - 5} more)"
-            )
+            more = "" if len(staged_files) <= 5 else f" (+{len(staged_files) - 5} more)"
             return (
                 f"Git guidance: {len(staged_files)} staged change(s) are "
                 f"NOT committed yet ({listing}{more}) — `git push` would "
@@ -1155,7 +1155,10 @@ async def _nlp_git(agent: "Agent", args: dict[str, Any]) -> str:
     # Arg-list execution (no shell): shell metacharacters in
     # model-supplied args become literal git arguments.
     output, error = _run_subprocess_captured(
-        ["git"] + base + extra, _effective_ws_dir(agent), 30, "Git",
+        ["git"] + base + extra,
+        _effective_ws_dir(agent),
+        30,
+        "Git",
     )
     return error or output
 
@@ -1173,7 +1176,9 @@ async def _nlp_merge(agent: "Agent", args: dict[str, Any]) -> str:
     from agent_core.tools import git_merge
 
     return await asyncio.to_thread(
-        git_merge.run_merge, _effective_ws_dir(agent), args,
+        git_merge.run_merge,
+        _effective_ws_dir(agent),
+        args,
     )
 
 
@@ -1189,7 +1194,10 @@ async def _nlp_diff(agent: "Agent", args: dict[str, Any]) -> str:
     else:
         cmd += [file1]
     output, error = _run_subprocess_captured(
-        cmd, _effective_ws_dir(agent), 30, "Diff",
+        cmd,
+        _effective_ws_dir(agent),
+        30,
+        "Diff",
     )
     if error:
         return error
@@ -1227,7 +1235,9 @@ async def _nlp_edit(agent: "Agent", args: dict[str, Any]) -> str:
     if encoding == "utf-8":
         try:
             return await _agent_attr(agent, "_save_verify_note")(
-                path, new_content, f"Edited {path}",
+                path,
+                new_content,
+                f"Edited {path}",
             )
         except Exception as e:
             return f"Edit error: {e}"
@@ -1239,8 +1249,7 @@ async def _nlp_edit(agent: "Agent", args: dict[str, Any]) -> str:
     except OSError as e:
         return f"Edit error: {e}"
     verify = (
-        await _agent_attr(agent, "_verify_file")(path)
-        if path.endswith(".py") else ""
+        await _agent_attr(agent, "_verify_file")(path) if path.endswith(".py") else ""
     )
     _agent_attr(agent, "_note_effect")(path)
     return f"Edited {path} (kept {encoding})\n{verify}".strip()
@@ -1253,9 +1262,7 @@ async def _nlp_tests(agent: "Agent", args: dict[str, Any]) -> str:
     #: The full suite takes ~15 minutes here (measured 861.5s), not the
     #: 2.5 minutes this used to assume - 300s killed whole-suite runs.
     timeout = 300
-    is_full = (
-        os.path.abspath(test_path) == os.path.abspath(_effective_ws_dir(agent))
-    )
+    is_full = os.path.abspath(test_path) == os.path.abspath(_effective_ws_dir(agent))
     if is_full:
         # Whole-workspace run: same "earned and rare" gate as the run tool -
         # no real change means a full pass verifies nothing.  Check BEFORE
@@ -1275,7 +1282,10 @@ async def _nlp_tests(agent: "Agent", args: dict[str, Any]) -> str:
         cmd = [sys.executable, "-m", "unittest", test_path, "-v"]
     started = time.monotonic()
     output, error = _run_subprocess_captured(
-        cmd, _effective_ws_dir(agent), timeout, "Tests",
+        cmd,
+        _effective_ws_dir(agent),
+        timeout,
+        "Tests",
     )
     if is_full and error is None:
         timed_out = "timed out after" in (output or "")
@@ -1285,7 +1295,8 @@ async def _nlp_tests(agent: "Agent", args: dict[str, Any]) -> str:
             agent._full_run_gate.record_full_run()
         # A killed run still proves it lasted AT LEAST this long.
         record_full_run_seconds(
-            time.monotonic() - started, completed=not timed_out,
+            time.monotonic() - started,
+            completed=not timed_out,
         )
     return error or output
 
@@ -1302,6 +1313,7 @@ async def _nlp_analyze(agent: "Agent", args: dict[str, Any]) -> str:
         _agent_attr(agent, "_note_effect")(analyze_args[0])
     try:
         from agent_core.commands.analyze_cmd import AnalyzeCommand
+
         return await _run_command_quietly(
             agent, AnalyzeCommand(), analyze_args, "Analysis complete."
         )
@@ -1321,8 +1333,8 @@ async def _nlp_web_search(agent: "Agent", args: dict[str, Any]) -> str:
             sanitize_query,
             search_ddg,
         )
-        max_results = max(
-            1, min(int(args.get("max_results") or 5), MAX_RESULTS_LIMIT))
+
+        max_results = max(1, min(int(args.get("max_results") or 5), MAX_RESULTS_LIMIT))
         clean_query = sanitize_query(query)
         hits = search_ddg(clean_query, max_results=max_results)
         output = format_results(clean_query, hits)
@@ -1335,6 +1347,7 @@ async def _nlp_get_current_datetime(agent: "Agent", args: dict[str, Any]) -> str
     """Return the current date/time, optionally in a given timezone."""
     from datetime import datetime
     import zoneinfo
+
     tz_name = args.get("timezone")
     if tz_name:
         try:
@@ -1373,8 +1386,14 @@ async def _nlp_hue_control(agent: "Agent", args: dict[str, Any]) -> str:
             lines = []
             for ln in lights:
                 state = "ON" if ln.get("on") else "OFF"
-                bri = f"{ln.get('brightness'):.1f}%" if ln.get("brightness") is not None else "?"
-                lines.append(f"  [{ln['id']}] {ln['name']} -- {state}, brightness={bri}")
+                bri = (
+                    f"{ln.get('brightness'):.1f}%"
+                    if ln.get("brightness") is not None
+                    else "?"
+                )
+                lines.append(
+                    f"  [{ln['id']}] {ln['name']} -- {state}, brightness={bri}"
+                )
             return f"Found {len(lights)} light(s):\n" + "\n".join(lines)
 
         elif action == "get_light":
@@ -1449,18 +1468,23 @@ async def _nlp_hue_control(agent: "Agent", args: dict[str, Any]) -> str:
             name = args.get("name", "")
             brightness_val = float(args.get("brightness", 100.0))
 
-            await bridge.set_light_color_named(light_id, name, brightness=brightness_val)
+            await bridge.set_light_color_named(
+                light_id, name, brightness=brightness_val
+            )
             return f"Light {light_id} color set to '{name}' at {brightness_val}%."
 
         else:
-            return f"Error: unknown action '{action}'. Use list_lights, get_light, " \
-                   f"set_light (V1), or color_capabilities/set_color/set_color_named (V2)."
+            return (
+                f"Error: unknown action '{action}'. Use list_lights, get_light, "
+                f"set_light (V1), or color_capabilities/set_color/set_color_named (V2)."
+            )
 
     except HueBridgeError as exc:
         return f"Hue Bridge error: {exc}"
 
 
 # ── Plan workflow NLP tools ─────────────────────────────────────────────────
+
 
 async def _get_plan_state(agent: "Agent") -> dict[str, Any]:
     """Detect current plan status + tasks from the filesystem."""
@@ -1587,16 +1611,19 @@ async def _nlp_plan_start(agent: "Agent", args: dict[str, Any]) -> str:
     # silently block the workflow. See consensus_gate.py.
     consensus_note = ""
     from agent_core.plan_execution.consensus_gate import gate_enabled as _gate_on
+
     if _gate_on(agent.workspace):
         from agent_core.plan_execution.consensus_gate import review_plan
+
         outcome = await review_plan(agent, state["plan_text"])
         note_text = outcome.consensus or outcome.skipped_reason
         consensus_note = f"\nConsensus gate: {note_text}" if note_text else ""
         if not outcome.approved:
             return (
-                "Plan blocked by the consensus gate." + consensus_note
+                "Plan blocked by the consensus gate."
+                + consensus_note
                 + "\nThe plan stays proposed. Address the reviewers'"
-                  " concerns and propose again."
+                " concerns and propose again."
             )
 
     dry_run = args.get("dry_run", False)
@@ -1627,9 +1654,7 @@ async def _nlp_plan_start(agent: "Agent", args: dict[str, Any]) -> str:
             failed.append(t["task_id"])
 
     if failed:
-        report_lines.append(
-            f"\n{len(failed)} task(s) failed: {', '.join(failed)}"
-        )
+        report_lines.append(f"\n{len(failed)} task(s) failed: {', '.join(failed)}")
         report_lines.append(
             "Use plan_finish with success=false to mark the plan as failed."
         )
@@ -1651,10 +1676,7 @@ async def _nlp_plan_step(agent: "Agent", args: dict[str, Any]) -> str:
     if state.get("error"):
         return f"Error: {state['error']}"
     if state["status"] == "proposed":
-        return (
-            "Error: plan not yet started. "
-            "Use plan_start first."
-        )
+        return "Error: plan not yet started. Use plan_start first."
     if state["status"] != "executing":
         return f"Error: plan is '{state['status']}', cannot step."
 
@@ -1696,8 +1718,7 @@ async def _nlp_plan_step(agent: "Agent", args: dict[str, Any]) -> str:
     unmet = [d for d in next_task.depends_on if d not in completed_ids]
     if unmet:
         return (
-            f"Error: task '{next_task.id}' has unmet dependencies: "
-            f"{', '.join(unmet)}"
+            f"Error: task '{next_task.id}' has unmet dependencies: {', '.join(unmet)}"
         )
 
     # Collect upstream dependency results so the subagent can use them.
@@ -1706,36 +1727,29 @@ async def _nlp_plan_step(agent: "Agent", args: dict[str, Any]) -> str:
         dep_path = Path(state["plan_dir"]) / f"dep_{dep_id}_result.json"
         if dep_path.exists():
             try:
-                dep_results[dep_id] = json.loads(
-                    dep_path.read_text(encoding="utf-8")
-                )
+                dep_results[dep_id] = json.loads(dep_path.read_text(encoding="utf-8"))
             except Exception:
                 pass
 
-    sub = agent.spawn_subagent(
-        name=f"exec-{next_task.id}", role=next_task.role
-    )
+    sub = agent.spawn_subagent(name=f"exec-{next_task.id}", role=next_task.role)
     desc = next_task.description
     if dep_results:
         parts = []
         for dep_id, res in dep_results.items():
             summary = (
-                res.get("summary") or res.get("result") or ""
-            ) if isinstance(res, dict) else str(res)
+                (res.get("summary") or res.get("result") or "")
+                if isinstance(res, dict)
+                else str(res)
+            )
             parts.append(f"- {dep_id}: {summary}")
         desc += "\n\nUpstream results from dependencies:\n" + "\n".join(parts)
     result = await sub.respond(desc)
 
     # Determine whether the subagent actually succeeded.
     _TURN_CAP_SENTINEL = "turn cap reached"
-    task_failed = (
-        _TURN_CAP_SENTINEL in result
-        or not result.strip()
-    )
+    task_failed = _TURN_CAP_SENTINEL in result or not result.strip()
     status_label = "failed" if task_failed else "completed"
-    report_entry = (
-        f"- [{next_task.id}] {status_label} (role: {next_task.role})"
-    )
+    report_entry = f"- [{next_task.id}] {status_label} (role: {next_task.role})"
     try:
         with open(report_path, "a", encoding="utf-8") as f:
             f.write(report_entry + "\n")
@@ -1743,8 +1757,7 @@ async def _nlp_plan_step(agent: "Agent", args: dict[str, Any]) -> str:
         pass
 
     remaining = [
-        tid for tid in order
-        if tid not in completed_ids and tid != next_task.id
+        tid for tid in order if tid not in completed_ids and tid != next_task.id
     ]
 
     preview = result[:200] + ("..." if len(result) > 200 else "")
@@ -1767,15 +1780,13 @@ async def _nlp_plan_finish(agent: "Agent", args: dict[str, Any]) -> str:
     if state.get("error"):
         return f"Error: {state['error']}"
     if state["status"] != "executing":
-        return (
-            f"Error: plan is '{state['status']}', "
-            f"can only finish an executing plan."
-        )
+        return f"Error: plan is '{state['status']}', can only finish an executing plan."
 
     success = args.get("success", True)
     reason = args.get("reason", "")
     from pathlib import Path
     from agent_core.commands.plan_lifecycle import PlanLifecycleManager
+
     plan_dir = Path(state["plan_dir"])
     lifecycle = PlanLifecycleManager(plan_dir, Path(agent.workspace))
 

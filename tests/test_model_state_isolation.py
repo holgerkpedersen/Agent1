@@ -42,7 +42,9 @@ def test_failover_persists_only_in_the_sandbox(tmp_path, monkeypatch):
     before = real_model.read_text(encoding="utf-8") if real_model.is_file() else None
 
     monkeypatch.setattr(
-        constants, "MODEL_JSON_PATH", str(tmp_path / "model.json"),
+        constants,
+        "MODEL_JSON_PATH",
+        str(tmp_path / "model.json"),
     )
     monkeypatch.chdir(tmp_path)  # persist_model_choice writes .env in cwd
 

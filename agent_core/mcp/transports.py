@@ -10,6 +10,7 @@ Safety contract shared by both transports:
 * responses are matched to requests by id; server-pushed notifications are
   consumed but never crash the reader.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,8 +46,9 @@ def clamp_timeout(timeout_s: float) -> float:
 class BaseTransport:
     """Interface both transports implement."""
 
-    def request(self, method: str, params: dict[str, Any] | None,
-                timeout_s: float) -> Any:
+    def request(
+        self, method: str, params: dict[str, Any] | None, timeout_s: float
+    ) -> Any:
         raise NotImplementedError
 
     def notify(self, method: str) -> None:
@@ -68,8 +70,12 @@ class StdioTransport(BaseTransport):
     in-flight request per server keeps ordering and back-pressure simple).
     """
 
-    def __init__(self, command: list[str], env: dict[str, str] | None = None,
-                 cwd: str | None = None) -> None:
+    def __init__(
+        self,
+        command: list[str],
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> None:
         self._command = list(command)
         self._extra_env = dict(env or {})
         self._cwd = cwd
@@ -96,13 +102,13 @@ class StdioTransport(BaseTransport):
                 creationflags=_CREATE_NO_WINDOW,
             )
         except OSError as exc:
-            raise TransportError(
-                f"cannot spawn {self._command[:1]}: {exc}"
-            ) from exc
+            raise TransportError(f"cannot spawn {self._command[:1]}: {exc}") from exc
         assert self._proc.stdout is not None
         threading.Thread(
-            target=self._reader, args=(self._proc.stdout,),
-            name="mcp-stdio-reader", daemon=True,
+            target=self._reader,
+            args=(self._proc.stdout,),
+            name="mcp-stdio-reader",
+            daemon=True,
         ).start()
 
     def _reader(self, stdout: Any) -> None:
@@ -130,9 +136,7 @@ class StdioTransport(BaseTransport):
         note = jsonrpc.make_request(method)
         try:
             with self._send_lock:
-                self._proc.stdin.write(
-                    json.dumps(note, separators=(",", ":")) + "\n"
-                )
+                self._proc.stdin.write(json.dumps(note, separators=(",", ":")) + "\n")
                 self._proc.stdin.flush()
         except (OSError, ValueError):
             pass
@@ -157,8 +161,9 @@ class StdioTransport(BaseTransport):
 
     # -- protocol ----------------------------------------------------------
 
-    def request(self, method: str, params: dict[str, Any] | None,
-                timeout_s: float) -> Any:
+    def request(
+        self, method: str, params: dict[str, Any] | None, timeout_s: float
+    ) -> Any:
         timeout = clamp_timeout(timeout_s)
         with self._request_lock:
             self.start()
@@ -203,16 +208,22 @@ class HttpTransport(BaseTransport):
         if not url.startswith(("http://", "https://")):
             raise TransportError(f"unsupported MCP URL scheme: {url!r}")
         self._url = url
-        self._headers = {"Accept": "application/json, text/event-stream",
-                         **(headers or {})}
+        self._headers = {
+            "Accept": "application/json, text/event-stream",
+            **(headers or {}),
+        }
 
-    def request(self, method: str, params: dict[str, Any] | None,
-                timeout_s: float) -> Any:
+    def request(
+        self, method: str, params: dict[str, Any] | None, timeout_s: float
+    ) -> Any:
         timeout = clamp_timeout(timeout_s)
         req = jsonrpc.make_request(method, params)
         try:
             resp = httpx.post(
-                self._url, json=req, headers=self._headers, timeout=timeout,
+                self._url,
+                json=req,
+                headers=self._headers,
+                timeout=timeout,
             )
         except httpx.HTTPError as exc:
             raise TransportError(f"MCP HTTP call failed: {exc}") from exc
@@ -231,8 +242,12 @@ class HttpTransport(BaseTransport):
     def notify(self, method: str) -> None:
         """POST the notification and discard whatever comes back."""
         try:
-            httpx.post(self._url, json=jsonrpc.make_request(method),
-                       headers=self._headers, timeout=5.0)
+            httpx.post(
+                self._url,
+                json=jsonrpc.make_request(method),
+                headers=self._headers,
+                timeout=5.0,
+            )
         except httpx.HTTPError:
             pass
 
@@ -246,7 +261,7 @@ def _response_in_sse(body: str, req_id: Any) -> dict[str, Any]:
         for line in chunk.splitlines():
             if not line.startswith("data:"):
                 continue
-            data = line[len("data:"):].strip()
+            data = line[len("data:") :].strip()
             if not data:
                 continue
             msg = jsonrpc.parse_message(data)

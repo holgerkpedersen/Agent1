@@ -28,6 +28,7 @@ The command is READ-ONLY: ``--file`` only reads; no tool can mutate anything.
 REPL convention: ``shlex.split(posix=False)`` keeps literal quotes on quoted
 values, stripped here with ``.strip('"')`` (same as ``speculate``/``multillm``).
 """
+
 from __future__ import annotations
 
 import json
@@ -42,8 +43,14 @@ if TYPE_CHECKING:
 _KINDS = ("yesno", "choice", "score")
 _MECHANISMS = ("auto", "vote", "logprobs")
 _VALUE_FLAGS = {
-    "--options", "--state", "--file", "--rubric", "--samples",
-    "--threshold", "--mechanism", "--model",
+    "--options",
+    "--state",
+    "--file",
+    "--rubric",
+    "--samples",
+    "--threshold",
+    "--mechanism",
+    "--model",
 }
 
 
@@ -59,8 +66,8 @@ class JevCommand(Command):
         return (
             'jev yesno "<statement>" | jev choice "A|B|C" "<q>" | '
             'jev score --rubric "<rubric>" "<subject>" | jev stats '
-            '[--last N] [--json] | jev label <id> correct|incorrect '
-            "[--note \"...\"] [--state \"<text>\" | --file <path>] "
+            "[--last N] [--json] | jev label <id> correct|incorrect "
+            '[--note "..."] [--state "<text>" | --file <path>] '
             "[--samples N] [--threshold X] [--mechanism auto|vote|logprobs] "
             "[--model m] [--json] - typed probabilistic decision from the "
             "dedicated small Jev model; 'jev stats' reports decision counts, "
@@ -106,9 +113,7 @@ class JevCommand(Command):
             p = parts[i]
             nxt = parts[i + 1] if i + 1 < len(parts) else None
             if p == "--options" and nxt is not None:
-                options = [
-                    o.strip() for o in nxt.strip('"').split("|") if o.strip()
-                ]
+                options = [o.strip() for o in nxt.strip('"').split("|") if o.strip()]
                 i += 2
                 continue
             if p == "--state" and nxt is not None:
@@ -146,10 +151,7 @@ class JevCommand(Command):
             if p == "--mechanism" and nxt is not None:
                 mechanism = nxt.strip('"').lower()
                 if mechanism not in _MECHANISMS:
-                    self.error(
-                        "--mechanism must be one of "
-                        + ", ".join(_MECHANISMS)
-                    )
+                    self.error("--mechanism must be one of " + ", ".join(_MECHANISMS))
                     return True
                 i += 2
                 continue
@@ -169,7 +171,8 @@ class JevCommand(Command):
             if token in _VALUE_FLAGS and j + 1 < len(parts):
                 flag_values.add(parts[j + 1])
         question_words = [
-            token for token in parts[1:]
+            token
+            for token in parts[1:]
             if token != "--json"
             and not token.startswith("--")
             and token not in flag_values
@@ -232,8 +235,11 @@ class JevCommand(Command):
 
         try:
             engine = build_jev_engine(
-                model_name=model, samples=samples, mechanism=mechanism,
-                threshold=threshold, source="repl",
+                model_name=model,
+                samples=samples,
+                mechanism=mechanism,
+                threshold=threshold,
+                source="repl",
                 log_workspace=getattr(agent, "workspace", None),
             )
         except Exception as exc:  # noqa: BLE001 - surface a clear setup error
@@ -346,8 +352,10 @@ class JevCommand(Command):
             i += 1
         try:
             ok = record_outcome(
-                decision_id, outcome,
-                workspace=getattr(agent, "workspace", None), note=note,
+                decision_id,
+                outcome,
+                workspace=getattr(agent, "workspace", None),
+                note=note,
             )
         except ValueError as exc:
             self.error(str(exc))

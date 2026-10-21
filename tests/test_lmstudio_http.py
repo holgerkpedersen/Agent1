@@ -1,4 +1,5 @@
 """Tests for LM Studio HTTP error handling (body surfacing + auto-load)."""
+
 import urllib.error
 from io import BytesIO
 from unittest.mock import patch
@@ -34,9 +35,13 @@ class TestMakeRequest:
         def boom(req, timeout=None):
             _http_error(req, body)
 
-        with patch("urllib.request.urlopen", side_effect=boom), patch(
-            "agent_core.llm.lmstudio.load_model", return_value=(False, "load refused")
-        ) as lm:
+        with (
+            patch("urllib.request.urlopen", side_effect=boom),
+            patch(
+                "agent_core.llm.lmstudio.load_model",
+                return_value=(False, "load refused"),
+            ) as lm,
+        ):
             try:
                 prov._make_request({"model": "x"})
                 assert False, "forventede RuntimeError"
@@ -56,9 +61,12 @@ class TestMakeRequest:
             calls["n"] += 1
             return _FakeHTTPResponse(b'{"choices": [{"message": {"content": "hej"}}]}')
 
-        with patch("urllib.request.urlopen", side_effect=fake), patch(
-            "agent_core.llm.lmstudio.load_model", return_value=(True, "loaded")
-        ) as lm:
+        with (
+            patch("urllib.request.urlopen", side_effect=fake),
+            patch(
+                "agent_core.llm.lmstudio.load_model", return_value=(True, "loaded")
+            ) as lm,
+        ):
             result = prov._make_request({"model": "x"})
         assert result["choices"][0]["message"]["content"] == "hej"
         lm.assert_called_once_with("meta/muse-glimmer")
@@ -70,8 +78,12 @@ class TestMakeRequest:
         def boom(req, timeout=None):
             _http_error(req, body)
 
-        with patch("urllib.request.urlopen", side_effect=boom), patch(
-            "agent_core.llm.lmstudio.load_model", return_value=(False, "load refused")
+        with (
+            patch("urllib.request.urlopen", side_effect=boom),
+            patch(
+                "agent_core.llm.lmstudio.load_model",
+                return_value=(False, "load refused"),
+            ),
         ):
             try:
                 prov._make_request({"model": "x"})
@@ -86,9 +98,10 @@ class TestMakeRequest:
         def boom(req, timeout=None):
             _http_error(req, body)
 
-        with patch("urllib.request.urlopen", side_effect=boom), patch(
-            "agent_core.llm.lmstudio.load_model"
-        ) as lm:
+        with (
+            patch("urllib.request.urlopen", side_effect=boom),
+            patch("agent_core.llm.lmstudio.load_model") as lm,
+        ):
             try:
                 prov._make_request({"model": "x"})
                 assert False, "forventede RuntimeError"

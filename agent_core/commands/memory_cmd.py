@@ -155,8 +155,10 @@ class MemoryCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return ("memory [--json] [--latency] [--bucket-ms <ms>] - LLM decision "
-                "attribution stats from agent_memory.db")
+        return (
+            "memory [--json] [--latency] [--bucket-ms <ms>] - LLM decision "
+            "attribution stats from agent_memory.db"
+        )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         parsed = _parse_args(args)
@@ -171,7 +173,8 @@ class MemoryCommand(Command):
             summary = attribution_summary(db_path)
             latency = (
                 decision_latency_histogram(db_path, bucket_ms=bucket_ms)
-                if show_latency else None
+                if show_latency
+                else None
             )
         else:
             # No DB: never touch sqlite (a connect would CREATE the file) and

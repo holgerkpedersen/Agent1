@@ -10,6 +10,7 @@ Hermetic: patches load_model_json / get_profile so no real model.json is read;
 asserts the logged message contains a traceback frame and that _profile_name
 is None on failure.  Also asserts the happy path still restores the profile.
 """
+
 import logging
 
 import pytest
@@ -22,7 +23,9 @@ def _capture_warnings(caplog):
     return caplog
 
 
-def test_profile_restore_failure_is_logged_with_traceback(_capture_warnings, monkeypatch):
+def test_profile_restore_failure_is_logged_with_traceback(
+    _capture_warnings, monkeypatch
+):
     """A failing profile restore must log a traceback and reset _profile_name.
 
     build_provider also calls load_model_json internally (before the restore
@@ -41,6 +44,7 @@ def test_profile_restore_failure_is_logged_with_traceback(_capture_warnings, mon
         return _FakeProvider()
 
     monkeypatch.setattr("agent_core.llm.provider.build_provider", _fake_build_provider)
+
     # load_model_json returns a profile name so the restore block reaches get_profile;
     # then make get_profile raise to trigger __init__'s except branch.
     def _ok_load():
@@ -52,7 +56,8 @@ def test_profile_restore_failure_is_logged_with_traceback(_capture_warnings, mon
         raise RuntimeError("corrupt model.json: missing 'temperature'")
 
     monkeypatch.setattr(
-        "agent_core.llm.model_profiles.get_profile", _fail_get_profile,
+        "agent_core.llm.model_profiles.get_profile",
+        _fail_get_profile,
     )
 
     client = agent_mod.LLMClient(model_name="test-model-failure")
@@ -79,7 +84,8 @@ def test_profile_restore_success_sets_name(_capture_warnings, monkeypatch):
 
     monkeypatch.setattr("agent_core.constants.load_model_json", _ok_load)
     monkeypatch.setattr(
-        "agent_core.llm.model_profiles.get_profile", lambda name: _FakeProfile(),
+        "agent_core.llm.model_profiles.get_profile",
+        lambda name: _FakeProfile(),
     )
 
     import agent as agent_mod
@@ -106,7 +112,9 @@ def test_signal_break_handler_runs_cleanup_before_exit(monkeypatch):
 
     # Capture os._exit so the test process doesn't actually die.
     captured = {}
-    monkeypatch.setattr(agent_mod.os, "_exit", lambda code: captured.setdefault("code", code))
+    monkeypatch.setattr(
+        agent_mod.os, "_exit", lambda code: captured.setdefault("code", code)
+    )
 
     safe_signal_break_handler(
         memory_path="agent_memory.json",
@@ -126,7 +134,9 @@ def test_signal_break_handler_swallows_hook_failure(monkeypatch):
         raise ValueError("disk full")
 
     captured = {}
-    monkeypatch.setattr(agent_mod.os, "_exit", lambda code: captured.setdefault("code", code))
+    monkeypatch.setattr(
+        agent_mod.os, "_exit", lambda code: captured.setdefault("code", code)
+    )
 
     # Should not raise — hook failure logged + continues to exit.
     safe_signal_break_handler(
@@ -149,7 +159,9 @@ def test_register_signal_break_handler_returns_bool(monkeypatch):
 
     monkeypatch.setattr("agent.signal.signal", fake_signal)
     result = register_signal_break_handler(
-        memory_path="m.json", save_memory_fn=lambda: None, trace_writer_close=None,
+        memory_path="m.json",
+        save_memory_fn=lambda: None,
+        trace_writer_close=None,
     )
     assert result is True
     assert "sig" in installed and callable(installed["handler"])

@@ -1,7 +1,9 @@
 """Help command for agent interactive mode."""
+
 from .base import Command
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -15,10 +17,13 @@ class HelpCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "help [command] - List all commands or show details for a specific command"
+        return (
+            "help [command] - List all commands or show details for a specific command"
+        )
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         from .registry import CommandRegistry
+
         # Build a fresh registry — same set of commands as run_interactive().
         registry = CommandRegistry()
 
@@ -59,16 +64,44 @@ class HelpCommand(Command):
         from .habits_cmd import HabitsCommand
         from .issue_cmd import IssueCommand
 
-        for cmd_cls in (ReadCommand, WriteCommand, SearchCommand, ClearCommand,
-                        ModelCommand, AnalyzeCommand, PlanCommand, EntitiesCommand,
-                        TaskplanCommand, CleanupCommand, GitCommand, ImplementCommand,
-                        FixCommand, WorkflowCommand, OptimizeCommand, PerfCommand,
-                        PasteCommand, PasteImageCommand, DisplayCommand, DecideCommand,
-                        ReviewCommand, RunCommand, SelfHealCommand, ReconstructCommand,
-                        MultiLlmCommand, DemoDataCommand, ModeCommand, SubAgentCommand,
-                        MCPCommand, ProposeCommand, SpeculateCommand, JevCommand,
-                        MemoryCommand, HabitsCommand, IssueCommand,
-                        HelpCommand):
+        for cmd_cls in (
+            ReadCommand,
+            WriteCommand,
+            SearchCommand,
+            ClearCommand,
+            ModelCommand,
+            AnalyzeCommand,
+            PlanCommand,
+            EntitiesCommand,
+            TaskplanCommand,
+            CleanupCommand,
+            GitCommand,
+            ImplementCommand,
+            FixCommand,
+            WorkflowCommand,
+            OptimizeCommand,
+            PerfCommand,
+            PasteCommand,
+            PasteImageCommand,
+            DisplayCommand,
+            DecideCommand,
+            ReviewCommand,
+            RunCommand,
+            SelfHealCommand,
+            ReconstructCommand,
+            MultiLlmCommand,
+            DemoDataCommand,
+            ModeCommand,
+            SubAgentCommand,
+            MCPCommand,
+            ProposeCommand,
+            SpeculateCommand,
+            JevCommand,
+            MemoryCommand,
+            HabitsCommand,
+            IssueCommand,
+            HelpCommand,
+        ):
             registry.register(cmd_cls())
 
         if not args:
@@ -89,14 +122,21 @@ class HelpCommand(Command):
             else:
                 # Suggest similar commands
                 import difflib
+
                 all_names = sorted(registry.names())
-                matches = difflib.get_close_matches(cmd_name, all_names, n=3, cutoff=0.6)
+                matches = difflib.get_close_matches(
+                    cmd_name, all_names, n=3, cutoff=0.6
+                )
                 if matches:
                     print(f"Unknown command '{cmd_name}'. Did you mean:")
                     for m in matches:
                         cmd_m = registry.get(m)
-                        synopsis = cmd_m.help_text.splitlines()[0].strip() if cmd_m else ""
+                        synopsis = (
+                            cmd_m.help_text.splitlines()[0].strip() if cmd_m else ""
+                        )
                         print(f"  {m:<25} {synopsis}")
                 else:
-                    print(f"Unknown command '{cmd_name}'. Type 'help' for all commands.")
+                    print(
+                        f"Unknown command '{cmd_name}'. Type 'help' for all commands."
+                    )
         return True

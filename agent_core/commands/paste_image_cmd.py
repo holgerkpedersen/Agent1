@@ -77,11 +77,11 @@ class PasteImageCommand(Command):
     @property
     def help_text(self) -> str:
         return (
-            "paste_image [path] [--desc \"text\" | --prompt \"text\"] - Paste an "
+            'paste_image [path] [--desc "text" | --prompt "text"] - Paste an '
             "image (clipboard or file) into the chat for vision-capable LLMs"
         )
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         parsed = list(args)
         prompt: str | None = None
         # Text flag: --desc (matches analyze/fix/workflow) or --prompt (alias).
@@ -93,7 +93,7 @@ class PasteImageCommand(Command):
             idx = parsed.index(text_flag)
             if idx + 1 < len(parsed):
                 prompt = parsed[idx + 1]
-                del parsed[idx:idx + 2]
+                del parsed[idx : idx + 2]
             else:
                 self.error(f"{text_flag} requires a quoted text argument")
                 return True
@@ -123,7 +123,7 @@ class PasteImageCommand(Command):
             if grabbed is None:
                 self.error(
                     "No image on the clipboard. Copy an image first, or pass a "
-                    "file path: paste_image [path] [--desc \"...\"]"
+                    'file path: paste_image [path] [--desc "..."]'
                 )
                 return True
             data_url, mime = grabbed

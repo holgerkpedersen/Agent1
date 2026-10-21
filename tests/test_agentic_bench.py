@@ -31,6 +31,7 @@ from harnessfix.judge import JudgeVerdict
 # response, so a clean run passes its rubric and an interrupted one does not.
 # ---------------------------------------------------------------------------
 
+
 class FakeTransport:
     """Minimal ChatML transport: completes each prompt with the echo reply."""
 
@@ -56,7 +57,8 @@ class FakeTransport:
         run passes its rubric.  Kept as a thin adapter over :meth:`complete`.
         """
         prompt = "\n".join(
-            str(m.get("content", "")) for m in messages
+            str(m.get("content", ""))
+            for m in messages
             if isinstance(m, dict) and m.get("role") == "user"
         )
         result = await self.complete(prompt, **(tools and {"tools": tools} or {}))
@@ -76,18 +78,19 @@ class FakeTransport:
 
 def _agent(model_name: str | None = None) -> Agent:
     """Main-loop Agent with the fake transport installed at construction."""
-    return Agent(workspace=tempfile.mkdtemp(prefix="agentic-bench-"),
-                 model_name=model_name)
+    return Agent(
+        workspace=tempfile.mkdtemp(prefix="agentic-bench-"), model_name=model_name
+    )
 
 
 # ---------------------------------------------------------------------------
 # Scenario bank
 # ---------------------------------------------------------------------------
 
+
 class TestScenarioBank(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.patcher = patch.object(Agent, "build_transport",
-                                   side_effect=FakeTransport)
+        self.patcher = patch.object(Agent, "build_transport", side_effect=FakeTransport)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
         self.agent = _agent("main")
@@ -117,17 +120,20 @@ class TestScenarioBank(unittest.IsolatedAsyncioTestCase):
         for sc in ab.SCENARIOS:
             for text in sc.rubric:
                 self.assertNotIn(
-                    "_w(", text,
+                    "_w(",
+                    text,
                     f"{sc.id}: un-interpolated _w() fragment leaked into the "
                     f"rubric line: {text!r}",
                 )
                 self.assertNotIn(
-                    "{", text,
+                    "{",
+                    text,
                     f"{sc.id}: leftover template placeholder in rubric: {text!r}",
                 )
                 _, weight = ab.parse_rubric(text)
                 self.assertNotEqual(
-                    weight, 1,
+                    weight,
+                    1,
                     f"{sc.id}: rubric line {text!r} has no (weight=N) marker, "
                     f"so it silently scored as weight 1",
                 )
@@ -135,16 +141,18 @@ class TestScenarioBank(unittest.IsolatedAsyncioTestCase):
     async def test_scenario_weight_totals(self) -> None:
         """Lock the per-scenario weight totals so no criterion is reweighted."""
         totals = {
-            sc.id: sum(ab.parse_rubric(t)[1] for t in sc.rubric)
-            for sc in ab.SCENARIOS
+            sc.id: sum(ab.parse_rubric(t)[1] for t in sc.rubric) for sc in ab.SCENARIOS
         }
         for scenario_id, expected in totals.items():
             with self.subTest(scenario=scenario_id):
                 self.assertGreater(expected, 0, scenario_id)
         # Every criterion contributes its stated weight, never the default 1.
         self.assertEqual(
-            {sc.id: len(sc.rubric) for sc in ab.SCENARIOS
-             if all(ab.parse_rubric(t)[1] == 1 for t in sc.rubric)},
+            {
+                sc.id: len(sc.rubric)
+                for sc in ab.SCENARIOS
+                if all(ab.parse_rubric(t)[1] == 1 for t in sc.rubric)
+            },
             {},
             "no scenario may have all criteria falling back to weight 1",
         )
@@ -164,20 +172,23 @@ class TestScenarioBank(unittest.IsolatedAsyncioTestCase):
         async def llm_chat_fn(msgs, tools):
             for m in msgs:
                 if m.get("role") == "user":
-                    marker = next((w for w in m["content"].split()
-                                  if ab.MARKER_TOKEN in w), "")
+                    marker = next(
+                        (w for w in m["content"].split() if ab.MARKER_TOKEN in w), ""
+                    )
                     return f"done {marker}".strip(), msgs + [
-                        {"role": "assistant", "content": f"done {marker}"}]
+                        {"role": "assistant", "content": f"done {marker}"}
+                    ]
             return "done", msgs
 
         async def execute_tool(name, args):
             calls.append((name, str(sorted(args))))
             return "ok"
 
-        with patch.object(Agent, "build_transport", new=FakeTransport), \
-             patch.object(ToolLoopRunner, "run", side_effect=runner.run) as run_spy:
-            results = await ab.run_scenarios(self.agent, model="m-test",
-                                            repetitions=1)
+        with (
+            patch.object(Agent, "build_transport", new=FakeTransport),
+            patch.object(ToolLoopRunner, "run", side_effect=runner.run) as run_spy,
+        ):
+            results = await ab.run_scenarios(self.agent, model="m-test", repetitions=1)
             self.assertEqual(run_spy.call_count, len(ab.SCENARIOS))
             for call in run_spy.call_args_list:
                 tools = call.kwargs.get("tools") or []
@@ -192,10 +203,10 @@ class TestScenarioBank(unittest.IsolatedAsyncioTestCase):
 # Runner + scoring: one clean run per scenario passes its rubric
 # ---------------------------------------------------------------------------
 
+
 class TestRunner(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.patcher = patch.object(Agent, "build_transport",
-                                   side_effect=FakeTransport)
+        self.patcher = patch.object(Agent, "build_transport", side_effect=FakeTransport)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
         self.agent = _agent("main")
@@ -211,9 +222,7 @@ class TestRunner(unittest.IsolatedAsyncioTestCase):
         exactly the false green this benchmark existed to catch.
         """
         with patch.object(Agent, "build_transport", new=ToolCallTransport):
-            results = await ab.run_scenarios(
-                self.agent, model="m-ok", repetitions=1
-            )
+            results = await ab.run_scenarios(self.agent, model="m-ok", repetitions=1)
         self.assertEqual(len(results), len(ab.SCENARIOS))
         for res in results:
             self.assertTrue(res.passed, f"{res.scenario.id} scored {res.score}")
@@ -226,9 +235,7 @@ class TestRunner(unittest.IsolatedAsyncioTestCase):
         are 1.0 and the averaged scenario score must be exactly 1.0.
         """
         with patch.object(Agent, "build_transport", new=FakeTransport):
-            results = await ab.run_scenarios(
-                self.agent, model="m-reps", repetitions=2
-            )
+            results = await ab.run_scenarios(self.agent, model="m-reps", repetitions=2)
         self.assertEqual(len(results), len(ab.SCENARIOS))
         for res in results:
             rows = res.repetitions
@@ -246,8 +253,10 @@ class TestRunner(unittest.IsolatedAsyncioTestCase):
             seen.append([t["function"]["name"] for t in tool_defs])
             return await real(transport, messages, tool_defs, **kw)
 
-        with patch.object(Agent, "build_transport", new=FakeTransport), \
-             patch("agentic_bench.run_tool_loop", side_effect=spy):
+        with (
+            patch.object(Agent, "build_transport", new=FakeTransport),
+            patch("agentic_bench.run_tool_loop", side_effect=spy),
+        ):
             results = await ab.run_scenarios(self.agent, model="m-spy")
         self.assertEqual(len(results), len(ab.SCENARIOS))
         for names in seen:
@@ -259,11 +268,14 @@ class TestWeightedScoring(unittest.TestCase):
     """``score_run`` must normalise by total weight and stay inside [0, 1]."""
 
     def _score(self, rubric: tuple[str, ...], verdicts: list[float]) -> float:
-        with patch.object(ab, "judge", side_effect=[
-            JudgeVerdict(v, "pass" if v else "fail", "") for v in verdicts
-        ]):
-            score, notes = ab.score_run(
-                ab.RunOutcome("done", 1, 1), rubric, "m", "")
+        with patch.object(
+            ab,
+            "judge",
+            side_effect=[
+                JudgeVerdict(v, "pass" if v else "fail", "") for v in verdicts
+            ],
+        ):
+            score, notes = ab.score_run(ab.RunOutcome("done", 1, 1), rubric, "m", "")
         self.assertEqual(len(notes), len(rubric))
         return score
 
@@ -285,7 +297,8 @@ class TestWeightedScoring(unittest.TestCase):
         for sc in ab.SCENARIOS:
             with self.subTest(scenario=sc.id):
                 self.assertAlmostEqual(
-                    self._score(sc.rubric, [0.0] * len(sc.rubric)), 0.0,
+                    self._score(sc.rubric, [0.0] * len(sc.rubric)),
+                    0.0,
                     places=6,
                 )
 
@@ -309,18 +322,29 @@ class TestWeightedScoring(unittest.TestCase):
 # Report file consumed by gates.run_agentic_gate
 # ---------------------------------------------------------------------------
 
+
 class TestReport(unittest.TestCase):
     def test_report_shape_matches_the_gate(self) -> None:
         scenario = ab.Scenario(
-            id="scn-demo", category="shell", style="plain",
+            id="scn-demo",
+            category="shell",
+            style="plain",
             prompt=f"run the {ab.MARKER_TOKEN}1 step",
             expected_outcome=f"final output contains `{ab.MARKER_TOKEN}1`",
             rubric=("- echo marker `1` verbatim",),
         )
         res = ab.ScenarioResult(
-            scenario, model="m-x", profile="", repeat_index=0,
-            response=f"done {ab.MARKER_TOKEN}1", turns=2, tools_used=3,
-            latency_ms=5.0, passed=True, score=1.0, notes=["ok"],
+            scenario,
+            model="m-x",
+            profile="",
+            repeat_index=0,
+            response=f"done {ab.MARKER_TOKEN}1",
+            turns=2,
+            tools_used=3,
+            latency_ms=5.0,
+            passed=True,
+            score=1.0,
+            notes=["ok"],
         )
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "agentic_bench.json"
@@ -338,10 +362,10 @@ class TestReport(unittest.TestCase):
 # CLI: --model runs the bank, --trend prints history and exits
 # ---------------------------------------------------------------------------
 
+
 class TestCli(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.patcher = patch.object(Agent, "build_transport",
-                                   side_effect=FakeTransport)
+        self.patcher = patch.object(Agent, "build_transport", side_effect=FakeTransport)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
         self.agent = _agent("main")
@@ -350,13 +374,23 @@ class TestCli(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out = str(Path(tmp) / "agentic_bench.json")
             with patch.object(ab, "run_scenarios") as run:
+
                 async def _fake(mgr, model="", profile="", repetitions=1, **kw):
-                    return [ab.ScenarioResult(
-                        ab.SCENARIOS[0], model="m-cli", profile="",
-                        repeat_index=0, response=f"done {ab.MARKER_TOKEN}1",
-                        turns=1, tools_used=2, latency_ms=5.0,
-                        passed=True, score=1.0, notes=[],
-                    )]
+                    return [
+                        ab.ScenarioResult(
+                            ab.SCENARIOS[0],
+                            model="m-cli",
+                            profile="",
+                            repeat_index=0,
+                            response=f"done {ab.MARKER_TOKEN}1",
+                            turns=1,
+                            tools_used=2,
+                            latency_ms=5.0,
+                            passed=True,
+                            score=1.0,
+                            notes=[],
+                        )
+                    ]
 
                 run.side_effect = _fake
                 args = ab.parse_args(["--model", "m-cli", "--out", out])
@@ -367,8 +401,10 @@ class TestCli(unittest.IsolatedAsyncioTestCase):
     async def test_trend_prints_and_exits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             snap = Path(tmp) / "agentic_bench.json"
-            snap.write_text(json.dumps({"models": [
-                {"model": "m-t", "overall_accuracy": 42.0}]}), encoding="utf-8")
+            snap.write_text(
+                json.dumps({"models": [{"model": "m-t", "overall_accuracy": 42.0}]}),
+                encoding="utf-8",
+            )
             with patch.object(ab, "print_trend") as pt:
                 args = ab.parse_args(["--trend", "m-t"])
                 await ab.main(args)
@@ -389,6 +425,7 @@ class TestCli(unittest.IsolatedAsyncioTestCase):
 # (4) the default build_transport output behaves identically to what LLMClient
 # built itself for chat / chat_stream / the auto-resume continuation chain.
 # ---------------------------------------------------------------------------
+
 
 def _make_turn_agent() -> Agent:
     """Fresh main-loop Agent with FakeTransport installed at construction."""
@@ -441,8 +478,11 @@ class SpyProvider:
         # text would make every scenario FAIL and hide the seam behaviour these
         # tests are here to assert.
         content = next(
-            (str(m.get("content", "")) for m in reversed(list(messages))
-             if isinstance(m, dict) and m.get("role") == "user"),
+            (
+                str(m.get("content", ""))
+                for m in reversed(list(messages))
+                if isinstance(m, dict) and m.get("role") == "user"
+            ),
             "",
         )
         marker = ""
@@ -486,13 +526,19 @@ class ToolCallTransport(FakeTransport):
         self.turns += 1
         if self.turns <= self.tool_calls_per_turn:
             calls = [
-                {"id": f"call-{n}", "type": "function",
-                 "function": {"name": "read",
-                             "arguments": json.dumps({"path": f"f{n}.txt"})}}
+                {
+                    "id": f"call-{n}",
+                    "type": "function",
+                    "function": {
+                        "name": "read",
+                        "arguments": json.dumps({"path": f"f{n}.txt"}),
+                    },
+                }
                 for n in range(self.tool_calls_per_turn)
             ]
-            return json.dumps({"content": f"narration {self.turns}",
-                              "tool_calls": calls})
+            return json.dumps(
+                {"content": f"narration {self.turns}", "tool_calls": calls}
+            )
         return await super().chat(messages, tools=tools, **kwargs)
 
 
@@ -517,16 +563,14 @@ class TestSeamFactoryPerTurnAgent(unittest.IsolatedAsyncioTestCase):
         # ``new=`` must carry the staticmethod itself: patch.object sets the
         # attribute on the class, and a plain function there would be bound
         # as a method and receive (self, client).
-        self.patcher = patch.object(Agent, "build_transport",
-                                    new=staticmethod(factory))
+        self.patcher = patch.object(Agent, "build_transport", new=staticmethod(factory))
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
         self.agent = _make_turn_agent()
 
     async def test_factory_sees_n_agents_for_n_reps(self) -> None:
         """One fresh turn agent per scenario and repetition, all on main loop."""
-        results = await ab.run_scenarios(
-            self.agent, model="m-seam", repetitions=1)
+        results = await ab.run_scenarios(self.agent, model="m-seam", repetitions=1)
         n_scen = len(ab.SCENARIOS)
         self.assertEqual(len(results), n_scen)
         # One entry per (scenario, rep); every run on the main surface.
@@ -544,8 +588,10 @@ class TestSeamFactoryPerTurnAgent(unittest.IsolatedAsyncioTestCase):
             # ToolDispatcher exposes its registry as _handlers (there is no
             # public handlers() accessor).
             self.assertEqual(
-                len(client._agent.dispatcher._handlers), n_scen + 4,
-                "turn agents must carry the full main-loop tool surface")
+                len(client._agent.dispatcher._handlers),
+                n_scen + 4,
+                "turn agents must carry the full main-loop tool surface",
+            )
 
     async def test_patched_factory_reaches_every_turn(self) -> None:
         """The injected transport answers every turn on the public chat path."""
@@ -567,22 +613,23 @@ class TestSeamFactoryPerTurnAgent(unittest.IsolatedAsyncioTestCase):
             base = agent.llm._provider
             self.assertIsInstance(base, SpyProvider)
             self.assertIs(base, built[0])
-            results = await ab.run_scenarios(
-                agent, model="m-spy", repetitions=1)
+            results = await ab.run_scenarios(agent, model="m-spy", repetitions=1)
         # run_scenarios builds a FRESH agent (and so a fresh provider) per
         # scenario/rep, so the base agent's spy sees nothing.
         turn_spies = built[1:]
         self.assertEqual(len(turn_spies), len(ab.SCENARIOS))
-        self.assertEqual(base.chat_calls, [],
-                         "the base agent must not run any scenario")
+        self.assertEqual(
+            base.chat_calls, [], "the base agent must not run any scenario"
+        )
         for spy in turn_spies:
-            self.assertEqual(len(spy.chat_calls), 1,
-                             "one chat call per scenario run")
+            self.assertEqual(len(spy.chat_calls), 1, "one chat call per scenario run")
             msgs, _ = spy.chat_calls[0]
-            self.assertEqual(len(msgs), 1,
-                             "a run starts from the bare scenario prompt")
-        self.assertEqual(sum(len(s.chat_calls) for s in turn_spies),
-                         len(ab.SCENARIOS), "one turn per scenario run")
+            self.assertEqual(len(msgs), 1, "a run starts from the bare scenario prompt")
+        self.assertEqual(
+            sum(len(s.chat_calls) for s in turn_spies),
+            len(ab.SCENARIOS),
+            "one turn per scenario run",
+        )
         # The spy answers in text only (one turn per scenario), so it satisfies
         # every marker criterion but NOT scn-shell-1's explicit "the run tool
         # was used" criterion.  The score must reflect that honestly instead of
@@ -593,7 +640,9 @@ class TestSeamFactoryPerTurnAgent(unittest.IsolatedAsyncioTestCase):
         shell = next(r for r in results if r.scenario.id == "scn-shell-1")
         weights = [ab.parse_rubric(t)[1] for t in shell.scenario.rubric]
         self.assertAlmostEqual(
-            shell.score, weights[0] / sum(weights), places=4,
+            shell.score,
+            weights[0] / sum(weights),
+            places=4,
             msg="a text-only run earns only scn-shell-1's marker criterion",
         )
         self.assertFalse(
@@ -607,8 +656,7 @@ class TestSeamToolCallTurns(unittest.IsolatedAsyncioTestCase):
     """A tool-call-only answer stays on one loop call and executes once."""
 
     def setUp(self) -> None:
-        self.patcher = patch.object(Agent, "build_transport",
-                                   new=ToolCallTransport)
+        self.patcher = patch.object(Agent, "build_transport", new=ToolCallTransport)
         self.addCleanup(self.patcher.stop)
 
     async def asyncSetUp(self) -> None:
@@ -639,11 +687,12 @@ class TestSeamToolCallTurns(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("delegate", seen, "scenarios must not delegate")
             return await run_tool_loop(transport, messages, tool_defs, **kw)
 
-        with patch.object(Agent, "build_transport", new=ToolCallTransport), \
-             patch.object(Agent, "_execute_tool_call", new=recording_execute), \
-             patch("agentic_bench.run_tool_loop", side_effect=spy):
-            results = await ab.run_scenarios(
-                self.agent, model="m-tc", repetitions=1)
+        with (
+            patch.object(Agent, "build_transport", new=ToolCallTransport),
+            patch.object(Agent, "_execute_tool_call", new=recording_execute),
+            patch("agentic_bench.run_tool_loop", side_effect=spy),
+        ):
+            results = await ab.run_scenarios(self.agent, model="m-tc", repetitions=1)
 
         self.assertEqual(len(results), len(ab.SCENARIOS))
         reads = [a["path"] for name, a in executed if name == "read"]
@@ -651,8 +700,7 @@ class TestSeamToolCallTurns(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reads.count("f0.txt"), n_scen, "f0 read once per rep")
         self.assertEqual(reads.count("f1.txt"), n_scen, "f1 read once per rep")
         # Nothing from the delegation surface may reach the dispatcher.
-        delegated = [n for n, _ in executed
-                     if n.lower() in ab.DELEGATION_TOOLS]
+        delegated = [n for n, _ in executed if n.lower() in ab.DELEGATION_TOOLS]
         self.assertEqual(delegated, [], "delegation must never execute")
 
     async def test_delegation_tool_call_is_refused(self) -> None:
@@ -661,6 +709,7 @@ class TestSeamToolCallTurns(unittest.IsolatedAsyncioTestCase):
         run_tool_loop short-circuits DELEGATION_TOOLS before the dispatcher,
         so the refusal text lands in the conversation and no subagent runs.
         """
+
         class DelegatingTransport:
             """Answers every turn with one delegation tool call."""
 
@@ -668,14 +717,21 @@ class TestSeamToolCallTurns(unittest.IsolatedAsyncioTestCase):
                 self.client = client
 
             async def chat(self, messages, tools=None, **kwargs) -> str:
-                return json.dumps({
-                    "content": "delegating",
-                    "tool_calls": [{
-                        "id": "call-0", "type": "function",
-                        "function": {"name": "delegate_batch",
-                                     "arguments": json.dumps({"tasks": []})},
-                    }],
-                })
+                return json.dumps(
+                    {
+                        "content": "delegating",
+                        "tool_calls": [
+                            {
+                                "id": "call-0",
+                                "type": "function",
+                                "function": {
+                                    "name": "delegate_batch",
+                                    "arguments": json.dumps({"tasks": []}),
+                                },
+                            }
+                        ],
+                    }
+                )
 
         agent = _make_turn_agent()
         agent.llm._agent = agent
@@ -691,28 +747,37 @@ class TestSeamToolCallTurns(unittest.IsolatedAsyncioTestCase):
         seen: list[dict] = []
         real_run = ToolLoopRunner.run
 
-        async def capturing_run(runner, messages, llm_chat_fn, execute_tool_fn,
-                                **kw):
+        async def capturing_run(runner, messages, llm_chat_fn, execute_tool_fn, **kw):
             response, final = await real_run(
-                runner, messages, llm_chat_fn, execute_tool_fn, **kw)
+                runner, messages, llm_chat_fn, execute_tool_fn, **kw
+            )
             seen.extend(final)
             return response, final
 
-        with patch.object(Agent, "_execute_tool_call", new=recording_execute), \
-             patch.object(ToolLoopRunner, "run", new=capturing_run):
+        with (
+            patch.object(Agent, "_execute_tool_call", new=recording_execute),
+            patch.object(ToolLoopRunner, "run", new=capturing_run),
+        ):
             outcomes = await run_tool_loop(
-                agent.llm, [{"role": "user", "content": "go"}],
-                ab.build_main_surface(agent), repetitions=1, max_iterations=2)
+                agent.llm,
+                [{"role": "user", "content": "go"}],
+                ab.build_main_surface(agent),
+                repetitions=1,
+                max_iterations=2,
+            )
 
         self.assertEqual(len(outcomes), 1)
-        self.assertNotIn("delegate_batch", executed,
-                         "a refused delegation never reaches the dispatcher")
-        refusals = [str(m.get("content", "")) for m in seen
-                    if m.get("role") == "tool"]
+        self.assertNotIn(
+            "delegate_batch",
+            executed,
+            "a refused delegation never reaches the dispatcher",
+        )
+        refusals = [str(m.get("content", "")) for m in seen if m.get("role") == "tool"]
         self.assertTrue(refusals, "the tool result must be reported back")
         self.assertTrue(
             all("refused" in r for r in refusals),
-            f"delegation must be refused outright, got {refusals}")
+            f"delegation must be refused outright, got {refusals}",
+        )
 
 
 class TestSeamDefaultProviderBehaviour(unittest.IsolatedAsyncioTestCase):
@@ -758,14 +823,17 @@ class TestSeamDefaultProviderBehaviour(unittest.IsolatedAsyncioTestCase):
         # hard-coded number of turns.
         before = len(spy.chat_calls)
         await agent.llm.chat_with_continuation(msgs, max_tokens=99)
-        self.assertGreater(len(spy.chat_calls), before,
-                           "auto-resume must issue at least one more chat()")
+        self.assertGreater(
+            len(spy.chat_calls),
+            before,
+            "auto-resume must issue at least one more chat()",
+        )
         for _, tools2 in spy.chat_calls[1:]:
-            self.assertIsNone(tools2,
-                              "continuation requests carry no tool schema")
+            self.assertIsNone(tools2, "continuation requests carry no tool schema")
         self.assertTrue(
             all(kw.get("max_tokens") == 99 for kw in spy.chat_kwargs[before:]),
-            "the caller's token cap reaches every continuation request")
+            "the caller's token cap reaches every continuation request",
+        )
 
     async def test_chat_stream_reaches_provider(self) -> None:
         """chat_stream() delegates to the provider's chat_stream."""
@@ -774,8 +842,7 @@ class TestSeamDefaultProviderBehaviour(unittest.IsolatedAsyncioTestCase):
         # take the provider off the client rather than guessing the index.
         spy = agent.llm._provider
         self.assertIs(spy, self.spies[0])
-        reply = await agent.llm.chat_stream(
-            [{"role": "user", "content": "stream me"}])
+        reply = await agent.llm.chat_stream([{"role": "user", "content": "stream me"}])
         self.assertEqual(reply, "stream reply")
         self.assertGreaterEqual(len(spy.stream_calls), 1)
 
@@ -788,6 +855,7 @@ class TestSeamContinuationChain(unittest.IsolatedAsyncioTestCase):
         # test needs a bare client with no Agent, so it has no build_transport
         # seam to exercise; the spy provider is installed as _provider.
         from agent import LLMClient
+
         self.client = LLMClient(model_name="main")
         self.spy = SpyProvider()
         self.client._agent = None
@@ -803,27 +871,37 @@ class TestSeamContinuationChain(unittest.IsolatedAsyncioTestCase):
         self.spy.replies = list(_CONT_REPLIES)
         reply = await self.client.chat_with_continuation(
             [{"role": "user", "content": "write a bubble sort"}],
-            max_continues=3, max_tokens=99)
+            max_continues=3,
+            max_tokens=99,
+        )
         self.assertEqual(len(self.spy.chat_calls), 3)
         self.assertEqual(
-            len(self.spy.stream_calls), 0,
-            "auto-resume goes through chat, never streaming")
+            len(self.spy.stream_calls),
+            0,
+            "auto-resume goes through chat, never streaming",
+        )
         for _, tools in self.spy.chat_calls:
             self.assertIsNone(tools, "continuation requests carry no tool schema")
         # Every turn carries the caller's token cap all the way to the wire.
-        self.assertEqual([kw.get("max_tokens") for kw in self.spy.chat_kwargs],
-                         [99, 99, 99])
+        self.assertEqual(
+            [kw.get("max_tokens") for kw in self.spy.chat_kwargs], [99, 99, 99]
+        )
         # Each turn grows the history by one assistant answer + one "continue"
         # request.  Read the SNAPSHOTS: chat_calls holds the live list, which
         # chat_with_continuation mutates, so every entry would otherwise show
         # the final history.
-        counts = [sum(1 for m in snap if m.get("role") == "user")
-                  for snap in self.spy.chat_snapshots]
-        self.assertEqual(counts, [1, 2, 3],
-                         "each continuation request re-sends the grown history")
+        counts = [
+            sum(1 for m in snap if m.get("role") == "user")
+            for snap in self.spy.chat_snapshots
+        ]
+        self.assertEqual(
+            counts, [1, 2, 3], "each continuation request re-sends the grown history"
+        )
         first = self.spy.chat_snapshots[0]
-        self.assertEqual([m["content"] for m in first
-                          if m.get("role") == "user"], ["write a bubble sort"])
+        self.assertEqual(
+            [m["content"] for m in first if m.get("role") == "user"],
+            ["write a bubble sort"],
+        )
         last = self.spy.chat_snapshots[-1]
         users = [m["content"] for m in last if m.get("role") == "user"]
         # The tail users are resume prompts, NOT assistant replies, so they
@@ -832,15 +910,21 @@ class TestSeamContinuationChain(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Continue exactly where you stopped", prompt)
             self.assertNotIn("def bubble_sort", prompt)
         assistants = [m["content"] for m in last if m.get("role") == "assistant"]
-        self.assertEqual(assistants, _CONT_REPLIES[:2],
-                         "prior turns are replayed so the model can resume")
-        self.assertEqual(reply, "".join(_CONT_REPLIES),
-                         "the final answer is every reply, joined")
+        self.assertEqual(
+            assistants,
+            _CONT_REPLIES[:2],
+            "prior turns are replayed so the model can resume",
+        )
+        self.assertEqual(
+            reply, "".join(_CONT_REPLIES), "the final answer is every reply, joined"
+        )
 
 
-_CONT_REPLIES = ["```python\ndef bubble_sort(a):\n    # part 1",
-                 "```\ndef bubble_sort(b):\n    # part 2",
-                 "def bubble_sort(c):\n    # done"]
+_CONT_REPLIES = [
+    "```python\ndef bubble_sort(a):\n    # part 1",
+    "```\ndef bubble_sort(b):\n    # part 2",
+    "def bubble_sort(c):\n    # done",
+]
 
 
 if __name__ == "__main__":

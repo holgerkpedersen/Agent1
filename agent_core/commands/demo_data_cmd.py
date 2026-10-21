@@ -19,6 +19,7 @@ Examples:
     demo_data --loop 10          # one batch per second, 10 rounds
     demo_data --clear            # wipe collector + active alerts
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -108,9 +109,13 @@ class DemoDataCommand(Command):
                     activity=name, latency_ms=latency_ms
                 )
                 total += result["events"]
-            print(f"  [demo] round {round_no + 1}/{loop_rounds}: "
-                  f"+{count} events fed (running total {total})")
+            print(
+                f"  [demo] round {round_no + 1}/{loop_rounds}: "
+                f"+{count} events fed (running total {total})"
+            )
 
-        print("  [demo] done. Open http://localhost:8081 "
-              "(UI polls every 3s; llama-server LLM backend on :8080).")
+        print(
+            "  [demo] done. Open http://localhost:8081 "
+            "(UI polls every 3s; llama-server LLM backend on :8080)."
+        )
         return True

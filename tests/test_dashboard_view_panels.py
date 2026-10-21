@@ -8,6 +8,7 @@ Command Summary view rendered as a blank page (title changed, nothing else).
 HTML parsers auto-close such tags, so plain tag-balance checks did NOT flag
 it -- the nesting depth is the reliable signal.
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -95,4 +96,3 @@ def test_no_panel_is_descendant_of_another_panel() -> None:
             f"{ancestors}; expected direct child of .dashboard-main-body "
             f"({expected_chain})"
         )
-

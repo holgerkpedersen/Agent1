@@ -38,8 +38,13 @@ class TestStatusNormalization:
         ws = _make_workspace(tmp_path)
         raw = [
             {"id": "001", "title": "No status", "tags": [], "affected_files": []},
-            {"id": "002", "title": "Has status", "status": "superseded",
-             "tags": [], "affected_files": []},
+            {
+                "id": "002",
+                "title": "Has status",
+                "status": "superseded",
+                "tags": [],
+                "affected_files": [],
+            },
         ]
         save_decisions(ws, raw)
         loaded = load_decisions(ws)
@@ -49,8 +54,13 @@ class TestStatusNormalization:
     def test_invalid_status_normalized_to_active(self, tmp_path):
         ws = _make_workspace(tmp_path)
         raw = [
-            {"id": "001", "title": "Bad status", "status": "accepted",
-             "tags": [], "affected_files": []},
+            {
+                "id": "001",
+                "title": "Bad status",
+                "status": "accepted",
+                "tags": [],
+                "affected_files": [],
+            },
         ]
         save_decisions(ws, raw)
         loaded = load_decisions(ws)
@@ -59,12 +69,27 @@ class TestStatusNormalization:
     def test_all_three_statuses_survive_roundtrip(self, tmp_path):
         ws = _make_workspace(tmp_path)
         raw = [
-            {"id": "001", "title": "Active", "status": "active",
-             "tags": [], "affected_files": []},
-            {"id": "002", "title": "Superseded", "status": "superseded",
-             "tags": [], "affected_files": []},
-            {"id": "003", "title": "Archived", "status": "archived",
-             "tags": [], "affected_files": []},
+            {
+                "id": "001",
+                "title": "Active",
+                "status": "active",
+                "tags": [],
+                "affected_files": [],
+            },
+            {
+                "id": "002",
+                "title": "Superseded",
+                "status": "superseded",
+                "tags": [],
+                "affected_files": [],
+            },
+            {
+                "id": "003",
+                "title": "Archived",
+                "status": "archived",
+                "tags": [],
+                "affected_files": [],
+            },
         ]
         save_decisions(ws, raw)
         loaded = load_decisions(ws)
@@ -78,12 +103,27 @@ class TestStatusNormalization:
 class TestStatusFiltering:
     def _setup(self, ws: Path):
         raw = [
-            {"id": "001", "title": "Active one", "status": "active",
-             "tags": ["a"], "affected_files": []},
-            {"id": "002", "title": "Superseded one", "status": "superseded",
-             "tags": ["a"], "affected_files": []},
-            {"id": "003", "title": "Another active", "status": "active",
-             "tags": ["b"], "affected_files": []},
+            {
+                "id": "001",
+                "title": "Active one",
+                "status": "active",
+                "tags": ["a"],
+                "affected_files": [],
+            },
+            {
+                "id": "002",
+                "title": "Superseded one",
+                "status": "superseded",
+                "tags": ["a"],
+                "affected_files": [],
+            },
+            {
+                "id": "003",
+                "title": "Another active",
+                "status": "active",
+                "tags": ["b"],
+                "affected_files": [],
+            },
         ]
         save_decisions(ws, raw)
 
@@ -120,14 +160,38 @@ class TestStatusFiltering:
 class TestCategoryFiltering:
     def _setup(self, ws: Path):
         raw = [
-            {"id": "001", "title": "Security", "status": "active",
-             "tags": [], "affected_files": [], "category": "security"},
-            {"id": "002", "title": "Arch", "status": "active",
-             "tags": [], "affected_files": [], "category": "architecture"},
-            {"id": "003", "title": "More security", "status": "active",
-             "tags": [], "affected_files": [], "category": "security"},
-            {"id": "004", "title": "No cat", "status": "active",
-             "tags": [], "affected_files": [], "category": ""},
+            {
+                "id": "001",
+                "title": "Security",
+                "status": "active",
+                "tags": [],
+                "affected_files": [],
+                "category": "security",
+            },
+            {
+                "id": "002",
+                "title": "Arch",
+                "status": "active",
+                "tags": [],
+                "affected_files": [],
+                "category": "architecture",
+            },
+            {
+                "id": "003",
+                "title": "More security",
+                "status": "active",
+                "tags": [],
+                "affected_files": [],
+                "category": "security",
+            },
+            {
+                "id": "004",
+                "title": "No cat",
+                "status": "active",
+                "tags": [],
+                "affected_files": [],
+                "category": "",
+            },
         ]
         save_decisions(ws, raw)
 
@@ -157,12 +221,30 @@ class TestCategoryFiltering:
 class TestCombinedFilters:
     def _setup(self, ws: Path):
         raw = [
-            {"id": "001", "title": "Sec active", "status": "active",
-             "tags": ["security"], "affected_files": [], "category": "security"},
-            {"id": "002", "title": "Sec sup", "status": "superseded",
-             "tags": ["security"], "affected_files": [], "category": "security"},
-            {"id": "003", "title": "Arch active", "status": "active",
-             "tags": ["arch"], "affected_files": [], "category": "architecture"},
+            {
+                "id": "001",
+                "title": "Sec active",
+                "status": "active",
+                "tags": ["security"],
+                "affected_files": [],
+                "category": "security",
+            },
+            {
+                "id": "002",
+                "title": "Sec sup",
+                "status": "superseded",
+                "tags": ["security"],
+                "affected_files": [],
+                "category": "security",
+            },
+            {
+                "id": "003",
+                "title": "Arch active",
+                "status": "active",
+                "tags": ["arch"],
+                "affected_files": [],
+                "category": "architecture",
+            },
         ]
         save_decisions(ws, raw)
 
@@ -183,8 +265,9 @@ class TestCombinedFilters:
     def test_all_filters_combined(self, tmp_path):
         ws = _make_workspace(tmp_path)
         self._setup(ws)
-        results = find_decisions(ws, tags=["security"], status="active",
-                                 category="security")
+        results = find_decisions(
+            ws, tags=["security"], status="active", category="security"
+        )
         assert len(results) == 1
 
 
@@ -195,12 +278,27 @@ class TestCountHelpers:
     def test_count_by_status(self, tmp_path):
         ws = _make_workspace(tmp_path)
         raw = [
-            {"id": "001", "title": "A", "status": "active",
-             "tags": [], "affected_files": []},
-            {"id": "002", "title": "B", "status": "active",
-             "tags": [], "affected_files": []},
-            {"id": "003", "title": "C", "status": "superseded",
-             "tags": [], "affected_files": []},
+            {
+                "id": "001",
+                "title": "A",
+                "status": "active",
+                "tags": [],
+                "affected_files": [],
+            },
+            {
+                "id": "002",
+                "title": "B",
+                "status": "active",
+                "tags": [],
+                "affected_files": [],
+            },
+            {
+                "id": "003",
+                "title": "C",
+                "status": "superseded",
+                "tags": [],
+                "affected_files": [],
+            },
         ]
         save_decisions(ws, raw)
         decisions = load_decisions(ws)
@@ -210,14 +308,38 @@ class TestCountHelpers:
     def test_count_by_category(self, tmp_path):
         ws = _make_workspace(tmp_path)
         raw = [
-            {"id": "001", "title": "A", "status": "active",
-             "tags": [], "affected_files": [], "category": "security"},
-            {"id": "002", "title": "B", "status": "active",
-             "tags": [], "affected_files": [], "category": "security"},
-            {"id": "003", "title": "C", "status": "active",
-             "tags": [], "affected_files": [], "category": "testing"},
-            {"id": "004", "title": "D", "status": "active",
-             "tags": [], "affected_files": [], "category": ""},
+            {
+                "id": "001",
+                "title": "A",
+                "status": "active",
+                "tags": [],
+                "affected_files": [],
+                "category": "security",
+            },
+            {
+                "id": "002",
+                "title": "B",
+                "status": "active",
+                "tags": [],
+                "affected_files": [],
+                "category": "security",
+            },
+            {
+                "id": "003",
+                "title": "C",
+                "status": "active",
+                "tags": [],
+                "affected_files": [],
+                "category": "testing",
+            },
+            {
+                "id": "004",
+                "title": "D",
+                "status": "active",
+                "tags": [],
+                "affected_files": [],
+                "category": "",
+            },
         ]
         save_decisions(ws, raw)
         decisions = load_decisions(ws)
@@ -297,8 +419,12 @@ class TestBackwardCompatibility:
         ws = _make_workspace(tmp_path)
         # Simulate 113 legacy decisions without status/category
         raw = [
-            {"id": str(i).zfill(3), "title": f"Legacy {i}",
-             "tags": ["test"], "affected_files": []}
+            {
+                "id": str(i).zfill(3),
+                "title": f"Legacy {i}",
+                "tags": ["test"],
+                "affected_files": [],
+            }
             for i in range(1, 114)
         ]
         save_decisions(ws, raw)
@@ -311,8 +437,14 @@ class TestBackwardCompatibility:
         ws = _make_workspace(tmp_path)
         raw = [
             {"id": "001", "title": "Old", "tags": [], "affected_files": []},
-            {"id": "002", "title": "New", "status": "superseded",
-             "category": "security", "tags": [], "affected_files": []},
+            {
+                "id": "002",
+                "title": "New",
+                "status": "superseded",
+                "category": "security",
+                "tags": [],
+                "affected_files": [],
+            },
         ]
         save_decisions(ws, raw)
         loaded = load_decisions(ws)

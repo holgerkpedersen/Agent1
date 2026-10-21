@@ -29,6 +29,7 @@ try:
 except ImportError:
     # Fallback for direct execution or isolated testing outside package structure
     import contextvars
+
     CORRELATION_ID_CTX = contextvars.ContextVar("correlation_id", default="")
 
 NO_CORRELATION_ID = "no-correlation-id"
@@ -118,9 +119,21 @@ class JsonFormatter(logging.Formatter):
         # Attach custom extra fields (e.g. allowlist event metadata)
         for key, value in record.__dict__.items():
             if key not in (
-                "name", "msg", "args", "created", "relativeCreated",
-                "exc_info", "exc_text", "stack_info", "lineno", "funcName",
-                "pathname", "filename", "module", "levelno", "levelname",
+                "name",
+                "msg",
+                "args",
+                "created",
+                "relativeCreated",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+                "lineno",
+                "funcName",
+                "pathname",
+                "filename",
+                "module",
+                "levelno",
+                "levelname",
             ):
                 log_data[key] = value
 
@@ -131,11 +144,11 @@ class HumanReadableFormatter(logging.Formatter):
     """ANSI-colored console format for local development."""
 
     COLORS = {
-        "DEBUG": "\033[36m",      # Cyan
-        "INFO": "\033[32m",       # Green
-        "WARNING": "\033[33m",    # Yellow
-        "ERROR": "\033[31m",      # Red
-        "CRITICAL": "\033[41m",   # Red background
+        "DEBUG": "\033[36m",  # Cyan
+        "INFO": "\033[32m",  # Green
+        "WARNING": "\033[33m",  # Yellow
+        "ERROR": "\033[31m",  # Red
+        "CRITICAL": "\033[41m",  # Red background
         "RESET": "\033[0m",
     }
 

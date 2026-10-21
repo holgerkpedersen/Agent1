@@ -14,7 +14,18 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from typing import Callable, Dict, Iterable, Iterator, List, Optional, Protocol, Set, Tuple, cast
+from typing import (
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Protocol,
+    Set,
+    Tuple,
+    cast,
+)
 
 try:  # pragma: no cover - networkx is an optional dependency in some envs
     import networkx as nx
@@ -53,7 +64,9 @@ class GraphBackend(Protocol):
     def ancestors_of(self, node_id: str) -> Iterable[str]: ...
     def roots(self) -> List[str]: ...
     def leaves(self) -> List[str]: ...
-    def longest_path(self, weight: Optional[Callable[[str, str], int]] = None) -> List[str]: ...
+    def longest_path(
+        self, weight: Optional[Callable[[str, str], int]] = None
+    ) -> List[str]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +137,7 @@ class TaskNode:
             node_id=str(data["node_id"]),
             task_type=cast(Optional[str], data.get("task_type")),
             priority=int(str(cast(Optional[str], data.get("priority", "0")))),
-            metadata=cast(Dict[str, object], data.get("metadata", {}))
+            metadata=cast(Dict[str, object], data.get("metadata", {})),
         )
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
@@ -294,6 +307,7 @@ class DependencyGraph:
         """
         if self.find_cycle():
             raise CycleError("Graph contains a cycle", cycle=self.find_cycle())
+
         # weight lookup helper -------------------------------------------------
         def _weight(u: str, v: str) -> int:
             node_v = self.get_node(v)
@@ -453,7 +467,9 @@ class _FallbackDiGraph:
         parent: Dict[str, Optional[str]] = {n: None for n in self._nodes}
 
         def _dfs(start: str) -> List[str]:
-            stack: List[Tuple[str, Iterator[str]]] = [(start, iter(sorted(self._succ[start])))]
+            stack: List[Tuple[str, Iterator[str]]] = [
+                (start, iter(sorted(self._succ[start])))
+            ]
             color[start] = GRAY
             while stack:
                 node, it = stack[-1]
@@ -513,9 +529,13 @@ class _FallbackDiGraph:
             frontier = nxt_frontier
         return seen
 
-    def longest_path(self, weight: Optional[Callable[[str, str], int]] = None) -> List[str]:
+    def longest_path(
+        self, weight: Optional[Callable[[str, str], int]] = None
+    ) -> List[str]:
         order, _ = self.topological_sort()
-        best: Dict[str, Tuple[int, Optional[str]]] = {n: (0 if not weight else 0, None) for n in self._nodes}
+        best: Dict[str, Tuple[int, Optional[str]]] = {
+            n: (0 if not weight else 0, None) for n in self._nodes
+        }
         # seed with priority of each node as its own length contribution
         for n in order:
             base = best[n][0]

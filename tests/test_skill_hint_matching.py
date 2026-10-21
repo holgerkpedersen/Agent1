@@ -5,6 +5,7 @@ Regression guard for :func:`agent_core.skills.match_skills_for_input` /
 hint must appear ONLY when a skill's name/tags actually match the input,
 stay out of multimodal turns (image content arrays), and never kill a turn.
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,7 +22,9 @@ WORKSPACE = Path(__file__).resolve().parent.parent
 
 
 def _skill(
-    name: str, description: str, tags: tuple[str, ...] = (),
+    name: str,
+    description: str,
+    tags: tuple[str, ...] = (),
     when_to_use: str | None = None,
 ) -> Skill:
     return Skill(
@@ -36,6 +39,7 @@ def _skill(
 # ---------------------------------------------------------------------------
 # Pure matching logic
 # ---------------------------------------------------------------------------
+
 
 def test_match_by_name_and_tags() -> None:
     skills = [
@@ -65,7 +69,9 @@ def test_match_by_when_to_use_phrase() -> None:
     """A skill's ``when_to_use`` clause can trigger a hint (full phrase only)."""
     skills = [
         _skill(
-            "test-driven-development", "", ("tdd",),
+            "test-driven-development",
+            "",
+            ("tdd",),
             when_to_use=(
                 "implementing any feature or bug fix, "
                 "before writing implementation code"
@@ -76,18 +82,20 @@ def test_match_by_when_to_use_phrase() -> None:
         "please implement the new retry feature and also fix that small "
         "bug — should I start with a failing test?"
     )
-    assert [s.name for s in match_skills_for_input(skills, text)] == \
-        ["test-driven-development"]
+    assert [s.name for s in match_skills_for_input(skills, text)] == [
+        "test-driven-development"
+    ]
 
 
 def test_when_to_use_does_not_over_trigger() -> None:
     """Short/generic phrases must not match on partial substrings."""
     skills = [
         _skill(
-            "verification-before-completion", "", ("done-gate",),
+            "verification-before-completion",
+            "",
+            ("done-gate",),
             when_to_use=(
-                "about to claim completion, a fix, green tests, "
-                "or to commit/merge"
+                "about to claim completion, a fix, green tests, or to commit/merge"
             ),
         ),
     ]
@@ -95,14 +103,17 @@ def test_when_to_use_does_not_over_trigger() -> None:
     assert match_skills_for_input(skills, "the tests are green now") == []
     # But the full phrase matches (case-insensitive).
     text = "I'm about to claim completion on this task."
-    assert [s.name for s in match_skills_for_input(skills, text)] == \
-        ["verification-before-completion"]
+    assert [s.name for s in match_skills_for_input(skills, text)] == [
+        "verification-before-completion"
+    ]
 
 
 def test_when_to_use_phrase_is_case_insensitive() -> None:
     skills = [
         _skill(
-            "systematic-debugging", "", (),
+            "systematic-debugging",
+            "",
+            (),
             when_to_use="Any Bug, test failure or unexpected behavior",
         ),
     ]
@@ -119,7 +130,8 @@ def test_name_or_tag_match_still_works_with_when_to_use() -> None:
 
 def test_match_respects_max_matches() -> None:
     skills = [
-        _skill(f"skill-{i}", "", (f"tag{i}",)) for i in range(5)  # noqa: E231
+        _skill(f"skill-{i}", "", (f"tag{i}",))
+        for i in range(5)  # noqa: E231
     ]
     text = " ".join(s.tags[0] for s in skills)
     assert len(match_skills_for_input(skills, text)) == 3
@@ -129,6 +141,7 @@ def test_match_respects_max_matches() -> None:
 # ---------------------------------------------------------------------------
 # Hint formatting
 # ---------------------------------------------------------------------------
+
 
 def test_hint_block_empty_when_nothing_matched() -> None:
     assert skill_hint_block([]) == ""
@@ -143,6 +156,7 @@ def test_hint_block_lists_matched_names_and_description() -> None:
 # ---------------------------------------------------------------------------
 # Wiring into Agent._append_user_turn (real path, no network)
 # ---------------------------------------------------------------------------
+
 
 def _make_agent(tmp_path: Path, monkeypatch):
     import agent as agent_mod
@@ -191,6 +205,7 @@ def test_no_hint_on_multimodal_turns(tmp_path: Path, monkeypatch) -> None:
 # Observability: hint matches are counted + printed (tunable from real usage)
 # ---------------------------------------------------------------------------
 
+
 def test_hint_match_writes_metrics(tmp_path: Path, monkeypatch) -> None:
     """A matched hint increments `skill.hint.matched` and mirrors it to the
     shared event file (so a standalone --serve dashboard sees it)."""
@@ -200,7 +215,8 @@ def test_hint_match_writes_metrics(tmp_path: Path, monkeypatch) -> None:
 
     events: list[tuple[str, str, float]] = []
     real_append = __import__(
-        "agent_core.monitoring.metrics_file", fromlist=["append_event"],
+        "agent_core.monitoring.metrics_file",
+        fromlist=["append_event"],
     ).append_event
     monkeypatch.setattr(
         "agent_core.monitoring.metrics_file.append_event",
@@ -224,7 +240,9 @@ def test_no_hint_match_writes_no_metrics(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_hint_status_print_in_non_quiet_mode(
-    tmp_path: Path, monkeypatch, capsys,
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
 ) -> None:
     """Like [plan mode]: the match is announced unless QUIET mode hides it."""
     bot = _make_agent(tmp_path, monkeypatch)
@@ -238,7 +256,9 @@ def test_hint_status_print_in_non_quiet_mode(
 
 
 def test_hint_status_print_suppressed_in_quiet(
-    tmp_path: Path, monkeypatch, capsys,
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
 ) -> None:
     bot = _make_agent(tmp_path, monkeypatch)
     monkeypatch.setenv("AGENT_DISPLAY_MODE", "quiet")
@@ -250,7 +270,9 @@ def test_hint_status_print_suppressed_in_quiet(
 
 
 def test_hint_status_print_absent_when_no_match(
-    tmp_path: Path, monkeypatch, capsys,
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
 ) -> None:
     bot = _make_agent(tmp_path, monkeypatch)
     monkeypatch.setenv("AGENT_DISPLAY_MODE", "verbose")

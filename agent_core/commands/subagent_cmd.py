@@ -78,7 +78,9 @@ class SubAgentCommand(Command):
         }
         handler = handlers.get(cmd)
         if handler is None:
-            print(f"Unknown subagent command '{cyan(cmd)}'. Try 'subagent' alone for help.")
+            print(
+                f"Unknown subagent command '{cyan(cmd)}'. Try 'subagent' alone for help."
+            )
             return True
         await handler(rest, agent)
         return True
@@ -96,14 +98,18 @@ class SubAgentCommand(Command):
         print(cyan("Available subagent roles:"))
         for role in ROLES.values():
             ro = " [read-only]" if role.read_only else ""
-            print(f"  {cyan(role.name):<12} {role.title}{ro} — tools: "
-                  f"{', '.join(sorted(role.tools_allowed))}")
+            print(
+                f"  {cyan(role.name):<12} {role.title}{ro} — tools: "
+                f"{', '.join(sorted(role.tools_allowed))}"
+            )
 
     async def _cmd_create(self, args: list[str], agent: "Agent") -> None:
         from agent_core.subagent_roles import get_role, role_names
 
         if not args:
-            print(f"Usage: subagent create {cyan('<name>')} [--role <role>|--role auto] [--workspace <path>]")
+            print(
+                f"Usage: subagent create {cyan('<name>')} [--role <role>|--role auto] [--workspace <path>]"
+            )
             return
 
         name = args[0]
@@ -127,7 +133,9 @@ class SubAgentCommand(Command):
         elif role.lower() == "auto":
             # Auto-routing needs the task; without one, triage is the safe default.
             role = "planner"
-            print(f"No task given for auto-routing — using '{cyan('planner')}' (triage).")
+            print(
+                f"No task given for auto-routing — using '{cyan('planner')}' (triage)."
+            )
         if role is not None and get_role(role) is None:
             print(f"Unknown role '{role}'. Available: {', '.join(role_names())}")
             return
@@ -149,11 +157,14 @@ class SubAgentCommand(Command):
             return
         role_name, score = route_with_score(issue)
         from agent_core.subagent_roles import get_role
+
         spec = get_role(role_name)
         title = spec.title if spec else role_name
         print(f"Suggested role: {cyan(role_name)} ({title}) — score {score}")
         if score == 0:
-            print("  (no keyword hits — ambiguous issue; planner/triage is the safe default)")
+            print(
+                "  (no keyword hits — ambiguous issue; planner/triage is the safe default)"
+            )
         print(f"  next: subagent create w1 --role {cyan(role_name)}")
 
     async def _cmd_run(self, args: list[str], agent: "Agent") -> None:
@@ -163,7 +174,9 @@ class SubAgentCommand(Command):
         name, task = args[0], " ".join(args[1:])
         sub = agent._subagents.get(name)
         if sub is None:
-            print(f"SubAgent '{cyan(name)}' not found. Create it with 'subagent create {name}'.")
+            print(
+                f"SubAgent '{cyan(name)}' not found. Create it with 'subagent create {name}'."
+            )
             return
         print(magenta(f"[{name}] working ..."))
         # THE FIX: actually await the coroutine (was returned un-awaited).

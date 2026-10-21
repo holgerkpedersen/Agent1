@@ -48,8 +48,20 @@ _FULL_SUITE_MARGIN = FULL_SUITE_MARGIN
 
 #: Tokens that are part of the interpreter/pytest invocation itself, not a path.
 _PYTEST_BARE_TOKENS = {
-    "python", "python2", "python3", "py", "pytest", "py.test", "m", "set",
-    "call", "&", "&&", "|", "||", ";",
+    "python",
+    "python2",
+    "python3",
+    "py",
+    "pytest",
+    "py.test",
+    "m",
+    "set",
+    "call",
+    "&",
+    "&&",
+    "|",
+    "||",
+    ";",
 }
 
 #: pytest options that consume the FOLLOWING token as their value.  Without
@@ -59,12 +71,35 @@ _PYTEST_BARE_TOKENS = {
 #: default instead of the suite budget.  Values attached with ``=`` are handled
 #: by the generic flag check.
 _PYTEST_VALUE_FLAGS = {
-    "-p", "-k", "-m", "-o", "-c", "-n", "-W", "-r",
-    "--deselect", "--ignore", "--ignore-glob", "--maxfail", "--tb",
-    "--durations", "--rootdir", "--confcutdir", "--basetemp", "--junitxml",
-    "--junit-prefix", "--log-level", "--log-file", "--log-format", "--dist",
-    "--import-mode", "--cache-dir", "--override-ini", "--numprocesses",
-    "--lfnf", "--last-failed-no-failures",
+    "-p",
+    "-k",
+    "-m",
+    "-o",
+    "-c",
+    "-n",
+    "-W",
+    "-r",
+    "--deselect",
+    "--ignore",
+    "--ignore-glob",
+    "--maxfail",
+    "--tb",
+    "--durations",
+    "--rootdir",
+    "--confcutdir",
+    "--basetemp",
+    "--junitxml",
+    "--junit-prefix",
+    "--log-level",
+    "--log-file",
+    "--log-format",
+    "--dist",
+    "--import-mode",
+    "--cache-dir",
+    "--override-ini",
+    "--numprocesses",
+    "--lfnf",
+    "--last-failed-no-failures",
 }
 
 #: Flags that SELECT A SUBSET, so the invocation is not a full run: ``--lf``
@@ -73,8 +108,14 @@ _PYTEST_VALUE_FLAGS = {
 #: budget and the full-run gate - i.e. the cheap lanes were penalised exactly
 #: like the expensive one.  Mirrors conftest._SUBSET_FLAGS.
 _PYTEST_SUBSET_FLAGS = {
-    "--lf", "--last-failed", "--lfnf", "--last-failed-no-failures",
-    "--nf", "--new-first", "--failed-first", "--testmon",
+    "--lf",
+    "--last-failed",
+    "--lfnf",
+    "--last-failed-no-failures",
+    "--nf",
+    "--new-first",
+    "--failed-first",
+    "--testmon",
 }
 
 
@@ -87,6 +128,7 @@ def _env_file_path() -> str:
     """
     try:
         import agent as _agent_mod
+
         value = getattr(_agent_mod, "_ENV_FILE_PATH", None)
         if value:
             return str(value)

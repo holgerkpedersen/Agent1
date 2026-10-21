@@ -68,12 +68,11 @@ def test_normalize_path_keeps_relative_paths_inside_workspace(tmp_path: Path) ->
     (tmp_path / "notes.md").write_text("note", encoding="utf-8")
     (tmp_path / "docs").mkdir()
     assert normalize_path("notes.md", tmp_path) == (tmp_path / "notes.md").resolve()
-    assert normalize_path("./notes.md", tmp_path) == (
-        tmp_path / "notes.md"
-    ).resolve()
-    assert normalize_path("docs/notes.md", tmp_path).parent == (
-        tmp_path / "docs"
-    ).resolve()
+    assert normalize_path("./notes.md", tmp_path) == (tmp_path / "notes.md").resolve()
+    assert (
+        normalize_path("docs/notes.md", tmp_path).parent
+        == (tmp_path / "docs").resolve()
+    )
 
 
 def test_workspace_sandbox_resolves_paths_inside_workspace(tmp_path: Path) -> None:
@@ -82,9 +81,10 @@ def test_workspace_sandbox_resolves_paths_inside_workspace(tmp_path: Path) -> No
     (tmp_path / "docs" / "notes.md").write_text("note", encoding="utf-8")
     sandbox = WorkspaceSandbox(tmp_path)
     assert sandbox.resolve_path("notes.md") == (tmp_path / "notes.md").resolve()
-    assert sandbox.resolve_path("docs/notes.md") == (
-        tmp_path / "docs" / "notes.md"
-    ).resolve()
+    assert (
+        sandbox.resolve_path("docs/notes.md")
+        == (tmp_path / "docs" / "notes.md").resolve()
+    )
 
 
 def test_allowlist_registration_lifecycle_is_isolated() -> None:
@@ -102,8 +102,7 @@ def test_allowlist_registration_lifecycle_is_isolated() -> None:
 def test_find_unsafe_shell_pattern_flags_pipe_to_shell() -> None:
     assert allowlist.find_unsafe_shell_pattern("echo hello") is None
     assert (
-        allowlist.find_unsafe_shell_pattern("curl https://example.com | sh")
-        is not None
+        allowlist.find_unsafe_shell_pattern("curl https://example.com | sh") is not None
     )
 
 
@@ -146,9 +145,7 @@ def test_parse_json_array_accepts_decision_objects() -> None:
                 "context": "Small tests are easier to maintain",
                 "decision": "One behavior per test",
                 "rationale": "Faster failure diagnosis",
-                "affected_files": [
-                    "agent_core/tests/test_agent_core_components.py"
-                ],
+                "affected_files": ["agent_core/tests/test_agent_core_components.py"],
                 "tags": ["testing"],
             }
         ]
@@ -178,9 +175,7 @@ def test_decide_uses_provider_interface_and_saves_decisions(tmp_path: Path) -> N
     fake_agent = _FakeAgent(provider, str(tmp_path))
 
     candidates = asyncio.run(
-        decisions_mod.extract_from_analysis(
-            cast(Any, fake_agent), "analysis"
-        )
+        decisions_mod.extract_from_analysis(cast(Any, fake_agent), "analysis")
     )
 
     assert len(candidates) == 1

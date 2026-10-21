@@ -1,4 +1,5 @@
 """Tests for the harnessfix.dashboard CLI, incl. the --task detail view."""
+
 from __future__ import annotations
 
 import json
@@ -10,15 +11,54 @@ from harnessfix.dashboard import (
     main,
 )
 
-_GOOD_TRACE = "\n".join(
-    json.dumps(ev)
-    for ev in [
-        {"task_id": "t1", "ts": 1.0, "correlation_id": "", "kind": "step_start", "layer": "lifecycle", "iteration": 0, "budget_remaining": 4},
-        {"task_id": "t1", "ts": 1.1, "correlation_id": "", "kind": "tool_call", "layer": "tool_interface", "iteration": 0, "tool": "run", "args_hash": "{}"},
-        {"task_id": "t1", "ts": 1.2, "correlation_id": "", "kind": "tool_error", "layer": "tool_interface", "iteration": 0, "tool": "run", "exception": "ValueError", "message": "boom"},
-        {"task_id": "t1", "ts": 1.3, "correlation_id": "", "kind": "loop_end", "layer": "lifecycle", "iteration": 0, "outcome": "completed", "termination_reason": "answer"},
-    ]
-) + "\n"
+_GOOD_TRACE = (
+    "\n".join(
+        json.dumps(ev)
+        for ev in [
+            {
+                "task_id": "t1",
+                "ts": 1.0,
+                "correlation_id": "",
+                "kind": "step_start",
+                "layer": "lifecycle",
+                "iteration": 0,
+                "budget_remaining": 4,
+            },
+            {
+                "task_id": "t1",
+                "ts": 1.1,
+                "correlation_id": "",
+                "kind": "tool_call",
+                "layer": "tool_interface",
+                "iteration": 0,
+                "tool": "run",
+                "args_hash": "{}",
+            },
+            {
+                "task_id": "t1",
+                "ts": 1.2,
+                "correlation_id": "",
+                "kind": "tool_error",
+                "layer": "tool_interface",
+                "iteration": 0,
+                "tool": "run",
+                "exception": "ValueError",
+                "message": "boom",
+            },
+            {
+                "task_id": "t1",
+                "ts": 1.3,
+                "correlation_id": "",
+                "kind": "loop_end",
+                "layer": "lifecycle",
+                "iteration": 0,
+                "outcome": "completed",
+                "termination_reason": "answer",
+            },
+        ]
+    )
+    + "\n"
+)
 
 _DIAGNOSIS = {
     "task_id": "t1",
@@ -69,7 +109,9 @@ def test_task_detail_view_prints_explanation(capsys, tmp_path):
     assert "exception=ValueError" in out
     assert "<-- FAIL" in out
     assert "Tool error at event 2: run raised ValueError: boom" in out
-    assert "Diagnosis: tool_interface — unclassified tool error (confidence 0.85)." in out
+    assert (
+        "Diagnosis: tool_interface — unclassified tool error (confidence 0.85)." in out
+    )
     assert "Suggested repair: inspect tool_interface harness mechanism." in out
 
 
@@ -87,7 +129,9 @@ def test_task_detail_json(capsys, tmp_path):
 
 def test_main_task_unknown_returns_1(capsys, tmp_path):
     traces, diagnoses = _setup(tmp_path)
-    rc = main(["--traces", str(traces), "--diagnoses", str(diagnoses), "--task", "missing"])
+    rc = main(
+        ["--traces", str(traces), "--diagnoses", str(diagnoses), "--task", "missing"]
+    )
     assert rc == 1
     assert "Unknown task: 'missing'" in capsys.readouterr().out
 

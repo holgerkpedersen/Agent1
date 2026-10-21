@@ -51,10 +51,12 @@ def _key_path() -> Path:
 # Backends
 # ---------------------------------------------------------------------------
 
+
 def _keyring_backend() -> Any | None:
     """Return a callable keyring module, or None when not installed."""
     try:
         import keyring  # type: ignore[import-not-found]
+
         return keyring
     except ImportError:
         return None
@@ -64,6 +66,7 @@ def _crypto_backend() -> Any | None:
     """Return ``cryptography.fernet.Fernet``, or None when not installed."""
     try:
         from cryptography.fernet import Fernet
+
         return Fernet
     except ImportError:
         return None
@@ -124,6 +127,7 @@ def _write_encrypted_store(data: dict[str, str]) -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def has_secret(name: str) -> bool:
     """True when *name* exists in the secure store (keyring or encrypted file)."""
     if not name:
@@ -170,7 +174,11 @@ def set_secret(name: str, value: str) -> None:
             logger.debug("Stored secret %s via OS keyring", name)
             return
         except Exception as exc:  # noqa: BLE001
-            logger.warning("keyring write failed for %s (%s) — falling back to encrypted file", name, exc)
+            logger.warning(
+                "keyring write failed for %s (%s) — falling back to encrypted file",
+                name,
+                exc,
+            )
     data = _encrypted_store()
     data[name] = value
     _write_encrypted_store(data)
@@ -201,6 +209,7 @@ def delete_secret(name: str) -> bool:
 # ---------------------------------------------------------------------------
 # config.py integration
 # ---------------------------------------------------------------------------
+
 
 def resolve_secret(name: str, default: str = "") -> str:
     """Environment-first resolution used by ``config.py``:

@@ -1,4 +1,5 @@
 """Tool dispatcher with registry pattern for agent."""
+
 import time
 from typing import Callable, Awaitable, Any
 
@@ -15,7 +16,9 @@ class ToolDispatcher:
     feed observability metrics without the dispatcher knowing about them.
     """
 
-    def __init__(self, on_tool: "Callable[[str, float, bool], None] | None" = None) -> None:
+    def __init__(
+        self, on_tool: "Callable[[str, float, bool], None] | None" = None
+    ) -> None:
         self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
         self._on_tool = on_tool
 

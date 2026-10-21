@@ -67,16 +67,16 @@ class TestFullPytestDetection:
             "python -m pytest tests -q",
             "pytest tests/",
             "python -m pytest . -q",
-            "python -m pytest tests/ -q --no-cov 2>&1 | python -c \"print(1)\"",
+            'python -m pytest tests/ -q --no-cov 2>&1 | python -c "print(1)"',
             # 2026-09-21 regression: pytest options with a SEPARATE value were
             # read as positional paths, misclassifying a full run as targeted
             # so it was killed at the 600s cap (the run tool) / lost its
             # watchdog + recording (conftest).
             "python -m pytest -q -p no:cacheprovider --no-cov",
-            "cd /d C:\\Dev\\Agent1 && python -m pytest -q -p no:cacheprovider --no-cov 2>&1 | findstr /r /c:\"passed\" /c:\"failed\"",
-            "python -m pytest -m \"not slow\" tests/ -q",
+            'cd /d C:\\Dev\\Agent1 && python -m pytest -q -p no:cacheprovider --no-cov 2>&1 | findstr /r /c:"passed" /c:"failed"',
+            'python -m pytest -m "not slow" tests/ -q',
             "python -m pytest -n 4 --no-cov",
-            "python -m pytest -k \"foo or bar\" -q --no-cov",
+            'python -m pytest -k "foo or bar" -q --no-cov',
         ],
     )
     def test_full_runs_detected(self, command: str) -> None:
@@ -92,12 +92,12 @@ class TestFullPytestDetection:
             "echo pytest rules",
             "python -c \"print('pytest')\"",
             # A real path AFTER a value-taking option is still targeted.
-            "python -m pytest -m \"not slow\" tests/test_x.py",
+            'python -m pytest -m "not slow" tests/test_x.py',
             "python -m pytest -p no:cacheprovider tests/test_x.py",
             # REPL incident: a QUOTED path::nodeid under tests/ plus value
             # flags, redirection and a pipe — the "tests/" substring used to
             # make this a "full run" and the budget gate refused it.
-            "python -m pytest \"tests/test_pytest_full_run_gate.py::TestRunToolGate::test_targeted_runs_never_gated\" -q --no-cov -p no:cacheprovider --tb=short -o addopts=\"\" 2>&1 | more +0",
+            'python -m pytest "tests/test_pytest_full_run_gate.py::TestRunToolGate::test_targeted_runs_never_gated" -q --no-cov -p no:cacheprovider --tb=short -o addopts="" 2>&1 | more +0',
             "python -m pytest tests/test_x.py::test_y -q --no-cov",
         ],
     )
@@ -123,7 +123,9 @@ class TestBudgetResolution:
         assert agent._pytest_full_suite_timeout() == 1234.0
 
     def test_repo_env_file_fallback(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("PYTEST_FULL_SUITE_TIMEOUT", raising=False)
         env = tmp_path / ".env"
@@ -135,7 +137,9 @@ class TestBudgetResolution:
         assert agent._pytest_full_suite_timeout() == 1800.0
 
     def test_last_run_margin_matches_watchdog(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Budget mirrors conftest: max(floor, last * 1.5)."""
         monkeypatch.delenv("PYTEST_FULL_SUITE_TIMEOUT", raising=False)
@@ -156,7 +160,9 @@ class TestBudgetResolution:
         assert agent._FULL_SUITE_MARGIN == conftest._FULL_SUITE_MARGIN
 
     def test_process_env_wins_over_repo_env(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "777")
         monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
@@ -166,7 +172,9 @@ class TestBudgetResolution:
         assert agent._pytest_full_suite_timeout() == 777.0
 
     def test_missing_file_falls_back_to_cap(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("PYTEST_FULL_SUITE_TIMEOUT", raising=False)
         monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
@@ -177,7 +185,9 @@ class TestBudgetResolution:
         )
 
     def test_garbage_value_falls_back_to_cap(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "not-a-number")
         monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
@@ -205,7 +215,9 @@ class TestRunToolTimeout:
         return _FakeProc.instances[-1]
 
     def test_full_pytest_uses_injected_budget(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)
         monkeypatch.setattr(agent, "_pytest_full_suite_timeout", lambda: 1800.0)
@@ -217,7 +229,9 @@ class TestRunToolTimeout:
         assert proc.timeout_seen == 1800.0
 
     def test_model_timeout_never_lowers_the_injected_budget(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)
         monkeypatch.setattr(agent, "_pytest_full_suite_timeout", lambda: 900.0)
@@ -229,14 +243,18 @@ class TestRunToolTimeout:
         assert proc.timeout_seen == 900.0
 
     def test_non_pytest_command_still_capped(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)
-        proc = self._run(bot, {"command": "echo hi", "timeout": 10 ** 6})
+        proc = self._run(bot, {"command": "echo hi", "timeout": 10**6})
         assert proc.timeout_seen == agent._MAX_RUN_TIMEOUT_S
 
     def test_targeted_pytest_still_capped(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)
         monkeypatch.setattr(agent, "_pytest_full_suite_timeout", lambda: 1800.0)
@@ -244,7 +262,7 @@ class TestRunToolTimeout:
             bot,
             {
                 "command": "python -m pytest tests/test_x.py -q",
-                "timeout": 10 ** 6,
+                "timeout": 10**6,
             },
         )
         assert proc.timeout_seen == agent._MAX_RUN_TIMEOUT_S

@@ -1,4 +1,5 @@
 """Tests for the `model unload` command with the llama provider."""
+
 from types import SimpleNamespace
 
 import pytest

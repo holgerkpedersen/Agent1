@@ -29,7 +29,9 @@ def run_command(workspace_root: Path, cmd_str: str) -> Tuple[int, str, str]:
     # --- Structural safety: no pipes / redirection / chaining ---------
     unsafe = find_unsafe_shell_pattern(cmd_str)
     if unsafe is not None:
-        logger.warning("Rejected command with unsafe shell pattern %r: %s", cmd_str, unsafe)
+        logger.warning(
+            "Rejected command with unsafe shell pattern %r: %s", cmd_str, unsafe
+        )
         return 1, "", f"Command rejected: {unsafe}."
 
     # --- Parse safely -----------------------------------------------
@@ -56,7 +58,8 @@ def run_command(workspace_root: Path, cmd_str: str) -> Tuple[int, str, str]:
             cwd=workspace_root,
             capture_output=True,
             text=True,
-            encoding="utf-8", errors="replace",
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
     except FileNotFoundError as exc:

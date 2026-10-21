@@ -6,6 +6,7 @@ F2: dashboard POST origin/host checks must match loopback EXACTLY -
 F3: the LLM bridge's expose_to_llm gate must be re-validated under the
     manager lock at call time (no TOCTOU between gate check and invoke).
 """
+
 from __future__ import annotations
 
 import json
@@ -16,20 +17,24 @@ from pathlib import Path
 
 import pytest
 
-FIXTURE = [sys.executable,
-           str(Path(__file__).parent / "fixtures" / "fake_mcp_server.py")]
+FIXTURE = [
+    sys.executable,
+    str(Path(__file__).parent / "fixtures" / "fake_mcp_server.py"),
+]
 
 
 class TestF1Gitignored:
     def test_mcp_json_is_ignored(self) -> None:
         import pathlib
+
         gi = pathlib.Path(".gitignore").read_text(encoding="utf-8")
-        assert any(
-            line.strip() == "mcp.json" for line in gi.splitlines()
-        ), "mcp.json missing from .gitignore - config could be committed"
+        assert any(line.strip() == "mcp.json" for line in gi.splitlines()), (
+            "mcp.json missing from .gitignore - config could be committed"
+        )
 
     def test_git_ignores_the_actual_file(self, tmp_path: Path) -> None:
         import subprocess
+
         r = subprocess.run(
             ["git", "check-ignore", "-q", "mcp.json"],
             capture_output=True,
@@ -42,11 +47,13 @@ class _Handler:
 
     def do_POST(self) -> None:  # noqa: N802 - http.server API
         from http.server import BaseHTTPRequestHandler
+
         handler: BaseHTTPRequestHandler = self  # type: ignore[assignment]
         length = int(handler.headers.get("content-length", 0))
         handler.rfile.read(length)
-        payload = json.dumps({"ok": True, "echo_host":
-                              handler.headers.get("Host", "")}).encode()
+        payload = json.dumps(
+            {"ok": True, "echo_host": handler.headers.get("Host", "")}
+        ).encode()
         handler.send_response(200)
         handler.send_header("content-type", "application/json")
         handler.send_header("content-length", str(len(payload)))
@@ -61,6 +68,7 @@ class TestF2OriginHostExactMatch:
         from http.server import ThreadingHTTPServer
 
         from agent_core.monitoring.dashboard_api import DashboardAPIHandler
+
         httpd = ThreadingHTTPServer(("localhost", 0), DashboardAPIHandler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
@@ -69,8 +77,9 @@ class TestF2OriginHostExactMatch:
         httpd.server_close()
 
     @staticmethod
-    def post(url: str, host_header: str | None = None,
-             origin: str | None = None) -> int:
+    def post(
+        url: str, host_header: str | None = None, origin: str | None = None
+    ) -> int:
         headers = {"Content-Type": "application/json"}
         if host_header is not None:
             headers["Host"] = host_header
@@ -79,7 +88,8 @@ class TestF2OriginHostExactMatch:
         req = urllib.request.Request(
             url + "/api/mcp/call",
             data=json.dumps({"server": "x", "tool": "y"}).encode(),
-            headers=headers, method="POST",
+            headers=headers,
+            method="POST",
         )
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -114,15 +124,24 @@ class TestF3ExposeGateAtCallTime:
     def mgr(self, tmp_path: Path):
         from agent_core.mcp.config import save_mcp_servers, validate_entry
         from agent_core.mcp.manager import McpManager
+
         path = tmp_path / "mcp.json"
-        cfgs = {"open": validate_entry("open", {
-            "transport": "stdio", "command": FIXTURE, "expose_to_llm": True,
-        })}
+        cfgs = {
+            "open": validate_entry(
+                "open",
+                {
+                    "transport": "stdio",
+                    "command": FIXTURE,
+                    "expose_to_llm": True,
+                },
+            )
+        }
         save_mcp_servers(cfgs, path)
         return McpManager(config_path=path)
 
     def test_expose_off_between_check_and_call_blocks(self, mgr) -> None:
         from agent_core.mcp.manager import McpManagerError
+
         mgr.connect("open")
         try:
             # The caller's stale snapshot says exposed...
@@ -132,16 +151,14 @@ class TestF3ExposeGateAtCallTime:
             mgr.save_config(configs)
             # ...but call_tool(require_exposed=True) re-reads and blocks.
             with pytest.raises(McpManagerError, match="not exposed"):
-                mgr.call_tool("open", "add", {"a": 1, "b": 2},
-                              require_exposed=True)
+                mgr.call_tool("open", "add", {"a": 1, "b": 2}, require_exposed=True)
         finally:
             mgr.disconnect_all()
 
     def test_require_exposed_true_still_works_when_on(self, mgr) -> None:
         mgr.connect("open")
         try:
-            out = mgr.call_tool("open", "add", {"a": 3, "b": 4},
-                                require_exposed=True)
+            out = mgr.call_tool("open", "add", {"a": 3, "b": 4}, require_exposed=True)
             assert out == "7"
         finally:
             mgr.disconnect_all()
@@ -158,17 +175,27 @@ class TestF3ExposeGateAtCallTime:
             mgr.disconnect_all()
 
     def test_nlp_handler_goes_through_locked_gate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import asyncio
 
         import agent
         from agent_core.mcp.config import save_mcp_servers, validate_entry
         from agent_core.mcp.manager import McpManager
+
         path = tmp_path / "mcp.json"
-        cfgs = {"open": validate_entry("open", {
-            "transport": "stdio", "command": FIXTURE, "expose_to_llm": True,
-        })}
+        cfgs = {
+            "open": validate_entry(
+                "open",
+                {
+                    "transport": "stdio",
+                    "command": FIXTURE,
+                    "expose_to_llm": True,
+                },
+            )
+        }
         save_mcp_servers(cfgs, path)
         mgr = McpManager(config_path=path)
         monkeypatch.setattr("agent_core.mcp.manager.get_manager", lambda: mgr)
@@ -178,9 +205,15 @@ class TestF3ExposeGateAtCallTime:
         configs["open"].expose_to_llm = False
         mgr.save_config(configs)
         try:
-            out = asyncio.run(a._nlp_mcp_call({
-                "server": "open", "tool": "add", "arguments": {"a": 1, "b": 1},
-            }))
+            out = asyncio.run(
+                a._nlp_mcp_call(
+                    {
+                        "server": "open",
+                        "tool": "add",
+                        "arguments": {"a": 1, "b": 1},
+                    }
+                )
+            )
             assert "not exposed" in out
         finally:
             mgr.disconnect_all()
@@ -199,9 +232,12 @@ class TestF3ExposeGateAtCallTime:
 # or not the test remembered to disconnect.
 # ---------------------------------------------------------------------------
 
+
 class TestF4NoOrphanedStdioChildren:
     def test_connect_then_teardown_leaves_no_live_transport(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import asyncio
         import io
@@ -213,9 +249,15 @@ class TestF4NoOrphanedStdioChildren:
 
         path = tmp_path / "mcp.json"
         save_mcp_servers(
-            {"fake": validate_entry("fake", {
-                "transport": "stdio", "command": FIXTURE,
-            })},
+            {
+                "fake": validate_entry(
+                    "fake",
+                    {
+                        "transport": "stdio",
+                        "command": FIXTURE,
+                    },
+                )
+            },
             path,
         )
         mgr = McpManager(config_path=path)

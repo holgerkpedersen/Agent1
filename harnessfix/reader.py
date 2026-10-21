@@ -3,6 +3,7 @@
 Schema-validates and size-limits parsed trace files (decision #022), so a
 corrupt or hostile trace can never crash the HTIR compiler.
 """
+
 from __future__ import annotations
 
 import json
@@ -37,7 +38,9 @@ def read_trace(path: Path | str) -> list[dict[str, Any]]:
             try:
                 record = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise TraceValidationError(f"{p}:{lineno}: invalid JSON: {exc}") from exc
+                raise TraceValidationError(
+                    f"{p}:{lineno}: invalid JSON: {exc}"
+                ) from exc
             if not isinstance(record, dict):
                 raise TraceValidationError(f"{p}:{lineno}: event is not an object")
             if record.get("kind") not in KINDS:

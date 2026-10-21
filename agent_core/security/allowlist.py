@@ -95,6 +95,7 @@ def _normalize(binary_name: str) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def find_unsafe_shell_pattern(cmd_str: str) -> str | None:
     """Return a description of the first unsafe shell pattern in *cmd_str*.
 
@@ -210,7 +211,9 @@ def is_command_allowed(binary_name: str) -> bool:
     normalized = _normalize(binary_name)
     allowed = normalized in SAFE_COMMANDS or normalized in _dynamic_allowlist
 
-    source: str = "static" if normalized in SAFE_COMMANDS else ("dynamic" if allowed else "none")
+    source: str = (
+        "static" if normalized in SAFE_COMMANDS else ("dynamic" if allowed else "none")
+    )
     _logger.info(
         "Command allowlist check",
         extra={

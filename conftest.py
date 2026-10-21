@@ -332,12 +332,35 @@ _FULL_SUITE_MARGIN = 0.50  # 50% headroom over the last recorded duration
 #: full run loses BOTH its watchdog and its elapsed-time recording — so the
 #: budget never grows past the floor.  Mirrors ``agent._PYTEST_VALUE_FLAGS``.
 _VALUE_FLAGS = {
-    "-p", "-k", "-m", "-o", "-c", "-n", "-W", "-r",
-    "--deselect", "--ignore", "--ignore-glob", "--maxfail", "--tb",
-    "--durations", "--rootdir", "--confcutdir", "--basetemp", "--junitxml",
-    "--junit-prefix", "--log-level", "--log-file", "--log-format", "--dist",
-    "--import-mode", "--cache-dir", "--override-ini", "--numprocesses",
-    "--lfnf", "--last-failed-no-failures",
+    "-p",
+    "-k",
+    "-m",
+    "-o",
+    "-c",
+    "-n",
+    "-W",
+    "-r",
+    "--deselect",
+    "--ignore",
+    "--ignore-glob",
+    "--maxfail",
+    "--tb",
+    "--durations",
+    "--rootdir",
+    "--confcutdir",
+    "--basetemp",
+    "--junitxml",
+    "--junit-prefix",
+    "--log-level",
+    "--log-file",
+    "--log-format",
+    "--dist",
+    "--import-mode",
+    "--cache-dir",
+    "--override-ini",
+    "--numprocesses",
+    "--lfnf",
+    "--last-failed-no-failures",
 }
 
 #: Flags that SELECT A SUBSET of the suite, so the invocation is NOT a full
@@ -346,8 +369,14 @@ _VALUE_FLAGS = {
 #: whole-suite budget/watchdog - and made the agent's full-run gate refuse the
 #: very commands that exist to avoid a full run.
 _SUBSET_FLAGS = {
-    "--lf", "--last-failed", "--lfnf", "--last-failed-no-failures",
-    "--nf", "--new-first", "--failed-first", "--testmon",
+    "--lf",
+    "--last-failed",
+    "--lfnf",
+    "--last-failed-no-failures",
+    "--nf",
+    "--new-first",
+    "--failed-first",
+    "--testmon",
 }
 
 #: Source of the last real full-run duration, shared by the budget the NEXT

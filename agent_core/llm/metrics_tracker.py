@@ -44,7 +44,9 @@ class MetricsTracker:
             self._cache_stats[key] = entry
         entry["misses"] += 1
 
-    def get_cache_metrics(self, task_type: TaskType, profile_type: ProfileType) -> dict[str, float | int]:
+    def get_cache_metrics(
+        self, task_type: TaskType, profile_type: ProfileType
+    ) -> dict[str, float | int]:
         """Return cache hit/miss stats for a (task_type, profile_type) pair.
 
         Returns {"hits", "misses", "total_lookups", "hit_rate_pct"} or an empty
@@ -81,7 +83,9 @@ class MetricsTracker:
             }
         return result
 
-    def record_success(self, task_type: TaskType, profile_type: ProfileType, latency_seconds: float) -> None:
+    def record_success(
+        self, task_type: TaskType, profile_type: ProfileType, latency_seconds: float
+    ) -> None:
         key = (task_type.value, profile_type.value)
         self._success_counts[key] += 1
         self._latencies[key].append(latency_seconds)
@@ -107,7 +111,9 @@ class MetricsTracker:
         """
         key = (task_type.value, profile_type.value)
         if metrics is not None:
-            tokens = tokens if tokens is not None else getattr(metrics, "total_tokens", None)
+            tokens = (
+                tokens if tokens is not None else getattr(metrics, "total_tokens", None)
+            )
             cost = cost if cost is not None else getattr(metrics, "cost", 0.0)
             if latency_seconds is None:
                 latency_seconds = getattr(metrics, "latency_ms", 0.0) / 1000.0
@@ -123,8 +129,12 @@ class MetricsTracker:
 
     def get_success_rate(self, profile_type: ProfileType) -> float:
         """Return overall success rate for a profile across all task types."""
-        successes = sum(v for k, v in self._success_counts.items() if k[1] == profile_type.value)
-        failures = sum(v for k, v in self._failure_counts.items() if k[1] == profile_type.value)
+        successes = sum(
+            v for k, v in self._success_counts.items() if k[1] == profile_type.value
+        )
+        failures = sum(
+            v for k, v in self._failure_counts.items() if k[1] == profile_type.value
+        )
         total = successes + failures
         if total == 0:
             return 0.5
@@ -132,9 +142,13 @@ class MetricsTracker:
 
     def get_failure_count(self, profile_type: ProfileType) -> int:
         """Return total failure count for a profile across all task types."""
-        return sum(v for k, v in self._failure_counts.items() if k[1] == profile_type.value)
+        return sum(
+            v for k, v in self._failure_counts.items() if k[1] == profile_type.value
+        )
 
-    def get_performance_score(self, task_type: TaskType, profile_type: ProfileType) -> float:
+    def get_performance_score(
+        self, task_type: TaskType, profile_type: ProfileType
+    ) -> float:
         """Returns a performance score in [0.0, 1.0] for the given combo."""
         key = (task_type.value, profile_type.value)
         successes = self._success_counts[key]
@@ -157,10 +171,14 @@ class MetricsTracker:
                 seen_keys.add(key)
                 task_type = TaskType(key[0])
                 profile_type = ProfileType(key[1])
-                scores[(task_type, profile_type)] = self.get_performance_score(task_type, profile_type)
+                scores[(task_type, profile_type)] = self.get_performance_score(
+                    task_type, profile_type
+                )
         return scores
 
-    def get_metrics(self, task_type: TaskType, profile_type: ProfileType) -> dict[str, float | int]:
+    def get_metrics(
+        self, task_type: TaskType, profile_type: ProfileType
+    ) -> dict[str, float | int]:
         """Returns raw metrics for meta-policy evolution and cache updates."""
         key = (task_type.value, profile_type.value)
         successes = self._success_counts[key]

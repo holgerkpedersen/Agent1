@@ -67,12 +67,11 @@ def _mean_seconds(timer: timeit.Timer) -> float:
 # Benchmarks
 # ---------------------------------------------------------------------------
 
+
 def bench_path_normalization() -> Tuple[str, float]:
     """Benchmark normalize_path against various traversal payloads."""
     timer = timeit.Timer(
-        stmt=lambda: list(
-            normalize_path(_workspace_root, p) for p in _ATTACK_PATHS
-        ),
+        stmt=lambda: list(normalize_path(_workspace_root, p) for p in _ATTACK_PATHS),
     )
     return "path_normalization", _mean_seconds(timer)
 
@@ -104,7 +103,14 @@ def bench_shell_run_safe() -> Tuple[str, float]:
 
 def bench_path_traversal_protection() -> Tuple[str, float]:
     """Benchmark that normalize_path raises SecurityViolationError on escapes."""
-    escape_paths = [p for p in _ATTACK_PATHS if ".." in p or p.startswith("/") and not p.startswith(_workspace_root.as_posix())]
+    escape_paths = [
+        p
+        for p in _ATTACK_PATHS
+        if ".." in p
+        or p.startswith("/")
+        and not p.startswith(_workspace_root.as_posix())
+    ]
+
     # We only benchmark the ones that are expected to raise.
     def _run() -> None:
         for p in escape_paths[:3]:  # limit scope for speed
@@ -120,6 +126,7 @@ def bench_path_traversal_protection() -> Tuple[str, float]:
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
+
 
 def run_all_benchmarks() -> List[Tuple[str, float]]:
     """Execute every security benchmark and return (name, mean seconds)."""

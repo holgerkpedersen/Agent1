@@ -7,6 +7,7 @@ request attributes on stdin.  For ``get`` it emits the GITHUB_TOKEN from
 The token is read only from ``.env`` (gitignored) -- it is never written into
 ``.git/config`` or the remote URL.
 """
+
 import os
 import sys
 from pathlib import Path

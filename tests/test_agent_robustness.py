@@ -17,6 +17,7 @@ message whose text happens to equal the note text must survive the strip.
 B3: providers expose apply_profile(); LLMClient restores profiles through it
 instead of poking _profile_name/temperature/max_tokens directly.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -45,9 +46,12 @@ def _tool_msg(content: str) -> dict:
 # A2 — atomic persistence + corrupt-file quarantine
 # ---------------------------------------------------------------------------
 
+
 class TestAtomicPersistence:
     def test_save_chat_history_leaves_no_tmp_sidecar(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         hist = tmp_path / "chat_history.json"
         monkeypatch.setattr(agent, "CHAT_HISTORY_JSON_PATH", str(hist))
@@ -64,7 +68,9 @@ class TestAtomicPersistence:
         assert [m["role"] for m in data] == ["system", "user"]
 
     def test_save_memory_leaves_no_tmp_sidecar(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
@@ -78,7 +84,9 @@ class TestAtomicPersistence:
         assert data["files_read"] == [str(tmp_path / "x.py")]
 
     def test_save_memory_sidecar_tracks_destination_not_stale_constant(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """Regression (CI WinError 17): the tmp sidecar must be derived from
         the CURRENT AGENT_MEMORY_JSON_PATH.  A stale module-level
@@ -87,7 +95,8 @@ class TestAtomicPersistence:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
         monkeypatch.setattr(
-            agent, "AGENT_MEMORY_TMP_PATH",
+            agent,
+            "AGENT_MEMORY_TMP_PATH",
             str(tmp_path / "no-such-dir" / "agent_memory.json.tmp"),
         )
         bot = Agent(workspace=str(tmp_path))
@@ -98,7 +107,9 @@ class TestAtomicPersistence:
         assert data["files_read"] == [str(tmp_path / "x.py")]
 
     def test_corrupt_chat_history_is_quarantined_not_silently_dropped(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """The old behavior returned [] and left corrupt bytes in place, so
         the next save clobbered them. Now a .bad-<ts> copy must exist."""
@@ -115,7 +126,9 @@ class TestAtomicPersistence:
         assert bot._chat_history == []
 
     def test_corrupt_agent_memory_is_quarantined(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         mem = tmp_path / "agent_memory.json"
         mem.write_text("]not json[", encoding="utf-8")
@@ -125,10 +138,13 @@ class TestAtomicPersistence:
         assert bot._files_read == set()
 
     def test_missing_file_still_loads_empty_without_quarantine(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
-        monkeypatch.setattr(agent, "CHAT_HISTORY_JSON_PATH",
-                            str(tmp_path / "absent.json"))
+        monkeypatch.setattr(
+            agent, "CHAT_HISTORY_JSON_PATH", str(tmp_path / "absent.json")
+        )
         bot = Agent(workspace=str(tmp_path))
         assert bot._chat_history == []
         assert not list(tmp_path.glob("*.bad-*"))
@@ -138,9 +154,10 @@ class TestAtomicPersistence:
 # A4 — model-supplied argument caps
 # ---------------------------------------------------------------------------
 
+
 class TestToolArgumentCaps:
     def test_run_timeout_capped(self, bot: Agent) -> None:
-        out = asyncio.run(bot._nlp_run({"command": "echo hi", "timeout": 10 ** 6}))
+        out = asyncio.run(bot._nlp_run({"command": "echo hi", "timeout": 10**6}))
         assert agent._MAX_RUN_TIMEOUT_S == 600
         assert "hi" in out or out.strip() != ""
 
@@ -154,19 +171,24 @@ class TestToolArgumentCaps:
         assert "ok" in out
 
     def test_read_limit_capped_at_max_read_lines(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         big = tmp_path / "big.py"
         big.write_text("\n".join(f"line_{i}" for i in range(900)), encoding="utf-8")
         monkeypatch.chdir(tmp_path)
         bot = Agent(workspace=str(tmp_path))
-        out = asyncio.run(bot._nlp_read({"path": str(big), "offset": 1, "limit": 10 ** 6}))
+        out = asyncio.run(
+            bot._nlp_read({"path": str(big), "offset": 1, "limit": 10**6})
+        )
         body_lines = [ln for ln in out.splitlines() if ln.startswith("line_")]
         assert len(body_lines) == agent._MAX_READ_LINES
         assert "[truncated" in out
 
     def test_read_offset_beyond_end_reports_line_count(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         f = tmp_path / "small.py"
         f.write_text("a\nb\n", encoding="utf-8")
@@ -175,7 +197,9 @@ class TestToolArgumentCaps:
         assert "999" in out and "2 lines" in out
 
     def test_read_pages_large_py_files_instead_of_returning_the_summary(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """Regression: a >threshold .py file returned its definitions summary
         for EVERY offset — the model paged to fresh offsets, saw identical
@@ -190,9 +214,7 @@ class TestToolArgumentCaps:
         assert big.stat().st_size > 50 * 1024  # over the AST threshold
         bot = Agent(workspace=str(tmp_path))
 
-        paged = asyncio.run(
-            bot._nlp_read({"path": str(big), "offset": 1, "limit": 3})
-        )
+        paged = asyncio.run(bot._nlp_read({"path": str(big), "offset": 1, "limit": 3}))
         assert "def f0" in paged and "Definitions in" not in paged
 
         overview = asyncio.run(bot._nlp_read({"path": str(big)}))
@@ -204,9 +226,12 @@ class TestToolArgumentCaps:
 # C2 — tagged continue-note stripping
 # ---------------------------------------------------------------------------
 
+
 class TestContinueNoteTagging:
     def test_user_message_equal_to_note_text_survives_persist(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """The old code stripped ANY message whose content equaled the note —
         including a genuine user prompt. Tagged stripping must keep it."""
@@ -218,23 +243,26 @@ class TestContinueNoteTagging:
         note = agent._CONTINUE_NOTE
 
         async def fake_loop_run(self_loop, **kwargs):
-            kwargs["messages"].append({
-                "role": "assistant", "content": "Done.",
-            })
+            kwargs["messages"].append(
+                {
+                    "role": "assistant",
+                    "content": "Done.",
+                }
+            )
             return "Done.", kwargs["messages"]
 
         monkeypatch.setattr(agent.ToolLoopRunner, "run", fake_loop_run)
         asyncio.run(bot.chat_nlp(note))  # user literally sends the note text
         saved = json.loads(hist_file.read_text(encoding="utf-8"))
-        user_msgs = [
-            m.get("content") for m in saved if m.get("role") == "user"
-        ]
+        user_msgs = [m.get("content") for m in saved if m.get("role") == "user"]
         assert any(c == note for c in user_msgs), (
             "user message matching the note text was dropped"
         )
 
     def test_injected_note_is_tagged_and_stripped_from_persisted_history(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         hist_file = tmp_path / "chat_history.json"
         mem_file = tmp_path / "agent_memory.json"
@@ -263,27 +291,29 @@ class TestContinueNoteTagging:
 
         # During the chained turn the injected note carried the tag...
         tagged = [
-            m for m in captured["messages"]
+            m
+            for m in captured["messages"]
             if m.get(agent._CONTINUE_NOTE_TAG_KEY) == agent._CONTINUE_NOTE_TAG
         ]
         assert len(tagged) == 1
         # ...and after the turn it is gone from the persisted history.
         saved = json.loads(hist_file.read_text(encoding="utf-8"))
-        assert all(
-            m.get("content") != agent._CONTINUE_NOTE for m in saved
-        )
+        assert all(m.get("content") != agent._CONTINUE_NOTE for m in saved)
 
 
 # ---------------------------------------------------------------------------
 # C1 — plan-mode banner vs QUIET display mode
 # ---------------------------------------------------------------------------
 
+
 class TestPlanBannerDisplayMode:
     def _plan_bot(self, tmp_path: Path, monkeypatch) -> Agent:
-        monkeypatch.setattr(agent, "CHAT_HISTORY_JSON_PATH",
-                            str(tmp_path / "chat_history.json"))
-        monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH",
-                            str(tmp_path / "agent_memory.json"))
+        monkeypatch.setattr(
+            agent, "CHAT_HISTORY_JSON_PATH", str(tmp_path / "chat_history.json")
+        )
+        monkeypatch.setattr(
+            agent, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
+        )
         b = Agent(workspace=str(tmp_path))
         b.mode = "plan"
 
@@ -294,7 +324,10 @@ class TestPlanBannerDisplayMode:
         return b
 
     def test_quiet_mode_suppresses_plan_banner(
-        self, tmp_path: Path, monkeypatch, capsys,
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
     ) -> None:
         b = self._plan_bot(tmp_path, monkeypatch)
         monkeypatch.setenv("AGENT_DISPLAY_MODE", "quiet")
@@ -304,7 +337,10 @@ class TestPlanBannerDisplayMode:
         assert "Research complete." in out  # final answer always prints
 
     def test_verbose_mode_keeps_plan_banner(
-        self, tmp_path: Path, monkeypatch, capsys,
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
     ) -> None:
         b = self._plan_bot(tmp_path, monkeypatch)
         monkeypatch.setenv("AGENT_DISPLAY_MODE", "verbose")
@@ -316,6 +352,7 @@ class TestPlanBannerDisplayMode:
 # ---------------------------------------------------------------------------
 # B3 — apply_profile on providers; no direct attribute pokes
 # ---------------------------------------------------------------------------
+
 
 class TestApplyProfileContract:
     def test_lmstudio_apply_profile_sets_all_three(self) -> None:
@@ -330,15 +367,18 @@ class TestApplyProfileContract:
     def test_opencode_apply_profile_sets_all_three(self) -> None:
         from agent_core.llm.opencode_provider import OpencodeProvider
 
-        p = OpencodeProvider(model_name="opencode-go/deepseek-v4-flash",
-                             read_store=False)
+        p = OpencodeProvider(
+            model_name="opencode-go/deepseek-v4-flash", read_store=False
+        )
         p.apply_profile("default", 0.5, 4000)
         assert p._profile_name == "default"
         assert p.temperature == 0.5
         assert p.max_tokens == 4000
 
     def test_llmclient_restores_profile_via_apply_profile(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """LLMClient.__init__ used to poke _provider._profile_name etc.
         directly; it must go through apply_profile now."""
@@ -351,10 +391,12 @@ class TestApplyProfileContract:
                 self.max_tokens = 50000
                 self._profile_name = None
 
-            def apply_profile(self, name: str, temperature: float,
-                              max_tokens: int) -> None:
-                applied.update(name=name, temperature=temperature,
-                               max_tokens=max_tokens)
+            def apply_profile(
+                self, name: str, temperature: float, max_tokens: int
+            ) -> None:
+                applied.update(
+                    name=name, temperature=temperature, max_tokens=max_tokens
+                )
                 self._profile_name = name
                 self.temperature = temperature
                 self.max_tokens = max_tokens
@@ -379,23 +421,29 @@ class TestApplyProfileContract:
 # Payload boundary — the internal tag must never reach a provider
 # ---------------------------------------------------------------------------
 
+
 class TestTagStrippedAtPayloadBoundary:
     def test_sanitize_message_roles_strips_loop_note_tag(self) -> None:
         from agent_core.llm.lmstudio import sanitize_message_roles
 
         msgs = [
             {"role": "system", "content": "sys"},
-            {"role": "user", "content": "task",
-             agent.LOOP_NOTE_TAG_KEY: "continue"},
+            {"role": "user", "content": "task", agent.LOOP_NOTE_TAG_KEY: "continue"},
             {"role": "assistant", "content": "half done"},
-            {"role": "user", "content": agent._CONTINUE_NOTE,
-             agent.LOOP_NOTE_TAG_KEY: "continue"},
+            {
+                "role": "user",
+                "content": agent._CONTINUE_NOTE,
+                agent.LOOP_NOTE_TAG_KEY: "continue",
+            },
         ]
         out = sanitize_message_roles(msgs)
         assert all(agent.LOOP_NOTE_TAG_KEY not in m for m in out)
         # Content and roles are untouched otherwise.
         assert [m["role"] for m in out] == [
-            "system", "user", "assistant", "user",
+            "system",
+            "user",
+            "assistant",
+            "user",
         ]
         assert out[1]["content"] == "task"
         assert out[3]["content"] == agent._CONTINUE_NOTE
@@ -404,6 +452,7 @@ class TestTagStrippedAtPayloadBoundary:
 # ---------------------------------------------------------------------------
 # Turn-level retry on transient LLM failure (timeout must not destroy execution)
 # ---------------------------------------------------------------------------
+
 
 class TestTransientLlmErrorRetry:
     """A single transient timeout/connection failure must not end the task.
@@ -416,8 +465,7 @@ class TestTransientLlmErrorRetry:
     def _patch(self, monkeypatch, bot, fake_loop):
         captured = {}
 
-        def fake_finish(final_text=None, llm_error=None, loop=None,
-                        display_mode=None):
+        def fake_finish(final_text=None, llm_error=None, loop=None, display_mode=None):
             captured["text"] = final_text
             captured["err"] = llm_error
 
@@ -425,8 +473,10 @@ class TestTransientLlmErrorRetry:
         monkeypatch.setattr(bot, "_finish_turn", fake_finish)
         monkeypatch.setattr(bot, "_refresh_system_message", lambda *a, **k: None)
         monkeypatch.setattr(bot, "_append_user_turn", lambda *a, **k: None)
-        monkeypatch.setattr(agent, "_resolve_display_mode",
-                            lambda: AgentDisplayMode.QUIET)
+        monkeypatch.setattr(
+            agent, "_resolve_display_mode", lambda: AgentDisplayMode.QUIET
+        )
+
         # Keep the retry backoff instant in tests (no-op awaitable).
         async def _no_sleep(*a, **k):
             return None
@@ -445,8 +495,12 @@ class TestTransientLlmErrorRetry:
             if calls["n"] == 1:
                 # First attempt: transient timeout -> must be retried.
                 return ("", [], "[Error: read timed out]", loop_token)
-            return ("Done", [{"role": "assistant", "content": "Done"}],
-                    None, loop_token)
+            return (
+                "Done",
+                [{"role": "assistant", "content": "Done"}],
+                None,
+                loop_token,
+            )
 
         captured = self._patch(monkeypatch, bot, fake_loop)
         asyncio.run(bot.chat_nlp("do it"))
@@ -463,8 +517,12 @@ class TestTransientLlmErrorRetry:
         async def fake_loop(*args, **kwargs):
             calls["n"] += 1
             # A 401 is permanent — must NOT be retried (would loop forever).
-            return ("", [], "[Error: opencode API request failed: "
-                    "HTTP Error 401: Unauthorized]", loop_token)
+            return (
+                "",
+                [],
+                "[Error: opencode API request failed: HTTP Error 401: Unauthorized]",
+                loop_token,
+            )
 
         captured = self._patch(monkeypatch, bot, fake_loop)
         asyncio.run(bot.chat_nlp("do it"))
@@ -476,6 +534,7 @@ class TestTransientLlmErrorRetry:
 # ---------------------------------------------------------------------------
 # Failover visibility — which LLM actually answered must be shown in chat
 # ---------------------------------------------------------------------------
+
 
 class _FakeFailoverProvider:
     """Stands in for ``FailoverProvider`` on ``bot.llm._provider``."""
@@ -495,8 +554,11 @@ def _notice() -> dict:
         "answered_provider": "opencode",
         "answered_model": "opencode-go/deepseek-v4.1-flash",
         "attempted": [
-            {"provider": "lmstudio", "model": "llama-4-scout",
-             "error": "[Error: unreachable]"},
+            {
+                "provider": "lmstudio",
+                "model": "llama-4-scout",
+                "error": "[Error: unreachable]",
+            },
         ],
     }
 
@@ -525,12 +587,14 @@ def test_reset_failover_notice_tolerates_a_plain_provider() -> None:
 
 
 def test_report_failover_prints_the_answering_model(
-    monkeypatch, capsys,
+    monkeypatch,
+    capsys,
 ) -> None:
     bot = Agent(workspace=".")
     bot.llm._provider = _FakeFailoverProvider(_notice())
-    monkeypatch.setattr(agent, "_resolve_display_mode",
-                        lambda: AgentDisplayMode.VERBOSE)
+    monkeypatch.setattr(
+        agent, "_resolve_display_mode", lambda: AgentDisplayMode.VERBOSE
+    )
     bot._report_failover()
     out = capsys.readouterr().out
     assert "[failover]" in out
@@ -540,31 +604,34 @@ def test_report_failover_prints_the_answering_model(
 
 
 def test_report_failover_is_silent_in_quiet_mode(
-    monkeypatch, capsys,
+    monkeypatch,
+    capsys,
 ) -> None:
     """QUIET promises only the final answer — no failover banner."""
     bot = Agent(workspace=".")
     bot.llm._provider = _FakeFailoverProvider(_notice())
-    monkeypatch.setattr(agent, "_resolve_display_mode",
-                        lambda: AgentDisplayMode.QUIET)
+    monkeypatch.setattr(agent, "_resolve_display_mode", lambda: AgentDisplayMode.QUIET)
     bot._report_failover()
     assert "[failover]" not in capsys.readouterr().out
 
 
 def test_report_failover_is_silent_when_nothing_failed_over(
-    monkeypatch, capsys,
+    monkeypatch,
+    capsys,
 ) -> None:
     """A normal turn (first provider healthy) must print nothing."""
     bot = Agent(workspace=".")
     bot.llm._provider = _FakeFailoverProvider(None)
-    monkeypatch.setattr(agent, "_resolve_display_mode",
-                        lambda: AgentDisplayMode.VERBOSE)
+    monkeypatch.setattr(
+        agent, "_resolve_display_mode", lambda: AgentDisplayMode.VERBOSE
+    )
     bot._report_failover()
     assert "[failover]" not in capsys.readouterr().out
 
 
 def test_chat_nlp_reports_failover_after_a_clean_turn(
-    monkeypatch, capsys,
+    monkeypatch,
+    capsys,
 ) -> None:
     """End-to-end: the loop succeeds but a failover happened DURING it, so the
     user must be told which model answered instead of silently getting another.
@@ -584,8 +651,7 @@ def test_chat_nlp_reports_failover_after_a_clean_turn(
         if loop_calls["n"] == 0:
             fake.last_failover = _notice()
         loop_calls["n"] += 1
-        return ("Done", [{"role": "assistant", "content": "Done"}],
-                None, loop_token)
+        return ("Done", [{"role": "assistant", "content": "Done"}], None, loop_token)
 
     monkeypatch.setattr(bot, "_run_chained_tool_loop", fake_loop)
     monkeypatch.setattr(bot, "_refresh_system_message", lambda *a, **k: None)
@@ -593,8 +659,9 @@ def test_chat_nlp_reports_failover_after_a_clean_turn(
     monkeypatch.setattr(bot, "_finish_turn", lambda *a, **k: None)
     monkeypatch.setattr(bot, "_save_chat_history", lambda *a, **k: None)
     monkeypatch.setattr(bot, "_save_memory", lambda *a, **k: None)
-    monkeypatch.setattr(agent, "_resolve_display_mode",
-                        lambda: AgentDisplayMode.VERBOSE)
+    monkeypatch.setattr(
+        agent, "_resolve_display_mode", lambda: AgentDisplayMode.VERBOSE
+    )
     asyncio.run(bot.chat_nlp("do it"))
     out = capsys.readouterr().out
     assert "[failover]" in out
@@ -612,8 +679,6 @@ def test_shell_command_hint_is_platform_aware() -> None:
     assert "no Unix tools" in agent._unix_command_hint()
     assert "cmd.exe" in agent._windows_command_hint()
     expected = (
-        agent._unix_command_hint() if os.name == "nt"
-        else agent._windows_command_hint()
+        agent._unix_command_hint() if os.name == "nt" else agent._windows_command_hint()
     )
     assert agent._shell_command_hint() == expected
-

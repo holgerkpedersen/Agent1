@@ -107,7 +107,7 @@ def find_dead_tails(path: Path) -> list[str]:
                 break
         if terminator_at is None:
             continue
-        dead = stmts[terminator_at + 1:]
+        dead = stmts[terminator_at + 1 :]
         if dead:
             first = dead[0]
             last = dead[-1]
@@ -144,20 +144,16 @@ def test_guard_actually_sees_the_source_tree():
     assert len(files) > 50, f"scan covered only {len(files)} files"
 
     # The guarded module is real source, not filtered out as cache/venv.
-    assert any(
-        p.name == "llama_server.py" and "llm" in p.parts for p in files
-    ), "llama_server.py was not scanned -- SKIP_DIRS is too broad"
+    assert any(p.name == "llama_server.py" and "llm" in p.parts for p in files), (
+        "llama_server.py was not scanned -- SKIP_DIRS is too broad"
+    )
 
 
 def test_detects_a_constructed_dead_tail(tmp_path):
     """Meta-check: the detector fires on a synthetic offender."""
     bad = tmp_path / "offender.py"
     bad.write_text(
-        "def f(x):\n"
-        "    if x:\n"
-        "        return 1\n"
-        "        y = 2\n"
-        "    return 3\n",
+        "def f(x):\n    if x:\n        return 1\n        y = 2\n    return 3\n",
         encoding="utf-8",
     )
     findings = find_dead_tails(bad)
@@ -183,11 +179,7 @@ def test_else_and_finally_bodies_are_scanned_separately(tmp_path):
 
     alive = tmp_path / "alive_else.py"
     alive.write_text(
-        "def f(x):\n"
-        "    if x:\n"
-        "        return 1\n"
-        "    else:\n"
-        "        return 2\n",
+        "def f(x):\n    if x:\n        return 1\n    else:\n        return 2\n",
         encoding="utf-8",
     )
     assert find_dead_tails(alive) == []

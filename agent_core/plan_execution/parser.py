@@ -5,6 +5,7 @@ executor (``plan exec``) is a ``## Tasks`` markdown block, or an explicit
 ``--tasks <json>`` file.  Both are parsed into :class:`PlanTask` objects so the
 executor stays deterministic and testable (no LLM re-extraction of free text).
 """
+
 from __future__ import annotations
 
 import json
@@ -105,14 +106,8 @@ def parse_tasks_from_markdown(text: str) -> List[PlanTask]:
             continue
         role = (m.group("role") or DEFAULT_ROLE).strip().lower() or DEFAULT_ROLE
         deps_raw = m.group("deps")
-        deps = (
-            [d.strip() for d in deps_raw.split(",") if d.strip()]
-            if deps_raw
-            else []
-        )
-        out.append(
-            PlanTask(id=tid, description=desc, role=role, depends_on=deps)
-        )
+        deps = [d.strip() for d in deps_raw.split(",") if d.strip()] if deps_raw else []
+        out.append(PlanTask(id=tid, description=desc, role=role, depends_on=deps))
     return out
 
 

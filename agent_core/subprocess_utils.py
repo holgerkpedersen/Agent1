@@ -53,14 +53,14 @@ async def run_subprocess_with_timeout(
         # the error so callers can report it meaningfully.
         if cmd and cmd[0].lower() in _SHELL_BUILTINS and _args_are_shell_safe(cmd):
             logger.debug(
-                "Falling back to shell for builtin %r on cwd=%s", cmd[0], cwd or os.getcwd()
+                "Falling back to shell for builtin %r on cwd=%s",
+                cmd[0],
+                cwd or os.getcwd(),
             )
             return await _run_via_shell(cmd, timeout_sec, cwd)
         raise ToolExecutionError("subprocess", f"Executable not found: {cmd[0]}") from e
     except asyncio.TimeoutError as e:
-        logger.warning(
-            "Subprocess timed out after %ss: %s", timeout_sec, " ".join(cmd)
-        )
+        logger.warning("Subprocess timed out after %ss: %s", timeout_sec, " ".join(cmd))
         # Kill and reap the child so its pipe transports close before the loop ends.
         if proc is not None and proc.returncode is None:
             try:
@@ -106,8 +106,10 @@ async def _run_via_shell(
         command_str = _join_for_cmd(cmd)
         shell_executable = None  # create_subprocess_shell uses the default shell
     else:
-        command_str = shlex.join(cmd) if hasattr(shlex, "join") else " ".join(
-            shlex.quote(a) for a in cmd
+        command_str = (
+            shlex.join(cmd)
+            if hasattr(shlex, "join")
+            else " ".join(shlex.quote(a) for a in cmd)
         )
         shell_executable = "/bin/sh"
 
@@ -163,7 +165,7 @@ def _posix_guidance(shell: str) -> str:
         f"Use {shell} syntax; forward-slash paths. There are NO cmd.exe "
         "builtins (dir/type/findstr/copy/del/where) and NO PowerShell cmdlets "
         "(Get-ChildItem/Select-String/Get-Content) — use ls/cat/grep/find, or a "
-        "Python one-liner (python -c \"...\"). Run output is auto-truncated."
+        'Python one-liner (python -c "..."). Run output is auto-truncated.'
     )
 
 
@@ -179,7 +181,9 @@ def shell_info() -> dict[str, str]:
     sentence the LLM can use).
     """
     shell_env = os.environ.get("SHELL", "")
-    shell_name = os.path.splitext(os.path.basename(shell_env))[0].lower() if shell_env else ""
+    shell_name = (
+        os.path.splitext(os.path.basename(shell_env))[0].lower() if shell_env else ""
+    )
 
     # POSIX-like shell detected (bash, zsh, sh, fish, …) – even on Windows
     # when Git Bash / MSYS2 / WSL is in use.
@@ -219,7 +223,7 @@ def shell_info() -> dict[str, str]:
                 "Use cmd.exe syntax; paths use backslash. cmd.exe has NO Unix "
                 "tools — never use tail/head/grep/ls/cat/sed/awk/wc or pipe to "
                 "them (run output is auto-truncated). Use dir/type/findstr/more "
-                "instead, or a Python one-liner (python -c \"...\"). Call Python "
+                'instead, or a Python one-liner (python -c "..."). Call Python '
                 "tools as 'python -m <tool>'."
             ),
         }

@@ -23,6 +23,7 @@ The mode is session state on the ``Agent`` instance (``agent.mode``); it
 does not persist across restarts, mirroring opencode's per-session modes.
 This module stays import-free of ``agent`` (agent_core namespace rule).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -40,25 +41,32 @@ MODE_PLAN = "plan"
 #: shell), ``git`` (add/commit/checkout …), ``tests`` (pytest writes
 #: ``__pycache__``/``.pytest_cache``) and ``analyze`` (writes its report
 #: into ``.docs/<ts>/``) — so plan mode excludes them wholesale.
-PLAN_MODE_TOOLS: frozenset[str] = frozenset({
-    "search", "read", "list_files", "diff", "web_search",
-    "definitions", "references",
-    # ``jev_decide`` is a pure reader — it asks the dedicated small Jev model a
-    # typed question and returns probabilities; it touches no files.
-    "jev_decide",
-    # ``speculate`` is read-only too: every speculative branch may only call
-    # the _BRANCH_TOOLS allowlist (search/read/list_files/definitions/
-    # references/web_search/get_current_datetime), so parallel branches can
-    # never mutate the workspace while plan mode holds.
-    "speculate",
-    # ``read_skill`` is a pure reader — it only opens skills/<name>/SKILL.md
-    # read-only and returns one page of text; the SKILLS index in the system
-    # prompt tells the model to call it, so plan mode must allow it.
-    "read_skill",
-    # ``delegate`` is safe in plan mode: the parent's mode caps every child
-    # to read-only (SubAgent.__init__), so delegation cannot mutate files.
-    "delegate",
-})
+PLAN_MODE_TOOLS: frozenset[str] = frozenset(
+    {
+        "search",
+        "read",
+        "list_files",
+        "diff",
+        "web_search",
+        "definitions",
+        "references",
+        # ``jev_decide`` is a pure reader — it asks the dedicated small Jev model a
+        # typed question and returns probabilities; it touches no files.
+        "jev_decide",
+        # ``speculate`` is read-only too: every speculative branch may only call
+        # the _BRANCH_TOOLS allowlist (search/read/list_files/definitions/
+        # references/web_search/get_current_datetime), so parallel branches can
+        # never mutate the workspace while plan mode holds.
+        "speculate",
+        # ``read_skill`` is a pure reader — it only opens skills/<name>/SKILL.md
+        # read-only and returns one page of text; the SKILLS index in the system
+        # prompt tells the model to call it, so plan mode must allow it.
+        "read_skill",
+        # ``delegate`` is safe in plan mode: the parent's mode caps every child
+        # to read-only (SubAgent.__init__), so delegation cannot mutate files.
+        "delegate",
+    }
+)
 
 #: Runtime rejection returned by the executor for a blocked tool call.
 _PLAN_REJECTION = (
@@ -74,7 +82,8 @@ def is_plan_mode(mode: str) -> bool:
 
 
 def filter_tool_schemas(
-    schemas: list[dict[str, Any]], mode: str,
+    schemas: list[dict[str, Any]],
+    mode: str,
 ) -> list[dict[str, Any]]:
     """Return the tool schemas the LLM may see in *mode*.
 
@@ -84,10 +93,7 @@ def filter_tool_schemas(
     """
     if not is_plan_mode(mode):
         return list(schemas)
-    return [
-        s for s in schemas
-        if s.get("function", {}).get("name") in PLAN_MODE_TOOLS
-    ]
+    return [s for s in schemas if s.get("function", {}).get("name") in PLAN_MODE_TOOLS]
 
 
 def check_tool_allowed(name: str, mode: str) -> str | None:

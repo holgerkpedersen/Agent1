@@ -15,6 +15,7 @@ Modules: :mod:`.jsonrpc` (framing), :mod:`.transports` (stdio + HTTP),
 :mod:`.config` (validated config), :mod:`.client` (protocol),
 :mod:`.manager` (lifecycle, shared singleton).
 """
+
 from .config import (
     DEFAULT_MCP_JSON,
     McpConfigError,

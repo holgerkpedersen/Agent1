@@ -26,8 +26,14 @@ APPLY_FIX_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
         "filename": {"type": "string", "description": "Path to the file to fix"},
-        "line_number": {"type": "integer", "description": "1-indexed line number where the fix starts"},
-        "patch": {"type": "string", "description": "Replacement code for the specified line"},
+        "line_number": {
+            "type": "integer",
+            "description": "1-indexed line number where the fix starts",
+        },
+        "patch": {
+            "type": "string",
+            "description": "Replacement code for the specified line",
+        },
     },
     "required": ["filename", "line_number", "patch"],
 }

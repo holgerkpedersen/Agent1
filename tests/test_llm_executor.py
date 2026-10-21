@@ -41,7 +41,9 @@ def test_llm_executor_no_tool_calls_returns_empty_list() -> None:
     mock_chat_completion = AsyncMock()
     mock_chat_completion.choices = []
 
-    with patch.object(executor.client.chat.completions, "create", return_value=mock_chat_completion):
+    with patch.object(
+        executor.client.chat.completions, "create", return_value=mock_chat_completion
+    ):
         # Should raise error not return empty list
         with pytest.raises(LLMExecutorError):
             asyncio.run(executor.run_fix_command("Test issue"))
@@ -52,11 +54,29 @@ def test_llm_executor_tool_execution_failure_returns_error_string() -> None:
     executor = LLMExecutor(api_key="fake-key", model="qwen3-coder-30b-a3b-instruct")
 
     mock_chat_completion = AsyncMock()
-    mock_chat_completion.choices = [AsyncMock(message=AsyncMock(model_dump=lambda: {"tool_calls": [{"name": "read_file", "function": {"arguments": '{"filename": "test.txt"}'}}]}))]
+    mock_chat_completion.choices = [
+        AsyncMock(
+            message=AsyncMock(
+                model_dump=lambda: {
+                    "tool_calls": [
+                        {
+                            "name": "read_file",
+                            "function": {"arguments": '{"filename": "test.txt"}'},
+                        }
+                    ]
+                }
+            )
+        )
+    ]
 
-    with patch.object(executor.client.chat.completions, "create", return_value=mock_chat_completion):
+    with patch.object(
+        executor.client.chat.completions, "create", return_value=mock_chat_completion
+    ):
         # Mock the tool call to return an error string
-        with patch("fixcommand.core.executor.llm_executor.execute_tool_call", return_value="Error: tool failed"):
+        with patch(
+            "fixcommand.core.executor.llm_executor.execute_tool_call",
+            return_value="Error: tool failed",
+        ):
             result = asyncio.run(executor.run_fix_command("Test issue"))
             assert isinstance(result[0], str)
             assert "Error: tool failed" in result[0]
@@ -66,7 +86,9 @@ def test_llm_executor_api_failure_raises_error() -> None:
     """LLMExecutor raises LLMExecutorError if API call fails."""
     executor = LLMExecutor(api_key="fake-key", model="qwen3-coder-30b-a3b-instruct")
 
-    with patch.object(executor.client.chat.completions, "create", side_effect=Exception("API failed")):
+    with patch.object(
+        executor.client.chat.completions, "create", side_effect=Exception("API failed")
+    ):
         # Should raise specific error not generic exception
         with pytest.raises(LLMExecutorError):
             asyncio.run(executor.run_fix_command("Test issue"))
@@ -109,16 +131,23 @@ def test_run_fix_command_concurrent_tool_calls_with_mixed_results() -> None:
         }
 
     mock_chat_completion = AsyncMock()
-    mock_chat_completion.choices = [AsyncMock(message=AsyncMock(model_dump=_response_dict))]
+    mock_chat_completion.choices = [
+        AsyncMock(message=AsyncMock(model_dump=_response_dict))
+    ]
 
-    with patch.object(executor.client.chat.completions, "create", return_value=mock_chat_completion):
+    with patch.object(
+        executor.client.chat.completions, "create", return_value=mock_chat_completion
+    ):
         # First tool call succeeds; second raises — gather must keep both as strings.
         def fake_execute_tool_call(call: ToolCallResult) -> str:
             if call["arguments"].get("filename") == "b.txt":
                 raise RuntimeError("boom on b.txt")
             return "read a.txt OK"
 
-        with patch("fixcommand.core.executor.llm_executor.execute_tool_call", side_effect=fake_execute_tool_call):
+        with patch(
+            "fixcommand.core.executor.llm_executor.execute_tool_call",
+            side_effect=fake_execute_tool_call,
+        ):
             result = asyncio.run(executor.run_fix_command("Test issue"))
             assert isinstance(result, list)
             assert len(result) == 2

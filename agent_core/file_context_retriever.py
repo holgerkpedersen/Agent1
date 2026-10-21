@@ -17,10 +17,20 @@ class FileContextRetriever:
     """
 
     _KEYWORD_RE: re.Pattern[str] = re.compile(r"(?:/|@)(\S+\.\w+)")
-    _FALLBACK_EXTENSIONS: tuple[str, ...] = (".py", ".txt", ".md", ".json", ".yaml", ".yml", ".toml")
+    _FALLBACK_EXTENSIONS: tuple[str, ...] = (
+        ".py",
+        ".txt",
+        ".md",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+    )
 
     def __init__(self, base_dir: str | Path | None = None) -> None:
-        self._base_dir = Path(base_dir).resolve() if base_dir is not None else Path.cwd().resolve()
+        self._base_dir = (
+            Path(base_dir).resolve() if base_dir is not None else Path.cwd().resolve()
+        )
 
     def retrieve(self, filename: str) -> str | None:
         """Return the text content of *filename* if it exists, else ``None``."""

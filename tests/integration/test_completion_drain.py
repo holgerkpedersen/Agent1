@@ -29,7 +29,9 @@ def _chain_executor() -> TaskExecutor:
     return _slow_executor
 
 
-async def _build_scheduler_with_chain(scheduler: TaskScheduler, executor: TaskExecutor) -> None:
+async def _build_scheduler_with_chain(
+    scheduler: TaskScheduler, executor: TaskExecutor
+) -> None:
     """Register a dependency chain (a -> b -> c) plus an independent task d."""
 
     scheduler.add_task(TaskNode(task_id="a", name="A", description="", dependencies=[]))
@@ -63,7 +65,9 @@ async def test_completion_drain_on_stop(_chain_executor: TaskExecutor) -> None:
 
 
 @pytest.mark.anyio
-async def test_every_tracked_task_is_terminal_after_cancel(_chain_executor: TaskExecutor) -> None:
+async def test_every_tracked_task_is_terminal_after_cancel(
+    _chain_executor: TaskExecutor,
+) -> None:
     """After cancellation, no RUNNING/PENDING task remains non-terminal."""
 
     scheduler = TaskScheduler(executors={})
@@ -87,7 +91,9 @@ async def test_every_tracked_task_is_terminal_after_cancel(_chain_executor: Task
 
 
 @pytest.mark.anyio
-async def test_cancel_schedule_leaves_no_inflight(_chain_executor: TaskExecutor) -> None:
+async def test_cancel_schedule_leaves_no_inflight(
+    _chain_executor: TaskExecutor,
+) -> None:
     """cancel_schedule on a not-yet-due task plus stop drains cleanly."""
 
     scheduler = TaskScheduler(executors={})

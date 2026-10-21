@@ -5,6 +5,7 @@ Covers the safety rails that make "fully autonomous" safe:
 - honours the STOP_AUTONOMOUS kill-switch between iterations,
 - commits only an ACCEPTED repair and stops on any non-accepted verdict.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -15,8 +16,9 @@ import pytest
 import scripts.autonomous_self_improve as drv
 
 
-def _fake_summary(verdict: str, *, repair: str = "tool-interface-error-detail",
-                  accepted: bool = False) -> dict:
+def _fake_summary(
+    verdict: str, *, repair: str = "tool-interface-error-detail", accepted: bool = False
+) -> dict:
     return {
         "verdict": verdict,
         "proposed_repair": repair,
@@ -38,14 +40,17 @@ def test_engages_with_auto_flag(monkeypatch, tmp_path):
     monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)
     calls = []
 
-    def fake_run_iteration(iteration, *, model, profile, trace_dir, output_dir,
-                            no_benchmark=False):
+    def fake_run_iteration(
+        iteration, *, model, profile, trace_dir, output_dir, no_benchmark=False
+    ):
         calls.append(iteration)
         return _fake_summary("no_repair_catalogued")
 
-    with mock.patch.object(drv, "run_iteration", fake_run_iteration), \
-         mock.patch.object(drv, "_git", _noop_git), \
-         mock.patch.object(drv, "_stop_requested", lambda: False):
+    with (
+        mock.patch.object(drv, "run_iteration", fake_run_iteration),
+        mock.patch.object(drv, "_git", _noop_git),
+        mock.patch.object(drv, "_stop_requested", lambda: False),
+    ):
         rc = drv.main(["--auto", "--model", "x", "--max-iterations", "3"])
     # One iteration, then stop because no repair was catalogued.
     assert rc == 0
@@ -63,9 +68,11 @@ def _noop_git(*_args, **_kw):
 def test_stops_on_kill_switch(monkeypatch, tmp_path):
     monkeypatch.delenv("AGENT_AUTONOMOUS", raising=False)
     stops = iter([True, False])  # stop before iteration 1
-    with mock.patch.object(drv, "_stop_requested", lambda: next(stops)), \
-         mock.patch.object(drv, "_git", _noop_git), \
-         mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
+    with (
+        mock.patch.object(drv, "_stop_requested", lambda: next(stops)),
+        mock.patch.object(drv, "_git", _noop_git),
+        mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()),
+    ):
         # --source catalog so the kill-switch is consulted before the catalog
         # loop (the issue loop would consume the first stop flag otherwise).
         rc = drv.main(["--auto", "--source", "catalog", "--max-iterations", "3"])
@@ -76,20 +83,24 @@ def test_no_benchmark_disables_model(tmp_path):
     """--no-benchmark forces the model to None so the loop never spawns the
     benchmark subprocess; the offline harness-quality gate is used instead."""
     import os as _os
+
     _os.environ.pop("AGENT_AUTONOMOUS", None)
     seen = {}
 
-    def fake_run_iteration(iteration, *, model, profile, trace_dir, output_dir,
-                           no_benchmark=False):
+    def fake_run_iteration(
+        iteration, *, model, profile, trace_dir, output_dir, no_benchmark=False
+    ):
         # Mirror the real run_iteration: --no-benchmark forces model=None.
         eff_model = None if no_benchmark else model
         seen["model"] = eff_model
         seen["no_benchmark"] = no_benchmark
         return _fake_summary("no_repair_catalogued")
 
-    with mock.patch.object(drv, "run_iteration", fake_run_iteration), \
-         mock.patch.object(drv, "_git", _noop_git), \
-         mock.patch.object(drv, "_stop_requested", lambda: False):
+    with (
+        mock.patch.object(drv, "run_iteration", fake_run_iteration),
+        mock.patch.object(drv, "_git", _noop_git),
+        mock.patch.object(drv, "_stop_requested", lambda: False),
+    ):
         rc = drv.main(["--auto", "--model", "qwen3", "--no-benchmark"])
     assert rc == 0
     assert seen["no_benchmark"] is True
@@ -102,6 +113,7 @@ def test_model_passed_to_agent_for_generation(tmp_path):
     optional benchmark gate.  Passing --model but building Agent without it
     silently fell back to the default model for generation (bug report)."""
     import os as _os
+
     _os.environ.pop("AGENT_AUTONOMOUS", None)
     captured = {}
 
@@ -109,20 +121,32 @@ def test_model_passed_to_agent_for_generation(tmp_path):
         def __init__(self, workspace=None, model_name=None):
             captured["model_name"] = model_name
             captured["workspace"] = workspace
+
         def model_name(self):  # pragma: no cover - not used by driver
             return captured["model_name"]
 
-    with mock.patch("agent.Agent", _FakeAgent), \
-         mock.patch.object(drv, "_git", _noop_git), \
-         mock.patch.object(drv, "_stop_requested", lambda: False), \
-         mock.patch.object(drv, "run_iteration", lambda *a, **k: _fake_summary("no_repair_catalogued")):
+    with (
+        mock.patch("agent.Agent", _FakeAgent),
+        mock.patch.object(drv, "_git", _noop_git),
+        mock.patch.object(drv, "_stop_requested", lambda: False),
+        mock.patch.object(
+            drv, "run_iteration", lambda *a, **k: _fake_summary("no_repair_catalogued")
+        ),
+    ):
         # --source issues enters the issue loop, which constructs the Agent.
         # With no eligible issues the loop returns immediately (no real work),
         # but the Agent must already have been built with the requested model.
-        rc = drv.main([
-            "--auto", "--source", "issues", "--model", "qwen/qwen3.8-27b",
-            "--max-iterations", "1",
-        ])
+        rc = drv.main(
+            [
+                "--auto",
+                "--source",
+                "issues",
+                "--model",
+                "qwen/qwen3.8-27b",
+                "--max-iterations",
+                "1",
+            ]
+        )
     assert rc == 0
     assert captured.get("model_name") == "qwen/qwen3.8-27b", (
         f"--model not forwarded to Agent; got {captured.get('model_name')!r}"
@@ -142,9 +166,11 @@ def test_commits_accepted_repair_then_stops(monkeypatch, tmp_path):
             return subprocess.CompletedProcess(args, 0, changed)
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    with mock.patch.object(drv, "_git", fake_git), \
-         mock.patch.object(drv, "_stop_requested", lambda: False), \
-         mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
+    with (
+        mock.patch.object(drv, "_git", fake_git),
+        mock.patch.object(drv, "_stop_requested", lambda: False),
+        mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()),
+    ):
         rc = drv.main(["--auto", "--max-iterations", "3"])
     assert rc == 0
     # Accepted -> add + commit happened.
@@ -161,9 +187,11 @@ def test_stops_on_rejected_verdict(monkeypatch, tmp_path):
         iters.append(iteration)
         return _fake_summary("rejected_and_reverted")
 
-    with mock.patch.object(drv, "_stop_requested", lambda: False), \
-         mock.patch.object(drv, "_git", _noop_git), \
-         mock.patch.object(drv, "run_iteration", fake_iter):
+    with (
+        mock.patch.object(drv, "_stop_requested", lambda: False),
+        mock.patch.object(drv, "_git", _noop_git),
+        mock.patch.object(drv, "run_iteration", fake_iter),
+    ):
         rc = drv.main(["--auto", "--max-iterations", "5"])
     assert rc == 0
     assert iters == [1]
@@ -188,9 +216,11 @@ def test_iteration_exception_is_caught_and_stops(monkeypatch, tmp_path):
         target.write_text("corrupted\n", encoding="utf-8")
         raise RuntimeError("boom in iteration")
 
-    with mock.patch.object(drv, "_stop_requested", lambda: False), \
-         mock.patch.object(drv, "_git", spy_git), \
-         mock.patch.object(drv, "run_iteration", boom):
+    with (
+        mock.patch.object(drv, "_stop_requested", lambda: False),
+        mock.patch.object(drv, "_git", spy_git),
+        mock.patch.object(drv, "run_iteration", boom),
+    ):
         rc = drv.main(["--auto", "--source", "catalog", "--max-iterations", "5"])
     assert rc == 1
     # The catalog loop no longer uses git stash (no stale-stash pops).
@@ -218,9 +248,11 @@ def test_keyboard_interrupt_restores_checkpoint_and_reraises(monkeypatch, tmp_pa
         target.write_text("corrupted\n", encoding="utf-8")
         raise KeyboardInterrupt()
 
-    with mock.patch.object(drv, "_stop_requested", lambda: False), \
-         mock.patch.object(drv, "_git", spy_git), \
-         mock.patch.object(drv, "run_iteration", interrupt):
+    with (
+        mock.patch.object(drv, "_stop_requested", lambda: False),
+        mock.patch.object(drv, "_git", spy_git),
+        mock.patch.object(drv, "run_iteration", interrupt),
+    ):
         with pytest.raises(KeyboardInterrupt):
             drv.main(["--auto", "--source", "catalog", "--max-iterations", "5"])
     # The catalog loop no longer uses git stash.
@@ -247,9 +279,13 @@ def test_catalog_loop_never_uses_git_stash(monkeypatch, tmp_path):
     target.write_text("original\n", encoding="utf-8")
     monkeypatch.setattr(drv, "_catalog_target_files", lambda: [target])
 
-    with mock.patch.object(drv, "_stop_requested", lambda: False), \
-         mock.patch.object(drv, "_git", spy_git), \
-         mock.patch.object(drv, "run_iteration", lambda *a, **k: _fake_summary("no_repair_catalogued")):
+    with (
+        mock.patch.object(drv, "_stop_requested", lambda: False),
+        mock.patch.object(drv, "_git", spy_git),
+        mock.patch.object(
+            drv, "run_iteration", lambda *a, **k: _fake_summary("no_repair_catalogued")
+        ),
+    ):
         rc = drv.main(["--auto", "--source", "catalog", "--max-iterations", "3"])
     assert rc == 0
     # No stash command of any kind is issued by the catalog loop.
@@ -266,9 +302,11 @@ def test_git_missing_raises_clear_error(monkeypatch):
 
     # Patch the real subprocess.run that _git() delegates to, so the
     # try/except FileNotFoundError branch inside _git() is exercised.
-    with mock.patch.object(drv.subprocess, "run", missing_run), \
-         mock.patch.object(drv, "_stop_requested", lambda: False), \
-         mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
+    with (
+        mock.patch.object(drv.subprocess, "run", missing_run),
+        mock.patch.object(drv, "_stop_requested", lambda: False),
+        mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()),
+    ):
         with pytest.raises(RuntimeError, match="git executable not found"):
             drv.main(["--auto", "--max-iterations", "3"])
 
@@ -288,9 +326,11 @@ def test_failed_stash_push_does_not_pop_unrelated_stash(monkeypatch):
             return subprocess.CompletedProcess(args, 1, "", "nothing to stash")
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    with mock.patch.object(drv, "_stop_requested", lambda: False), \
-         mock.patch.object(drv, "_git", fake_git), \
-         mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
+    with (
+        mock.patch.object(drv, "_stop_requested", lambda: False),
+        mock.patch.object(drv, "_git", fake_git),
+        mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()),
+    ):
         rc = drv.main(["--auto", "--source", "catalog", "--max-iterations", "3"])
     # The fake iteration returns "accepted" but the tree is unchanged, so the
     # driver fails closed (no commit possible) rather than spinning.
@@ -319,9 +359,11 @@ def test_commit_stages_only_repair_files_not_blanket_add(monkeypatch, tmp_path):
             return subprocess.CompletedProcess(args, 0, "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    with mock.patch.object(drv, "_stop_requested", lambda: False), \
-         mock.patch.object(drv, "_git", fake_git), \
-         mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
+    with (
+        mock.patch.object(drv, "_stop_requested", lambda: False),
+        mock.patch.object(drv, "_git", fake_git),
+        mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()),
+    ):
         rc = drv.main(["--auto", "--max-iterations", "3"])
     assert rc == 0
     # No blanket add.
@@ -351,9 +393,11 @@ def test_commit_skips_when_no_repair_files_changed(monkeypatch, tmp_path):
             return subprocess.CompletedProcess(args, 0, "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    with mock.patch.object(drv, "_stop_requested", lambda: False), \
-         mock.patch.object(drv, "_git", fake_git), \
-         mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()):
+    with (
+        mock.patch.object(drv, "_stop_requested", lambda: False),
+        mock.patch.object(drv, "_git", fake_git),
+        mock.patch.object(drv, "run_iteration", lambda *a, **k: _accepted_summary()),
+    ):
         rc = drv.main(["--auto", "--source", "catalog", "--max-iterations", "3"])
     # Accepted but nothing to commit -> fail closed (rc 1), not a silent 0.
     assert rc == 1
@@ -389,6 +433,7 @@ def test_gate_runs_the_real_functional_suite(monkeypatch):
     args = captured["args"]
     # The gate invokes pytest as a subprocess (the real functional suite).
     assert "pytest" in args
+
 
 def test_restore_snapshot_skips_identical_bytes(tmp_path):
     """A restore must not rewrite bytes that already match the snapshot.

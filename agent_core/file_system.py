@@ -1,4 +1,5 @@
 """File system operations for agent."""
+
 import logging
 import os
 
@@ -32,7 +33,7 @@ class FileSystem:
         local_path = self.safe_path(path)
 
         try:
-            with open(local_path, 'r', encoding='utf-8') as f:
+            with open(local_path, "r", encoding="utf-8") as f:
                 return f.read()
         except FileNotFoundError:
             logger.warning("File not found: %s", path)
@@ -60,7 +61,7 @@ class FileSystem:
             if dir_name:
                 os.makedirs(dir_name, exist_ok=True)
 
-            with open(local_path, 'w', encoding='utf-8') as f:
+            with open(local_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
             return f"Successfully wrote to {path}"
@@ -85,7 +86,7 @@ class FileSystem:
         local_path = self.safe_path(path)
 
         try:
-            with open(local_path, 'r', encoding='utf-8') as f:
+            with open(local_path, "r", encoding="utf-8") as f:
                 content = f.read()
 
             if find not in content:
@@ -97,7 +98,7 @@ class FileSystem:
 
             new_content = content.replace(find, replace, 1)
 
-            with open(local_path, 'w', encoding='utf-8') as f:
+            with open(local_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
 
             return "Patch applied successfully"
@@ -123,7 +124,7 @@ class FileSystem:
         local_path = self.safe_path(path)
 
         try:
-            with open(local_path, 'w', encoding='utf-8') as f:
+            with open(local_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
             return f"Successfully edited {path}"

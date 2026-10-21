@@ -7,6 +7,7 @@ The :class:`PlanDryRunner` checks whether a plan document contains
 references to tools that would mutate the workspace. If so, it rejects
 the plan unless the caller opts into execution with ``--force``.
 """
+
 from __future__ import annotations
 
 import re
@@ -14,16 +15,18 @@ import re
 from .plan_schema import DryRunResult
 
 #: Tool names that mutate the workspace — blocked during dry-run.
-MUTATING_TOOLS = frozenset({
-    "write",
-    "edit",
-    "fix",
-    "delete_file",
-    "run",
-    "git",
-    "delegate",
-    "delegate_batch",
-})
+MUTATING_TOOLS = frozenset(
+    {
+        "write",
+        "edit",
+        "fix",
+        "delete_file",
+        "run",
+        "git",
+        "delegate",
+        "delegate_batch",
+    }
+)
 
 # Patterns that indicate mutating operations inside plan markdown.
 _MUTATION_PATTERNS: list[re.Pattern[str]] = [

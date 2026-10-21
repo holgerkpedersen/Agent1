@@ -53,14 +53,15 @@ class TestModelApiFailure:
         async def _run() -> None:
             with patch(
                 "benchmark.query_model",
-                new=AsyncMock(
-                    side_effect=[("4", 10.0, 5), ModelAPIError("down")]
-                ),
+                new=AsyncMock(side_effect=[("4", 10.0, 5), ModelAPIError("down")]),
             ):
                 cat = await run_category(
                     "m1",
                     "coding",
-                    [("What is 2+2?", "4"), ("What is the capital of France?", "Paris")],
+                    [
+                        ("What is 2+2?", "4"),
+                        ("What is the capital of France?", "Paris"),
+                    ],
                 )
             assert cat.results[0].correct is True
             assert cat.results[1].correct is None
@@ -222,20 +223,30 @@ class TestScoreInstructionFollowingTightened:
         assert score == 1.0
 
     def test_exactly_three_words(self):
-        assert score_instruction_following(
-            "Respond with exactly 3 words.", "one two three"
-        ) == 1.0
-        assert score_instruction_following(
-            "Respond with exactly 3 words.", "one two"
-        ) < 1.0
+        assert (
+            score_instruction_following(
+                "Respond with exactly 3 words.", "one two three"
+            )
+            == 1.0
+        )
+        assert (
+            score_instruction_following("Respond with exactly 3 words.", "one two")
+            < 1.0
+        )
 
     def test_all_lowercase(self):
-        assert score_instruction_following(
-            "Write your answer in only lowercase.", "hello world"
-        ) == 1.0
-        assert score_instruction_following(
-            "Write your answer in only lowercase.", "Hello World"
-        ) < 1.0
+        assert (
+            score_instruction_following(
+                "Write your answer in only lowercase.", "hello world"
+            )
+            == 1.0
+        )
+        assert (
+            score_instruction_following(
+                "Write your answer in only lowercase.", "Hello World"
+            )
+            < 1.0
+        )
 
 
 class TestJudgeFallback:
@@ -305,14 +316,20 @@ class TestJudgeFallback:
 class TestLooksIncompleteTuning:
     def test_completion_overrides_weak_marker(self):
         from agent import _looks_incomplete
+
         # "remaining" is a weak marker, but the answer is clearly finished.
         assert not _looks_incomplete("The remaining issue is fixed — all done.")
         assert not _looks_incomplete("Budget spent, task is complete.")
 
     def test_weak_marker_without_completion_still_incomplete(self):
         from agent import _looks_incomplete
-        assert _looks_incomplete("The tool budget is exhausted, I still need more calls.")
-        assert _looks_incomplete("I could not complete the analysis yet — would need more budget.")
+
+        assert _looks_incomplete(
+            "The tool budget is exhausted, I still need more calls."
+        )
+        assert _looks_incomplete(
+            "I could not complete the analysis yet — would need more budget."
+        )
 
 
 class TestProbeEndpoint:
@@ -325,8 +342,10 @@ class TestProbeEndpoint:
 
         class _FakeResp:
             def read(self):
-                return (b'{"error":{"message":"No models loaded. Please load a '
-                        b'model in the developer page.","type":"invalid_request_error"}}')
+                return (
+                    b'{"error":{"message":"No models loaded. Please load a '
+                    b'model in the developer page.","type":"invalid_request_error"}}'
+                )
 
             def close(self):
                 return None
@@ -336,11 +355,15 @@ class TestProbeEndpoint:
                 return 400
 
         def _urlopen(req, timeout=5.0):
-            raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, _FakeResp())
+            raise urllib.error.HTTPError(
+                req.full_url, 400, "Bad Request", {}, _FakeResp()
+            )
 
         import urllib.request
+
         monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
         from benchmark import _probe_endpoint
+
         try:
             _probe_endpoint("http://localhost:1234/v1/chat/completions", timeout=1.0)
             assert False, "expected BenchmarkError"
@@ -354,8 +377,10 @@ class TestProbeEndpoint:
             raise urllib.error.URLError("connection refused")
 
         import urllib.request
+
         monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
         from benchmark import _probe_endpoint
+
         try:
             _probe_endpoint("http://localhost:1234/v1/chat/completions", timeout=1.0)
             assert False, "expected BenchmarkError"
@@ -377,6 +402,7 @@ class TestProbeEndpoint:
 
         monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=5.0: _Ctx())
         from benchmark import _probe_endpoint
+
         # Should not raise.
         _probe_endpoint("http://localhost:1234/v1/chat/completions", timeout=1.0)
 
@@ -410,7 +436,9 @@ class TestNullContentResponse:
                 new=AsyncMock(return_value=("", 10.0, 5)),
             ):
                 cat = await run_category(
-                    "m1", "reasoning", [("What is 2+2?", "4")],
+                    "m1",
+                    "reasoning",
+                    [("What is 2+2?", "4")],
                 )
             r = cat.results[0]
             assert r.response == ""
@@ -419,7 +447,8 @@ class TestNullContentResponse:
         asyncio.run(_run())
 
     def test_query_model_coerces_null_content_to_empty_string(
-        self, monkeypatch,
+        self,
+        monkeypatch,
     ) -> None:
         import json as _json
         import urllib.request
@@ -432,13 +461,17 @@ class TestNullContentResponse:
                 return False
 
             def read(self):
-                return _json.dumps({
-                    "choices": [{"message": {"content": None}}],
-                    "usage": {"total_tokens": 7},
-                }).encode("utf-8")
+                return _json.dumps(
+                    {
+                        "choices": [{"message": {"content": None}}],
+                        "usage": {"total_tokens": 7},
+                    }
+                ).encode("utf-8")
 
         monkeypatch.setattr(
-            urllib.request, "urlopen", lambda req, timeout=120: _Ctx(),
+            urllib.request,
+            "urlopen",
+            lambda req, timeout=120: _Ctx(),
         )
         text, latency_ms, tokens = asyncio.run(
             query_model("m1", "hi", max_retries=1),

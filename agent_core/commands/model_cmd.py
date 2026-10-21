@@ -22,16 +22,17 @@ from agent_core.llm import model_profiles as _profiles
 from agent_core.llm.pricing import _is_free_tier
 
 from typing import TYPE_CHECKING, Any
+
 if TYPE_CHECKING:
     from agent import Agent
 
 
 def _format_size(bytes_val: int) -> str:
     """Return a human-readable size string."""
-    gb = bytes_val / (1024 ** 3)
+    gb = bytes_val / (1024**3)
     if gb >= 1:
         return f"{gb:.1f} GB"
-    mb = bytes_val / (1024 ** 2)
+    mb = bytes_val / (1024**2)
     if mb >= 1:
         return f"{mb:.0f} MB"
     return f"{bytes_val} B"
@@ -121,7 +122,9 @@ class ModelCommand(Command):
             # `model openrouter [--all | --paid]` — list the OpenRouter catalog
             # (free tier by default; full paid+free catalog with --all/--paid).
             show_paid = any(a in ("--all", "--paid") for a in rest)
-            self._list_models(agent, interactive=True, openrouter_free_only=not show_paid)
+            self._list_models(
+                agent, interactive=True, openrouter_free_only=not show_paid
+            )
             return True
 
         if sub in ("prices", "price"):
@@ -151,7 +154,9 @@ class ModelCommand(Command):
     def _fetch_models(self) -> tuple[list[dict[str, Any]], list[str]]:
         """Return (all_models, loaded_instance_ids) from the LM Studio API."""
         models = _lms.get_models_status()
-        loaded_ids = [m["instance_id"] for m in models if m["loaded"] and m["instance_id"]]
+        loaded_ids = [
+            m["instance_id"] for m in models if m["loaded"] and m["instance_id"]
+        ]
         return models, loaded_ids
 
     def _opencode_catalog(self, agent: "Agent") -> tuple[list[str], list[str], bool]:
@@ -186,13 +191,16 @@ class ModelCommand(Command):
         else:
             try:
                 from agent_core.config import load_agent_settings
+
                 s = load_agent_settings()
                 # Force a go-mode provider (never zen) so the [opencode] block
                 # always reflects the keyed opencode-go catalog, even when the
                 # active model is a keyless opencode-zen free model.
                 oc = OpencodeProvider(
                     model_name=s.opencode_model,
-                    server_url=getattr(s, "opencode_server_url", DEFAULT_OPENCODE_SERVER_URL),
+                    server_url=getattr(
+                        s, "opencode_server_url", DEFAULT_OPENCODE_SERVER_URL
+                    ),
                     password=getattr(s, "opencode_password", ""),
                     api_url=getattr(s, "opencode_api_url", DEFAULT_OPENCODE_API_BASE),
                     api_key=getattr(s, "opencode_api_key", ""),
@@ -251,7 +259,6 @@ class ModelCommand(Command):
     #  List
     # ------------------------------------------------------------------
 
-
     def _llama_catalog(self, agent: "Agent") -> list[str]:
         """Return llama.cpp model ids (namespaced llama/<id>).
 
@@ -269,10 +276,13 @@ class ModelCommand(Command):
                 return []
         try:
             from agent_core.config import load_agent_settings
+
             s = load_agent_settings()
-            return list(LlamaProvider(
-                api_url=getattr(s, "llama_base_url", DEFAULT_LLAMA_BASE_URL)
-            ).list_models())
+            return list(
+                LlamaProvider(
+                    api_url=getattr(s, "llama_base_url", DEFAULT_LLAMA_BASE_URL)
+                ).list_models()
+            )
         except Exception:
             return []
 
@@ -297,12 +307,17 @@ class ModelCommand(Command):
                 return []
         try:
             from agent_core.config import load_agent_settings
+
             s = load_agent_settings()
-            return list(OpenRouterProvider(
-                model_name=getattr(s, "openrouter_model", DEFAULT_OPENROUTER_MODEL),
-                api_url=getattr(s, "openrouter_api_url", DEFAULT_OPENROUTER_API_BASE),
-                api_key=getattr(s, "openrouter_api_key", ""),
-            ).list_models(free_only=free_only))
+            return list(
+                OpenRouterProvider(
+                    model_name=getattr(s, "openrouter_model", DEFAULT_OPENROUTER_MODEL),
+                    api_url=getattr(
+                        s, "openrouter_api_url", DEFAULT_OPENROUTER_API_BASE
+                    ),
+                    api_key=getattr(s, "openrouter_api_key", ""),
+                ).list_models(free_only=free_only)
+            )
         except Exception:
             return []
 
@@ -318,8 +333,11 @@ class ModelCommand(Command):
         provider = getattr(getattr(agent, "llm", None), "_provider", None)
         if type(provider).__name__ == "FailoverProvider":
             provider = next(
-                (p for p in getattr(provider, "providers", [])
-                 if type(p).__name__ == "LemonadeProvider"),
+                (
+                    p
+                    for p in getattr(provider, "providers", [])
+                    if type(p).__name__ == "LemonadeProvider"
+                ),
                 None,
             )
         if type(provider).__name__ == "LemonadeProvider":
@@ -329,14 +347,22 @@ class ModelCommand(Command):
                 return []
         try:
             from agent_core.config import load_agent_settings
+
             s = load_agent_settings()
-            return list(LemonadeProvider(
-                api_url=getattr(s, "lemonade_api_url", DEFAULT_LEMONADE_API_BASE),
-            ).list_models())
+            return list(
+                LemonadeProvider(
+                    api_url=getattr(s, "lemonade_api_url", DEFAULT_LEMONADE_API_BASE),
+                ).list_models()
+            )
         except Exception:
             return []
 
-    def _list_models(self, agent: "Agent", interactive: bool = False, openrouter_free_only: bool = True) -> None:
+    def _list_models(
+        self,
+        agent: "Agent",
+        interactive: bool = False,
+        openrouter_free_only: bool = True,
+    ) -> None:
         """Show available models per LLM provider (LM Studio + opencode).
 
         READ-ONLY by design (multi-shell safety): listing must never switch
@@ -355,8 +381,11 @@ class ModelCommand(Command):
         try:
             settings = load_agent_settings()
             from agent_core.constants import load_model_json
+
             persisted_provider = str(load_model_json().get("provider") or "")
-            active_provider = provider_for(current, settings.llm_provider, persisted_provider)
+            active_provider = provider_for(
+                current, settings.llm_provider, persisted_provider
+            )
         except Exception:
             active_provider = "lmstudio"
 
@@ -370,11 +399,13 @@ class ModelCommand(Command):
         # opencode-zen FREE tier is always fetched separately (no key).
         opencode_models, zen_models, oc_api_mode = self._opencode_catalog(agent)
 
-        print(f"\n  Providers: lmstudio (active: {'*' if active_provider == 'lmstudio' else ' '})"
-              f"  opencode (active: {'*' if active_provider == 'opencode' else ' '})"
-              f"  llama (active: {'*' if active_provider == 'llama' else ' '})"
-              f"  openrouter (active: {'*' if active_provider == 'openrouter' else ' '})"
-              f"  lemonade (active: {'*' if active_provider == 'lemonade' else ' '})")
+        print(
+            f"\n  Providers: lmstudio (active: {'*' if active_provider == 'lmstudio' else ' '})"
+            f"  opencode (active: {'*' if active_provider == 'opencode' else ' '})"
+            f"  llama (active: {'*' if active_provider == 'llama' else ' '})"
+            f"  openrouter (active: {'*' if active_provider == 'openrouter' else ' '})"
+            f"  lemonade (active: {'*' if active_provider == 'lemonade' else ' '})"
+        )
         if opencode_models:
             print(f"  [opencode] {len(opencode_models)} model(s) — needs API key:\n")
             for key in opencode_models:
@@ -382,8 +413,11 @@ class ModelCommand(Command):
                 marker = "  *" if is_current else "   "
                 print(f"{marker} {key}")
         else:
-            hint = ("'opencode serve --port 4096'" if not oc_api_mode
-                    else "set OPENCODE_API_KEY to reach the hosted opencode-go API")
+            hint = (
+                "'opencode serve --port 4096'"
+                if not oc_api_mode
+                else "set OPENCODE_API_KEY to reach the hosted opencode-go API"
+            )
             print(f"  [opencode] unreachable — start {hint}")
             print("            (models appear once the connection works)\n")
 
@@ -408,32 +442,45 @@ class ModelCommand(Command):
         else:
             try:
                 from agent_core.config import load_agent_settings
+
                 _lurl = load_agent_settings().llama_base_url
             except Exception:
                 _lurl = DEFAULT_LLAMA_BASE_URL
-            print(f"\n  [llama] llama.cpp server unreachable at {_lurl} - start llama-server")
+            print(
+                f"\n  [llama] llama.cpp server unreachable at {_lurl} - start llama-server"
+            )
 
         # ---- OpenRouter hosted gateway models (FREE tier by default) ----
         # The owner only uses OpenRouter's no-cost models, so `model list`
         # shows the free tier only.  `model openrouter --all` / `--paid` shows
         # the full (paid + free) catalog via _openrouter_catalog(free_only=False).
-        openrouter_models = self._openrouter_catalog(agent, free_only=openrouter_free_only)
+        openrouter_models = self._openrouter_catalog(
+            agent, free_only=openrouter_free_only
+        )
         if openrouter_models:
             suffix = " (free tier)" if openrouter_free_only else " (free + paid)"
-            print(f"\n  [openrouter] {len(openrouter_models)} model(s){suffix} — needs API key:\n")
+            print(
+                f"\n  [openrouter] {len(openrouter_models)} model(s){suffix} — needs API key:\n"
+            )
             for key in openrouter_models:
                 is_current = key == current
                 marker = "  *" if is_current else "   "
                 print(f"{marker} {key}  (provider=openrouter)")
             if openrouter_free_only:
-                print("            (show the full paid catalog with: model openrouter --all)")
+                print(
+                    "            (show the full paid catalog with: model openrouter --all)"
+                )
         else:
-            print("\n  [openrouter] unreachable — set OPENROUTER_API_KEY / check network")
+            print(
+                "\n  [openrouter] unreachable — set OPENROUTER_API_KEY / check network"
+            )
 
         # ---- AMD Lemonade (NPU / iGPU) models ----
         lemonade_models = self._lemonade_catalog(agent)
         if lemonade_models:
-            print(f"\n  [lemonade] {len(lemonade_models)} model(s) — AMD XDNA NPU via Lemonade:\n")
+            print(
+                f"\n  [lemonade] {len(lemonade_models)} model(s) — AMD XDNA NPU via Lemonade:\n"
+            )
             for key in lemonade_models:
                 is_current = key == current
                 marker = "  *" if is_current else "   "
@@ -441,16 +488,21 @@ class ModelCommand(Command):
         else:
             try:
                 from agent_core.config import load_agent_settings
+
                 _leurl = load_agent_settings().lemonade_api_url
             except Exception:
                 _leurl = DEFAULT_LEMONADE_API_BASE
-            print(f"\n  [lemonade] NPU server unreachable at {_leurl} - start it: 'lemonade run <model>'")
+            print(
+                f"\n  [lemonade] NPU server unreachable at {_leurl} - start it: 'lemonade run <model>'"
+            )
 
         # ---- LM Studio models ----
         models, loaded_ids = self._fetch_models()
 
         if not models:
-            print(f"  [lmstudio] LM Studio server not reachable at {lmstudio_base_url()}")
+            print(
+                f"  [lmstudio] LM Studio server not reachable at {lmstudio_base_url()}"
+            )
             print("  [lmstudio] Developer tab > Start Server, or 'lms server start'")
             self._list_known_only(agent)
             return
@@ -472,7 +524,9 @@ class ModelCommand(Command):
 
             marker_str = f"  [{', '.join(markers)}]" if markers else ""
             prefix = " *" if is_current else "  "
-            print(f" {prefix}{i:>3}. {name:<40} {params:<10} {size:<8}  [lmstudio]{marker_str}")
+            print(
+                f" {prefix}{i:>3}. {name:<40} {params:<10} {size:<8}  [lmstudio]{marker_str}"
+            )
 
         kinfo = KNOWN_MODELS.get(current, {})
         active_profile = agent.llm._provider._profile_name
@@ -520,7 +574,8 @@ class ModelCommand(Command):
 
         table = pricing.fetch_cloud_prices(fetch=force, force=force)
         cloud = {
-            k: v for k, v in table.items()
+            k: v
+            for k, v in table.items()
             if k.startswith("opencode-go/") and not _is_free_tier(k)
         }
         if not cloud:
@@ -542,7 +597,9 @@ class ModelCommand(Command):
                 f"{(_fmt_money(cr) if cr is not None else '-'):>9}  {src}"
             )
         print()
-        print("  Local (LM Studio / llama) and opencode-zen FREE tiers are 0.0 by definition.")
+        print(
+            "  Local (LM Studio / llama) and opencode-zen FREE tiers are 0.0 by definition."
+        )
         if not force:
             print("  Cached (≤24h). Re-fetch from the web with: model prices --refresh")
 
@@ -563,7 +620,9 @@ class ModelCommand(Command):
 
         cheapest = pricing.cheapest_opencode_go_model()
         if not cheapest:
-            print("\n  No priced opencode-go model available. Run `model cheapest --refresh`.")
+            print(
+                "\n  No priced opencode-go model available. Run `model cheapest --refresh`."
+            )
             return
 
         old = agent.llm.model_name
@@ -572,10 +631,14 @@ class ModelCommand(Command):
             return
 
         settings = load_agent_settings()
-        agent.llm._provider = build_provider(settings, cheapest, provider_override="opencode")
+        agent.llm._provider = build_provider(
+            settings, cheapest, provider_override="opencode"
+        )
         agent.llm.model_name = cheapest
         persist_model_choice(cheapest, provider="opencode")
-        print(f"  Switched to cheapest cloud model: {old} -> {cheapest}  (provider=opencode)")
+        print(
+            f"  Switched to cheapest cloud model: {old} -> {cheapest}  (provider=opencode)"
+        )
         e = pricing.load_prices().get(cheapest, {})
         p = e.get("prompt_per_1m")
         c = e.get("completion_per_1m")
@@ -621,8 +684,11 @@ class ModelCommand(Command):
                 return
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
+
             settings = load_agent_settings()
-            agent.llm._provider = build_provider(settings, query, provider_override="opencode")
+            agent.llm._provider = build_provider(
+                settings, query, provider_override="opencode"
+            )
             agent.llm.model_name = query
             persist_model_choice(query, provider="opencode")
             print(f"  Switched: {old} -> {query}  (provider=opencode)")
@@ -631,15 +697,22 @@ class ModelCommand(Command):
         # Keyless opencode-zen FREE tier (e.g. "opencode-zen/hy3-free",
         # "model nemotron-3.5-lightning-free").  No API key needed.
         if lowered.startswith("opencode-zen/") or lowered.startswith("zen/"):
-            q = query if lowered.startswith("opencode-zen/") else f"opencode-zen/{query}"
+            q = (
+                query
+                if lowered.startswith("opencode-zen/")
+                else f"opencode-zen/{query}"
+            )
             old = agent.llm.model_name
             if q == old:
                 print(f"  Already using: {q}")
                 return
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
+
             settings = load_agent_settings()
-            agent.llm._provider = build_provider(settings, q, provider_override="opencode")
+            agent.llm._provider = build_provider(
+                settings, q, provider_override="opencode"
+            )
             agent.llm.model_name = q
             persist_model_choice(q, provider="opencode")
             print(f"  Switched: {old} -> {q}  (provider=opencode-zen, free)")
@@ -653,6 +726,7 @@ class ModelCommand(Command):
                 return
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
+
             settings = load_agent_settings()
             provider = build_provider(settings, query, provider_override="llama")
             # Reconciliation needs the concrete LlamaProvider (it exposes
@@ -665,6 +739,7 @@ class ModelCommand(Command):
             # llama/Bonsai -p llama` use Bonsai directly instead of silently
             # falling back to whatever GGUF the pre-started server loaded.
             from agent_core.llm import llama_server
+
             ok, msg = llama_server.ensure_model_served(llama_provider.api_url, query)
             if not ok:
                 print(f"  [llama] WARNING: could not ensure model served: {msg}")
@@ -694,8 +769,11 @@ class ModelCommand(Command):
                 return
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
+
             settings = load_agent_settings()
-            agent.llm._provider = build_provider(settings, query, provider_override="lemonade")
+            agent.llm._provider = build_provider(
+                settings, query, provider_override="lemonade"
+            )
             agent.llm.model_name = query
             persist_model_choice(query, provider="lemonade")
             print(f"  Switched: {old} -> {query}  (provider=lemonade, NPU)")
@@ -704,15 +782,22 @@ class ModelCommand(Command):
         # OpenRouter hosted models, e.g. "openrouter/anthropic/claude-3.5-haiku".
         # The openrouter-go/ prefix is also accepted as an alias for openrouter/.
         if lowered.startswith("openrouter/") or lowered.startswith("openrouter-go/"):
-            q = query if lowered.startswith("openrouter/") else f"openrouter/{query[len('openrouter-go/'):]}"
+            q = (
+                query
+                if lowered.startswith("openrouter/")
+                else f"openrouter/{query[len('openrouter-go/') :]}"
+            )
             old = agent.llm.model_name
             if q == old:
                 print(f"  Already using: {q}")
                 return
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
+
             settings = load_agent_settings()
-            agent.llm._provider = build_provider(settings, q, provider_override="openrouter")
+            agent.llm._provider = build_provider(
+                settings, q, provider_override="openrouter"
+            )
             agent.llm.model_name = q
             persist_model_choice(q, provider="openrouter")
             print(f"  Switched: {old} -> {q}  (provider=openrouter)")
@@ -785,8 +870,11 @@ class ModelCommand(Command):
                 return
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
+
             settings = load_agent_settings()
-            agent.llm._provider = build_provider(settings, zen_match, provider_override="opencode")
+            agent.llm._provider = build_provider(
+                settings, zen_match, provider_override="opencode"
+            )
             agent.llm.model_name = zen_match
             persist_model_choice(zen_match, provider="opencode")
             print(f"  Switched: {old} -> {zen_match}  (provider=opencode-zen, free)")
@@ -799,8 +887,11 @@ class ModelCommand(Command):
                 return
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
+
             settings = load_agent_settings()
-            agent.llm._provider = build_provider(settings, oc_match, provider_override="opencode")
+            agent.llm._provider = build_provider(
+                settings, oc_match, provider_override="opencode"
+            )
             agent.llm.model_name = oc_match
             persist_model_choice(oc_match, provider="opencode")
             print(f"  Switched: {old} -> {oc_match}  (provider=opencode)")
@@ -818,8 +909,11 @@ class ModelCommand(Command):
                 return
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import build_provider
+
             settings = load_agent_settings()
-            agent.llm._provider = build_provider(settings, le_match, provider_override="lemonade")
+            agent.llm._provider = build_provider(
+                settings, le_match, provider_override="lemonade"
+            )
             agent.llm.model_name = le_match
             persist_model_choice(le_match, provider="lemonade")
             print(f"  Switched: {old} -> {le_match}  (provider=lemonade, NPU)")
@@ -898,15 +992,20 @@ class ModelCommand(Command):
         """
         query = " ".join(args).strip()
         if not query:
-            print("  Specify a model name, e.g. `model <name> --provider <lmstudio|opencode>`.")
+            print(
+                "  Specify a model name, e.g. `model <name> --provider <lmstudio|opencode>`."
+            )
             return
 
         if provider not in ("lmstudio", "opencode", "llama", "openrouter", "lemonade"):
-            print(f"  Unknown provider '{provider}'. Options: lmstudio, opencode, llama, openrouter, lemonade.")
+            print(
+                f"  Unknown provider '{provider}'. Options: lmstudio, opencode, llama, openrouter, lemonade."
+            )
             return
 
         from agent_core.config import load_agent_settings
         from agent_core.llm.provider import build_provider
+
         settings = load_agent_settings()
 
         if provider == "openrouter":
@@ -924,7 +1023,9 @@ class ModelCommand(Command):
             if q == old:
                 print(f"  Already using: {q}")
                 return
-            agent.llm._provider = build_provider(settings, q, provider_override="openrouter")
+            agent.llm._provider = build_provider(
+                settings, q, provider_override="openrouter"
+            )
             agent.llm.model_name = q
             persist_model_choice(q, provider="openrouter")
             print(f"  Switched: {old} -> {q}  (provider=openrouter)")
@@ -939,10 +1040,14 @@ class ModelCommand(Command):
                 if zen_match == old:
                     print(f"  Already using: {zen_match}")
                     return
-                agent.llm._provider = build_provider(settings, zen_match, provider_override="opencode")
+                agent.llm._provider = build_provider(
+                    settings, zen_match, provider_override="opencode"
+                )
                 agent.llm.model_name = zen_match
                 persist_model_choice(zen_match, provider="opencode")
-                print(f"  Switched: {old} -> {zen_match}  (provider=opencode-zen, free)")
+                print(
+                    f"  Switched: {old} -> {zen_match}  (provider=opencode-zen, free)"
+                )
                 return
             oc_match = self._resolve_opencode_match(query, opencode_models)
             if oc_match:
@@ -950,7 +1055,9 @@ class ModelCommand(Command):
                 if oc_match == old:
                     print(f"  Already using: {oc_match}")
                     return
-                agent.llm._provider = build_provider(settings, oc_match, provider_override="opencode")
+                agent.llm._provider = build_provider(
+                    settings, oc_match, provider_override="opencode"
+                )
                 agent.llm.model_name = oc_match
                 persist_model_choice(oc_match, provider="opencode")
                 print(f"  Switched: {old} -> {oc_match}  (provider=opencode)")
@@ -961,7 +1068,9 @@ class ModelCommand(Command):
             if q == old:
                 print(f"  Already using: {q}")
                 return
-            agent.llm._provider = build_provider(settings, q, provider_override="opencode")
+            agent.llm._provider = build_provider(
+                settings, q, provider_override="opencode"
+            )
             agent.llm.model_name = q
             persist_model_choice(q, provider="opencode")
             print(f"  Switched: {old} -> {q}  (provider=opencode)")
@@ -986,6 +1095,7 @@ class ModelCommand(Command):
             # load/unload, or relaunch with --models-dir), then pin model_name
             # to the id the server now serves.
             from agent_core.llm import llama_server
+
             ok, msg = llama_server.ensure_model_served(llama_provider.api_url, name)
             if not ok:
                 print(f"  [llama] WARNING: could not ensure model served: {msg}")
@@ -1014,7 +1124,9 @@ class ModelCommand(Command):
             if q == old:
                 print(f"  Already using: {q}")
                 return
-            agent.llm._provider = build_provider(settings, q, provider_override="lemonade")
+            agent.llm._provider = build_provider(
+                settings, q, provider_override="lemonade"
+            )
             agent.llm.model_name = q
             persist_model_choice(q, provider="lemonade")
             print(f"  Switched: {old} -> {q}  (provider=lemonade, NPU)")
@@ -1058,7 +1170,10 @@ class ModelCommand(Command):
         return
 
     def _rebuild_provider(
-        self, agent: "Agent", model_name: str, provider_override: str | None = None,
+        self,
+        agent: "Agent",
+        model_name: str,
+        provider_override: str | None = None,
     ) -> None:
         """Rebuild the agent's LLM provider for *model_name* (provider-aware).
 
@@ -1071,12 +1186,12 @@ class ModelCommand(Command):
         from agent_core.llm.provider import build_provider
 
         agent.llm._provider = build_provider(
-            load_agent_settings(), model_name, provider_override=provider_override,
+            load_agent_settings(),
+            model_name,
+            provider_override=provider_override,
         )
 
-    def _resolve_llama_server_model(
-        self, provider: Any, routing_label: str
-    ) -> str:
+    def _resolve_llama_server_model(self, provider: Any, routing_label: str) -> str:
         """Resolve the llama-server's REAL served model id for a switch.
 
         The user types a routing label (e.g. ``llama/oss-20b``) but the
@@ -1101,9 +1216,12 @@ class ModelCommand(Command):
             from agent_core.config import load_agent_settings
             from agent_core.llm.provider import provider_for
             from agent_core.constants import load_model_json
+
             settings = load_agent_settings()
             persisted_provider = str(load_model_json().get("provider") or "")
-            current = provider_for(agent.llm.model_name, settings.llm_provider, persisted_provider)
+            current = provider_for(
+                agent.llm.model_name, settings.llm_provider, persisted_provider
+            )
             print(f"  Provider: {current}  (model: {agent.llm.model_name})")
             print(f"  Persisted provider: {persisted_provider or '(auto)'}")
             print("  Providers: lmstudio | opencode | llama | openrouter | lemonade")
@@ -1122,20 +1240,31 @@ class ModelCommand(Command):
 
         settings = load_agent_settings()
         from agent_core.constants import load_model_json
+
         persisted_provider = str(load_model_json().get("provider") or "")
-        current = provider_for(agent.llm.model_name, settings.llm_provider, persisted_provider)
+        current = provider_for(
+            agent.llm.model_name, settings.llm_provider, persisted_provider
+        )
         if target == current:
             print(f"  Already on provider '{target}'.")
             return
 
         if target == "lemonade":
             le_models = self._lemonade_catalog(agent)
-            model = le_models[0] if le_models else (
-                f"lemonade/{settings.lemonade_model}" if settings.lemonade_model else ""
+            model = (
+                le_models[0]
+                if le_models
+                else (
+                    f"lemonade/{settings.lemonade_model}"
+                    if settings.lemonade_model
+                    else ""
+                )
             )
             if not model:
-                print("  No Lemonade/NPU models available — start the server "
-                      "(`lemonade run <model>`) or set AGENT_LEMONADE_MODEL.")
+                print(
+                    "  No Lemonade/NPU models available — start the server "
+                    "(`lemonade run <model>`) or set AGENT_LEMONADE_MODEL."
+                )
                 return
         elif target == "opencode":
             model = settings.opencode_model
@@ -1143,6 +1272,7 @@ class ModelCommand(Command):
             model = settings.openrouter_model
         else:
             from agent_core.constants import DEFAULT_MODEL
+
             persisted = load_model_json()
             model = str(persisted.get("model") or DEFAULT_MODEL)
             if model.startswith("opencode") or model.startswith("openrouter"):
@@ -1213,10 +1343,14 @@ class ModelCommand(Command):
             print(f"  Could not configure Jev model '{name}': {exc}")
             return
         persist_jev_model(name)
-        print(f"  Jev model set: {engine.model_name} "
-              f"(provider={type(engine.provider).__name__})")
-        print("  Persisted to model.json + .env (AGENT_JEV_MODEL); it is used "
-              "by jev / jev_decide / speculate --judge jev automatically.")
+        print(
+            f"  Jev model set: {engine.model_name} "
+            f"(provider={type(engine.provider).__name__})"
+        )
+        print(
+            "  Persisted to model.json + .env (AGENT_JEV_MODEL); it is used "
+            "by jev / jev_decide / speculate --judge jev automatically."
+        )
         if type(engine.provider).__name__ == "LMStudioProvider":
             from agent_core.llm.lmstudio import get_models_status
 
@@ -1224,8 +1358,10 @@ class ModelCommand(Command):
             if status and not any(
                 str(m.get("key")) == engine.model_name for m in status
             ):
-                print(f"  Warning: '{engine.model_name}' is not in LM Studio — "
-                      "download/load it there or the Jev calls will abstain.")
+                print(
+                    f"  Warning: '{engine.model_name}' is not in LM Studio — "
+                    "download/load it there or the Jev calls will abstain."
+                )
 
     async def _switch_known(self, query: str, agent: "Agent") -> None:
         """Fallback switch using hardcoded KNOWN_MODELS."""
@@ -1275,11 +1411,15 @@ class ModelCommand(Command):
 
             settings = load_agent_settings()
             persisted_provider = str(load_model_json().get("provider") or "")
-            active_provider = provider_for(current, settings.llm_provider, persisted_provider)
+            active_provider = provider_for(
+                current, settings.llm_provider, persisted_provider
+            )
         except Exception:
             active_provider = "lmstudio"
         if active_provider != "lmstudio":
-            print(f"  {current} is an {active_provider} model — no LM Studio sync needed.")
+            print(
+                f"  {current} is an {active_provider} model — no LM Studio sync needed."
+            )
             return
 
         models, loaded_ids = self._fetch_models()
@@ -1298,7 +1438,9 @@ class ModelCommand(Command):
         active_key = active["key"]
 
         if active_key == current:
-            print(f"  Agent matches LM Studio: {current}  ({_format_size(active['size_bytes'])})")
+            print(
+                f"  Agent matches LM Studio: {current}  ({_format_size(active['size_bytes'])})"
+            )
         else:
             print(f"  Agent: {current}  |  LM Studio has: {active_key}")
             print("  Syncing agent to match LM Studio...")
@@ -1315,7 +1457,9 @@ class ModelCommand(Command):
     #  Load / Unload
     # ------------------------------------------------------------------
 
-    def _unload_current_if_needed(self, models: list[dict[str, Any]], new_key: str) -> None:
+    def _unload_current_if_needed(
+        self, models: list[dict[str, Any]], new_key: str
+    ) -> None:
         """Unload currently loaded models to free VRAM before loading a new one."""
         loaded = [m for m in models if m["loaded"] and m["key"] != new_key]
         for m in loaded:
@@ -1331,7 +1475,10 @@ class ModelCommand(Command):
         if ok:
             return True, msg
 
-        if any(kw in msg.lower() for kw in ("space", "memory", "vram", "failed to load", "allocation")):
+        if any(
+            kw in msg.lower()
+            for kw in ("space", "memory", "vram", "failed to load", "allocation")
+        ):
             models, _ = self._fetch_models()
             loaded = [m for m in models if m["loaded"] and m["key"] != model_key]
             if loaded:
@@ -1359,8 +1506,14 @@ class ModelCommand(Command):
 
         lowered = query.lower()
         provider_prefixes = (
-            "lemonade/", "opencode/", "opencode-go/", "opencode-zen/",
-            "zen/", "openrouter/", "openrouter-go/", "llama/",
+            "lemonade/",
+            "opencode/",
+            "opencode-go/",
+            "opencode-zen/",
+            "zen/",
+            "openrouter/",
+            "openrouter-go/",
+            "llama/",
         )
         if any(lowered.startswith(p) for p in provider_prefixes):
             await self._switch_model([query], agent)
@@ -1369,7 +1522,9 @@ class ModelCommand(Command):
         resolved = _lms.resolve_model_name(query)
         if not resolved:
             # Try hardcoded
-            matches = difflib.get_close_matches(query, KNOWN_MODELS.keys(), n=1, cutoff=0.3)
+            matches = difflib.get_close_matches(
+                query, KNOWN_MODELS.keys(), n=1, cutoff=0.3
+            )
             resolved = matches[0] if matches else query
 
         # Check if already loaded — skip API call if so
@@ -1415,14 +1570,18 @@ class ModelCommand(Command):
             print(f"\n  Profiles ({len(profiles)}):")
             for p in sorted(profiles, key=lambda x: x.name):
                 marker = " *" if p.name == current_profile else "  "
-                print(f" {marker} {p.name:<20} temp={p.temperature}  max_tok={p.max_tokens}  {p.description}")
+                print(
+                    f" {marker} {p.name:<20} temp={p.temperature}  max_tok={p.max_tokens}  {p.description}"
+                )
             print()
             return
 
         if sub == "save":
             name = args[0].strip().lower() if args else ""
             if not name:
-                print("  Usage: model profile save <name> [--temp 0.3] [--max-tokens 8000] [--desc \"text\"]")
+                print(
+                    '  Usage: model profile save <name> [--temp 0.3] [--max-tokens 8000] [--desc "text"]'
+                )
                 return
             model = agent.llm.model_name
             temp = 0.7
@@ -1436,8 +1595,11 @@ class ModelCommand(Command):
                 if a == "--desc" and i + 1 < len(args):
                     desc = args[i + 1]
             profile = _profiles.ProfileMetadata(
-                name=name, description=desc, model=model,
-                temperature=temp, max_tokens=max_tok,
+                name=name,
+                description=desc,
+                model=model,
+                temperature=temp,
+                max_tokens=max_tok,
             )
             _profiles.save_profile(profile)
             print(f"  Saved: {name} (model={model}, temp={temp}, max_tok={max_tok})")
@@ -1469,11 +1631,14 @@ class ModelCommand(Command):
             # suggestion for the rest of the session.
             agent.llm._profile_pinned = True
             agent.llm._provider.apply_profile(
-                name, profile.temperature, profile.max_tokens,
+                name,
+                profile.temperature,
+                profile.max_tokens,
             )
             persist_model_choice(agent.llm.model_name)
             # Persist profile name in model.json
             from agent_core.constants import load_model_json, save_model_json
+
             data = load_model_json()
             data["profile"] = name
             save_model_json(data)
@@ -1484,7 +1649,9 @@ class ModelCommand(Command):
         try:
             profile = _profiles.get_profile(sub)
             print(f"  {profile.name}: {profile.description}")
-            print(f"    model={profile.model or '(any)'}  temp={profile.temperature}  max_tok={profile.max_tokens}")
+            print(
+                f"    model={profile.model or '(any)'}  temp={profile.temperature}  max_tok={profile.max_tokens}"
+            )
         except KeyError:
             print(f"  No profile: {sub}")
 
@@ -1566,7 +1733,9 @@ class ModelCommand(Command):
     #  Helpers
     # ------------------------------------------------------------------
 
-    def _resolve_opencode_match(self, query: str, opencode_models: list[str]) -> str | None:
+    def _resolve_opencode_match(
+        self, query: str, opencode_models: list[str]
+    ) -> str | None:
         """Fuzzy-match *query* against the opencode model catalog.
 
         Mirrors the LM Studio fuzzy logic (exact, substring, then difflib) but
@@ -1603,7 +1772,9 @@ class ModelCommand(Command):
                     return str(m)
         return None
 
-    def _resolve_openrouter_match(self, query: str, openrouter_models: list[str]) -> str | None:
+    def _resolve_openrouter_match(
+        self, query: str, openrouter_models: list[str]
+    ) -> str | None:
         """Fuzzy-match *query* against the OpenRouter catalog.
 
         Same precedence as the opencode matcher (exact, substring, difflib)
@@ -1639,7 +1810,9 @@ class ModelCommand(Command):
                     return str(m)
         return None
 
-    def _resolve_lemonade_match(self, query: str, lemonade_models: list[str]) -> str | None:
+    def _resolve_lemonade_match(
+        self, query: str, lemonade_models: list[str]
+    ) -> str | None:
         """Fuzzy-match *query* against the Lemonade (NPU) catalog.
 
         Same precedence as the opencode/openrouter matchers (exact, substring,
@@ -1650,7 +1823,7 @@ class ModelCommand(Command):
             return None
         qlo = query.strip().lower()
         if qlo.startswith("lemonade/"):
-            qlo = qlo[len("lemonade/"):]
+            qlo = qlo[len("lemonade/") :]
 
         # Exact on the bare id
         for m in lemonade_models:
@@ -1694,7 +1867,9 @@ class ModelCommand(Command):
 
         return None
 
-    def _resolve_match_strong(self, query: str, models: list[dict[str, Any]]) -> str | None:
+    def _resolve_match_strong(
+        self, query: str, models: list[dict[str, Any]]
+    ) -> str | None:
         """Exact / substring match against LM Studio model keys, display names
         and params — no difflib fuzz.  Used to decide LM Studio precedence
         over the opencode catalogs without spurious fuzzy collisions."""
@@ -1718,7 +1893,11 @@ class ModelCommand(Command):
             return str(sub_disp[0]["key"])
 
         # Substring match on params (e.g. "9b", "27b")
-        sub_params = [m for m in models if m["params_string"] and qlo in m["params_string"].lower()]
+        sub_params = [
+            m
+            for m in models
+            if m["params_string"] and qlo in m["params_string"].lower()
+        ]
         if len(sub_params) == 1:
             return str(sub_params[0]["key"])
 
@@ -1776,7 +1955,9 @@ class ModelCommand(Command):
 
         return None
 
-    def _resolve_lmstudio_fuzzy(self, query: str, models: list[dict[str, Any]]) -> str | None:
+    def _resolve_lmstudio_fuzzy(
+        self, query: str, models: list[dict[str, Any]]
+    ) -> str | None:
         """Difflib-only fallback for LM Studio — used only when neither a strong
         LM Studio match nor an opencode catalog match was found."""
         if not query or not models:

@@ -53,8 +53,7 @@ class Sanitizer:
         """
         self.allow_html = allow_html
         self._combined_pattern = re.compile(
-            "|".join(self._FORBIDDEN_PATTERNS),
-            re.IGNORECASE
+            "|".join(self._FORBIDDEN_PATTERNS), re.IGNORECASE
         )
 
     def sanitize_string(self, text: str) -> str:
@@ -90,10 +89,7 @@ class Sanitizer:
             return self.sanitize_string(data)
 
         if isinstance(data, dict):
-            return {
-                str(k): self.sanitize(v)
-                for k, v in data.items()
-            }
+            return {str(k): self.sanitize(v) for k, v in data.items()}
 
         if isinstance(data, list):
             return [self.sanitize(item) for item in data]
@@ -129,10 +125,7 @@ class Sanitizer:
             return self.mask_secrets(self.sanitize_string(data))
 
         if isinstance(data, dict):
-            return {
-                str(k): self.sanitize_and_mask(v)
-                for k, v in data.items()
-            }
+            return {str(k): self.sanitize_and_mask(v) for k, v in data.items()}
 
         if isinstance(data, list):
             return [self.sanitize_and_mask(item) for item in data]

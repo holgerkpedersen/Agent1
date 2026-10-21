@@ -1,4 +1,5 @@
 """Dashboard API exposing monitoring metrics and alerts over HTTP."""
+
 from __future__ import annotations
 
 import json
@@ -23,7 +24,9 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
     #: Optional pre-request hook (e.g. tailing a shared metrics event file so
     #: cross-process activity shows up). Called before every API dispatch.
     _refresh: Optional[Callable[[MetricsCollector], None]] = None
-    _base_dir: str = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    _base_dir: str = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
 
     def do_GET(self) -> None:
         self._maybe_refresh()
@@ -138,6 +141,7 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         # Late import: keeps monitoring free of any hard dependency on the
         # mcp package when only metrics are served.
         from agent_core.mcp.manager import get_manager
+
         return get_manager()
 
     def _mcp_state(self) -> Dict[str, Any]:
@@ -216,7 +220,9 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
 
         # Latest summary.json (written at end of each iteration).
         summary: Dict[str, Any] = {}
-        summary_path = os.path.join(self._base_dir, "reports", "harnessfix", "summary.json")
+        summary_path = os.path.join(
+            self._base_dir, "reports", "harnessfix", "summary.json"
+        )
         if os.path.isfile(summary_path):
             try:
                 summary = json.loads(Path(summary_path).read_text(encoding="utf-8"))
@@ -241,7 +247,8 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
                 cwd=self._base_dir,
                 capture_output=True,
                 text=True,
-                encoding="utf-8", errors="replace",
+                encoding="utf-8",
+                errors="replace",
                 check=False,
                 timeout=5,
             )
@@ -340,7 +347,9 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _read_partial(name: str) -> str:
-        base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        base = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
         path = os.path.join(base, "partials", name)
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -489,7 +498,9 @@ class DashboardAPIServer:
         #: called without an explicit ``refresh=`` argument.
         self._refresh: Optional[Callable[[MetricsCollector], None]] = None
 
-    def set_refresh(self, refresh: Optional[Callable[[MetricsCollector], None]]) -> None:
+    def set_refresh(
+        self, refresh: Optional[Callable[[MetricsCollector], None]]
+    ) -> None:
         """Register a pre-request hook (e.g. a shared metrics-file tailer)."""
         self._refresh = refresh
 

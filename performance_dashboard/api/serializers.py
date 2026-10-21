@@ -43,9 +43,7 @@ class MetricSerializer(MetricEncoder):
 class TrendFormatter:
     """Base formatter for trend analysis packaging supporting statistical evidence."""
 
-    def format(
-        self, result: Optional[TrendAnalysisResult]
-    ) -> Optional[Dict[str, Any]]:
+    def format(self, result: Optional[TrendAnalysisResult]) -> Optional[Dict[str, Any]]:
         if result is None:
             return None
         return {

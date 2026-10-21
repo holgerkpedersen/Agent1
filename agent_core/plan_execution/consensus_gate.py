@@ -29,6 +29,7 @@ and ``profile_auto`` (:mod:`agent_core.llm.workspace_prefs`):
 
     {"consensus_gate": true, "consensus_quorum": 0.75}
 """
+
 from __future__ import annotations
 
 import logging
@@ -137,7 +138,9 @@ async def review_plan(
     workspace = Path(str(getattr(agent, "workspace", ".")))
     if not gate_enabled(workspace):
         return ConsensusGateOutcome(
-            enabled=False, approved=True, skipped_reason="gate disabled",
+            enabled=False,
+            approved=True,
+            skipped_reason="gate disabled",
         )
 
     quorum = DEFAULT_QUORUM if threshold is None else float(threshold)
@@ -151,14 +154,16 @@ async def review_plan(
                 settings = load_agent_settings()
             except Exception as exc:  # infra failure -> fail open, visibly
                 return ConsensusGateOutcome(
-                    enabled=True, approved=True,
+                    enabled=True,
+                    approved=True,
                     skipped_reason=f"settings unavailable ({exc})",
                 )
         resolved_models = default_models(agent, settings)
 
     if len(resolved_models) < 2:
         return ConsensusGateOutcome(
-            enabled=True, approved=True,
+            enabled=True,
+            approved=True,
             skipped_reason=(
                 "needs at least two models — got "
                 f"{len(resolved_models)}; gate skipped (fail-open)"
@@ -180,7 +185,8 @@ async def review_plan(
     except Exception as exc:  # provider dispatch failure -> fail open, visibly
         logger.debug("consensus gate run_parallel failed", exc_info=True)
         return ConsensusGateOutcome(
-            enabled=True, approved=True,
+            enabled=True,
+            approved=True,
             skipped_reason=f"review dispatch failed ({exc})",
         )
 
@@ -190,12 +196,18 @@ async def review_plan(
     consensus = run.consensus(quorum)
     if recorded == 0:
         return ConsensusGateOutcome(
-            enabled=True, approved=True, consensus=consensus, recorded=0,
+            enabled=True,
+            approved=True,
+            consensus=consensus,
+            recorded=0,
             skipped_reason="no usable answers — gate skipped (fail-open)",
         )
     approved = bool(run.quorum_reached(quorum))
     return ConsensusGateOutcome(
-        enabled=True, approved=approved, consensus=consensus, recorded=recorded,
+        enabled=True,
+        approved=approved,
+        consensus=consensus,
+        recorded=recorded,
     )
 
 

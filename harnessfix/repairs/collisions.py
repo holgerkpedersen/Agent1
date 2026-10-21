@@ -23,6 +23,7 @@ Known limitation: a fragment produced on a ``return`` line and pinned
 indirectly (``return "Tool error: boom"`` in a helper, ``assert helper() in
 out``) is not detected, because pinning it would need real data flow.
 """
+
 from __future__ import annotations
 
 import re

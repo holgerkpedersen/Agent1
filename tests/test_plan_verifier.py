@@ -13,6 +13,7 @@ written straight from LLM text. These tests pin the new gate:
 * ``workflow_cmd._plan_doc_gate`` — the shared gate used by all nine inline
   workflow write sites.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -56,6 +57,7 @@ def ws(tmp_path: Path) -> Path:
 # plan_verifier: path existence vs creation intent
 # ---------------------------------------------------------------------------
 
+
 class TestPlanPathChecks:
     def test_existing_path_is_clean(self, ws: Path) -> None:
         result = verify_plan_doc("Update `existing.py` for speed.\n", str(ws))
@@ -69,24 +71,29 @@ class TestPlanPathChecks:
 
     def test_create_wording_marks_new_file_ok(self, ws: Path) -> None:
         result = verify_plan_doc(
-            "1. Create `utils/forgotten_helper.py` for caching.\n", str(ws))
+            "1. Create `utils/forgotten_helper.py` for caching.\n", str(ws)
+        )
         assert result.clean
 
     def test_new_tag_marks_new_file_ok(self, ws: Path) -> None:
         result = verify_taskplan_doc(
-            "1. [NEW] `agent_core/newmod.py` — add module\n", str(ws))
+            "1. [NEW] `agent_core/newmod.py` — add module\n", str(ws)
+        )
         assert result.clean
 
     def test_modify_tag_on_missing_file_is_flagged(self, ws: Path) -> None:
         result = verify_taskplan_doc(
-            "1. [MODIFY] `ghost.py` — extend handler\n", str(ws))
+            "1. [MODIFY] `ghost.py` — extend handler\n", str(ws)
+        )
         assert not result.clean
         assert "modify target" in result.findings[0]
 
     def test_stale_report_is_not_rechecked(self, ws: Path) -> None:
-        doc = ("Touch `missing_thing.py`.\n\n---\n\n## Verification Report\n\n"
-               "- plan claims checked: 1 — 0 verified, 1 flagged.\n"
-               "- [UNVERIFIED] `missing_thing.py` — not found\n")
+        doc = (
+            "Touch `missing_thing.py`.\n\n---\n\n## Verification Report\n\n"
+            "- plan claims checked: 1 — 0 verified, 1 flagged.\n"
+            "- [UNVERIFIED] `missing_thing.py` — not found\n"
+        )
         result = verify_plan_doc(doc, str(ws))
         # Only the real claim is counted — the report's own copy is ignored.
         assert result.checked == 1
@@ -95,6 +102,7 @@ class TestPlanPathChecks:
 # ---------------------------------------------------------------------------
 # plan_verifier: duplicate definitions
 # ---------------------------------------------------------------------------
+
 
 class TestDuplicateDefinitions:
     def test_taskplan_flags_dup_defs_in_same_dir(self, ws: Path) -> None:
@@ -117,6 +125,7 @@ class TestDuplicateDefinitions:
 # ---------------------------------------------------------------------------
 # plan_verifier: entity blocks must parse and define unique names
 # ---------------------------------------------------------------------------
+
 
 class TestEntitiesChecks:
     CLEAN = "```python\n@dataclass\nclass Config:\n    name: str\n```\n"
@@ -141,6 +150,7 @@ class TestEntitiesChecks:
 # dispatch + report rendering
 # ---------------------------------------------------------------------------
 
+
 def test_check_doc_unknown_kind_raises() -> None:
     with pytest.raises(ValueError):
         check_doc("spec", "text", ".")
@@ -158,8 +168,9 @@ def test_apply_report_is_idempotent_under_recheck(ws: Path) -> None:
 def test_report_section_caps_findings(ws: Path) -> None:
     from agent_core.commands.plan_verifier import PlanCheckResult
 
-    result = PlanCheckResult("plan", checked=30, flagged=25,
-                             findings=[f"f{i}" for i in range(25)])
+    result = PlanCheckResult(
+        "plan", checked=30, flagged=25, findings=[f"f{i}" for i in range(25)]
+    )
     section = report_section(result)
     assert section.count("[UNVERIFIED]") == 20
     assert "5 more finding(s)" in section
@@ -178,6 +189,7 @@ def test_summarize_prints_findings(capsys) -> None:
 # standalone commands halt / force-write through the gate
 # ---------------------------------------------------------------------------
 
+
 def _make_agent(ws: Path, reply: str) -> AsyncMock:
     agent = AsyncMock()
     agent.workspace = str(ws)
@@ -191,8 +203,7 @@ class TestStandaloneCommands:
         analysis.write_text("The module `existing.py` parses.\n", encoding="utf-8")
         plan_md = ws / "plan.md"
         agent = _make_agent(ws, "1. Update `ghost.py` — refactor internals\n")
-        rc = asyncio.run(PlanCommand().execute(
-            [str(analysis), str(plan_md)], agent))
+        rc = asyncio.run(PlanCommand().execute([str(analysis), str(plan_md)], agent))
         assert rc is True
         assert not plan_md.exists()  # autonomous default DECLINED
 
@@ -201,8 +212,9 @@ class TestStandaloneCommands:
         analysis.write_text("The module `existing.py` parses.\n", encoding="utf-8")
         plan_md = ws / "plan.md"
         agent = _make_agent(ws, "Touch `missing_thing.py`.\n")
-        rc = asyncio.run(PlanCommand().execute(
-            [str(analysis), str(plan_md), "--force"], agent))
+        rc = asyncio.run(
+            PlanCommand().execute([str(analysis), str(plan_md), "--force"], agent)
+        )
         assert rc is True
         content = plan_md.read_text(encoding="utf-8")
         assert "Verification Report" in content
@@ -212,8 +224,7 @@ class TestStandaloneCommands:
         analysis.write_text("x\n", encoding="utf-8")
         ent_md = ws / "entities.md"
         agent = _make_agent(ws, "```python\ndef broken(:\n```\n")
-        rc = asyncio.run(EntitiesCommand().execute(
-            [str(analysis), str(ent_md)], agent))
+        rc = asyncio.run(EntitiesCommand().execute([str(analysis), str(ent_md)], agent))
         assert rc is True
         assert not ent_md.exists()
 
@@ -226,8 +237,11 @@ class TestStandaloneCommands:
         plan_md.write_text("# Plan\n", encoding="utf-8")
         tasks_md = ws / "tasks.md"
         agent = _make_agent(ws, "1. `a_mod.py` — update\n2. `b_mod.py` — update\n")
-        rc = asyncio.run(TaskplanCommand().execute(
-            [str(analysis), str(plan_md), str(tasks_md)], agent))
+        rc = asyncio.run(
+            TaskplanCommand().execute(
+                [str(analysis), str(plan_md), str(tasks_md)], agent
+            )
+        )
         assert rc is True
         assert not tasks_md.exists()
 
@@ -238,8 +252,11 @@ class TestStandaloneCommands:
         plan_md.write_text("# Plan\n", encoding="utf-8")
         tasks_md = ws / "tasks.md"
         agent = _make_agent(ws, "1. `existing.py` — extend parser\n")
-        rc = asyncio.run(TaskplanCommand().execute(
-            [str(analysis), str(plan_md), str(tasks_md)], agent))
+        rc = asyncio.run(
+            TaskplanCommand().execute(
+                [str(analysis), str(plan_md), str(tasks_md)], agent
+            )
+        )
         assert rc is True
         content = tasks_md.read_text(encoding="utf-8")
         assert "Verification Report" not in content
@@ -248,6 +265,7 @@ class TestStandaloneCommands:
 # ---------------------------------------------------------------------------
 # workflow shared gate
 # ---------------------------------------------------------------------------
+
 
 class TestWorkflowPlanDocGate:
     def test_clean_content_returned_unchanged(self, ws: Path) -> None:
@@ -262,16 +280,22 @@ class TestWorkflowPlanDocGate:
         assert "Verification Report" in out
 
     def test_flagged_autonomous_halts(self, ws: Path) -> None:
-        assert _plan_doc_gate(
-            "taskplan", "1. [MODIFY] `ghost.py` — x\n", str(ws), force=False,
-        ) is None
+        assert (
+            _plan_doc_gate(
+                "taskplan",
+                "1. [MODIFY] `ghost.py` — x\n",
+                str(ws),
+                force=False,
+            )
+            is None
+        )
 
     def test_all_workflow_write_sites_use_the_gate(self) -> None:
         import inspect
 
         src = inspect.getsource(
-            __import__("agent_core.commands.workflow_cmd",
-                       fromlist=["_plan_doc_gate"]))
+            __import__("agent_core.commands.workflow_cmd", fromlist=["_plan_doc_gate"])
+        )
         # 9 inline write sites (3 branches × plan/entities/taskplan) + 1 def.
         assert src.count("_plan_doc_gate(") >= 10
         assert 'f.write(strip_reasoning(r, mode="light"))' not in src
@@ -304,9 +328,15 @@ class TestStructuralValidity:
             assert any("JSON envelope" in f for f in result.findings), kind
 
     def test_envelope_gate_halts_in_autonomous_mode(self, ws: Path) -> None:
-        assert _plan_doc_gate(
-            "plan", _HALLUCINATED_PLAN_ENVELOPE, str(ws), force=False,
-        ) is None
+        assert (
+            _plan_doc_gate(
+                "plan",
+                _HALLUCINATED_PLAN_ENVELOPE,
+                str(ws),
+                force=False,
+            )
+            is None
+        )
 
     def test_foreign_absolute_path_flagged(self, ws: Path) -> None:
         result = check_doc(

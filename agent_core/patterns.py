@@ -88,9 +88,11 @@ def _docstring_lines_uncached(source: str) -> set[int]:
         if not body:
             continue
         first = body[0]
-        if isinstance(first, ast.Expr) and isinstance(
-            first.value, (ast.Constant,)
-        ) and isinstance(first.value.value, str):
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, (ast.Constant,))
+            and isinstance(first.value.value, str)
+        ):
             spans.append((first.lineno, first.end_lineno or first.lineno))
 
     lines: set[int] = set()
@@ -117,11 +119,13 @@ def analyze(source: str) -> list[Finding]:
     all_findings: list[Finding] = []
     for detector in DETECTORS:
         for line_no, name, suggestion in detector(source):
-            all_findings.append({
-                "line": int(line_no),
-                "pattern": name,
-                "suggestion": suggestion,
-            })
+            all_findings.append(
+                {
+                    "line": int(line_no),
+                    "pattern": name,
+                    "suggestion": suggestion,
+                }
+            )
     all_findings.sort(key=lambda f: f["line"])
     if len(_ANALYZE_CACHE) >= _ANALYZE_CACHE_MAX:
         _ANALYZE_CACHE.clear()
@@ -132,6 +136,7 @@ def analyze(source: str) -> list[Finding]:
 # ---------------------------------------------------------------------------
 # Individual detectors
 # ---------------------------------------------------------------------------
+
 
 def _loop_body_lines(lines: list[str]) -> list[bool]:
     """Return a per-line boolean: whether the line is inside a for/while body.
@@ -206,9 +211,10 @@ def _loop_caches(spans_body: list[str]) -> bool:
     cache_var = guard_match.group(1)
     # a dict-style write `cache_var[...] = <name>` where that name is the
     # read result, e.g. `read_cache[full] = ref_content`
-    has_memoized = re.search(
-        rf"{re.escape(cache_var)}\s*\[[^\]]*\]\s*=\s*([A-Za-z_]\w*)", body
-    ) is not None
+    has_memoized = (
+        re.search(rf"{re.escape(cache_var)}\s*\[[^\]]*\]\s*=\s*([A-Za-z_]\w*)", body)
+        is not None
+    )
     return has_memoized
 
 
@@ -217,11 +223,22 @@ def detect_regex_in_loop(source: str) -> list[tuple[int, str, str]]:
     findings: list[tuple[int, str, str]] = []
     lines = source.split("\n")
     in_loop_flags = _loop_body_lines(lines)
-    _COMPILE_MATCH_SUB_FINDALL_RE = re.compile(r"\bre\.(compile|match|search|sub|findall)\(")
+    _COMPILE_MATCH_SUB_FINDALL_RE = re.compile(
+        r"\bre\.(compile|match|search|sub|findall)\("
+    )
     for i, line in enumerate(lines, 1):
-        if in_loop_flags[i - 1] and _COMPILE_MATCH_SUB_FINDALL_RE.search(line) and _line_regex_arg_is_hoistable(line):
-            findings.append((i, "regex_in_loop",
-                             "Move re.compile() to module level — compiling inside loop wastes cycles"))
+        if (
+            in_loop_flags[i - 1]
+            and _COMPILE_MATCH_SUB_FINDALL_RE.search(line)
+            and _line_regex_arg_is_hoistable(line)
+        ):
+            findings.append(
+                (
+                    i,
+                    "regex_in_loop",
+                    "Move re.compile() to module level — compiling inside loop wastes cycles",
+                )
+            )
     return findings
 
 
@@ -235,12 +252,20 @@ def _line_regex_arg_is_hoistable(line: str) -> bool:
             nxt = toks[i + 1]
             if nxt[1] == "." and i + 2 < len(toks):
                 after = toks[i + 2]
-                if after[0] == tokenize.NAME and after[1] in ("compile", "match", "search", "sub", "findall") and i + 3 < len(toks):
+                if (
+                    after[0] == tokenize.NAME
+                    and after[1] in ("compile", "match", "search", "sub", "findall")
+                    and i + 3 < len(toks)
+                ):
                     if toks[i + 3][1] == "(":
                         j = i + 4
                         while j < len(toks):
                             tj = toks[j]
-                            if tj[0] in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE):
+                            if tj[0] in (
+                                tokenize.COMMENT,
+                                tokenize.NL,
+                                tokenize.NEWLINE,
+                            ):
                                 j += 1
                                 continue
                             if tj[0] == tokenize.STRING:
@@ -253,7 +278,11 @@ def _line_regex_arg_is_hoistable(line: str) -> bool:
                                 if "{" in val and "f" in prefix.lower():
                                     return False
                                 k = j + 1
-                                while k < len(toks) and toks[k][0] in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE):
+                                while k < len(toks) and toks[k][0] in (
+                                    tokenize.COMMENT,
+                                    tokenize.NL,
+                                    tokenize.NEWLINE,
+                                ):
                                     k += 1
                                 if k < len(toks) and toks[k][1] == "+":
                                     return False
@@ -270,8 +299,13 @@ def detect_string_concat_in_loop(source: str) -> list[tuple[int, str, str]]:
     _PLUS_EQ_RE = re.compile(r"\w+\s*\+=\s*[\"']")
     for i, line in enumerate(lines, 1):
         if in_loop_flags[i - 1] and _PLUS_EQ_RE.search(line):
-            findings.append((i, "string_concat_in_loop",
-                             "Use ''.join() or io.StringIO instead of += in loop — O(n²) becomes O(n)"))
+            findings.append(
+                (
+                    i,
+                    "string_concat_in_loop",
+                    "Use ''.join() or io.StringIO instead of += in loop — O(n²) becomes O(n)",
+                )
+            )
     return findings
 
 
@@ -281,8 +315,13 @@ def detect_bare_except(source: str) -> list[tuple[int, str, str]]:
     _EXCEPT_RE = re.compile(r"^\s*except\s*:")
     for i, line in enumerate(source.split("\n"), 1):
         if _EXCEPT_RE.match(line) and "except:" in line:
-            findings.append((i, "bare_except",
-                             "Specify exception type — bare except catches KeyboardInterrupt and hides bugs"))
+            findings.append(
+                (
+                    i,
+                    "bare_except",
+                    "Specify exception type — bare except catches KeyboardInterrupt and hides bugs",
+                )
+            )
     return findings
 
 
@@ -304,11 +343,16 @@ def detect_silent_except(source: str) -> list[tuple[int, str, str]]:
                 if nxt_indent <= e_indent:
                     break  # dedented — end of except body
                 if _PASS_RE.match(nxt):
-                    findings.append((i, "silent_except",
-                                     "Replace 'pass' with a print/log warning — do NOT re-raise (silent "
-                                     "handlers are often intentional fallbacks such as cache reads, "
-                                     "optional features, or Ctrl-C handling); re-raising would crash "
-                                     "normal operation — preserve the original control flow"))
+                    findings.append(
+                        (
+                            i,
+                            "silent_except",
+                            "Replace 'pass' with a print/log warning — do NOT re-raise (silent "
+                            "handlers are often intentional fallbacks such as cache reads, "
+                            "optional features, or Ctrl-C handling); re-raising would crash "
+                            "normal operation — preserve the original control flow",
+                        )
+                    )
                     break
                 if nxt.strip():
                     break  # non-pass statement — block is no longer silent
@@ -330,8 +374,13 @@ def detect_duplicate_imports(source: str) -> list[tuple[int, str, str]]:
             if key in seen:
                 fline, findent = seen[key]
                 if indent == 0 and findent == 0:
-                    findings.append((i, "duplicate_import",
-                                     f"Duplicate import (first at line {fline}). Remove this copy."))
+                    findings.append(
+                        (
+                            i,
+                            "duplicate_import",
+                            f"Duplicate import (first at line {fline}). Remove this copy.",
+                        )
+                    )
             else:
                 seen[key] = (i, indent)
     return findings
@@ -340,6 +389,7 @@ def detect_duplicate_imports(source: str) -> list[tuple[int, str, str]]:
 def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
     """``open(...).read()`` without ``with`` statement — AST-based, no false positives."""
     import ast
+
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -449,14 +499,20 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
         line = call_node.lineno
         if line not in seen:
             seen.add(line)
-            findings.append((line, "missing_context_manager",
-                             "Use 'with open() as f:' — current code may leak file handles"))
+            findings.append(
+                (
+                    line,
+                    "missing_context_manager",
+                    "Use 'with open() as f:' — current code may leak file handles",
+                )
+            )
     return findings
 
 
 def _module_shadows_open(tree: ast.Module) -> bool:
     """True when top-level code binds the name ``'open'`` (assign, import, def, class)."""
     import ast
+
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
@@ -501,9 +557,7 @@ def _open_write_mode(line: str) -> bool:
     return False
 
 
-_READ_SUGGESTION = (
-    "File read inside loop — move open() outside or cache the content"
-)
+_READ_SUGGESTION = "File read inside loop — move open() outside or cache the content"
 _INVARIANT_SUGGESTION = (
     "Same file re-read on every iteration — read it once before the loop "
     "(or cache the content)"
@@ -544,7 +598,7 @@ def _open_path_arg(stmt: str) -> str | None:
         end += 1
     if depth != 0:
         return None  # unbalanced — cannot determine argument
-    arg = stmt[pos:end - 1].strip()
+    arg = stmt[pos : end - 1].strip()
     if not arg or arg.startswith("="):
         return None
     # first positional argument — split on commas at depth 0
@@ -603,9 +657,7 @@ def _iter_derived_names(body: list[str], loop_vars: set[str]) -> set[str]:
     while changed:
         changed = False
         for name, rhs in assignments.items():
-            if name not in derived and any(
-                w in derived for w in _ID_RE.findall(rhs)
-            ):
+            if name not in derived and any(w in derived for w in _ID_RE.findall(rhs)):
                 derived.add(name)
                 changed = True
     return derived
@@ -670,7 +722,7 @@ def detect_file_read_in_loop(source: str) -> list[tuple[int, str, str]]:
             if not (start < idx < end):  # strictly inside this loop's body
                 continue
             in_any_loop = True
-            body = lines[start + 1:end]
+            body = lines[start + 1 : end]
             if _loop_caches(body):
                 cached = True
                 break
@@ -692,9 +744,13 @@ def detect_file_read_in_loop(source: str) -> list[tuple[int, str, str]]:
             path = receivers.get(rcvr, "")
         if _path_derived(path, derived):
             continue  # distinct file per iteration — no hoistable work
-        findings.append((i, "file_read_in_loop",
-                         _INVARIANT_SUGGESTION if path
-                         else _READ_SUGGESTION))
+        findings.append(
+            (
+                i,
+                "file_read_in_loop",
+                _INVARIANT_SUGGESTION if path else _READ_SUGGESTION,
+            )
+        )
     return findings
 
 
@@ -718,8 +774,8 @@ def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
     loop_indent = 0
     loop_body_lines: list[str] = []
     body_assigned: set[str] = set()
-    loop_candidates: list[tuple[int, str]] = []   # pending until loop closes
-    append_lines: list[tuple[int, str]] = []       # filtered survivors
+    loop_candidates: list[tuple[int, str]] = []  # pending until loop closes
+    append_lines: list[tuple[int, str]] = []  # filtered survivors
     _APPEND_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\.(?:append|extend)\(")
     _IEQ_RE = re.compile(r"([A-Za-z_]\w*)\s*\+=\s*\S")
 
@@ -742,7 +798,9 @@ def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
         loop_candidates = []
 
     _FOR_WHILE_RE = re.compile(r"^\s*(for|while)\s")
-    _IF_ELIF_TRY_EXCEPT_RE = re.compile(r'\b(if|elif|else|await|break|continue|return|try|except)\b')
+    _IF_ELIF_TRY_EXCEPT_RE = re.compile(
+        r"\b(if|elif|else|await|break|continue|return|try|except)\b"
+    )
     for i, line in enumerate(lines, 1):
         stripped = line.strip()
         if _FOR_WHILE_RE.match(line):
@@ -763,11 +821,11 @@ def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
                 m = _assignment_match(stripped, compound=False)
                 if m:
                     body_assigned.add(m.group(1))
-        if in_loop and (".append(" in line or ".extend(" in line
-                        or ("+=" in line and "[" in line)):
+        if in_loop and (
+            ".append(" in line or ".extend(" in line or ("+=" in line and "[" in line)
+        ):
             has_complex_flow = any(
-                _IF_ELIF_TRY_EXCEPT_RE.search(bl)
-                for bl in loop_body_lines
+                _IF_ELIF_TRY_EXCEPT_RE.search(bl) for bl in loop_body_lines
             )
             if not has_complex_flow:
                 m = _APPEND_RE.search(line)
@@ -783,10 +841,15 @@ def detect_list_append_join(source: str) -> list[tuple[int, str, str]]:
     # Only flag lines whose list is consumed by a .join() call.
     for i, var in append_lines:
         if re.search(rf"\.join\s*\(\s*{re.escape(var)}\s*\)", source):
-            findings.append((i, "list_append_join",
-                             "Build the joined list in one comprehension/generator "
-                             "instead of building it per-iteration with .append/.extend/+= — "
-                             "currently O(n) per-iteration call overhead"))
+            findings.append(
+                (
+                    i,
+                    "list_append_join",
+                    "Build the joined list in one comprehension/generator "
+                    "instead of building it per-iteration with .append/.extend/+= — "
+                    "currently O(n) per-iteration call overhead",
+                )
+            )
     return findings
 
 
@@ -887,10 +950,15 @@ def detect_dead_assignment(source: str) -> list[tuple[int, str, str]]:
                 # Skip when the overwrite line reads the variable on its RHS
                 # (e.g. ``ws = agent.workspace`` then ``ws = to_windows_path(ws)``):
                 # the first value is consumed, so the store is NOT dead.
-                rhs = next_line[m2.end():]
+                rhs = next_line[m2.end() :]
                 if not re.search(rf"\b{re.escape(var_name)}\b", rhs):
-                    findings.append((i, "dead_assignment",
-                                     f"Variable '{var_name}' assigned at line {i} then immediately overwritten at line {j + 1}. Remove the dead assignment."))
+                    findings.append(
+                        (
+                            i,
+                            "dead_assignment",
+                            f"Variable '{var_name}' assigned at line {i} then immediately overwritten at line {j + 1}. Remove the dead assignment.",
+                        )
+                    )
             break
 
     seen_dead: set[tuple[int, str]] = {(f[0], f[1]) for f in findings}
@@ -961,8 +1029,13 @@ def detect_dead_assignment(source: str) -> list[tuple[int, str, str]]:
             used_after = _loop_body_references(lines, i, var_name)
 
         if not used_after:
-            findings.append((i, "dead_assignment",
-                             f"Variable '{var_name}' assigned at line {i} but never used after. Remove the dead assignment."))
+            findings.append(
+                (
+                    i,
+                    "dead_assignment",
+                    f"Variable '{var_name}' assigned at line {i} but never used after. Remove the dead assignment.",
+                )
+            )
 
     findings.sort(key=lambda f: f[0])
     return findings
@@ -1052,16 +1125,23 @@ def detect_walrus_in_comprehension(source: str) -> list[tuple[int, str, str]]:
         return findings
 
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        if not isinstance(
+            node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
             continue
         walruses = [sub for sub in ast.walk(node) if isinstance(sub, ast.NamedExpr)]
         if not walruses:
             continue
         first = walruses[0]
         names = ", ".join({ast.unparse(w.target) for w in walruses})
-        findings.append((first.lineno, "walrus_in_comprehension",
-                         f"Walrus '{names}' inside comprehension leaks into enclosing scope. "
-                         "Bind these as named locals on their own line before the comprehension."))
+        findings.append(
+            (
+                first.lineno,
+                "walrus_in_comprehension",
+                f"Walrus '{names}' inside comprehension leaks into enclosing scope. "
+                "Bind these as named locals on their own line before the comprehension.",
+            )
+        )
     findings.sort(key=lambda f: f[0])
     return findings
 
@@ -1098,7 +1178,14 @@ def _strip_strings(line: str) -> str:
 def _balance_delta(line: str) -> int:
     """Return net open-minus-close delimiter count for () [] {} on *line* (strings ignored)."""
     clean = _strip_strings(line)
-    return clean.count("(") - clean.count(")") + clean.count("[") - clean.count("]") + clean.count("{") - clean.count("}")
+    return (
+        clean.count("(")
+        - clean.count(")")
+        + clean.count("[")
+        - clean.count("]")
+        + clean.count("{")
+        - clean.count("}")
+    )
 
 
 def detect_unreachable_code(source: str) -> list[tuple[int, str, str]]:
@@ -1136,8 +1223,13 @@ def detect_unreachable_code(source: str) -> list[tuple[int, str, str]]:
                 continue
             next_indent = len(nxt) - len(nxt.lstrip())
             if next_indent >= stmt_indent:
-                findings.append((k + 1, "unreachable_code",
-                                 f"Code after '{stripped}' at line {i} can never execute."))
+                findings.append(
+                    (
+                        k + 1,
+                        "unreachable_code",
+                        f"Code after '{stripped}' at line {i} can never execute.",
+                    )
+                )
             break
 
     return findings
@@ -1171,8 +1263,13 @@ def detect_unused_imports(source: str) -> list[tuple[int, str, str]]:
                 used = True
                 break
         if not used:
-            findings.append((i, "unused_import",
-                             f"Imported '{name}' is never used. Remove the import."))
+            findings.append(
+                (
+                    i,
+                    "unused_import",
+                    f"Imported '{name}' is never used. Remove the import.",
+                )
+            )
     return findings
 
 
@@ -1180,7 +1277,10 @@ def detect_unused_imports(source: str) -> list[tuple[int, str, str]]:
 # Cross-file detectors (called from implement --review)
 # ---------------------------------------------------------------------------
 
-def detect_module_collisions(generated_files: list[str], existing_files: list[str] | None = None) -> list[dict[str, Any]]:
+
+def detect_module_collisions(
+    generated_files: list[str], existing_files: list[str] | None = None
+) -> list[dict[str, Any]]:
     """Flag generated modules whose names overlap with existing project modules.
 
     Checks for near-duplicate filenames (e.g., ``lm_studio_provider.py``
@@ -1198,11 +1298,16 @@ def detect_module_collisions(generated_files: list[str], existing_files: list[st
     if existing_files is None:
         existing_files = []
         import os as _os
+
         for root, dirs, files in _os.walk("."):
-            dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache")]
+            dirs[:] = [
+                d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache")
+            ]
             for f in files:
                 if f.endswith(".py"):
-                    existing_files.append(_os.path.relpath(_os.path.join(root, f), ".").replace("\\", "/"))
+                    existing_files.append(
+                        _os.path.relpath(_os.path.join(root, f), ".").replace("\\", "/")
+                    )
 
     for fname in generated_files:
         if not fname.endswith(".py") or fname.endswith("__init__.py"):
@@ -1216,26 +1321,49 @@ def detect_module_collisions(generated_files: list[str], existing_files: list[st
             # Check via difflib for similar names (threshold 0.6)
             ratio = difflib.SequenceMatcher(None, stem, other_stem).ratio()
             substring_match = stem in other_stem or other_stem in stem
-            prefix_match = other_stem.startswith(stem[:6]) or stem.startswith(other_stem[:6])
+            prefix_match = other_stem.startswith(stem[:6]) or stem.startswith(
+                other_stem[:6]
+            )
             token_match = _shared_name_tokens(stem, other_stem)
             if ratio > 0.6 or substring_match or prefix_match or token_match:
                 collisions.append(other)
         if collisions:
-            findings.append({
-                "file": fname,
-                "line": 0,
-                "pattern": "module_collision",
-                "suggestion": f"Module name similar to existing: {', '.join(collisions[:3])}. Consider a more distinct name.",
-            })
+            findings.append(
+                {
+                    "file": fname,
+                    "line": 0,
+                    "pattern": "module_collision",
+                    "suggestion": f"Module name similar to existing: {', '.join(collisions[:3])}. Consider a more distinct name.",
+                }
+            )
     return findings
 
 
 #: Name tokens too generic to indicate duplication (``cmd``, ``core``, ...).
-_GENERIC_NAME_TOKENS = frozenset({
-    "core", "util", "utils", "helper", "helpers", "base", "common", "main",
-    "app", "service", "command", "cmd", "test", "tests", "module", "impl",
-    "support", "shared", "misc", "miscellaneous",
-})
+_GENERIC_NAME_TOKENS = frozenset(
+    {
+        "core",
+        "util",
+        "utils",
+        "helper",
+        "helpers",
+        "base",
+        "common",
+        "main",
+        "app",
+        "service",
+        "command",
+        "cmd",
+        "test",
+        "tests",
+        "module",
+        "impl",
+        "support",
+        "shared",
+        "misc",
+        "miscellaneous",
+    }
+)
 
 
 def _shared_name_tokens(stem1: str, stem2: str) -> bool:
@@ -1250,14 +1378,17 @@ def _shared_name_tokens(stem1: str, stem2: str) -> bool:
 
     def _tokens(stem: str) -> set[str]:
         return {
-            t for t in _re.split(r"[^a-zA-Z0-9]+", stem.lower())
+            t
+            for t in _re.split(r"[^a-zA-Z0-9]+", stem.lower())
             if len(t) >= 4 and t not in _GENERIC_NAME_TOKENS
         }
 
     return bool(_tokens(stem1) & _tokens(stem2))
 
 
-def detect_attribute_errors(source_files: dict[str, str], project_root: str) -> list[dict[str, Any]]:
+def detect_attribute_errors(
+    source_files: dict[str, str], project_root: str
+) -> list[dict[str, Any]]:
     """Check attribute access patterns against what imported classes actually export.
 
     Tracks both direct imports AND annotated variables/functions that reference
@@ -1296,7 +1427,10 @@ def detect_attribute_errors(source_files: dict[str, str], project_root: str) -> 
                             type_hints[arg.arg] = arg.annotation.id
             # Variable assignments with type annotations: x: ProfileMetadata = ...
             if isinstance(node, ast.AnnAssign):
-                if isinstance(node.annotation, ast.Name) and node.annotation.id in imports:
+                if (
+                    isinstance(node.annotation, ast.Name)
+                    and node.annotation.id in imports
+                ):
                     if isinstance(node.target, ast.Name):
                         type_hints[node.target.id] = node.annotation.id
 
@@ -1335,51 +1469,81 @@ def detect_attribute_errors(source_files: dict[str, str], project_root: str) -> 
                         mod_tree = ast.parse(mod_source)
                     except Exception:
                         continue
-                    class_fields: set[str] = {"__class__", "__dict__", "__name__", "__init__"}
+                    class_fields: set[str] = {
+                        "__class__",
+                        "__dict__",
+                        "__name__",
+                        "__init__",
+                    }
                     for node in ast.walk(mod_tree):
                         if isinstance(node, ast.ClassDef) and node.name == cls_name:
                             for sn in node.body:
                                 if isinstance(sn, (ast.AnnAssign, ast.Assign)):
-                                    targets = [sn.target] if isinstance(sn, ast.AnnAssign) else sn.targets
+                                    targets = (
+                                        [sn.target]
+                                        if isinstance(sn, ast.AnnAssign)
+                                        else sn.targets
+                                    )
                                     for t in targets:
-                                        names = {n.id for n in ast.walk(t) if isinstance(n, ast.Name) and n.id not in ("self", "cls")}
+                                        names = {
+                                            n.id
+                                            for n in ast.walk(t)
+                                            if isinstance(n, ast.Name)
+                                            and n.id not in ("self", "cls")
+                                        }
                                         class_fields.update(names)
                             # Also check __init__ parameters
                             for sn in node.body:
-                                if isinstance(sn, ast.FunctionDef) and sn.name == "__init__":
+                                if (
+                                    isinstance(sn, ast.FunctionDef)
+                                    and sn.name == "__init__"
+                                ):
                                     for arg in sn.args.args:
                                         if arg.arg != "self":
                                             class_fields.add(arg.arg)
                             # Also check @dataclass fields (ast.Name from annotations)
                             for sn in node.body:
                                 if isinstance(sn, ast.AnnAssign):
-                                    names = {n.id for n in ast.walk(sn.target) if isinstance(n, ast.Name)}
+                                    names = {
+                                        n.id
+                                        for n in ast.walk(sn.target)
+                                        if isinstance(n, ast.Name)
+                                    }
                                     class_fields.update(names)
-                               # body assignments like self.name = ...
+                            # body assignments like self.name = ...
                             for sn in node.body:
-                                   if isinstance(sn, ast.Assign):
-                                       for t in sn.targets:
-                                           if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "self":
-                                               class_fields.add(t.attr)
+                                if isinstance(sn, ast.Assign):
+                                    for t in sn.targets:
+                                        if (
+                                            isinstance(t, ast.Attribute)
+                                            and isinstance(t.value, ast.Name)
+                                            and t.value.id == "self"
+                                        ):
+                                            class_fields.add(t.attr)
                             break
                     missing = attrs - class_fields
                     for attr in sorted(missing):
-                        findings.append({
-                            "file": fname,
-                            "line": 0,
-                            "pattern": "attribute_error",
-                            "suggestion": f"{obj_name}.{attr} — '{attr}' not found in class '{cls_name}' from {mod_path}. Available: {', '.join(sorted(class_fields)[:12]) or 'none'}",
-                        })
+                        findings.append(
+                            {
+                                "file": fname,
+                                "line": 0,
+                                "pattern": "attribute_error",
+                                "suggestion": f"{obj_name}.{attr} — '{attr}' not found in class '{cls_name}' from {mod_path}. Available: {', '.join(sorted(class_fields)[:12]) or 'none'}",
+                            }
+                        )
                     break
     return findings
 
 
-def detect_unwired_modules(generated_files: list[str], project_root: str) -> list[dict[str, Any]]:
+def detect_unwired_modules(
+    generated_files: list[str], project_root: str
+) -> list[dict[str, Any]]:
     """Flag generated modules that are not imported by any existing code.
 
     Returns findings with "unwired_module" pattern.
     """
     import os as _os
+
     findings: list[dict[str, Any]] = []
 
     for fname in generated_files:
@@ -1390,7 +1554,11 @@ def detect_unwired_modules(generated_files: list[str], project_root: str) -> lis
         # Check if any .py file in the project imports this module
         referenced = False
         for root, dirs, files in _os.walk(project_root):
-            dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "__pycache__")]
+            dirs[:] = [
+                d
+                for d in dirs
+                if d not in (".git", "__pycache__", ".pytest_cache", "__pycache__")
+            ]
             for f in files:
                 if not f.endswith(".py"):
                     continue
@@ -1401,24 +1569,30 @@ def detect_unwired_modules(generated_files: list[str], project_root: str) -> lis
                 except Exception:
                     continue
                 # Check for import references
-                if mod_name in content or fname.replace("/", ".").replace(".py", "") in content.replace("\\", "/"):
+                if mod_name in content or fname.replace("/", ".").replace(
+                    ".py", ""
+                ) in content.replace("\\", "/"):
                     referenced = True
                     break
             if referenced:
                 break
 
         if not referenced:
-            findings.append({
-                "file": fname,
-                "line": 0,
-                "pattern": "unwired_module",
-                "suggestion": f"Module '{fname}' is not imported by any existing project code. It needs to be wired in (e.g., add 'from {mod_name} import X' in a consumer module).",
-            })
+            findings.append(
+                {
+                    "file": fname,
+                    "line": 0,
+                    "pattern": "unwired_module",
+                    "suggestion": f"Module '{fname}' is not imported by any existing project code. It needs to be wired in (e.g., add 'from {mod_name} import X' in a consumer module).",
+                }
+            )
 
     return findings
 
 
-def detect_class_conflicts(generated_files: list[str], project_root: str) -> list[dict[str, Any]]:
+def detect_class_conflicts(
+    generated_files: list[str], project_root: str
+) -> list[dict[str, Any]]:
     """Flag generated class/function names that collide with existing production code
     in the *same directory*.  Cross-package name reuse is intentional.
     """
@@ -1426,13 +1600,36 @@ def detect_class_conflicts(generated_files: list[str], project_root: str) -> lis
     import ast
 
     findings: list[dict[str, Any]] = []
-    skip = {"__init__", "__str__", "__repr__", "__eq__", "__hash__", "__call__",
-            "__enter__", "__exit__", "__getitem__", "__setitem__", "__iter__", "__len__",
-            "get", "set", "run", "main", "execute", "record", "start", "stop"}
+    skip = {
+        "__init__",
+        "__str__",
+        "__repr__",
+        "__eq__",
+        "__hash__",
+        "__call__",
+        "__enter__",
+        "__exit__",
+        "__getitem__",
+        "__setitem__",
+        "__iter__",
+        "__len__",
+        "get",
+        "set",
+        "run",
+        "main",
+        "execute",
+        "record",
+        "start",
+        "stop",
+    }
 
     existing: dict[str, tuple[str, str]] = {}  # name → (rel_path, dir)
     for root, dirs, files in _os.walk(project_root):
-        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
+        dirs[:] = [
+            d
+            for d in dirs
+            if d not in (".git", "__pycache__", ".pytest_cache", "backups")
+        ]
         for f in files:
             if not f.endswith(".py"):
                 continue
@@ -1445,7 +1642,10 @@ def detect_class_conflicts(generated_files: list[str], project_root: str) -> lis
                     tree = ast.parse(fh.read())
                 pkg_dir = _os.path.dirname(rel)
                 for node in ast.walk(tree):
-                    if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name not in skip:
+                    if (
+                        isinstance(node, (ast.ClassDef, ast.FunctionDef))
+                        and node.name not in skip
+                    ):
                         existing[node.name] = (rel, pkg_dir)
             except Exception:
                 print("Warning: silenced exception in patterns.py:1303")
@@ -1467,10 +1667,14 @@ def detect_class_conflicts(generated_files: list[str], project_root: str) -> lis
             if node.name in existing:
                 ex_rel, ex_dir = existing[node.name]
                 if ex_dir == gen_dir:
-                    findings.append({
-                        "file": fname, "line": node.lineno, "pattern": "class_conflict",
-                        "suggestion": f"'{node.name}' already defined in {ex_rel} (same directory). Rename in {fname} to avoid import collision.",
-                    })
+                    findings.append(
+                        {
+                            "file": fname,
+                            "line": node.lineno,
+                            "pattern": "class_conflict",
+                            "suggestion": f"'{node.name}' already defined in {ex_rel} (same directory). Rename in {fname} to avoid import collision.",
+                        }
+                    )
 
     return findings
 
@@ -1524,7 +1728,7 @@ def _fstring_lines_without_interpolation(source: str) -> list[tuple[int, int]]:
             if not has_interp:
                 line_no, col = fstring_start
                 if line_no <= len(lines) and col < len(lines[line_no - 1]):
-                    if lines[line_no - 1][col] in ('f', 'F'):
+                    if lines[line_no - 1][col] in ("f", "F"):
                         findings.append((line_no, col))
             fstring_start = None
             continue
@@ -1538,13 +1742,22 @@ def detect_none_eq(source: str) -> list[tuple[int, str, str]]:
     findings: list[tuple[int, str, str]] = []
     for i, line in enumerate(source.split("\n"), 1):
         stripped = line.strip()
-        if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
+        if (
+            stripped.startswith("#")
+            or stripped.startswith('"""')
+            or stripped.startswith("'''")
+        ):
             continue
         m = _NONE_EQ_RE.search(stripped)
         if m:
-            findings.append((i, "none_eq",
-                             f"Use '{m.group(1)} is None' / '{m.group(1)} is not None' "
-                             f"instead of '{m.group(1)} {m.group(2)} None'"))
+            findings.append(
+                (
+                    i,
+                    "none_eq",
+                    f"Use '{m.group(1)} is None' / '{m.group(1)} is not None' "
+                    f"instead of '{m.group(1)} {m.group(2)} None'",
+                )
+            )
     return findings
 
 
@@ -1556,8 +1769,13 @@ def detect_fstring_without_placeholder(source: str) -> list[tuple[int, str, str]
         if line_no in seen:
             continue
         seen.add(line_no)
-        findings.append((line_no, "fstring_without_placeholder",
-                         "Remove the 'f' prefix — no interpolation expressions inside"))
+        findings.append(
+            (
+                line_no,
+                "fstring_without_placeholder",
+                "Remove the 'f' prefix — no interpolation expressions inside",
+            )
+        )
     return findings
 
 
@@ -1572,9 +1790,14 @@ def detect_iter_dict_keys(source: str) -> list[tuple[int, str, str]]:
         m = _FOR_IN_KEYS_RE.search(stripped) or _IN_KEYS_RE.search(stripped)
         if not m:
             continue
-        findings.append((i, "iter_dict_keys",
-                         f"Drop redundant .keys(): use '{m.group(1)} in d' or "
-                         f"'for {m.group(1)} in d:' instead"))
+        findings.append(
+            (
+                i,
+                "iter_dict_keys",
+                f"Drop redundant .keys(): use '{m.group(1)} in d' or "
+                f"'for {m.group(1)} in d:' instead",
+            )
+        )
     return findings
 
 
@@ -1591,18 +1814,33 @@ def detect_type_comparison(source: str) -> list[tuple[int, str, str]]:
             continue
         m = _TYPE_EQ_RE.search(stripped)
         if m:
-            findings.append((i, "type_comparison",
-                             f"Use isinstance({m.group(1)}, {m.group(2)}) instead of type() == check"))
+            findings.append(
+                (
+                    i,
+                    "type_comparison",
+                    f"Use isinstance({m.group(1)}, {m.group(2)}) instead of type() == check",
+                )
+            )
             continue
         m = _TYPE_NE_RE.search(stripped)
         if m:
-            findings.append((i, "type_comparison",
-                             f"Use 'not isinstance({m.group(1)}, {m.group(2)})' instead of type() != check"))
+            findings.append(
+                (
+                    i,
+                    "type_comparison",
+                    f"Use 'not isinstance({m.group(1)}, {m.group(2)})' instead of type() != check",
+                )
+            )
             continue
         m = _TYPE_IN_RE.search(stripped)
         if m:
-            findings.append((i, "type_comparison",
-                             f"Use isinstance({m.group(1)}, ({m.group(2)})) instead of type() in (...) check"))
+            findings.append(
+                (
+                    i,
+                    "type_comparison",
+                    f"Use isinstance({m.group(1)}, ({m.group(2)})) instead of type() in (...) check",
+                )
+            )
     return findings
 
 
@@ -1616,31 +1854,50 @@ def detect_mutable_default_arg(source: str) -> list[tuple[int, str, str]]:
             continue
         m = _ASSIGN_RE.search(stripped)
         if m:
-            findings.append((i, "mutable_default_arg",
-                             f"Mutable default argument {m.group(1)}: use None and "
-                             f"guard with '{m.group(1)} or param is None' in function body"))
+            findings.append(
+                (
+                    i,
+                    "mutable_default_arg",
+                    f"Mutable default argument {m.group(1)}: use None and "
+                    f"guard with '{m.group(1)} or param is None' in function body",
+                )
+            )
     return findings
 
 
 def detect_redundant_bool_expr(source: str) -> list[tuple[int, str, str]]:
     """``return True if cond else False`` — replace with ``bool(cond)``."""
     findings: list[tuple[int, str, str]] = []
-    _RETURN_TRUE_ELSE_FALSE_RE = re.compile(r"return\s+True\s+if\s+(.+?)\s+else\s+False\s*$")
-    _RETURN_FALSE_ELSE_TRUE_RE = re.compile(r"return\s+False\s+if\s+(.+?)\s+else\s+True\s*$")
+    _RETURN_TRUE_ELSE_FALSE_RE = re.compile(
+        r"return\s+True\s+if\s+(.+?)\s+else\s+False\s*$"
+    )
+    _RETURN_FALSE_ELSE_TRUE_RE = re.compile(
+        r"return\s+False\s+if\s+(.+?)\s+else\s+True\s*$"
+    )
     for i, line in enumerate(source.split("\n"), 1):
         stripped = line.strip()
         if stripped.startswith("#"):
             continue
         m = _RETURN_TRUE_ELSE_FALSE_RE.search(stripped)
         if m:
-            findings.append((i, "redundant_bool_expr",
-                             f"Use 'return bool({m.group(1).strip()})' instead of True-if-else-False"))
+            findings.append(
+                (
+                    i,
+                    "redundant_bool_expr",
+                    f"Use 'return bool({m.group(1).strip()})' instead of True-if-else-False",
+                )
+            )
             continue
         m = _RETURN_FALSE_ELSE_TRUE_RE.search(stripped)
         if m:
-            findings.append((i, "redundant_bool_expr",
-                             f"Use 'return not ({m.group(1).strip()})' or "
-                             f"'return not bool({m.group(1).strip()})' instead"))
+            findings.append(
+                (
+                    i,
+                    "redundant_bool_expr",
+                    f"Use 'return not ({m.group(1).strip()})' or "
+                    f"'return not bool({m.group(1).strip()})' instead",
+                )
+            )
     return findings
 
 

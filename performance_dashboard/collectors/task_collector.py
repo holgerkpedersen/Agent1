@@ -13,7 +13,10 @@ from typing import Union
 
 from performance_dashboard.models import TaskMetric
 from performance_dashboard.utils.time_utils import get_current_timestamp
-from performance_dashboard.utils.validation import MetricSchemaValidator, validate_task_metric
+from performance_dashboard.utils.validation import (
+    MetricSchemaValidator,
+    validate_task_metric,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +30,9 @@ class TaskCollector:
         self._subtask_metrics: dict[str, list[TaskMetric]] = defaultdict(list)
         self._dependency_graph: dict[str, set[str]] = defaultdict(set)
 
-    def monitor_task_progress(self, task_id: str, milestone_name: str | None = None) -> float:
+    def monitor_task_progress(
+        self, task_id: str, milestone_name: str | None = None
+    ) -> float:
         """Record completion times and intermediate milestones for long-running processes.
 
         Args:
@@ -40,12 +45,21 @@ class TaskCollector:
         timestamp: float = get_current_timestamp()
         self._milestones[task_id].append(timestamp)
         if milestone_name is not None:
-            logger.debug("Milestone '%s' reached for task '%s' at %.3f", milestone_name, task_id, timestamp)
+            logger.debug(
+                "Milestone '%s' reached for task '%s' at %.3f",
+                milestone_name,
+                task_id,
+                timestamp,
+            )
         else:
-            logger.info("Task '%s' progress checkpoint recorded at %.3f", task_id, timestamp)
+            logger.info(
+                "Task '%s' progress checkpoint recorded at %.3f", task_id, timestamp
+            )
         return timestamp
 
-    def aggregate_subtask_metrics(self, task_id: str, subtask_metric: TaskMetric) -> TaskMetric | None:
+    def aggregate_subtask_metrics(
+        self, task_id: str, subtask_metric: TaskMetric
+    ) -> TaskMetric | None:
         """Combine metrics from component operations within complex tasks.
 
         Args:
@@ -57,14 +71,19 @@ class TaskCollector:
         """
         is_valid: bool = validate_task_metric(self._validator, subtask_metric)
         if not is_valid:
-            logger.warning("Invalid subtask metric for task '%s'; skipping aggregation", task_id)
+            logger.warning(
+                "Invalid subtask metric for task '%s'; skipping aggregation", task_id
+            )
             return None
 
         self._subtask_metrics[task_id].append(subtask_metric)
         aggregated: TaskMetric = self._compute_aggregate(task_id)
         logger.debug(
             "Aggregated %d subtasks for '%s': duration=%.3fs, success_rate=%.2f%%",
-            len(self._subtask_metrics[task_id]), task_id, aggregated["duration_seconds"], aggregated["success_rate"] * 100.0,
+            len(self._subtask_metrics[task_id]),
+            task_id,
+            aggregated["duration_seconds"],
+            aggregated["success_rate"] * 100.0,
         )
         return aggregated
 
@@ -73,20 +92,33 @@ class TaskCollector:
         subtask_list: list[TaskMetric] = self._subtask_metrics.get(task_id, [])
         if not subtask_list:
             return TaskMetric(
-                duration_seconds=0.0, success_rate=1.0, resource_consumption_units=0.0, task_id=task_id, status="pending",
+                duration_seconds=0.0,
+                success_rate=1.0,
+                resource_consumption_units=0.0,
+                task_id=task_id,
+                status="pending",
             )
 
         total_duration: float = sum(m["duration_seconds"] for m in subtask_list)
-        avg_success_rate: float = sum(m["success_rate"] for m in subtask_list) / len(subtask_list)
-        max_resource_consumption: float = max(m["resource_consumption_units"] for m in subtask_list)
+        avg_success_rate: float = sum(m["success_rate"] for m in subtask_list) / len(
+            subtask_list
+        )
+        max_resource_consumption: float = max(
+            m["resource_consumption_units"] for m in subtask_list
+        )
 
         # Determine overall status from per-subtask statuses.
-        statuses: list[str | None] = [m.get("status") for m in subtask_list
-                                      if m.get("status") is not None]
+        statuses: list[str | None] = [
+            m.get("status") for m in subtask_list if m.get("status") is not None
+        ]
         overall_status: str | None = self._resolve_overall_status(statuses)
 
         return TaskMetric(
-            duration_seconds=total_duration, success_rate=avg_success_rate, resource_consumption_units=max_resource_consumption, task_id=task_id, status=overall_status,
+            duration_seconds=total_duration,
+            success_rate=avg_success_rate,
+            resource_consumption_units=max_resource_consumption,
+            task_id=task_id,
+            status=overall_status,
         )
 
     def _resolve_overall_status(self, statuses: list[str]) -> str | None:
@@ -111,7 +143,10 @@ class TaskCollector:
         return "completed"
 
     def correlate_dependency_performance(
-        self, task_id: str, dependency_task_ids: list[str], bottleneck_threshold_ms: float = 500.0,
+        self,
+        task_id: str,
+        dependency_task_ids: list[str],
+        bottleneck_threshold_ms: float = 500.0,
     ) -> dict[str, Union[TaskMetric, bool]]:
         """Link executions identifying bottlenecks via Union type branch resolution using pattern matching constructs.
 
@@ -139,7 +174,8 @@ class TaskCollector:
                 results[dep_id] = True
                 logger.warning(
                     "Dependency '%s' identified as bottleneck (>%.1fms)",
-                    dep_id, bottleneck_threshold_ms,
+                    dep_id,
+                    bottleneck_threshold_ms,
                 )
             else:
                 aggregate_metric: TaskMetric | None = self._compute_aggregate(dep_id)
@@ -148,5 +184,9 @@ class TaskCollector:
                 else:
                     results[dep_id] = False
 
-        logger.info("Correlated %d dependencies for task '%s'", len(dependency_task_ids), task_id)
+        logger.info(
+            "Correlated %d dependencies for task '%s'",
+            len(dependency_task_ids),
+            task_id,
+        )
         return results

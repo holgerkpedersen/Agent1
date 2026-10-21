@@ -14,6 +14,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset_stop_flag():
     from agent_core.commands.base import clear_stop
+
     clear_stop()
     yield
     clear_stop()
@@ -22,40 +23,47 @@ def _reset_stop_flag():
 class TestReadChoice:
     def test_yes(self):
         from agent_core.commands.base import read_choice
+
         with patch("builtins.input", return_value="y"):
             assert read_choice("> ") is True
 
     def test_yes_caps(self):
         from agent_core.commands.base import read_choice
+
         with patch("builtins.input", return_value="YES"):
             assert read_choice("> ") is True
 
     def test_no(self):
         from agent_core.commands.base import read_choice, stop_requested
+
         with patch("builtins.input", return_value="n"):
             assert read_choice("> ") is False
         assert stop_requested() is False
 
     def test_enter(self):
         from agent_core.commands.base import read_choice
+
         with patch("builtins.input", return_value=""):
             assert read_choice("> ") is False
 
     @pytest.mark.parametrize("token", ["s", "stop", "q", "quit", "abort", "x", "Quit"])
     def test_stop_tokens_decline_and_request_stop(self, token):
         from agent_core.commands.base import read_choice, stop_requested
+
         with patch("builtins.input", return_value=token):
             assert read_choice("> ") is False
         assert stop_requested() is True
 
     def test_eof_declines_without_stop(self):
         from agent_core.commands.base import read_choice, stop_requested
+
         with patch("builtins.input", side_effect=EOFError):
             assert read_choice("> ") is False
         assert stop_requested() is False
 
     def test_keyboard_interrupt_declines_and_requests_stop(self):
         from agent_core.commands.base import read_choice, stop_requested
+
         with patch("builtins.input", side_effect=KeyboardInterrupt):
             assert read_choice("> ") is False
         assert stop_requested() is True
@@ -64,12 +72,14 @@ class TestReadChoice:
 class TestReadInput:
     def test_keyboard_interrupt_requests_stop(self):
         from agent_core.commands.base import read_input, stop_requested
+
         with patch("builtins.input", side_effect=KeyboardInterrupt):
             assert read_input() == ""
         assert stop_requested() is True
 
     def test_eof_returns_empty_without_stop(self):
         from agent_core.commands.base import read_input, stop_requested
+
         with patch("builtins.input", side_effect=EOFError):
             assert read_input() == ""
         assert stop_requested() is False
@@ -78,6 +88,7 @@ class TestReadInput:
 class TestSaveFilePy:
     def test_stop_token_does_not_write(self, tmp_path, capsys):
         from agent_core.commands.base import save_file_py, stop_requested
+
         target = tmp_path / "a.py"
         target.write_text("old = 1\n", encoding="utf-8")
         with patch("builtins.input", return_value="q"):
@@ -116,6 +127,7 @@ class TestChatStoppable:
 
     def test_flow_stopped_not_swallowed_by_exception_handlers(self):
         from agent_core.commands.base import FlowStopped
+
         with pytest.raises(FlowStopped):
             try:
                 raise FlowStopped()
@@ -126,13 +138,15 @@ class TestChatStoppable:
 class TestApplyPatchReason:
     def test_reason_shown_above_diff(self, tmp_path, capsys):
         from agent_core.commands.fix_cmd import FixCommand
+
         fc = FixCommand()
         target = tmp_path / "test.py"
         target.write_text("old = 1\n", encoding="utf-8")
         with patch("builtins.input", return_value="n"):
             fc._apply_patch(
                 "@@ -1 +1 @@\n- old = 1\n+ new = 1\n",
-                str(target), str(tmp_path),
+                str(target),
+                str(tmp_path),
                 reason="test.py:1: error: assignment to undefined name  [name-defined]",
             )
         out = capsys.readouterr().out
@@ -145,19 +159,19 @@ class TestApplyFixBlocksContext:
     def test_targeted_issues_printed_above_patch(self, tmp_path, capsys):
         from agent_core.commands.base import stop_requested
         from agent_core.commands.fix_cmd import FixCommand
+
         target = tmp_path / "t.py"
         target.write_text("def f():\n    pass\n", encoding="utf-8")
         response = (
-            "[PATCH: t.py]\n"
-            "@@ -1,2 +1,2 @@\n"
-            " def f():\n"
-            "-    pass\n"
-            "+    return 1\n"
+            "[PATCH: t.py]\n@@ -1,2 +1,2 @@\n def f():\n-    pass\n+    return 1\n"
         )
         fc = FixCommand()
         with patch("builtins.input", return_value="q"):
             n, failures = fc._apply_fix_blocks(
-                response, str(tmp_path), "t.py", auto_yes=False,
+                response,
+                str(tmp_path),
+                "t.py",
+                auto_yes=False,
                 context_errors=["t.py:2: error: Missing return statement  [return]"],
             )
         out = capsys.readouterr().out
@@ -194,14 +208,18 @@ class TestShowPatchVerdict:
                     tmpfile = os.path.basename(a)
                     break
             if tmpfile is None or call_idx[0] >= len(per_call_outputs):
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(
+                    cmd, returncode=0, stdout="", stderr=""
+                )
             raw = per_call_outputs[call_idx[0]]
             call_idx[0] += 1
             if isinstance(raw, list):
                 raw = "\n".join(raw)
             stdout = raw.replace("__TMPFILE__", tmpfile)
             rc = 1 if stdout.strip() else 0
-            return subprocess.CompletedProcess(cmd, returncode=rc, stdout=stdout, stderr="")
+            return subprocess.CompletedProcess(
+                cmd, returncode=rc, stdout=stdout, stderr=""
+            )
 
         return _fake_run
 
@@ -219,7 +237,9 @@ class TestShowPatchVerdict:
             str(target),
             "x: int = 5\n",
             "t.py",
-            ["t.py:1: error: Incompatible types in assignment (expression has type \"str\", variable has type \"int\")  [assignment]"],
+            [
+                't.py:1: error: Incompatible types in assignment (expression has type "str", variable has type "int")  [assignment]'
+            ],
             str(tmp_path),
         )
         out = capsys.readouterr().out
@@ -234,9 +254,15 @@ class TestShowPatchVerdict:
         from agent_core.commands.fix_cmd import FixCommand
 
         # Patched file has a NEW error the original didn't have
-        monkeypatch.setattr(_mod, "_run_capped", self._make_fake_run(
-            ["__TMPFILE__:1: error: Incompatible types in assignment  [assignment]"],
-        ))
+        monkeypatch.setattr(
+            _mod,
+            "_run_capped",
+            self._make_fake_run(
+                [
+                    "__TMPFILE__:1: error: Incompatible types in assignment  [assignment]"
+                ],
+            ),
+        )
         target = tmp_path / "t.py"
         target.write_text("x: int = 'bad'\n", encoding="utf-8")
         fc = FixCommand()
@@ -244,7 +270,9 @@ class TestShowPatchVerdict:
             str(target),
             "x: int = 'bad'  # type: ignore[assignment]\n",
             "t.py",
-            ["t.py:1: error: Incompatible types in assignment (expression has type \"str\", variable has type \"int\")  [assignment]"],
+            [
+                't.py:1: error: Incompatible types in assignment (expression has type "str", variable has type "int")  [assignment]'
+            ],
             str(tmp_path),
         )
         out = capsys.readouterr().out
@@ -258,13 +286,19 @@ class TestShowPatchVerdict:
 
         # Call 1 (patched file): operator error gone, but name-defined remains
         # Call 2 (original baseline): both operator AND name-defined present
-        monkeypatch.setattr(_mod, "_run_capped", self._make_fake_run(
-            ["__TMPFILE__:5: error: Name \"nonexistent_attr\" is not defined  [name-defined]"],
-            [
-                "__TMPFILE__:2: error: Unsupported operand types for - (\"None\" and \"int\")  [operator]",
-                "__TMPFILE__:5: error: Name \"nonexistent_attr\" is not defined  [name-defined]",
-            ],
-        ))
+        monkeypatch.setattr(
+            _mod,
+            "_run_capped",
+            self._make_fake_run(
+                [
+                    '__TMPFILE__:5: error: Name "nonexistent_attr" is not defined  [name-defined]'
+                ],
+                [
+                    '__TMPFILE__:2: error: Unsupported operand types for - ("None" and "int")  [operator]',
+                    '__TMPFILE__:5: error: Name "nonexistent_attr" is not defined  [name-defined]',
+                ],
+            ),
+        )
         target = tmp_path / "t.py"
         target.write_text(
             "def f(a: int | None) -> int:\n"
@@ -287,7 +321,9 @@ class TestShowPatchVerdict:
             str(target),
             patched,
             "t.py",
-            ['t.py:2: error: Unsupported operand types for - ("None" and "int")  [operator]'],
+            [
+                't.py:2: error: Unsupported operand types for - ("None" and "int")  [operator]'
+            ],
             str(tmp_path),
         )
         out = capsys.readouterr().out

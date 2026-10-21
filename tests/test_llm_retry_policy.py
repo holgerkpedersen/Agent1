@@ -12,6 +12,7 @@ succeeded on the same blip (``opencode_provider._with_retry``).  Now:
 Retry tests go through ``prov.chat(...)`` — the REAL code path, where
 ``execute_with_retry`` wraps ``_make_request`` — never around it.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -58,8 +59,9 @@ class TestTransientStatuses:
         def boom(req, timeout=None):
             raise _http_error(req, status, b"server busy")
 
-        with patch("urllib.request.urlopen", side_effect=boom), patch(
-            "agent_core.llm.lmstudio.load_model", return_value=(False, "no")
+        with (
+            patch("urllib.request.urlopen", side_effect=boom),
+            patch("agent_core.llm.lmstudio.load_model", return_value=(False, "no")),
         ):
             with pytest.raises(TransientHTTPError) as excinfo:
                 prov._make_request({"model": "x"})
@@ -97,9 +99,10 @@ class TestRetryBehaviour:
             calls["n"] += 1
             raise _http_error(req, 400, b'{"error": "invalid parameter: foo"}')
 
-        with patch("urllib.request.urlopen", side_effect=bad), patch(
-            "agent_core.llm.lmstudio.load_model"
-        ) as lm:
+        with (
+            patch("urllib.request.urlopen", side_effect=bad),
+            patch("agent_core.llm.lmstudio.load_model") as lm,
+        ):
             result = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert calls["n"] == 1  # no retry on permanent errors
         assert result.startswith("[Error:")
@@ -131,12 +134,16 @@ class TestRetryBehaviour:
 
 
 def _exhausted_response() -> bytes:
-    return json.dumps({
-        "choices": [{
-            "message": {"content": "", "reasoning_content": "r" * 2000},
-            "finish_reason": "length",
-        }]
-    }).encode()
+    return json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {"content": "", "reasoning_content": "r" * 2000},
+                    "finish_reason": "length",
+                }
+            ]
+        }
+    ).encode()
 
 
 class TestThinkingBudgetRecovery:
@@ -151,14 +158,12 @@ class TestThinkingBudgetRecovery:
             payloads.append(json.loads(req.data.decode()))
             if len(payloads) == 1:
                 return _FakeResponse(_exhausted_response())
-            return _FakeResponse(
-                b'{"choices": [{"message": {"content": "ok"}}]}'
-            )
+            return _FakeResponse(b'{"choices": [{"message": {"content": "ok"}}]}')
 
         with patch("urllib.request.urlopen", side_effect=fake):
-            out = asyncio.run(prov.chat(
-                [{"role": "user", "content": "hi"}], max_tokens=200
-            ))
+            out = asyncio.run(
+                prov.chat([{"role": "user", "content": "hi"}], max_tokens=200)
+            )
         assert out == "ok"
         assert len(payloads) == 2
         # The retry carries the reasoning-off knob (fallback path for a model
@@ -178,9 +183,9 @@ class TestThinkingBudgetRecovery:
             return _FakeResponse(_exhausted_response())
 
         with patch("urllib.request.urlopen", side_effect=fake):
-            out = asyncio.run(prov.chat(
-                [{"role": "user", "content": "hi"}], disable_thinking=True
-            ))
+            out = asyncio.run(
+                prov.chat([{"role": "user", "content": "hi"}], disable_thinking=True)
+            )
         assert calls["n"] == 1
         assert out.startswith("[Error:")
         assert "reasoning bytes" in out
@@ -225,8 +230,9 @@ class TestEngineServerErrors:
         def boom(req, timeout=None):
             raise _http_error(req, 400, _ENGINE_ERROR_BODY)
 
-        with patch("urllib.request.urlopen", side_effect=boom), patch(
-            "agent_core.llm.lmstudio.load_model", return_value=(False, "no")
+        with (
+            patch("urllib.request.urlopen", side_effect=boom),
+            patch("agent_core.llm.lmstudio.load_model", return_value=(False, "no")),
         ):
             with pytest.raises(TransientHTTPError) as excinfo:
                 prov._make_request({"model": "x"})
@@ -293,9 +299,9 @@ class TestToolGrammarRecovery:
 
         tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
         with patch("urllib.request.urlopen", side_effect=fake):
-            out = asyncio.run(prov.chat(
-                [{"role": "user", "content": "hi"}], tools=tools
-            ))
+            out = asyncio.run(
+                prov.chat([{"role": "user", "content": "hi"}], tools=tools)
+            )
         assert out == "ok"
         assert len(payloads) == 2  # no verbatim retries, just the no-tools retry
         assert "tools" in payloads[0]
@@ -391,7 +397,7 @@ class TestToolPathDropTools:
         assert _is_tool_path_engine_error(f"[Error: {_PEG_ERROR_BODY.decode()}]")
         assert _is_tool_path_engine_error(f"[Error: {_channel_error_body().decode()}]")
         assert _is_tool_path_engine_error(
-            '[Error: Engine protocol predict request failed: fetch failed]'
+            "[Error: Engine protocol predict request failed: fetch failed]"
         )
         assert _is_tool_path_engine_error(
             '[Error: HTTP Error 400: {"error":"terminated"}]'
@@ -427,9 +433,9 @@ class TestToolPathDropTools:
 
         tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
         with patch("urllib.request.urlopen", side_effect=fake):
-            out = asyncio.run(prov.chat(
-                [{"role": "user", "content": "hi"}], tools=tools
-            ))
+            out = asyncio.run(
+                prov.chat([{"role": "user", "content": "hi"}], tools=tools)
+            )
         assert len(payloads) == 1, "a deterministic OOM must not be retried"
         assert out.startswith("[Error:")
         assert "out of memory" in out
@@ -452,13 +458,13 @@ class TestToolPathDropTools:
 
         tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
         with patch("urllib.request.urlopen", side_effect=fake):
-            out1 = asyncio.run(prov.chat(
-                [{"role": "user", "content": "a"}], tools=tools
-            ))
+            out1 = asyncio.run(
+                prov.chat([{"role": "user", "content": "a"}], tools=tools)
+            )
             first_call_len = len(payloads)
-            out2 = asyncio.run(prov.chat(
-                [{"role": "user", "content": "b"}], tools=tools
-            ))
+            out2 = asyncio.run(
+                prov.chat([{"role": "user", "content": "b"}], tools=tools)
+            )
         assert out1 == "ok" and out2 == "ok"
         # The 2nd chat must skip tools entirely (no doomed attempt).
         assert first_call_len == 2

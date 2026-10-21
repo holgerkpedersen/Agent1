@@ -9,6 +9,7 @@
    is supplied, OR the offline harness-quality gate when no model is given).
 7. Write reports/harnessfix/summary.json with the verdict.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,7 +25,10 @@ from .repairs import collisions, repairs_for_layer
 from .tracing import TRACE_DIR
 
 try:
-    from .wiki import consolidate as _consolidate_wiki, format_wiki_notes as _format_wiki_notes
+    from .wiki import (
+        consolidate as _consolidate_wiki,
+        format_wiki_notes as _format_wiki_notes,
+    )
 except Exception:  # pragma: no cover - wiki is additive; never block the loop.
     _consolidate_wiki = None
     _format_wiki_notes = None
@@ -107,10 +111,14 @@ def run_loop(
     if _format_wiki_notes is not None and candidates:
         try:
             target_layer = candidates[0].layer
-            summary["wiki_context"] = _format_wiki_notes(
-                f"{target_layer} harness mechanism", k=3,
-                path=output_dir.parent / "wiki" / "wiki.jsonl",
-            ) or ""
+            summary["wiki_context"] = (
+                _format_wiki_notes(
+                    f"{target_layer} harness mechanism",
+                    k=3,
+                    path=output_dir.parent / "wiki" / "wiki.jsonl",
+                )
+                or ""
+            )
         except Exception:
             pass
 
@@ -176,7 +184,10 @@ def run_loop(
                 c.to_dict() for c in collisions_hits
             )
             summary.setdefault("skipped_collisions", []).append(
-                {"repair": repair.id, "collisions": [c.to_dict() for c in collisions_hits]}
+                {
+                    "repair": repair.id,
+                    "collisions": [c.to_dict() for c in collisions_hits],
+                }
             )
             summary["verdict"] = "skipped_test_collision"
             attempted.append(repair.id)
@@ -221,9 +232,7 @@ def run_loop(
             return _finish(summary, output_dir)
 
         set_phase("applying_repair", repair_applied=summary.get("repair_applied"))
-        tests_passed, tests_tail = gates.run_test_gate(
-            baseline_failures=baseline_fail
-        )
+        tests_passed, tests_tail = gates.run_test_gate(baseline_failures=baseline_fail)
         set_phase("running_test_gate", tests_passed=tests_passed)
         security_passed, security_tail = gates.run_security_gate()
         set_phase("running_security_gate", security_passed=security_passed)
@@ -236,7 +245,8 @@ def run_loop(
         harness_post = gates.run_harness_quality_gate(trace_dir)
         set_phase("running_harness_gate")
         harness_ok = gates.should_accept_harness(
-            harness_baseline, harness_post,
+            harness_baseline,
+            harness_post,
             target_layer=repair.layer,
         )
         benchmark_ok = gates.should_accept(
@@ -251,9 +261,11 @@ def run_loop(
         # is non-blocking (agentic_ok is True) whenever no model is supplied,
         # so offline runs are unchanged, but a model-backed run is rejected if
         # real agentic task performance regressed.
-        accepted = (tests_passed and security_passed) and (
-            benchmark_ok if model else harness_ok
-        ) and agentic_ok
+        accepted = (
+            (tests_passed and security_passed)
+            and (benchmark_ok if model else harness_ok)
+            and agentic_ok
+        )
         summary.update(
             tests_passed=tests_passed,
             tests_tail=tests_tail,
@@ -264,7 +276,9 @@ def run_loop(
             agentic_baseline=agentic_baseline,
             agentic_post=agentic_post,
             agentic_accepted=agentic_ok,
-            harness_baseline=harness_baseline.model_dump() if harness_baseline else None,
+            harness_baseline=harness_baseline.model_dump()
+            if harness_baseline
+            else None,
             harness_post=harness_post.model_dump() if harness_post else None,
             harness_accepted=harness_ok,
             accepted=accepted,
@@ -278,7 +292,9 @@ def run_loop(
                 summary["error"] = str(exc)
             attempted.append(repair.id)
             summary["attempted_repairs"] = attempted
-            set_phase("evaluating_candidate", candidate=repair.id, verdict=summary["verdict"])
+            set_phase(
+                "evaluating_candidate", candidate=repair.id, verdict=summary["verdict"]
+            )
             continue
 
         # The test gate ran the *full* pytest suite, and some HarnessFix
@@ -360,18 +376,39 @@ def main(argv: list[str] | None = None) -> int:
         prog="harnessfix.loop",
         description="HarnessFix closed loop: diagnose traces, apply scoped repair, verify gates.",
     )
-    parser.add_argument("--traces", type=Path, default=TRACE_DIR, help="trace corpus dir")
-    parser.add_argument("--approve", action="store_true", help="human review gate: approve the proposed repair")
-    parser.add_argument("--auto-approve", action="store_true",
-                        help="fully autonomous: apply + run gates, commit only if all gates pass "
-                             "(test + security + benchmark no-regression); never merges on ambiguity")
-    parser.add_argument("--model", default=None, help="benchmark gate model (needs a live API)")
-    parser.add_argument("--profile", default=None, help="benchmark profile tag (decision #055)")
-    parser.add_argument("--output", type=Path, default=SUMMARY_PATH.parent, help="reports/harnessfix output dir")
+    parser.add_argument(
+        "--traces", type=Path, default=TRACE_DIR, help="trace corpus dir"
+    )
+    parser.add_argument(
+        "--approve",
+        action="store_true",
+        help="human review gate: approve the proposed repair",
+    )
+    parser.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="fully autonomous: apply + run gates, commit only if all gates pass "
+        "(test + security + benchmark no-regression); never merges on ambiguity",
+    )
+    parser.add_argument(
+        "--model", default=None, help="benchmark gate model (needs a live API)"
+    )
+    parser.add_argument(
+        "--profile", default=None, help="benchmark profile tag (decision #055)"
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=SUMMARY_PATH.parent,
+        help="reports/harnessfix output dir",
+    )
     args = parser.parse_args(argv)
     summary = run_loop(
-        args.traces, approve=args.approve, model=args.model,
-        profile=args.profile, output_dir=args.output,
+        args.traces,
+        approve=args.approve,
+        model=args.model,
+        profile=args.profile,
+        output_dir=args.output,
         auto_approve=args.auto_approve,
     )
     print(json.dumps(summary, indent=2, ensure_ascii=False))

@@ -2,9 +2,11 @@ import pytest
 from unittest.mock import MagicMock
 from agent_core.llm_agent import LLMAgent
 
+
 class MockLLMClient:
     def chat(self, messages: list[dict[str, str]]) -> str:
         return "mock response"
+
 
 def test_respond_clears_temp_messages_even_on_failure():
     # Setup agent with a failing client
@@ -21,6 +23,7 @@ def test_respond_clears_temp_messages_even_on_failure():
     # Verify that even on failure, temp messages are cleared
     assert len(agent._pending_temp_systems) == 0
 
+
 def test_respond_appends_to_conversation_on_success():
     client = MockLLMClient()
     agent = LLMAgent(llm_client=client)
@@ -32,6 +35,7 @@ def test_respond_appends_to_conversation_on_success():
     assert agent._conversation[0] == {"role": "user", "content": "hello"}
     assert agent._conversation[1] == {"role": "assistant", "content": "mock response"}
 
+
 def test_respond_fallback_when_no_client():
     agent = LLMAgent(llm_client=None)
     response = agent.respond("hello")
@@ -39,6 +43,7 @@ def test_respond_fallback_when_no_client():
     assert response == "I received your message but have no LLM client available."
     assert len(agent._conversation) == 2
     assert agent._conversation[1] == {"role": "assistant", "content": response}
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

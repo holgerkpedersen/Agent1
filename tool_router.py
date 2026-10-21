@@ -18,11 +18,11 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class ToolExecutionError(Exception):
-    """Raised when tool argument validation fails or routing encounters an unrecoverable state."""
+    """Raised when tool argument validation fails
+    or routing encounters an unrecoverable state.
+    """
 
-    def __init__(
-        self, message: str, details: dict[str, Any] | None = None
-    ) -> None:
+    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
         self.message = message
         self.details = details or {}
         super().__init__(message)
@@ -37,6 +37,7 @@ class RoutingError(Exception):
 # ---------------------------------------------------------------------------
 # Tool Argument Models (Pydantic Validation)
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ToolDefinition:
@@ -56,13 +57,13 @@ class ToolDefinition:
 
 
 class ReadFileArgs(BaseModel):
-    path: str = Field(..., description="Relative or absolute path to the file within workspace")
+    path: str = Field(
+        ..., description="Relative or absolute path to the file within workspace"
+    )
 
 
 class WriteFileArgs(BaseModel):
-    path: str = Field(
-        ..., description="Target file path for writing/overwriting"
-    )
+    path: str = Field(..., description="Target file path for writing/overwriting")
     content: str = Field(..., description="String content to write into the file")
 
 
@@ -74,15 +75,14 @@ class SearchFilesArgs(BaseModel):
 
 
 class ShellCommandArgs(BaseModel):
-    command: str = Field(
-        ..., description="Shell command string (sanitized externally)"
-    )
+    command: str = Field(..., description="Shell command string (sanitized externally)")
 
 
 class GetCurrentDatetimeArgs(BaseModel):
     timezone: str | None = Field(
         None,
-        description="IANA timezone name (e.g. 'UTC', 'America/New_York'). Defaults to local time.",
+        description="IANA timezone name (e.g. 'UTC', 'America/New_York')."
+        " Defaults to local time.",
     )
 
 
@@ -112,8 +112,7 @@ DEFAULT_TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
         name="search_files",
         description=(
-            "Searches for text patterns across workspace files using "
-            "grep/findstr."
+            "Searches for text patterns across workspace files using grep/findstr."
         ),
         parameters_schema=SearchFilesArgs.model_json_schema(),
         intents=["search", "find", "grep", "look", "locate", "query"],
@@ -131,8 +130,17 @@ DEFAULT_TOOL_DEFINITIONS: list[ToolDefinition] = [
         description="Returns the current date and time as an ISO 8601 string.",
         parameters_schema=GetCurrentDatetimeArgs.model_json_schema(),
         intents=[
-            "time", "date", "datetime", "clock", "hour", "today",
-            "now", "current", "day", "timestamp", "when",
+            "time",
+            "date",
+            "datetime",
+            "clock",
+            "hour",
+            "today",
+            "now",
+            "current",
+            "day",
+            "timestamp",
+            "when",
         ],
     ),
 ]
@@ -141,6 +149,7 @@ DEFAULT_TOOL_DEFINITIONS: list[ToolDefinition] = [
 # ---------------------------------------------------------------------------
 # Shell Command Handler
 # ---------------------------------------------------------------------------
+
 
 class ShellCommandHandler:
     """Handles execution of validated shell commands.
@@ -168,7 +177,8 @@ class ShellCommandHandler:
         cmd = args.command.strip()
         if not cmd:
             raise ToolExecutionError(
-                "Empty command", details={"command": cmd},
+                "Empty command",
+                details={"command": cmd},
             )
 
         # Gate 1 — structural safety: no pipes / redirection / chaining.
@@ -189,7 +199,8 @@ class ShellCommandHandler:
             )
         if not tokens:
             raise ToolExecutionError(
-                f"Invalid command: {cmd}", details={"command": cmd},
+                f"Invalid command: {cmd}",
+                details={"command": cmd},
             )
         binary = Path(tokens[0]).name  # strip any path component for allowlist check
         if not is_command_allowed(binary):
@@ -220,7 +231,8 @@ class ShellCommandHandler:
                 shell=use_shell,
                 capture_output=True,
                 text=True,
-                encoding="utf-8", errors="replace",
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
             )
             if result.returncode == 0:
@@ -239,6 +251,7 @@ class ShellCommandHandler:
 # ---------------------------------------------------------------------------
 # Datetime Tool Handler
 # ---------------------------------------------------------------------------
+
 
 def _handle_get_current_datetime(args: GetCurrentDatetimeArgs | dict) -> dict[str, str]:
     """Return the current date/time as an ISO 8601 string."""
@@ -280,6 +293,7 @@ _NL_PATTERNS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Router Implementation
 # ---------------------------------------------------------------------------
+
 
 class ToolRouter:
     """Routes LLM responses or natural language prompts to validated tool executions."""
@@ -337,9 +351,7 @@ class ToolRouter:
 
     def parse_explicit_command(self, prompt: str) -> tuple[str, BaseModel]:
         """Parse deterministic ``/tool:name key=value`` style commands."""
-        match = re.match(
-            r"^/tool:(\w+)(?:\s+(.+))?$", prompt.strip(), re.IGNORECASE
-        )
+        match = re.match(r"^/tool:(\w+)(?:\s+(.+))?$", prompt.strip(), re.IGNORECASE)
         if not match:
             raise RoutingError(
                 "Invalid explicit command format. Expected: /tool:<name> [<args>]"
@@ -385,9 +397,7 @@ class ToolRouter:
             if not tool_def.intents:
                 continue
             # Only match intents for tools with no required args
-            required_args = set(
-                tool_def.parameters_schema.get("required", [])
-            )
+            required_args = set(tool_def.parameters_schema.get("required", []))
             if required_args:
                 continue  # skip — needs regex arg extraction, not just keywords
             score = sum(1 for intent in tool_def.intents if intent in prompt_words)
@@ -490,9 +500,7 @@ class ToolRouter:
     def execute(self, tool_name: str, args: BaseModel) -> Any:
         """Dispatch validated arguments to the bound handler."""
         if tool_name not in self._handlers:
-            raise ToolExecutionError(
-                f"No handler registered for tool '{tool_name}'"
-            )
+            raise ToolExecutionError(f"No handler registered for tool '{tool_name}'")
         return self._handlers[tool_name](args)
 
     def route_and_execute(

@@ -5,11 +5,13 @@ each hunk is displayed and must be approved (y/N) before it is applied —
 rejected hunks leave the file's original lines intact (plan feature item 31).
 ``--yes`` skips the review entirely.
 """
+
 import difflib
 
 from .base import Command, read_choice, stop_requested
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -34,7 +36,9 @@ class WriteCommand(Command):
         from agent_core.patch_utils import apply_patch, split_patch_hunks
 
         diff_text = "\n".join(
-            difflib.unified_diff(old_text.splitlines(), new_text.splitlines(), lineterm="")
+            difflib.unified_diff(
+                old_text.splitlines(), new_text.splitlines(), lineterm=""
+            )
         )
         hunks = split_patch_hunks(diff_text)
         if not hunks:
@@ -68,7 +72,7 @@ class WriteCommand(Command):
             return old_text
         return str(patched)
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         yes_mode = "--yes" in args or "--force" in args
         filtered = [a for a in args if a not in ("--yes", "--force")]
         if len(filtered) < 2:

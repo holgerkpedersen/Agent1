@@ -8,6 +8,7 @@ Tracing is opt-OUT: AGENT_NO_TRACE=1 disables it.  When no TraceWriter is
 attached to a run, byte-identical behaviour is preserved (zero change to the
 LLM request payloads).
 """
+
 from __future__ import annotations
 
 import json

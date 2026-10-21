@@ -11,6 +11,7 @@ program's real output channel).  These tests drive the REAL
 ``LLMClient._reconcile_llama_model`` and assert stdout stays empty while the
 information is still surfaced on stderr.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -44,9 +45,7 @@ def _make_client(model_name: str, provider: Any) -> LLMClient:
 @pytest.fixture()
 def llama_env(monkeypatch: pytest.MonkeyPatch):
     """Force the llama path so ``_reconcile_llama_model`` does real work."""
-    monkeypatch.setattr(
-        "agent_core.llm.provider.provider_for", lambda *a, **k: "llama"
-    )
+    monkeypatch.setattr("agent_core.llm.provider.provider_for", lambda *a, **k: "llama")
     monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {})
     return monkeypatch
 

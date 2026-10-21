@@ -1,5 +1,6 @@
 """Decision extraction tests (plan task 35): recording, searching, overlap
 detection, persistence, and best-effort contradiction parsing."""
+
 import tempfile
 from pathlib import Path
 
@@ -42,9 +43,7 @@ class TestAddAndPersist:
 
     def test_escape_paths_dropped_from_affected_files(self, ws):
         (ws / "agent.py").write_text("x = 1", encoding="utf-8")
-        record = add_decision(
-            ws, "t", affected_files=["../outside.py", "agent.py"]
-        )
+        record = add_decision(ws, "t", affected_files=["../outside.py", "agent.py"])
         assert record["affected_files"] == ["agent.py"]
 
 
@@ -91,7 +90,7 @@ class TestParseJsonArray:
 
     def test_parses_array_embedded_in_text(self):
         parsed = _parse_json_array(
-            "Here are the decisions:\n[{\"title\": \"a\"}, {\"title\": \"b\"}]\nRegards"
+            'Here are the decisions:\n[{"title": "a"}, {"title": "b"}]\nRegards'
         )
         assert len(parsed) == 2
 

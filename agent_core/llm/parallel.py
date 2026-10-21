@@ -46,6 +46,7 @@ Design notes
 * **Metrics** — each result carries the provider's
   ``last_response_metrics`` (token/latency accounting, plan ARCH item 17).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -246,10 +247,14 @@ class ParallelRun:
         if votes["total"] == 0:
             return "no usable model answers — no consensus"
         if self.quorum_reached(quorum_threshold):
-            return (f"consensus APPROVE ({votes['yes']}/{votes['total']} "
-                    f"above {quorum_threshold:.0%} quorum)")
-        return (f"no consensus ({votes['yes']}/{votes['total']} approve, "
-                f"quorum {quorum_threshold:.0%})")
+            return (
+                f"consensus APPROVE ({votes['yes']}/{votes['total']} "
+                f"above {quorum_threshold:.0%} quorum)"
+            )
+        return (
+            f"no consensus ({votes['yes']}/{votes['total']} approve, "
+            f"quorum {quorum_threshold:.0%})"
+        )
 
 
 def _looks_negative(text: str) -> bool:
@@ -277,8 +282,9 @@ def _error_or_exception(result: Any) -> tuple[str, str]:
     return text, ""
 
 
-def _make_tool_llm_chat_fn(provider: Any, max_tokens: int | None,
-                           disable_thinking: bool) -> Callable[
+def _make_tool_llm_chat_fn(
+    provider: Any, max_tokens: int | None, disable_thinking: bool
+) -> Callable[
     [list[dict[str, Any]], list[dict[str, Any]]],
     Awaitable[tuple[str, list[dict[str, Any]]]],
 ]:
@@ -289,14 +295,18 @@ def _make_tool_llm_chat_fn(provider: Any, max_tokens: int | None,
     so the loop can execute the calls, and treat provider error strings as
     empty so the loop's forced-synthesis retry kicks in.
     """
+
     async def llm_chat_fn(
-        messages: list[dict[str, Any]], tools: list[dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
     ) -> tuple[str, list[dict[str, Any]]]:
         # Re-trim EVERY iteration: tool results accumulate across the loop, so
         # the initial trim is not enough for a small NPU context window.
         messages = trim_messages_to_context(messages, provider=provider)
         raw = await provider.chat(
-            messages, tools=tools, max_tokens=max_tokens,
+            messages,
+            tools=tools,
+            max_tokens=max_tokens,
             disable_thinking=disable_thinking,
         )
         if raw.strip() == "(no output)":
@@ -310,11 +320,13 @@ def _make_tool_llm_chat_fn(provider: Any, max_tokens: int | None,
         if isinstance(parsed, dict) and parsed.get("tool_calls"):
             parsed.pop("role", None)
             updated = list(messages)
-            updated.append({
-                "role": "assistant",
-                "content": parsed.get("content") or "",
-                **parsed,
-            })
+            updated.append(
+                {
+                    "role": "assistant",
+                    "content": parsed.get("content") or "",
+                    **parsed,
+                }
+            )
             return str(parsed.get("content") or ""), updated
         updated = list(messages)
         updated.append({"role": "assistant", "content": raw})
@@ -451,7 +463,9 @@ async def run_parallel(
                 final_text, _ = await loop.run(
                     messages=model_messages,
                     llm_chat_fn=_make_tool_llm_chat_fn(
-                        provider, max_tokens, disable_thinking,
+                        provider,
+                        max_tokens,
+                        disable_thinking,
                     ),
                     execute_tool_fn=execute_tool_fn,
                     tools=list(tools),
@@ -466,6 +480,7 @@ async def run_parallel(
             return exc
 
     if warm:
+
         async def _warm(provider: Any) -> None:
             ensure = getattr(provider, "ensure_model_loaded", None)
             if not callable(ensure):
@@ -525,9 +540,7 @@ def summarize(run: ParallelRun) -> str:
         vote = ""
         if r.ok and r.verdict is not None:
             vote = f"  [{r.verdict_label}]"
-        lines.append(
-            f"  [{status}] {r.model} ({device}{r.provider}){metrics}{vote}"
-        )
+        lines.append(f"  [{status}] {r.model} ({device}{r.provider}){metrics}{vote}")
         if r.ok and r.verdict is not None and r.verdict_reason:
             lines.append(f"      verdict: {r.verdict_reason[:200]}")
         if not r.ok:

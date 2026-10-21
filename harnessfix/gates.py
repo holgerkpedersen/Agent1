@@ -4,6 +4,7 @@ A repair is accepted only if it passes ALL enabled gates: the pytest suite,
 the security-primitive checks, and (when a model is supplied) the benchmark
 pass-rate gate.  Gate and scorer code is never modified by a repair run.
 """
+
 from __future__ import annotations
 
 import json
@@ -26,8 +27,11 @@ def _git_head() -> str | None:
     try:
         proc = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=30,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
         )
         if proc.returncode == 0:
             return proc.stdout.strip()
@@ -55,18 +59,28 @@ def collect_test_failures() -> tuple[bool, frozenset[str], str]:
     try:
         proc = subprocess.run(
             [
-                sys.executable, "-m", "pytest", "-q",
-                "-o", "addopts=", "-p", "no:cacheprovider", "--no-header",
-                "--tb=no", "-rf",
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-o",
+                "addopts=",
+                "-p",
+                "no:cacheprovider",
+                "--no-header",
+                "--tb=no",
+                "-rf",
                 # HarnessFix loop/repair self-tests (marker `harnessfix_self_test`)
                 # mutate agent_core/llm/tool_loop.py and would revert an applied
                 # repair mid-run; excluding them lets the gate validate the real
                 # repaired functional suite while the change is actually present.
-                "-m", "not harnessfix_self_test",
+                "-m",
+                "not harnessfix_self_test",
             ],
             capture_output=True,
             text=True,
-            encoding="utf-8", errors="replace",
+            encoding="utf-8",
+            errors="replace",
             timeout=_GATE_TIMEOUT,
         )
     except subprocess.TimeoutExpired as exc:
@@ -80,7 +94,7 @@ def collect_test_failures() -> tuple[bool, frozenset[str], str]:
         line = line.strip()
         if line.startswith("FAILED "):
             # "-rf" emits "FAILED <nodeid>" lines (no trailing reason).
-            failed.add(line[len("FAILED "):].strip())
+            failed.add(line[len("FAILED ") :].strip())
     summary = (proc.stdout or "").strip().splitlines()
     tail = " | ".join(summary[-3:]) if summary else (proc.stderr or "")[-300:]
     return ran_ok, frozenset(failed), tail
@@ -110,9 +124,7 @@ def get_baseline_failures(force: bool = False) -> frozenset[str]:
         try:
             _BASELINE_CACHE.parent.mkdir(parents=True, exist_ok=True)
             _BASELINE_CACHE.write_text(
-                json.dumps(
-                    {"git_head": head, "failures": sorted(failures)}, indent=2
-                ),
+                json.dumps({"git_head": head, "failures": sorted(failures)}, indent=2),
                 encoding="utf-8",
             )
         except OSError:
@@ -175,16 +187,22 @@ def _benchmark_key(model: str, profile: str = "") -> str:
     return f"{model}|{profile}" if profile else model
 
 
-def run_benchmark_gate(
-    model: str | None, profile: str | None = None
-) -> float | None:
+def run_benchmark_gate(model: str | None, profile: str | None = None) -> float | None:
     """Single-shot benchmark pass rate (percent) via benchmark.py, or None."""
     if not model:
         return None
     out = Path("reports") / "benchmark_harnessfix.json"
     key = _benchmark_key(model, profile or "")
-    cmd = [sys.executable, "benchmark.py", "--model", model,
-           "--output", str(out), "--repetitions", "1"]
+    cmd = [
+        sys.executable,
+        "benchmark.py",
+        "--model",
+        model,
+        "--output",
+        str(out),
+        "--repetitions",
+        "1",
+    ]
     if profile:
         cmd += ["--profile", profile]
     try:
@@ -192,7 +210,8 @@ def run_benchmark_gate(
             cmd,
             capture_output=True,
             text=True,
-            encoding="utf-8", errors="replace",
+            encoding="utf-8",
+            errors="replace",
             timeout=_GATE_TIMEOUT,
         )
         if proc.returncode != 0:
@@ -215,8 +234,15 @@ def run_benchmark_gate(
             if isinstance(entry, dict):
                 accuracy = entry.get("overall_accuracy")
         return float(accuracy) if accuracy is not None else None
-    except (OSError, json.JSONDecodeError, KeyError, ValueError, AttributeError,
-            TypeError, subprocess.TimeoutExpired):
+    except (
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        ValueError,
+        AttributeError,
+        TypeError,
+        subprocess.TimeoutExpired,
+    ):
         return None
 
 
@@ -243,6 +269,7 @@ def run_agentic_gate(
         return None
     try:
         from agentic_bench import run_agentic_gate as _run_agentic
+
         return _run_agentic(model, profile or "", out_dir)
     except Exception:  # noqa: BLE001 - a gate must never raise into run_loop
         return None

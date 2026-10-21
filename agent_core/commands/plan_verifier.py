@@ -31,6 +31,7 @@ claims are listed in an appended ``## Verification Report``.  An existing
 report section is stripped before re-checking so repeated gates stay
 idempotent and never verify their own findings as claims.
 """
+
 from __future__ import annotations
 
 import ast
@@ -48,11 +49,25 @@ _CLAIM_EXTS = (".py", ".md", ".toml", ".json", ".yaml", ".yml", ".txt", ".cfg")
 
 #: Line wording that marks a missing path as an intentional new file.
 _NEW_INTENT_WORDS = (
-    "create", "new file", "add ", "scaffold", "introduce", "generate",
-    "implement the new", "boot strap", "bootstrap",
+    "create",
+    "new file",
+    "add ",
+    "scaffold",
+    "introduce",
+    "generate",
+    "implement the new",
+    "boot strap",
+    "bootstrap",
 )
-_MODIFY_INTENT_WORDS = ("modify", "edit", "update", "refactor", "extend",
-                        "change", "fix")
+_MODIFY_INTENT_WORDS = (
+    "modify",
+    "edit",
+    "update",
+    "refactor",
+    "extend",
+    "change",
+    "fix",
+)
 
 _MAX_REPORT_FINDINGS = 20
 
@@ -154,7 +169,8 @@ def _top_level_names(py_file: Path) -> tuple[list[str], str | None]:
     except (OSError, SyntaxError, ValueError) as exc:
         return [], f"unreadable ({exc.__class__.__name__})"
     names = [
-        node.name for node in tree.body
+        node.name
+        for node in tree.body
         if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
     ]
     return names, None
@@ -195,6 +211,7 @@ class PlanVerifier:
     def verify_schema_compliance(self, content: str) -> tuple[bool, list[str]]:
         """Validate the markdown plan against required schema structure."""
         from .plan_schema import validate_plan_markdown
+
         return validate_plan_markdown(content)
 
     def verify_affected_files_exist(self, content: str) -> PlanCheckResult:
@@ -216,6 +233,7 @@ class PlanVerifier:
                 if re.search(pattern, line, re.IGNORECASE):
                     violations.append(f"Unsupported operation found: {line.strip()}")
         return len(violations) == 0, violations
+
 
 def verify_plan_doc(text: str, ws: str | Path) -> PlanCheckResult:
     """Regression-check backticked path references in a generated plan."""
@@ -275,12 +293,12 @@ def verify_entities_doc(text: str, ws: str | Path) -> PlanCheckResult:
             )
             continue
         for node in tree.body:
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef,
-                                 ast.AsyncFunctionDef)):
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
                 names = [(node.name, node.lineno)]
             elif isinstance(node, ast.Assign):
-                names = [(t.id, node.lineno) for t in node.targets
-                         if isinstance(t, ast.Name)]
+                names = [
+                    (t.id, node.lineno) for t in node.targets if isinstance(t, ast.Name)
+                ]
             else:
                 names = []
             for name, lineno in names:

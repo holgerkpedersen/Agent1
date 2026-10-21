@@ -17,6 +17,7 @@ Detection is name-based (``is_harmony_model``): the routing label
 both consulted, because either may be the only identifier available when
 the payload is built.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -50,8 +51,8 @@ HARMONY_SAFETY_ADDENDUM = (
 #: of the fix; the ``git`` handler's push/commit backstops are the hard half.
 HARMONY_GIT_ADDENDUM = (
     "\n\nGIT WORKFLOW (harmony/gpt-oss — follow exactly):\n"
-    "- \"Commit changes\" means the FULL sequence: status -> add -A -> "
-    "commit -m \"<message>\" -> push. Never run `git push` alone, because "
+    '- "Commit changes" means the FULL sequence: status -> add -A -> '
+    'commit -m "<message>" -> push. Never run `git push` alone, because '
     "push only sends commits and silently leaves staged work behind.\n"
     "- Stage everything with `git add -A` (a bare `-` is not a pathspec). "
     "Commit with a `-m` message — a message-less commit hangs on an editor."

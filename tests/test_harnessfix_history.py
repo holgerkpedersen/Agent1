@@ -4,6 +4,7 @@ Pins harnessfix/history.py: the trace-index + execution-ledger queries and
 the PAST EXECUTION NOTES formatters that implement/fix inject into prompts.
 The real-corpus test below is skipped when reports/traces/ is absent.
 """
+
 import json
 import os
 
@@ -27,13 +28,13 @@ def _trace(tmp_path, name: str, events: list[dict]) -> object:
     trace_dir = tmp_path / TRACE_DIR / TRACE_SUB
     trace_dir.mkdir(parents=True, exist_ok=True)
     path = trace_dir / name
-    path.write_text(
-        "\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8"
-    )
+    path.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
     return path
 
 
-def _result_event(task: str, tool: str, args: dict, result: str = "", affected=None, ts: float = 100.0) -> dict:
+def _result_event(
+    task: str, tool: str, args: dict, result: str = "", affected=None, ts: float = 100.0
+) -> dict:
     return {
         "task_id": task,
         "ts": ts,
@@ -46,7 +47,9 @@ def _result_event(task: str, tool: str, args: dict, result: str = "", affected=N
     }
 
 
-def _error_event(task: str, tool: str, args: dict, exc: str, msg: str, ts: float = 100.0) -> dict:
+def _error_event(
+    task: str, tool: str, args: dict, exc: str, msg: str, ts: float = 100.0
+) -> dict:
     return {
         "task_id": task,
         "ts": ts,
@@ -63,20 +66,35 @@ class TestPathMatching:
     def test_absolute_arg_matches_relative_target(self):
         from harnessfix.history import _matches_arg
 
-        assert _matches_arg("C:/Dev/Agent1/agent_core/commands/workflow_cmd.py", "agent_core/commands/workflow_cmd.py")
-        assert _matches_arg("C:/Dev/Agent1/agent_core/commands/workflow_cmd.py", "workflow_cmd.py")
-        assert not _matches_arg("C:/Dev/Agent1/agent_core/commands/workflow_cmd.py", "agent_core/commands/implement_cmd.py")
+        assert _matches_arg(
+            "C:/Dev/Agent1/agent_core/commands/workflow_cmd.py",
+            "agent_core/commands/workflow_cmd.py",
+        )
+        assert _matches_arg(
+            "C:/Dev/Agent1/agent_core/commands/workflow_cmd.py", "workflow_cmd.py"
+        )
+        assert not _matches_arg(
+            "C:/Dev/Agent1/agent_core/commands/workflow_cmd.py",
+            "agent_core/commands/implement_cmd.py",
+        )
 
     def test_mixed_separators_normalized(self):
         from harnessfix.history import _matches_arg
 
-        assert _matches_arg("C:\\Dev\\Agent1/agent_core/commands/x.py", "agent_core/commands/x.py")
+        assert _matches_arg(
+            "C:\\Dev\\Agent1/agent_core/commands/x.py", "agent_core/commands/x.py"
+        )
 
     def test_directory_arg_matches_direct_child_only(self):
         from harnessfix.history import _matches_arg
 
-        assert _matches_arg("C:/Dev/Agent1/agent_core/commands", "C:/Dev/Agent1/agent_core/commands/workflow_cmd.py")
-        assert not _matches_arg("C:/Dev/Agent1", "C:/Dev/Agent1/agent_core/commands/workflow_cmd.py")
+        assert _matches_arg(
+            "C:/Dev/Agent1/agent_core/commands",
+            "C:/Dev/Agent1/agent_core/commands/workflow_cmd.py",
+        )
+        assert not _matches_arg(
+            "C:/Dev/Agent1", "C:/Dev/Agent1/agent_core/commands/workflow_cmd.py"
+        )
 
     def test_relative_target_suffix_against_relative_arg(self):
         from harnessfix.history import _matches_arg
@@ -89,11 +107,21 @@ class TestTraceParsing:
         p = _trace(
             tmp_path,
             "t1.jsonl",
-            [_result_event("t1", "read", {"path": "C:/Dev/Agent1/agent.py"}, result="content", ts=1)],
+            [
+                _result_event(
+                    "t1",
+                    "read",
+                    {"path": "C:/Dev/Agent1/agent.py"},
+                    result="content",
+                    ts=1,
+                )
+            ],
         )
         from harnessfix.history import _parse_trace_event
 
-        ev = _parse_trace_event(json.loads(p.read_text(encoding="utf-8").splitlines()[0]))
+        ev = _parse_trace_event(
+            json.loads(p.read_text(encoding="utf-8").splitlines()[0])
+        )
         assert ev is not None
         assert ev.tool == "read"
         assert ev.weight == 3
@@ -106,14 +134,19 @@ class TestTraceParsing:
             "t2.jsonl",
             [
                 _error_event(
-                    "t2", "read", {"path": "C:/Dev/Agent1/agent.py"},
-                    "PermissionError", "Permission denied: agent.py",
+                    "t2",
+                    "read",
+                    {"path": "C:/Dev/Agent1/agent.py"},
+                    "PermissionError",
+                    "Permission denied: agent.py",
                 )
             ],
         )
         from harnessfix.history import _parse_trace_event
 
-        ev = _parse_trace_event(json.loads(p.read_text(encoding="utf-8").splitlines()[0]))
+        ev = _parse_trace_event(
+            json.loads(p.read_text(encoding="utf-8").splitlines()[0])
+        )
         assert ev is not None
         assert ev.kind == "error"
         assert ev.weight == 0
@@ -125,13 +158,19 @@ class TestTraceParsing:
             "t3.jsonl",
             [
                 _result_event(
-                    "t3", "edit", {"new_text": "x"}, affected=["C:/Dev/Agent1/agent_core/commands/y.py"], ts=2
+                    "t3",
+                    "edit",
+                    {"new_text": "x"},
+                    affected=["C:/Dev/Agent1/agent_core/commands/y.py"],
+                    ts=2,
                 )
             ],
         )
         from harnessfix.history import _parse_trace_event
 
-        ev = _parse_trace_event(json.loads(p.read_text(encoding="utf-8").splitlines()[0]))
+        ev = _parse_trace_event(
+            json.loads(p.read_text(encoding="utf-8").splitlines()[0])
+        )
         assert ev is not None
         assert ev.weight == 1
         assert any("y.py" in f for f in ev.files)
@@ -140,11 +179,17 @@ class TestTraceParsing:
         p = _trace(
             tmp_path,
             "t4.jsonl",
-            [_result_event("t4", "run", {"command": "python -m pytest tests/test_x.py"}, ts=3)],
+            [
+                _result_event(
+                    "t4", "run", {"command": "python -m pytest tests/test_x.py"}, ts=3
+                )
+            ],
         )
         from harnessfix.history import _parse_trace_event
 
-        ev = _parse_trace_event(json.loads(p.read_text(encoding="utf-8").splitlines()[0]))
+        ev = _parse_trace_event(
+            json.loads(p.read_text(encoding="utf-8").splitlines()[0])
+        )
         assert ev is not None
         assert ev.weight == 2
         assert "pytest" in ev.summary
@@ -157,8 +202,21 @@ class TestFileHistory:
             "h1.jsonl",
             [
                 _result_event("h1", "read", {"path": "C:/Dev/Agent1/a.py"}, ts=1),
-                _result_event("h1", "edit", {"path": "C:/Dev/Agent1/a.py"}, affected=["C:/Dev/Agent1/a.py"], ts=2),
-                _error_event("h1", "write", {"path": "C:/Dev/Agent1/a.py"}, "OSError", "disk full", ts=3),
+                _result_event(
+                    "h1",
+                    "edit",
+                    {"path": "C:/Dev/Agent1/a.py"},
+                    affected=["C:/Dev/Agent1/a.py"],
+                    ts=2,
+                ),
+                _error_event(
+                    "h1",
+                    "write",
+                    {"path": "C:/Dev/Agent1/a.py"},
+                    "OSError",
+                    "disk full",
+                    ts=3,
+                ),
             ],
         )
         ws = str(tmp_path)
@@ -171,15 +229,23 @@ class TestFileHistory:
             tmp_path,
             "h2.jsonl",
             [
-                _result_event("h2", "read", {"path": "C:/Dev/Agent1/b.py", "offset": 1}, ts=1),
-                _result_event("h2", "read", {"path": "C:/Dev/Agent1/b.py", "offset": 101}, ts=2),
+                _result_event(
+                    "h2", "read", {"path": "C:/Dev/Agent1/b.py", "offset": 1}, ts=1
+                ),
+                _result_event(
+                    "h2", "read", {"path": "C:/Dev/Agent1/b.py", "offset": 101}, ts=2
+                ),
             ],
         )
         events = file_history("b.py", str(tmp_path), limit=1)
         assert len(events) == 1
 
     def test_irrelevant_file_not_returned(self, tmp_path):
-        _trace(tmp_path, "h3.jsonl", [_result_event("h3", "read", {"path": "C:/Dev/Agent1/c.py"})])
+        _trace(
+            tmp_path,
+            "h3.jsonl",
+            [_result_event("h3", "read", {"path": "C:/Dev/Agent1/c.py"})],
+        )
         assert file_history("d.py", str(tmp_path)) == []
 
 
@@ -192,7 +258,16 @@ class TestFormatters:
         _trace(
             tmp_path,
             "f1.jsonl",
-            [_error_event("f1", "read", {"path": "C:/Dev/Agent1/f1.jsonl"}, "TimeoutExpired", "command timed out", ts=5)],
+            [
+                _error_event(
+                    "f1",
+                    "read",
+                    {"path": "C:/Dev/Agent1/f1.jsonl"},
+                    "TimeoutExpired",
+                    "command timed out",
+                    ts=5,
+                )
+            ],
         )
         block = format_file_history("f1.jsonl", str(tmp_path))
         assert "PAST EXECUTION NOTES" in block
@@ -200,8 +275,21 @@ class TestFormatters:
 
     def test_format_batch_history_multi_file_and_cap(self, tmp_path):
         for i, name in enumerate(["x1.py", "x2.py"]):
-            _trace(tmp_path, f"b{i}.jsonl", [_result_event(f"b{i}", "write", {"path": f"C:/Dev/Agent1/{name}"}, affected=[f"C:/Dev/Agent1/{name}"])])
-        block = format_batch_history(["x1.py", "x2.py"], str(tmp_path), per_file=1, line_cap=3)
+            _trace(
+                tmp_path,
+                f"b{i}.jsonl",
+                [
+                    _result_event(
+                        f"b{i}",
+                        "write",
+                        {"path": f"C:/Dev/Agent1/{name}"},
+                        affected=[f"C:/Dev/Agent1/{name}"],
+                    )
+                ],
+            )
+        block = format_batch_history(
+            ["x1.py", "x2.py"], str(tmp_path), per_file=1, line_cap=3
+        )
         assert "PAST EXECUTION NOTES" in block
         assert "x1.py" in block
         assert "..." in block
@@ -211,9 +299,11 @@ class TestExecutionLedger:
     def test_append_and_read_roundtrip(self, tmp_path):
         ws = str(tmp_path)
         append_execution(
-            ws, "implement",
+            ws,
+            "implement",
             [{"path": "agent_core/commands/z.py", "status": "written"}],
-            outcome="ok", note="1 file",
+            outcome="ok",
+            note="1 file",
         )
         events = file_history("agent_core/commands/z.py", ws)
         assert len(events) == 1

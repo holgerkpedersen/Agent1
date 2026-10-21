@@ -43,6 +43,7 @@ literal quotes on a quoted value; the command strips them (same convention
 as ``analyze_cmd``/``fix_cmd``/``implement_cmd``), so multi-word prompts
 work inline.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -79,6 +80,7 @@ def _default_models(agent: "Agent") -> list[str]:
     current = agent.llm.model_name
     try:
         from agent_core.config import load_agent_settings
+
         settings = load_agent_settings()
         opencode_model = settings.opencode_model
     except Exception:
@@ -144,9 +146,7 @@ class MultiLlmCommand(Command):
                 i += 2
                 continue
             if p == "--engines" and i + 1 < len(parts):
-                engine_names = [
-                    e.strip() for e in parts[i + 1].split(",") if e.strip()
-                ]
+                engine_names = [e.strip() for e in parts[i + 1].split(",") if e.strip()]
                 i += 2
                 continue
             if p == "--warm":
@@ -193,6 +193,7 @@ class MultiLlmCommand(Command):
                 try:
                     with open(role_path, encoding="utf-8") as f:
                         import json
+
                         file_roles = json.load(f)
                     if not isinstance(file_roles, dict):
                         self.error("--role-file must contain a JSON object.")
@@ -211,14 +212,19 @@ class MultiLlmCommand(Command):
 
         # Everything that is not a flag is the question (quoted at the REPL).
         question_parts = [
-            p for p in parts
-            if p not in ("--thinking", "--synthesize")
-            and not p.startswith("--")
+            p
+            for p in parts
+            if p not in ("--thinking", "--synthesize") and not p.startswith("--")
         ]
         # Drop flag values from the question.
         skip_values = {
-            "--models", "--engines", "--max-tokens", "--concurrency", "--template",
-            "--role", "--role-file",
+            "--models",
+            "--engines",
+            "--max-tokens",
+            "--concurrency",
+            "--template",
+            "--role",
+            "--role-file",
         }
         flag_values: set[str] = set()
         for j, p in enumerate(parts):
@@ -289,9 +295,11 @@ class MultiLlmCommand(Command):
             # _execute_tool_call still rejects anything that slips through.
             tools=(
                 filter_tool_schemas(
-                    NLP_TOOL_SCHEMAS, getattr(agent, "mode", MODE_BUILD),
+                    NLP_TOOL_SCHEMAS,
+                    getattr(agent, "mode", MODE_BUILD),
                 )
-                if getattr(agent, "_execute_tool_call", None) else None
+                if getattr(agent, "_execute_tool_call", None)
+                else None
             ),
             execute_tool_fn=getattr(agent, "_execute_tool_call", None),
         )
@@ -317,10 +325,12 @@ class MultiLlmCommand(Command):
             if recorded:
                 print(cyan(f"  {recorded} structured verdict(s) counted."))
             else:
-                print(yellow(
-                    "  No model emitted a parseable 'VERDICT:' line — "
-                    "no consensus to report."
-                ))
+                print(
+                    yellow(
+                        "  No model emitted a parseable 'VERDICT:' line — "
+                        "no consensus to report."
+                    )
+                )
         print(summarize(run))
 
         if synthesize:
@@ -328,7 +338,11 @@ class MultiLlmCommand(Command):
         return True
 
     def _synthesize(
-        self, run: Any, agent: "Agent", question: str, disable_thinking: bool,
+        self,
+        run: Any,
+        agent: "Agent",
+        question: str,
+        disable_thinking: bool,
     ) -> None:
         """Merge the successful answers through the current model (plan D-#15).
 
@@ -337,13 +351,9 @@ class MultiLlmCommand(Command):
         """
         usable = [r for r in run.ok_results if r.text.strip()]
         if len(usable) < 2:
-            print(yellow(
-                "  [synthesize] needs at least two usable answers — skipped."
-            ))
+            print(yellow("  [synthesize] needs at least two usable answers — skipped."))
             return
-        merged = "\n\n".join(
-            f"## Answer from {r.model}\n\n{r.text}" for r in usable
-        )
+        merged = "\n\n".join(f"## Answer from {r.model}\n\n{r.text}" for r in usable)
         messages = [
             {
                 "role": "system",
@@ -364,9 +374,12 @@ class MultiLlmCommand(Command):
             print(cyan("\n  [synthesize] merging answers..."))
             import asyncio
 
-            merged_text = asyncio.run(agent.llm.chat(
-                messages, disable_thinking=disable_thinking,
-            ))
+            merged_text = asyncio.run(
+                agent.llm.chat(
+                    messages,
+                    disable_thinking=disable_thinking,
+                )
+            )
         except Exception as exc:
             print(yellow(f"  [synthesize] failed: {exc}"))
             return

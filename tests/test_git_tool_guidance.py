@@ -27,9 +27,7 @@ from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
 
 
 def _git_schema() -> dict:
-    return next(
-        s for s in NLP_TOOL_SCHEMAS if s["function"]["name"] == "git"
-    )
+    return next(s for s in NLP_TOOL_SCHEMAS if s["function"]["name"] == "git")
 
 
 class TestGitToolIsSelfDescribing:
@@ -78,9 +76,7 @@ class TestGitAddBackstop:
         return Agent.__new__(Agent)
 
     def test_bare_dash_add_returns_guidance(self) -> None:
-        out = asyncio.run(
-            self._agent()._nlp_git({"subcommand": "add", "args": "-"})
-        )
+        out = asyncio.run(self._agent()._nlp_git({"subcommand": "add", "args": "-"}))
         assert "pathspec" in out
         assert "-A" in out
 
@@ -115,14 +111,17 @@ class TestGitPushAndCommitBackstops:
         )
         (tmp_path / "base.txt").write_text("base\n", encoding="utf-8")
         subprocess.run(
-            ["git", "-C", str(tmp_path), "add", "base.txt"], check=False,
+            ["git", "-C", str(tmp_path), "add", "base.txt"],
+            check=False,
         )
         subprocess.run(
-            ["git", "-C", str(tmp_path), "commit", "-qm", "init"], check=False,
+            ["git", "-C", str(tmp_path), "commit", "-qm", "init"],
+            check=False,
         )
         (tmp_path / "staged.txt").write_text("staged\n", encoding="utf-8")
         subprocess.run(
-            ["git", "-C", str(tmp_path), "add", "staged.txt"], check=False,
+            ["git", "-C", str(tmp_path), "add", "staged.txt"],
+            check=False,
         )
         return Agent(workspace=str(tmp_path))
 
@@ -130,9 +129,7 @@ class TestGitPushAndCommitBackstops:
         self, tmp_path: Path
     ) -> None:
         out = asyncio.run(
-            self._repo_with_staged_change(tmp_path)._nlp_git(
-                {"subcommand": "push"}
-            )
+            self._repo_with_staged_change(tmp_path)._nlp_git({"subcommand": "push"})
         )
         assert "staged" in out.lower()
         assert "staged.txt" in out
@@ -152,10 +149,12 @@ class TestGitPushAndCommitBackstops:
         )
         (tmp_path / "base.txt").write_text("base\n", encoding="utf-8")
         subprocess.run(
-            ["git", "-C", str(tmp_path), "add", "base.txt"], check=False,
+            ["git", "-C", str(tmp_path), "add", "base.txt"],
+            check=False,
         )
         subprocess.run(
-            ["git", "-C", str(tmp_path), "commit", "-qm", "init"], check=False,
+            ["git", "-C", str(tmp_path), "commit", "-qm", "init"],
+            check=False,
         )
         out = asyncio.run(
             Agent(workspace=str(tmp_path))._nlp_git({"subcommand": "push"})
@@ -187,7 +186,8 @@ class TestGitPushAndCommitBackstops:
         (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(tmp_path), "add", "a.txt"], check=False)
         subprocess.run(
-            ["git", "-C", str(tmp_path), "commit", "-qm", "init"], check=False,
+            ["git", "-C", str(tmp_path), "commit", "-qm", "init"],
+            check=False,
         )
         agent = Agent(workspace=str(tmp_path))
         out = asyncio.run(

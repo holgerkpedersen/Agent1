@@ -1,4 +1,5 @@
 """Tests for the LLM-free `run` REPL command."""
+
 import asyncio
 from unittest.mock import AsyncMock, patch
 

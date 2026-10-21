@@ -16,6 +16,7 @@ Two connection modes, both implementing the SAME chat contract as
    pending tool parts are mapped to this agent's tools via a fixed table and
    results fed back as text parts on the next turn.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -105,13 +106,14 @@ ZEN_API_BASE = DEFAULT_OPENCODE_ZEN_API_BASE
 #: (loaded from the model catalog — no concrete names in code).
 ZEN_PREFIXES: tuple[str, ...] = _ZEN_TIER_PREFIXES
 
+
 #: Model ids on the hosted API are unprefixed; this agent's persisted names
 #: keep the "opencode-go/..." / "opencode-zen/..." prefix for provider
 #: resolution.
 def _hosted_model_id(model_name: str) -> str:
     for prefix in ("opencode-go/", "opencode-zen/", "opencode/", "zen/"):
         if model_name.startswith(prefix):
-            return model_name[len(prefix):]
+            return model_name[len(prefix) :]
     return model_name
 
 
@@ -157,7 +159,8 @@ def _pair_tool_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         if isinstance(b, dict) and b.get("type") == "tool_result"
                     }
                 blocks = [
-                    b for b in blocks
+                    b
+                    for b in blocks
                     if not (isinstance(b, dict) and b.get("type") == "tool_use")
                     or b.get("id") in result_ids
                 ]
@@ -168,18 +171,22 @@ def _pair_tool_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 # ``prev_use_ids`` comes from the message emitted last; a
                 # ``tool_result`` only survives if its call did.
                 blocks = [
-                    b for b in blocks
+                    b
+                    for b in blocks
                     if not (isinstance(b, dict) and b.get("type") == "tool_result")
                     or b.get("tool_use_id") in prev_use_ids
                 ]
                 # A tool_result must IMMEDIATELY follow its tool_use, so keep
                 # results ahead of any user text folded into the same message.
-                blocks = (
-                    [b for b in blocks
-                     if isinstance(b, dict) and b.get("type") == "tool_result"]
-                    + [b for b in blocks
-                       if not (isinstance(b, dict) and b.get("type") == "tool_result")]
-                )
+                blocks = [
+                    b
+                    for b in blocks
+                    if isinstance(b, dict) and b.get("type") == "tool_result"
+                ] + [
+                    b
+                    for b in blocks
+                    if not (isinstance(b, dict) and b.get("type") == "tool_result")
+                ]
         else:
             prev_use_ids = set()
             out.append(msg)
@@ -196,7 +203,8 @@ def _pair_tool_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             out.append({"role": role, "content": blocks})
         prev_use_ids = (
             {
-                b.get("id") for b in out[-1]["content"]
+                b.get("id")
+                for b in out[-1]["content"]
                 if isinstance(b, dict) and b.get("type") == "tool_use"
             }
             if role == "assistant"
@@ -285,10 +293,12 @@ def _anthropic_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]
         out.append(entry)
     return out
 
+
 #: Official opencode-zen FREE models are intentionally NOT hardcoded here —
 #: a machine/account may not have them, and the live keyless catalog is the
 #: single source of truth (see _zen_free_fallbacks).  When settings and the
 #: live catalog both fail, the callers return an empty list (no assumptions).
+
 
 def _zen_free_fallbacks() -> list[str]:
     """Return the opencode-zen FREE fallback model list.
@@ -321,6 +331,7 @@ def _zen_free_fallbacks() -> list[str]:
     # No hardcoded fallback: surface the free-tier endpoint so the user can
     # list/choose from the live catalog instead of assuming a model exists.
     return []
+
 
 #: Substrings in a provider error string that mean the backend model itself
 #: is down (as opposed to a bug in our request) — these trigger the free-tier
@@ -417,6 +428,7 @@ def _reasoning_exhausted(
         )
     return None
 
+
 #: opencode built-in tools we enable on sessions (the model may call these).
 _ENABLED_TOOLS: dict[str, bool] = {
     "bash": True,
@@ -485,10 +497,14 @@ class OpencodeProvider:
         self.last_response_metrics: ResponseMetrics | None = None
         self._session_id: str | None = None
         self._last_label: str | None = None
-        self._server_timeout = float(os.environ.get("OPENCODE_SERVER_TIMEOUT", str(DEFAULT_CHAT_TIMEOUT)))
+        self._server_timeout = float(
+            os.environ.get("OPENCODE_SERVER_TIMEOUT", str(DEFAULT_CHAT_TIMEOUT))
+        )
         #: Long reads are normal for big prompts (workflow plan steps); 600s
         #: matches the server-mode default. Override via OPENCODE_TIMEOUT.
-        self._api_timeout = float(os.environ.get("OPENCODE_TIMEOUT", str(DEFAULT_CHAT_TIMEOUT)))
+        self._api_timeout = float(
+            os.environ.get("OPENCODE_TIMEOUT", str(DEFAULT_CHAT_TIMEOUT))
+        )
         #: Transient-failure retry (default 3 attempts, exponential backoff).
         #: A single intermittent gateway 5xx must not abort a workflow run.
         self._max_retries = (
@@ -499,7 +515,10 @@ class OpencodeProvider:
         self._retry_base_delay = max(0.0, float(retry_base_delay))
 
     def apply_profile(
-        self, name: str, temperature: float, max_tokens: int,
+        self,
+        name: str,
+        temperature: float,
+        max_tokens: int,
     ) -> None:
         """Activate *name* with its sampling parameters in one step.
 
@@ -560,16 +579,12 @@ class OpencodeProvider:
         headers = self._headers(body is not None)
         if extra_headers:
             headers.update(extra_headers)
-        req = urllib.request.Request(
-            url, data=data, headers=headers, method=method
-        )
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
             return json.loads(raw) if raw.strip() else None
 
-    async def _with_retry(
-        self, factory: Callable[[], Any], *, label: str
-    ) -> Any:
+    async def _with_retry(self, factory: Callable[[], Any], *, label: str) -> Any:
         """Run *factory* with exponential backoff on transient failures.
 
         Retries HTTP 429/5xx responses — and gateway 4xx responses whose body
@@ -595,7 +610,7 @@ class OpencodeProvider:
             except (TimeoutError, OSError) as exc:
                 last_error = exc
             if attempt < self._max_retries:
-                wait = self._retry_base_delay * (2 ** attempt)
+                wait = self._retry_base_delay * (2**attempt)
                 print(
                     f"  [retry {attempt + 1}/{self._max_retries}] {label}: "
                     f"{last_error}, waiting {wait:.0f}s...",
@@ -636,7 +651,9 @@ class OpencodeProvider:
         try:
             result = await self._with_retry(
                 lambda: self._request(
-                    "POST", f"{self.api_url}/chat/completions", payload,
+                    "POST",
+                    f"{self.api_url}/chat/completions",
+                    payload,
                     timeout=self._api_timeout,
                 ),
                 label="opencode chat/completions",
@@ -654,7 +671,9 @@ class OpencodeProvider:
             # that protocol instead of failing the whole interaction.
             if exc.code == 400 and "ModelProtocolUnsupported" in detail:
                 return await self._chat_api_anthropic(messages, tools, max_tokens)
-            return f"[Error: opencode API request failed: HTTP Error {exc.code}: {detail}]"
+            return (
+                f"[Error: opencode API request failed: HTTP Error {exc.code}: {detail}]"
+            )
         except Exception as exc:
             return f"[Error: opencode API request failed: {exc}]"
         choices = result.get("choices") if isinstance(result, dict) else None
@@ -668,12 +687,18 @@ class OpencodeProvider:
         tool_calls = message.get("tool_calls")
         # Per-turn token/latency/cost accounting (plan ARCH item 17).
         usage = result.get("usage") if isinstance(result, dict) else None
-        prompt_tokens = int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
-        completion_tokens = int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0
+        prompt_tokens = (
+            int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
+        )
+        completion_tokens = (
+            int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0
+        )
         self.last_response_metrics = ResponseMetrics(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            cost=estimate_cost(prompt_tokens, completion_tokens, self.model_name, "opencode"),
+            cost=estimate_cost(
+                prompt_tokens, completion_tokens, self.model_name, "opencode"
+            ),
         )
         if tool_calls:
             return json.dumps({"content": content, "tool_calls": tool_calls})
@@ -713,8 +738,11 @@ class OpencodeProvider:
         try:
             result = await self._with_retry(
                 lambda: self._request(
-                    "POST", url, payload,
-                    timeout=self._api_timeout, extra_headers=headers,
+                    "POST",
+                    url,
+                    payload,
+                    timeout=self._api_timeout,
+                    extra_headers=headers,
                 ),
                 label="opencode /messages",
             )
@@ -777,7 +805,8 @@ class OpencodeProvider:
             blocks = []
         text = "".join(
             str(b.get("text") or "")
-            for b in blocks if isinstance(b, dict) and b.get("type") == "text"
+            for b in blocks
+            if isinstance(b, dict) and b.get("type") == "text"
         )
         tool_calls = []
         for block in blocks:
@@ -808,7 +837,9 @@ class OpencodeProvider:
         )
         if tool_calls:
             return json.dumps({"content": text, "tool_calls": tool_calls})
-        return text if text else "[Error: opencode /messages returned an empty response]"
+        return (
+            text if text else "[Error: opencode /messages returned an empty response]"
+        )
 
     # ------------------------------------------------------------------
     # Server mode (opencode serve session)
@@ -820,7 +851,9 @@ class OpencodeProvider:
         try:
             session = await asyncio.to_thread(
                 self._request,
-                "POST", f"{self.server_url}/session", {"title": "agent1"},
+                "POST",
+                f"{self.server_url}/session",
+                {"title": "agent1"},
                 timeout=self._server_timeout,
             )
         except Exception as exc:
@@ -832,7 +865,9 @@ class OpencodeProvider:
         return self._session_id
 
     @staticmethod
-    def _messages_to_parts(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+    def _messages_to_parts(
+        messages: list[dict[str, Any]],
+    ) -> tuple[str, list[dict[str, Any]]]:
         """Split *messages* into (system_text, request_parts).
 
         tool_call_id of the previous assistant turn are irrelevant here:
@@ -857,12 +892,21 @@ class OpencodeProvider:
                         args = json.loads(fn.get("arguments", "{}"))
                     except (json.JSONDecodeError, TypeError):
                         args = {}
-                    parts.append({"type": "text", "text": f"[tool call] {name}({json.dumps(args)})"})
+                    parts.append(
+                        {
+                            "type": "text",
+                            "text": f"[tool call] {name}({json.dumps(args)})",
+                        }
+                    )
             elif role == "tool":
-                parts.append({"type": "text", "text": f"[tool result] {m.get('content', '')}"})
+                parts.append(
+                    {"type": "text", "text": f"[tool result] {m.get('content', '')}"}
+                )
         return "\n".join(system_parts), parts
 
-    def _parts_to_response(self, parts: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+    def _parts_to_response(
+        self, parts: list[dict[str, Any]]
+    ) -> tuple[str, list[dict[str, Any]]]:
         """Map response parts to (content, tool_calls).
 
         tool-call parts (state pending, input present) become OpenAI-style
@@ -893,7 +937,9 @@ class OpencodeProvider:
         return "\n".join(content_parts), tool_calls
 
     async def _chat_server(
-        self, messages: list[dict[str, Any]], max_tokens: int | None,
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int | None,
         disable_thinking: bool = False,
     ) -> str:
         session = await self._ensure_session()
@@ -914,7 +960,9 @@ class OpencodeProvider:
         try:
             result = await self._with_retry(
                 lambda: self._request(
-                    "POST", f"{self.server_url}/session/{session}/message", body,
+                    "POST",
+                    f"{self.server_url}/session/{session}/message",
+                    body,
                     timeout=self._server_timeout,
                 ),
                 label="opencode message",
@@ -956,7 +1004,9 @@ class OpencodeProvider:
             # unavailable", 5xx, or a read timeout).  Rather than hard-fail the
             # turn, transparently retry against a known-good free model.
             if self.zen_mode and self._is_backend_down(result):
-                return await self._zen_free_fallback(messages, tools, max_tokens, disable_thinking)
+                return await self._zen_free_fallback(
+                    messages, tools, max_tokens, disable_thinking
+                )
             return result
         return await self._chat_server(messages, max_tokens, disable_thinking)
 
@@ -1008,7 +1058,9 @@ class OpencodeProvider:
                 prov.temperature = self.temperature
                 prov.max_tokens = self.max_tokens
                 prov._profile_name = self._profile_name
-                out = await prov._chat_api(messages, tools, max_tokens, disable_thinking)
+                out = await prov._chat_api(
+                    messages, tools, max_tokens, disable_thinking
+                )
             except Exception as exc:  # noqa: BLE001 - defensive per-turn
                 out = f"[Error: {exc}]"
             if not self._is_backend_down(out):
@@ -1029,10 +1081,15 @@ class OpencodeProvider:
 
     async def analyze_code(self, code: str) -> str:
         """Analyze code using the opencode model."""
-        return await self.chat([
-            {"role": "system", "content": "Analyze the following code for bugs and improvements."},
-            {"role": "user", "content": code},
-        ])
+        return await self.chat(
+            [
+                {
+                    "role": "system",
+                    "content": "Analyze the following code for bugs and improvements.",
+                },
+                {"role": "user", "content": code},
+            ]
+        )
 
     # ------------------------------------------------------------------
     # model command support
@@ -1053,9 +1110,13 @@ class OpencodeProvider:
                 data = self._request("GET", f"{self.api_url}/models", timeout=15)
                 items = data.get("data") if isinstance(data, dict) else []
                 return sorted(
-                    f"{prefix}/{m.get('id')}" for m in (items or []) if isinstance(m, dict)
+                    f"{prefix}/{m.get('id')}"
+                    for m in (items or [])
+                    if isinstance(m, dict)
                 )
-            config = self._request("GET", f"{self.server_url}/config/providers", timeout=15)
+            config = self._request(
+                "GET", f"{self.server_url}/config/providers", timeout=15
+            )
         except Exception:
             return []
         if self.zen_mode:
@@ -1082,7 +1143,9 @@ class OpencodeProvider:
             data = self._request("GET", f"{ZEN_API_BASE}/models", timeout=15)
             items = data.get("data") if isinstance(data, dict) else []
             return sorted(
-                f"opencode-zen/{m.get('id')}" for m in (items or []) if isinstance(m, dict)
+                f"opencode-zen/{m.get('id')}"
+                for m in (items or [])
+                if isinstance(m, dict)
             )
         except Exception:
             return []

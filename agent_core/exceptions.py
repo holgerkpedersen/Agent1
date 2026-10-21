@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Final
 
+
 class AgentBaseError(Exception):
     """Base exception for all agent-related errors."""
 

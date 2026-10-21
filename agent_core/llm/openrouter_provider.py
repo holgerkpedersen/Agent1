@@ -21,6 +21,7 @@ carry a ``(connection error)`` marker so :func:`is_connection_failure` in
 Unlike :class:`LMStudioProvider` and :class:`LlamaProvider`, OpenRouter hosts
 the models — there is NO model management (no load/unload, no auto-reload).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -54,9 +55,7 @@ _REASONING_MANDATORY_400 = "reasoning is mandatory"
 #: account's remaining credits can afford. We parse the "can only afford N"
 #: number out of it to transparently retry with a smaller budget instead of
 #: surfacing a hard failure (the turn still completes with fewer tokens).
-_CREDITS_AFFORD_RE = re.compile(
-    r"can only afford\s+(\d+)", re.IGNORECASE
-)
+_CREDITS_AFFORD_RE = re.compile(r"can only afford\s+(\d+)", re.IGNORECASE)
 
 DEFAULT_API_BASE = DEFAULT_OPENROUTER_API_BASE
 
@@ -70,7 +69,7 @@ def _http_model_id(model_name: str) -> str:
     happen to contain a slash.  The HTTP request must use the bare id.
     """
     if model_name.startswith("openrouter/"):
-        return model_name[len("openrouter/"):]
+        return model_name[len("openrouter/") :]
     return model_name
 
 
@@ -115,12 +114,7 @@ def _reasoning_exhausted(
     misreported as a failure and the caller would uselessly retry.
     """
     truncated = finish_reason in (None, "length")
-    if (
-        truncated
-        and not content.strip()
-        and reasoning
-        and len(reasoning) > 300
-    ):
+    if truncated and not content.strip() and reasoning and len(reasoning) > 300:
         return (
             f"[Error: model consumed {len(reasoning)} reasoning bytes with "
             "no output — reasoning models burn their budget thinking. Retry "
@@ -199,12 +193,17 @@ def _format_http_error(code: int, detail: str) -> str:
     lowered = (detail or "").lower()
     if code == 403 and "agentic harness" in lowered:
         return (
-            "[Error: openrouter model is restricted — \"only available on "
-            "agentic harnesses\", so it cannot be called via the API. Pick a "
+            '[Error: openrouter model is restricted — "only available on '
+            'agentic harnesses", so it cannot be called via the API. Pick a '
             "different free model, e.g. "
             f"'{OpenRouterProvider.suggest_free_model()}'.]"
         )
-    if code == 429 or "rate-limit" in lowered or "rate limited" in lowered or "too many requests" in lowered:
+    if (
+        code == 429
+        or "rate-limit" in lowered
+        or "rate limited" in lowered
+        or "too many requests" in lowered
+    ):
         return (
             "[Error: openrouter free-tier model is rate-limited upstream "
             "(HTTP 429). The free tier is throttled — wait a moment or switch to "
@@ -230,7 +229,9 @@ class OpenRouterProvider:
         self.model_name = (
             name if name.startswith("openrouter/") else f"openrouter/{name}"
         )
-        self.api_url = (api_url or os.environ.get("OPENROUTER_API_URL") or DEFAULT_API_BASE).rstrip("/")
+        self.api_url = (
+            api_url or os.environ.get("OPENROUTER_API_URL") or DEFAULT_API_BASE
+        ).rstrip("/")
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
         self.temperature: float = 0.7
         self.max_tokens: int = 50000
@@ -239,7 +240,9 @@ class OpenRouterProvider:
         self._last_label: str | None = None
         #: Long reads are normal for big prompts (workflow plan steps); 600s
         #: matches the other hosted providers. Override via OPENROUTER_TIMEOUT.
-        self._api_timeout = float(os.environ.get("OPENROUTER_TIMEOUT", str(DEFAULT_CHAT_TIMEOUT)))
+        self._api_timeout = float(
+            os.environ.get("OPENROUTER_TIMEOUT", str(DEFAULT_CHAT_TIMEOUT))
+        )
         #: Transient-failure retry (default 3 attempts, exponential backoff).
         #: A single intermittent gateway/upstream 5xx must not abort a run.
         self._max_retries = (
@@ -298,9 +301,7 @@ class OpenRouterProvider:
             raw = resp.read().decode("utf-8", errors="replace")
             return json.loads(raw) if raw.strip() else None
 
-    async def _with_retry(
-        self, factory: Callable[[], Any], *, label: str
-    ) -> Any:
+    async def _with_retry(self, factory: Callable[[], Any], *, label: str) -> Any:
         """Run *factory* with exponential backoff on transient failures.
 
         Retries HTTP 429/5xx responses and network timeouts — the gateway sits
@@ -324,7 +325,7 @@ class OpenRouterProvider:
             except (TimeoutError, OSError) as exc:
                 last_error = exc
             if attempt < self._max_retries:
-                wait = self._retry_base_delay * (2 ** attempt)
+                wait = self._retry_base_delay * (2**attempt)
                 print(
                     f"  [retry {attempt + 1}/{self._max_retries}] {label}: "
                     f"{last_error}, waiting {wait:.0f}s...",
@@ -376,7 +377,9 @@ class OpenRouterProvider:
         try:
             result = await self._with_retry(
                 lambda: self._request(
-                    "POST", f"{self.api_url}/chat/completions", payload,
+                    "POST",
+                    f"{self.api_url}/chat/completions",
+                    payload,
                     timeout=self._api_timeout,
                 ),
                 label="openrouter chat/completions",
@@ -396,7 +399,9 @@ class OpenRouterProvider:
                 try:
                     result = await self._with_retry(
                         lambda: self._request(
-                            "POST", f"{self.api_url}/chat/completions", payload,
+                            "POST",
+                            f"{self.api_url}/chat/completions",
+                            payload,
                             timeout=self._api_timeout,
                         ),
                         label="openrouter chat/completions (reasoning enabled)",
@@ -413,7 +418,9 @@ class OpenRouterProvider:
                         try:
                             result = await self._with_retry(
                                 lambda: self._request(
-                                    "POST", f"{self.api_url}/chat/completions", payload,
+                                    "POST",
+                                    f"{self.api_url}/chat/completions",
+                                    payload,
                                     timeout=self._api_timeout,
                                 ),
                                 label="openrouter chat/completions (no reasoning knob)",
@@ -453,7 +460,9 @@ class OpenRouterProvider:
                     try:
                         result = await self._with_retry(
                             lambda: self._request(
-                                "POST", f"{self.api_url}/chat/completions", payload,
+                                "POST",
+                                f"{self.api_url}/chat/completions",
+                                payload,
                                 timeout=self._api_timeout,
                             ),
                             label=f"openrouter chat/completions (reduced max_tokens={new_max})",
@@ -471,12 +480,18 @@ class OpenRouterProvider:
                         return f"[Error: openrouter API request failed: {exc2}]"
 
             # --- Fix C: model doesn't support tool use — strip tools and retry. ---
-            if not repaired and exc.code == 404 and "support tool" in (detail or "").lower():
+            if (
+                not repaired
+                and exc.code == 404
+                and "support tool" in (detail or "").lower()
+            ):
                 payload.pop("tools", None)
                 try:
                     result = await self._with_retry(
                         lambda: self._request(
-                            "POST", f"{self.api_url}/chat/completions", payload,
+                            "POST",
+                            f"{self.api_url}/chat/completions",
+                            payload,
                             timeout=self._api_timeout,
                         ),
                         label="openrouter chat/completions (no tools)",
@@ -510,22 +525,26 @@ class OpenRouterProvider:
         message = first.get("message") or {}
         content_raw = message.get("content")
         reasoning_raw = (
-            message.get("reasoning_content")
-            or message.get("reasoning")
-            or ""
+            message.get("reasoning_content") or message.get("reasoning") or ""
         )
         finish_reason = first.get("finish_reason")
 
         tool_calls = message.get("tool_calls")
         # Per-turn token/latency accounting (plan ARCH item 17).
         usage = result.get("usage") if isinstance(result, dict) else None
-        prompt_tokens = int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
-        completion_tokens = int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0
+        prompt_tokens = (
+            int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
+        )
+        completion_tokens = (
+            int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0
+        )
         self.last_response_metrics = ResponseMetrics(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             latency_ms=elapsed_ms,
-            cost=estimate_cost(prompt_tokens, completion_tokens, self.model_name, "openrouter"),
+            cost=estimate_cost(
+                prompt_tokens, completion_tokens, self.model_name, "openrouter"
+            ),
         )
         if tool_calls:
             return json.dumps({"content": content_raw, "tool_calls": tool_calls})
@@ -545,10 +564,15 @@ class OpenRouterProvider:
 
     async def analyze_code(self, code: str) -> str:
         """Analyze code using the OpenRouter model."""
-        return await self.chat([
-            {"role": "system", "content": "Analyze the following code for bugs and improvements."},
-            {"role": "user", "content": code},
-        ])
+        return await self.chat(
+            [
+                {
+                    "role": "system",
+                    "content": "Analyze the following code for bugs and improvements.",
+                },
+                {"role": "user", "content": code},
+            ]
+        )
 
     # ------------------------------------------------------------------
     # model command support
@@ -573,7 +597,7 @@ class OpenRouterProvider:
             return []
         items = data.get("data") if isinstance(data, dict) else []
         out: list[str] = []
-        for m in (items or []):
+        for m in items or []:
             if not isinstance(m, dict) or not m.get("id"):
                 continue
             if free_only and not _is_free_model(m):

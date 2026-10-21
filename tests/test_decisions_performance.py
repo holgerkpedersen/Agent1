@@ -87,17 +87,14 @@ class TestFindOverlapsFast:
         """Test that no overlaps returns empty list."""
         new_decision = {
             "tags": ["new", "feature"],
-            "affected_files": ["agent_core/new_feature.py"]
+            "affected_files": ["agent_core/new_feature.py"],
         }
         overlaps = find_overlaps(new_decision, sample_decisions, "/workspace")
         assert overlaps == []
 
     def test_find_overlaps_file_overlap(self, sample_decisions):
         """Test that file overlap is detected."""
-        new_decision = {
-            "tags": [],
-            "affected_files": ["agent_core/api_client.py"]
-        }
+        new_decision = {"tags": [], "affected_files": ["agent_core/api_client.py"]}
         overlaps = find_overlaps(new_decision, sample_decisions, "/workspace")
         # Should match decision 001 and 003 (both use api_client.py)
         assert len(overlaps) == 2
@@ -106,10 +103,7 @@ class TestFindOverlapsFast:
 
     def test_find_overlaps_tag_overlap(self, sample_decisions):
         """Test that tag overlap is detected."""
-        new_decision = {
-            "tags": ["concurrency"],
-            "affected_files": []
-        }
+        new_decision = {"tags": ["concurrency"], "affected_files": []}
         overlaps = find_overlaps(new_decision, sample_decisions, "/workspace")
         # Should match decision 001
         assert len(overlaps) == 1
@@ -117,10 +111,7 @@ class TestFindOverlapsFast:
 
     def test_find_overlaps_both_overlap(self, sample_decisions):
         """Test that both file and tag overlap is detected."""
-        new_decision = {
-            "tags": ["testing"],
-            "affected_files": ["tests/test_api.py"]
-        }
+        new_decision = {"tags": ["testing"], "affected_files": ["tests/test_api.py"]}
         overlaps = find_overlaps(new_decision, sample_decisions, "/workspace")
         # Should match decision 004
         assert len(overlaps) == 1
@@ -128,10 +119,7 @@ class TestFindOverlapsFast:
 
     def test_find_overlaps_multiple_matches(self, sample_decisions):
         """Test that multiple matches are returned."""
-        new_decision = {
-            "tags": ["testing"],
-            "affected_files": []
-        }
+        new_decision = {"tags": ["testing"], "affected_files": []}
         overlaps = find_overlaps(new_decision, sample_decisions, "/workspace")
         # Only decision 004 has "testing" tag
         assert len(overlaps) == 1
@@ -172,13 +160,10 @@ class TestCheckContradictionsFast:
         """Test that fast check returns early when no overlaps found."""
         new_decision = {
             "tags": ["new", "feature"],
-            "affected_files": ["agent_core/new_feature.py"]
+            "affected_files": ["agent_core/new_feature.py"],
         }
         result = await check_contradictions_fast(
-            mock_agent,
-            new_decision,
-            "New feature X",
-            workspace
+            mock_agent, new_decision, "New feature X", workspace
         )
         # Should not call LLM when no overlaps
         assert "No similar decisions found" in result
@@ -189,16 +174,10 @@ class TestCheckContradictionsFast:
         self, sample_decisions, mock_agent, workspace
     ):
         """Test that fast check calls the LLM only on overlapping decisions."""
-        new_decision = {
-            "tags": ["testing"],
-            "affected_files": []
-        }
+        new_decision = {"tags": ["testing"], "affected_files": []}
         # This should only check decision 004 (tag "testing")
         result = await check_contradictions_fast(
-            mock_agent,
-            new_decision,
-            "New testing approach",
-            workspace
+            mock_agent, new_decision, "New testing approach", workspace
         )
         # LLM should have been called (not early returned)
         assert "contradiction" in result.lower() or "no contradiction" in result.lower()

@@ -12,6 +12,7 @@ Covers:
     top_pages by hits, and last_consolidated timestamp.
   - load_wiki/save_wiki round-trip is atomic and schema-tolerant on corrupt lines.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,17 +29,46 @@ from harnessfix.wiki import (
 )
 
 
-def _failed_trace(path: Path, task_id: str = "t1", exc: str = "ValueError", msg: str = "") -> None:
+def _failed_trace(
+    path: Path, task_id: str = "t1", exc: str = "ValueError", msg: str = ""
+) -> None:
     """Write a minimal failed trace (tool_error + loop_end error outcome)."""
     events = [
-        {"task_id": task_id, "ts": 1.0, "kind": "task_begin", "layer": "context",
-         "user_input": f"fix the {exc} crash in foo.py"},
-        {"task_id": task_id, "ts": 2.0, "kind": "tool_call", "layer": "tool_interface",
-         "iteration": 0, "tool": "run", "args_hash": "{}"},
-        {"task_id": task_id, "ts": 3.0, "kind": "tool_error", "layer": "tool_interface",
-         "iteration": 0, "tool": "run", "exception": exc, "message": msg or "boom in foo.py"},
-        {"task_id": task_id, "ts": 9.0, "kind": "loop_end", "layer": "lifecycle",
-         "iteration": 0, "outcome": "error", "termination_reason": "tool_error"},
+        {
+            "task_id": task_id,
+            "ts": 1.0,
+            "kind": "task_begin",
+            "layer": "context",
+            "user_input": f"fix the {exc} crash in foo.py",
+        },
+        {
+            "task_id": task_id,
+            "ts": 2.0,
+            "kind": "tool_call",
+            "layer": "tool_interface",
+            "iteration": 0,
+            "tool": "run",
+            "args_hash": "{}",
+        },
+        {
+            "task_id": task_id,
+            "ts": 3.0,
+            "kind": "tool_error",
+            "layer": "tool_interface",
+            "iteration": 0,
+            "tool": "run",
+            "exception": exc,
+            "message": msg or "boom in foo.py",
+        },
+        {
+            "task_id": task_id,
+            "ts": 9.0,
+            "kind": "loop_end",
+            "layer": "lifecycle",
+            "iteration": 0,
+            "outcome": "error",
+            "termination_reason": "tool_error",
+        },
     ]
     path.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
 
@@ -46,22 +76,70 @@ def _failed_trace(path: Path, task_id: str = "t1", exc: str = "ValueError", msg:
 def _success_trace(path: Path, task_id: str = "s1", file_stem: str = "foo") -> None:
     """Write a minimal successful trace (write+run+loop_end completed)."""
     events = [
-        {"task_id": task_id, "ts": 1.0, "kind": "task_begin", "layer": "context",
-         "user_input": f"fix the ImportError in {file_stem}.py"},
-        {"task_id": task_id, "ts": 2.0, "kind": "tool_call", "layer": "tool_interface",
-         "iteration": 1, "tool": "write", "args_hash": json.dumps({"path": f"{file_stem}.py"})},
-        {"task_id": task_id, "ts": 3.0, "kind": "tool_result", "layer": "execution_environment",
-         "iteration": 1, "tool": "write", "args_hash": json.dumps({"path": f"{file_stem}.py"}),
-         "result": "Written"},
-        {"task_id": task_id, "ts": 4.0, "kind": "tool_call", "layer": "tool_interface",
-         "iteration": 2, "tool": "run", "args_hash": json.dumps({"command": f"python {file_stem}.py"})},
-        {"task_id": task_id, "ts": 5.0, "kind": "tool_result", "layer": "execution_environment",
-         "iteration": 2, "tool": "run", "args_hash": json.dumps({"command": f"python {file_stem}.py"}),
-         "result": "ok"},
-        {"task_id": task_id, "ts": 6.0, "kind": "llm_response", "layer": "observability",
-         "iteration": 2, "text": "Fixed the ImportError by re-exporting keyboard from the correct module path."},
-        {"task_id": task_id, "ts": 9.0, "kind": "loop_end", "layer": "lifecycle",
-         "iteration": 0, "outcome": "completed"},
+        {
+            "task_id": task_id,
+            "ts": 1.0,
+            "kind": "task_begin",
+            "layer": "context",
+            "user_input": f"fix the ImportError in {file_stem}.py",
+        },
+        {
+            "task_id": task_id,
+            "ts": 2.0,
+            "kind": "tool_call",
+            "layer": "tool_interface",
+            "iteration": 1,
+            "tool": "write",
+            "args_hash": json.dumps({"path": f"{file_stem}.py"}),
+        },
+        {
+            "task_id": task_id,
+            "ts": 3.0,
+            "kind": "tool_result",
+            "layer": "execution_environment",
+            "iteration": 1,
+            "tool": "write",
+            "args_hash": json.dumps({"path": f"{file_stem}.py"}),
+            "result": "Written",
+        },
+        {
+            "task_id": task_id,
+            "ts": 4.0,
+            "kind": "tool_call",
+            "layer": "tool_interface",
+            "iteration": 2,
+            "tool": "run",
+            "args_hash": json.dumps({"command": f"python {file_stem}.py"}),
+        },
+        {
+            "task_id": task_id,
+            "ts": 5.0,
+            "kind": "tool_result",
+            "layer": "execution_environment",
+            "iteration": 2,
+            "tool": "run",
+            "args_hash": json.dumps({"command": f"python {file_stem}.py"}),
+            "result": "ok",
+        },
+        {
+            "task_id": task_id,
+            "ts": 6.0,
+            "kind": "llm_response",
+            "layer": "observability",
+            "iteration": 2,
+            "text": (
+                "Fixed the ImportError by re-exporting"
+                " keyboard from the correct module path."
+            ),
+        },
+        {
+            "task_id": task_id,
+            "ts": 9.0,
+            "kind": "loop_end",
+            "layer": "lifecycle",
+            "iteration": 0,
+            "outcome": "completed",
+        },
     ]
     path.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
 
@@ -120,7 +198,7 @@ class TestConsolidate:
         assert len(pages) == 2
         layers = {pg.layer for pg in pages}
         assert "tool_interface" in layers  # failure page
-        assert "(success)" in layers      # success page
+        assert "(success)" in layers  # success page
 
     def test_consolidate_is_idempotent_merge(self, tmp_path):
         traces = tmp_path / "traces"
@@ -153,7 +231,9 @@ class TestRetrieve:
         wiki_dir = tmp_path / "wiki"
         consolidate(traces, wiki_dir)
 
-        results = retrieve("ValueError crash in foo.py", k=5, path=wiki_dir / "wiki.jsonl")
+        results = retrieve(
+            "ValueError crash in foo.py", k=5, path=wiki_dir / "wiki.jsonl"
+        )
         assert len(results) >= 1
         pg = results[0]
         assert "ValueError" in pg.error_classes
@@ -175,7 +255,11 @@ class TestRetrieve:
     def test_retrieve_vague_query_falls_back_to_token_overlap(self, tmp_path):
         traces = tmp_path / "traces"
         traces.mkdir()
-        _failed_trace(traces / "t1.jsonl", exc="ValueError", msg="inspect tool_interface harness mechanism")
+        _failed_trace(
+            traces / "t1.jsonl",
+            exc="ValueError",
+            msg="inspect tool_interface harness mechanism",
+        )
         wiki_dir = tmp_path / "wiki"
         consolidate(traces, wiki_dir)
 
@@ -204,7 +288,9 @@ class TestFormatWikiNotes:
         wiki_dir = tmp_path / "wiki"
         consolidate(traces, wiki_dir)
 
-        notes = format_wiki_notes("ValueError crash foo.py", k=3, path=wiki_dir / "wiki.jsonl")
+        notes = format_wiki_notes(
+            "ValueError crash foo.py", k=3, path=wiki_dir / "wiki.jsonl"
+        )
         assert notes != ""
         assert "COMPILED KNOWLEDGE (wiki)" in notes
         assert "lesson:" in notes
@@ -311,6 +397,7 @@ class TestDashboardAPI:
         wiki_dir = tmp_path / "reports" / "wiki"
 
         from agent_core.monitoring import dashboard_api
+
         # Redirect the handler's base dir to our temp root.
         dashboard_api.DashboardAPIHandler._base_dir = str(tmp_path)
 
@@ -323,7 +410,10 @@ class TestDashboardAPI:
         # The _autonomous_status method reads wiki via the handler's base dir.
         class _Stub:
             pass
-        stub = dashboard_api.DashboardAPIHandler.__new__(dashboard_api.DashboardAPIHandler)
+
+        stub = dashboard_api.DashboardAPIHandler.__new__(
+            dashboard_api.DashboardAPIHandler
+        )
         result = stub._autonomous_status()
         assert "wiki" in result
         assert isinstance(result["wiki"], dict)
@@ -333,9 +423,12 @@ class TestDashboardAPI:
     def test_autonomous_status_wiki_empty_when_no_wiki(self, tmp_path):
         """Wiki stats must degrade gracefully when no wiki file exists."""
         from agent_core.monitoring import dashboard_api
+
         dashboard_api.DashboardAPIHandler._base_dir = str(tmp_path)
 
-        stub = dashboard_api.DashboardAPIHandler.__new__(dashboard_api.DashboardAPIHandler)
+        stub = dashboard_api.DashboardAPIHandler.__new__(
+            dashboard_api.DashboardAPIHandler
+        )
         result = stub._autonomous_status()
         assert "wiki" in result
         assert isinstance(result["wiki"], dict)
@@ -356,11 +449,11 @@ class TestSandbox:
         file_out = wiki_mod._sandbox(wiki_mod.WIKI_PATH)
         assert file_out == tmp_path / "kb" / "wiki.jsonl"
         dir_out = wiki_mod._sandbox(
-            wiki_mod.REPO_ROOT / "reports" / "harnessfix" / "wiki")
+            wiki_mod.REPO_ROOT / "reports" / "harnessfix" / "wiki"
+        )
         assert dir_out == tmp_path / "kb"
 
-    def test_passes_through_outside_repo_and_without_env(
-            self, tmp_path, monkeypatch):
+    def test_passes_through_outside_repo_and_without_env(self, tmp_path, monkeypatch):
         import harnessfix.wiki as wiki_mod
 
         monkeypatch.setenv(wiki_mod.SANDBOX_ENV, str(tmp_path / "kb"))
@@ -374,15 +467,13 @@ class TestSandbox:
 
         monkeypatch.setenv(wiki_mod.SANDBOX_ENV, str(tmp_path / "kb"))
         real_before = (
-            wiki_mod.WIKI_PATH.read_bytes() if wiki_mod.WIKI_PATH.exists()
-            else None
+            wiki_mod.WIKI_PATH.read_bytes() if wiki_mod.WIKI_PATH.exists() else None
         )
         save_wiki([WikiPage(key="k", title="t", lesson="L")])
         assert (tmp_path / "kb" / "wiki.jsonl").is_file()
         assert [p.key for p in load_wiki()] == ["k"]
         real_after = (
-            wiki_mod.WIKI_PATH.read_bytes() if wiki_mod.WIKI_PATH.exists()
-            else None
+            wiki_mod.WIKI_PATH.read_bytes() if wiki_mod.WIKI_PATH.exists() else None
         )
         assert real_after == real_before  # live wiki untouched
 

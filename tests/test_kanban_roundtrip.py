@@ -11,6 +11,7 @@ same issue and mapped it to that same issue id, so the next poll echoed again
 — an unbounded card-creation loop.  This test pins the idempotency guard that
 absorbs the echo.
 """
+
 from __future__ import annotations
 
 import json
@@ -158,9 +159,7 @@ def test_round_trip_produces_no_dead_letters(shared_queue, tmp_path, monkeypatch
     assert dead == [], f"unexpected dead letters: {dead}"
 
 
-def test_card_create_persists_the_issue_it_maps(
-    shared_queue, tmp_path, monkeypatch
-):
+def test_card_create_persists_the_issue_it_maps(shared_queue, tmp_path, monkeypatch):
     """An inbound card must land in the ledger, not just in the id map.
 
     ``issues.make_issue()`` only builds the dict; the repo-scan collector does
@@ -181,9 +180,7 @@ def test_card_create_persists_the_issue_it_maps(
     )
 
 
-def test_move_to_finished_resolves_the_issue(
-    shared_queue, tmp_path, monkeypatch
-):
+def test_move_to_finished_resolves_the_issue(shared_queue, tmp_path, monkeypatch):
     """Moving a card to the "Finished" column must resolve its issue.
 
     The Kanban side sends an opaque frame *id*; ``FRAME_TO_STATUS`` is keyed by

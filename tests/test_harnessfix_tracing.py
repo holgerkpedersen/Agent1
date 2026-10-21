@@ -6,6 +6,7 @@ Covers the spec's acceptance criteria:
 - tracing is non-invasive: byte-identical behaviour with and without a sink
 - AGENT_NO_TRACE env toggle disables trace writing
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -42,11 +43,16 @@ def _fake_llm(script):
             {
                 "id": f"call-{i}",
                 "type": "function",
-                "function": {"name": tc["name"], "arguments": json.dumps(tc["arguments"])},
+                "function": {
+                    "name": tc["name"],
+                    "arguments": json.dumps(tc["arguments"]),
+                },
             }
             for i, tc in enumerate(step[1])
         ]
-        updated = messages + [{"role": "assistant", "content": "", "tool_calls": tool_calls}]
+        updated = messages + [
+            {"role": "assistant", "content": "", "tool_calls": tool_calls}
+        ]
         return "", updated
 
     return llm_chat_fn, calls
@@ -154,7 +160,9 @@ def test_trace_enabled_env_toggle(monkeypatch):
 
 def test_reader_rejects_malformed_trace(tmp_path):
     bad = tmp_path / "bad.jsonl"
-    bad.write_text('{"kind": "step_start", "layer": "lifecycle"}\nnot json\n', encoding="utf-8")
+    bad.write_text(
+        '{"kind": "step_start", "layer": "lifecycle"}\nnot json\n', encoding="utf-8"
+    )
     with pytest.raises(TraceValidationError):
         read_trace(bad)
 
@@ -170,7 +178,8 @@ def test_task_begin_and_meta_stamp_every_record(tmp_path):
     from harnessfix.tracing import KIND_TASK_BEGIN, LAYER_CONTEXT
 
     writer = TraceWriter(
-        task_id="t3", directory=tmp_path,
+        task_id="t3",
+        directory=tmp_path,
         meta={"model": "qwen3.8-27b", "profile": "deep-analysis"},
     )
     writer.emit_task_begin("refactor the verifier please")
@@ -186,6 +195,7 @@ def test_task_begin_and_meta_stamp_every_record(tmp_path):
         assert ev["model"] == "qwen3.8-27b"
         assert ev["profile"] == "deep-analysis"
     from harnessfix.tracing import KINDS
+
     assert KIND_TASK_BEGIN in KINDS
 
 
@@ -204,6 +214,7 @@ def test_task_begin_truncates_long_prompts(tmp_path):
 # Turn-scoped events API (plan item #4 residual: score one turn, not a session)
 # ---------------------------------------------------------------------------
 
+
 def test_begin_turn_arms_collection_and_take_drains(tmp_path):
     """A turn's events are collectable in memory and consumed exactly once."""
     import harnessfix.tracing as tracing
@@ -212,14 +223,23 @@ def test_begin_turn_arms_collection_and_take_drains(tmp_path):
     try:
         writer = TraceWriter(task_id="tt1", directory=tmp_path)
         writer.emit_task_begin("do the thing")
-        writer.emit({"kind": KIND_TOOL_RESULT, "layer": "tool_interface",
-                     "tool": "run", "duration_s": 5.0})
-        writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
-                     "outcome": "completed"})
+        writer.emit(
+            {
+                "kind": KIND_TOOL_RESULT,
+                "layer": "tool_interface",
+                "tool": "run",
+                "duration_s": 5.0,
+            }
+        )
+        writer.emit(
+            {"kind": KIND_LOOP_END, "layer": "lifecycle", "outcome": "completed"}
+        )
 
         peeked = tracing.current_turn_events()
         assert [e["kind"] for e in peeked] == [
-            "task_begin", KIND_TOOL_RESULT, KIND_LOOP_END,
+            "task_begin",
+            KIND_TOOL_RESULT,
+            KIND_LOOP_END,
         ], "the buffer must hold the records as written, in order"
         assert peeked[0]["task_id"] == "tt1"
         # A peek must NOT consume the turn's events.
@@ -238,8 +258,7 @@ def test_events_outside_an_armed_turn_are_not_buffered(tmp_path):
 
     tracing.take_turn_events()  # make sure no turn is armed (defensive)
     writer = TraceWriter(task_id="tt2", directory=tmp_path)
-    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
-                 "outcome": "completed"})
+    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle", "outcome": "completed"})
 
     assert writer.path.is_file(), "the trace file must still be written"
     assert tracing.current_turn_events() == []
@@ -252,8 +271,7 @@ def test_begin_turn_clears_previous_turns_events(tmp_path):
 
     tracing.begin_turn()
     writer = TraceWriter(task_id="tt3", directory=tmp_path)
-    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
-                 "outcome": "completed"})
+    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle", "outcome": "completed"})
 
     tracing.begin_turn()  # next turn starts
     assert tracing.current_turn_events() == []
@@ -268,10 +286,12 @@ def test_turn_buffer_is_bounded_and_keeps_newest(tmp_path, monkeypatch):
     try:
         writer = TraceWriter(task_id="tt4", directory=tmp_path)
         for i in range(8):
-            writer.emit({"kind": KIND_TOOL_RESULT, "layer": "tool_interface",
-                         "iteration": i})
-        writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
-                     "outcome": "completed"})
+            writer.emit(
+                {"kind": KIND_TOOL_RESULT, "layer": "tool_interface", "iteration": i}
+            )
+        writer.emit(
+            {"kind": KIND_LOOP_END, "layer": "lifecycle", "outcome": "completed"}
+        )
 
         events = tracing.current_turn_events()
         assert len(events) == 5, "the buffer must respect TURN_EVENTS_CAP"
@@ -289,8 +309,9 @@ def test_drain_turn_events_is_an_alias_of_take(tmp_path):
     tracing.begin_turn()
     try:
         writer = TraceWriter(task_id="tt5", directory=tmp_path)
-        writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
-                     "outcome": "completed"})
+        writer.emit(
+            {"kind": KIND_LOOP_END, "layer": "lifecycle", "outcome": "completed"}
+        )
         assert [e["task_id"] for e in tracing.drain_turn_events()] == ["tt5"]
         assert tracing.drain_turn_events() == []
     finally:

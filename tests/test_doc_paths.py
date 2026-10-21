@@ -5,6 +5,7 @@ Regression coverage: workflow docs used to be written to the workspace root
 .docs/<YYYY-MM-DD_HH-MM-SS>/ folders — one per run — and readers must find
 the newest run first, with the root kept as a legacy fallback.
 """
+
 from datetime import datetime
 from pathlib import Path
 

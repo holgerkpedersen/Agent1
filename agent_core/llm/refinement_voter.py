@@ -12,6 +12,7 @@ class RefinementVoter:
     def __init__(self, quorum_threshold: float = 0.5) -> None:
         self._votes: dict[str, list[bool]] = defaultdict(list)
         from agent_core.llm.orchestrator import ConsensusVoter
+
         self._consensus = ConsensusVoter(quorum_threshold=quorum_threshold)
 
     def collect_vote(self, refinement_id: str, vote: bool) -> None:

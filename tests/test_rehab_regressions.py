@@ -28,6 +28,7 @@ WS = Path(__file__).resolve().parents[1]
 # static guards: the exact NameError patterns that shipped must stay dead
 # --------------------------------------------------------------------------
 
+
 def _module_source(rel: str) -> str:
     return (WS / rel).read_text(encoding="utf-8")
 
@@ -36,9 +37,7 @@ def test_implement_cmd_imports_difflib_and_has_no_private_alias() -> None:
     src = _module_source("agent_core/commands/implement_cmd.py")
     assert "import difflib" in src
     tree = ast.parse(src)
-    names = {
-        n.id for n in ast.walk(tree) if isinstance(n, ast.Name)
-    }
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
     assert "_difflib" not in names
 
 
@@ -61,7 +60,8 @@ def test_module_similarity_imports_numpy_at_module_level() -> None:
     assert "_numpy(" not in src  # the mis-annotated accessor is gone
     tree = ast.parse(src)
     loads = [
-        n for n in ast.walk(tree)
+        n
+        for n in ast.walk(tree)
         if isinstance(n, ast.Name) and n.id == "np" and isinstance(n.ctx, ast.Load)
     ]
     assert loads, "expected typed `np` usages"
@@ -71,6 +71,7 @@ def test_module_similarity_imports_numpy_at_module_level() -> None:
 # performance_dashboard: importability + TypedDict-safe analytics
 # --------------------------------------------------------------------------
 
+
 def test_performance_dashboard_root_imports_cleanly() -> None:
     for mod in ("performance_dashboard", "performance_dashboard.main"):
         assert mod in sys.modules or __import__(mod)
@@ -79,16 +80,23 @@ def test_performance_dashboard_root_imports_cleanly() -> None:
 def test_root_package_exposes_real_names_not_phantoms() -> None:
     import performance_dashboard as pd
 
-    for name in ("CommandMetric", "TaskMetric", "DatabaseConfig",
-                 "PerformanceThresholds"):
+    for name in (
+        "CommandMetric",
+        "TaskMetric",
+        "DatabaseConfig",
+        "PerformanceThresholds",
+    ):
         assert getattr(pd, name, None) is not None
     with pytest.raises(AttributeError):
         pd.Config  # noqa: B018 - phantom name removed on purpose
 
 
-def test_lazy_attrs_resolve_without_optional_deps(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delitem(sys.modules, "performance_dashboard.collectors.task_collector",
-                        raising=False)
+def test_lazy_attrs_resolve_without_optional_deps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delitem(
+        sys.modules, "performance_dashboard.collectors.task_collector", raising=False
+    )
     import performance_dashboard as pd
 
     assert pd.TaskCollector.__name__ == "TaskCollector"
@@ -102,7 +110,8 @@ def test_command_collector_survives_missing_resource_module() -> None:
     import performance_dashboard.collectors.command_collector as cc
 
     log = cc.parse_execution_logs(
-        "Execution time: 42.0 ms\nMemory usage: 512 KiB\nCommand: build\n")
+        "Execution time: 42.0 ms\nMemory usage: 512 KiB\nCommand: build\n"
+    )
     assert log["execution_time_ms"] == 42.0
     assert log["memory_usage_mb"] == pytest.approx(0.5)
 
@@ -113,12 +122,20 @@ def test_processor_handles_mixed_typeddict_records() -> None:
         calculate_performance_trends,
     )
 
-    cmd = {"execution_time_ms": 100.0, "memory_usage_mb": 32.0,
-           "cpu_utilization_percent": 50.0, "command_name": "c",
-           "return_code": 0}
-    task = {"duration_seconds": 4.0, "success_rate": 1.0,
-            "resource_consumption_units": 2.0, "task_id": "t",
-            "status": "completed"}
+    cmd = {
+        "execution_time_ms": 100.0,
+        "memory_usage_mb": 32.0,
+        "cpu_utilization_percent": 50.0,
+        "command_name": "c",
+        "return_code": 0,
+    }
+    task = {
+        "duration_seconds": 4.0,
+        "success_rate": 1.0,
+        "resource_consumption_units": 2.0,
+        "task_id": "t",
+        "status": "completed",
+    }
     dists = compute_statistical_distributions([cmd, task])
     assert set(dists) == {"command_execution_time", "task_duration"}
     trends = calculate_performance_trends([cmd, task])
@@ -127,16 +144,24 @@ def test_processor_handles_mixed_typeddict_records() -> None:
 
 def test_aggregator_ingests_records_without_isinstance_crash() -> None:
     from performance_dashboard.analytics.aggregator import (
-        AggregationEngine, HierarchicalAggregator,
+        AggregationEngine,
+        HierarchicalAggregator,
     )
 
-    rec = {"timestamp": 1.0,
-           "record_type": {"execution_time_ms": 10.0, "memory_usage_mb": 1.0,
-                           "cpu_utilization_percent": 5.0,
-                           "command_name": "x", "return_code": 0},
-           "source_identifier": "s", "metadata": {}}
+    rec = {
+        "timestamp": 1.0,
+        "record_type": {
+            "execution_time_ms": 10.0,
+            "memory_usage_mb": 1.0,
+            "cpu_utilization_percent": 5.0,
+            "command_name": "x",
+            "return_code": 0,
+        },
+        "source_identifier": "s",
+        "metadata": {},
+    }
     engine = AggregationEngine()
-    assert engine.ingest(rec) is True          # shape check, not isinstance
+    assert engine.ingest(rec) is True  # shape check, not isinstance
     assert engine.ingest({"bogus": True}) is False
     hier = HierarchicalAggregator()
     hier.ingest(rec)
@@ -145,24 +170,33 @@ def test_aggregator_ingests_records_without_isinstance_crash() -> None:
 
 def test_validation_wrappers_exist_and_return_bool() -> None:
     from performance_dashboard.utils.validation import (
-        MetricSchemaValidator, validate_task_metric,
+        MetricSchemaValidator,
+        validate_task_metric,
     )
 
-    good = {"duration_seconds": 1.0, "success_rate": 1.0,
-            "resource_consumption_units": 0.0, "task_id": "t"}
+    good = {
+        "duration_seconds": 1.0,
+        "success_rate": 1.0,
+        "resource_consumption_units": 0.0,
+        "task_id": "t",
+    }
     bad = {**good, "success_rate": 7.0}
     v = MetricSchemaValidator()
     assert validate_task_metric(v, good) is True
-    assert validate_task_metric(v, bad) is False   # bool contract, not raise
+    assert validate_task_metric(v, bad) is False  # bool contract, not raise
 
 
 def test_task_collector_aggregation_end_to_end() -> None:
     from performance_dashboard.collectors.task_collector import TaskCollector
 
     tc = TaskCollector()
-    sub = {"duration_seconds": 2.0, "success_rate": 1.0,
-           "resource_consumption_units": 1.0, "task_id": "s",
-           "status": "completed"}
+    sub = {
+        "duration_seconds": 2.0,
+        "success_rate": 1.0,
+        "resource_consumption_units": 1.0,
+        "task_id": "s",
+        "status": "completed",
+    }
     merged = tc.aggregate_subtask_metrics("parent", sub)
     assert merged is not None
     assert merged["duration_seconds"] == pytest.approx(2.0)

@@ -23,6 +23,7 @@ The fix resolves the flag the way the rest of this repo already resolves
 ``.env`` values (``agent._read_env_value``, ``agent_core/hue/bridge.py``,
 ``conftest._load_env``): **process env wins, else the repo ``.env``**.
 """
+
 from __future__ import annotations
 
 import threading
@@ -83,10 +84,12 @@ def _inbound_threads() -> list[threading.Thread]:
 # The flag resolver
 # ---------------------------------------------------------------------------
 
+
 class TestSyncEnabledResolver:
     def test_dotenv_one_enables(self, tmp_path, monkeypatch):
         """The core regression: .env alone must be enough to enable sync."""
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.setattr(kb, "ENV_FILE_PATH", _write_env(tmp_path, _ENV_ON))
 
         assert kb.sync_enabled() is True
@@ -94,6 +97,7 @@ class TestSyncEnabledResolver:
     def test_process_env_wins_over_dotenv(self, tmp_path, monkeypatch):
         """An explicit export must override the file, not be shadowed by it."""
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.setattr(kb, "ENV_FILE_PATH", _write_env(tmp_path, _ENV_ON))
         monkeypatch.setenv("KANBAN_SYNC_ENABLED", "0")
 
@@ -101,12 +105,14 @@ class TestSyncEnabledResolver:
 
     def test_absent_key_is_disabled(self, tmp_path, monkeypatch):
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.setattr(kb, "ENV_FILE_PATH", _write_env(tmp_path, "OTHER_KEY=1\n"))
 
         assert kb.sync_enabled() is False
 
     def test_missing_env_file_is_disabled(self, monkeypatch):
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.setattr(
             kb, "ENV_FILE_PATH", __import__("pathlib").Path("does-not-exist.env")
         )
@@ -116,8 +122,10 @@ class TestSyncEnabledResolver:
     def test_comments_and_quotes_are_tolerated(self, tmp_path, monkeypatch):
         """Match the repo's .env dialect: '#' comments, quotes, spaces."""
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.setattr(
-            kb, "ENV_FILE_PATH",
+            kb,
+            "ENV_FILE_PATH",
             _write_env(
                 tmp_path,
                 "# KANBAN_SYNC_ENABLED=0  (commented out, must be ignored)\n"
@@ -132,10 +140,12 @@ class TestSyncEnabledResolver:
 # The two real gates must honour the file
 # ---------------------------------------------------------------------------
 
+
 class TestGatesHonourDotenv:
     def test_inbound_boot_starts_from_dotenv(self, tmp_path, monkeypatch):
         """``agent.py:main()`` -> ``start_inbound_processor()`` must honour .env."""
         import harnessfix.kanban_bridge as kb
+
         env = _write_env(tmp_path, "KANBAN_SYNC_ENABLED=1\n")
         monkeypatch.setattr(kb, "ENV_FILE_PATH", env)
 
@@ -150,6 +160,7 @@ class TestGatesHonourDotenv:
         """``issues._should_sync()`` must honour .env or issues never enqueue."""
         import harnessfix.kanban_bridge as kb
         from harnessfix import issues as issue_store
+
         env = _write_env(tmp_path, "KANBAN_SYNC_ENABLED=1\n")
         monkeypatch.setattr(kb, "ENV_FILE_PATH", env)
 
@@ -164,6 +175,7 @@ class TestGatesHonourDotenv:
     def test_outbound_disabled_when_dotenv_says_zero(self, tmp_path, monkeypatch):
         import harnessfix.kanban_bridge as kb
         from harnessfix import issues as issue_store
+
         env = _write_env(tmp_path, "KANBAN_SYNC_ENABLED=0\n")
         monkeypatch.setattr(kb, "ENV_FILE_PATH", env)
 

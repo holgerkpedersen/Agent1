@@ -1,10 +1,10 @@
 """Tests for the MCP calculator server."""
+
 from __future__ import annotations
 
 import json
 from io import StringIO
 from unittest.mock import patch
-
 
 
 def _call_tool(name: str, arguments: dict) -> dict:
@@ -34,6 +34,7 @@ def _is_error(resp: dict) -> bool:
 # -----------------------------------------------------------------------
 # Basic arithmetic
 # -----------------------------------------------------------------------
+
 
 class TestAdd:
     def test_basic(self):
@@ -79,6 +80,7 @@ class TestDivide:
 # Expression calculator
 # -----------------------------------------------------------------------
 
+
 class TestCalculate:
     def test_simple_addition(self):
         assert _text(_call_tool("calculate", {"expression": "2 + 3"})) == "5"
@@ -102,7 +104,9 @@ class TestCalculate:
         assert _text(_call_tool("calculate", {"expression": "-5 + 3"})) == "-2"
 
     def test_nested_expression(self):
-        assert _text(_call_tool("calculate", {"expression": "(1 + 2) * (3 + 4)"})) == "21"
+        assert (
+            _text(_call_tool("calculate", {"expression": "(1 + 2) * (3 + 4)"})) == "21"
+        )
 
     def test_invalid_expression(self):
         resp = _call_tool("calculate", {"expression": "import os"})
@@ -116,6 +120,7 @@ class TestCalculate:
 # -----------------------------------------------------------------------
 # Error handling
 # -----------------------------------------------------------------------
+
 
 class TestErrors:
     def test_unknown_tool(self):
@@ -131,19 +136,23 @@ class TestErrors:
 # MCP protocol
 # -----------------------------------------------------------------------
 
+
 class TestMcpProtocol:
     def test_initialize(self):
         from mcp_servers.calculator import _handle
-        resp = _handle({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "test", "version": "0.1"},
-            },
-        })
+
+        resp = _handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "0.1"},
+                },
+            }
+        )
         assert resp is not None
         result = resp["result"]
         assert result["protocolVersion"] == "2024-11-05"
@@ -152,12 +161,15 @@ class TestMcpProtocol:
 
     def test_tools_list(self):
         from mcp_servers.calculator import _handle
-        resp = _handle({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {},
-        })
+
+        resp = _handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {},
+            }
+        )
         assert resp is not None
         tools = resp["result"]["tools"]
         names = {t["name"] for t in tools}
@@ -165,6 +177,7 @@ class TestMcpProtocol:
 
     def test_tool_schemas_have_required_fields(self):
         from mcp_servers.calculator import TOOLS
+
         for tool in TOOLS:
             assert "name" in tool
             assert "description" in tool
@@ -176,20 +189,26 @@ class TestMcpProtocol:
 
     def test_notifications_no_response(self):
         from mcp_servers.calculator import _handle
-        resp = _handle({
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-        })
+
+        resp = _handle(
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+            }
+        )
         assert resp is None
 
     def test_unknown_method_returns_error(self):
         from mcp_servers.calculator import _handle
-        resp = _handle({
-            "jsonrpc": "2.0",
-            "id": 99,
-            "method": "bogus/method",
-            "params": {},
-        })
+
+        resp = _handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 99,
+                "method": "bogus/method",
+                "params": {},
+            }
+        )
         assert resp is not None
         assert resp["error"]["code"] == -32601
 
@@ -198,16 +217,19 @@ class TestMcpProtocol:
 # Main loop
 # -----------------------------------------------------------------------
 
+
 class TestMain:
     def test_main_reads_and_responds(self, capsys):
         from mcp_servers.calculator import main
 
-        request = json.dumps({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": "add", "arguments": {"a": 10, "b": 20}},
-        })
+        request = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "add", "arguments": {"a": 10, "b": 20}},
+            }
+        )
         with patch("sys.stdin", StringIO(request + "\n")):
             main()
 

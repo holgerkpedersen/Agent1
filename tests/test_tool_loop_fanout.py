@@ -32,6 +32,7 @@ from agent_core.llm.tool_loop import (
 # Helpers (mirrors test_tool_loop_nlp conventions)
 # ---------------------------------------------------------------------------
 
+
 class _ScriptedLLM:
     """Fake LLM returning a fixed sequence of responses.
 
@@ -55,14 +56,16 @@ class _ScriptedLLM:
                     tool_name, args = item
                 else:
                     tool_name, args = item, {}
-                tool_calls.append({
-                    "id": f"call_{i}",
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(args),
-                    },
-                })
+                tool_calls.append(
+                    {
+                        "id": f"call_{i}",
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(args),
+                        },
+                    }
+                )
             msg = {
                 "role": "assistant",
                 "content": "",
@@ -75,14 +78,16 @@ class _ScriptedLLM:
             msg = {
                 "role": "assistant",
                 "content": "",
-                "tool_calls": [{
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(args),
-                    },
-                }],
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(args),
+                        },
+                    }
+                ],
             }
             return json.dumps(msg)
         # Plain text answer
@@ -99,27 +104,33 @@ def _make_llm_chat_fn(fake_llm):
         if isinstance(parsed, dict) and parsed.get("tool_calls"):
             parsed.pop("role", None)
             updated = list(messages)
-            updated.append({"role": "assistant", "content": parsed.get("content") or "", **parsed})
+            updated.append(
+                {"role": "assistant", "content": parsed.get("content") or "", **parsed}
+            )
             return str(parsed.get("content") or ""), updated
         updated = list(messages)
         updated.append({"role": "assistant", "content": raw})
         return raw, updated
+
     return llm_chat_fn
 
 
 def _loop_runner_sync(runner, fake_llm, execute_tool, **kwargs):
-    return asyncio.run(runner.run(
-        messages=[{"role": "user", "content": "do the thing"}],
-        llm_chat_fn=_make_llm_chat_fn(fake_llm),
-        execute_tool_fn=execute_tool,
-        tools=[],  # tools not needed for scripted LLM
-        **kwargs,
-    ))
+    return asyncio.run(
+        runner.run(
+            messages=[{"role": "user", "content": "do the thing"}],
+            llm_chat_fn=_make_llm_chat_fn(fake_llm),
+            execute_tool_fn=execute_tool,
+            tools=[],  # tools not needed for scripted LLM
+            **kwargs,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
 # READONLY_FANOUT_TOOLS sanity checks
 # ---------------------------------------------------------------------------
+
 
 class TestReadonlyFanoutToolsSet:
     """Verify the constant is correctly derived."""
@@ -137,12 +148,15 @@ class TestReadonlyFanoutToolsSet:
 
     def test_excludes_mutating_tools(self):
         for name in ("write", "edit", "fix"):
-            assert name not in READONLY_FANOUT_TOOLS, f"{name} should not be in fan-out set"
+            assert name not in READONLY_FANOUT_TOOLS, (
+                f"{name} should not be in fan-out set"
+            )
 
 
 # ---------------------------------------------------------------------------
 # Concurrent execution tests
 # ---------------------------------------------------------------------------
+
 
 class TestFanoutConcurrency:
     """Read-only calls in a single batch must run concurrently."""
@@ -159,10 +173,12 @@ class TestFanoutConcurrency:
             execution_times.append((name, start, end))
             return f"result-of-{name}-{args.get('path', '')}"
 
-        fake = _ScriptedLLM([
-            ([("read", {"path": "a.py"}), ("read", {"path": "b.py"})], []),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ([("read", {"path": "a.py"}), ("read", {"path": "b.py"})], []),
+                "Done.",
+            ]
+        )
         runner = ToolLoopRunner(max_iterations=5)
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
 
@@ -171,7 +187,8 @@ class TestFanoutConcurrency:
         # If concurrent, the second call's start should be BEFORE the first's end.
         (_, s1, e1), (_, s2, e2) = execution_times
         assert s2 < e1 or s1 < e2, (
-            "Read-only calls should overlap (run concurrently), but they ran sequentially"
+            "Read-only calls should overlap (run concurrently),"
+            " but they ran sequentially"
         )
 
     def test_three_readonly_calls_all_run_concurrently(self):
@@ -185,14 +202,19 @@ class TestFanoutConcurrency:
             execution_times.append((name, start, end))
             return f"result-{args.get('path', '')}"
 
-        fake = _ScriptedLLM([
-            ([
-                ("read", {"path": "a.py"}),
-                ("read", {"path": "b.py"}),
-                ("read", {"path": "c.py"}),
-            ], []),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                (
+                    [
+                        ("read", {"path": "a.py"}),
+                        ("read", {"path": "b.py"}),
+                        ("read", {"path": "c.py"}),
+                    ],
+                    [],
+                ),
+                "Done.",
+            ]
+        )
         runner = ToolLoopRunner(max_iterations=5)
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
 
@@ -215,10 +237,12 @@ class TestFanoutConcurrency:
             executed.append(name)
             return "result"
 
-        fake = _ScriptedLLM([
-            ([("read", {"path": "a.py"})], []),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ([("read", {"path": "a.py"})], []),
+                "Done.",
+            ]
+        )
         runner = ToolLoopRunner(max_iterations=5)
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
 
@@ -229,6 +253,7 @@ class TestFanoutConcurrency:
 # ---------------------------------------------------------------------------
 # Mutating tools stay sequential
 # ---------------------------------------------------------------------------
+
 
 class TestMutatingToolsSequential:
     """write/edit/fix must NOT be fan-out'd."""
@@ -245,10 +270,18 @@ class TestMutatingToolsSequential:
             execution_log.append(("end", name))
             return "ok"
 
-        fake = _ScriptedLLM([
-            ([("read", {"path": "a.py"}), ("write", {"path": "b.py", "content": "x"})], []),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                (
+                    [
+                        ("read", {"path": "a.py"}),
+                        ("write", {"path": "b.py", "content": "x"}),
+                    ],
+                    [],
+                ),
+                "Done.",
+            ]
+        )
         runner = ToolLoopRunner(max_iterations=5)
         final_text, _ = _loop_runner_sync(runner, fake, execute_tool)
 
@@ -269,23 +302,32 @@ class TestMutatingToolsSequential:
             return "ok"
 
         # Two writes — they should be sequential, so end1 < start2 (or very close)
-        fake = _ScriptedLLM([
-            ([("write", {"path": "a.py", "content": "x"}),
-              ("write", {"path": "b.py", "content": "y"})], []),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                (
+                    [
+                        ("write", {"path": "a.py", "content": "x"}),
+                        ("write", {"path": "b.py", "content": "y"}),
+                    ],
+                    [],
+                ),
+                "Done.",
+            ]
+        )
         runner = ToolLoopRunner(max_iterations=5)
         final_text, _ = _loop_runner_sync(runner, fake, execute_tool)
 
         assert final_text == "Done."
         (_, s1, e1), (_, s2, e2) = execution_times
-        # Sequential: second starts after first ends (with tiny margin for asyncio scheduling).
+        # Sequential: second starts after first ends
+        # (with tiny margin for asyncio scheduling).
         assert s2 >= e1 - 0.01, "Two writes should be sequential, not concurrent"
 
 
 # ---------------------------------------------------------------------------
 # Message ordering preserved
 # ---------------------------------------------------------------------------
+
 
 class TestMessageOrdering:
     """Tool results must appear in original tool_call_id order, not
@@ -306,18 +348,23 @@ class TestMessageOrdering:
             completion_order.append(path)
             return f"content-of-{path}"
 
-        fake = _ScriptedLLM([
-            ([("read", {"path": "a.py"}), ("read", {"path": "b.py"})], []),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ([("read", {"path": "a.py"}), ("read", {"path": "b.py"})], []),
+                "Done.",
+            ]
+        )
         runner = ToolLoopRunner(max_iterations=5)
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
 
         assert final_text == "Done."
         # completion_order shows who finished first (gather order).
-        assert completion_order == ["b.py", "a.py"], "b should finish first due to shorter sleep"
+        assert completion_order == ["b.py", "a.py"], (
+            "b should finish first due to shorter sleep"
+        )
 
-        # But tool messages must be in original call_id order: call_0 (a) before call_1 (b).
+        # But tool messages must be in original call_id order:
+        # call_0 (a) before call_1 (b).
         tool_msgs = [m for m in messages if m.get("role") == "tool"]
         assert len(tool_msgs) == 2
         assert tool_msgs[0]["tool_call_id"] == "call_0"  # a.py
@@ -329,6 +376,7 @@ class TestMessageOrdering:
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestFanoutEdgeCases:
     def test_all_readonly_no_mutating(self):
@@ -342,23 +390,32 @@ class TestFanoutEdgeCases:
             execution_times.append((name, start, end))
             return "ok"
 
-        fake = _ScriptedLLM([
-            ([
-                ("read", {"path": "a.py"}),
-                ("search", {"query": "foo"}),
-                ("list_files", {"path": "."}),
-                ("diff", {"path": "a.py"}),
-            ], []),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                (
+                    [
+                        ("read", {"path": "a.py"}),
+                        ("search", {"query": "foo"}),
+                        ("list_files", {"path": "."}),
+                        ("diff", {"path": "a.py"}),
+                    ],
+                    [],
+                ),
+                "Done.",
+            ]
+        )
         runner = ToolLoopRunner(max_iterations=5)
         final_text, _ = _loop_runner_sync(runner, fake, execute_tool)
 
         assert final_text == "Done."
         assert len(execution_times) == 4
         # Total wall time should be ~0.05s (concurrent), not ~0.2s (sequential).
-        wall_time = max(t[2] for t in execution_times) - min(t[1] for t in execution_times)
-        assert wall_time < 0.15, f"Fan-out should be concurrent; wall time was {wall_time:.3f}s"
+        wall_time = max(t[2] for t in execution_times) - min(
+            t[1] for t in execution_times
+        )
+        assert wall_time < 0.15, (
+            f"Fan-out should be concurrent; wall time was {wall_time:.3f}s"
+        )
 
     def test_mixed_readonly_and_muting_batch(self):
         """Batch with 2 reads + 1 write: reads concurrent, write sequential after."""
@@ -369,14 +426,19 @@ class TestFanoutEdgeCases:
             execution_log.append((name, "end", time.monotonic()))
             return "ok"
 
-        fake = _ScriptedLLM([
-            ([
-                ("read", {"path": "a.py"}),
-                ("read", {"path": "b.py"}),
-                ("write", {"path": "c.py", "content": "x"}),
-            ], []),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                (
+                    [
+                        ("read", {"path": "a.py"}),
+                        ("read", {"path": "b.py"}),
+                        ("write", {"path": "c.py", "content": "x"}),
+                    ],
+                    [],
+                ),
+                "Done.",
+            ]
+        )
         runner = ToolLoopRunner(max_iterations=5)
         final_text, _ = _loop_runner_sync(runner, fake, execute_tool)
 
@@ -395,10 +457,12 @@ class TestFanoutEdgeCases:
             executed.append(name)
             return f"result-{name}"
 
-        fake = _ScriptedLLM([
-            ([("read", {"path": "a.py"}), ("search", {"query": "foo"})], []),
-            "Found it.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ([("read", {"path": "a.py"}), ("search", {"query": "foo"})], []),
+                "Found it.",
+            ]
+        )
         runner = ToolLoopRunner(max_iterations=5)
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
 

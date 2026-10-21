@@ -13,6 +13,7 @@ STRUCTURE instead of text:
 Both are read-only, stdlib-only, and workspace-scoped by the agent's path
 resolution — same safety envelope as the existing ``search`` tool.
 """
+
 from __future__ import annotations
 
 import ast
@@ -25,8 +26,17 @@ MAX_REFERENCES = 60
 #: Files bigger than this are skipped by the workspace scan (generated blobs).
 _MAX_SCAN_BYTES = 1_500_000
 
-_SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", ".mypy_cache",
-              ".ruff_cache", "backups", ".docs", "node_modules", ".venv"}
+_SKIP_DIRS = {
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "backups",
+    ".docs",
+    "node_modules",
+    ".venv",
+}
 
 _DEF_KINDS = {
     ast.FunctionDef: "def",
@@ -149,7 +159,9 @@ def _word_is_symbol(word: str, symbol: str) -> bool:
 
 
 def collect_references(
-    symbol: str, root: str, max_results: int = MAX_REFERENCES,
+    symbol: str,
+    root: str,
+    max_results: int = MAX_REFERENCES,
 ) -> str:
     """Scan the workspace for *symbol* uses; return a capped file:line list.
 
@@ -162,9 +174,7 @@ def collect_references(
     if not symbol or not symbol.replace("_", "").isalnum():
         return f"Invalid symbol name: {symbol!r}"
 
-    pattern = re.compile(
-        r"(?<![\w.])" + re.escape(symbol) + r"(?![\w])"
-    )
+    pattern = re.compile(r"(?<![\w.])" + re.escape(symbol) + r"(?![\w])")
     hits: list[tuple[str, int, str]] = []
     truncated_files = 0
     for path in _iter_py_files(root):

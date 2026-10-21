@@ -23,7 +23,7 @@ def normalize_patch_block(patch_text: str) -> str:
     text = patch_text.strip()
     fence = re.match(r"^```[a-zA-Z0-9_-]*\s*(\n)", text)
     if fence:
-        text = text[fence.end():]
+        text = text[fence.end() :]
     if text.rstrip().endswith("```"):
         text = text[: text.rfind("```")]
     first = text.find("@@")
@@ -34,10 +34,10 @@ def normalize_patch_block(patch_text: str) -> str:
 
 def _strip_numbered_prefix(line: str) -> str:
     """Strip ``46 |`` artifacts that LLMs copy from numbered context."""
-    m = re.match(r'^(\s*)([\-+ ]?)\s*\d+\s*\|\s*', line)
+    m = re.match(r"^(\s*)([\-+ ]?)\s*\d+\s*\|\s*", line)
     if m:
-        marker = m.group(2) or ' '
-        return m.group(1) + marker + line[m.end():]
+        marker = m.group(2) or " "
+        return m.group(1) + marker + line[m.end() :]
     return line
 
 
@@ -70,7 +70,7 @@ def _reindent(text: str, lead: int) -> str:
     stripped = text.lstrip()
     if not stripped:
         return text
-    return ' ' * max(0, lead) + stripped
+    return " " * max(0, lead) + stripped
 
 
 def split_patch_hunks(patch_text: str) -> list[tuple[int, list[tuple[str, str]]]]:
@@ -86,7 +86,9 @@ def split_patch_hunks(patch_text: str) -> list[tuple[int, list[tuple[str, str]]]
         return []
     parts = re.split(r"(?=@@\s*-\d+)", text)
     hunks: list[tuple[int, list[tuple[str, str]]]] = []
-    _ID_RE = re.compile(r"@@\s*-(\d+)(?:,(\d+))?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@[^\n]*\n(.*)", re.DOTALL)
+    _ID_RE = re.compile(
+        r"@@\s*-(\d+)(?:,(\d+))?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@[^\n]*\n(.*)", re.DOTALL
+    )
     for part in parts:
         part = part.strip("\n")
         if not part:
@@ -127,36 +129,42 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
     # Parse hunks: @@ -start,count +start,count @@ ... @@
     # Also lenient: @@ -start @@ (missing +start part)
     hunks = []
-    for m in re.finditer(r'@@\s*-(\d+)(?:,\d+)?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@[^\n]*\n(.*?)(?=@@|\Z)', patch_text, re.DOTALL):
+    for m in re.finditer(
+        r"@@\s*-(\d+)(?:,\d+)?(?:\s*\+(\d+)(?:,\d+)?)?\s*@@[^\n]*\n(.*?)(?=@@|\Z)",
+        patch_text,
+        re.DOTALL,
+    ):
         start = int(m.group(1))
-        body = m.group(3).strip('\n')
+        body = m.group(3).strip("\n")
         chunks: list[tuple[str, str]] = []
-        for line in body.split('\n'):
-            line = line.rstrip('\r')
+        for line in body.split("\n"):
+            line = line.rstrip("\r")
             line = _strip_numbered_prefix(line)
-            if line.startswith('-'):
-                chunks.append(('-', line[1:]))
-            elif line.startswith('+'):
-                chunks.append(('+', line[1:]))
-            elif line.startswith(' '):
-                chunks.append((' ', line[1:]))
+            if line.startswith("-"):
+                chunks.append(("-", line[1:]))
+            elif line.startswith("+"):
+                chunks.append(("+", line[1:]))
+            elif line.startswith(" "):
+                chunks.append((" ", line[1:]))
         if chunks:
             hunks.append((start, chunks))
     if not hunks:
         return False, "Could not parse patch"
 
     # Filter out broken hunks (incomplete: has - but no +, empty + lines, or incomplete lines)
-    incomplete_ops = ('=', '+', '-', '*', '/')
+    incomplete_ops = ("=", "+", "-", "*", "/")
     valid_hunks = []
     for start, chunks in hunks:
-        has_minus = any(op == '-' for op, _ in chunks)
-        has_plus = any(op == '+' for op, _ in chunks)
+        has_minus = any(op == "-" for op, _ in chunks)
+        has_plus = any(op == "+" for op, _ in chunks)
         if not has_minus and not has_plus:
             continue
-        if any(op == '+' and not text.strip() for op, text in chunks):
+        if any(op == "+" and not text.strip() for op, text in chunks):
             continue  # Empty replacement — skip
         # Filter incomplete lines (trailing operators like =, +, -, etc.)
-        if any(op == '+' and text.rstrip().endswith(incomplete_ops) for op, text in chunks):
+        if any(
+            op == "+" and text.rstrip().endswith(incomplete_ops) for op, text in chunks
+        ):
             continue  # Incomplete replacement — skip
         valid_hunks.append((start, chunks))
 
@@ -173,33 +181,36 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
         filtered_chunks = []
         sampled: list[int] = []
         for op, text in chunks:
-            if op == '-':
+            if op == "-":
                 if idx < 0 or idx >= len(original_lines):
-                    return False, f"Patch mismatch at line {idx+1}: line out of range"
-                actual = original_lines[idx].rstrip('\r\n')
+                    return False, f"Patch mismatch at line {idx + 1}: line out of range"
+                actual = original_lines[idx].rstrip("\r\n")
                 patch_lead = len(text) - len(text.lstrip())
                 file_lead = len(actual) - len(actual.lstrip())
                 if actual.strip() != text.strip():
-                    return False, f"Patch mismatch at line {idx+1}: expected '{text[:60]}'"
+                    return (
+                        False,
+                        f"Patch mismatch at line {idx + 1}: expected '{text[:60]}'",
+                    )
                 sampled.append(patch_lead - file_lead)
                 filtered_chunks.append((op, text))
                 idx += 1
-            elif op == ' ':
+            elif op == " ":
                 if idx < 0 or idx >= len(original_lines):
                     idx += 1
                     continue  # Skip out-of-range context
-                actual = original_lines[idx].rstrip('\r\n')
+                actual = original_lines[idx].rstrip("\r\n")
                 # Normalize for comparison: strip trailing whitespace
                 actual_norm = actual.rstrip()
                 text_norm = text.rstrip()
                 if actual_norm == text_norm:
                     # Exact match (after trailing-ws normalization)
-                    filtered_chunks.append((' ', actual))  # Use file's version
+                    filtered_chunks.append((" ", actual))  # Use file's version
                     idx += 1
                 elif actual_norm.lstrip() == text_norm.lstrip():
                     # Indentation-only difference (LLM indentation drift):
                     # use the file's actual line to preserve correct indentation
-                    filtered_chunks.append((' ', actual))
+                    filtered_chunks.append((" ", actual))
                     idx += 1
                 else:
                     # Content mismatch — skip mismatched context line
@@ -214,22 +225,22 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
         delta = hunk_deltas.get(start, 0)
         if delta > 0:
             text = _reindent(text, len(text) - len(text.lstrip()) - delta)
-        elif delta < 0 and text.startswith(' '):
+        elif delta < 0 and text.startswith(" "):
             text = text[1:]
         return text
 
     # Apply hunks in reverse order.  Content is applied verbatim (only the
     # marker padding is stripped) — indentation is never rewritten here; the
     # syntax check below rejects patches with broken indentation.
-    result = [line + '\n' for line in original_lines]
+    result = [line + "\n" for line in original_lines]
     for start, chunks in reversed(valid_hunks):
-        old_lines = [text for op, text in chunks if op in ('-', ' ')]
+        old_lines = [text for op, text in chunks if op in ("-", " ")]
         new_lines = []
         i = 0
         while i < len(chunks):
             op, text = chunks[i]
-            if op == '-':
-                if i + 1 < len(chunks) and chunks[i + 1][0] == '+':
+            if op == "-":
+                if i + 1 < len(chunks) and chunks[i + 1][0] == "+":
                     # Paired removal + addition: the + line is applied verbatim.
                     new_lines.append(_render_plus(start, chunks[i + 1][1]))
                     i += 2  # Skip both - and + lines
@@ -238,26 +249,26 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
                     # is dropped, not kept — keeping it would resurrect the
                     # removed line right next to its replacement.
                     i += 1
-            elif op == '+':
+            elif op == "+":
                 new_lines.append(_render_plus(start, text))
                 i += 1
-            elif op == ' ':
+            elif op == " ":
                 new_lines.append(text)
                 i += 1
 
         idx = start - 1
         if idx + len(old_lines) <= len(result):
-            del result[idx:idx + len(old_lines)]
+            del result[idx : idx + len(old_lines)]
             for i, text in enumerate(new_lines):
-                result.insert(idx + i, text + '\n')
+                result.insert(idx + i, text + "\n")
 
     # Syntax check (in-process; equivalent to py_compile for syntax errors)
     try:
-        compile(''.join(result), "<patch>", "exec")
+        compile("".join(result), "<patch>", "exec")
     except SyntaxError as e:
         return False, f"Patch breaks syntax: {e.msg} (line {e.lineno})"
 
-    return True, ''.join(result)
+    return True, "".join(result)
 
 
 def compute_diff(old_text: str, new_text: str, filename: str = "<file>") -> str:
@@ -271,7 +282,8 @@ def compute_diff(old_text: str, new_text: str, filename: str = "<file>") -> str:
     old_lines = old_text.splitlines(keepends=True)
     new_lines = new_text.splitlines(keepends=True)
     diff = difflib.unified_diff(
-        old_lines, new_lines,
+        old_lines,
+        new_lines,
         fromfile=f"a/{filename}",
         tofile=f"b/{filename}",
         lineterm="",
@@ -287,8 +299,8 @@ def normalize_ctx(text: str) -> str:
 def split_source_lines(text: str) -> list[str]:
     """Split file text into lines, dropping the trailing '' artifact that
     ``text.split('\\n')`` leaves when the file ends with a newline."""
-    lines = text.split('\n')
-    if lines and lines[-1] == '':
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
         lines.pop()
     return lines
 
@@ -322,8 +334,9 @@ def _run_score(lines: list[str], old_lines: list[str], start: int) -> float | No
     return sum(matched) / len(matched)
 
 
-def _find_hunk_anchor(lines: list[str], chunks: list[tuple[str, str]],
-                      claimed_start: int) -> int | None:
+def _find_hunk_anchor(
+    lines: list[str], chunks: list[tuple[str, str]], claimed_start: int
+) -> int | None:
     """Locate the ('-'/' ') line that the first old line of *chunks* anchors
     to in *lines*, searching a ±60-line window around *claimed_start*.
 
@@ -344,7 +357,7 @@ def _find_hunk_anchor(lines: list[str], chunks: list[tuple[str, str]],
 
     Returns the 0-based index or None.
     """
-    old_lines = [text for op, text in chunks if op in ('-', ' ')]
+    old_lines = [text for op, text in chunks if op in ("-", " ")]
     if not old_lines:
         return None
     center = max(0, (claimed_start or 1) - 1)
@@ -371,7 +384,10 @@ def _find_hunk_anchor(lines: list[str], chunks: list[tuple[str, str]],
         exact = [a for a in anchors if _match_score(lines[a[0]], old_lines[0]) == 1.0]
         if exact:
             exact.sort(key=lambda t: -t[1])
-            if len(exact) == 1 or max(a[0] for a in exact) - min(a[0] for a in exact) <= 10:
+            if (
+                len(exact) == 1
+                or max(a[0] for a in exact) - min(a[0] for a in exact) <= 10
+            ):
                 return exact[0][0]
             return None  # two verbatim copies far apart — genuinely ambiguous
         for idx, score in anchors[1:]:
@@ -380,7 +396,9 @@ def _find_hunk_anchor(lines: list[str], chunks: list[tuple[str, str]],
     return best_idx
 
 
-def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
+def apply_anchored_patch(
+    patch_text: str, original_lines: list[str]
+) -> tuple[bool, str]:
     """Content-anchored fallback for ``apply_patch``.
 
     Same safety rules (no removal-only hunks, no empty replacements, final
@@ -390,16 +408,18 @@ def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bo
     glued headers.  Falls cheap when the content cannot be anchored
     unambiguously rather than risk a wrong edit.
     """
-    incomplete_ops = ('=', '+', '-', '*', '/')
+    incomplete_ops = ("=", "+", "-", "*", "/")
     valid: list[tuple[int, list[tuple[str, str]]]] = []
     for claimed, chunks in split_patch_hunks(patch_text):
-        has_minus = any(op == '-' for op, _ in chunks)
-        has_plus = any(op == '+' for op, _ in chunks)
+        has_minus = any(op == "-" for op, _ in chunks)
+        has_plus = any(op == "+" for op, _ in chunks)
         if not has_minus and not has_plus:
             continue  # context-only hunk — no edit; do not let it delete
-        if any(op == '+' and not text.strip() for op, text in chunks):
+        if any(op == "+" and not text.strip() for op, text in chunks):
             continue
-        if any(op == '+' and text.rstrip().endswith(incomplete_ops) for op, text in chunks):
+        if any(
+            op == "+" and text.rstrip().endswith(incomplete_ops) for op, text in chunks
+        ):
             continue
         valid.append((claimed, chunks))
     if not valid:
@@ -409,24 +429,29 @@ def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bo
     for claimed, chunks in valid:
         anchor = _find_hunk_anchor(original_lines, chunks, claimed)
         if anchor is None:
-            return False, ("Cannot anchor patch content in the file around "
-                           f"line {claimed}")
+            return False, (
+                f"Cannot anchor patch content in the file around line {claimed}"
+            )
         # Verify the whole old run verbatim (strip-compare) at the anchor and
         # detect the LLM padding-space convention from the first '-'/' ' line.
         idx = anchor
         sampled: list[int] = []
         for op, text in chunks:
-            if op == '-':
-                actual = original_lines[idx].rstrip('\r\n')
+            if op == "-":
+                actual = original_lines[idx].rstrip("\r\n")
                 patch_lead = len(text) - len(text.lstrip())
                 file_lead = len(actual) - len(actual.lstrip())
                 if actual.strip() != text.strip():
-                    return False, (f"Patch mismatch at line {idx + 1}: "
-                                   f"expected '{text[:60]}'")
+                    return False, (
+                        f"Patch mismatch at line {idx + 1}: expected '{text[:60]}'"
+                    )
                 sampled.append(patch_lead - file_lead)
                 idx += 1
-            elif op == ' ':
-                if idx < len(original_lines) and original_lines[idx].rstrip('\r\n').strip() == text.strip():
+            elif op == " ":
+                if (
+                    idx < len(original_lines)
+                    and original_lines[idx].rstrip("\r\n").strip() == text.strip()
+                ):
                     idx += 1
         delta = _mode_delta(sampled)
         old_len = idx - anchor
@@ -441,31 +466,31 @@ def apply_anchored_patch(patch_text: str, original_lines: list[str]) -> tuple[bo
         new_lines: list[str] = []
         k = anchor
         for op, text in chunks:
-            if op == ' ':
+            if op == " ":
                 if k < len(original_lines):
                     new_lines.append(original_lines[k])
                 k += 1
-            elif op == '-':
+            elif op == "-":
                 k += 1
-            elif op == '+':
+            elif op == "+":
                 if delta > 0:
                     text = _reindent(text, len(text) - len(text.lstrip()) - delta)
-                elif delta < 0 and text.startswith(' '):
+                elif delta < 0 and text.startswith(" "):
                     text = text[1:]
                 new_lines.append(text)
         edits.append((anchor, old_len, new_lines))
 
     # Apply bottom-up so earlier anchors are never disturbed.
-    result = [line + '\n' for line in original_lines]
+    result = [line + "\n" for line in original_lines]
     for anchor, old_len, new_lines in sorted(edits, key=lambda e: e[0], reverse=True):
-        del result[anchor:anchor + old_len]
+        del result[anchor : anchor + old_len]
         for i, text in enumerate(new_lines):
-            result.insert(anchor + i, text + '\n')
+            result.insert(anchor + i, text + "\n")
 
     # Syntax check (in-process; equivalent to py_compile for syntax errors).
     try:
-        compile(''.join(result), "<patch>", "exec")
+        compile("".join(result), "<patch>", "exec")
     except SyntaxError as e:
         return False, f"Patch breaks syntax: {e.msg} (line {e.lineno})"
 
-    return True, ''.join(result)
+    return True, "".join(result)

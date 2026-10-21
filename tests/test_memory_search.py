@@ -24,6 +24,7 @@ The server now keeps an FTS5 index in sync with the table and ranks hits with
 
 FTS5 was verified available on this interpreter (SQLite 3.49.1).
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -49,15 +50,21 @@ def db(tmp_path: Path, monkeypatch) -> Path:
     return path
 
 
-def _add(path: Path, action: str, outcome: float, context: str,
-         success: int | None = None) -> None:
+def _add(
+    path: Path, action: str, outcome: float, context: str, success: int | None = None
+) -> None:
     conn = sqlite3.connect(str(path))
     try:
         conn.execute(
             "INSERT INTO experiences (timestamp, action, outcome, context, success) "
             "VALUES (?, ?, ?, ?, ?)",
-            ("2026-10-01T00:00:00", action, outcome, context,
-             1 if success is None else success),
+            (
+                "2026-10-01T00:00:00",
+                action,
+                outcome,
+                context,
+                1 if success is None else success,
+            ),
         )
         conn.commit()
     finally:
@@ -70,16 +77,14 @@ class TestTokenMatching:
         columns — the old LIKE required one contiguous phrase in one column."""
         _add(db, "refactor module", 1.0, '{"note": "auth flow needs work"}')
 
-        out = memory._execute_tool(
-            "search_experiences", {"query": "refactor auth"})
+        out = memory._execute_tool("search_experiences", {"query": "refactor auth"})
 
         assert "No experiences matching" not in out
         assert "refactor module" in out
 
     def test_matches_terms_in_any_order(self, db: Path) -> None:
         _add(db, "auth refactor", 1.0, "{}")
-        out = memory._execute_tool(
-            "search_experiences", {"query": "auth refactor"})
+        out = memory._execute_tool("search_experiences", {"query": "auth refactor"})
         assert "auth refactor" in out
 
     def test_all_tokens_must_be_present(self, db: Path) -> None:
@@ -88,16 +93,17 @@ class TestTokenMatching:
         _add(db, "payment gateway", 1.0, "{}")
 
         out = memory._execute_tool(
-            "search_experiences", {"query": "auth unrelatedterm"})
+            "search_experiences", {"query": "auth unrelatedterm"}
+        )
 
         assert "No experiences matching" in out
 
     def test_list_experiences_search_also_matches_tokens_across_columns(
-        self, db: Path,
+        self,
+        db: Path,
     ) -> None:
         _add(db, "refactor module", 1.0, '{"note": "auth flow"}')
-        out = memory._execute_tool(
-            "list_experiences", {"search": "refactor auth"})
+        out = memory._execute_tool("list_experiences", {"search": "refactor auth"})
         assert "refactor module" in out
 
 
@@ -107,11 +113,14 @@ class TestRelevanceRanking:
         mentions the terms once — ORDER BY outcome DESC put the latter first."""
         _add(db, "generic run", 1.0, '{"note": "sqlite fts5"}')
         for i in range(5):
-            _add(db, f"run {i}", 0.0,
-                 '{"note": "sqlite fts5 bm25 ranking sqlite fts5 bm25"}')
+            _add(
+                db,
+                f"run {i}",
+                0.0,
+                '{"note": "sqlite fts5 bm25 ranking sqlite fts5 bm25"}',
+            )
 
-        out = memory._execute_tool(
-            "search_experiences", {"query": "sqlite fts5"})
+        out = memory._execute_tool("search_experiences", {"query": "sqlite fts5"})
 
         assert "No experiences matching" not in out
         assert out.index("run 0") < out.index("generic run")
@@ -130,8 +139,9 @@ class TestListSortingIsHonoured:
         _add(db, "low", 0.1, '{"tag": "deploy"}')
         _add(db, "high", 0.9, '{"tag": "deploy"}')
 
-        out = memory._execute_tool("list_experiences", {
-            "search": "deploy", "sort": "outcome", "order": "desc"})
+        out = memory._execute_tool(
+            "list_experiences", {"search": "deploy", "sort": "outcome", "order": "desc"}
+        )
 
         assert out.index("high") < out.index("low")
 
@@ -139,8 +149,9 @@ class TestListSortingIsHonoured:
         _add(db, "low", 0.1, '{"tag": "deploy"}')
         _add(db, "high", 0.9, '{"tag": "deploy"}')
 
-        out = memory._execute_tool("list_experiences", {
-            "search": "deploy", "sort": "outcome", "order": "asc"})
+        out = memory._execute_tool(
+            "list_experiences", {"search": "deploy", "sort": "outcome", "order": "asc"}
+        )
 
         assert out.index("low") < out.index("high")
 
@@ -148,8 +159,9 @@ class TestListSortingIsHonoured:
         _add(db, "ok_row", 1.0, '{"tag": "deploy"}')
         _add(db, "bad_row", 0.0, '{"tag": "deploy"}', success=0)
 
-        out = memory._execute_tool("list_experiences", {
-            "search": "deploy", "success": False})
+        out = memory._execute_tool(
+            "list_experiences", {"search": "deploy", "success": False}
+        )
 
         assert "bad_row" in out
         assert "ok_row" not in out
@@ -166,12 +178,14 @@ class TestIndexStaysInSync:
         """Agent._record_llm_experience inserts into `experiences` without the
         MCP server's help; the index must pick the row up on the next search."""
         assert "No experiences matching" in memory._execute_tool(
-            "search_experiences", {"query": "checkout"})
+            "search_experiences", {"query": "checkout"}
+        )
 
         _add(db, "chat_turn", 1.0, '{"intent": "checkout regression"}')
 
         assert "chat_turn" in memory._execute_tool(
-            "search_experiences", {"query": "checkout"})
+            "search_experiences", {"query": "checkout"}
+        )
 
     def test_picks_up_several_direct_writes_in_order(self, db: Path) -> None:
         for i in range(3):
@@ -189,8 +203,7 @@ class TestIndexStaysInSync:
         """
         _add(db, "gone", 1.0, '{"tag": "deploy"}')
         _add(db, "stays", 1.0, '{"tag": "deploy"}')
-        assert "gone" in memory._execute_tool(
-            "search_experiences", {"query": "deploy"})
+        assert "gone" in memory._execute_tool("search_experiences", {"query": "deploy"})
 
         # Remove the FIRST row; `stays` still owns the highest rowid, so the
         # high-water mark does not move and no rebuild is triggered.
@@ -209,8 +222,7 @@ class TestIndexStaysInSync:
 class TestRobustness:
     def test_punctuation_only_query_does_not_raise(self, db: Path) -> None:
         _add(db, "auth", 1.0, "{}")
-        out = memory._execute_tool(
-            "search_experiences", {"query": "!!! ??? ---"})
+        out = memory._execute_tool("search_experiences", {"query": "!!! ??? ---"})
         assert isinstance(out, str)
 
     def test_fts_syntax_in_user_query_is_not_interpreted(self, db: Path) -> None:
@@ -220,8 +232,7 @@ class TestRobustness:
         _add(db, "auth module", 1.0, "{}")
         _add(db, "payment module", 1.0, "{}")
 
-        out = memory._execute_tool(
-            "search_experiences", {"query": "payment OR auth"})
+        out = memory._execute_tool("search_experiences", {"query": "payment OR auth"})
 
         # Neither row contains every token, so the OR must not have unioned.
         assert "No experiences matching" in out
@@ -232,13 +243,14 @@ class TestRobustness:
         assert "No experiences matching" in out
 
     def test_falls_back_to_like_when_fts_is_unavailable(
-        self, db: Path, monkeypatch,
+        self,
+        db: Path,
+        monkeypatch,
     ) -> None:
         """A SQLite built without FTS5 must degrade, not break the tool."""
         monkeypatch.setattr(memory, "_ensure_fts", lambda conn: False)
         _add(db, "refactor module", 1.0, '{"note": "auth flow"}')
 
-        out = memory._execute_tool(
-            "search_experiences", {"query": "refactor"})
+        out = memory._execute_tool("search_experiences", {"query": "refactor"})
 
         assert "refactor module" in out

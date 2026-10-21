@@ -22,7 +22,9 @@ class AsyncLLMProvider(abc.ABC):
             await asyncio.sleep(min_interval - elapsed)
         self._last_request_time = time.monotonic()
 
-    async def _retry_with_backoff(self, func: Callable[..., Awaitable[Any]], *args: Any, **kwargs: Any) -> Any:
+    async def _retry_with_backoff(
+        self, func: Callable[..., Awaitable[Any]], *args: Any, **kwargs: Any
+    ) -> Any:
         """Executes an async function with exponential backoff retries."""
         exc_to_raise: BaseException = RuntimeError("Unexpected retry failure")
         for attempt in range(self.max_retries + 1):
@@ -32,7 +34,7 @@ class AsyncLLMProvider(abc.ABC):
             except BaseException as exc:
                 exc_to_raise = exc
                 if attempt < self.max_retries:
-                    delay = min(self.base_delay * (2 ** attempt), self.max_delay)
+                    delay = min(self.base_delay * (2**attempt), self.max_delay)
                     await asyncio.sleep(delay)
         raise exc_to_raise
 
@@ -44,6 +46,7 @@ class LMStudioProvider(AsyncLLMProvider):
         super().__init__()
         if base_url is None:
             from agent_core.config import lmstudio_base_url
+
             base_url = lmstudio_base_url()
         self.base_url = base_url
 

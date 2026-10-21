@@ -14,6 +14,7 @@ the turn dies as stuck/no_progress.  After _MAX_CONSECUTIVE_READS reads in
 one turn, results carry a steering note; any non-read tool resets the count;
 a new turn starts from zero.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -56,7 +57,9 @@ class TestEngineStallCap:
 
 
 class TestReadLoopGuard:
-    def test_reads_below_threshold_are_unmodified(self, bot: Agent, tmp_path: Path) -> None:
+    def test_reads_below_threshold_are_unmodified(
+        self, bot: Agent, tmp_path: Path
+    ) -> None:
         f = tmp_path / "m.py"
         f.write_text("x = 1\n", encoding="utf-8")
         for _ in range(agent._MAX_CONSECUTIVE_READS - 1):
@@ -77,9 +80,12 @@ class TestReadLoopGuard:
         f.write_text("x = 1\n", encoding="utf-8")
         for _ in range(agent._MAX_CONSECUTIVE_READS - 1):
             asyncio.run(bot._nlp_read({"path": str(f)}))
-        asyncio.run(bot._execute_tool_call(
-            "list_files", {"path": "."},
-        ))
+        asyncio.run(
+            bot._execute_tool_call(
+                "list_files",
+                {"path": "."},
+            )
+        )
         assert bot._read_streak == 0
         out = asyncio.run(bot._nlp_read({"path": str(f)}))
         assert "read-loop guard" not in out

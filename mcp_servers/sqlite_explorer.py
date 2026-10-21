@@ -6,6 +6,7 @@ Exposes tools for querying and inspecting SQLite databases:
 
 Zero external dependencies — stdlib only.
 """
+
 from __future__ import annotations
 
 import csv
@@ -40,7 +41,9 @@ def _make_response(req_id: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
 
-def _make_error(req_id: Any, code: int, message: str, data: Any = None) -> dict[str, Any]:
+def _make_error(
+    req_id: Any, code: int, message: str, data: Any = None
+) -> dict[str, Any]:
     err: dict[str, Any] = {"code": code, "message": message}
     if data is not None:
         err["data"] = data
@@ -73,6 +76,7 @@ DEFAULT_SEARCH_DIRS = [".", "backups"]
 # Database discovery
 # ---------------------------------------------------------------------------
 
+
 def _find_databases(search_dirs: list[str] | None = None) -> list[dict[str, str]]:
     """Walk search dirs and find .db / .sqlite / .sqlite3 files."""
     dirs = search_dirs or DEFAULT_SEARCH_DIRS
@@ -93,7 +97,11 @@ def _find_databases(search_dirs: list[str] | None = None) -> list[dict[str, str]
 def _add_db(found: dict[str, dict[str, str]], p: Path) -> None:
     key = str(p.resolve())
     if key not in found:
-        found[key] = {"name": p.stem, "path": str(p), "size_bytes": str(p.stat().st_size)}
+        found[key] = {
+            "name": p.stem,
+            "path": str(p),
+            "size_bytes": str(p.stat().st_size),
+        }
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -260,6 +268,7 @@ TOOLS: list[dict[str, Any]] = [
 # Tool dispatch
 # ---------------------------------------------------------------------------
 
+
 def _format_table(rows: list[sqlite3.Row], max_rows: int = 50) -> str:
     """Format rows as a text table with aligned columns."""
     if not rows:
@@ -289,7 +298,9 @@ def _format_table(rows: list[sqlite3.Row], max_rows: int = 50) -> str:
         lines.append(" | ".join(sr[h].ljust(col_widths[h]) for h in headers))
     total = len(rows)
     if total > max_rows:
-        lines.append(f"\n... ({total - max_rows} more rows, showing {max_rows} of {total})")
+        lines.append(
+            f"\n... ({total - max_rows} more rows, showing {max_rows} of {total})"
+        )
     else:
         lines.append(f"\n({total} row{'s' if total != 1 else ''})")
     return "\n".join(lines)
@@ -305,7 +316,7 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
         for db in dbs:
             size = int(db["size_bytes"])
             if size > 1024 * 1024:
-                size_str = f"{size / (1024*1024):.1f} MB"
+                size_str = f"{size / (1024 * 1024):.1f} MB"
             elif size > 1024:
                 size_str = f"{size / 1024:.1f} KB"
             else:
@@ -354,7 +365,9 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
         for col in cols:
             pk = " [PK]" if col["pk"] else ""
             notnull = " NOT NULL" if col["notnull"] else ""
-            default = f" DEFAULT {col['dflt_value']}" if col["dflt_value"] is not None else ""
+            default = (
+                f" DEFAULT {col['dflt_value']}" if col["dflt_value"] is not None else ""
+            )
             lines.append(f"  {col['name']}: {col['type']}{pk}{notnull}{default}")
         if indexes:
             lines.append("")
@@ -373,7 +386,9 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
         # Safety: enforce SELECT only
         upper = sql.upper().lstrip()
         if not upper.startswith("SELECT") and not upper.startswith("WITH"):
-            raise ValueError("Only SELECT/WITH queries allowed in 'query'. Use 'execute' for writes.")
+            raise ValueError(
+                "Only SELECT/WITH queries allowed in 'query'. Use 'execute' for writes."
+            )
         # Auto-add LIMIT if missing
         if "LIMIT" not in upper:
             sql = f"{sql} LIMIT {limit}"
@@ -432,6 +447,7 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
 # Message routing
 # ---------------------------------------------------------------------------
 
+
 def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
     """Route an incoming JSON-RPC message; return a response dict (or None for notifications)."""
     req_id = msg.get("id")
@@ -444,11 +460,14 @@ def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
 
     # ---- initialize ----
     if method == "initialize":
-        return _make_response(req_id, {
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": SERVER_CAPABILITIES,
-            "serverInfo": SERVER_INFO,
-        })
+        return _make_response(
+            req_id,
+            {
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": SERVER_CAPABILITIES,
+                "serverInfo": SERVER_INFO,
+            },
+        )
 
     # ---- tools/list ----
     if method == "tools/list":
@@ -462,15 +481,27 @@ def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
             return _make_error(req_id, -32602, "missing tool name")
         try:
             text = _execute_tool(tool_name, arguments)
-            return _make_response(req_id, {
-                "content": [{"type": "text", "text": text}],
-                "isError": False,
-            })
-        except (KeyError, ValueError, TypeError, FileNotFoundError, sqlite3.Error) as exc:
-            return _make_response(req_id, {
-                "content": [{"type": "text", "text": f"Error: {exc}"}],
-                "isError": True,
-            })
+            return _make_response(
+                req_id,
+                {
+                    "content": [{"type": "text", "text": text}],
+                    "isError": False,
+                },
+            )
+        except (
+            KeyError,
+            ValueError,
+            TypeError,
+            FileNotFoundError,
+            sqlite3.Error,
+        ) as exc:
+            return _make_response(
+                req_id,
+                {
+                    "content": [{"type": "text", "text": f"Error: {exc}"}],
+                    "isError": True,
+                },
+            )
 
     # ---- unknown method ----
     if req_id is not None:
@@ -482,6 +513,7 @@ def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     """Read newline-delimited JSON-RPC from stdin, write responses to stdout."""

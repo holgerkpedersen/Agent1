@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class ProfileMetadata:
     name: str
     description: str = ""
-    model: str = ""              # model key to use with this profile
+    model: str = ""  # model key to use with this profile
     temperature: float = 0.7
     max_tokens: int = 50000
     thinking: Optional[bool] = None  # None = use model default
@@ -47,7 +47,10 @@ _BUILTIN_PROFILES: Final[Dict[str, ProfileMetadata]] = {
     ),
 }
 
-_PROFILES_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "profiles.json")
+_PROFILES_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "profiles.json",
+)
 
 _user_profiles: Dict[str, ProfileMetadata] = {}
 
@@ -67,7 +70,9 @@ def _save_user_profiles() -> None:
         with open(_PROFILES_FILE, "w") as f:
             json.dump({k: v.as_dict() for k, v in _user_profiles.items()}, f, indent=2)
     except OSError:
-        logger.warning("Failed to save user profiles to %s", _PROFILES_FILE, exc_info=True)
+        logger.warning(
+            "Failed to save user profiles to %s", _PROFILES_FILE, exc_info=True
+        )
 
 
 def list_profiles() -> List[ProfileMetadata]:

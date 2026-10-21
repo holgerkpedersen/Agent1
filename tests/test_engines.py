@@ -1,4 +1,5 @@
 """Tests for the engine/accelerator abstraction (NPU + iGPU parallelism)."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -47,9 +48,7 @@ class TestEngines:
         assert errors == []
 
     def test_resolve_engines_reports_unknown_and_missing(self):
-        models, overrides, errors = engines.resolve_engines(
-            ["gpu"], None, probe=False
-        )
+        models, overrides, errors = engines.resolve_engines(["gpu"], None, probe=False)
         assert models == [] and overrides == {}
         assert errors and "unknown engine" in errors[0]
 

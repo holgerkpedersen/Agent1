@@ -5,6 +5,7 @@ re-exports this module (plus the CLI layer) so ``import agent``,
 ``python -m agent`` and every monkeypatch on the ``agent`` module keep
 working unchanged.
 """
+
 from agent_core.bootstrap import (  # explicit names (was: import *)
     AGENT_MEMORY_JSON_PATH,
     AGENT_MEMORY_TMP_PATH,
@@ -166,6 +167,7 @@ from agent_core.shell_utils import (
     parse_ps_exit_marker as _parse_ps_exit_marker,
     SYSTEM_PROMPT as _SYSTEM_PROMPT,
 )
+
 # Pytest command policy (taskplan t06): the full/targeted/subset classifier and
 # the suite timeout budget.  Restored from agent.py — the ac9a3df import-block
 # rewrite deleted the inline block and left shell_utils' naive list-based
@@ -332,7 +334,9 @@ def _agent_mod() -> Any:
     ``agent.py``.
     """
     import agent as _agent_mod
+
     return _agent_mod
+
 
 def _escape_json_string_controls(text: str) -> str:
     """Escape raw control characters that appear INSIDE JSON string literals.
@@ -357,7 +361,7 @@ def _escape_json_string_controls(text: str) -> str:
             out.append(ch)
             escaped = False
             continue
-        if ch == '\\':
+        if ch == "\\":
             out.append(ch)
             escaped = True
             continue
@@ -367,11 +371,13 @@ def _escape_json_string_controls(text: str) -> str:
             continue
         code = ord(ch)
         if code < 32:
-            out.append({'\n': '\\n', '\r': '\\r', '\t': '\\t'}.get(ch,
-                f'\\u{code:04x}'))
+            out.append(
+                {"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(ch, f"\\u{code:04x}")
+            )
             continue
         out.append(ch)
-    return ''.join(out)
+    return "".join(out)
+
 
 def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
     """Parse a tool-call ``arguments`` string, repairing common model typos.
@@ -394,16 +400,20 @@ def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
         return parsed if isinstance(parsed, dict) else {}
     except (json.JSONDecodeError, TypeError):
         return {}
+
+
 NlpToolHandler = Callable[..., Awaitable[str]]
 
 
 class AgentCore:
     """Main agent class with workspace management and tool execution."""
+
     DEFAULT_WORKSPACE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    def __init__(self, workspace: str | None=None, model_name: str | None=None):
-        self.workspace = os.path.abspath(_agent_mod().to_windows_path(workspace
-            or self.DEFAULT_WORKSPACE))
+    def __init__(self, workspace: str | None = None, model_name: str | None = None):
+        self.workspace = os.path.abspath(
+            _agent_mod().to_windows_path(workspace or self.DEFAULT_WORKSPACE)
+        )
         self.model_name = _agent_mod().resolve_model(model_name)
         self._semantic_index: dict[str, set[int]] = defaultdict(set)
         self._files_read: set[str] = set()
@@ -412,7 +422,7 @@ class AgentCore:
         self._pending_effects: list[str] | None = None
         self._knowledge_graph: dict[str, Any] = {}
         self._working_memory: list[Any] = []
-        self._original_goal: str = ''
+        self._original_goal: str = ""
         self._goal_from_restore: bool = False
         self._prior_chat_history: list[dict[str, Any]] = []
         self._history: list[Any] = []
@@ -443,13 +453,15 @@ class AgentCore:
                 prof = None
                 if prof_name:
                     from agent_core.llm.model_profiles import get_profile
+
                     prof = get_profile(prof_name)
                 self.llm._provider = _seamed
                 if prof_name and prof is not None:
-                    self.llm._provider.apply_profile(prof_name, prof.temperature,
-                        prof.max_tokens)
+                    self.llm._provider.apply_profile(
+                        prof_name, prof.temperature, prof.max_tokens
+                    )
         except Exception as _seam_err:
-            logger.exception('build_transport seam wiring failed:\n')
+            logger.exception("build_transport seam wiring failed:\n")
         self.fs = _agent_mod().FileSystem(self.workspace)
         self.searcher = _agent_mod().FileSearcher(self.workspace)
         self.dispatcher = _agent_mod().ToolDispatcher(on_tool=_emit_tool_metrics)
@@ -457,24 +469,30 @@ class AgentCore:
 
     def _register_tool_handlers(self) -> None:
         """Register tool handlers with the dispatcher."""
-        self.dispatcher.register('read_file', lambda args: self._tool_read_file(**args))
-        self.dispatcher.register('write_file',
-            lambda args: self._tool_write_file(**args))
-        self.dispatcher.register('apply_patch',
-            lambda args: self._tool_apply_patch(**args))
-        self.dispatcher.register('edit_file', lambda args: self._tool_edit_file(**args))
-        self.dispatcher.register('search', lambda args: self._tool_search(**args))
-        self.dispatcher.register('search_file', lambda args: self._tool_search(**args))
-        self.dispatcher.register('list_files',
-            lambda args: self._tool_list_files(**args))
-        self.dispatcher.register('delete_file',
-            lambda args: self._tool_delete_file(**args))
-        self.dispatcher.register('analyze_file',
-            lambda args: self._tool_analyze_file(**args))
-        self.dispatcher.register('llm_analyze',
-            lambda args: self._tool_llm_analyze(**args))
+        self.dispatcher.register("read_file", lambda args: self._tool_read_file(**args))
+        self.dispatcher.register(
+            "write_file", lambda args: self._tool_write_file(**args)
+        )
+        self.dispatcher.register(
+            "apply_patch", lambda args: self._tool_apply_patch(**args)
+        )
+        self.dispatcher.register("edit_file", lambda args: self._tool_edit_file(**args))
+        self.dispatcher.register("search", lambda args: self._tool_search(**args))
+        self.dispatcher.register("search_file", lambda args: self._tool_search(**args))
+        self.dispatcher.register(
+            "list_files", lambda args: self._tool_list_files(**args)
+        )
+        self.dispatcher.register(
+            "delete_file", lambda args: self._tool_delete_file(**args)
+        )
+        self.dispatcher.register(
+            "analyze_file", lambda args: self._tool_analyze_file(**args)
+        )
+        self.dispatcher.register(
+            "llm_analyze", lambda args: self._tool_llm_analyze(**args)
+        )
 
-    def build_transport(self, client: 'LLMClient') -> Any:
+    def build_transport(self, client: "LLMClient") -> Any:
         """Build the transport (provider) that drives this agent's LLM client.
 
         Public construction seam: returns the provider object that becomes
@@ -486,16 +504,16 @@ class AgentCore:
         """
         from agent_core.config import load_agent_settings
         from agent_core.llm.provider import build_provider
+
         try:
             settings = load_agent_settings()
         except Exception:
             settings = None
         return build_provider(settings, client.model_name)
 
-    def spawn_subagent(self,
-        name: str,
-        workspace: str | None=None,
-        role: str | None=None) -> 'SubAgent':
+    def spawn_subagent(
+        self, name: str, workspace: str | None = None, role: str | None = None
+    ) -> "SubAgent":
         """Create a child :class:`SubAgent` sharing this agent's workspace.
 
         The subagent gets its own conversation history so work done there does
@@ -508,11 +526,12 @@ class AgentCore:
         child at read-only regardless of the role's own mode.
         """
         from agent_core.subagent import SubAgent
+
         return SubAgent(parent=self, name=name, workspace=workspace, role=role)
 
-    def run_parallel_tasks(self,
-        tasks: list[Callable[[], str]],
-        max_workers: int=10) -> list[str]:
+    def run_parallel_tasks(
+        self, tasks: list[Callable[[], str]], max_workers: int = 10
+    ) -> list[str]:
         """Run *tasks* in parallel threads and collect their string results.
 
         Each task is typically a closure that spawns a :meth:`spawn_subagent`,
@@ -520,6 +539,7 @@ class AgentCore:
         merge the subagent outputs.
         """
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = [pool.submit(task) for task in tasks]
             results = []
@@ -527,13 +547,12 @@ class AgentCore:
                 try:
                     results.append(future.result())
                 except Exception as exc:
-                    results.append(f'[task-error] {exc}')
+                    results.append(f"[task-error] {exc}")
         return results
 
-    def record_demo_activity(self,
-        activity: str='analyze',
-        latency_ms: float=120.0) -> dict[str,
-        float]:
+    def record_demo_activity(
+        self, activity: str = "analyze", latency_ms: float = 120.0
+    ) -> dict[str, float]:
         """Record one synthetic activity into the shared metrics collector.
 
         Mirrors exactly what ``record_command_metrics()`` writes for a real
@@ -544,11 +563,13 @@ class AgentCore:
         elapsed_s = max(0.001, latency_ms / 1000.0)
         _emit_command_metrics(activity, elapsed_s)
         collector = self.get_metrics_collector()
-        return {'events': 3,
-            'counter': collector.get_counter_value(f'command.{activity}.count'),
-                'elapsed_s': elapsed_s}
+        return {
+            "events": 3,
+            "counter": collector.get_counter_value(f"command.{activity}.count"),
+            "elapsed_s": elapsed_s,
+        }
 
-    def get_metrics_collector(self) -> 'MetricsCollector':
+    def get_metrics_collector(self) -> "MetricsCollector":
         """Instance delegate for the process-wide collector (test seam)."""
         return get_metrics_collector()
 
@@ -574,8 +595,8 @@ class AgentCore:
         before calling, so this is a programming-error guard, not a silent
         fallback to a mode the user did not ask for.
         """
-        if mode not in (MODE_BUILD, 'plan'):
-            raise ValueError(f'unknown mode: {mode!r}')
+        if mode not in (MODE_BUILD, "plan"):
+            raise ValueError(f"unknown mode: {mode!r}")
         self.mode = mode
 
     def is_plan_mode(self) -> bool:
@@ -601,20 +622,21 @@ class AgentCore:
         cannot take down the whole turn.
         """
         name = name.lower()
-        if name != 'read':
+        if name != "read":
             self._read_streak = 0
         rejection = check_tool_allowed(name, self.mode)
         if rejection:
             return rejection
         handler = self._nlp_tool_handlers().get(name)
         if handler is None:
-            return (f"Unknown tool: {name}. "
-                    f"Available: {', '.join(sorted(NLP_TOOL_NAMES))}")
+            return (
+                f"Unknown tool: {name}. Available: {', '.join(sorted(NLP_TOOL_NAMES))}"
+            )
         try:
             return await handler(args)
         except Exception as e:
-            logger.exception('NLP tool %r failed', name)
-            return f'{name} error: {e}'
+            logger.exception("NLP tool %r failed", name)
+            return f"{name} error: {e}"
 
     async def _nlp_delegate(self, args: dict[str, Any]) -> str:
         return await _nlp_delegate(self, args)
@@ -622,10 +644,9 @@ class AgentCore:
     async def _nlp_delegate_batch(self, args: dict[str, Any]) -> str:
         return await _nlp_delegate_batch(self, args)
 
-    async def _run_command_quietly(self,
-        command: Command,
-        args: list[str],
-        done_msg: str) -> str:
+    async def _run_command_quietly(
+        self, command: Command, args: list[str], done_msg: str
+    ) -> str:
         return await _run_command_quietly(self, command, args, done_msg)
 
     def _effective_ws_dir(self) -> str:
@@ -733,23 +754,20 @@ class AgentCore:
     async def _tool_write_file(self, path: str, content: str, **kwargs: Any) -> str:
         return await _tool_write_file(self, path, content, **kwargs)
 
-    async def _tool_apply_patch(self,
-        path: str,
-        find: str,
-        replace: str,
-        **kwargs: Any) -> str:
+    async def _tool_apply_patch(
+        self, path: str, find: str, replace: str, **kwargs: Any
+    ) -> str:
         return await _tool_apply_patch(self, path, find, replace, **kwargs)
 
     async def _tool_edit_file(self, path: str, content: str, **kwargs: Any) -> str:
         return await _tool_edit_file(self, path, content, **kwargs)
 
-    async def _tool_search(self, query: str, path: str='.', **kwargs: Any) -> str:
+    async def _tool_search(self, query: str, path: str = ".", **kwargs: Any) -> str:
         return await _tool_search(self, query, path, **kwargs)
 
-    async def _tool_list_files(self,
-        path: str='.',
-        pattern: str='*',
-        **kwargs: Any) -> str:
+    async def _tool_list_files(
+        self, path: str = ".", pattern: str = "*", **kwargs: Any
+    ) -> str:
         return await _tool_list_files(self, path, pattern, **kwargs)
 
     async def _tool_delete_file(self, path: str, **kwargs: Any) -> str:
@@ -773,31 +791,33 @@ class AgentCore:
         """Validate and normalize path in one step."""
         return _safe_path(self, path)
 
-    async def read_file(self, path: str, track_read: bool=True) -> str:
+    async def read_file(self, path: str, track_read: bool = True) -> str:
         local_path = self._safe_path(path)
         if os.path.isdir(local_path):
-            return (f'Not a file (directory): {path} '
-                f'— read/analyze take a FILE path; '
-                f'omit the path to analyze the whole workspace, '
-                f'or use list_files/search to inspect a directory.')
+            return (
+                f"Not a file (directory): {path} "
+                f"— read/analyze take a FILE path; "
+                f"omit the path to analyze the whole workspace, "
+                f"or use list_files/search to inspect a directory."
+            )
         try:
-            with open(local_path, 'r', encoding='utf-8') as f:
+            with open(local_path, "r", encoding="utf-8") as f:
                 content = f.read()
             if track_read:
                 self._files_read.add(local_path)
                 try:
                     self._file_mtimes[local_path] = os.path.getmtime(local_path)
                 except OSError as e:
-                    logger.warning('Could not stat %s: %s', local_path, e)
+                    logger.warning("Could not stat %s: %s", local_path, e)
             return content
         except IsADirectoryError:
-            return f'Not a file (directory): {path}'
+            return f"Not a file (directory): {path}"
         except PermissionError as e:
-            return f'Permission denied reading {path}: {e}'
+            return f"Permission denied reading {path}: {e}"
         except FileNotFoundError:
-            return f'File not found: {path}'
+            return f"File not found: {path}"
         except Exception as e:
-            return f'Error reading file: {e}'
+            return f"Error reading file: {e}"
 
     async def write_file(self, path: str, content: str) -> str:
         local_path = self._safe_path(path)
@@ -805,44 +825,46 @@ class AgentCore:
             dir_name = os.path.dirname(local_path)
             if dir_name:
                 os.makedirs(dir_name, exist_ok=True)
-            with open(local_path, 'w', encoding='utf-8') as f:
+            with open(local_path, "w", encoding="utf-8") as f:
                 f.write(content)
-            return f'Successfully wrote to {path}'
+            return f"Successfully wrote to {path}"
         except PermissionError:
-            return f'Permission denied: {path}'
+            return f"Permission denied: {path}"
         except Exception as e:
-            return f'Error writing file: {e}'
+            return f"Error writing file: {e}"
 
     async def apply_patch(self, path: str, find: str, replace: str) -> str:
         local_path = self._safe_path(path)
         try:
-            with open(local_path, 'r', encoding='utf-8') as f:
+            with open(local_path, "r", encoding="utf-8") as f:
                 content = f.read()
             if find not in content:
-                return 'Pattern not found in file'
+                return "Pattern not found in file"
             count = content.count(find)
             if count > 1:
-                return (f'Error: find text matches {count} locations. '
-                        'Add more context to make it unique.')
+                return (
+                    f"Error: find text matches {count} locations. "
+                    "Add more context to make it unique."
+                )
             new_content = content.replace(find, replace, 1)
-            with open(local_path, 'w', encoding='utf-8') as f:
+            with open(local_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
-            return 'Patch applied successfully'
+            return "Patch applied successfully"
         except PermissionError:
-            return f'Permission denied: {path}'
+            return f"Permission denied: {path}"
         except Exception as e:
-            return f'Error applying patch: {e}'
+            return f"Error applying patch: {e}"
 
     async def edit_file(self, path: str, content: str) -> str:
         local_path = self._safe_path(path)
         try:
             if save_file_py(local_path, content, auto_yes=True):
-                return f'Successfully edited {path}'
-            return f'Skipped {path} (no changes)'
+                return f"Successfully edited {path}"
+            return f"Skipped {path} (no changes)"
         except PermissionError:
-            return f'Permission denied: {path}'
+            return f"Permission denied: {path}"
         except Exception as e:
-            return f'Error editing file: {e}'
+            return f"Error editing file: {e}"
 
     def _build_semantic_index(self, words: list[str], idx: int) -> None:
         """Build semantic index with memory management."""
@@ -864,7 +886,7 @@ class AgentCore:
         for word, idx_set in sorted_items[:keep_count]:
             self._semantic_index[word] = idx_set
 
-    async def search_file(self, query: str, path: str | None=None) -> str:
+    async def search_file(self, query: str, path: str | None = None) -> str:
         """Search workspace files for text.
 
         Delegates to the shared :class:`FileSearcher` (excludes git-ignored
@@ -872,11 +894,11 @@ class AgentCore:
         the REPL ``search`` command and the NLP ``search`` tool behave alike.
         """
         results = await self.searcher.search(query, path or self.workspace)
-        if not results or results == 'No matches found':
-            return 'No matches found'
+        if not results or results == "No matches found":
+            return "No matches found"
         return results
 
-    def _refresh_system_message(self, query: str | None=None) -> None:
+    def _refresh_system_message(self, query: str | None = None) -> None:
         """Ensure history starts with a system message and rebuild its dynamic
         blocks (decision-constraints / skill index / plan-mode suffix).
 
@@ -892,23 +914,30 @@ class AgentCore:
         the next turn), not the snapshot taken on the first turn.
         """
         if not self._chat_history:
-            self._chat_history.append({'role': 'system',
-                'content': _SYSTEM_PROMPT + (plan_mode_system_suffix()
-                    if self.is_plan_mode() else '') + _intent_mode_system_suffix()})
-        elif self._chat_history[0].get('role') != 'system':
-            self._chat_history.insert(0, {'role': 'system', 'content': _SYSTEM_PROMPT})
-        self._chat_history[0] = {'role': 'system',
-            'content': _strip_dynamic_system_blocks(
-                    str(self._chat_history[0].get('content')
-                    or _SYSTEM_PROMPT))
-                + self._original_goal_block()
-                + self._decision_constraints_block()
-                + self._skill_index_block()
-                + self._habits_block()
-                + self._semantic_memory_block(query)
-                + self._file_history_block(query)
-                + (plan_mode_system_suffix() if self.is_plan_mode() else '')
-                + _intent_mode_system_suffix()}
+            self._chat_history.append(
+                {
+                    "role": "system",
+                    "content": _SYSTEM_PROMPT
+                    + (plan_mode_system_suffix() if self.is_plan_mode() else "")
+                    + _intent_mode_system_suffix(),
+                }
+            )
+        elif self._chat_history[0].get("role") != "system":
+            self._chat_history.insert(0, {"role": "system", "content": _SYSTEM_PROMPT})
+        self._chat_history[0] = {
+            "role": "system",
+            "content": _strip_dynamic_system_blocks(
+                str(self._chat_history[0].get("content") or _SYSTEM_PROMPT)
+            )
+            + self._original_goal_block()
+            + self._decision_constraints_block()
+            + self._skill_index_block()
+            + self._habits_block()
+            + self._semantic_memory_block(query)
+            + self._file_history_block(query)
+            + (plan_mode_system_suffix() if self.is_plan_mode() else "")
+            + _intent_mode_system_suffix(),
+        }
 
     def _append_user_turn(self, user_input: str, images: list[str] | None) -> None:
         """Append this turn's user message (multimodal when *images* given).
@@ -931,27 +960,37 @@ class AgentCore:
         self._ensure_original_goal(user_input)
         if self.is_plan_mode() and (not images):
             if _agent_mod()._resolve_display_mode() != AgentDisplayMode.QUIET:
-                print(yellow("  [plan mode] Read-only research — mutating tools "
-                    "blocked. Switch back with 'mode build' to apply changes."))
-            user_input = f'{plan_mode_turn_note()}\n\n{user_input}'
-        hint = '' if images else self._skill_hint_block(user_input)
+                print(
+                    yellow(
+                        "  [plan mode] Read-only research — mutating tools "
+                        "blocked. Switch back with 'mode build' to apply changes."
+                    )
+                )
+            user_input = f"{plan_mode_turn_note()}\n\n{user_input}"
+        hint = "" if images else self._skill_hint_block(user_input)
         if hint:
-            user_input = f'{hint}\n\n{user_input}'
+            user_input = f"{hint}\n\n{user_input}"
         self._turn_start_index = len(self._chat_history)
         if images:
-            content: Any = [{'type': 'text', 'text': user_input
-                or '(see the attached image)'}]
+            content: Any = [
+                {"type": "text", "text": user_input or "(see the attached image)"}
+            ]
             for img in images:
-                content.append({'type': 'image_url', 'image_url': {'url': img}})
-            self._chat_history.append({'role': 'user', 'content': content})
+                content.append({"type": "image_url", "image_url": {"url": img}})
+            self._chat_history.append({"role": "user", "content": content})
         else:
-            self._chat_history.append({'role': 'user', 'content': user_input})
+            self._chat_history.append({"role": "user", "content": user_input})
 
-    async def _run_chained_tool_loop(self, user_input: str, messages: list[dict[str,
-        Any]], display_mode: AgentDisplayMode, seen_calls: dict[tuple[str, str],
-            int]) -> tuple[str, list[dict[str, Any]], str | None, ToolLoopRunner]:
-        return await _run_chained_tool_loop(self, user_input, messages, display_mode,
-            seen_calls)
+    async def _run_chained_tool_loop(
+        self,
+        user_input: str,
+        messages: list[dict[str, Any]],
+        display_mode: AgentDisplayMode,
+        seen_calls: dict[tuple[str, str], int],
+    ) -> tuple[str, list[dict[str, Any]], str | None, ToolLoopRunner]:
+        return await _run_chained_tool_loop(
+            self, user_input, messages, display_mode, seen_calls
+        )
 
     def _reset_failover_notice(self) -> None:
         _reset_failover_notice(self)
@@ -959,12 +998,16 @@ class AgentCore:
     def _report_failover(self) -> None:
         _report_failover(self)
 
-    def _finish_turn(self, final_text: str, llm_error: str | None,
+    def _finish_turn(
+        self,
+        final_text: str,
+        llm_error: str | None,
         loop: ToolLoopRunner,
-        display_mode: AgentDisplayMode) -> None:
+        display_mode: AgentDisplayMode,
+    ) -> None:
         _finish_turn(self, final_text, llm_error, loop, display_mode)
 
-    async def chat_nlp(self, user_input: str, images: list[str] | None=None) -> None:
+    async def chat_nlp(self, user_input: str, images: list[str] | None = None) -> None:
         """Process natural language input through a structured tool-calling loop.
 
         The LLM receives native OpenAI-format tool schemas (``NLP_TOOL_SCHEMAS``)
@@ -1001,67 +1044,100 @@ class AgentCore:
         self._last_user_input = user_input
         self._turn_started_at = datetime.now()
         try:
-            if not getattr(self.llm, '_profile_pinned', False):
-                _suggested = _agent_mod().recommend_profile(user_input,
-                    getattr(self.llm, '_profile_name', None))
+            if not getattr(self.llm, "_profile_pinned", False):
+                _suggested = _agent_mod().recommend_profile(
+                    user_input, getattr(self.llm, "_profile_name", None)
+                )
                 if _suggested:
                     _auto = False
                     try:
                         import pathlib as _pathlib
                         from agent_core.llm.workspace_prefs import get_pref
-                        _auto = get_pref(_pathlib.Path(self._effective_ws_dir()),
-                            'profile_auto') is True
+
+                        _auto = (
+                            get_pref(
+                                _pathlib.Path(self._effective_ws_dir()), "profile_auto"
+                            )
+                            is True
+                        )
                     except Exception:
                         _auto = False
-                    _quiet = (_agent_mod()._resolve_display_mode()
-                              == AgentDisplayMode.QUIET)
+                    _quiet = (
+                        _agent_mod()._resolve_display_mode() == AgentDisplayMode.QUIET
+                    )
                     if _auto:
                         try:
                             from agent_core.llm.model_profiles import get_profile
+
                             _prof = get_profile(_suggested)
-                            self.llm._provider.apply_profile(_suggested,
-                                _prof.temperature, _prof.max_tokens)
+                            self.llm._provider.apply_profile(
+                                _suggested, _prof.temperature, _prof.max_tokens
+                            )
                             self.llm._profile_name = _suggested
                         except Exception:
-                            logger.debug('profile_auto apply failed (no-op)',
-                                exc_info=True)
+                            logger.debug(
+                                "profile_auto apply failed (no-op)", exc_info=True
+                            )
                         else:
                             if not _quiet:
-                                print(gray(
-                                    f'  [profile] auto-applied {_suggested} '
-                                    f'(profile_auto pref)'))
+                                print(
+                                    gray(
+                                        f"  [profile] auto-applied {_suggested} "
+                                        f"(profile_auto pref)"
+                                    )
+                                )
                     elif not _quiet:
-                        print(gray(f"  [suggest] profile {_suggested}"
-                            f" for this task — 'model profile use'"
-                            f" or set pref profile_auto"))
+                        print(
+                            gray(
+                                f"  [suggest] profile {_suggested}"
+                                f" for this task — 'model profile use'"
+                                f" or set pref profile_auto"
+                            )
+                        )
         except Exception:
-            logger.debug('Profile suggestion failed (no-op)', exc_info=True)
+            logger.debug("Profile suggestion failed (no-op)", exc_info=True)
         self._append_user_turn(user_input, images)
         self._chat_history = _trim_chat_history(self._chat_history, self._original_goal)
         history_snapshot = list(self._chat_history)
-        final_text, final_messages, llm_error, loop = ('', self._chat_history, None,
-            None)
+        final_text, final_messages, llm_error, loop = (
+            "",
+            self._chat_history,
+            None,
+            None,
+        )
         for attempt in range(1, _LLM_ERROR_MAX_RETRIES + 1):
-            final_text, final_messages, llm_error, loop = (
-                await self._run_chained_tool_loop(
-                    user_input=user_input,
-                    messages=self._chat_history,
-                    display_mode=_agent_mod()._resolve_display_mode(),
-                    seen_calls={}))
+            (
+                final_text,
+                final_messages,
+                llm_error,
+                loop,
+            ) = await self._run_chained_tool_loop(
+                user_input=user_input,
+                messages=self._chat_history,
+                display_mode=_agent_mod()._resolve_display_mode(),
+                seen_calls={},
+            )
             if not llm_error or not is_connection_failure(llm_error):
                 break
             if attempt < _LLM_ERROR_MAX_RETRIES:
                 self._chat_history = list(history_snapshot)
                 if _agent_mod()._resolve_display_mode() != AgentDisplayMode.QUIET:
-                    print(yellow(
-                        f'\n  [retry {attempt}/{_LLM_ERROR_MAX_RETRIES}] '
-                        f'LLM call failed transiently ({llm_error[:120]}); '
-                        f'retrying...\n'))
+                    print(
+                        yellow(
+                            f"\n  [retry {attempt}/{_LLM_ERROR_MAX_RETRIES}] "
+                            f"LLM call failed transiently ({llm_error[:120]}); "
+                            f"retrying...\n"
+                        )
+                    )
                 await asyncio.sleep(_LLM_ERROR_BACKOFF_S * 2 ** (attempt - 1))
         self._chat_history = final_messages
         self._report_failover()
-        self._finish_turn(final_text=final_text, llm_error=llm_error, loop=loop,
-            display_mode=_agent_mod()._resolve_display_mode())
+        self._finish_turn(
+            final_text=final_text,
+            llm_error=llm_error,
+            loop=loop,
+            display_mode=_agent_mod()._resolve_display_mode(),
+        )
 
     def _mutating_files_this_turn(self) -> list[str]:
         return _mutating_files_this_turn(self)
@@ -1096,21 +1172,24 @@ class AgentCore:
     def _habits_block(self) -> str:
         return _habits_block(self)
 
-    def _file_history_block(self, query: str | None=None) -> str:
+    def _file_history_block(self, query: str | None = None) -> str:
         return _file_history_block(self, query)
 
-    def _semantic_memory_block(self, query: str | None=None) -> str:
+    def _semantic_memory_block(self, query: str | None = None) -> str:
         return _semantic_memory_block(self, query)
 
-    def _ensure_original_goal(self, pending_user_input: str | None=None) -> None:
+    def _ensure_original_goal(self, pending_user_input: str | None = None) -> None:
         _ensure_original_goal(self, pending_user_input)
 
-    def _recent_user_texts(self, limit: int=10) -> list[str]:
+    def _recent_user_texts(self, limit: int = 10) -> list[str]:
         return _recent_user_texts(self, limit)
 
-    def _prompts_related(self, new_prompt: str,
+    def _prompts_related(
+        self,
+        new_prompt: str,
         prior_texts: list[str],
-        threshold: float=_GOAL_RELATED_THRESHOLD) -> bool:
+        threshold: float = _GOAL_RELATED_THRESHOLD,
+    ) -> bool:
         return _prompts_related(self, new_prompt, prior_texts, threshold)
 
     def _suspend_history_for_new_task(self) -> None:
@@ -1131,41 +1210,66 @@ class AgentCore:
     def _save_memory(self) -> None:
         _save_memory(self)
 
-    def _record_llm_experience(self, action: str, outcome: float, context: dict[str,
-        Any] | None=None, success: bool | None=None, decision_llm: str | None=None,
-            decision_prompt: Any=None, run_id: str | None=None,
-                latency_ms: float | None=None,
-                    token_usage: int | None=None) -> int | None:
-        return _record_llm_experience(self, action, outcome, context, success,
-            decision_llm, decision_prompt, run_id, latency_ms, token_usage)
+    def _record_llm_experience(
+        self,
+        action: str,
+        outcome: float,
+        context: dict[str, Any] | None = None,
+        success: bool | None = None,
+        decision_llm: str | None = None,
+        decision_prompt: Any = None,
+        run_id: str | None = None,
+        latency_ms: float | None = None,
+        token_usage: int | None = None,
+    ) -> int | None:
+        return _record_llm_experience(
+            self,
+            action,
+            outcome,
+            context,
+            success,
+            decision_llm,
+            decision_prompt,
+            run_id,
+            latency_ms,
+            token_usage,
+        )
+
+
 _MAX_CHAINED_RUNS = 6
 _LLM_ERROR_MAX_RETRIES = 2
 _LLM_ERROR_BACKOFF_S = 5.0
-_CONTINUE_NOTE_TAG = 'continue'
+_CONTINUE_NOTE_TAG = "continue"
 _MAX_RUN_TIMEOUT_S = 600
 _MAX_READ_LINES = 500
 _MAX_READ_FILES = 10
-_CONTEXT_AST_THRESHOLD_KB = int(os.environ.get('USE_CONTEXT_AST_STRATEGY', '50'))
+_CONTEXT_AST_THRESHOLD_KB = int(os.environ.get("USE_CONTEXT_AST_STRATEGY", "50"))
 _MAX_CONSECUTIVE_READS = 6
-_READ_LOOP_NOTE = ('\n[read-loop guard] {n} consecutive reads this turn '
-                   'without acting. '
-    'Stop paging files — each extra page inflates the prompt '
-    'and slows every later call. '
-    'Work with what you have: '
-    'use definitions/references/search '
-    'for targeted lookups, or give your answer / take the next action now.')
+_READ_LOOP_NOTE = (
+    "\n[read-loop guard] {n} consecutive reads this turn "
+    "without acting. "
+    "Stop paging files — each extra page inflates the prompt "
+    "and slows every later call. "
+    "Work with what you have: "
+    "use definitions/references/search "
+    "for targeted lookups, or give your answer / take the next action now."
+)
 _MAX_ACTIVE_SUBAGENTS = 3
 _DELEGATE_TIMEOUT_S = 600.0
 _CONTINUE_NOTE_TAG_KEY = LOOP_NOTE_TAG_KEY
-_CONTINUE_NOTE = ('The previous tool session ended before you finished. A fresh tool '
-    'budget is available now. CONTINUE THE TASK where you left off — use the tools as '
-        'needed, complete the remaining work, then give your final answer. Do not '
-            'describe what remains; do it.')
-_VERIFY_NOTE = ("You answered without calling a single tool, so you have not verified "
+_CONTINUE_NOTE = (
+    "The previous tool session ended before you finished. A fresh tool "
+    "budget is available now. CONTINUE THE TASK where you left off — use the tools as "
+    "needed, complete the remaining work, then give your final answer. Do not "
+    "describe what remains; do it."
+)
+_VERIFY_NOTE = (
+    "You answered without calling a single tool, so you have not verified "
     "anything about this repository — you cannot know whether changes are staged, "
-        "committed or pushed. Do not assert that state. Call the git tool now "
-            "(subcommand='status' first), then do the work and report what it actually "
-                "returned.")
+    "committed or pushed. Do not assert that state. Call the git tool now "
+    "(subcommand='status' first), then do the work and report what it actually "
+    "returned."
+)
 
 
 # Public alias: the class was renamed AgentCore; agent.py exposes it as Agent.
@@ -1175,292 +1279,292 @@ Agent = AgentCore
 # Full public+private surface re-exported by the agent.py shim (frozen by
 # tests/test_agent_module_surface.py via star-import expansion).
 __all__ = (
-    'AGENT_MEMORY_JSON_PATH',
-    'AGENT_MEMORY_TMP_PATH',
-    'Agent',
-    'AgentCore',
-    'AgentDisplayMode',
-    'AnalyzeCommand',
-    'Any',
-    'Awaitable',
-    'CHAT_HISTORY_JSON_PATH',
-    'CHAT_HISTORY_TMP_PATH',
-    'CORRELATION_ID_CTX',
-    'Callable',
-    'CleanupCommand',
-    'ClearCommand',
-    'Command',
-    'CommandRegistry',
-    'CorrelationIdContext',
-    'DEFAULT_FULL_SUITE_TIMEOUT',
-    'DEFAULT_PAGE_LINES',
-    'DESTRUCTIVE_SHELL_PATTERNS',
-    'DecideCommand',
-    'DemoDataCommand',
-    'DisplayCommand',
-    'EntitiesCommand',
-    'FILE_HISTORY_MARKER',
-    'FileSearcher',
-    'FileSystem',
-    'FixCommand',
-    'FlowStopped',
-    'FullRunGate',
-    'GitCommand',
-    'HABITS_MARKER',
-    'HueBridge',
-    'HueBridgeError',
-    'ImplementCommand',
-    'Iterator',
-    'LLMClient',
-    'LOOP_NOTE_TAG_KEY',
-    'MAX_GOAL_CHARS',
-    'MODE_BUILD',
-    'ModelCommand',
-    'MultiLlmCommand',
-    'NLP_TOOL_NAMES',
-    'NLP_TOOL_SCHEMAS',
-    'NlpToolHandler',
-    'NonUtf8TextError',
-    'ORIGINAL_GOAL_MARKER',
-    'OptimizeCommand',
-    'Optional',
-    'PasteCommand',
-    'PasteImageCommand',
-    'PerfCommand',
-    'PerfTracker',
-    'PlanCommand',
-    'ReadCommand',
-    'ReconstructCommand',
-    'ReviewCommand',
-    'RunCommand',
-    'SEMANTIC_MEMORY_MARKER',
-    'SKILL_INDEX_MARKER',
-    'SearchCommand',
-    'SelfHealCommand',
-    'SkillError',
-    'TURN_LOG_PATH',
-    'TYPE_CHECKING',
-    'TaskplanCommand',
-    'ToolDispatcher',
-    'ToolLoopRunner',
-    'TraceWriter',
-    'UnrepresentableTextError',
-    'WorkflowCommand',
-    'WriteCommand',
-    '_CONTEXT_AST_THRESHOLD_KB',
-    '_CONTINUE_NOTE',
-    '_CONTINUE_NOTE_TAG',
-    '_CONTINUE_NOTE_TAG_KEY',
-    '_DANGEROUS_SHELL_PATTERNS',
-    '_DELEGATE_TIMEOUT_S',
-    '_ENV_FILE_PATH',
-    '_FULL_SUITE_MARGIN',
-    '_GOAL_RELATED_THRESHOLD',
-    '_HISTORY_CHAR_BUDGET',
-    '_HISTORY_TRIM_NOTE',
-    '_LLM_ERROR_BACKOFF_S',
-    '_LLM_ERROR_MAX_RETRIES',
-    '_MAX_ACTIVE_SUBAGENTS',
-    '_MAX_CHAINED_RUNS',
-    '_MAX_CHAT_MESSAGES',
-    '_MAX_CONSECUTIVE_READS',
-    '_MAX_READ_FILES',
-    '_MAX_READ_LINES',
-    '_MAX_RUN_TIMEOUT_S',
-    '_READ_LOOP_NOTE',
-    '_SHELL_NAME',
-    '_SYSTEM_PROMPT',
-    '_VERIFY_NOTE',
-    '_append_turn_log',
-    '_begin_trace_turn',
-    '_blocked_shell_command',
-    '_content_tokens',
-    '_current_git_branch',
-    '_decision_constraints_block',
-    '_detect_shell',
-    '_drop_orphan_tool_messages',
-    '_effective_ws_dir',
-    '_ensure_original_goal',
-    '_escape_json_string_controls',
-    '_file_history_block',
-    '_final_answer_fallback',
-    '_finish_turn',
-    '_get_plan_state',
-    '_habits_block',
-    '_install_signal_handlers',
-    '_intent_mode_system_suffix',
-    '_interruptible_input',
-    '_is_compaction_note',
-    '_is_full_pytest_command',
-    '_is_pytest_command',
-    '_is_subset_pytest_command',
-    '_kill_process_tree',
-    '_load_chat_history',
-    '_load_memory',
-    '_message_size',
-    '_mutating_files_this_turn',
-    '_nlp_analyze',
-    '_nlp_create_subagent',
-    '_nlp_definitions',
-    '_nlp_delegate',
-    '_nlp_delegate_batch',
-    '_nlp_diff',
-    '_nlp_edit',
-    '_nlp_fix',
-    '_nlp_get_current_datetime',
-    '_nlp_git',
-    '_nlp_hue_control',
-    '_nlp_jev_decide',
-    '_nlp_list_files',
-    '_nlp_mcp_call',
-    '_nlp_mcp_tools',
-    '_nlp_merge',
-    '_nlp_plan_finish',
-    '_nlp_plan_start',
-    '_nlp_plan_status',
-    '_nlp_plan_step',
-    '_nlp_read',
-    '_nlp_read_many',
-    '_nlp_read_skill',
-    '_nlp_references',
-    '_nlp_run',
-    '_nlp_run_subagent_task',
-    '_nlp_search',
-    '_nlp_speculate',
-    '_nlp_tests',
-    '_nlp_tool_handlers',
-    '_nlp_web_search',
-    '_nlp_write',
-    '_normalize_path',
-    '_note_effect',
-    '_original_goal_block',
-    '_persist_plan_answer',
-    '_print_self_review_note',
-    '_project_chat_history',
-    '_prompts_related',
-    '_pytest_full_suite_timeout',
-    '_read_env_value',
-    '_read_json_quarantining',
-    '_read_page',
-    '_recent_user_texts',
-    '_record_llm_experience',
-    '_recover_original_goal',
-    '_repair_tool_arguments',
-    '_repair_unanswered_tool_calls',
-    '_report_failover',
-    '_reset_failover_notice',
-    '_resolve_display_mode',
-    '_resolve_nlp_path',
-    '_resolve_stream_fn',
-    '_run_chained_tool_loop',
-    '_run_command_quietly',
-    '_parse_ps_exit_marker',
-    '_run_shell_command',
-    '_run_subprocess_captured',
-    '_safe_path',
-    '_save_chat_history',
-    '_save_memory',
-    '_save_verify_note',
-    '_semantic_memory_block',
-    '_shape_run_stderr',
-    '_shell_command_hint',
-    '_shell_name_token',
-    '_signal_break_with_cleanup',
-    '_skill_hint_block',
-    '_skill_index_block',
-    '_start_kanban_inbound',
-    '_strip_dynamic_system_blocks',
-    '_strip_image_blocks',
-    '_strip_turn_wrappers',
-    '_suppress_and_log',
-    '_suspend_history_for_new_task',
-    '_take_trace_effects',
-    '_tool_analyze_file',
-    '_tool_apply_patch',
-    '_tool_delete_file',
-    '_tool_edit_file',
-    '_tool_list_files',
-    '_tool_llm_analyze',
-    '_tool_read_file',
-    '_tool_search',
-    '_tool_write_file',
-    '_trim_chat_history',
-    '_truncate_output',
-    '_turn_quality_score',
-    '_unix_command_hint',
-    '_verify_file',
-    '_windows_command_hint',
-    'asyncio',
-    'blue',
-    'cast',
-    'chat_stoppable',
-    'check_stale_files',
-    'check_tool_allowed',
-    'clear_history',
-    'clear_stop',
-    'collect_definitions',
-    'collect_references',
-    'concurrent',
-    'contextlib',
-    'cyan',
-    'datetime',
-    'decisions_as_system_prompt',
-    'defaultdict',
-    'discover_skills',
-    'encode_in_encoding',
-    'execute_tool',
-    'file_notes_block',
-    'filter_tool_schemas',
-    'find_destructive_shell_pattern',
-    'format_skill_page',
-    'get_last_metrics',
-    'get_role',
-    'gray',
-    'green',
-    'habits_block',
-    'invalidate_stale',
-    'io',
-    'is_connection_failure',
-    'is_plan_mode',
-    'json',
-    'load_agent_settings',
-    'load_habits',
-    'load_semantic_memory',
-    'load_skill_index',
-    'logger',
-    'logging',
-    'magenta',
-    'match_skills_for_input',
-    'memory_stats',
-    'original_goal_block',
-    'original_goal_from_block',
-    'os',
-    'plan_mode_system_suffix',
-    'plan_mode_turn_note',
-    'provider_supports_streaming',
-    're',
-    'read_skill',
-    'read_text_preserving',
-    'recommend_profile',
-    'record_full_run_seconds',
-    'record_turn_outcome',
-    'red',
-    'resolve_model',
-    'resolve_path',
-    'role_names',
-    'safe_path',
-    'save_file_py',
-    'save_meta_policy_weights',
-    'semantic_memory_block',
-    'semantic_search_memories',
-    'shlex',
-    'signal',
-    'skill_hint_block',
-    'subprocess',
-    'sys',
-    'time',
-    'to_windows_path',
-    'trace_enabled',
-    'traceback',
-    'yellow',
+    "AGENT_MEMORY_JSON_PATH",
+    "AGENT_MEMORY_TMP_PATH",
+    "Agent",
+    "AgentCore",
+    "AgentDisplayMode",
+    "AnalyzeCommand",
+    "Any",
+    "Awaitable",
+    "CHAT_HISTORY_JSON_PATH",
+    "CHAT_HISTORY_TMP_PATH",
+    "CORRELATION_ID_CTX",
+    "Callable",
+    "CleanupCommand",
+    "ClearCommand",
+    "Command",
+    "CommandRegistry",
+    "CorrelationIdContext",
+    "DEFAULT_FULL_SUITE_TIMEOUT",
+    "DEFAULT_PAGE_LINES",
+    "DESTRUCTIVE_SHELL_PATTERNS",
+    "DecideCommand",
+    "DemoDataCommand",
+    "DisplayCommand",
+    "EntitiesCommand",
+    "FILE_HISTORY_MARKER",
+    "FileSearcher",
+    "FileSystem",
+    "FixCommand",
+    "FlowStopped",
+    "FullRunGate",
+    "GitCommand",
+    "HABITS_MARKER",
+    "HueBridge",
+    "HueBridgeError",
+    "ImplementCommand",
+    "Iterator",
+    "LLMClient",
+    "LOOP_NOTE_TAG_KEY",
+    "MAX_GOAL_CHARS",
+    "MODE_BUILD",
+    "ModelCommand",
+    "MultiLlmCommand",
+    "NLP_TOOL_NAMES",
+    "NLP_TOOL_SCHEMAS",
+    "NlpToolHandler",
+    "NonUtf8TextError",
+    "ORIGINAL_GOAL_MARKER",
+    "OptimizeCommand",
+    "Optional",
+    "PasteCommand",
+    "PasteImageCommand",
+    "PerfCommand",
+    "PerfTracker",
+    "PlanCommand",
+    "ReadCommand",
+    "ReconstructCommand",
+    "ReviewCommand",
+    "RunCommand",
+    "SEMANTIC_MEMORY_MARKER",
+    "SKILL_INDEX_MARKER",
+    "SearchCommand",
+    "SelfHealCommand",
+    "SkillError",
+    "TURN_LOG_PATH",
+    "TYPE_CHECKING",
+    "TaskplanCommand",
+    "ToolDispatcher",
+    "ToolLoopRunner",
+    "TraceWriter",
+    "UnrepresentableTextError",
+    "WorkflowCommand",
+    "WriteCommand",
+    "_CONTEXT_AST_THRESHOLD_KB",
+    "_CONTINUE_NOTE",
+    "_CONTINUE_NOTE_TAG",
+    "_CONTINUE_NOTE_TAG_KEY",
+    "_DANGEROUS_SHELL_PATTERNS",
+    "_DELEGATE_TIMEOUT_S",
+    "_ENV_FILE_PATH",
+    "_FULL_SUITE_MARGIN",
+    "_GOAL_RELATED_THRESHOLD",
+    "_HISTORY_CHAR_BUDGET",
+    "_HISTORY_TRIM_NOTE",
+    "_LLM_ERROR_BACKOFF_S",
+    "_LLM_ERROR_MAX_RETRIES",
+    "_MAX_ACTIVE_SUBAGENTS",
+    "_MAX_CHAINED_RUNS",
+    "_MAX_CHAT_MESSAGES",
+    "_MAX_CONSECUTIVE_READS",
+    "_MAX_READ_FILES",
+    "_MAX_READ_LINES",
+    "_MAX_RUN_TIMEOUT_S",
+    "_READ_LOOP_NOTE",
+    "_SHELL_NAME",
+    "_SYSTEM_PROMPT",
+    "_VERIFY_NOTE",
+    "_append_turn_log",
+    "_begin_trace_turn",
+    "_blocked_shell_command",
+    "_content_tokens",
+    "_current_git_branch",
+    "_decision_constraints_block",
+    "_detect_shell",
+    "_drop_orphan_tool_messages",
+    "_effective_ws_dir",
+    "_ensure_original_goal",
+    "_escape_json_string_controls",
+    "_file_history_block",
+    "_final_answer_fallback",
+    "_finish_turn",
+    "_get_plan_state",
+    "_habits_block",
+    "_install_signal_handlers",
+    "_intent_mode_system_suffix",
+    "_interruptible_input",
+    "_is_compaction_note",
+    "_is_full_pytest_command",
+    "_is_pytest_command",
+    "_is_subset_pytest_command",
+    "_kill_process_tree",
+    "_load_chat_history",
+    "_load_memory",
+    "_message_size",
+    "_mutating_files_this_turn",
+    "_nlp_analyze",
+    "_nlp_create_subagent",
+    "_nlp_definitions",
+    "_nlp_delegate",
+    "_nlp_delegate_batch",
+    "_nlp_diff",
+    "_nlp_edit",
+    "_nlp_fix",
+    "_nlp_get_current_datetime",
+    "_nlp_git",
+    "_nlp_hue_control",
+    "_nlp_jev_decide",
+    "_nlp_list_files",
+    "_nlp_mcp_call",
+    "_nlp_mcp_tools",
+    "_nlp_merge",
+    "_nlp_plan_finish",
+    "_nlp_plan_start",
+    "_nlp_plan_status",
+    "_nlp_plan_step",
+    "_nlp_read",
+    "_nlp_read_many",
+    "_nlp_read_skill",
+    "_nlp_references",
+    "_nlp_run",
+    "_nlp_run_subagent_task",
+    "_nlp_search",
+    "_nlp_speculate",
+    "_nlp_tests",
+    "_nlp_tool_handlers",
+    "_nlp_web_search",
+    "_nlp_write",
+    "_normalize_path",
+    "_note_effect",
+    "_original_goal_block",
+    "_persist_plan_answer",
+    "_print_self_review_note",
+    "_project_chat_history",
+    "_prompts_related",
+    "_pytest_full_suite_timeout",
+    "_read_env_value",
+    "_read_json_quarantining",
+    "_read_page",
+    "_recent_user_texts",
+    "_record_llm_experience",
+    "_recover_original_goal",
+    "_repair_tool_arguments",
+    "_repair_unanswered_tool_calls",
+    "_report_failover",
+    "_reset_failover_notice",
+    "_resolve_display_mode",
+    "_resolve_nlp_path",
+    "_resolve_stream_fn",
+    "_run_chained_tool_loop",
+    "_run_command_quietly",
+    "_parse_ps_exit_marker",
+    "_run_shell_command",
+    "_run_subprocess_captured",
+    "_safe_path",
+    "_save_chat_history",
+    "_save_memory",
+    "_save_verify_note",
+    "_semantic_memory_block",
+    "_shape_run_stderr",
+    "_shell_command_hint",
+    "_shell_name_token",
+    "_signal_break_with_cleanup",
+    "_skill_hint_block",
+    "_skill_index_block",
+    "_start_kanban_inbound",
+    "_strip_dynamic_system_blocks",
+    "_strip_image_blocks",
+    "_strip_turn_wrappers",
+    "_suppress_and_log",
+    "_suspend_history_for_new_task",
+    "_take_trace_effects",
+    "_tool_analyze_file",
+    "_tool_apply_patch",
+    "_tool_delete_file",
+    "_tool_edit_file",
+    "_tool_list_files",
+    "_tool_llm_analyze",
+    "_tool_read_file",
+    "_tool_search",
+    "_tool_write_file",
+    "_trim_chat_history",
+    "_truncate_output",
+    "_turn_quality_score",
+    "_unix_command_hint",
+    "_verify_file",
+    "_windows_command_hint",
+    "asyncio",
+    "blue",
+    "cast",
+    "chat_stoppable",
+    "check_stale_files",
+    "check_tool_allowed",
+    "clear_history",
+    "clear_stop",
+    "collect_definitions",
+    "collect_references",
+    "concurrent",
+    "contextlib",
+    "cyan",
+    "datetime",
+    "decisions_as_system_prompt",
+    "defaultdict",
+    "discover_skills",
+    "encode_in_encoding",
+    "execute_tool",
+    "file_notes_block",
+    "filter_tool_schemas",
+    "find_destructive_shell_pattern",
+    "format_skill_page",
+    "get_last_metrics",
+    "get_role",
+    "gray",
+    "green",
+    "habits_block",
+    "invalidate_stale",
+    "io",
+    "is_connection_failure",
+    "is_plan_mode",
+    "json",
+    "load_agent_settings",
+    "load_habits",
+    "load_semantic_memory",
+    "load_skill_index",
+    "logger",
+    "logging",
+    "magenta",
+    "match_skills_for_input",
+    "memory_stats",
+    "original_goal_block",
+    "original_goal_from_block",
+    "os",
+    "plan_mode_system_suffix",
+    "plan_mode_turn_note",
+    "provider_supports_streaming",
+    "re",
+    "read_skill",
+    "read_text_preserving",
+    "recommend_profile",
+    "record_full_run_seconds",
+    "record_turn_outcome",
+    "red",
+    "resolve_model",
+    "resolve_path",
+    "role_names",
+    "safe_path",
+    "save_file_py",
+    "save_meta_policy_weights",
+    "semantic_memory_block",
+    "semantic_search_memories",
+    "shlex",
+    "signal",
+    "skill_hint_block",
+    "subprocess",
+    "sys",
+    "time",
+    "to_windows_path",
+    "trace_enabled",
+    "traceback",
+    "yellow",
 )

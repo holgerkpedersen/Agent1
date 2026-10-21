@@ -3,6 +3,7 @@
 Extracted from agent.py as the t00 run-concern block (step t01).
 Contains helpers that cross-cut the run loop and tool execution.
 """
+
 from __future__ import annotations
 
 import logging
@@ -101,6 +102,7 @@ def resolve_stream_fn(
         try:
             # Access via module attribute so tests/monkeypatches can replace it.
             from agent_core import config as _config_module
+
             settings = _config_module.load_agent_settings()
             if not getattr(settings, "stream_final_answer", False):
                 return None
@@ -110,12 +112,14 @@ def resolve_stream_fn(
         if not provider_supports_streaming(provider):
             return None
         from functools import partial
+
         return partial(_stream_via_llm, llm)
     if stream and llm is not None:
         provider = getattr(llm, "_provider", None)
         if not provider_supports_streaming(provider):
             return None
         from functools import partial
+
         return partial(_stream_via_llm, llm)
     return None
 
@@ -136,13 +140,21 @@ def resolve_display_mode() -> "AgentDisplayMode":
     killing intent/quiet/clean while every test kept passing (they patch the
     resolver instead of calling it).
     """
-    from agent_core.config import AgentDisplayMode, _parse_display_mode, load_agent_settings
+    from agent_core.config import (
+        AgentDisplayMode,
+        _parse_display_mode,
+        load_agent_settings,
+    )
 
     try:
         return load_agent_settings().display_mode
     except Exception:
-        logger.debug("load_agent_settings failed in resolve_display_mode", exc_info=True)
-    return _parse_display_mode(os.environ.get("AGENT_DISPLAY_MODE"), AgentDisplayMode.VERBOSE)
+        logger.debug(
+            "load_agent_settings failed in resolve_display_mode", exc_info=True
+        )
+    return _parse_display_mode(
+        os.environ.get("AGENT_DISPLAY_MODE"), AgentDisplayMode.VERBOSE
+    )
 
 
 #: Appended to the system prompt when the session display mode is INTENT so
@@ -168,6 +180,7 @@ def intent_mode_system_suffix() -> str:
     """
     try:
         from agent_core.config import AgentDisplayMode
+
         if resolve_display_mode() is AgentDisplayMode.INTENT:
             return _INTENT_SYSTEM_SUFFIX
     except Exception:
@@ -230,8 +243,12 @@ def turn_quality_score(
             import harnessfix.tracing as _tr
 
             events: list[dict[str, Any]] | None = None
-            for _name in ("take_turn_events", "drain_turn_events",
-                          "current_turn_events", "turn_events"):
+            for _name in (
+                "take_turn_events",
+                "drain_turn_events",
+                "current_turn_events",
+                "turn_events",
+            ):
                 _getter = getattr(_tr, _name, None)
                 if callable(_getter):
                     events = _getter()
@@ -285,6 +302,7 @@ def append_turn_log(record: dict[str, Any]) -> None:
         import json
         import os
         from agent_core import constants as _constants_module
+
         path = _constants_module.TURN_LOG_PATH
         parent = os.path.dirname(path)
         if parent:

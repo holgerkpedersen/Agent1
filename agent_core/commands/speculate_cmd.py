@@ -26,6 +26,7 @@ REPL convention: input arrives via ``shlex.split(posix=False)``, so quoted
 questions keep their literal quotes — stripped here with ``.strip('"')``
 (same as ``multillm``/``analyze``/``fix``).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,10 +47,17 @@ _FIRST_NUMBER_RE = re.compile(r"[-+]?\d*\.?\d+")
 #: (filesystem inspection + web search + datetime).  Enforced as a hard
 #: allowlist, so a hallucinated ``run``/``write``/``edit`` can never mutate
 #: the workspace even though the branches run in parallel.
-_BRANCH_TOOLS: frozenset[str] = frozenset({
-    "search", "read", "list_files", "definitions", "references", "web_search",
-    "get_current_datetime",
-})
+_BRANCH_TOOLS: frozenset[str] = frozenset(
+    {
+        "search",
+        "read",
+        "list_files",
+        "definitions",
+        "references",
+        "web_search",
+        "get_current_datetime",
+    }
+)
 
 #: Max model round-trips per branch before a final, tools-withheld answer.
 _BRANCH_MAX_ITERS = 4
@@ -116,7 +124,8 @@ def _branch_tool_schemas() -> list[dict[str, Any]]:
     from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
 
     return [
-        s for s in NLP_TOOL_SCHEMAS
+        s
+        for s in NLP_TOOL_SCHEMAS
         if s.get("function", {}).get("name") in _BRANCH_TOOLS
     ]
 
@@ -126,7 +135,10 @@ def _branch_tool_schemas() -> list[dict[str, Any]]:
 #: ``<|tool_call>call:run{command:"…"}<tool_call|>``.  Such a reply is not an
 #: answer and must never be committed (it once scored 1.0 and COMMITted).
 _TOOL_CALL_MARKERS = (
-    "<|tool_call", "<tool_call", "<|tool_response", "<tool_response",
+    "<|tool_call",
+    "<tool_call",
+    "<|tool_response",
+    "<tool_response",
 )
 
 #: Inline call syntax without angle brackets: ``call:name{...}`` / ``call_name(...)``.
@@ -187,10 +199,26 @@ def _looks_like_fabricated_output(text: str) -> bool:
 #: Hints that a question is about THIS repo/codebase (so a branch must ground
 #: its answer with a tool call instead of answering from memory).
 _REPO_QUESTION_HINTS = (
-    "repo", "repository", "workspace", "codebase", "this project",
-    "agent.py", "agent1", "jev", "speculate", "harnessfix", "implement",
-    "fix command", "pytest", "mypy", "ruff", "module", "function",
-    "class", "file", "code",
+    "repo",
+    "repository",
+    "workspace",
+    "codebase",
+    "this project",
+    "agent.py",
+    "agent1",
+    "jev",
+    "speculate",
+    "harnessfix",
+    "implement",
+    "fix command",
+    "pytest",
+    "mypy",
+    "ruff",
+    "module",
+    "function",
+    "class",
+    "file",
+    "code",
 )
 _CLAIM_PATH_RE = re.compile(
     r"(?<![\w/\\])([A-Za-z0-9_][\w./\\-]*\.(?:py|md|json|toml|txt|cfg|yaml|yml|ini))"
@@ -208,30 +236,158 @@ def _is_repo_question(text: str) -> bool:
 
 #: Words that carry no subject signal in a repo question (a grounded branch
 #: should not pass just because a tool result happened to contain "work").
-_SUBJECT_STOPWORDS = frozenset({
-    "what", "which", "where", "when", "does", "this", "that", "with", "from",
-    "have", "should", "would", "could", "there", "their", "about", "into",
-    "than", "then", "them", "they", "your", "will", "shall", "must", "make",
-    "made", "using", "used", "need", "needs", "best", "good", "better",
-    "work", "works", "working", "right", "single", "value", "high",
-    "highest", "improve", "improvement", "improvements", "change", "changes",
-    "repo", "repository", "project", "codebase", "workspace", "code", "file",
-    "files", "command", "commands", "current", "currently", "really", "more",
-    "most", "much", "many", "very", "just", "like", "also", "only", "over",
-    "under", "after", "before", "while", "being", "been", "were", "are",
-    "some", "each", "other", "another", "such", "same", "both", "thing",
-    "things",
-    # 3-letter words (distinctive terms like "jev" must survive).
-    "the", "and", "for", "not", "but", "you", "can", "how", "why", "was",
-    "its", "our", "his", "her", "who", "all", "any", "may", "new", "old",
-    "now", "get", "got", "see", "use", "let", "put", "say", "way", "too",
-    "own", "out", "off", "per", "via", "etc", "one", "two", "has", "had",
-    "did", "add", "run", "set", "end", "key", "fix", "bug",
-})
+_SUBJECT_STOPWORDS = frozenset(
+    {
+        "what",
+        "which",
+        "where",
+        "when",
+        "does",
+        "this",
+        "that",
+        "with",
+        "from",
+        "have",
+        "should",
+        "would",
+        "could",
+        "there",
+        "their",
+        "about",
+        "into",
+        "than",
+        "then",
+        "them",
+        "they",
+        "your",
+        "will",
+        "shall",
+        "must",
+        "make",
+        "made",
+        "using",
+        "used",
+        "need",
+        "needs",
+        "best",
+        "good",
+        "better",
+        "work",
+        "works",
+        "working",
+        "right",
+        "single",
+        "value",
+        "high",
+        "highest",
+        "improve",
+        "improvement",
+        "improvements",
+        "change",
+        "changes",
+        "repo",
+        "repository",
+        "project",
+        "codebase",
+        "workspace",
+        "code",
+        "file",
+        "files",
+        "command",
+        "commands",
+        "current",
+        "currently",
+        "really",
+        "more",
+        "most",
+        "much",
+        "many",
+        "very",
+        "just",
+        "like",
+        "also",
+        "only",
+        "over",
+        "under",
+        "after",
+        "before",
+        "while",
+        "being",
+        "been",
+        "were",
+        "are",
+        "some",
+        "each",
+        "other",
+        "another",
+        "such",
+        "same",
+        "both",
+        "thing",
+        "things",
+        # 3-letter words (distinctive terms like "jev" must survive).
+        "the",
+        "and",
+        "for",
+        "not",
+        "but",
+        "you",
+        "can",
+        "how",
+        "why",
+        "was",
+        "its",
+        "our",
+        "his",
+        "her",
+        "who",
+        "all",
+        "any",
+        "may",
+        "new",
+        "old",
+        "now",
+        "get",
+        "got",
+        "see",
+        "use",
+        "let",
+        "put",
+        "say",
+        "way",
+        "too",
+        "own",
+        "out",
+        "off",
+        "per",
+        "via",
+        "etc",
+        "one",
+        "two",
+        "has",
+        "had",
+        "did",
+        "add",
+        "run",
+        "set",
+        "end",
+        "key",
+        "fix",
+        "bug",
+    }
+)
 
 _IDENT_RE = re.compile(r"`([A-Za-z_][\w.]*)`")
 _FILE_EXT_SUFFIXES = (
-    ".py", ".md", ".json", ".toml", ".txt", ".cfg", ".yaml", ".yml", ".ini",
+    ".py",
+    ".md",
+    ".json",
+    ".toml",
+    ".txt",
+    ".cfg",
+    ".yaml",
+    ".yml",
+    ".ini",
 )
 
 
@@ -273,7 +429,7 @@ def _grounded_in_subject(evidence: list[str], terms: set[str]) -> bool:
 
 def _claim_idents(text: str, start: int, end: int, rel: str) -> list[str]:
     """Backticked identifiers near a citation (excluding the cited filename)."""
-    context = text[max(0, start - 160):min(len(text), end + 160)]
+    context = text[max(0, start - 160) : min(len(text), end + 160)]
     idents: list[str] = []
     for ident in _IDENT_RE.findall(context):
         low = ident.lower()
@@ -323,19 +479,18 @@ def _verify_claims(answer: str, workspace: str) -> list[str]:
             continue
         try:
             file_lines = candidate.read_text(
-                encoding="utf-8", errors="replace",
+                encoding="utf-8",
+                errors="replace",
             ).splitlines()
         except OSError:
             continue
         if int(line) > len(file_lines):
-            problems.append(
-                f"{rel}:{line} is past EOF ({len(file_lines)} lines)"
-            )
+            problems.append(f"{rel}:{line} is past EOF ({len(file_lines)} lines)")
             continue
         idents = _claim_idents(text, match.start(), match.end(), rel)
         if idents:
             index = int(line) - 1
-            window = " ".join(file_lines[max(0, index - 3):index + 4])
+            window = " ".join(file_lines[max(0, index - 3) : index + 4])
             missing = [i for i in dict.fromkeys(idents) if i not in window]
             if missing:
                 problems.append(
@@ -358,8 +513,7 @@ def _evidence_signature(answer: str) -> str:
     branches is the cheapest defence against a confident, wrong answer.
     """
     stems = {
-        Path(m.group(1)).name.lower()
-        for m in _CLAIM_PATH_RE.finditer(str(answer))
+        Path(m.group(1)).name.lower() for m in _CLAIM_PATH_RE.finditer(str(answer))
     }
     if stems:
         return "|".join(sorted(stems))
@@ -390,6 +544,7 @@ class SpeculateCommand(Command):
             "branches on the Jev model too; --escalate opts into gray-band "
             "escalation to the chat-model judge; both averages the two"
         )
+
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         from agent_core.orchestrator_probabilistic import (
             Decision,
@@ -537,8 +692,13 @@ class SpeculateCommand(Command):
             return True
 
         skip_values = {
-            "--branches", "--threshold", "--timeout", "--judge", "--low",
-            "--branch-model", "--agree",
+            "--branches",
+            "--threshold",
+            "--timeout",
+            "--judge",
+            "--low",
+            "--branch-model",
+            "--agree",
         }
         question_parts: list[str] = []
         for j, p in enumerate(parts):
@@ -592,8 +752,7 @@ class SpeculateCommand(Command):
             except Exception as exc:  # noqa: BLE001 - degrade gracefully
                 if judge_mode in ("jev", "both"):
                     print(
-                        "  [speculate] Jev judge unavailable "
-                        f"({exc}); using LLM judge"
+                        f"  [speculate] Jev judge unavailable ({exc}); using LLM judge"
                     )
                     judge_mode = "llm"
                 if branch_model == "jev":
@@ -656,39 +815,49 @@ class SpeculateCommand(Command):
             messages: list[dict[str, Any]] = []
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": (
-                f"Speculative branch {branch_id}. {question}\n\n"
-                "Answer the question directly in prose — that text is the "
-                "final answer shown to the user, so never reply with a tool "
-                "call. You may call ONLY these read-only tools if you must "
-                "check the workspace: "
-                f"{', '.join(sorted(_BRANCH_TOOLS))}. Do not call any other tool. "
-                "NEVER invent tool output: do not write XML/tags like "
-                "<definitions ...> or <search ...>, and no placeholder paths "
-                "like path/to/x.py — if you need a fact, actually call the tool. "
-                "When you claim something about the code, cite it as "
-                "`path/to/file.py:line`."
-            )})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"Speculative branch {branch_id}. {question}\n\n"
+                        "Answer the question directly in prose — that text is the "
+                        "final answer shown to the user, so never reply with a tool "
+                        "call. You may call ONLY these read-only tools if you must "
+                        "check the workspace: "
+                        f"{', '.join(sorted(_BRANCH_TOOLS))}. Do not call any other tool. "
+                        "NEVER invent tool output: do not write XML/tags like "
+                        "<definitions ...> or <search ...>, and no placeholder paths "
+                        "like path/to/x.py — if you need a fact, actually call the tool. "
+                        "When you claim something about the code, cite it as "
+                        "`path/to/file.py:line`."
+                    ),
+                }
+            )
             answer = ""
             tool_calls_made = 0
             tool_evidence: list[str] = []
             for _ in range(_BRANCH_MAX_ITERS):
-                reply = str(asyncio.run(
-                    branch_llm.chat(
-                        messages, tools=branch_tools,
-                        max_tokens=_BRANCH_MAX_TOKENS,
+                reply = str(
+                    asyncio.run(
+                        branch_llm.chat(
+                            messages,
+                            tools=branch_tools,
+                            max_tokens=_BRANCH_MAX_TOKENS,
+                        )
                     )
-                ))
+                )
                 split = _split_tool_reply(reply)
                 if split is None:
                     answer = reply
                     break
                 content, calls = split
-                messages.append({
-                    "role": "assistant",
-                    "content": content,
-                    "tool_calls": calls,
-                })
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": content,
+                        "tool_calls": calls,
+                    }
+                )
                 for call in calls:
                     fn = call.get("function") if isinstance(call, dict) else {}
                     fn = fn if isinstance(fn, dict) else {}
@@ -701,25 +870,31 @@ class SpeculateCommand(Command):
                         targs = {}
                     result_text = _call_branch_tool(name, targs)
                     tool_evidence.append(result_text[:20_000])
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": str(call.get("id") or ""),
-                        "content": result_text,
-                    })
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": str(call.get("id") or ""),
+                            "content": result_text,
+                        }
+                    )
                     tool_calls_made += 1
             else:
                 # Still calling tools at the cap: force a final text answer
                 # with tools withheld so the branch always returns prose.
-                answer = str(asyncio.run(
-                    branch_llm.chat(messages, max_tokens=_BRANCH_MAX_TOKENS)
-                ))
+                answer = str(
+                    asyncio.run(
+                        branch_llm.chat(messages, max_tokens=_BRANCH_MAX_TOKENS)
+                    )
+                )
             if _looks_like_tool_call(answer):
                 return _fail(
-                    branch_id, "emitted a raw tool call instead of an answer",
+                    branch_id,
+                    "emitted a raw tool call instead of an answer",
                 )
             if _looks_like_fabricated_output(answer):
                 return _fail(
-                    branch_id, "fabricated tool output instead of answering",
+                    branch_id,
+                    "fabricated tool output instead of answering",
                 )
             if require_grounding and tool_calls_made == 0:
                 return _fail(
@@ -728,7 +903,8 @@ class SpeculateCommand(Command):
                     "(ungrounded code claims are not candidates)",
                 )
             if require_grounding and not _grounded_in_subject(
-                tool_evidence, subject_terms,
+                tool_evidence,
+                subject_terms,
             ):
                 return _fail(
                     branch_id,
@@ -828,22 +1004,15 @@ class SpeculateCommand(Command):
             # Make the DEDICATED Jev model visible up front: it is independent
             # of the branch model, and printing it here proves the judge is not
             # running on the agent's chat model.
-            judge_note += (
-                f", jev_model={getattr(jev_engine, 'model_name', '?')}"
-            )
+            judge_note += f", jev_model={getattr(jev_engine, 'model_name', '?')}"
         if branch_llm is llm:
             judge_note += ", branch_model=chat"
         else:
-            judge_note += (
-                f", branch_model={getattr(branch_llm, 'model_name', 'jev')}"
-            )
+            judge_note += f", branch_model={getattr(branch_llm, 'model_name', 'jev')}"
         if judge_mode == "jev":
-            judge_note += (
-                f", low={low:g}, escalate={'on' if escalate else 'off'}"
-            )
+            judge_note += f", low={low:g}, escalate={'on' if escalate else 'off'}"
         judge_note += (
-            f", grounding={'on' if require_grounding else 'off'}"
-            f", agree={agree}"
+            f", grounding={'on' if require_grounding else 'off'}, agree={agree}"
         )
         print(
             f"\n  [speculate] {num_branches} branch(es), threshold={threshold:g}, "
@@ -885,8 +1054,7 @@ class SpeculateCommand(Command):
             if require_grounding and agree > 1:
                 best_signature = _evidence_signature(answer)
                 supporters = sum(
-                    1 for signature in branch_signatures
-                    if signature == best_signature
+                    1 for signature in branch_signatures if signature == best_signature
                 )
                 if supporters < agree:
                     print(
@@ -906,13 +1074,16 @@ class SpeculateCommand(Command):
                 for problem in problems[:5]:
                     print(f"    - {problem}")
                 return True
-            print(f"  [speculate] COMMIT score={decision.best.score:.2f} "
-                  f"threshold={threshold:g}")
+            print(
+                f"  [speculate] COMMIT score={decision.best.score:.2f} "
+                f"threshold={threshold:g}"
+            )
             for line in answer.splitlines() or [answer]:
                 print(f"  {line}")
         else:
-            print(f"  [speculate] REFUSE - no candidate reached "
-                  f"threshold {threshold:g}")
+            print(
+                f"  [speculate] REFUSE - no candidate reached threshold {threshold:g}"
+            )
             if branch_errors:
                 print("  [speculate] branch failures (deterministic guards):")
                 for reason in sorted(set(branch_errors))[:3]:

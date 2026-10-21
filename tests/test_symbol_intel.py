@@ -8,6 +8,7 @@ Covers:
 - Agent wiring: dispatch-table parity, plan-mode blocking, end-to-end
   handler behaviour through _execute_tool_call
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -29,15 +30,10 @@ from agent_core.symbol_intel import (
 # definitions
 # ---------------------------------------------------------------------------
 
+
 class TestCollectDefinitions:
     def test_signatures_and_line_spans(self) -> None:
-        src = (
-            "def top(a, b=2):\n"
-            "    return a\n"
-            "\n"
-            "async def afunc() -> None:\n"
-            "    pass\n"
-        )
+        src = "def top(a, b=2):\n    return a\n\nasync def afunc() -> None:\n    pass\n"
         out = collect_definitions(src, "m.py")
         assert "def top(a, b=2)" in out
         assert "async def afunc() -> None" in out
@@ -74,6 +70,7 @@ class TestCollectDefinitions:
 # references
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def ws(tmp_path: Path) -> Path:
     """Tiny workspace: defs.py defines sym_a/sym_b; user.py uses them."""
@@ -84,7 +81,7 @@ def ws(tmp_path: Path) -> Path:
     (tmp_path / "user.py").write_text(
         "from defs import sym_a\n"
         "sym_a()\n"
-        "x = sym_a_longer()\n"   # must NOT match (substring)
+        "x = sym_a_longer()\n"  # must NOT match (substring)
         "import defs\n"
         "print(defs.sym_a)\n",
         encoding="utf-8",
@@ -103,8 +100,10 @@ class TestCollectReferences:
         out = collect_references("sym_a", str(ws))
         assert "user.py" in out
         # the sym_a_longer line must not appear
-        assert "sym_a_longer()" not in out.replace("sym_a_longer", "SHOULD-NOT-MATCH") or \
-            "1: x = sym_a_longer()" not in out
+        assert (
+            "sym_a_longer()" not in out.replace("sym_a_longer", "SHOULD-NOT-MATCH")
+            or "1: x = sym_a_longer()" not in out
+        )
 
     def test_definition_lines_included(self, ws: Path) -> None:
         out = collect_references("sym_a", str(ws))
@@ -112,7 +111,10 @@ class TestCollectReferences:
 
     def test_scans_subdirectories_skips_pycache(self, ws: Path) -> None:
         out = collect_references("sym_a", str(ws))
-        assert os.path.join("sub", "more.py").replace("\\", "/") in out or "sub/more.py" in out
+        assert (
+            os.path.join("sub", "more.py").replace("\\", "/") in out
+            or "sub/more.py" in out
+        )
         assert "__pycache__" not in out
 
     def test_cap_on_hits(self, ws: Path) -> None:
@@ -132,6 +134,7 @@ class TestCollectReferences:
 # ---------------------------------------------------------------------------
 # Agent wiring
 # ---------------------------------------------------------------------------
+
 
 class TestAgentWiring:
     def test_dispatch_table_covers_new_tools(self) -> None:
@@ -153,6 +156,7 @@ class TestAgentWiring:
             assert rejection is None  # read-only tools stay allowed
             # but they must be IN the read-only set so schemas survive filtering
         from agent_core.modes import PLAN_MODE_TOOLS
+
         assert {"definitions", "references"} <= PLAN_MODE_TOOLS
 
     def test_definitions_end_to_end(self, tmp_path: Path) -> None:
@@ -160,25 +164,34 @@ class TestAgentWiring:
             "def hello(name):\n    return name\n", encoding="utf-8"
         )
         bot = Agent(workspace=str(tmp_path))
-        out = asyncio.run(bot._execute_tool_call(
-            "definitions", {"path": "mod.py"},
-        ))
+        out = asyncio.run(
+            bot._execute_tool_call(
+                "definitions",
+                {"path": "mod.py"},
+            )
+        )
         assert "def hello(name)" in out
         assert "[lines 1-2]" in out
 
     def test_definitions_missing_file(self) -> None:
         bot = Agent(workspace=".")
-        out = asyncio.run(bot._execute_tool_call(
-            "definitions", {"path": "definitely_not_here_xyz.py"},
-        ))
+        out = asyncio.run(
+            bot._execute_tool_call(
+                "definitions",
+                {"path": "definitely_not_here_xyz.py"},
+            )
+        )
         assert out.startswith("File not found:")
 
     def test_definitions_rejects_non_python(self, tmp_path: Path) -> None:
         (tmp_path / "notes.txt").write_text("hi", encoding="utf-8")
         bot = Agent(workspace=str(tmp_path))
-        out = asyncio.run(bot._execute_tool_call(
-            "definitions", {"path": "notes.txt"},
-        ))
+        out = asyncio.run(
+            bot._execute_tool_call(
+                "definitions",
+                {"path": "notes.txt"},
+            )
+        )
         assert out.startswith("Error: definitions needs a .py file")
 
     def test_references_end_to_end(self, tmp_path: Path) -> None:
@@ -186,9 +199,12 @@ class TestAgentWiring:
             "val = MY_CONST\nother = MY_CONSTS\n", encoding="utf-8"
         )
         bot = Agent(workspace=str(tmp_path))
-        out = asyncio.run(bot._execute_tool_call(
-            "references", {"symbol": "MY_CONST"},
-        ))
+        out = asyncio.run(
+            bot._execute_tool_call(
+                "references",
+                {"symbol": "MY_CONST"},
+            )
+        )
         assert "MY_CONST" in out
         assert "1: val = MY_CONST" in out
         assert "MY_CONSTS" not in out.replace("MY_CONSTS", "")  # no false hit line

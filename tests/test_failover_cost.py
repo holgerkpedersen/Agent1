@@ -5,6 +5,7 @@ table is monkeypatched, so the suite is deterministic and offline.  Model
 names come from ``_helpers`` (``_default_zen_free_model`` / ``_default_llm``)
 which honor ``AGENT_ZEN_FREE_MODEL`` / ``AGENT_OPENCODE_MODEL`` when set.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -70,7 +71,14 @@ def test_cost_per_token_paid_nonzero(monkeypatch) -> None:
     """A known paid model yields a positive per-token cost."""
     monkeypatch.setattr(
         "agent_core.llm.pricing.BASELINE_PRICES",
-        {_paid_model(): {"prompt_per_1m": 1.0, "completion_per_1m": 3.0, "verified": False, "source": "test"}},
+        {
+            _paid_model(): {
+                "prompt_per_1m": 1.0,
+                "completion_per_1m": 3.0,
+                "verified": False,
+                "source": "test",
+            }
+        },
     )
     # Blended per-1M = (1 + 3)/2 = 2.0 -> per token = 2e-6.
     assert cost_per_token(_paid_model(), "opencode") == pytest.approx(2.0 / 1_000_000.0)
@@ -91,7 +99,14 @@ def test_cheapest_strategy_orders_by_cost(monkeypatch) -> None:
     paid = _paid_model()
     monkeypatch.setattr(
         "agent_core.llm.pricing.BASELINE_PRICES",
-        {paid: {"prompt_per_1m": 1.0, "completion_per_1m": 3.0, "verified": False, "source": "test"}},
+        {
+            paid: {
+                "prompt_per_1m": 1.0,
+                "completion_per_1m": 3.0,
+                "verified": False,
+                "source": "test",
+            }
+        },
     )
     # Order the inputs as paid-then-free; cheapest must try free first.
     go = _Stub("go", paid)
@@ -106,7 +121,14 @@ def test_cheapest_strategy_prefers_free_over_paid(monkeypatch) -> None:
     paid = _paid_model()
     monkeypatch.setattr(
         "agent_core.llm.pricing.BASELINE_PRICES",
-        {paid: {"prompt_per_1m": 2.0, "completion_per_1m": 4.0, "verified": False, "source": "test"}},
+        {
+            paid: {
+                "prompt_per_1m": 2.0,
+                "completion_per_1m": 4.0,
+                "verified": False,
+                "source": "test",
+            }
+        },
     )
     go = _Stub("go", paid, fail=False)
     zen = _Stub("zen", _free_model(), fail=False)
@@ -122,7 +144,14 @@ def test_cheapest_falls_over_on_failure(monkeypatch) -> None:
     paid = _paid_model()
     monkeypatch.setattr(
         "agent_core.llm.pricing.BASELINE_PRICES",
-        {paid: {"prompt_per_1m": 2.0, "completion_per_1m": 4.0, "verified": False, "source": "test"}},
+        {
+            paid: {
+                "prompt_per_1m": 2.0,
+                "completion_per_1m": 4.0,
+                "verified": False,
+                "source": "test",
+            }
+        },
     )
     # zen is cheapest (cost 0) but failing; go is next and must answer.
     zen = _Stub("zen", _free_model(), fail=True)
@@ -136,7 +165,9 @@ def test_cheapest_falls_over_on_failure(monkeypatch) -> None:
 
 def test_cheapest_strategy_invalid_value() -> None:
     with pytest.raises(ValueError):
-        FailoverProvider([_Stub("a", _free_model())], model_name=_free_model(), strategy="bogus")
+        FailoverProvider(
+            [_Stub("a", _free_model())], model_name=_free_model(), strategy="bogus"
+        )
 
 
 def test_estimate_cost_free_zero() -> None:
@@ -148,7 +179,14 @@ def test_estimate_cost_paid_nonzero(monkeypatch) -> None:
     paid = _paid_model()
     monkeypatch.setattr(
         "agent_core.llm.pricing.BASELINE_PRICES",
-        {paid: {"prompt_per_1m": 1.0, "completion_per_1m": 3.0, "verified": False, "source": "test"}},
+        {
+            paid: {
+                "prompt_per_1m": 1.0,
+                "completion_per_1m": 3.0,
+                "verified": False,
+                "source": "test",
+            }
+        },
     )
     # (1000*1 + 2000*3)/1e6 = (1000 + 6000)/1e6 = 7e-3.
     assert estimate_cost(1000, 2000, paid, "opencode") == pytest.approx(7.0 / 1_000.0)

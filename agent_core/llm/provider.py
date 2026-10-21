@@ -152,12 +152,23 @@ def provider_for(
     for prefix, provider in ROUTER.items():
         if prefix in m:
             return provider
-    if persisted_provider in ("lmstudio", "opencode", "llama", "openrouter", "lemonade"):
+    if persisted_provider in (
+        "lmstudio",
+        "opencode",
+        "llama",
+        "openrouter",
+        "lemonade",
+    ):
         return persisted_provider
     # A chain entry may carry a per-entry model override ("opencode:model");
     # the provider part is everything before the first colon.
     provider_setting = provider_setting.split(":", 1)[0].strip()
-    return provider_setting if provider_setting in ("lmstudio", "opencode", "llama", "openrouter", "lemonade") else "lmstudio"
+    return (
+        provider_setting
+        if provider_setting
+        in ("lmstudio", "opencode", "llama", "openrouter", "lemonade")
+        else "lmstudio"
+    )
 
 
 def _split_entry(entry: str) -> tuple[str, str | None]:
@@ -186,6 +197,7 @@ def _provider_part(entry: str) -> str:
 def _model_mode(model: str | None) -> str:
     """Return ``"zen"`` for free-tier model names, else ``"go"`` (keyed/other)."""
     from agent_core.constants import _ZEN_TIER_PREFIXES
+
     m = (model or "").lower()
     return "zen" if m.startswith(_ZEN_TIER_PREFIXES) else "go"
 
@@ -225,7 +237,9 @@ def _effective_model(
     otherwise the provider falls back to its own default (``None``).
     """
     if entry_override:
-        if _matches_slot(model_name, entry_provider, entry_override, persisted_provider):
+        if _matches_slot(
+            model_name, entry_provider, entry_override, persisted_provider
+        ):
             return model_name
         return entry_override
     if provider_for(model_name, entry_provider, persisted_provider) == entry_provider:
@@ -297,17 +311,24 @@ def build_provider(
         if provider_name == "opencode":
             from .opencode_provider import OpencodeProvider
 
-            opencode_model: str = str(eff or getattr(settings, "opencode_model", DEFAULT_OPENCODE_MODEL))
+            opencode_model: str = str(
+                eff or getattr(settings, "opencode_model", DEFAULT_OPENCODE_MODEL)
+            )
             return OpencodeProvider(
                 model_name=opencode_model,
-                server_url=getattr(settings, "opencode_server_url", DEFAULT_OPENCODE_SERVER_URL),
+                server_url=getattr(
+                    settings, "opencode_server_url", DEFAULT_OPENCODE_SERVER_URL
+                ),
                 password=getattr(settings, "opencode_password", ""),
-                api_url=getattr(settings, "opencode_api_url", DEFAULT_OPENCODE_API_BASE),
+                api_url=getattr(
+                    settings, "opencode_api_url", DEFAULT_OPENCODE_API_BASE
+                ),
                 api_key=getattr(settings, "opencode_api_key", ""),
             )
         # llama.cpp (llama-server) OpenAI-compatible provider.
         if provider_name == "llama":
             from .llama_provider import LlamaProvider
+
             return LlamaProvider(
                 model_name=eff,
                 api_url=getattr(settings, "llama_base_url", DEFAULT_LLAMA_BASE_URL),
@@ -316,10 +337,15 @@ def build_provider(
         # OpenRouter hosted gateway (OpenAI-compatible, native tool calling).
         if provider_name == "openrouter":
             from .openrouter_provider import OpenRouterProvider
-            openrouter_model: str = str(eff or getattr(settings, "openrouter_model", DEFAULT_OPENROUTER_MODEL))
+
+            openrouter_model: str = str(
+                eff or getattr(settings, "openrouter_model", DEFAULT_OPENROUTER_MODEL)
+            )
             return OpenRouterProvider(
                 model_name=openrouter_model,
-                api_url=getattr(settings, "openrouter_api_url", DEFAULT_OPENROUTER_API_BASE),
+                api_url=getattr(
+                    settings, "openrouter_api_url", DEFAULT_OPENROUTER_API_BASE
+                ),
                 api_key=getattr(settings, "openrouter_api_key", ""),
             )
 
@@ -329,7 +355,9 @@ def build_provider(
 
             return LemonadeProvider(
                 model_name=eff or getattr(settings, "lemonade_model", "") or None,
-                api_url=getattr(settings, "lemonade_api_url", DEFAULT_LEMONADE_API_BASE),
+                api_url=getattr(
+                    settings, "lemonade_api_url", DEFAULT_LEMONADE_API_BASE
+                ),
             )
 
         # Unknown entries fall back to LM Studio (the default provider).
@@ -366,7 +394,8 @@ def build_provider(
     if single:
         routed = (
             provider_override
-            if provider_override in ("lmstudio", "opencode", "llama", "openrouter", "lemonade")
+            if provider_override
+            in ("lmstudio", "opencode", "llama", "openrouter", "lemonade")
             else provider_for(model_name, chain[0], persisted_provider)
         )
         return _build_one(routed, None, user_explicit=True)
@@ -376,7 +405,13 @@ def build_provider(
     # the chain.  Only an explicit multi-provider chain builds a FailoverProvider.
     if len(chain) == 1:
         # An explicit override wins over prefix-based and persisted routing.
-        if provider_override in ("lmstudio", "opencode", "llama", "openrouter", "lemonade"):
+        if provider_override in (
+            "lmstudio",
+            "opencode",
+            "llama",
+            "openrouter",
+            "lemonade",
+        ):
             return _build_one(provider_override, None, user_explicit=True)
         # No override: the model prefix / persisted provider still selects the
         # concrete provider (e.g. an opencode-go name routes to opencode even
@@ -400,7 +435,9 @@ def build_provider(
     ordered_entries = list(chain)
     explicit_entry: str | None = None
     if provider_override in ("lmstudio", "opencode", "llama", "openrouter", "lemonade"):
-        matching = [e for e in ordered_entries if _provider_part(e) == provider_override]
+        matching = [
+            e for e in ordered_entries if _provider_part(e) == provider_override
+        ]
         rest = [e for e in ordered_entries if _provider_part(e) != provider_override]
         if matching:
             # Keep the matching entry's existing override (e.g. "opencode:…").
@@ -584,7 +621,10 @@ class FailoverProvider:
         self.last_failover = None
 
     def apply_profile(
-        self, name: str, temperature: float, max_tokens: int,
+        self,
+        name: str,
+        temperature: float,
+        max_tokens: int,
     ) -> None:
         """Activate *name* on every wrapped provider (profile is global)."""
         self._profile_name = name
@@ -630,9 +670,7 @@ class FailoverProvider:
                         self.last_failover = {
                             "answered_index": index,
                             "answered_provider": _provider_label(provider),
-                            "answered_model": getattr(
-                                provider, "model_name", None
-                            ),
+                            "answered_model": getattr(provider, "model_name", None),
                             "attempted": [
                                 {
                                     "provider": _provider_label(p),
@@ -653,6 +691,7 @@ class FailoverProvider:
                         self.model_name = working_model
                         try:
                             from agent_core.constants import persist_model_choice
+
                             persist_model_choice(
                                 working_model,
                                 provider=provider_for(working_model, "lmstudio"),
@@ -670,7 +709,11 @@ class FailoverProvider:
             )
         # All providers failed — return the last error text so callers treat
         # it exactly like a normal provider failure.
-        return last_error if last_error is not None else "[Error: all LLM providers failed]"
+        return (
+            last_error
+            if last_error is not None
+            else "[Error: all LLM providers failed]"
+        )
 
     async def chat_stream(self, messages: list[dict[str, str]]) -> str:
         return await self._providers[0].chat_stream(messages)
@@ -702,7 +745,10 @@ class LLMProvider(Protocol):
     max_tokens: int
 
     def apply_profile(
-        self, name: str, temperature: float, max_tokens: int,
+        self,
+        name: str,
+        temperature: float,
+        max_tokens: int,
     ) -> None:
         """Activate *name* with its sampling parameters (see class docstring)."""
         ...

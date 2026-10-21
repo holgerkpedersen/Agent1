@@ -1,4 +1,5 @@
 """Tests for cross-file review detectors: collision, attribute, unwired."""
+
 import tempfile
 import os
 
@@ -14,7 +15,10 @@ class TestModuleCollisions:
     def test_similar_names_detected(self):
         findings = detect_module_collisions(
             ["agent_core/llm/lm_studio_provider.py"],
-            existing_files=["agent_core/llm/lmstudio.py", "agent_core/llm/tool_loop.py"],
+            existing_files=[
+                "agent_core/llm/lmstudio.py",
+                "agent_core/llm/tool_loop.py",
+            ],
         )
         assert len(findings) == 1
         assert "lmstudio.py" in findings[0]["suggestion"]
@@ -22,7 +26,10 @@ class TestModuleCollisions:
     def test_distinct_names_not_flagged(self):
         findings = detect_module_collisions(
             ["agent_core/llm/model_profiles.py"],
-            existing_files=["agent_core/llm/lmstudio.py", "agent_core/llm/tool_loop.py"],
+            existing_files=[
+                "agent_core/llm/lmstudio.py",
+                "agent_core/llm/tool_loop.py",
+            ],
         )
         assert len(findings) == 0
 

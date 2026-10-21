@@ -5,6 +5,7 @@ owning :class:`Agent` instance as its first parameter.  Agent-instance
 attributes (``workspace``, ``_pending_effects``, ...) are read through the
 instance at call time so monkeypatching and subclass overrides keep working.
 """
+
 from __future__ import annotations
 
 import os
@@ -31,7 +32,9 @@ def _resolve_nlp_path(agent: "Agent", path: str) -> str:
     return path
 
 
-async def _save_verify_note(agent: "Agent", path: str, content: str, ok_msg: str) -> str:
+async def _save_verify_note(
+    agent: "Agent", path: str, content: str, ok_msg: str
+) -> str:
     """Persist *content*, py_compile-verify .py files, note the effect.
 
     Shared tail of the NLP ``write`` and ``edit`` tool handlers so both
@@ -40,10 +43,10 @@ async def _save_verify_note(agent: "Agent", path: str, content: str, ok_msg: str
     (no changes)" message when ``save_file_py`` finds nothing to do.
     """
     if not save_file_py(path, content, auto_yes=True):
-        return f'Skipped {path} (no changes)'
-    verify = await getattr(agent, '_verify_file')(path) if path.endswith('.py') else ''
-    getattr(agent, '_note_effect')(path)
-    return f'{ok_msg}\n{verify}'.strip()
+        return f"Skipped {path} (no changes)"
+    verify = await getattr(agent, "_verify_file")(path) if path.endswith(".py") else ""
+    getattr(agent, "_note_effect")(path)
+    return f"{ok_msg}\n{verify}".strip()
 
 
 async def _verify_file(agent: "Agent", path: str) -> str:
@@ -52,12 +55,19 @@ async def _verify_file(agent: "Agent", path: str) -> str:
         cwd = os.path.abspath(to_windows_path(agent._nlp_workspace or agent.workspace))
         if not os.path.isdir(cwd):
             cwd = agent.workspace
-        r = subprocess.run([sys.executable, '-m', 'py_compile', path], capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=cwd)
+        r = subprocess.run(
+            [sys.executable, "-m", "py_compile", path],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+        )
     except OSError as e:
-        return f'[verify] py_compile could not run: {e}'
+        return f"[verify] py_compile could not run: {e}"
     if r.returncode == 0:
-        return '[verify] py_compile ✓'
-    return f'[verify] py_compile ✗: {r.stderr.strip()[:300]}'
+        return "[verify] py_compile ✓"
+    return f"[verify] py_compile ✗: {r.stderr.strip()[:300]}"
 
 
 def _note_effect(agent: "Agent", path: str) -> None:

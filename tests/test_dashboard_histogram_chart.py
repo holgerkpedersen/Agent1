@@ -10,6 +10,7 @@ Ships three layers of guards:
 4. Axis + view modes - index.html must expose X/Y value indicators and the
    Bars / Cumulative % / Bin table toggles so the histogram is readable.
 """
+
 from __future__ import annotations
 
 import json
@@ -59,14 +60,22 @@ def test_api_exposes_raw_histogram_samples(base_url: str) -> None:
     with urllib.request.urlopen(base_url + "/api/histograms", timeout=10) as r:
         payload = json.loads(r.read())
     assert set(payload["samples"]) == {
-        "command.elapsed.seconds", "tool.elapsed.seconds"
+        "command.elapsed.seconds",
+        "tool.elapsed.seconds",
     }
-    assert payload["samples"]["command.elapsed.seconds"] == [0.11, 0.12, 0.13, 0.14, 0.15]
+    assert payload["samples"]["command.elapsed.seconds"] == [
+        0.11,
+        0.12,
+        0.13,
+        0.14,
+        0.15,
+    ]
     # legacy summary fields stay intact: without ?name= it summarizes nothing,
     # with an explicit name it returns that metric's stats.
     assert payload["histogram"]["count"] == 0.0
     q = urllib.request.urlopen(
-        base_url + "/api/histograms?name=command.elapsed.seconds", timeout=10)
+        base_url + "/api/histograms?name=command.elapsed.seconds", timeout=10
+    )
     with q:
         named = json.loads(q.read())
     assert named["histogram"]["count"] == 5.0
@@ -77,19 +86,21 @@ def test_all_histogram_samples_returns_copies() -> None:
     c = _seeded_collector()
     snapshot = c.all_histogram_samples()
     snapshot["command.elapsed.seconds"].append(999.0)
-    assert 999.0 not in c.all_histogram_samples()["command.elapsed.seconds"], \
+    assert 999.0 not in c.all_histogram_samples()["command.elapsed.seconds"], (
         "caller mutated collector state -> API would leak mutable internals"
+    )
 
 
 def test_index_has_chart_scaffolding_and_styles() -> None:
     html = open(INDEX, encoding="utf-8").read()
     for needle in (
-        'id="hgram-chart"',            # bar container
-        'id="hgram-select"',           # metric picker
-        'id="hstat-p50"', 'id="hstat-p95"',  # tail-latency chips
-        ".hgram-bar {",                # bar styling hook
-        "renderChart(",                # renderer wired up
-        "api/histograms",              # new endpoint consumed
+        'id="hgram-chart"',  # bar container
+        'id="hgram-select"',  # metric picker
+        'id="hstat-p50"',
+        'id="hstat-p95"',  # tail-latency chips
+        ".hgram-bar {",  # bar styling hook
+        "renderChart(",  # renderer wired up
+        "api/histograms",  # new endpoint consumed
     ):
         assert needle in html, f"histogram chart lost its scaffolding: {needle}"
     # bars are percentage-height columns inside a fixed-height flex row;
@@ -97,12 +108,15 @@ def test_index_has_chart_scaffolding_and_styles() -> None:
     # The fixed 240px height lives on .hgram-chart-inner (rendered by JS),
     # NOT on the outer #hgram-chart wrapper - otherwise the X-axis tick row
     # overflows onto the stat chips below. Both must hold.
-    assert re.search(r"\.hgram-chart-inner\s*\{[^}]*align-items:\s*stretch", html), \
+    assert re.search(r"\.hgram-chart-inner\s*\{[^}]*align-items:\s*stretch", html), (
         ".hgram-chart-inner needs align-items:stretch or every bar collapses to 0 height"
-    assert re.search(r"\.hgram-chart-inner\s*\{[^}]*height:\s*240px", html), \
+    )
+    assert re.search(r"\.hgram-chart-inner\s*\{[^}]*height:\s*240px", html), (
         ".hgram-chart-inner must keep the fixed 240px bar height"
-    assert re.search(r"\.hgram-chart\s*\{[^}]*display:\s*block", html), \
+    )
+    assert re.search(r"\.hgram-chart\s*\{[^}]*display:\s*block", html), (
         "outer #hgram-chart must be a plain block wrapper so the X-axis cannot overflow onto the stat chips"
+    )
 
 
 def test_percentile_math_in_page_matches_reference() -> None:
@@ -112,10 +126,13 @@ def test_percentile_math_in_page_matches_reference() -> None:
     html = open(INDEX, encoding="utf-8").read()
     m = re.search(r"function percentile\(sortedAsc, q\) \{.*?\n    \}", html, re.S)
     assert m, "percentile() not found in index.html"
-    js = m.group(0) + """
+    js = (
+        m.group(0)
+        + """
       const s = [0.11,0.12,0.13,0.14,0.15,0.16,0.18,0.22,0.31,1.4];
       console.log(JSON.stringify([percentile(s,0.5), percentile(s,0.95)]));
     """
+    )
     r = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     p50, p95 = json.loads(r.stdout.strip())
@@ -131,21 +148,22 @@ def test_histogram_view_has_axis_indicators_and_view_modes() -> None:
     html = open(INDEX, encoding="utf-8").read()
     # X/Y axis scaffolding + the three view-mode toggles all present.
     for needle in (
-        'class="hgram-yaxis"',            # Y-axis value ladder (count)
-        'class="hgram-yaxis-title"',      # rotated Y-axis label
-        'class="hgram-tick"',             # X-axis tick row
-        'hgram-view-bars',                # Bars mode
-        'hgram-view-cum',                 # Cumulative % mode
-        'hgram-view-table',               # Bin table mode
-        'bindHgramViewToggle(',           # toggle wired to re-render
-        'window.__hgramSamples',          # samples cached for the toggle
+        'class="hgram-yaxis"',  # Y-axis value ladder (count)
+        'class="hgram-yaxis-title"',  # rotated Y-axis label
+        'class="hgram-tick"',  # X-axis tick row
+        "hgram-view-bars",  # Bars mode
+        "hgram-view-cum",  # Cumulative % mode
+        "hgram-view-table",  # Bin table mode
+        "bindHgramViewToggle(",  # toggle wired to re-render
+        "window.__hgramSamples",  # samples cached for the toggle
     ):
         assert needle in html, f"histogram axis/view-mode support missing: {needle}"
     # Regression guard: .hgram-plot must grow to fill the card width, otherwise
     # the flexed bars + X-axis ticks collapse into a ~70px strip and the tick
     # labels overlap each other.
-    assert re.search(r"\.hgram-plot\s*\{[^}]*flex:\s*1\s*1\s*0", html, re.S), \
+    assert re.search(r"\.hgram-plot\s*\{[^}]*flex:\s*1\s*1\s*0", html, re.S), (
         "histogram plot must be flex:1 1 0 so the X-axis does not squash/overlap"
+    )
 
 
 def test_render_chart_emits_axis_labels_and_all_three_views() -> None:
@@ -162,7 +180,13 @@ def test_render_chart_emits_axis_labels_and_all_three_views() -> None:
     assert b, "bindHgramViewToggle() not found in index.html"
     p = re.search(r"function percentile\(sortedAsc, q\) \{.*?\n    \}", html, re.S)
     assert p, "percentile() not found in index.html"
-    js = render + "\n" + p.group(0) + "\n" + b.group(0) + r"""
+    js = (
+        render
+        + "\n"
+        + p.group(0)
+        + "\n"
+        + b.group(0)
+        + r"""
       const vals = [0.12,0.13,0.14,0.15,0.18,0.22,0.31,0.40,1.20,2.50];
       const out = {};
       // Stable fake elements so renderChart writes into the same objects we read.
@@ -204,6 +228,7 @@ def test_render_chart_emits_axis_labels_and_all_three_views() -> None:
 
       console.log(JSON.stringify(out));
     """
+    )
     r = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout.strip())
@@ -221,9 +246,15 @@ def test_render_chart_emits_axis_labels_and_all_three_views() -> None:
     # "time (s)" axis label must NOT be drawn around it.
     assert "<table" in out["table"], "table view missing <table>"
     assert "share" in out["table"], "table view missing share column"
-    for forbidden in ("hgram-yaxis", "hgram-yaxis-title", "hgram-tick", "hgram-axis-label"):
-        assert forbidden not in out["table"], \
+    for forbidden in (
+        "hgram-yaxis",
+        "hgram-yaxis-title",
+        "hgram-tick",
+        "hgram-axis-label",
+    ):
+        assert forbidden not in out["table"], (
             f"table view must not draw chart axis scaffolding ({forbidden})"
+        )
 
 
 @pytest.mark.skipif(
@@ -265,26 +296,34 @@ def test_axis_indicators_only_with_data_and_never_overlap_stats(base_url: str) -
 
         # --- empty state: no axis indicators, just the placeholder ----------
         render([])
-        assert page.query_selector(".hgram-tick") is None, \
+        assert page.query_selector(".hgram-tick") is None, (
             "axis ticks must not render when there is no histogram"
-        assert page.query_selector(".hgram-yaxis") is None, \
+        )
+        assert page.query_selector(".hgram-yaxis") is None, (
             "Y-axis must not render when there is no histogram"
-        assert "No histogram data" in (page.query_selector(".hgram-chart").inner_text() or "")
+        )
+        assert "No histogram data" in (
+            page.query_selector(".hgram-chart").inner_text() or ""
+        )
 
         # --- with data: ticks exist and stay clear of the stat chips --------
         render([0.12, 0.13, 0.14, 0.15, 0.18, 0.22, 0.31, 0.40, 1.20, 2.50])
         tick = page.query_selector(".hgram-tick").bounding_box()
         stats = page.query_selector(".hgram-stats").bounding_box()
         assert tick is not None and stats is not None
-        assert tick["y"] + tick["height"] <= stats["y"] + 1, \
+        assert tick["y"] + tick["height"] <= stats["y"] + 1, (
             "X-axis tick row overlaps the SAMPLES/MEAN/P50/P95/MIN/MAX chips"
+        )
 
         # chips themselves must not overlap each other (horizontal flex row)
-        boxes = [d.bounding_box() for d in page.query_selector_all(".hgram-stats > div")]
+        boxes = [
+            d.bounding_box() for d in page.query_selector_all(".hgram-stats > div")
+        ]
         assert len(boxes) == 6, f"expected 6 stat chips, got {len(boxes)}"
         for a, b in zip(boxes, boxes[1:]):
-            assert a["y"] + a["height"] <= b["y"] + 1 or a["x"] + a["width"] <= b["x"] + 1, \
-                "stat chips overlap each other"
+            assert (
+                a["y"] + a["height"] <= b["y"] + 1 or a["x"] + a["width"] <= b["x"] + 1
+            ), "stat chips overlap each other"
 
         # --- table view: real table, but NO chart axis scaffolding ----------
         # The table already carries its own column headers (# / time bin /
@@ -299,7 +338,13 @@ def test_axis_indicators_only_with_data_and_never_overlap_stats(base_url: str) -
         )
         chart = page.query_selector(".hgram-chart")
         assert chart.query_selector("table") is not None, "table view missing <table>"
-        for forbidden in (".hgram-yaxis", ".hgram-yaxis-title", ".hgram-tick", ".hgram-axis-label"):
-            assert chart.query_selector(forbidden) is None, \
+        for forbidden in (
+            ".hgram-yaxis",
+            ".hgram-yaxis-title",
+            ".hgram-tick",
+            ".hgram-axis-label",
+        ):
+            assert chart.query_selector(forbidden) is None, (
                 f"table view must not draw chart axis scaffolding ({forbidden})"
+            )
         browser.close()

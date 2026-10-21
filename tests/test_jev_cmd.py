@@ -81,7 +81,7 @@ def test_jev_yesno_json(monkeypatch, capsys):
     _patch_engine(monkeypatch, ["no", "no", "no", "no", "no"])
     assert _run(["yesno", '"is it true?"', "--json"]) is True
     out = capsys.readouterr().out
-    payload = json.loads(out[out.index("{"):])
+    payload = json.loads(out[out.index("{") :])
     assert payload["decision"] == "FALSE"
     assert payload["probabilities"]["no"] == 1.0
 
@@ -105,9 +105,10 @@ def test_jev_choice_accepts_positional_options(monkeypatch, capsys):
 
 def test_jev_choice_distribution(monkeypatch, capsys):
     _patch_engine(monkeypatch, ["A", "A", "B", "A", "B"])
-    assert _run(
-        ["choice", "--options", "red|green", '"pick"', "--threshold", "0.5"]
-    ) is True
+    assert (
+        _run(["choice", "--options", "red|green", '"pick"', "--threshold", "0.5"])
+        is True
+    )
     out = capsys.readouterr().out
     assert "P(red)=0.60" in out
     assert "red" in out
@@ -124,8 +125,18 @@ def test_jev_rejects_bad_threshold(monkeypatch, capsys):
 def test_jev_forwards_model_and_mechanism(monkeypatch, capsys):
     captured = {}
     _patch_engine(monkeypatch, ["yes"], captured=captured)
-    _run(["yesno", '"q"', "--model", "google/gemma-4-e4b", "--mechanism", "vote",
-          "--samples", "3"])
+    _run(
+        [
+            "yesno",
+            '"q"',
+            "--model",
+            "google/gemma-4-e4b",
+            "--mechanism",
+            "vote",
+            "--samples",
+            "3",
+        ]
+    )
     assert captured["model_name"] == "google/gemma-4-e4b"
     assert captured["mechanism"] == "vote"
     assert captured["samples"] == 3
@@ -145,12 +156,20 @@ def test_jev_reads_state_file(monkeypatch, tmp_path, capsys):
         async def decide(self, question, state=""):
             seen["state"] = state
             from agent_core.jev_engine import JevResult
-            return JevResult(kind="yesno", model="m", mechanism="vote",
-                             decision="TRUE", confidence=1.0)
+
+            return JevResult(
+                kind="yesno",
+                model="m",
+                mechanism="vote",
+                decision="TRUE",
+                confidence=1.0,
+            )
 
     monkeypatch.setattr(jev, "build_jev_engine", lambda **kw: RecordingEngine())
-    assert _run(["yesno", '"is pytest used?"', "--file", "ctx.txt"],
-                _agent(str(tmp_path))) is True
+    assert (
+        _run(["yesno", '"is pytest used?"', "--file", "ctx.txt"], _agent(str(tmp_path)))
+        is True
+    )
     assert "pytest" in seen["state"]
 
 
@@ -259,16 +278,27 @@ def _seed_ledger(tmp_path):
     from harnessfix.jev_telemetry import record_decision, record_outcome
 
     question = JevQuestion(kind="yesno", text="is the sky blue?")
-    for p_yes, outcome in ((0.9, "correct"), (0.8, "correct"),
-                           (0.2, "incorrect"), (0.6, "incorrect")):
+    for p_yes, outcome in (
+        (0.9, "correct"),
+        (0.8, "correct"),
+        (0.2, "incorrect"),
+        (0.6, "incorrect"),
+    ):
         result = JevResult(
-            kind="yesno", model="qwen2.5-coder-1.5b-instruct", mechanism="vote",
+            kind="yesno",
+            model="qwen2.5-coder-1.5b-instruct",
+            mechanism="vote",
             probabilities={"yes": p_yes, "no": 1.0 - p_yes},
             decision="TRUE" if p_yes >= 0.7 else "FALSE",
-            confidence=max(p_yes, 1.0 - p_yes), threshold=0.7, n=5,
+            confidence=max(p_yes, 1.0 - p_yes),
+            threshold=0.7,
+            n=5,
         )
         decision_id = record_decision(
-            result, question, workspace=str(tmp_path), source="repl",
+            result,
+            question,
+            workspace=str(tmp_path),
+            source="repl",
         )
         record_outcome(decision_id, outcome, workspace=str(tmp_path))
 
@@ -288,7 +318,7 @@ def test_jev_stats_json(tmp_path, capsys, monkeypatch):
     _seed_ledger(tmp_path)
     assert _run(["stats", "--json"], _agent(str(tmp_path))) is True
     out = capsys.readouterr().out
-    payload = json.loads(out[out.index("{"):])
+    payload = json.loads(out[out.index("{") :])
     assert payload["total"] == 4
     assert payload["labeled"] == 4
     assert payload["suggested_threshold"]["accuracy"] == 1.0
@@ -326,6 +356,3 @@ def test_jev_label_unknown_id(tmp_path, capsys):
 def test_jev_label_requires_an_outcome(tmp_path, capsys):
     assert _run(["label", "some-id"], _agent(str(tmp_path))) is True
     assert "Usage: jev label" in capsys.readouterr().out
-
-
-

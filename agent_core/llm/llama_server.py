@@ -29,6 +29,7 @@ All public functions are best-effort and never raise: they return a
 ``(ok, message)`` tuple so callers degrade gracefully when a server cannot be
 managed (e.g. on a host without llama.cpp installed).
 """
+
 from __future__ import annotations
 
 import json
@@ -55,6 +56,7 @@ def _llama_extra_args() -> list[str]:
     raw = ""
     try:
         from agent_core.config import load_agent_settings
+
         raw = (getattr(load_agent_settings(), "llama_extra_args", "") or "").strip()
     except Exception:
         return []
@@ -63,6 +65,7 @@ def _llama_extra_args() -> list[str]:
     # Split on whitespace; keep quoted segments intact where possible.
     try:
         import shlex
+
         return shlex.split(raw)
     except Exception:
         return raw.split()
@@ -116,7 +119,7 @@ def _server_has_tool_call_parser(api_url: str) -> bool:
     if status != 200 or not isinstance(body, dict):
         return True  # can't tell — assume OK
     saw_args = False
-    for m in (body.get("data") or []):
+    for m in body.get("data") or []:
         if not isinstance(m, dict):
             continue
         args = (m.get("status") or {}).get("args")
@@ -136,12 +139,15 @@ _POLL_INTERVAL_S = 0.5
 #  HTTP helpers (no auth requirement for a local server)
 # ---------------------------------------------------------------------------
 
-def _http_json(method: str, url: str, payload: dict[str, Any] | None = None,
-               timeout: float = 10.0) -> tuple[int | None, Any]:
+
+def _http_json(
+    method: str, url: str, payload: dict[str, Any] | None = None, timeout: float = 10.0
+) -> tuple[int | None, Any]:
     """GET/POST JSON.  Returns ``(status_or_None, parsed_or_raw_text)``."""
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
-        url, data=data,
+        url,
+        data=data,
         headers={"Content-Type": "application/json", "Authorization": "Bearer x"},
         method=method,
     )
@@ -171,6 +177,7 @@ def _server_base_url(api_url: str) -> str:
 # ---------------------------------------------------------------------------
 #  Server introspection
 # ---------------------------------------------------------------------------
+
 
 def is_server_up(api_url: str) -> bool:
     base = _server_base_url(api_url)
@@ -210,7 +217,7 @@ def server_binary_path(api_url: str) -> str | None:
     """
     status, body = _http_json("GET", f"{api_url}/models", timeout=8.0)
     if status == 200 and isinstance(body, dict):
-        for m in (body.get("data") or []):
+        for m in body.get("data") or []:
             if isinstance(m, dict):
                 args = (m.get("status") or {}).get("args")
                 if isinstance(args, list) and args and isinstance(args[0], str):
@@ -218,6 +225,7 @@ def server_binary_path(api_url: str) -> str | None:
                         return args[0]
     # Fallbacks.
     import shutil
+
     on_path = shutil.which("llama-server") or shutil.which("llama-server.exe")
     if on_path:
         return on_path
@@ -236,8 +244,11 @@ def server_binary_path(api_url: str) -> str | None:
 #  Model reconciliation
 # ---------------------------------------------------------------------------
 
+
 def _bare_id(model_name: str) -> str:
-    return model_name[len("llama/"):] if model_name.startswith("llama/") else model_name
+    return (
+        model_name[len("llama/") :] if model_name.startswith("llama/") else model_name
+    )
 
 
 def _resolve_local_gguf(bare_id: str) -> str | None:
@@ -256,8 +267,10 @@ def _resolve_local_gguf(bare_id: str) -> str | None:
     # bare_id is like "lmstudio-community/Bonsai-27B-GGUF/Bonsai-27B-Q1_0"
     rel = bare_id.replace("/", os.sep)
     # Try exact path first (with and without .gguf).
-    for cand in (os.path.join(models_dir, rel),
-                 os.path.join(models_dir, rel + ".gguf")):
+    for cand in (
+        os.path.join(models_dir, rel),
+        os.path.join(models_dir, rel + ".gguf"),
+    ):
         if os.path.isfile(cand):
             return cand
     # Fall back to a walk (handles sharded / nested layouts).
@@ -267,7 +280,11 @@ def _resolve_local_gguf(bare_id: str) -> str | None:
             if not f.lower().endswith(".gguf") or f.lower().startswith("mmproj"):
                 continue
             stem = f[:-5]
-            key = os.path.relpath(os.path.join(root, stem), models_dir).replace(os.sep, "/").lower()
+            key = (
+                os.path.relpath(os.path.join(root, stem), models_dir)
+                .replace(os.sep, "/")
+                .lower()
+            )
             if key == want or key == want.replace("/", "/") + "-00001-of" in key:
                 return os.path.join(root, f)
     return None
@@ -364,10 +381,13 @@ def ensure_model_served(
             # tool calls and the agent sees plain text.  Restart with the
             # parser flag if missing (best-effort: only when we know the
             # parser for this model family).
-            if (_tool_call_parser_for_model(bare)
-                    and not _server_has_tool_call_parser(api_url)):
-                print(f"  [llama] server serves '{bare}' but lacks --tool-call-parser; "
-                      "relaunching with tool-call support")
+            if _tool_call_parser_for_model(bare) and not _server_has_tool_call_parser(
+                api_url
+            ):
+                print(
+                    f"  [llama] server serves '{bare}' but lacks --tool-call-parser; "
+                    "relaunching with tool-call support"
+                )
                 shutdown_server(api_url)
                 return _launch_server(api_url, bare, extra_args=extra_args)
             return True, f"llama-server already serves '{bare}'"
@@ -377,21 +397,27 @@ def ensure_model_served(
             if ok:
                 return True, msg
             # Router couldn't resolve it (e.g. no --models-dir). Relaunch.
-            print(f"  [llama] router could not load '{bare}' ({msg}); "
-                  "relaunching router with --models-dir")
+            print(
+                f"  [llama] router could not load '{bare}' ({msg}); "
+                "relaunching router with --models-dir"
+            )
             shut = shutdown_server(api_url)
             if not shut[0]:
                 return False, f"could not stop existing server to relaunch: {shut[1]}"
         else:
             # Single-model server serving the wrong model: must relaunch.
-            print(f"  [llama] server serves '{served[0] if served else 'none'}'; "
-                  f"relaunching to serve '{bare}'")
+            print(
+                f"  [llama] server serves '{served[0] if served else 'none'}'; "
+                f"relaunching to serve '{bare}'"
+            )
             shutdown_server(api_url)
 
     return _launch_server(api_url, bare, extra_args=extra_args)
 
 
-def _dynamic_load(api_url: str, bare: str, currently_served: list[str]) -> tuple[bool, str]:
+def _dynamic_load(
+    api_url: str, bare: str, currently_served: list[str]
+) -> tuple[bool, str]:
     """Load *bare* via POST /models/load on a router; unload others first.
 
     Tries, in order:
@@ -407,17 +433,22 @@ def _dynamic_load(api_url: str, bare: str, currently_served: list[str]) -> tuple
 
     last_err = f"HTTP {None}"
     for model_ref in candidates:
-        status, body = _http_json("POST", f"{base}/models/load",
-                                  {"model": model_ref}, timeout=30.0)
+        status, body = _http_json(
+            "POST", f"{base}/models/load", {"model": model_ref}, timeout=30.0
+        )
         if status == 200 and isinstance(body, dict) and body.get("success"):
             # Unload previously-served models to free VRAM (keep the one we want).
             for old in currently_served:
                 if old != bare:
-                    _http_json("POST", f"{base}/models/unload",
-                               {"model": old}, timeout=20.0)
+                    _http_json(
+                        "POST", f"{base}/models/unload", {"model": old}, timeout=20.0
+                    )
             return True, f"loaded '{bare}' on running router"
-        last_err = (body.get("error", {}).get("message")
-                    if isinstance(body, dict) else str(body)) or f"HTTP {status}"
+        last_err = (
+            body.get("error", {}).get("message")
+            if isinstance(body, dict)
+            else str(body)
+        ) or f"HTTP {status}"
     return False, last_err
 
 
@@ -449,13 +480,15 @@ def running_server_pids(api_url: str) -> list[int]:
 
 def _kill_pids(pids: list[int]) -> None:
     import signal
+
     for pid in pids:
         try:
             if os.name == "nt":
                 # Use taskkill to terminate the whole process tree on Windows.
                 subprocess.run(
                     ["taskkill", "/PID", str(pid), "/F", "/T"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                     timeout=10,
                 )
             else:
@@ -486,9 +519,12 @@ def _taskkill_by_image() -> bool:
     killed = False
     for img in ("llama-server.exe", "llama-swap.exe"):
         try:
-            r = subprocess.run(["taskkill", "/IM", img, "/F", "/T"],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               timeout=15)
+            r = subprocess.run(
+                ["taskkill", "/IM", img, "/F", "/T"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+            )
             if r.returncode == 0:
                 killed = True
         except Exception:
@@ -539,8 +575,9 @@ def _wait_until_up(api_url: str, timeout: float = _LAUNCH_TIMEOUT_S) -> bool:
     return False
 
 
-def _launch_server(api_url: str, bare: str | None,
-                   *, extra_args: list[str] | None = None) -> tuple[bool, str]:
+def _launch_server(
+    api_url: str, bare: str | None, *, extra_args: list[str] | None = None
+) -> tuple[bool, str]:
     """Launch a llama-server so it serves *bare* (best effort).
 
     Strategy (most robust first):
@@ -560,14 +597,17 @@ def _launch_server(api_url: str, bare: str | None,
         extra_args = _llama_extra_args()
     bin_path = server_binary_path(api_url)
     if not bin_path:
-        return False, ("llama-server binary not found on PATH or in common "
-                       "locations; cannot auto-launch. Start it manually with "
-                       "`--model <path-to-gguf>`.")
+        return False, (
+            "llama-server binary not found on PATH or in common "
+            "locations; cannot auto-launch. Start it manually with "
+            "`--model <path-to-gguf>`."
+        )
     base = _server_base_url(api_url)
     host = "127.0.0.1"
     port = 8080
     try:
         from urllib.parse import urlparse
+
         p = urlparse(base)
         host = p.hostname or host
         port = p.port or port
@@ -577,12 +617,28 @@ def _launch_server(api_url: str, bare: str | None,
     local_gguf = _resolve_local_gguf(bare) if bare else None
     if local_gguf:
         # Single-model server: serve the local GGUF under the requested id.
-        cmd = [bin_path, "--host", host, "--port", str(port),
-               "--model", local_gguf, "--alias", bare or "local-model"]
+        cmd = [
+            bin_path,
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--model",
+            local_gguf,
+            "--alias",
+            bare or "local-model",
+        ]
     else:
         # Router mode: resolves HF-cache / --models-dir / preset models.
-        cmd = [bin_path, "--host", host, "--port", str(port),
-               "--models-dir", _models_dir_for_launch()]
+        cmd = [
+            bin_path,
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--models-dir",
+            _models_dir_for_launch(),
+        ]
     if extra_args:
         cmd.extend(extra_args)
 
@@ -598,20 +654,27 @@ def _launch_server(api_url: str, bare: str | None,
     try:
         if os.name == "nt":
             subprocess.Popen(
-                cmd, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                cmd,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
                 | getattr(subprocess, "DETACHED_PROCESS", 0),
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
         else:
             subprocess.Popen(
-                cmd, start_new_session=True,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                cmd,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
     except Exception as exc:  # noqa: BLE001
         return False, f"failed to launch llama-server: {exc}"
 
     if not _wait_until_up(api_url):
-        return False, f"llama-server did not come up at {api_url} within {_LAUNCH_TIMEOUT_S}s"
+        return (
+            False,
+            f"llama-server did not come up at {api_url} within {_LAUNCH_TIMEOUT_S}s",
+        )
 
     if bare and not local_gguf:
         # Router mode: dynamically load the model id.
@@ -620,7 +683,10 @@ def _launch_server(api_url: str, bare: str | None,
             return True, f"launched router and loaded '{bare}'"
         return False, f"router up but could not load '{bare}': {msg}"
     # Single-model (or no model requested): it's already serving / up.
-    return True, f"llama-server launched serving '{bare}'" if bare else "llama-server launched"
+    return (
+        True,
+        f"llama-server launched serving '{bare}'" if bare else "llama-server launched",
+    )
 
 
 def _models_dir_for_launch() -> str:
@@ -631,6 +697,7 @@ def _models_dir_for_launch() -> str:
     llama.cpp cache dir if the project-local folder is absent.
     """
     from .llama_provider import _llama_models_dir
+
     d = _llama_models_dir()
     if d:
         return d

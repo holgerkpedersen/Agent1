@@ -179,7 +179,7 @@ class TestCheckContradictionsFastLatency:
         # New decision with no overlap
         new_decision = {
             "tags": ["new", "feature"],
-            "affected_files": ["agent_core/new_feature.py"]
+            "affected_files": ["agent_core/new_feature.py"],
         }
         new_decision_text = "New decision with no overlap."
 
@@ -223,7 +223,7 @@ class TestCheckContradictionsFastLatency:
         # New decision with overlap
         new_decision = {
             "tags": ["tag1"],  # Overlaps with all decisions
-            "affected_files": ["agent_core/file1.py"]  # Overlaps with decision 1
+            "affected_files": ["agent_core/file1.py"],  # Overlaps with decision 1
         }
         new_decision_text = "New decision with overlap."
 
@@ -299,12 +299,12 @@ class TestDecisionGraphLatency:
         max_time = max(times)
 
         print("\nbuild_decision_graph (50 decisions):")
-        print(f"  Average: {avg_time*1000:.3f}ms")
-        print(f"  Min: {min_time*1000:.3f}ms")
-        print(f"  Max: {max_time*1000:.3f}ms")
+        print(f"  Average: {avg_time * 1000:.3f}ms")
+        print(f"  Min: {min_time * 1000:.3f}ms")
+        print(f"  Max: {max_time * 1000:.3f}ms")
 
         # Should be very fast (< 100ms)
-        assert avg_time < 0.1, f"build_decision_graph too slow: {avg_time*1000:.3f}ms"
+        assert avg_time < 0.1, f"build_decision_graph too slow: {avg_time * 1000:.3f}ms"
 
     @pytest.mark.slow
     def test_benchmark_build_category_index(self):
@@ -341,12 +341,12 @@ class TestDecisionGraphLatency:
         max_time = max(times)
 
         print("\nbuild_category_index (50 decisions):")
-        print(f"  Average: {avg_time*1000:.3f}ms")
-        print(f"  Min: {min_time*1000:.3f}ms")
-        print(f"  Max: {max_time*1000:.3f}ms")
+        print(f"  Average: {avg_time * 1000:.3f}ms")
+        print(f"  Min: {min_time * 1000:.3f}ms")
+        print(f"  Max: {max_time * 1000:.3f}ms")
 
         # Should be very fast (< 100ms)
-        assert avg_time < 0.1, f"build_category_index too slow: {avg_time*1000:.3f}ms"
+        assert avg_time < 0.1, f"build_category_index too slow: {avg_time * 1000:.3f}ms"
 
 
 class TestFindOverlapsLatency:
@@ -368,10 +368,7 @@ class TestFindOverlapsLatency:
             for i in range(1, 51)  # 50 decisions
         ]
 
-        new_decision = {
-            "tags": ["tag1"],
-            "affected_files": ["agent_core/file1.py"]
-        }
+        new_decision = {"tags": ["tag1"], "affected_files": ["agent_core/file1.py"]}
 
         # Warm up
         find_overlaps(new_decision, decisions, "/workspace")
@@ -391,9 +388,9 @@ class TestFindOverlapsLatency:
         max_time = max(times)
 
         print("\nfind_overlaps (50 decisions, with overlap):")
-        print(f"  Average: {avg_time*1000:.3f}ms")
-        print(f"  Min: {min_time*1000:.3f}ms")
-        print(f"  Max: {max_time*1000:.3f}ms")
+        print(f"  Average: {avg_time * 1000:.3f}ms")
+        print(f"  Min: {min_time * 1000:.3f}ms")
+        print(f"  Max: {max_time * 1000:.3f}ms")
 
         # Should be very fast (< 10ms)
-        assert avg_time < 0.01, f"find_overlaps too slow: {avg_time*1000:.3f}ms"
+        assert avg_time < 0.01, f"find_overlaps too slow: {avg_time * 1000:.3f}ms"

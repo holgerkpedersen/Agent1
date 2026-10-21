@@ -34,8 +34,17 @@ from harnessfix.tracing import (
 )
 
 try:
-    from agent_core.colors import cyan, green, red, yellow, magenta, gray, colorize_result
+    from agent_core.colors import (
+        cyan,
+        green,
+        red,
+        yellow,
+        magenta,
+        gray,
+        colorize_result,
+    )
 except Exception:  # pragma: no cover - colors degrade gracefully if unavailable
+
     def _identity(text: str, *, bold: bool = False) -> str:  # noqa: ARG001
         return text
 
@@ -44,12 +53,14 @@ except Exception:  # pragma: no cover - colors degrade gracefully if unavailable
     def colorize_result(result: str) -> str:
         return result
 
+
 #: How much tool-call activity is printed to the end user during NLP turns.
 class DisplayMode(str, enum.Enum):
-    VERBOSE = "verbose"   # every call + full (truncated) result shown
-    CLEAN = "clean"      # reason line per call; results summarized for display only
-    QUIET = "quiet"      # tool calls/results hidden; only final answer printed
-    INTENT = "intent"    # per LLM round: model's intent + planned calls shown BEFORE execution, then verbose lines
+    VERBOSE = "verbose"  # every call + full (truncated) result shown
+    CLEAN = "clean"  # reason line per call; results summarized for display only
+    QUIET = "quiet"  # tool calls/results hidden; only final answer printed
+    INTENT = "intent"  # per LLM round: model's intent + planned calls shown BEFORE execution, then verbose lines
+
 
 #: Injected into the history when only a few iterations remain, so the model
 #: starts wrapping up instead of discovering the cap when it is too late.
@@ -99,10 +110,18 @@ MUTATING_TOOLS = frozenset({"write", "edit", "fix"})
 try:
     from agent_core.modes import PLAN_MODE_TOOLS as _PLAN_MODE_TOOLS
 except Exception:  # pragma: no cover - import isolation fallback
-    _PLAN_MODE_TOOLS = frozenset({
-        "search", "read", "list_files", "diff", "web_search",
-        "definitions", "references", "delegate",
-    })
+    _PLAN_MODE_TOOLS = frozenset(
+        {
+            "search",
+            "read",
+            "list_files",
+            "diff",
+            "web_search",
+            "definitions",
+            "references",
+            "delegate",
+        }
+    )
 READONLY_FANOUT_TOOLS: frozenset[str] = _PLAN_MODE_TOOLS - {"delegate"}
 
 _NO_PROGRESS_NUDGE = (
@@ -156,10 +175,12 @@ _PATH_MISS_PREFIXES = ("File not found:", "Error reading file:")
 #: arguments always yields the same result (by design).  The stuck-repeat NOTE
 #: should not fire for these: the model legitimately wants to re-check the same
 #: value and there is no "different action" to take.
-_IDEMPOTENT_TOOLS: frozenset[str] = frozenset({
-    "get_current_datetime",
-    "git",
-})
+_IDEMPOTENT_TOOLS: frozenset[str] = frozenset(
+    {
+        "get_current_datetime",
+        "git",
+    }
+)
 
 #: Steering note injected with a parent-directory listing when a tool result shows
 #: a missing path — supplies the simple existence check the model lacks so it can
@@ -337,7 +358,9 @@ def _summarize_payload(dropped: list[dict[str, Any]]) -> str:
 
 
 def _split_for_compaction(
-    messages: list[dict[str, Any]], max_messages: int, char_budget: int,
+    messages: list[dict[str, Any]],
+    max_messages: int,
+    char_budget: int,
 ) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]]]:
     """Return ``(dropped_prefix, kept_full)`` or ``(None, None)`` if the list
     fits within the bounds and needs no compaction.
@@ -391,7 +414,9 @@ def _split_for_compaction(
 
 
 def _compact_messages(
-    messages: list[dict[str, Any]], max_messages: int, char_budget: int,
+    messages: list[dict[str, Any]],
+    max_messages: int,
+    char_budget: int,
     summary: str | None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Compact *messages* to a bounded working set.
@@ -416,40 +441,37 @@ def _compact_messages(
     """
     dropped, kept_full = _split_for_compaction(messages, max_messages, char_budget)
     if dropped is None:
-        if (
-            len(messages) <= max_messages
-            and _total_chars(messages) <= char_budget
-        ):
+        if len(messages) <= max_messages and _total_chars(messages) <= char_budget:
             # Under both bounds — the common case.  Byte-identical no-op.
             return messages, None
         shrunk, changed = _shrink_to_budget(messages, char_budget)
         if not changed:
             return messages, None
-        shrunk = [
-            m for m in shrunk
-            if m.get(LOOP_NOTE_TAG_KEY) != _COMPACT_NOTE_TAG
-        ]
+        shrunk = [m for m in shrunk if m.get(LOOP_NOTE_TAG_KEY) != _COMPACT_NOTE_TAG]
         return (
-            shrunk + [{
-                "role": "user",
-                "content": _COMPACT_SHRINK_NOTE,
-                LOOP_NOTE_TAG_KEY: _COMPACT_NOTE_TAG,
-            }],
+            shrunk
+            + [
+                {
+                    "role": "user",
+                    "content": _COMPACT_SHRINK_NOTE,
+                    LOOP_NOTE_TAG_KEY: _COMPACT_NOTE_TAG,
+                }
+            ],
             _COMPACT_SHRINK_NOTE,
         )
-    kept_full = [
-        m for m in kept_full
-        if m.get(LOOP_NOTE_TAG_KEY) != _COMPACT_NOTE_TAG
-    ]
+    kept_full = [m for m in kept_full if m.get(LOOP_NOTE_TAG_KEY) != _COMPACT_NOTE_TAG]
     stripped = (summary or "").strip()
     summary_clause = f" (working summary: {stripped})" if stripped else ""
     note = _COMPACT_NOTE.format(dropped=len(dropped), summary_clause=summary_clause)
     return (
-        kept_full + [{
-            "role": "user",
-            "content": note,
-            LOOP_NOTE_TAG_KEY: _COMPACT_NOTE_TAG,
-        }],
+        kept_full
+        + [
+            {
+                "role": "user",
+                "content": note,
+                LOOP_NOTE_TAG_KEY: _COMPACT_NOTE_TAG,
+            }
+        ],
         note,
     )
 
@@ -477,7 +499,8 @@ def _strip_oversized_tool_args(message: dict[str, Any]) -> dict[str, Any]:
             func = {
                 **func,
                 "arguments": json.dumps(
-                    {"_truncated": True, "_original_len": len(args)}),
+                    {"_truncated": True, "_original_len": len(args)}
+                ),
             }
             stripped.append({**tc, "function": func})
         else:
@@ -504,7 +527,8 @@ def _shrink_content(content: Any, keep: int) -> Any:
 
 
 def _shrink_to_budget(
-    messages: list[dict[str, Any]], char_budget: int,
+    messages: list[dict[str, Any]],
+    char_budget: int,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Shrink message CONTENTS until ``_total_chars(messages) <= char_budget``.
 
@@ -531,11 +555,9 @@ def _shrink_to_budget(
         return msgs, False
     start = 1 if msgs and msgs[0].get("role") == "system" else 0
     head, body = msgs[:start], msgs[start:]
-    first_user = next(
-        (i for i, m in enumerate(body) if m.get("role") == "user"), None)
+    first_user = next((i for i, m in enumerate(body) if m.get("role") == "user"), None)
     last_assistant = next(
-        (i for i in range(len(body) - 1, -1, -1)
-         if body[i].get("role") == "assistant"),
+        (i for i in range(len(body) - 1, -1, -1) if body[i].get("role") == "assistant"),
         None,
     )
     newest_start = last_assistant if last_assistant is not None else len(body)
@@ -565,8 +587,7 @@ def _shrink_to_budget(
                 ),
             }
         elif content is not None and not isinstance(content, str):
-            stripped = {
-                **stripped, "content": _shrink_content(content, 0)}
+            stripped = {**stripped, "content": _shrink_content(content, 0)}
         if stripped != body[i]:
             body[i] = stripped
             changed = True
@@ -686,8 +707,11 @@ class ToolLoopRunner:
         #: ``"summarize"`` (ask the model to condense the dropped prefix into a
         #: working-memory note; fail-open to ``"note"`` on any empty/error).
         self.in_loop_compact = in_loop_compact
-        self.compact_strategy = compact_strategy if compact_strategy in (
-            "off", "note", "summarize") else "note"
+        self.compact_strategy = (
+            compact_strategy
+            if compact_strategy in ("off", "note", "summarize")
+            else "note"
+        )
         self.compact_max_messages = max(8, compact_max_messages)
         #: Char budget resolution order: an explicit ``compact_char_budget``
         #: always wins; otherwise the model's REAL context window
@@ -700,8 +724,9 @@ class ToolLoopRunner:
             resolved_budget = max(4_000, compact_char_budget)
         elif context_limit_tokens:
             resolved_budget = max(
-                4_000, min(_IN_LOOP_CHAR_BUDGET,
-                           char_budget_for_limit(context_limit_tokens)))
+                4_000,
+                min(_IN_LOOP_CHAR_BUDGET, char_budget_for_limit(context_limit_tokens)),
+            )
         else:
             resolved_budget = max(4_000, _IN_LOOP_CHAR_BUDGET)
         self.compact_char_budget = resolved_budget
@@ -713,7 +738,9 @@ class ToolLoopRunner:
         #: Progress guard: after this many consecutive non-mutating tool calls
         #: a steering note is injected; the count resets on write/edit/fix.
         self.no_mutation_limit = max(1, no_mutation_limit)
-        self.force_after_no_mutation = max(self.no_mutation_limit + 1, force_after_no_mutation)
+        self.force_after_no_mutation = max(
+            self.no_mutation_limit + 1, force_after_no_mutation
+        )
         #: Console display mode for this run. Defaults to VERBOSE so existing
         #: behaviour (and tests that assert on history/final_text, not stdout)
         #: is unchanged when the caller does not specify a mode.
@@ -761,14 +788,15 @@ class ToolLoopRunner:
         #: generated.  The caller must not print the answer again in that case.
         self.final_answer_streamed: bool = False
         #: Set by :meth:`run`; the optional streaming path for the final answer.
-        self._stream_fn: (
-            Callable[[list[dict[str, Any]]], Awaitable[str]] | None
-        ) = None
+        self._stream_fn: Callable[[list[dict[str, Any]]], Awaitable[str]] | None = None
 
     async def run(
         self,
         messages: list[dict[str, Any]],
-        llm_chat_fn: Callable[[list[dict[str, Any]], list[dict[str, Any]]], Awaitable[tuple[str, list[dict[str, Any]]]]],
+        llm_chat_fn: Callable[
+            [list[dict[str, Any]], list[dict[str, Any]]],
+            Awaitable[tuple[str, list[dict[str, Any]]]],
+        ],
         execute_tool_fn: Callable[[str, dict[str, Any]], Awaitable[str]],
         tools: list[dict[str, Any]] | None = None,
         seen_calls: dict[tuple[str, str], int] | None = None,
@@ -829,9 +857,7 @@ class ToolLoopRunner:
         if self._trace is not None:
             self._trace.emit({"kind": kind, "layer": layer, **fields})
 
-    def _collect_effects(
-        self, tool_name: str, args: dict[str, Any]
-    ) -> list[str]:
+    def _collect_effects(self, tool_name: str, args: dict[str, Any]) -> list[str]:
         """Ask the caller which files this tool call affected.
 
         Only invoked when a trace sink is attached and an ``effects_fn`` was
@@ -866,7 +892,10 @@ class ToolLoopRunner:
     async def _run_traced(
         self,
         messages: list[dict[str, Any]],
-        llm_chat_fn: Callable[[list[dict[str, Any]], list[dict[str, Any]]], Awaitable[tuple[str, list[dict[str, Any]]]]],
+        llm_chat_fn: Callable[
+            [list[dict[str, Any]], list[dict[str, Any]]],
+            Awaitable[tuple[str, list[dict[str, Any]]]],
+        ],
         execute_tool_fn: Callable[[str, dict[str, Any]], Awaitable[str]],
         tools: list[dict[str, Any]] | None,
         seen_calls: dict[tuple[str, str], int] | None,
@@ -1001,13 +1030,25 @@ class ToolLoopRunner:
                 summary: str | None = None
                 if self.compact_strategy == "summarize":
                     dropped, _ = _split_for_compaction(
-                        current_messages, self.compact_max_messages, self.compact_char_budget)
+                        current_messages,
+                        self.compact_max_messages,
+                        self.compact_char_budget,
+                    )
                     if dropped:
                         try:
                             raw_summary, _ = await llm_chat_fn(
-                                [{"role": "system", "content": "Summarize the tool-call history."},
-                                 {"role": "user", "content": _SUMMARIZE_INSTRUCTION
-                                  + "\n" + _summarize_payload(dropped)}],
+                                [
+                                    {
+                                        "role": "system",
+                                        "content": "Summarize the tool-call history.",
+                                    },
+                                    {
+                                        "role": "user",
+                                        "content": _SUMMARIZE_INSTRUCTION
+                                        + "\n"
+                                        + _summarize_payload(dropped),
+                                    },
+                                ],
                                 [],
                             )
                             if raw_summary and raw_summary.strip():
@@ -1015,7 +1056,11 @@ class ToolLoopRunner:
                         except Exception:  # pragma: no cover - fail-open to note
                             summary = None
                 compacted, note = _compact_messages(
-                    current_messages, self.compact_max_messages, self.compact_char_budget, summary)
+                    current_messages,
+                    self.compact_max_messages,
+                    self.compact_char_budget,
+                    summary,
+                )
                 if note is not None:
                     injected_notes.append(note)
                     self._emit(
@@ -1043,7 +1088,9 @@ class ToolLoopRunner:
                 LAYER_OBSERVABILITY,
                 iteration=iteration,
                 text=truncate(response_text, TEXT_CAP),
-                tool_calls_requested=len(tool_calls) if isinstance(tool_calls, list) else 0,
+                tool_calls_requested=len(tool_calls)
+                if isinstance(tool_calls, list)
+                else 0,
             )
 
             # No tool calls - we're done
@@ -1095,8 +1142,13 @@ class ToolLoopRunner:
                     tool_label = cyan(tool_name) + "(" + gray(_fmt_args(args)) + ")"
                     print(f"  {yellow('[tool]')} {tool_label}")
                 self._emit(
-                    KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, iteration=iteration,
-                    tool=tool_name, args_hash=args_hash, tc_id=tc_id, duplicate=False,
+                    KIND_TOOL_CALL,
+                    LAYER_TOOL_INTERFACE,
+                    iteration=iteration,
+                    tool=tool_name,
+                    args_hash=args_hash,
+                    tc_id=tc_id,
+                    duplicate=False,
                 )
                 t_call = time.monotonic()
                 affected: list[str] = []
@@ -1105,9 +1157,13 @@ class ToolLoopRunner:
                 except Exception as exc:
                     affected = self._collect_effects(tool_name, args)
                     self._emit(
-                        KIND_TOOL_ERROR, LAYER_TOOL_INTERFACE, iteration=iteration,
-                        tool=tool_name, args_hash=args_hash,
-                        exception=type(exc).__name__, message=str(exc)[:500],
+                        KIND_TOOL_ERROR,
+                        LAYER_TOOL_INTERFACE,
+                        iteration=iteration,
+                        tool=tool_name,
+                        args_hash=args_hash,
+                        exception=type(exc).__name__,
+                        message=str(exc)[:500],
                         affected_files=affected,
                     )
                     result_str = f"Tool error ({type(exc).__name__}): {exc}"
@@ -1125,7 +1181,8 @@ class ToolLoopRunner:
                 #: laguna-s-2.1 lacked.
                 if _is_path_miss(result_str) and tool_name in _PATH_SENSITIVE_TOOLS:
                     result_str, discovered = await _recover_path_miss(
-                        execute_tool_fn, args, result_str)
+                        execute_tool_fn, args, result_str
+                    )
                     #: The recovery's hidden list_files records its own effect;
                     #: discard it so the parent dir is not attributed to this or
                     #: a later tool event (it was only listed, never touched).
@@ -1133,20 +1190,33 @@ class ToolLoopRunner:
                     if discovered:
                         calls_without_progress = 0
                     self._emit(
-                        KIND_GUARD_TRIGGERED, LAYER_LIFECYCLE, guard=GUARD_PATH_MISS,
-                        iteration=iteration, tool=tool_name,
+                        KIND_GUARD_TRIGGERED,
+                        LAYER_LIFECYCLE,
+                        guard=GUARD_PATH_MISS,
+                        iteration=iteration,
+                        tool=tool_name,
                         note=_PATH_RECOVERY_NOTE.format(listing="..."),
                     )
                 self._emit(
-                    KIND_TOOL_RESULT, LAYER_TOOL_INTERFACE, iteration=iteration,
-                    tool=tool_name, args_hash=args_hash, tc_id=tc_id, duplicate=False,
+                    KIND_TOOL_RESULT,
+                    LAYER_TOOL_INTERFACE,
+                    iteration=iteration,
+                    tool=tool_name,
+                    args_hash=args_hash,
+                    tc_id=tc_id,
+                    duplicate=False,
                     duration_s=time.monotonic() - t_call,
-                    result=truncate(result_str, RESULT_CAP), affected_files=affected,
+                    result=truncate(result_str, RESULT_CAP),
+                    affected_files=affected,
                 )
                 if self.display_mode != DisplayMode.QUIET:
                     if self.display_mode == DisplayMode.CLEAN:
-                        print(f"  {yellow('[reason]')} {_derive_reason(tool_name, args, prev_text)}")
-                        summary = _summarize_result(tool_name, result_str)[:_RESULT_DISPLAY_LIMIT]
+                        print(
+                            f"  {yellow('[reason]')} {_derive_reason(tool_name, args, prev_text)}"
+                        )
+                        summary = _summarize_result(tool_name, result_str)[
+                            :_RESULT_DISPLAY_LIMIT
+                        ]
                         print(f"  {yellow('[result]')} {colorize_result(summary)}")
                     else:
                         shown = colorize_result(result_str[:_RESULT_DISPLAY_LIMIT])
@@ -1172,12 +1242,18 @@ class ToolLoopRunner:
                     or "returned no output" in _result_stripped.lower()
                 )
                 if _is_empty_or_error:
-                    tool_consec_failures[tool_name] = tool_consec_failures.get(tool_name, 0) + 1
+                    tool_consec_failures[tool_name] = (
+                        tool_consec_failures.get(tool_name, 0) + 1
+                    )
                 else:
                     tool_consec_failures[tool_name] = 0
-                if tool_consec_failures.get(tool_name, 0) >= _TOOL_CONSECUTIVE_FAILURE_LIMIT:
+                if (
+                    tool_consec_failures.get(tool_name, 0)
+                    >= _TOOL_CONSECUTIVE_FAILURE_LIMIT
+                ):
                     note = _TOOL_CONSECUTIVE_FAILURE_NOTE.format(
-                        tool=tool_name, count=tool_consec_failures[tool_name])
+                        tool=tool_name, count=tool_consec_failures[tool_name]
+                    )
                     # Queue, don't append: a user message inserted HERE would
                     # land between the assistant tool_calls message and its
                     # tool results, and strict gateways reject that with HTTP
@@ -1188,8 +1264,13 @@ class ToolLoopRunner:
                     injected_notes.append(note)
                     tool_consec_failures[tool_name] = 0
                     self._emit(
-                        KIND_GUARD_TRIGGERED, LAYER_LIFECYCLE, guard=GUARD_STUCK,
-                        iteration=iteration, tool=tool_name, note=note)
+                        KIND_GUARD_TRIGGERED,
+                        LAYER_LIFECYCLE,
+                        guard=GUARD_STUCK,
+                        iteration=iteration,
+                        tool=tool_name,
+                        note=note,
+                    )
                 # Return the tool message instead of appending it here: under
                 # concurrent fan-out the caller appends results in ORIGINAL
                 # tool_call_id order (gather completes in arbitrary order),
@@ -1204,7 +1285,9 @@ class ToolLoopRunner:
             # side-effect-free and order-independent.  Mutating calls and
             # ``delegate`` run strictly sequentially AFTER the fan-out so no
             # mutation races and the no-mutation/progress guards stay correct.
-            pending: list[tuple[str, str, dict[str, Any], tuple[str, str], str, str]] = []
+            pending: list[
+                tuple[str, str, dict[str, Any], tuple[str, str], str, str]
+            ] = []
             for tc in tool_calls:
                 tc_id = tc.get("id", "")
                 func = tc.get("function", {})
@@ -1243,23 +1326,32 @@ class ToolLoopRunner:
                 # shifts).  Repeating is legitimate — skip the entire duplicate
                 # detection so the tool re-executes normally with a fresh result,
                 # no NOTE and no hard-stop.
-                if (call_key == prev_call_key or is_dup_this_iter) and \
-                        tool_name not in _IDEMPOTENT_TOOLS:
+                if (
+                    call_key == prev_call_key or is_dup_this_iter
+                ) and tool_name not in _IDEMPOTENT_TOOLS:
                     #: Total executions of this exact call across ALL chained
                     #: runs (shared registry), so a repeated probe is flagged as
                     #: a known dead-end even after an auto-continue restart.
-                    total_runs = max(total_runs, seen_calls.get(call_key, 1) if seen_calls is not None else 1)
+                    total_runs = max(
+                        total_runs,
+                        seen_calls.get(call_key, 1) if seen_calls is not None else 1,
+                    )
                     # If the repeated call's prior result was a missing path and this
                     # tool can follow up with a listing, recover before declaring stuck —
                     # an invented-path retry gets un-stuck instead of dead-ending (decision #035).
-                    if _is_path_miss(prev_result) and tool_name in _PATH_SENSITIVE_TOOLS:
+                    if (
+                        _is_path_miss(prev_result)
+                        and tool_name in _PATH_SENSITIVE_TOOLS
+                    ):
                         result_str, discovered = await _recover_path_miss(
                             execute_tool_fn, args, prev_result
                         )
                         #: Discard the hidden list_files' self-recorded effect —
                         #: same reason as in _run_one (see above).
                         self._collect_effects(tool_name, args)
-                        calls_without_progress = 0 if discovered else calls_without_progress + 1
+                        calls_without_progress = (
+                            0 if discovered else calls_without_progress + 1
+                        )
                         self._emit(
                             KIND_GUARD_TRIGGERED,
                             LAYER_LIFECYCLE,
@@ -1290,7 +1382,8 @@ class ToolLoopRunner:
                             f"NOTE: This exact call has now been executed {total_runs} "
                             f"time(s) in this conversation (result: {prev_result[:160]}). "
                             "It is not re-executed — unless the file changed, the result is "
-                            "identical. " + _REPEAT_HINTS.get(tool_name, _REPEAT_HINT_DEFAULT)
+                            "identical. "
+                            + _REPEAT_HINTS.get(tool_name, _REPEAT_HINT_DEFAULT)
                         )
                     _dup_streak[call_key] = True
                     self._emit(
@@ -1303,10 +1396,16 @@ class ToolLoopRunner:
                         duplicate=True,
                     )
                     if self.display_mode != DisplayMode.QUIET:
-                        print(f"  {yellow('[tool]')} {cyan(tool_name)}({gray(_fmt_args(args))}) (duplicate, not re-executed)")
+                        print(
+                            f"  {yellow('[tool]')} {cyan(tool_name)}({gray(_fmt_args(args))}) (duplicate, not re-executed)"
+                        )
                         if self.display_mode == DisplayMode.CLEAN:
-                            print(f"  {yellow('[reason]')} {_derive_reason(tool_name, args, prev_text)}")
-                            summary = _summarize_result(tool_name, result_str)[:_RESULT_DISPLAY_LIMIT]
+                            print(
+                                f"  {yellow('[reason]')} {_derive_reason(tool_name, args, prev_text)}"
+                            )
+                            summary = _summarize_result(tool_name, result_str)[
+                                :_RESULT_DISPLAY_LIMIT
+                            ]
                             print(f"  {yellow('[result]')} {colorize_result(summary)}")
                         else:
                             shown = colorize_result(result_str[:_RESULT_DISPLAY_LIMIT])
@@ -1316,11 +1415,13 @@ class ToolLoopRunner:
                     #: Defer the append (see dup_tool_msgs): this call sits in
                     #: the same assistant batch as pending calls that execute
                     #: LATER — appending now would put its tool message first.
-                    dup_tool_msgs.append({
-                        "role": "tool",
-                        "tool_call_id": tc_id,
-                        "content": result_str,
-                    })
+                    dup_tool_msgs.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": result_str,
+                        }
+                    )
                     self._emit(
                         KIND_TOOL_RESULT,
                         LAYER_TOOL_INTERFACE,
@@ -1343,22 +1444,50 @@ class ToolLoopRunner:
             # matching the pre-refactor inline behaviour.  The outer
             # ``if stuck: break`` below ends the loop after this batch.
             readonly_pending = [p for p in pending if p[1] in READONLY_FANOUT_TOOLS]
-            sequential_pending = [p for p in pending if p[1] not in READONLY_FANOUT_TOOLS]
+            sequential_pending = [
+                p for p in pending if p[1] not in READONLY_FANOUT_TOOLS
+            ]
             if len(readonly_pending) >= 2:
-                tool_msgs = await asyncio.gather(*(
-                    _run_one(p, current_messages, injected_notes, seen_calls,
-                             _executed_this_batch, _dup_streak, _tool_consec_failures)
-                    for p in readonly_pending))
+                tool_msgs = await asyncio.gather(
+                    *(
+                        _run_one(
+                            p,
+                            current_messages,
+                            injected_notes,
+                            seen_calls,
+                            _executed_this_batch,
+                            _dup_streak,
+                            _tool_consec_failures,
+                        )
+                        for p in readonly_pending
+                    )
+                )
             else:
                 tool_msgs = []
                 for p in readonly_pending:
-                    tool_msgs.append(await _run_one(
-                        p, current_messages, injected_notes, seen_calls,
-                        _executed_this_batch, _dup_streak, _tool_consec_failures))
+                    tool_msgs.append(
+                        await _run_one(
+                            p,
+                            current_messages,
+                            injected_notes,
+                            seen_calls,
+                            _executed_this_batch,
+                            _dup_streak,
+                            _tool_consec_failures,
+                        )
+                    )
             for p in sequential_pending:
-                tool_msgs.append(await _run_one(
-                    p, current_messages, injected_notes, seen_calls,
-                    _executed_this_batch, _dup_streak, _tool_consec_failures))
+                tool_msgs.append(
+                    await _run_one(
+                        p,
+                        current_messages,
+                        injected_notes,
+                        seen_calls,
+                        _executed_this_batch,
+                        _dup_streak,
+                        _tool_consec_failures,
+                    )
+                )
                 if stuck:
                     break
             # Append tool messages in ORIGINAL batch (tool_call_id) order — not
@@ -1397,7 +1526,7 @@ class ToolLoopRunner:
                         for tc in _m["tool_calls"]
                         if isinstance(tc, dict)
                     ]
-                    for _nxt in current_messages[_idx + 1:]:
+                    for _nxt in current_messages[_idx + 1 :]:
                         if _nxt.get("role") == "assistant":
                             break
                         if _nxt.get("role") == "tool":
@@ -1415,8 +1544,7 @@ class ToolLoopRunner:
                     )
                     if self.display_mode != DisplayMode.QUIET:
                         print(
-                            f"  {yellow('[tool]')} "
-                            f"{gray('(skipped — loop stopping)')}"
+                            f"  {yellow('[tool]')} {gray('(skipped — loop stopping)')}"
                         )
                     self._emit(
                         KIND_TOOL_RESULT,
@@ -1464,7 +1592,8 @@ class ToolLoopRunner:
             current_messages.append({"role": "user", "content": note})
             injected_notes.append(note)
             current_messages = self._ensure_char_budget(
-                current_messages, injected_notes)
+                current_messages, injected_notes
+            )
             response_text, updated_messages = await self._forced_final_answer(
                 current_messages, llm_chat_fn, iteration
             )
@@ -1476,10 +1605,15 @@ class ToolLoopRunner:
             # because the first attempt produced nothing, so re-streaming would
             # re-run the same failing transport instead of the fallback.
             if not response_text or response_text.strip() == "(no output)":
-                current_messages.append({"role": "user", "content": _FORCED_SYNTHESIS_RETRY})
+                current_messages.append(
+                    {"role": "user", "content": _FORCED_SYNTHESIS_RETRY}
+                )
                 current_messages = self._ensure_char_budget(
-                    current_messages, injected_notes)
-                response_text, updated_messages = await llm_chat_fn(current_messages, [])
+                    current_messages, injected_notes
+                )
+                response_text, updated_messages = await llm_chat_fn(
+                    current_messages, []
+                )
                 current_messages = updated_messages
                 self._emit_synthesis_response(iteration, response_text)
             if response_text:
@@ -1508,8 +1642,7 @@ class ToolLoopRunner:
         # because strict chat templates reject mid-conversation system roles.
         if injected_notes:
             current_messages = [
-                m for m in current_messages
-                if m.get("content") not in injected_notes
+                m for m in current_messages if m.get("content") not in injected_notes
             ]
         self.iterations_used = min(iteration + 1, self.max_iterations)
         return final_text, current_messages
@@ -1533,7 +1666,8 @@ class ToolLoopRunner:
         ):
             return messages
         compacted, note = _compact_messages(
-            messages, self.compact_max_messages, self.compact_char_budget, None)
+            messages, self.compact_max_messages, self.compact_char_budget, None
+        )
         if note and injected_notes is not None and note not in injected_notes:
             injected_notes.append(note)
         return compacted
@@ -1607,9 +1741,15 @@ class ToolLoopRunner:
         if tool_name in MUTATING_TOOLS:
             return True
         if tool_name == "read":
-            key: Any = (_norm_progress_path(str(args.get("path", ""))), int(args.get("offset") or 0))
+            key: Any = (
+                _norm_progress_path(str(args.get("path", ""))),
+                int(args.get("offset") or 0),
+            )
         elif tool_name == "search":
-            key = (str(args.get("query", "")), _norm_progress_path(str(args.get("path", ""))))
+            key = (
+                str(args.get("query", "")),
+                _norm_progress_path(str(args.get("path", ""))),
+            )
         elif tool_name == "list_files":
             key = _norm_progress_path(str(args.get("path", "")))
         else:

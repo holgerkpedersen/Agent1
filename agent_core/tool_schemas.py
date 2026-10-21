@@ -35,7 +35,10 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Text to search for"},
-                    "path": {"type": "string", "description": "Directory to search (default: workspace root)"},
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search (default: workspace root)",
+                    },
                 },
                 "required": ["query"],
             },
@@ -57,14 +60,23 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Absolute or workspace-relative file path (one file)"},
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute or workspace-relative file path (one file)",
+                    },
                     "paths": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Several file paths to read in one call (alternative to 'path')",
                     },
-                    "offset": {"type": "integer", "description": "1-based starting line number (default 1)"},
-                    "limit": {"type": "integer", "description": "Maximum number of lines to return (default 100)"},
+                    "offset": {
+                        "type": "integer",
+                        "description": "1-based starting line number (default 1)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of lines to return (default 100)",
+                    },
                 },
                 "required": [],
             },
@@ -86,9 +98,18 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "The skill name EXACTLY as listed in the SKILLS block — copy it verbatim, do not add suffixes or extra text (e.g. 'repo-runbook')"},
-                    "offset": {"type": "integer", "description": "1-based starting line of the body (default 1)"},
-                    "limit": {"type": "integer", "description": "Maximum number of body lines to return (default 200, max 400)"},
+                    "name": {
+                        "type": "string",
+                        "description": "The skill name EXACTLY as listed in the SKILLS block — copy it verbatim, do not add suffixes or extra text (e.g. 'repo-runbook')",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "1-based starting line of the body (default 1)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of body lines to return (default 200, max 400)",
+                    },
                 },
                 "required": ["name"],
             },
@@ -102,7 +123,10 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Directory to list (default: workspace root)"},
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to list (default: workspace root)",
+                    },
                 },
                 "required": [],
             },
@@ -119,8 +143,14 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Absolute or workspace-relative file path"},
-                    "content": {"type": "string", "description": "Full file content to write"},
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute or workspace-relative file path",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full file content to write",
+                    },
                 },
                 "required": ["path", "content"],
             },
@@ -137,8 +167,14 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Absolute or workspace-relative file path"},
-                    "old_text": {"type": "string", "description": "Exact text to find (including whitespace)"},
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute or workspace-relative file path",
+                    },
+                    "old_text": {
+                        "type": "string",
+                        "description": "Exact text to find (including whitespace)",
+                    },
                     "new_text": {"type": "string", "description": "Replacement text"},
                 },
                 "required": ["path", "old_text", "new_text"],
@@ -167,7 +203,10 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "The shell command to run"},
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to run",
+                    },
                     "timeout": {
                         "type": "integer",
                         "description": (
@@ -182,7 +221,8 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "required": ["command"],
             },
         },
-    },    {
+    },
+    {
         "type": "function",
         "function": {
             "name": "git",
@@ -193,7 +233,7 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "git pathspec); stage one path with args='<path>'. Commit with "
                 "subcommand='commit', args='-m \"message\"' (a message-less "
                 "commit hangs on an editor). Push with subcommand='push'. "
-                "\"Commit changes\" means the FULL sequence status -> add -A "
+                '"Commit changes" means the FULL sequence status -> add -A '
                 "-> commit -m -> push; never push alone, since `git push` only "
                 "sends commits and leaves staged work behind. Use only the "
                 "forms shown here or a real git flag — do not invent flags."
@@ -331,7 +371,10 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "file1": {"type": "string", "description": "First file path"},
-                    "file2": {"type": "string", "description": "Optional second file path"},
+                    "file2": {
+                        "type": "string",
+                        "description": "Optional second file path",
+                    },
                 },
                 "required": ["file1"],
             },
@@ -345,8 +388,15 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Test path (default: current directory)"},
-                    "framework": {"type": "string", "enum": ["pytest", "unittest"], "description": "Test framework (default pytest)"},
+                    "path": {
+                        "type": "string",
+                        "description": "Test path (default: current directory)",
+                    },
+                    "framework": {
+                        "type": "string",
+                        "enum": ["pytest", "unittest"],
+                        "description": "Test framework (default pytest)",
+                    },
                 },
                 "required": [],
             },
@@ -408,8 +458,14 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {"type": "string", "description": "Symbol name to locate"},
-                    "max_results": {"type": "integer", "description": "Cap on hits returned (default 60)"},
+                    "symbol": {
+                        "type": "string",
+                        "description": "Symbol name to locate",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Cap on hits returned (default 60)",
+                    },
                 },
                 "required": ["symbol"],
             },
@@ -427,7 +483,10 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "File or directory path to analyze (default: whole workspace)"},
+                    "path": {
+                        "type": "string",
+                        "description": "File or directory path to analyze (default: whole workspace)",
+                    },
                 },
                 "required": [],
             },
@@ -568,7 +627,10 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
-                    "max_results": {"type": "integer", "description": "Max results (default 5, max 10)"},
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Max results (default 5, max 10)",
+                    },
                 },
                 "required": ["query"],
             },
@@ -589,8 +651,14 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "role": {"type": "string", "description": "Role name (see subagent roles)"},
-                    "task": {"type": "string", "description": "Self-contained task description"},
+                    "role": {
+                        "type": "string",
+                        "description": "Role name (see subagent roles)",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Self-contained task description",
+                    },
                 },
                 "required": ["role", "task"],
             },
@@ -614,7 +682,10 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "items": {"type": "string"},
                         "description": "Role names (max 3 used, extras dropped)",
                     },
-                    "task": {"type": "string", "description": "Self-contained task for every role"},
+                    "task": {
+                        "type": "string",
+                        "description": "Self-contained task for every role",
+                    },
                 },
                 "required": ["roles", "task"],
             },
@@ -645,7 +716,10 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "server": {"type": "string", "description": "MCP server name"},
-                    "tool": {"type": "string", "description": "Tool name on that server"},
+                    "tool": {
+                        "type": "string",
+                        "description": "Tool name on that server",
+                    },
                     "arguments": {
                         "type": "object",
                         "description": "Tool arguments per its declared schema",
@@ -778,9 +852,18 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Unique identifier for this subagent"},
-                    "role": {"type": "string", "description": "Role name (planner, implementer, tester, debugger, reviewer, integrator, researcher, security, documenter)"},
-                    "workspace": {"type": "string", "description": "Optional workspace path override"},
+                    "name": {
+                        "type": "string",
+                        "description": "Unique identifier for this subagent",
+                    },
+                    "role": {
+                        "type": "string",
+                        "description": "Role name (planner, implementer, tester, debugger, reviewer, integrator, researcher, security, documenter)",
+                    },
+                    "workspace": {
+                        "type": "string",
+                        "description": "Optional workspace path override",
+                    },
                 },
                 "required": ["name", "role"],
             },
@@ -798,8 +881,14 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Name of the existing subagent"},
-                    "task": {"type": "string", "description": "Task description to execute"},
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the existing subagent",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Task description to execute",
+                    },
                 },
                 "required": ["name", "task"],
             },
@@ -819,7 +908,14 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["list_lights", "get_light", "set_light", "color_capabilities", "set_color", "set_color_named"],
+                        "enum": [
+                            "list_lights",
+                            "get_light",
+                            "set_light",
+                            "color_capabilities",
+                            "set_color",
+                            "set_color_named",
+                        ],
                         "description": (
                             "Action to perform: list_lights, get_light, set_light (V1 API), "
                             "color_capabilities, set_color (RGB/HSV/XY), or set_color_named."

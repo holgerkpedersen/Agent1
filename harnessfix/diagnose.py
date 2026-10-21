@@ -5,6 +5,7 @@ layer facet plus a mechanism, with evidence (link ids / step indices) and a
 repair proposal.  The LLM-agent tier is only activated later if the heuristic
 tier's precision falls below ~70% on a labeled set.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -27,22 +28,82 @@ from .tracing import (
 #: (facet, mechanism) results with the payload fields that trigger them.
 _SIGNATURES: list[tuple[str, str, str, str, bool]] = [
     # (layer, mechanism, field, needle-substring, case_insensitive)
-    (LAYER_TOOL_INTERFACE, "schema validation rejected tool args", "message", "validation", True),
-    (LAYER_EXECUTION, "subprocess/shell execution failed", "exception", "TimeoutExpired", False),
-    (LAYER_EXECUTION, "subprocess/shell execution failed", "exception", "FileNotFoundError", False),
-    (LAYER_EXECUTION, "subprocess/shell execution failed", "exception", "PermissionError", False),
-    (LAYER_EXECUTION, "subprocess/shell execution failed", "exception", "OSError", False),
-    (LAYER_GOVERNANCE, "security policy rejected tool call", "message", "not allowed", True),
-    (LAYER_GOVERNANCE, "security policy rejected tool call", "message", "SecurityViolation", False),
-    (LAYER_GOVERNANCE, "path escape blocked by sanitizer", "message", "path escape", True),
-    (LAYER_VERIFICATION, "benchmark checker failed after completion", "result", "verification failed", True),
+    (
+        LAYER_TOOL_INTERFACE,
+        "schema validation rejected tool args",
+        "message",
+        "validation",
+        True,
+    ),
+    (
+        LAYER_EXECUTION,
+        "subprocess/shell execution failed",
+        "exception",
+        "TimeoutExpired",
+        False,
+    ),
+    (
+        LAYER_EXECUTION,
+        "subprocess/shell execution failed",
+        "exception",
+        "FileNotFoundError",
+        False,
+    ),
+    (
+        LAYER_EXECUTION,
+        "subprocess/shell execution failed",
+        "exception",
+        "PermissionError",
+        False,
+    ),
+    (
+        LAYER_EXECUTION,
+        "subprocess/shell execution failed",
+        "exception",
+        "OSError",
+        False,
+    ),
+    (
+        LAYER_GOVERNANCE,
+        "security policy rejected tool call",
+        "message",
+        "not allowed",
+        True,
+    ),
+    (
+        LAYER_GOVERNANCE,
+        "security policy rejected tool call",
+        "message",
+        "SecurityViolation",
+        False,
+    ),
+    (
+        LAYER_GOVERNANCE,
+        "path escape blocked by sanitizer",
+        "message",
+        "path escape",
+        True,
+    ),
+    (
+        LAYER_VERIFICATION,
+        "benchmark checker failed after completion",
+        "result",
+        "verification failed",
+        True,
+    ),
     #: Context pressure is a SYSTEM steering note (guard/budget), never the
     #: model's own chat output: llm_response.text routinely QUOTES the
     #: tracer's storage marker "...[truncated N chars]" when the model echoes
     #: file content or its own earlier answer.  All five "context layer"
     #: diagnoses on the 2026-08-25 corpus were exactly that (five hits on
     #: llm_response.text, zero on any system field).
-    (LAYER_CONTEXT, "history truncation / token limit pressure", "note", "truncat", True),
+    (
+        LAYER_CONTEXT,
+        "history truncation / token limit pressure",
+        "note",
+        "truncat",
+        True,
+    ),
 ]
 
 #: Event kinds whose payloads may carry SYSTEM diagnostics worth signature
@@ -53,7 +114,9 @@ _SIGNATURES: list[tuple[str, str, str, str, bool]] = [
 #: a669a26e...).  For the same reason llm_response is eligible EXCEPT its
 #: free-text "text" field: that is MODEL OUTPUT, not a system diagnostic.
 #: Structured result/message/exception/note fields stay eligible.
-_SIGNATURE_KINDS = frozenset({"tool_error", "guard_triggered", "llm_response", "loop_end", "tool_result"})
+_SIGNATURE_KINDS = frozenset(
+    {"tool_error", "guard_triggered", "llm_response", "loop_end", "tool_result"}
+)
 
 
 class Diagnosis(BaseModel):
@@ -122,9 +185,7 @@ def diagnose_graph(graph: TraceGraph) -> Diagnosis:
             first_index=_first_mutation_index(graph),
         )
     if affected:
-        end = next(
-            (s for s in reversed(graph.steps) if s.kind == "loop_end"), None
-        )
+        end = next((s for s in reversed(graph.steps) if s.kind == "loop_end"), None)
         if end is not None and end.payload.get("outcome") != "completed":
             return _build(
                 graph,
@@ -179,7 +240,9 @@ def diagnose_graph(graph: TraceGraph) -> Diagnosis:
 
     # 4. Tool errors without a matching signature -> tool interface.
     if tool_errors:
-        return _build(graph, LAYER_TOOL_INTERFACE, "unclassified tool error", first_index=0)
+        return _build(
+            graph, LAYER_TOOL_INTERFACE, "unclassified tool error", first_index=0
+        )
 
     return _build(
         graph,
@@ -245,9 +308,12 @@ def _build(
             if not evidence:
                 evidence.append(f"step:{first_index}")
     if not evidence:
-        evidence = [ln.link_id for s in failed for ln in graph.links if ln.source == s.index or ln.target == s.index][:6] or [
-            f"step:{s.index}" for s in failed
-        ][:6]
+        evidence = [
+            ln.link_id
+            for s in failed
+            for ln in graph.links
+            if ln.source == s.index or ln.target == s.index
+        ][:6] or [f"step:{s.index}" for s in failed][:6]
     confidence = 0.85 if first_index is not None else 0.6
     return Diagnosis(
         task_id=graph.task_id,

@@ -40,7 +40,9 @@ def _make_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Agent:
     return Agent(workspace=str(tmp_path), model_name="test-model")
 
 
-def test_spawn_subagent_creates_isolated_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_spawn_subagent_creates_isolated_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """SubAgent should have its own conversation history separate from parent."""
     a = _make_agent(tmp_path, monkeypatch)
     sub = a.spawn_subagent("researcher")
@@ -58,7 +60,9 @@ def test_spawn_subagent_creates_isolated_context(tmp_path: Path, monkeypatch: py
     assert conv[1]["role"] == "assistant"
 
 
-def test_subagent_shares_workspace_with_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_subagent_shares_workspace_with_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """SubAgent should inherit parent's workspace by default."""
     a = _make_agent(tmp_path, monkeypatch)
     sub = a.spawn_subagent("worker")
@@ -67,7 +71,9 @@ def test_subagent_shares_workspace_with_parent(tmp_path: Path, monkeypatch: pyte
     assert sub.model_name == a.model_name
 
 
-def test_subagent_can_override_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_subagent_can_override_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """SubAgent should accept an explicit workspace override."""
     a = _make_agent(tmp_path, monkeypatch)
     child_dir = tmp_path / "child"
@@ -77,7 +83,9 @@ def test_subagent_can_override_workspace(tmp_path: Path, monkeypatch: pytest.Mon
     assert sub.workspace == os.path.abspath(str(child_dir))
 
 
-def test_parallel_task_execution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parallel_task_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Agent should be able to run multiple tasks in parallel."""
     import concurrent.futures
 
@@ -102,7 +110,9 @@ def test_parallel_task_execution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert "Task 1 work" in combined or "Task 2 work" in combined
 
 
-def test_subagent_result_collection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_subagent_result_collection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Parent can collect results from multiple subagents."""
     a = _make_agent(tmp_path, monkeypatch)
 
@@ -120,7 +130,9 @@ def test_subagent_result_collection(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         assert "context summary" in summary
 
 
-def test_subagent_reset_clears_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_subagent_reset_clears_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """SubAgent.reset() should clear conversation history."""
     a = _make_agent(tmp_path, monkeypatch)
     sub = a.spawn_subagent("reset-test")
@@ -144,7 +156,9 @@ def test_subagent_repr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert "pytest" in r and "subagent_repr" in r
 
 
-def test_subagent_context_summary_max_messages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_subagent_context_summary_max_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """get_context_summary should respect max_messages limit."""
     a = _make_agent(tmp_path, monkeypatch)
     sub = a.spawn_subagent("summary-test")
@@ -160,11 +174,15 @@ def test_subagent_context_summary_max_messages(tmp_path: Path, monkeypatch: pyte
     # Should only show last 2 pairs (4 messages).
     assert "context summary" in summary
     # Count the number of lines with "> " or "< " prefix.
-    lines = [ln for ln in summary.split("\n") if ln.startswith("  >") or ln.startswith("  <")]
+    lines = [
+        ln for ln in summary.split("\n") if ln.startswith("  >") or ln.startswith("  <")
+    ]
     assert len(lines) <= 4  # max 2 pairs
 
 
-def test_subagent_prefixed_message(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_subagent_prefixed_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """User messages should be prefixed with [SubAgent:name]."""
     a = _make_agent(tmp_path, monkeypatch)
     sub = a.spawn_subagent("my-agent")
@@ -174,7 +192,9 @@ def test_subagent_prefixed_message(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert "[SubAgent:my-agent]" in conv[0]["content"]
 
 
-def test_multiple_subagents_independent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_multiple_subagents_independent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Multiple subagents should have independent conversation histories."""
     a = _make_agent(tmp_path, monkeypatch)
 

@@ -4,6 +4,7 @@ The bridge is opt-in: only servers marked ``expose_to_llm`` in mcp.json AND
 currently connected are reachable, and the gate is re-checked at call time.
 Plan mode excludes both tools automatically (not in PLAN_MODE_TOOLS).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -17,25 +18,37 @@ from agent_core.mcp.config import save_mcp_servers, validate_entry
 from agent_core.mcp.manager import McpManager
 from agent_core.tool_schemas import NLP_TOOL_NAMES
 
-FIXTURE = [sys.executable,
-           str(Path(__file__).parent / "fixtures" / "fake_mcp_server.py")]
+FIXTURE = [
+    sys.executable,
+    str(Path(__file__).parent / "fixtures" / "fake_mcp_server.py"),
+]
 
 
 @pytest.fixture()
 def bot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     path = tmp_path / "mcp.json"
     cfgs = {
-        "open": validate_entry("open", {
-            "transport": "stdio", "command": FIXTURE, "expose_to_llm": True,
-        }),
-        "shut": validate_entry("shut", {
-            "transport": "stdio", "command": FIXTURE,
-        }),
+        "open": validate_entry(
+            "open",
+            {
+                "transport": "stdio",
+                "command": FIXTURE,
+                "expose_to_llm": True,
+            },
+        ),
+        "shut": validate_entry(
+            "shut",
+            {
+                "transport": "stdio",
+                "command": FIXTURE,
+            },
+        ),
     }
     save_mcp_servers(cfgs, path)
     mgr = McpManager(config_path=path)
     monkeypatch.setattr(
-        "agent_core.mcp.manager.get_manager", lambda: mgr,
+        "agent_core.mcp.manager.get_manager",
+        lambda: mgr,
     )
     # The handlers late-import get_manager from agent_core.mcp.manager, so
     # patching there covers every call path in this test module.
@@ -71,15 +84,22 @@ class TestMcpCallGate:
         mgr = bot._test_mcp_manager
         mgr.connect("open")
         try:
-            out = run(bot._nlp_mcp_call({
-                "server": "open", "tool": "add", "arguments": {"a": 5, "b": 7},
-            }))
+            out = run(
+                bot._nlp_mcp_call(
+                    {
+                        "server": "open",
+                        "tool": "add",
+                        "arguments": {"a": 5, "b": 7},
+                    }
+                )
+            )
             assert out == "12"
         finally:
             mgr.disconnect_all()
 
     def test_non_exposed_server_rejected_even_if_connected(
-        self, bot: agent.Agent,
+        self,
+        bot: agent.Agent,
     ) -> None:
         mgr = bot._test_mcp_manager
         mgr.connect("shut")
@@ -101,10 +121,15 @@ class TestMcpCallGate:
         mgr = bot._test_mcp_manager
         mgr.connect("open")
         try:
-            out = run(bot._nlp_mcp_call({
-                "server": "open", "tool": "add",
-                "arguments": {"a": "two", "b": 1},
-            }))
+            out = run(
+                bot._nlp_mcp_call(
+                    {
+                        "server": "open",
+                        "tool": "add",
+                        "arguments": {"a": "two", "b": 1},
+                    }
+                )
+            )
             assert "argument validation" in out
         finally:
             mgr.disconnect_all()
@@ -113,9 +138,15 @@ class TestMcpCallGate:
         mgr = bot._test_mcp_manager
         mgr.connect("open")
         try:
-            out = run(bot._nlp_mcp_call({
-                "server": "open", "tool": "add", "arguments": [1, 2],
-            }))
+            out = run(
+                bot._nlp_mcp_call(
+                    {
+                        "server": "open",
+                        "tool": "add",
+                        "arguments": [1, 2],
+                    }
+                )
+            )
             assert "must be a JSON object" in out
         finally:
             mgr.disconnect_all()
@@ -126,6 +157,7 @@ class TestModeAndParity:
         # Both tools can trigger external side effects - plan mode must
         # filter the schemas AND reject calls at the choke point.
         from agent_core.modes import check_tool_allowed, filter_tool_schemas
+
         rejection = check_tool_allowed("mcp_call", "plan")
         assert rejection is not None
         names = {
@@ -143,6 +175,7 @@ class TestModeAndParity:
 
     def test_build_mode_offers_both_tools(self) -> None:
         from agent_core.modes import filter_tool_schemas
+
         names = {
             s["function"]["name"]
             for s in filter_tool_schemas(list(agent.NLP_TOOL_SCHEMAS), "build")

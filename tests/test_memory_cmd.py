@@ -12,6 +12,7 @@ These tests drive the REAL path end to end: a real ``Agent`` writes rows via
 ``_record_llm_experience``, then ``MemoryCommand`` reads the same DB back.
 Nothing is simulated, and every file lands in ``tmp_path``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -48,6 +49,7 @@ def _db(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # 1. Surface: registration, name, help
 # ---------------------------------------------------------------------------
+
 
 def test_memory_command_is_registered() -> None:
     registry = CommandRegistry()
@@ -93,6 +95,7 @@ def test_help_shows_memory_details(capsys) -> None:
 # 2. Read-only: a missing DB is a clean message, never a crash or a new file
 # ---------------------------------------------------------------------------
 
+
 def test_missing_db_reports_cleanly_and_creates_nothing(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -123,25 +126,47 @@ def test_missing_db_json_is_still_valid_json(
 # 3. Round trip: real writes -> real reads, per model
 # ---------------------------------------------------------------------------
 
+
 def test_summary_reports_each_deciding_model(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     bot = _make_agent(tmp_path / "ws_rt", tmp_path, monkeypatch)
 
     # model-a: two decisions, one success (outcome 0.9) one failure (0.1).
-    assert bot._record_llm_experience(
-        "llm_decision", 0.9, decision_llm="model-a",
-        decision_prompt="prompt one", run_id="run-1", latency_ms=120.0,
-    ) is not None
-    assert bot._record_llm_experience(
-        "llm_decision", 0.1, decision_llm="model-a",
-        decision_prompt="prompt two", run_id="run-1", latency_ms=180.0,
-    ) is not None
+    assert (
+        bot._record_llm_experience(
+            "llm_decision",
+            0.9,
+            decision_llm="model-a",
+            decision_prompt="prompt one",
+            run_id="run-1",
+            latency_ms=120.0,
+        )
+        is not None
+    )
+    assert (
+        bot._record_llm_experience(
+            "llm_decision",
+            0.1,
+            decision_llm="model-a",
+            decision_prompt="prompt two",
+            run_id="run-1",
+            latency_ms=180.0,
+        )
+        is not None
+    )
     # model-b: one successful decision.
-    assert bot._record_llm_experience(
-        "llm_decision", 1.0, decision_llm="model-b",
-        decision_prompt="prompt three", run_id="run-2", latency_ms=50.0,
-    ) is not None
+    assert (
+        bot._record_llm_experience(
+            "llm_decision",
+            1.0,
+            decision_llm="model-b",
+            decision_prompt="prompt three",
+            run_id="run-2",
+            latency_ms=50.0,
+        )
+        is not None
+    )
 
     _run([], bot)
     out = capsys.readouterr().out
@@ -228,6 +253,7 @@ def test_unattributed_rows_are_not_credited_to_any_model(
 # 4. Latency histogram
 # ---------------------------------------------------------------------------
 
+
 def test_latency_histogram_buckets_logged_decisions(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -245,9 +271,7 @@ def test_latency_histogram_buckets_logged_decisions(
     ]
 
 
-def test_latency_histogram_renders_a_table(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
+def test_latency_histogram_renders_a_table(tmp_path: Path, monkeypatch, capsys) -> None:
     bot = _make_agent(tmp_path / "ws_lat_txt", tmp_path, monkeypatch)
     bot._record_llm_experience("llm_decision", 0.9, decision_llm="m", latency_ms=50.0)
 
@@ -258,9 +282,7 @@ def test_latency_histogram_renders_a_table(
     assert "0-99" in out, f"expected a human-readable bucket range, got: {out!r}"
 
 
-def test_bad_bucket_size_is_rejected(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
+def test_bad_bucket_size_is_rejected(tmp_path: Path, monkeypatch, capsys) -> None:
     bot = _make_agent(tmp_path / "ws_lat_bad", tmp_path, monkeypatch)
 
     assert _run(["--latency", "--bucket-ms", "0"], bot) is True
@@ -268,9 +290,7 @@ def test_bad_bucket_size_is_rejected(
     assert "bucket-ms" in out and "positive" in out
 
 
-def test_unknown_flag_prints_usage(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
+def test_unknown_flag_prints_usage(tmp_path: Path, monkeypatch, capsys) -> None:
     bot = _make_agent(tmp_path / "ws_usage", tmp_path, monkeypatch)
 
     assert _run(["--nope"], bot) is True

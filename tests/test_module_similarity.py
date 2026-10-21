@@ -4,6 +4,7 @@ Precision-first: true duplicate pairs from the workflow run must be flagged,
 unrelated planned modules must not, and test/benchmark modules never enter the
 corpus.
 """
+
 import pytest
 
 from agent_core.utils.module_similarity import (
@@ -83,7 +84,9 @@ class TestTruePairs:
             feature = sim._planned_feature(PlannedModule(path, desc))
             top = sim.corpus.top(_meaningful_tokens(feature), k=3)
             assert top, f"no match for {path}"
-            assert top[0][0] == expected, f"{path}: top-1 {top[0][0]}, expected {expected}"
+            assert top[0][0] == expected, (
+                f"{path}: top-1 {top[0][0]}, expected {expected}"
+            )
 
     def test_true_pairs_flagged(self, ws):
         sim = ModuleSimilarity(str(ws))
@@ -91,29 +94,48 @@ class TestTruePairs:
         findings = sim.find_duplicates(planned)
         flagged = {f.file: f.existing for f in findings}
         for path, _, expected in _TRUE_PAIRS:
-            assert flagged.get(path) == expected, f"{path} not flagged against {expected}"
+            assert flagged.get(path) == expected, (
+                f"{path} not flagged against {expected}"
+            )
 
 
 class TestFalsePairs:
     def test_chain_limiter_not_flagged(self, ws):
         sim = ModuleSimilarity(str(ws))
-        findings = sim.find_duplicates([
-            PlannedModule("agent_core/nlp/chain_limiter.py", "Bound recursive tool execution depth"),
-        ])
+        findings = sim.find_duplicates(
+            [
+                PlannedModule(
+                    "agent_core/nlp/chain_limiter.py",
+                    "Bound recursive tool execution depth",
+                ),
+            ]
+        )
         assert findings == []
 
     def test_self_match_excluded(self, ws):
         sim = ModuleSimilarity(str(ws))
-        findings = sim.find_duplicates([
-            PlannedModule("agent_core/commands/reporting_cmd.py", "Command that produces performance reports"),
-        ])
-        assert not any(f.existing == "agent_core/commands/reporting_cmd.py" for f in findings)
+        findings = sim.find_duplicates(
+            [
+                PlannedModule(
+                    "agent_core/commands/reporting_cmd.py",
+                    "Command that produces performance reports",
+                ),
+            ]
+        )
+        assert not any(
+            f.existing == "agent_core/commands/reporting_cmd.py" for f in findings
+        )
 
     def test_unrelated_module_not_flagged(self, ws):
         sim = ModuleSimilarity(str(ws))
-        findings = sim.find_duplicates([
-            PlannedModule("agent_core/nlp/prompt_scheduler.py", "Schedule LLM prompts by priority"),
-        ])
+        findings = sim.find_duplicates(
+            [
+                PlannedModule(
+                    "agent_core/nlp/prompt_scheduler.py",
+                    "Schedule LLM prompts by priority",
+                ),
+            ]
+        )
         assert findings == []
 
 

@@ -4,6 +4,7 @@ The command persists the chosen mode to ``.env`` in the current working
 directory, so every test runs inside a temporary directory to avoid touching
 the real project ``.env``.
 """
+
 import asyncio
 
 import pytest
@@ -87,7 +88,9 @@ def test_current_mode_reflects_env_when_settings_fail(sandbox, monkeypatch, caps
     assert "Display mode is 'intent'." in capsys.readouterr().out
 
 
-def test_current_mode_falls_back_to_verbose_on_invalid_env(sandbox, monkeypatch, capsys):
+def test_current_mode_falls_back_to_verbose_on_invalid_env(
+    sandbox, monkeypatch, capsys
+):
     import agent_core.config as cfg
 
     def boom(*a, **k):
@@ -138,7 +141,9 @@ class TestResolveDisplayMode:
         loop = ToolLoopRunner(max_iterations=1, display_mode=mode)
         assert loop.display_mode is DisplayMode.INTENT
 
-    def test_settings_failure_falls_back_to_env_not_sentinel(self, sandbox, monkeypatch):
+    def test_settings_failure_falls_back_to_env_not_sentinel(
+        self, sandbox, monkeypatch
+    ):
         import agent_core.config as cfg
         from agent_core.config import AgentDisplayMode
         from agent_core.run_utils import resolve_display_mode

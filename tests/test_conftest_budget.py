@@ -26,7 +26,8 @@ class TestResolveBudget:
         monkeypatch.setenv(conftest._FULL_SUITE_TIMEOUT_KEY, "600")
         monkeypatch.delenv(conftest._LAST_FULL_RUN_KEY, raising=False)
         monkeypatch.setattr(
-            conftest, "_load_env",
+            conftest,
+            "_load_env",
             lambda: {conftest._LAST_FULL_RUN_KEY: "10"},
         )
         assert conftest._resolve_budget() == 600.0
@@ -35,7 +36,8 @@ class TestResolveBudget:
         monkeypatch.setenv(conftest._FULL_SUITE_TIMEOUT_KEY, "600")
         monkeypatch.delenv(conftest._LAST_FULL_RUN_KEY, raising=False)
         monkeypatch.setattr(
-            conftest, "_load_env",
+            conftest,
+            "_load_env",
             lambda: {conftest._LAST_FULL_RUN_KEY: "1000"},
         )
         assert conftest._resolve_budget() == 1500.0  # 1000 * 1.50
@@ -55,7 +57,8 @@ class TestResolveBudget:
         monkeypatch.delenv(conftest._FULL_SUITE_TIMEOUT_KEY, raising=False)
         monkeypatch.delenv(conftest._LAST_FULL_RUN_KEY, raising=False)
         monkeypatch.setattr(
-            conftest, "_load_env",
+            conftest,
+            "_load_env",
             lambda: {
                 conftest._FULL_SUITE_TIMEOUT_KEY: "abc",
                 conftest._LAST_FULL_RUN_KEY: "xyz",
@@ -74,7 +77,8 @@ class TestGetEnvValue:
     def test_process_env_wins_over_env_file(self, monkeypatch):
         monkeypatch.setenv(conftest._FULL_SUITE_TIMEOUT_KEY, "42")
         monkeypatch.setattr(
-            conftest, "_load_env",
+            conftest,
+            "_load_env",
             lambda: {conftest._FULL_SUITE_TIMEOUT_KEY: "600"},
         )
         assert conftest._get_env_value(conftest._FULL_SUITE_TIMEOUT_KEY) == "42"
@@ -82,7 +86,8 @@ class TestGetEnvValue:
     def test_env_file_value_used_when_no_process_env(self, monkeypatch):
         monkeypatch.delenv(conftest._FULL_SUITE_TIMEOUT_KEY, raising=False)
         monkeypatch.setattr(
-            conftest, "_load_env",
+            conftest,
+            "_load_env",
             lambda: {conftest._FULL_SUITE_TIMEOUT_KEY: "600"},
         )
         assert conftest._get_env_value(conftest._FULL_SUITE_TIMEOUT_KEY) == "600"
@@ -92,7 +97,9 @@ class TestIsFullRun:
     @staticmethod
     def _config(args, testpaths=("tests",)):
         return type(
-            "C", (), {
+            "C",
+            (),
+            {
                 "invocation_params": type("P", (), {"args": args})(),
                 "getini": lambda self, name: list(testpaths),
             },
@@ -147,17 +154,21 @@ class TestIsFullRun:
         """Regression (2026-09-21): ``-p no:cacheprovider`` was read as a test
         path, so a full run lost its watchdog AND its elapsed-time recording
         (the budget could never grow).  Option values must be skipped."""
-        assert conftest._is_full_run(
-            self._config(["-q", "--no-cov", "-p", "no:cacheprovider"])
-        ) is True
-        assert conftest._is_full_run(
-            self._config(["-m", "not slow", "tests"])
-        ) is True
+        assert (
+            conftest._is_full_run(
+                self._config(["-q", "--no-cov", "-p", "no:cacheprovider"])
+            )
+            is True
+        )
+        assert conftest._is_full_run(self._config(["-m", "not slow", "tests"])) is True
         assert conftest._is_full_run(self._config(["-n", "4"])) is True
         # A real path after a value flag is still targeted.
-        assert conftest._is_full_run(
-            self._config(["-p", "no:cacheprovider", "tests/test_x.py"])
-        ) is False
+        assert (
+            conftest._is_full_run(
+                self._config(["-p", "no:cacheprovider", "tests/test_x.py"])
+            )
+            is False
+        )
 
 
 class TestEnvRoundTrip:

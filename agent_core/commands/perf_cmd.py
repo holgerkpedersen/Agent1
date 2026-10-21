@@ -17,6 +17,7 @@ from agent_core.constants import CHAT_HISTORY_JSON_PATH
 from .base import Command
 
 from typing import TYPE_CHECKING, Any
+
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -28,7 +29,8 @@ logger = logging.getLogger(__name__)
 #: ``_PERF_HISTORY_MAX`` records; read/write failures are logged at debug and
 #: otherwise ignored (a broken state dir must not break a command).
 PERF_HISTORY_JSON_PATH = os.path.join(
-    os.path.dirname(CHAT_HISTORY_JSON_PATH), "perf_history.json",
+    os.path.dirname(CHAT_HISTORY_JSON_PATH),
+    "perf_history.json",
 )
 _PERF_HISTORY_MAX = 1000
 
@@ -58,15 +60,12 @@ class PerfTracker:
                 data = json.load(fh)
             if isinstance(data, list):
                 cls._records = [
-                    r for r in data[-_PERF_HISTORY_MAX:]
-                    if isinstance(r, dict)
+                    r for r in data[-_PERF_HISTORY_MAX:] if isinstance(r, dict)
                 ]
         except FileNotFoundError:
             pass
         except (OSError, ValueError):  # corrupt/partial JSON, IO errors
-            logger.debug(
-                "perf history load failed (starting empty)", exc_info=True
-            )
+            logger.debug("perf history load failed (starting empty)", exc_info=True)
 
     @classmethod
     def _save(cls) -> None:
@@ -83,12 +82,14 @@ class PerfTracker:
     @classmethod
     def record(cls, command: str, elapsed_s: float, input_text: str = "") -> None:
         cls._ensure_loaded()
-        cls._records.append({
-            "command": command,
-            "elapsed_s": round(elapsed_s, 3),
-            "input_len": len(input_text),
-            "timestamp": _datetime.now().isoformat(timespec="seconds"),
-        })
+        cls._records.append(
+            {
+                "command": command,
+                "elapsed_s": round(elapsed_s, 3),
+                "input_len": len(input_text),
+                "timestamp": _datetime.now().isoformat(timespec="seconds"),
+            }
+        )
         cls._save()
 
     @classmethod
@@ -100,14 +101,16 @@ class PerfTracker:
             by_cmd.setdefault(r["command"], []).append(r["elapsed_s"])
         result = []
         for cmd, times in sorted(by_cmd.items(), key=lambda x: -sum(x[1])):
-            result.append({
-                "command": cmd,
-                "calls": len(times),
-                "total": f"{sum(times):.1f}s",
-                "avg": f"{sum(times) / len(times):.1f}s",
-                "max": f"{max(times):.1f}s",
-                "last": f"{times[-1]:.1f}s",
-            })
+            result.append(
+                {
+                    "command": cmd,
+                    "calls": len(times),
+                    "total": f"{sum(times):.1f}s",
+                    "avg": f"{sum(times) / len(times):.1f}s",
+                    "max": f"{max(times):.1f}s",
+                    "last": f"{times[-1]:.1f}s",
+                }
+            )
         return result
 
     @classmethod
@@ -146,8 +149,14 @@ class PerfCommand(Command):
                 return True
             print(f"\n  Execution log ({len(records)} entries):\n")
             for r in records:
-                ts = r["timestamp"].split("T")[-1] if "T" in r["timestamp"] else r["timestamp"]
-                print(f"  {ts}  {r['command']:<12} {r['elapsed_s']:>8.1f}s  ({r['input_len']} chars)")
+                ts = (
+                    r["timestamp"].split("T")[-1]
+                    if "T" in r["timestamp"]
+                    else r["timestamp"]
+                )
+                print(
+                    f"  {ts}  {r['command']:<12} {r['elapsed_s']:>8.1f}s  ({r['input_len']} chars)"
+                )
             return True
 
         if "--html" in args:
@@ -167,19 +176,34 @@ class PerfCommand(Command):
         total_time = sum(float(s["total"].rstrip("s")) for s in summary)
         records = PerfTracker.detail()
         total_input = sum(r["input_len"] for r in records)
-        llm_est = len([r for r in records if r["command"] not in ("read", "write", "search", "clear", "model", "cleanup")])
+        llm_est = len(
+            [
+                r
+                for r in records
+                if r["command"]
+                not in ("read", "write", "search", "clear", "model", "cleanup")
+            ]
+        )
 
-        print(f"\n  Commands: {total_calls}  |  Runtime: {total_time:.1f}s  |  Input: {total_input} chars  |  LLM calls: ~{llm_est}")
-        print(f"  {'─'*72}")
-        print(f"  {'command':<12} {'calls':>6} {'total':>8} {'avg':>8} {'max':>8} {'last':>8}")
-        print(f"  {'─'*72}")
+        print(
+            f"\n  Commands: {total_calls}  |  Runtime: {total_time:.1f}s  |  Input: {total_input} chars  |  LLM calls: ~{llm_est}"
+        )
+        print(f"  {'─' * 72}")
+        print(
+            f"  {'command':<12} {'calls':>6} {'total':>8} {'avg':>8} {'max':>8} {'last':>8}"
+        )
+        print(f"  {'─' * 72}")
         for s in summary:
-            print(f"  {s['command']:<12} {s['calls']:>6} {s['total']:>8} {s['avg']:>8} {s['max']:>8} {s['last']:>8}")
+            print(
+                f"  {s['command']:<12} {s['calls']:>6} {s['total']:>8} {s['avg']:>8} {s['max']:>8} {s['last']:>8}"
+            )
         print()
 
         return True
 
-    def _build_html(self, summary: list[dict[str, Any]], detail: list[dict[str, Any]]) -> str:
+    def _build_html(
+        self, summary: list[dict[str, Any]], detail: list[dict[str, Any]]
+    ) -> str:
         rows = "\n".join(
             f"<tr><td>{s['command']}</td><td>{s['calls']}</td><td>{s['total']}</td><td>{s['avg']}</td><td>{s['max']}</td><td>{s['last']}</td></tr>"
             for s in summary

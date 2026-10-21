@@ -3,6 +3,7 @@
 Extracted from agent.py as the t00 JSON concern (step t01).
 Provides safe JSON read/write with backup-on-corruption.
 """
+
 from __future__ import annotations
 
 import json
@@ -30,7 +31,9 @@ def _read_json_quarantining(
     except FileNotFoundError:
         return default if default is not None else {}
     except json.JSONDecodeError as exc:
-        logger.warning("JSON parse error in %s (%s): %s — quarantining", path, label, exc)
+        logger.warning(
+            "JSON parse error in %s (%s): %s — quarantining", path, label, exc
+        )
         _quarantine(path)
         return default if default is not None else {}
     except Exception as exc:

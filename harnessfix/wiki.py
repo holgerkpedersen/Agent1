@@ -22,6 +22,7 @@ Pages are persisted as JSONL under ``reports/wiki/`` (``wiki.jsonl``).  Writes
 are append-only per consolidation run; merges happen in memory on load and the
 whole file is rewritten atomically, mirroring :mod:`harnessfix.progress`.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -59,16 +60,16 @@ TOP_PAGES_LIMIT = 10
 class WikiPage:
     """One consolidated wiki page (a failure mode or a success pattern)."""
 
-    key: str                 # dedup key, e.g. "tool_interface:schema validation rejected tool args"
-    title: str              # human-readable short label
-    lesson: str             # consolidated knowledge (repair proposal / action pattern)
+    key: str  # dedup key, e.g. "tool_interface:schema validation rejected tool args"
+    title: str  # human-readable short label
+    lesson: str  # consolidated knowledge (repair proposal / action pattern)
     evidence: list[str] = field(default_factory=list)  # contributing task_ids
-    layer: str = ""          # harness layer facet ("(success)" for success pages)
+    layer: str = ""  # harness layer facet ("(success)" for success pages)
     error_classes: tuple[str, ...] = ()
     file_stems: tuple[str, ...] = ()
     created_at: float = 0.0
     updated_at: float = 0.0
-    hit_count: int = 0       # how many times this page was retrieved
+    hit_count: int = 0  # how many times this page was retrieved
 
 
 def _file_hash(file_stems: Tuple[str, ...]) -> str:
@@ -161,7 +162,9 @@ def _merge_page(pages: List[WikiPage], new: WikiPage) -> None:
     for i, pg in enumerate(pages):
         if pg.key == new.key:
             merged_ev = list(dict.fromkeys(pg.evidence + new.evidence))
-            merged_ec = tuple(dict.fromkeys(list(pg.error_classes) + list(new.error_classes)))
+            merged_ec = tuple(
+                dict.fromkeys(list(pg.error_classes) + list(new.error_classes))
+            )
             merged_fs = tuple(dict.fromkeys(list(pg.file_stems) + list(new.file_stems)))
             if new.lesson and (not pg.lesson or new.lesson != pg.lesson):
                 # Keep the most recent non-empty lesson.
@@ -214,7 +217,9 @@ def _page_from_failed_trace(graph: Any, diag: Any) -> WikiPage:
 
 def _page_from_success_episode(ep: Episode) -> WikiPage:
     """Build a success wiki page from an episode."""
-    key = f"success:{_file_hash(ep.file_stems)}" if ep.file_stems else "success:no_files"
+    key = (
+        f"success:{_file_hash(ep.file_stems)}" if ep.file_stems else "success:no_files"
+    )
     title = f"[success] {', '.join(ep.file_stems[:3]) or 'no files'}"
     lesson = ep.actions_summary or ""
     now = time.time()
@@ -395,7 +400,8 @@ def format_wiki_notes(
         lines.append(
             f"- [{pg.key[:48]}] hits={pg.hit_count} evidence=[{ev}] "
             + (" ".join(meta_parts) if meta_parts else "")
-            + "\n  lesson: " + pg.lesson.replace("\n", " ")[:300]
+            + "\n  lesson: "
+            + pg.lesson.replace("\n", " ")[:300]
         )
     return "\n".join(lines)
 
@@ -424,7 +430,9 @@ def wiki_stats(path: Path | None = None) -> Dict[str, Any]:
     coverage = len(failure_layers & set(LAYERS)) / max(1, len(LAYERS))
     avg_hits = total_ev > 0 and (sum(pg.hit_count for pg in pages) / len(pages)) or 0.0
 
-    top = sorted(pages, key=lambda p: (-p.hit_count, -len(p.evidence), p.key))[:TOP_PAGES_LIMIT]
+    top = sorted(pages, key=lambda p: (-p.hit_count, -len(p.evidence), p.key))[
+        :TOP_PAGES_LIMIT
+    ]
     top_pages = [
         {
             "key": pg.key,

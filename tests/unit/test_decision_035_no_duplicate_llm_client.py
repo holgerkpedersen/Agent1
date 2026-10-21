@@ -116,7 +116,8 @@ class TestDecision035Consolidation:
                         # filename list in workflow_cmd.py ("llm_client.py").
                         stripped = line.strip()
                         if stripped.startswith(("import ", "from ")) and (
-                            "agent_core.llm_client" in stripped or ".llm_client import" in stripped
+                            "agent_core.llm_client" in stripped
+                            or ".llm_client import" in stripped
                         ):
                             offenders.append(f"{p}:{i}: {stripped}")
 

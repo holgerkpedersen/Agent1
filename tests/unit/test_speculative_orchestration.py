@@ -1,15 +1,19 @@
 from agent_core.swarm_orchestrator import Orchestrator
 
+
 def test_dispatch_speculative():
     """Test that speculative branches are dispatched and return results."""
     with Orchestrator(agents=[], max_workers=4) as orch:
+
         def reasoning_func(branch_id, context):
             # Simulate some work
             return {"branch": branch_id, "context_val": context["value"]}
 
         context = {"value": 100}
         num_branches = 3
-        task_ids = orch.dispatch_speculative(reasoning_func, context, num_branches=num_branches)
+        task_ids = orch.dispatch_speculative(
+            reasoning_func, context, num_branches=num_branches
+        )
 
         assert len(task_ids) == num_branches
         assert orch.wait_for_completion(timeout=5) is True
@@ -23,9 +27,13 @@ def test_dispatch_speculative():
         for i in range(num_branches):
             assert results[i] == {"branch": i, "context_val": 100}
 
+
 def test_dispatch_speculative_exception():
-    """Test that an exception in one speculative branch doesn't crash the orchestrator."""
+    """Test that an exception in one speculative branch
+    doesn't crash the orchestrator.
+    """
     with Orchestrator(agents=[], max_workers=4) as orch:
+
         def reasoning_func(branch_id, context):
             if branch_id == 1:
                 raise ValueError("Branch 1 failed")
@@ -46,9 +54,11 @@ def test_dispatch_speculative_exception():
         assert "error" in results[1]
         assert results[1]["error"] == "Branch 1 failed"
 
+
 def test_dispatch_speculative_empty():
     """Test dispatching zero branches."""
     with Orchestrator(agents=[], max_workers=4) as orch:
+
         def reasoning_func(branch_id, context):
             return {"branch": branch_id}
 

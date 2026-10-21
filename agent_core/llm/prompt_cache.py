@@ -89,7 +89,8 @@ class PromptCache:
         """Remove cached entries.  Omit both args to clear everything."""
         before = len(self._store)
         keys_to_remove = [
-            key for key in self._store
+            key
+            for key in self._store
             if (task_type is None or key[0] == task_type)
             and (profile_type is None or key[1] == profile_type)
         ]
@@ -111,15 +112,13 @@ _DEFAULT_TEMPLATES: dict[tuple[str, str], str] = {
         "with full error handling: {task}"
     ),
     ("implement", "precise"): (
-        "Implement only what is strictly required for this task, "
-        "nothing more: {task}"
+        "Implement only what is strictly required for this task, nothing more: {task}"
     ),
     ("fix", "fast_codegen"): (
         "Fix the bug described below. Output only the corrected code: {task}"
     ),
     ("fix", "deep_analysis"): (
-        "Diagnose and fix the root cause of this issue. "
-        "Explain your reasoning: {task}"
+        "Diagnose and fix the root cause of this issue. Explain your reasoning: {task}"
     ),
     ("fix", "precise"): (
         "Apply the minimal change needed to resolve this issue: {task}"

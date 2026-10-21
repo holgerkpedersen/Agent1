@@ -112,7 +112,7 @@ class TestLooksCorrupted:
         assert _looks_corrupted(original, result) is not None
 
     def test_clean_result_passes(self):
-        original = ("def f():\n    return 1\n" * 3)
+        original = "def f():\n    return 1\n" * 3
         result = "def f():\n    return 2\n"
         assert _looks_corrupted(original, result) is None
 
@@ -120,6 +120,7 @@ class TestLooksCorrupted:
 class TestMaxIdenticalRun:
     def test_counts_longest(self):
         assert _max_identical_run("a\nb\nb\nb\nc") == 3
+
     def test_ignores_blank_lines(self):
         assert _max_identical_run("\n\n\n\n\nx") == 1
 
@@ -157,7 +158,9 @@ class TestRedundantCast:
 
 class TestImplicitOptional:
     def test_adds_optional(self):
-        lines = ["    async def search_file(self, query: str, path: str = None) -> str:"]
+        lines = [
+            "    async def search_file(self, query: str, path: str = None) -> str:"
+        ]
         out = _fix_implicit_optional(lines, 1)
         assert out is not None
         assert "path: str | None = None" in out[0]
@@ -183,14 +186,18 @@ class TestAttrDefinedRename:
 
     def test_renames_in_safe_caller(self):
         lines = self.SRC.split("\n")
-        out = _fix_attr_defined_rename(lines.copy(), 6, self.SRC, "_delete_file", "_tool_delete_file")
+        out = _fix_attr_defined_rename(
+            lines.copy(), 6, self.SRC, "_delete_file", "_tool_delete_file"
+        )
         assert out is not None
         assert out[5] == "        return self._tool_delete_file(p)"
 
     def test_skips_recursive_case(self):
         lines = self.SRC.split("\n")
         # line 3 is inside def _tool_delete_file; renaming there = recursion
-        out = _fix_attr_defined_rename(lines.copy(), 3, self.SRC, "_delete_file", "_tool_delete_file")
+        out = _fix_attr_defined_rename(
+            lines.copy(), 3, self.SRC, "_delete_file", "_tool_delete_file"
+        )
         assert out is None
 
 
@@ -212,13 +219,7 @@ class TestMissingReturnNone:
         assert _fix_missing_return_none(lines, 1) is None
 
     def test_multiline_signature(self):
-        src = (
-            "def long_signature(\n"
-            "    a,\n"
-            "    b,\n"
-            "):\n"
-            "    pass\n"
-        )
+        src = "def long_signature(\n    a,\n    b,\n):\n    pass\n"
         out = _fix_missing_return_none(src.split("\n"), 1)
         assert out is not None
         assert out[3] == ") -> None:"
@@ -237,21 +238,41 @@ class TestEnclosingFunction:
 class TestFixBareGeneric:
     def test_fills_bare_dict_in_annotation(self):
         lines = ["def f() -> list[dict]:", "    return []"]
-        out = _fix_bare_generic(lines, 1, 'error: Missing type arguments for generic type "dict" [type-arg]')
+        out = _fix_bare_generic(
+            lines, 1, 'error: Missing type arguments for generic type "dict" [type-arg]'
+        )
         assert out is not None
         assert "def f() -> list[dict[str, Any]]:" in out
 
     def test_leaves_parameterized_alone(self):
         lines = ["x: dict[str, int] = {}"]
-        assert _fix_bare_generic(lines, 1, 'error: Missing type arguments for generic type "dict" [type-arg]') is None
+        assert (
+            _fix_bare_generic(
+                lines,
+                1,
+                'error: Missing type arguments for generic type "dict" [type-arg]',
+            )
+            is None
+        )
 
     def test_leaves_call_alone(self):
         lines = ["d = dict()"]
-        assert _fix_bare_generic(lines, 1, 'error: Missing type arguments for generic type "dict" [type-arg]') is None
+        assert (
+            _fix_bare_generic(
+                lines,
+                1,
+                'error: Missing type arguments for generic type "dict" [type-arg]',
+            )
+            is None
+        )
 
     def test_match_generic(self):
         lines = ["m: re.Match | None = None"]
-        out = _fix_bare_generic(lines, 1, 'error: Missing type arguments for generic type "Match" [type-arg]')
+        out = _fix_bare_generic(
+            lines,
+            1,
+            'error: Missing type arguments for generic type "Match" [type-arg]',
+        )
         assert out is not None
         assert "m: re.Match[Any] | None = None" in out
 
@@ -296,7 +317,10 @@ class TestFixContainerOptional:
         out = _fix_container_optional(lines, TestFixContainerOptional.ERR)
         assert out is not None
         assert out[4] == "    chunks: list[tuple[str, str]] = []"
-        assert out[2] == "    ``str | None`` lives in a ``list[...]``/``tuple[...]``/``dict[...]``"
+        assert (
+            out[2]
+            == "    ``str | None`` lives in a ``list[...]``/``tuple[...]``/``dict[...]``"
+        )
 
     def test_ignores_pure_docstring(self):
         lines = [
@@ -344,11 +368,7 @@ class TestFixTupleArity:
 
 class TestFixUntypedParams:
     def test_annotates_all_params(self):
-        src = (
-            "from typing import Optional\n"
-            "def f(a, b: int, c=3):\n"
-            "    pass\n"
-        )
+        src = "from typing import Optional\ndef f(a, b: int, c=3):\n    pass\n"
         out = _fix_untyped_params(src.split("\n"), 2)
         assert out is not None
         assert out[0] == "from typing import Optional, Any"
@@ -364,6 +384,7 @@ class TestFixUntypedParams:
         src = "class C:\n    def m(self):\n        pass\n"
         out = _fix_untyped_params(src.split("\n"), 2)
         assert out is None
+
 
 class TestTypeContext:
     SRC = [
@@ -391,7 +412,12 @@ class TestTypeContext:
 
     def test_empty_outside_function(self):
         src = ["x = 1", "y = 2"]
-        assert _type_context(src, "t.py:1: error: Name 'x' is not defined  [name-defined]", 1) == ""
+        assert (
+            _type_context(
+                src, "t.py:1: error: Name 'x' is not defined  [name-defined]", 1
+            )
+            == ""
+        )
 
     def test_value_returning_no_annotations(self):
         """A function with neither param nor return annotations (the class
@@ -404,7 +430,10 @@ class TestTypeContext:
         ]
         out = _fix_untyped_params(src, 1)
         assert out is not None
-        assert "def _fix_dead_assignment(wl: Any, idx: Any, line: Any, basename: Any, finding: Any) -> Any:" in out
+        assert (
+            "def _fix_dead_assignment(wl: Any, idx: Any, line: Any, basename: Any, finding: Any) -> Any:"
+            in out
+        )
         assert "from typing import Any" in out
 
     def test_annotated_params_missing_return(self):
@@ -430,12 +459,12 @@ class TestReferencedDefinitions:
     import/cast.  `_referenced_definitions` puts those definitions in view."""
 
     SRC = [
-        "def _acc():",            # 1
-        "    return 1",           # 2
-        "",                       # 3
-        "def use():",             # 4
-        "    np = _acc()",        # 5
-        "    np.vstack([1])",     # 6  <- error is here; _acc() is one line above
+        "def _acc():",  # 1
+        "    return 1",  # 2
+        "",  # 3
+        "def use():",  # 4
+        "    np = _acc()",  # 5
+        "    np.vstack([1])",  # 6  <- error is here; _acc() is one line above
     ]
 
     def test_includes_helper_called_just_above_the_error(self):
@@ -509,7 +538,10 @@ class TestFixOptionalImportNone:
         ]
 
     def test_noop_when_already_ignored(self):
-        assert _fix_optional_import_none(["nx = None  # type: ignore[assignment]"], 1) is None
+        assert (
+            _fix_optional_import_none(["nx = None  # type: ignore[assignment]"], 1)
+            is None
+        )
 
     def test_noop_for_non_none_assignment(self):
         assert _fix_optional_import_none(["nx = module"], 1) is None
@@ -527,13 +559,18 @@ class TestPatchVerdictRejectsNewErrors:
         target.write_text("x: int = 1\n", encoding="utf-8")
         bad_candidate = "x: int = 1\ny: Any = 2\n"  # Any is not imported
         kinds = FixCommand()._show_patch_verdict(
-            str(target), bad_candidate, "m.py",
-            ["m.py:1: error: unrelated  [misc]"], str(tmp_path),
+            str(target),
+            bad_candidate,
+            "m.py",
+            ["m.py:1: error: unrelated  [misc]"],
+            str(tmp_path),
         )
         assert ("name-defined", 'Name "Any" is not defined') in kinds
 
     def test_counts_a_partial_fix_when_the_message_is_duplicated(
-        self, tmp_path, capsys,
+        self,
+        tmp_path,
+        capsys,
     ):
         """Two functions with the SAME error message: fixing one must count as
         1/1 fixed (a set-based compare wrongly said 0/1 because the untouched
@@ -570,19 +607,19 @@ class TestSignatureCallSites:
     must carry the call sites."""
 
     SRC = [
-        "def split(m):",                          # 1
-        "    return None, None",                  # 2  <- error here (signature)
-        "",                                       # 3
-        "def use(msgs):",                         # 4
-        "    dropped, kept = split(msgs)",        # 5  <- call site
-        "    if dropped is None:",                # 6
-        "        return msgs",                    # 7
-        "    return list(kept)",                  # 8
+        "def split(m):",  # 1
+        "    return None, None",  # 2  <- error here (signature)
+        "",  # 3
+        "def use(msgs):",  # 4
+        "    dropped, kept = split(msgs)",  # 5  <- call site
+        "    if dropped is None:",  # 6
+        "        return msgs",  # 7
+        "    return list(kept)",  # 8
     ]
 
     def test_includes_call_sites_of_the_nearby_signature(self):
         err = (
-            't.py:2: error: Incompatible return value type '
+            "t.py:2: error: Incompatible return value type "
             '(got "tuple[None, None]", expected "tuple[list | None, list]")  [return-value]'
         )
         out = _signature_call_sites(self.SRC, err, 2)

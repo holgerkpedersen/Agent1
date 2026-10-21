@@ -175,7 +175,11 @@ def semantic_search_memories(
         )
         # ``None`` marks the default case: each cache entry then owns a FRESH
         # VectorDatabase (a shared one would leak vectors across ledgers).
-        key = (id(service), id(vector_db) if vector_db is not None else None, fingerprint)
+        key = (
+            id(service),
+            id(vector_db) if vector_db is not None else None,
+            fingerprint,
+        )
         with _SEMANTIC_CACHE_LOCK:
             store = _SEMANTIC_INDEX_CACHE.get(key)
         if store is None:

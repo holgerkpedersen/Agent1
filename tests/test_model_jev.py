@@ -65,7 +65,8 @@ def test_model_jev_sets_and_persists(_isolate, capsys):
 
 def test_persist_jev_model_updates_existing_env_line(_isolate):
     (_isolate / ".env").write_text(
-        "AGENT_MODEL=keep-me\nAGENT_JEV_MODEL=old-model\n", encoding="utf-8",
+        "AGENT_MODEL=keep-me\nAGENT_JEV_MODEL=old-model\n",
+        encoding="utf-8",
     )
     persist_jev_model("new-model")
     env_text = (_isolate / ".env").read_text(encoding="utf-8")

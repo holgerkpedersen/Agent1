@@ -1,9 +1,11 @@
 """Git command for agent interactive mode."""
+
 import subprocess
 
 from .base import Command
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -29,7 +31,7 @@ class GitCommand(Command):
     def help_text(self) -> str:
         return "git <args>  - Run a git command in the workspace (e.g. `git status`, `git diff --stat`)"
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         if not args or not any(a.strip() for a in args):
             print("Usage: git <args>  (e.g. `git status`, `git log --oneline -10`)")
             return True
@@ -37,9 +39,12 @@ class GitCommand(Command):
         try:
             r = subprocess.run(
                 ["git", *args],
-                capture_output=True, text=True,
-                encoding="utf-8", errors="replace",
-                cwd=agent.workspace, timeout=60,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=agent.workspace,
+                timeout=60,
             )
         except FileNotFoundError:
             print("Error: git executable not found on PATH.")

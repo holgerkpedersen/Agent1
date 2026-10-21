@@ -12,12 +12,18 @@ Pins harnessfix/{embed,episodes,retrieval}.py:
 The real-corpus behaviour is covered by the disabled-default invariant; these
 unit tests use synthetic traces so they run anywhere.
 """
+
 import json
 import os
 
 import pytest
 
-from harnessfix.episodes import Episode, clear_episode_cache, extract_episode, successful_episodes
+from harnessfix.episodes import (
+    Episode,
+    clear_episode_cache,
+    extract_episode,
+    successful_episodes,
+)
 from harnessfix.embed import HashEmbedder, build_embedder
 from harnessfix.retrieval import EpisodeIndex, clear_index_cache, format_episodic_notes
 
@@ -35,22 +41,36 @@ def _trace(tmp_path, name, events):
 
 def _begin(task, text):
     return {
-        "task_id": task, "ts": 1.0, "kind": "task_begin", "layer": "context",
-        "user_input": text, "model": "m", "profile": "p",
+        "task_id": task,
+        "ts": 1.0,
+        "kind": "task_begin",
+        "layer": "context",
+        "user_input": text,
+        "model": "m",
+        "profile": "p",
     }
 
 
 def _llm(task, text, n=1):
     return {
-        "task_id": task, "ts": 2.0, "kind": "llm_response", "layer": "observability",
-        "iteration": n, "text": text, "tool_calls_requested": 0,
+        "task_id": task,
+        "ts": 2.0,
+        "kind": "llm_response",
+        "layer": "observability",
+        "iteration": n,
+        "text": text,
+        "tool_calls_requested": 0,
     }
 
 
 def _tool(task, tool, args, kind="tool_result", result="", exc="", msg=""):
     ev = {
-        "task_id": task, "ts": 3.0, "kind": kind, "layer": "tool_interface",
-        "tool": tool, "args_hash": json.dumps(args),
+        "task_id": task,
+        "ts": 3.0,
+        "kind": kind,
+        "layer": "tool_interface",
+        "tool": tool,
+        "args_hash": json.dumps(args),
     }
     if kind == "tool_error":
         ev["exception"] = exc
@@ -62,7 +82,13 @@ def _tool(task, tool, args, kind="tool_result", result="", exc="", msg=""):
 
 
 def _loop_end(task, outcome):
-    return {"task_id": task, "ts": 9.0, "kind": "loop_end", "layer": "lifecycle", "outcome": outcome}
+    return {
+        "task_id": task,
+        "ts": 9.0,
+        "kind": "loop_end",
+        "layer": "lifecycle",
+        "outcome": outcome,
+    }
 
 
 def _successful_events(task, problem, file="agent_core/foo.py", err=None):
@@ -70,7 +96,13 @@ def _successful_events(task, problem, file="agent_core/foo.py", err=None):
         _begin(task, problem),
         _tool(task, "write", {"path": file}, result="Written"),
         _tool(task, "run", {"command": "python foo.py"}, result=(err or "ok")),
-        _llm(task, "Fixed " + (err or "it") + " by adjusting the import path and re-exporting the symbol.", n=3),
+        _llm(
+            task,
+            "Fixed "
+            + (err or "it")
+            + " by adjusting the import path and re-exporting the symbol.",
+            n=3,
+        ),
         _loop_end(task, "completed"),
     ]
     return events
@@ -80,9 +112,15 @@ class TestEpisodeExtraction:
     def test_successful_trace_yields_one_episode(self):
         from harnessfix.htir import compile_trace
 
-        events = _successful_events("t1", "ImportError: cannot import name 'keyboard' from 'ursina'", file="agent_core/foo.py", err="ImportError: cannot import name 'keyboard'")
+        events = _successful_events(
+            "t1",
+            "ImportError: cannot import name 'keyboard' from 'ursina'",
+            file="agent_core/foo.py",
+            err="ImportError: cannot import name 'keyboard'",
+        )
         import tempfile
         from pathlib import Path
+
         d = Path(tempfile.mkdtemp())
         p = _trace(d, "t1.jsonl", events)
         graph = compile_trace(p)
@@ -99,7 +137,14 @@ class TestEpisodeExtraction:
     def test_tool_error_trace_excluded(self, tmp_path):
         events = [
             _begin("t2", "fix the crash"),
-            _tool("t2", "run", {"command": "x"}, kind="tool_error", exc="ImportError", msg="no module"),
+            _tool(
+                "t2",
+                "run",
+                {"command": "x"},
+                kind="tool_error",
+                exc="ImportError",
+                msg="no module",
+            ),
             _loop_end("t2", "error"),
         ]
         _trace(tmp_path, "t2.jsonl", events)
@@ -130,7 +175,11 @@ class TestEpisodeExtraction:
         events = [
             _begin("t5", "task"),
             _tool("t5", "write", {"path": "c.py"}),
-            _llm("t5", "I delivered the final answer with a full explanation of the fix and why it works.", n=2),
+            _llm(
+                "t5",
+                "I delivered the final answer with a full explanation of the fix and why it works.",
+                n=2,
+            ),
             _loop_end("t5", "stuck"),
         ]
         _trace(tmp_path, "t5.jsonl", events)
@@ -147,12 +196,15 @@ class TestEmbedder:
         assert a.shape == (384,)
         assert abs(float(a.dot(b)) - 1.0) < 1e-9
         import numpy as np
+
         assert abs(float(np.linalg.norm(a)) - 1.0) < 1e-9
 
     def test_similar_texts_rank_above_dissimilar(self):
         e = HashEmbedder()
         q = e.from_string("ImportError: cannot import name 'keyboard' from 'ursina'")
-        sim = e.from_string("ImportError cannot import name keyboard from ursina module")
+        sim = e.from_string(
+            "ImportError cannot import name keyboard from ursina module"
+        )
         diff = e.from_string("the weather today is sunny and warm outside")
         assert float(q.dot(sim)) > float(q.dot(diff))
 
@@ -163,8 +215,18 @@ class TestEmbedder:
 
 class TestEpisodeIndex:
     def _index(self, tmp_path):
-        ev_a = _successful_events("a", "ImportError: cannot import name 'keyboard' from 'ursina'", file="agent_core/foo.py", err="ImportError: cannot import name 'keyboard'")
-        ev_b = _successful_events("b", "TypeError: unsupported operand type for +: 'int' and 'str'", file="agent_core/bar.py", err="TypeError: unsupported operand")
+        ev_a = _successful_events(
+            "a",
+            "ImportError: cannot import name 'keyboard' from 'ursina'",
+            file="agent_core/foo.py",
+            err="ImportError: cannot import name 'keyboard'",
+        )
+        ev_b = _successful_events(
+            "b",
+            "TypeError: unsupported operand type for +: 'int' and 'str'",
+            file="agent_core/bar.py",
+            err="TypeError: unsupported operand",
+        )
         _trace(tmp_path, "a.jsonl", ev_a)
         _trace(tmp_path, "b.jsonl", ev_b)
         eps = successful_episodes(str(tmp_path))
@@ -172,7 +234,9 @@ class TestEpisodeIndex:
 
     def test_retrieve_fix_filters_by_error_class(self, tmp_path):
         idx, eps = self._index(tmp_path)
-        out = idx.retrieve("ImportError: cannot import name 'keyboard' from 'ursina'", mode="fix", k=3)
+        out = idx.retrieve(
+            "ImportError: cannot import name 'keyboard' from 'ursina'", mode="fix", k=3
+        )
         assert out
         assert all("ImportError" in ec for ec in (e.error_classes for e in out))
         assert out[0].task_id == "a"
@@ -184,7 +248,9 @@ class TestEpisodeIndex:
 
     def test_retrieve_implement_pure_semantic(self, tmp_path):
         idx, eps = self._index(tmp_path)
-        out = idx.retrieve("TypeError about operand types on bar", mode="implement", k=3)
+        out = idx.retrieve(
+            "TypeError about operand types on bar", mode="implement", k=3
+        )
         assert out[0].task_id == "b"
 
     def test_retrieve_empty_corpus(self):
@@ -195,14 +261,37 @@ class TestEpisodeIndex:
 class TestFormatNotes:
     def test_disabled_returns_empty(self, tmp_path, monkeypatch):
         monkeypatch.delenv("AGENT_RAG_EPISODES", raising=False)
-        _trace(tmp_path, "a.jsonl", _successful_events("a", "ImportError in foo", file="agent_core/foo.py"))
-        assert format_episodic_notes("ImportError in foo", mode="fix", workspace=str(tmp_path)) == ""
+        _trace(
+            tmp_path,
+            "a.jsonl",
+            _successful_events("a", "ImportError in foo", file="agent_core/foo.py"),
+        )
+        assert (
+            format_episodic_notes(
+                "ImportError in foo", mode="fix", workspace=str(tmp_path)
+            )
+            == ""
+        )
 
     def test_enabled_returns_block(self, tmp_path, monkeypatch):
         monkeypatch.setenv("AGENT_RAG_EPISODES", "1")
         clear_index_cache()
-        _trace(tmp_path, "a.jsonl", _successful_events("a", "ImportError: cannot import name 'keyboard' from 'ursina'", file="agent_core/foo.py", err="ImportError: cannot import name 'keyboard'"))
-        block = format_episodic_notes("ImportError: cannot import name 'keyboard' from 'ursina'", mode="fix", workspace=str(tmp_path), embedder=HashEmbedder())
+        _trace(
+            tmp_path,
+            "a.jsonl",
+            _successful_events(
+                "a",
+                "ImportError: cannot import name 'keyboard' from 'ursina'",
+                file="agent_core/foo.py",
+                err="ImportError: cannot import name 'keyboard'",
+            ),
+        )
+        block = format_episodic_notes(
+            "ImportError: cannot import name 'keyboard' from 'ursina'",
+            mode="fix",
+            workspace=str(tmp_path),
+            embedder=HashEmbedder(),
+        )
         assert block.startswith("\n## SUCCESSFUL RUN EXAMPLES")
         assert "keyboard" in block
         clear_index_cache()
@@ -210,7 +299,12 @@ class TestFormatNotes:
     def test_empty_corpus_returns_empty_even_if_enabled(self, tmp_path, monkeypatch):
         monkeypatch.setenv("AGENT_RAG_EPISODES", "1")
         clear_index_cache()
-        assert format_episodic_notes("x", mode="fix", workspace=str(tmp_path), embedder=HashEmbedder()) == ""
+        assert (
+            format_episodic_notes(
+                "x", mode="fix", workspace=str(tmp_path), embedder=HashEmbedder()
+            )
+            == ""
+        )
         clear_index_cache()
 
     def test_command_shaped_multiline_query(self, tmp_path, monkeypatch):
@@ -218,14 +312,25 @@ class TestFormatNotes:
         # traceback text, all on one multi-line string.
         monkeypatch.setenv("AGENT_RAG_EPISODES", "1")
         clear_index_cache()
-        _trace(tmp_path, "a.jsonl", _successful_events("a", "ImportError: cannot import name 'keyboard' from 'ursina'", file="agent_core/foo.py", err="ImportError: cannot import name 'keyboard'"))
+        _trace(
+            tmp_path,
+            "a.jsonl",
+            _successful_events(
+                "a",
+                "ImportError: cannot import name 'keyboard' from 'ursina'",
+                file="agent_core/foo.py",
+                err="ImportError: cannot import name 'keyboard'",
+            ),
+        )
         query = (
             "ImportError: cannot import name 'keyboard' from 'ursina'\n"
             "agent_core/foo.py\n"
-            "Traceback (most recent call last):\n  File \"agent_core/foo.py\", line 3\n"
+            'Traceback (most recent call last):\n  File "agent_core/foo.py", line 3\n'
             "ImportError: cannot import name 'keyboard' from 'ursina'"
         )
-        block = format_episodic_notes(query, mode="fix", workspace=str(tmp_path), embedder=HashEmbedder())
+        block = format_episodic_notes(
+            query, mode="fix", workspace=str(tmp_path), embedder=HashEmbedder()
+        )
         assert block.startswith("\n## SUCCESSFUL RUN EXAMPLES")
         assert "keyboard" in block
         clear_index_cache()
@@ -249,11 +354,17 @@ class TestRealCorpusIntegration:
         idx = EpisodeIndex(eps, embedder=HashEmbedder())
         out = idx.retrieve(
             "ImportError: cannot import name 'keyboard' from 'ursina'",
-            mode="fix", k=3,
+            mode="fix",
+            k=3,
         )
         assert out, "fix retrieval must return episodes for a real ImportError query"
         assert all("ImportError" in ec for ec in (e.error_classes for e in out))
         # disabled flag must never alter the prompt contract
         monkeypatch.delenv("AGENT_RAG_EPISODES", raising=False)
-        assert format_episodic_notes("ImportError in foo", mode="fix", workspace=".", embedder=HashEmbedder()) == ""
+        assert (
+            format_episodic_notes(
+                "ImportError in foo", mode="fix", workspace=".", embedder=HashEmbedder()
+            )
+            == ""
+        )
         clear_index_cache()

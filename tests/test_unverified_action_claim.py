@@ -28,6 +28,7 @@ from agent import Agent
 # Layer 1 — the predicate that decides "this answer claims an unverified action"
 # ---------------------------------------------------------------------------
 
+
 class TestUnverifiedActionClaimPredicate:
     def test_action_request_with_zero_tool_calls_is_flagged(self) -> None:
         assert agent_mod._unverified_action_claim("commit changes", 0) is True
@@ -63,26 +64,33 @@ class TestUnverifiedActionClaimPredicate:
 # Layer 2 — the backstop: a fabricated answer must not end the turn
 # ---------------------------------------------------------------------------
 
+
 def _bot(tmp_path: Path, monkeypatch) -> Agent:
-    monkeypatch.setattr(agent_mod, "CHAT_HISTORY_JSON_PATH",
-                        str(tmp_path / "chat_history.json"))
-    monkeypatch.setattr(agent_mod, "AGENT_MEMORY_JSON_PATH",
-                        str(tmp_path / "agent_memory.json"))
+    monkeypatch.setattr(
+        agent_mod, "CHAT_HISTORY_JSON_PATH", str(tmp_path / "chat_history.json")
+    )
+    monkeypatch.setattr(
+        agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
+    )
     return Agent(workspace=str(tmp_path))
 
 
 class TestFabricatedCommitAnswerIsRejected:
     def test_zero_tool_call_answer_to_commit_request_chains_another_run(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         bot = _bot(tmp_path, monkeypatch)
         monkeypatch.setattr(agent_mod, "_MAX_CHAINED_RUNS", 3)
 
         seen: list[list[dict]] = []
-        answers = iter([
-            "Everything is already committed and pushed.",
-            "git status showed staged.txt; staged, committed and pushed it.",
-        ])
+        answers = iter(
+            [
+                "Everything is already committed and pushed.",
+                "git status showed staged.txt; staged, committed and pushed it.",
+            ]
+        )
 
         async def fake_loop_run(self_loop, **kwargs):
             seen.append(list(kwargs["messages"]))
@@ -108,14 +116,18 @@ class TestFabricatedCommitAnswerIsRejected:
             "accepted as final"
         )
         injected = seen[1][-1]
-        assert injected.get(agent_mod._CONTINUE_NOTE_TAG_KEY) == \
-            agent_mod._CONTINUE_NOTE_TAG
+        assert (
+            injected.get(agent_mod._CONTINUE_NOTE_TAG_KEY)
+            == agent_mod._CONTINUE_NOTE_TAG
+        )
         assert "git" in injected["content"].lower(), (
             "the steering note must point the model at the git tool"
         )
 
     def test_verified_answer_is_accepted_without_an_extra_run(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         bot = _bot(tmp_path, monkeypatch)
         monkeypatch.setattr(agent_mod, "_MAX_CHAINED_RUNS", 3)
@@ -138,7 +150,9 @@ class TestFabricatedCommitAnswerIsRejected:
         assert runs["n"] == 1, "a tool-backed answer must end the turn"
 
     def test_injected_note_is_stripped_from_persisted_history(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         hist_file = tmp_path / "chat_history.json"
         bot = _bot(tmp_path, monkeypatch)
@@ -161,9 +175,9 @@ class TestFabricatedCommitAnswerIsRejected:
         asyncio.run(bot.chat_nlp("commit changes"))
 
         saved = json.loads(hist_file.read_text(encoding="utf-8"))
-        assert all(
-            m.get(agent_mod._CONTINUE_NOTE_TAG_KEY) is None for m in saved
-        ), "the loop-injected note must not persist into the next session"
+        assert all(m.get(agent_mod._CONTINUE_NOTE_TAG_KEY) is None for m in saved), (
+            "the loop-injected note must not persist into the next session"
+        )
 
 
 def test_system_prompt_forbids_asserting_unverified_repo_state() -> None:

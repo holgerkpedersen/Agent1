@@ -37,6 +37,7 @@ Message format (one JSON object per line)::
 
     {seq, ts, op, source_id, target_ref, payload, retry_count, processed}
 """
+
 from __future__ import annotations
 
 import atexit
@@ -128,7 +129,9 @@ def active_board_allows_agent1(working_dir: str | Path | None = None) -> bool:
     if "/" in active_id or "\\" in active_id or ".." in Path(active_id).parts:
         return False
     try:
-        board = json.loads((root / f"board-{active_id}.json").read_text(encoding="utf-8"))
+        board = json.loads(
+            (root / f"board-{active_id}.json").read_text(encoding="utf-8")
+        )
     except (OSError, ValueError):
         return False
     sync_map = board.get("sync") if isinstance(board, dict) else None
@@ -154,8 +157,12 @@ CARD_ID_MAP_PATH = DATA_DIR / ".card_id_map.json"
 # meant Agent1→Kanban on this side but Kanban→Agent1 on the other, so even with
 # a shared root the two sides read and wrote different queues.
 
-QUEUE_AGENT1_TO_KANBAN = DATA_DIR / "queue-agent1-to-kanban"   # Agent1 writes, Kanban reads
-QUEUE_KANBAN_TO_AGENT1 = DATA_DIR / "queue-kanban-to-agent1"   # Kanban writes, Agent1 reads
+QUEUE_AGENT1_TO_KANBAN = (
+    DATA_DIR / "queue-agent1-to-kanban"
+)  # Agent1 writes, Kanban reads
+QUEUE_KANBAN_TO_AGENT1 = (
+    DATA_DIR / "queue-kanban-to-agent1"
+)  # Kanban writes, Agent1 reads
 
 # A message that fails this many times is moved to <queue_dir>/dead_letters/.
 # Patchable at module level so tests can redirect the dead-letter directory.
@@ -201,8 +208,8 @@ def enqueue(message: dict[str, Any], queue_dir: Path | None = None) -> int:
     if queue_dir is None:
         queue_dir = QUEUE_AGENT1_TO_KANBAN
     elif isinstance(queue_dir, dict):
-         # This should not happen with correct usage but handles erroneous patching
-         raise TypeError("enqueue() argument 'queue_dir' must be Path, not dict")
+        # This should not happen with correct usage but handles erroneous patching
+        raise TypeError("enqueue() argument 'queue_dir' must be Path, not dict")
 
     if not isinstance(queue_dir, Path):
         queue_dir = Path(queue_dir)
@@ -237,6 +244,7 @@ def enqueue(message: dict[str, Any], queue_dir: Path | None = None) -> int:
 
 # --- ID mapping ----------------------------------------------------------------
 
+
 def _load_id_map() -> dict[str, str]:
     """Load the issue↔card bidirectional mapping."""
     if CARD_ID_MAP_PATH.exists():
@@ -262,7 +270,9 @@ def _save_id_map(mapping: dict[str, str]) -> None:
         shutil.copy2(str(tmp), str(CARD_ID_MAP_PATH))
 
 
-def link_ids(source_id: str, target_id: str, mapping: dict[str, str] | None = None) -> dict[str, str]:
+def link_ids(
+    source_id: str, target_id: str, mapping: dict[str, str] | None = None
+) -> dict[str, str]:
     """Record a bidirectional ID pair and save it."""
     if mapping is None:
         mapping = _load_id_map()
@@ -281,6 +291,7 @@ def resolve_id(source_id: str, mapping: dict[str, str] | None = None) -> str | N
 
 # --- Message conversion --------------------------------------------------------
 
+
 def issue_to_card_data(issue: dict[str, Any]) -> dict[str, Any]:
     """Convert an Agent1 issue dict into Kanban card payload data."""
     # Split evidence and suggested_approach using a delimiter that won't
@@ -294,7 +305,11 @@ def issue_to_card_data(issue: dict[str, Any]) -> dict[str, Any]:
     text = "\n\n---\n".join(parts)
 
     # Build tags from category and severity
-    tags: list[str] = [f"[{issue.get('category', 'general')}]", f"[severity:{issue.get('severity', 'low')}]", f"[status:{issue.get('status', 'open')}]"]
+    tags: list[str] = [
+        f"[{issue.get('category', 'general')}]",
+        f"[severity:{issue.get('severity', 'low')}]",
+        f"[status:{issue.get('status', 'open')}]",
+    ]
 
     return {
         "title": issue["title"],
@@ -320,9 +335,9 @@ def card_to_issue_data(card: dict[str, Any]) -> dict[str, Any]:
     status = "open"
     for tag in card.get("tags", []):
         if tag.startswith("[severity:"):
-            severity = tag[len("[severity:"):-1]
+            severity = tag[len("[severity:") : -1]
         elif tag.startswith("[status:"):
-            status = tag[len("[status:"):-1]
+            status = tag[len("[status:") : -1]
         elif tag.startswith("[") and tag.endswith("]") and ":" not in tag:
             category = tag[1:-1]
 
@@ -349,6 +364,7 @@ FRAME_TO_STATUS = {
 
 
 # --- Apply functions (Agent1 processes Kanban inbound messages) ----------------
+
 
 def _apply_card_create(payload: dict[str, Any]) -> bool:
     """Create an Agent1 issue from a Kanban card CREATE message."""
@@ -400,7 +416,9 @@ def _apply_card_update(payload: dict[str, Any]) -> bool:
     existing = issue_store.find_by_id(issues, issue_id)
 
     if not existing:
-        logger.warning("card_update: no matching issue for %s (source=%s)", issue_id, source_id)
+        logger.warning(
+            "card_update: no matching issue for %s (source=%s)", issue_id, source_id
+        )
         return False
 
     data = card_to_issue_data(payload.get("payload", payload))
@@ -410,7 +428,9 @@ def _apply_card_update(payload: dict[str, Any]) -> bool:
         existing["title"] = data["title"]
         updated = True
     if "evidence" in data and data["evidence"]:
-        existing["evidence"] = f"{existing.get('evidence', '')}\n[note] {data['evidence']}".strip()
+        existing["evidence"] = (
+            f"{existing.get('evidence', '')}\n[note] {data['evidence']}".strip()
+        )
         updated = True
     if "suggested_approach" in data and data["suggested_approach"]:
         existing["suggested_approach"] = data["suggested_approach"]
@@ -463,7 +483,9 @@ def _apply_card_move(payload: dict[str, Any]) -> bool:
     existing = issue_store.find_by_id(issues, issue_id)
 
     if not existing:
-        logger.warning("card_move: no matching issue for %s (source=%s)", issue_id, source_id)
+        logger.warning(
+            "card_move: no matching issue for %s (source=%s)", issue_id, source_id
+        )
         return False
 
     old_status = existing["status"]
@@ -491,16 +513,21 @@ def _apply_card_delete(payload: dict[str, Any]) -> bool:
     existing = issue_store.find_by_id(issues, issue_id)
 
     if not existing:
-        logger.warning("card_delete: no matching issue for %s (source=%s)", issue_id, source_id)
+        logger.warning(
+            "card_delete: no matching issue for %s (source=%s)", issue_id, source_id
+        )
         return False
 
     # Mark as wontfix rather than hard-delete to preserve history
-    issue_store.resolve(issues, issue_id, disposition="wontfix", note="Card deleted from Kanban")
+    issue_store.resolve(
+        issues, issue_id, disposition="wontfix", note="Card deleted from Kanban"
+    )
     logger.info("Applied card_delete: marked %s as wontfix", issue_id)
     return True
 
 
 # --- Inbound processor ---------------------------------------------------------
+
 
 def _process_single_message(msg: dict[str, Any]) -> bool:
     """Apply a single inbound message. Returns True on success."""
@@ -520,9 +547,7 @@ def _process_single_message(msg: dict[str, Any]) -> bool:
         return False
 
 
-def _quarantine_malformed(
-    queue_dir: Path, idx: int, line: str, exc: Exception
-) -> None:
+def _quarantine_malformed(queue_dir: Path, idx: int, line: str, exc: Exception) -> None:
     """Preserve an unparseable queue line instead of losing it to the log.
 
     A line that is not JSON can never be retried into success, so re-reading it
@@ -544,12 +569,15 @@ def _quarantine_malformed(
         )
         logger.error(
             "Quarantined malformed JSON from queue line %d to %s: %s",
-            idx, dl_file, exc,
+            idx,
+            dl_file,
+            exc,
         )
     except OSError as write_exc:  # noqa: BLE001 — never break the read loop
         logger.error(
             "Could not quarantine malformed queue line %d (%s); line dropped",
-            idx, write_exc,
+            idx,
+            write_exc,
         )
 
 
@@ -612,7 +640,9 @@ def advance_offset(queue_dir: Path, offset: int) -> None:
 
 def _dead_letter_dir(queue_dir: Path) -> Path:
     """Directory that quarantines permanently failing messages."""
-    return DEAD_LETTER_DIR if DEAD_LETTER_DIR is not None else queue_dir / "dead_letters"
+    return (
+        DEAD_LETTER_DIR if DEAD_LETTER_DIR is not None else queue_dir / "dead_letters"
+    )
 
 
 def _record_failure(queue_dir: Path, msg: dict[str, Any]) -> None:
@@ -631,12 +661,12 @@ def _record_failure(queue_dir: Path, msg: dict[str, Any]) -> None:
         dl_dir = _dead_letter_dir(queue_dir)
         dl_dir.mkdir(parents=True, exist_ok=True)
         dl_file = dl_dir / f"seq_{msg.get('seq', '?')}.jsonl"
-        dl_file.write_text(
-            json.dumps(msg, ensure_ascii=False) + "\n", encoding="utf-8"
-        )
+        dl_file.write_text(json.dumps(msg, ensure_ascii=False) + "\n", encoding="utf-8")
         logger.error(
             "Dead-lettered seq=%s after %d attempts to %s",
-            msg.get("seq"), retry_count, dl_file,
+            msg.get("seq"),
+            retry_count,
+            dl_file,
         )
         return
 
@@ -685,13 +715,17 @@ def process_inbound(queue_dir: Path | None = None) -> int:
         advance_offset(queue_dir, next_offset)
         logger.info(
             "Processed %d/%d messages from %s (offset now %d)",
-            applied, len(new_messages), queue_dir, next_offset,
+            applied,
+            len(new_messages),
+            queue_dir,
+            next_offset,
         )
 
     return applied
 
 
 # --- Background processor thread -----------------------------------------------
+
 
 class QueueProcessor:
     """Background thread that polls an inbound queue and processes messages."""
@@ -742,7 +776,8 @@ _BOOT_HANDLES: list["QueueProcessor"] = []
 
 
 def start_inbound_processor(
-    queue_dir: Path | None = None, poll_interval: float = 5.0,
+    queue_dir: Path | None = None,
+    poll_interval: float = 5.0,
 ) -> "QueueProcessor | None":
     """Start the inbound poller on a daemon thread; return it (None if reused).
 
@@ -770,7 +805,9 @@ def start_inbound_processor(
         # leaves stop() reachable; stop() is idempotent and only sets a flag.
         atexit.register(proc.stop)
         threading.Thread(
-            target=proc.run_forever, name="kanban-inbound", daemon=True,
+            target=proc.run_forever,
+            name="kanban-inbound",
+            daemon=True,
         ).start()
         _BOOT_HANDLES.append(proc)
         logger.info("Kanban inbound processor started (queue=%s)", proc.queue_dir)
@@ -787,17 +824,21 @@ def inbound_processor_running() -> bool:
 
 # --- CLI entry point -----------------------------------------------------------
 
+
 def main() -> int:
     """CLI entry point for manual queue processing."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Process Kanban sync queues")
-    parser.add_argument("--process-in", action="store_true", help="Process inbound (Kanban -> Agent1)")
+    parser.add_argument(
+        "--process-in", action="store_true", help="Process inbound (Kanban -> Agent1)"
+    )
     # Documented as ``--process`` in this module's docstring for a long time;
     # kept as a hidden alias so the old invocation in operator notes still
     # works instead of exiting with "unrecognized arguments".
-    parser.add_argument("--process", dest="process_in", action="store_true",
-                        help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--process", dest="process_in", action="store_true", help=argparse.SUPPRESS
+    )
     parser.add_argument("--queue-dir", type=str, help="Queue directory to process")
     args = parser.parse_args()
 

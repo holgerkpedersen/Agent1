@@ -3,6 +3,7 @@
 Leaving the child alive leaves its asyncio pipe transports open, which surfaces
 as PytestUnraisableExceptionWarning / ResourceWarning on Windows.
 """
+
 import asyncio
 
 import pytest

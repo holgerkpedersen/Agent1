@@ -14,6 +14,7 @@ Covers three changes to ``agent_core/commands/implement_cmd.py``:
 3. ``ImplementCommand._status_report`` renders a read-only plan progress
    report (ready / needs-generation / stdlib-shadowing) with no LLM calls.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -28,8 +29,8 @@ class TestParseLineNumberStructured:
     def test_mypy_path_with_version_fragment(self):
         """Regression: first-digit scan returned 2 from the 'v2' path part."""
         err = (
-            "agent_core/llm/v2/client.py:88: error: Item \"None\" of "
-            "\"str | None\" has no attribute \"strip\"  [union-attr]"
+            'agent_core/llm/v2/client.py:88: error: Item "None" of '
+            '"str | None" has no attribute "strip"  [union-attr]'
         )
         assert _parse_line_number(err) == 88
 
@@ -62,7 +63,10 @@ class TestGenerationRetrySentinels:
     def test_lmstudio_sentinel_is_a_failure_string(self):
         # Contract check on the sentinel prefix set used by execute():
         # both prefixes must be treated as failures.
-        for sentinel in ("[Error: timeout]", "[LM Studio stream error: HTTP Error 400: Bad Request]"):
+        for sentinel in (
+            "[Error: timeout]",
+            "[LM Studio stream error: HTTP Error 400: Bad Request]",
+        ):
             assert sentinel.startswith(("[Error:", "[LM Studio"))
 
     def test_batch_failure_records_outcome_for_every_batch_file(self):
@@ -92,7 +96,8 @@ class TestStatusReport:
         broken.write_text("def f(:\n", encoding="utf-8")
 
         self._cmd()._status_report(
-            ["pkg/good.py", "pkg/broken.py", "pkg/missing.py"], str(tmp_path),
+            ["pkg/good.py", "pkg/broken.py", "pkg/missing.py"],
+            str(tmp_path),
         )
         out = capsys.readouterr().out
         assert "1 ready" in out
@@ -144,9 +149,7 @@ class TestStatusReport:
             llm = _StubLLM()
 
         with patch.object(_StubLLM, "chat", side_effect=fail_chat):
-            result = asyncio.run(
-                cmd.execute([str(taskplan), "--status"], _StubAgent())
-            )
+            result = asyncio.run(cmd.execute([str(taskplan), "--status"], _StubAgent()))
         assert result is True
         out = capsys.readouterr().out
         assert "[status]" in out

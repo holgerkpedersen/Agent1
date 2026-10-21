@@ -31,6 +31,7 @@ Design notes
   block is hard-capped at 8 lines (~600 chars) — habits are a hint, not a
   database dump.
 """
+
 from __future__ import annotations
 
 import json
@@ -84,22 +85,35 @@ _LOOP_NOTE_KEY = "_loop_note"
 
 #: (category, compiled pattern, canonical habit text) for typed commands.
 _COMMAND_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
-    ("command", re.compile(r"\b(?:run|execute)\b[^.!?\n]*\btests?\b|\bpytest\b",
-                           re.I),
-     "run the test suite (pytest)"),
-    ("command", re.compile(r"\b(?:lint|ruff|flake8|pylint)\b", re.I),
-     "lint the changed files"),
-    ("command", re.compile(r"\bgit\s+(?:commit|push)\b", re.I),
-     "commit and push with git"),
+    (
+        "command",
+        re.compile(r"\b(?:run|execute)\b[^.!?\n]*\btests?\b|\bpytest\b", re.I),
+        "run the test suite (pytest)",
+    ),
+    (
+        "command",
+        re.compile(r"\b(?:lint|ruff|flake8|pylint)\b", re.I),
+        "lint the changed files",
+    ),
+    (
+        "command",
+        re.compile(r"\bgit\s+(?:commit|push)\b", re.I),
+        "commit and push with git",
+    ),
 )
 
 #: Output-style preferences: how the user wants answers rendered.
 _STYLE_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
-    ("style", re.compile(r"\b(?:short|brief|concise|terse|summar\w*)\b", re.I),
-     "keep answers short"),
-    ("style", re.compile(r"\b(?:verbose|detailed|in detail|thorough|step by step)\b",
-                         re.I),
-     "give detailed step-by-step answers"),
+    (
+        "style",
+        re.compile(r"\b(?:short|brief|concise|terse|summar\w*)\b", re.I),
+        "keep answers short",
+    ),
+    (
+        "style",
+        re.compile(r"\b(?:verbose|detailed|in detail|thorough|step by step)\b", re.I),
+        "give detailed step-by-step answers",
+    ),
 )
 
 #: A path-like token: dirs with slashes or a file name with an extension.
@@ -210,7 +224,7 @@ def mine_habits(
     """
     try:
         inputs = _user_texts(history) + _trace_texts(traces)
-        inputs = inputs[-max(1, int(window)):]
+        inputs = inputs[-max(1, int(window)) :]
         if not inputs:
             return []
 
@@ -236,8 +250,12 @@ def mine_habits(
                 score[key] = score.get(key, 0.0) + 1.0
 
         promoted = [
-            {"text": text, "count": count, "category": category,
-             "score": round(score[(category, text)], 4)}
+            {
+                "text": text,
+                "count": count,
+                "category": category,
+                "score": round(score[(category, text)], 4),
+            }
             for (category, text), count in raw.items()
             if count >= max(1, int(min_count))
         ]
@@ -249,7 +267,8 @@ def mine_habits(
         for category in ("command", "style", "files", "workflow", "corrections"):
             bucket = sorted(
                 (h for h in promoted if h["category"] == category),
-                key=lambda h: h["score"], reverse=True,
+                key=lambda h: h["score"],
+                reverse=True,
             )
             capped.extend(bucket[:MAX_PER_CATEGORY])
         capped.sort(key=lambda h: h["score"], reverse=True)
@@ -262,6 +281,7 @@ def mine_habits(
 # ---------------------------------------------------------------------------
 # Rendering (system-prompt block)
 # ---------------------------------------------------------------------------
+
 
 def _line(habit: Any) -> str | None:
     """Render one ``- <habit> (seen N times)`` line (``None`` to skip)."""
@@ -308,6 +328,7 @@ def habits_block(habits: Sequence[Any] | str | None) -> str:
 # ---------------------------------------------------------------------------
 # Persistence (workspace-local .habits.json)
 # ---------------------------------------------------------------------------
+
 
 def _habits_path(workspace: str | Path) -> Path:
     """The workspace's ``.habits.json`` ledger path."""

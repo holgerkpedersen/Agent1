@@ -10,6 +10,7 @@ The fix wires a real boot path: ``agent.py:main()`` calls
 ``_start_kanban_inbound()`` -> ``kanban_bridge.start_inbound_processor()``,
 gated on ``KANBAN_SYNC_ENABLED=1`` and idempotent per process.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -62,10 +63,12 @@ def _inbound_threads() -> list[threading.Thread]:
 # start_inbound_processor
 # ---------------------------------------------------------------------------
 
+
 class TestStartInboundProcessor:
     def test_disabled_by_default(self, monkeypatch):
         """No env var -> no poller, no thread (opt-in integration)."""
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.delenv("KANBAN_SYNC_ENABLED", raising=False)
 
         assert kb.start_inbound_processor() is None
@@ -74,6 +77,7 @@ class TestStartInboundProcessor:
 
     def test_disabled_when_flag_is_zero(self, monkeypatch):
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.setenv("KANBAN_SYNC_ENABLED", "0")
 
         assert kb.start_inbound_processor() is None
@@ -82,6 +86,7 @@ class TestStartInboundProcessor:
     def test_enabled_starts_daemon_poller(self, monkeypatch):
         """The core regression: enabled sync must actually spawn the poller."""
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.setenv("KANBAN_SYNC_ENABLED", "1")
 
         proc = kb.start_inbound_processor(poll_interval=0.05)
@@ -99,6 +104,7 @@ class TestStartInboundProcessor:
     def test_second_call_reuses_first_processor(self, monkeypatch):
         """A second poller on the same queue only widens the torn-line window."""
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.setenv("KANBAN_SYNC_ENABLED", "1")
 
         first = kb.start_inbound_processor(poll_interval=0.05)
@@ -112,6 +118,7 @@ class TestStartInboundProcessor:
     def test_stop_is_registered_with_atexit(self, monkeypatch):
         """atexit matters: a killed mid-append writer tears messages.jsonl."""
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.setenv("KANBAN_SYNC_ENABLED", "1")
 
         registered: list = []
@@ -125,6 +132,7 @@ class TestStartInboundProcessor:
     def test_construction_failure_is_swallowed(self, monkeypatch):
         """A broken queue must never stop the agent from booting."""
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.setenv("KANBAN_SYNC_ENABLED", "1")
 
         def _boom(*a, **kw):
@@ -138,6 +146,7 @@ class TestStartInboundProcessor:
 
     def test_inbound_processor_running_reflects_state(self, monkeypatch):
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.setenv("KANBAN_SYNC_ENABLED", "1")
 
         assert kb.inbound_processor_running() is False
@@ -149,15 +158,18 @@ class TestStartInboundProcessor:
 # agent.py boot wiring
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def agent_module():
     import agent
+
     return agent
 
 
 class TestAgentBootWiring:
     def test_helper_delegates_to_bridge(self, agent_module, monkeypatch):
         import harnessfix.kanban_bridge as kb
+
         calls: list = []
         monkeypatch.setattr(kb, "start_inbound_processor", lambda: calls.append(1))
 
@@ -185,7 +197,9 @@ class TestAgentBootWiring:
         """main() must boot the poller — that call site IS the fix."""
         order: list[str] = []
         monkeypatch.setattr(
-            agent_module, "_start_kanban_inbound", lambda: order.append("kanban"),
+            agent_module,
+            "_start_kanban_inbound",
+            lambda: order.append("kanban"),
         )
 
         async def _fake_interactive() -> None:
@@ -205,17 +219,22 @@ class TestAgentBootWiring:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 class TestManualCli:
     def _run_main(self, monkeypatch, argv: list[str]) -> int:
         import harnessfix.kanban_bridge as kb
+
         monkeypatch.setattr(sys, "argv", ["kanban_bridge", *argv])
         return kb.main()
 
     def test_process_in_flag(self, monkeypatch):
         import harnessfix.kanban_bridge as kb
+
         processed: list = []
         monkeypatch.setattr(
-            kb, "process_inbound", lambda qdir: processed.append(qdir) or 0,
+            kb,
+            "process_inbound",
+            lambda qdir: processed.append(qdir) or 0,
         )
 
         assert self._run_main(monkeypatch, ["--process-in"]) == 0
@@ -224,9 +243,12 @@ class TestManualCli:
     def test_process_alias_accepted(self, monkeypatch):
         """The docstring advertised ``--process`` for years; keep it working."""
         import harnessfix.kanban_bridge as kb
+
         processed: list = []
         monkeypatch.setattr(
-            kb, "process_inbound", lambda qdir: processed.append(qdir) or 0,
+            kb,
+            "process_inbound",
+            lambda qdir: processed.append(qdir) or 0,
         )
 
         assert self._run_main(monkeypatch, ["--process"]) == 0
@@ -234,14 +256,18 @@ class TestManualCli:
 
     def test_queue_dir_is_honoured(self, monkeypatch, tmp_path):
         import harnessfix.kanban_bridge as kb
+
         seen: list[Path] = []
         monkeypatch.setattr(
-            kb, "process_inbound", lambda qdir: seen.append(qdir) or 0,
+            kb,
+            "process_inbound",
+            lambda qdir: seen.append(qdir) or 0,
         )
 
         target = tmp_path / "custom-queue"
         rc = self._run_main(
-            monkeypatch, ["--process-in", "--queue-dir", str(target)],
+            monkeypatch,
+            ["--process-in", "--queue-dir", str(target)],
         )
         assert rc == 0
         assert seen == [target]
@@ -255,11 +281,13 @@ class TestManualCli:
 # The docstring's advertised boot path must be real
 # ---------------------------------------------------------------------------
 
+
 class TestDocumentedBootPath:
     def test_module_docstring_does_not_advertise_issue_loop(self):
         """It used to say ``python harnessfix/issue_loop.py`` — which has no
         ``main()`` and no argparse, so the documented boot did nothing."""
         import harnessfix.kanban_bridge as kb
+
         doc = kb.__doc__ or ""
 
         assert "issue_loop.py" not in doc

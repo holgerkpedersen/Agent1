@@ -1,5 +1,6 @@
 """Security hardening tests (plan tasks 1, 2, 5, 6):
 path containment, shell metacharacter rejection, shell_ops delegation."""
+
 import tempfile
 from pathlib import Path
 
@@ -64,7 +65,7 @@ class TestShellMetacharRejection:
             "python > out.txt",
             "dir < in.txt",
             "echo `whoami`",
-            "python -c \"$(whoami)\"",
+            'python -c "$(whoami)"',
             "echo a\nrm -rf /",
         ],
     )
@@ -106,19 +107,30 @@ class TestShellOps:
 
 class TestToolRouterDelegation:
     def test_handler_uses_shared_allowlist(self):
-        from tool_router import ShellCommandHandler, ShellCommandArgs, ToolExecutionError
+        from tool_router import (
+            ShellCommandHandler,
+            ShellCommandArgs,
+            ToolExecutionError,
+        )
+
         handler = ShellCommandHandler()
         with pytest.raises(ToolExecutionError):
             handler.execute(ShellCommandArgs(command="rm -rf /"))
 
     def test_handler_rejects_chaining(self):
-        from tool_router import ShellCommandHandler, ShellCommandArgs, ToolExecutionError
+        from tool_router import (
+            ShellCommandHandler,
+            ShellCommandArgs,
+            ToolExecutionError,
+        )
+
         handler = ShellCommandHandler()
         with pytest.raises(ToolExecutionError):
             handler.execute(ShellCommandArgs(command="python; rm -rf /"))
 
     def test_handler_allows_allowlisted_binary(self):
         from tool_router import ShellCommandHandler, ShellCommandArgs
+
         handler = ShellCommandHandler()
         result = handler.execute(ShellCommandArgs(command="python --version"))
         assert isinstance(result, dict)
@@ -127,5 +139,6 @@ class TestToolRouterDelegation:
     def test_no_duplicate_allowlist_state(self):
         import inspect
         from tool_router import ShellCommandHandler
+
         src = inspect.getsource(ShellCommandHandler)
         assert "_allowed_binaries" not in src

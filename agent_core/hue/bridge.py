@@ -36,6 +36,7 @@ def _read_env_file() -> dict[str, str]:
     """Best-effort read of project .env values for the from_env fallback."""
     try:
         from agent_core.config import _load_env_file
+
         return _load_env_file(_env_file_path())
     except Exception as exc:  # pragma: no cover - defensive degradation only
         logger.warning("Hue .env fallback unavailable: %s", exc)
@@ -49,6 +50,7 @@ class HueBridgeError(Exception):
 # ------------------------------------------------------------------
 # sRGB gamma correction functions (module-level helpers)
 # ------------------------------------------------------------------
+
 
 def _sRGB_from_linear(c: float) -> float:
     """Convert linear RGB to sRGB using the standard gamma curve. Returns float."""
@@ -115,11 +117,11 @@ def _rgb_to_hsv(r: int, g: int, b: int) -> tuple[float, float, float]:
     if delta == 0:
         h = 0.0
     elif max_c == r_norm:
-        h = (60 * ((g_norm - b_norm) / delta) % 360)
+        h = 60 * ((g_norm - b_norm) / delta) % 360
     elif max_c == g_norm:
-        h = (60 * ((b_norm - r_norm) / delta) + 120)
+        h = 60 * ((b_norm - r_norm) / delta) + 120
     else:
-        h = (60 * ((r_norm - g_norm) / delta) + 240)
+        h = 60 * ((r_norm - g_norm) / delta) + 240
 
     s = (delta / max_c) * 100.0 if max_c != 0 else 0.0
     v = max_c * 100.0
@@ -206,6 +208,7 @@ def _xy_to_rgb(x: float, y: float, z: float | None = None) -> tuple[int, int, in
 # HueBridge class - V1 and V2 API client
 # ------------------------------------------------------------------
 
+
 class HueBridge:
     """Async client for the Philips Hue Bridge V1 and V2 APIs.
 
@@ -247,9 +250,13 @@ class HueBridge:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(url, timeout=10.0)
         except httpx.ConnectError as exc:
-            raise HueBridgeError(f"Cannot reach Hue Bridge at {self._base_ip}: {exc}") from exc
+            raise HueBridgeError(
+                f"Cannot reach Hue Bridge at {self._base_ip}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
-            raise HueBridgeError(f"Hue API error communicating with Hue Bridge: {exc}") from exc
+            raise HueBridgeError(
+                f"Hue API error communicating with Hue Bridge: {exc}"
+            ) from exc
 
         if resp.status_code in (401, 403):
             raise HueBridgeError(
@@ -277,7 +284,11 @@ class HueBridge:
                 elif "description" in first_item:
                     desc = first_item["description"]
                 # Handle cases where description is short (e.g., just "on")
-                if not desc and isinstance(first_item, dict) and "address" in first_item:
+                if (
+                    not desc
+                    and isinstance(first_item, dict)
+                    and "address" in first_item
+                ):
                     desc = f"Hue API error on {first_item.get('address', 'unknown')}"
                 if desc:
                     raise HueBridgeError(desc)
@@ -293,9 +304,13 @@ class HueBridge:
             async with httpx.AsyncClient() as client:
                 resp = await client.put(url, json=payload, timeout=10.0)
         except httpx.ConnectError as exc:
-            raise HueBridgeError(f"Cannot reach Hue Bridge at {self._base_ip}: {exc}") from exc
+            raise HueBridgeError(
+                f"Cannot reach Hue Bridge at {self._base_ip}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
-            raise HueBridgeError(f"Hue API error communicating with Hue Bridge: {exc}") from exc
+            raise HueBridgeError(
+                f"Hue API error communicating with Hue Bridge: {exc}"
+            ) from exc
 
         if resp.status_code in (401, 403):
             raise HueBridgeError(
@@ -317,8 +332,14 @@ class HueBridge:
                     elif "description" in first_item:
                         desc = first_item["description"]
                     # Handle cases where description is short (e.g., just "on")
-                    if not desc and isinstance(first_item, dict) and "address" in first_item:
-                        desc = f"Hue API error on {first_item.get('address', 'unknown')}"
+                    if (
+                        not desc
+                        and isinstance(first_item, dict)
+                        and "address" in first_item
+                    ):
+                        desc = (
+                            f"Hue API error on {first_item.get('address', 'unknown')}"
+                        )
                     if desc:
                         raise HueBridgeError(desc)
         except ValueError:
@@ -361,9 +382,13 @@ class HueBridge:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(url, timeout=10.0)
         except httpx.ConnectError as exc:
-            raise HueBridgeError(f"Cannot reach Hue Bridge at {self._base_ip}: {exc}") from exc
+            raise HueBridgeError(
+                f"Cannot reach Hue Bridge at {self._base_ip}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
-            raise HueBridgeError(f"Hue API error communicating with Hue Bridge: {exc}") from exc
+            raise HueBridgeError(
+                f"Hue API error communicating with Hue Bridge: {exc}"
+            ) from exc
 
         if resp.status_code in (401, 403):
             raise HueBridgeError(
@@ -390,9 +415,13 @@ class HueBridge:
             async with httpx.AsyncClient() as client:
                 resp = await client.put(url, json=payload, timeout=10.0)
         except httpx.ConnectError as exc:
-            raise HueBridgeError(f"Cannot reach Hue Bridge at {self._base_ip}: {exc}") from exc
+            raise HueBridgeError(
+                f"Cannot reach Hue Bridge at {self._base_ip}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
-            raise HueBridgeError(f"Hue API error communicating with Hue Bridge: {exc}") from exc
+            raise HueBridgeError(
+                f"Hue API error communicating with Hue Bridge: {exc}"
+            ) from exc
 
         if resp.status_code in (401, 403):
             raise HueBridgeError(
@@ -415,15 +444,19 @@ class HueBridge:
             state = item.get("state", {})
             is_on: bool = state.get("on", False)
             bri_raw: int | None = state.get("bri")  # 0-254 in V1
-            brightness: float | None = round((bri_raw / 254.0) * 100, 1) if bri_raw is not None else None
+            brightness: float | None = (
+                round((bri_raw / 254.0) * 100, 1) if bri_raw is not None else None
+            )
             mirek: int | None = state.get("ct")
-            result.append({
-                "id": rid,
-                "name": item.get("name", f"Light {rid}"),
-                "on": is_on,
-                "brightness": brightness,
-                "mirek": mirek,
-            })
+            result.append(
+                {
+                    "id": rid,
+                    "name": item.get("name", f"Light {rid}"),
+                    "on": is_on,
+                    "brightness": brightness,
+                    "mirek": mirek,
+                }
+            )
         return result
 
     async def get_light(self, light_id: str) -> dict[str, Any]:
@@ -434,7 +467,9 @@ class HueBridge:
         state = data.get("state", {})
         is_on: bool = state.get("on", False)
         bri_raw: int | None = state.get("bri")
-        brightness: float | None = round((bri_raw / 254.0) * 100, 1) if bri_raw is not None else None
+        brightness: float | None = (
+            round((bri_raw / 254.0) * 100, 1) if bri_raw is not None else None
+        )
         mirek: int | None = state.get("ct")
         return {
             "id": light_id,
@@ -482,7 +517,6 @@ class HueBridge:
         await self._put(f"/lights/{light_id}/state", payload)
         logger.info("Set light %s (V1): %s", light_id, payload)
 
-
     # ------------------------------------------------------------------
     # Public API - V2 Methods (Full RGB Color Support)
     # ------------------------------------------------------------------
@@ -514,7 +548,9 @@ class HueBridge:
         state = v1_data.get("state", {})
         is_on: bool = state.get("on", False)
         bri_raw: int | None = state.get("bri")
-        brightness: float | None = round((bri_raw / 254.0) * 100, 1) if bri_raw is not None else None
+        brightness: float | None = (
+            round((bri_raw / 254.0) * 100, 1) if bri_raw is not None else None
+        )
 
         # Get V2 capabilities and color info
         v2_data = await self._v2_get(f"/lights/{light_id}")
@@ -542,9 +578,14 @@ class HueBridge:
         self,
         light_id: str,
         *,
-        r: int | None = None, g: int | None = None, b: int | None = None,
-        x: float | None = None, y: float | None = None,
-        h: float | None = None, s: float | None = None, v: float | None = None,
+        r: int | None = None,
+        g: int | None = None,
+        b: int | None = None,
+        x: float | None = None,
+        y: float | None = None,
+        h: float | None = None,
+        s: float | None = None,
+        v: float | None = None,
         brightness: float | None = None,
     ) -> None:
         """Set the color of a light via V2 API.
@@ -613,7 +654,6 @@ class HueBridge:
         await self._put(f"/lights/{light_id}/state", payload)
         logger.info("Set light %s (V1 color): %s", light_id, payload)
 
-
     async def set_light_color_named(
         self,
         light_id: str,
@@ -651,8 +691,9 @@ class HueBridge:
         # (light off) into full brightness.
         await self.set_light_color(light_id, x=x, y=y, brightness=brightness)
 
-
-    async def set_light_brightness(self, light_id: str, percentage: float | None = None) -> None:
+    async def set_light_brightness(
+        self, light_id: str, percentage: float | None = None
+    ) -> None:
         """Set the brightness of a light without changing color.
 
         Args:
@@ -679,6 +720,7 @@ class HueBridge:
 # ------------------------------------------------------------------
 # Module-level convenience functions (for quick access from tests)
 # ------------------------------------------------------------------
+
 
 def _get_bridge_for_testing(ip: str | None = None, key: str | None = None) -> HueBridge:
     """Convenience function for creating a bridge for testing."""

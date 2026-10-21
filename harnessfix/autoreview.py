@@ -67,7 +67,9 @@ def auto_review(graph: TraceGraph) -> AutoReview:
     # a tool_error), or a substantive final answer came AFTER the last guard
     # stop (the loop's "give your final answer now" pattern).
     if outcome == "completed":
-        return AutoReview(_NOISE, "high", ["loop_end outcome=completed — task delivered"])
+        return AutoReview(
+            _NOISE, "high", ["loop_end outcome=completed — task delivered"]
+        )
     if has_loop_end and final_answer and len(final_answer) >= FINAL_ANSWER_MIN_CHARS:
         if errors:
             evidence.append(f"tool errors ({len(errors)}) before answer")

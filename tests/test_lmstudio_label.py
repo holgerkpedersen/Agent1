@@ -4,6 +4,7 @@ The label must be printed once per session and only re-printed when the
 model/profile/temperature/tokens change mid-session — not before every
 LLM call in the tool loop.
 """
+
 import asyncio
 from unittest.mock import patch
 
@@ -16,10 +17,12 @@ def _provider() -> LMStudioProvider:
 
 def _fake_response() -> dict:
     return {
-        "choices": [{
-            "message": {"role": "assistant", "content": "Hello there"},
-            "finish_reason": "stop",
-        }]
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": "Hello there"},
+                "finish_reason": "stop",
+            }
+        ]
     }
 
 

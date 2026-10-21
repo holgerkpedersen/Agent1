@@ -30,6 +30,7 @@ fabricated vote; a majority of abstentions yields UNKNOWN/UNDECIDED.
 
 ``agent_core`` namespace rule: this module never imports ``agent``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -183,6 +184,7 @@ class JevResult:
 #  Parsers (pure, unit-testable)
 # ---------------------------------------------------------------------------
 
+
 def is_failure(text: str) -> bool:
     """True when *text* is a provider error or leaked tool-call syntax.
 
@@ -283,6 +285,7 @@ def parse_score(reply: str, max_value: float = 100.0) -> float | None:
 #  Engine
 # ---------------------------------------------------------------------------
 
+
 def _time_of_day(now: datetime) -> str:
     """Human time-of-day bucket (morning/afternoon/evening/night).
 
@@ -326,7 +329,8 @@ def _build_messages(question: JevQuestion, state: str = "") -> list[dict[str, st
         "nothing else. No explanation, no punctuation, no tool calls."
     )
     lines: list[str] = [
-        f"CONTEXT: current local date and time is {_now_context()}.", "",
+        f"CONTEXT: current local date and time is {_now_context()}.",
+        "",
     ]
     state = str(state or "").strip()
     if state:
@@ -410,7 +414,9 @@ class JevEngine:
         try:
             reply = await asyncio.wait_for(
                 self.provider.chat(
-                    messages, max_tokens=self.max_tokens, disable_thinking=True,
+                    messages,
+                    max_tokens=self.max_tokens,
+                    disable_thinking=True,
                 ),
                 timeout=self.timeout,
             )
@@ -419,14 +425,18 @@ class JevEngine:
         return str(reply or "")
 
     async def _vote(self, messages: list[dict[str, str]]) -> list[str]:
-        return list(await asyncio.gather(
-            *[self._one_sample(messages) for _ in range(self.samples)]
-        ))
+        return list(
+            await asyncio.gather(
+                *[self._one_sample(messages) for _ in range(self.samples)]
+            )
+        )
 
     # -- mechanisms ---------------------------------------------------------
 
     async def _via_logprobs(
-        self, question: JevQuestion, messages: list[dict[str, str]],
+        self,
+        question: JevQuestion,
+        messages: list[dict[str, str]],
     ) -> JevResult | None:
         """Read the model's own token probabilities (one call), or None."""
         chat_logprobs = getattr(self.provider, "chat_logprobs", None)
@@ -445,12 +455,18 @@ class JevEngine:
         if not dist:
             return None
         return self._result_from_probs(
-            question, dist, mechanism=MECHANISM_LOGPROBS,
-            n=1, abstentions=0, samples=[str(content)],
+            question,
+            dist,
+            mechanism=MECHANISM_LOGPROBS,
+            n=1,
+            abstentions=0,
+            samples=[str(content)],
         )
 
     async def _via_vote(
-        self, question: JevQuestion, messages: list[dict[str, str]],
+        self,
+        question: JevQuestion,
+        messages: list[dict[str, str]],
     ) -> JevResult:
         replies = await self._vote(messages)
         return self._result_from_replies(question, replies)
@@ -485,8 +501,10 @@ class JevEngine:
             from harnessfix.jev_telemetry import record_decision
 
             record_decision(
-                result, question,
-                workspace=self.log_workspace, source=self.source,
+                result,
+                question,
+                workspace=self.log_workspace,
+                source=self.source,
             )
         except Exception:  # noqa: BLE001 - telemetry is never fatal
             pass
@@ -526,7 +544,9 @@ class JevEngine:
     # -- aggregation --------------------------------------------------------
 
     def _result_from_replies(
-        self, question: JevQuestion, replies: list[str],
+        self,
+        question: JevQuestion,
+        replies: list[str],
     ) -> JevResult:
         if question.kind == KIND_YESNO:
             counts: dict[str, int] = {"yes": 0, "no": 0}
@@ -540,15 +560,25 @@ class JevEngine:
             total = counts["yes"] + counts["no"]
             if total == 0 or _majority_abstained(len(replies), abstentions):
                 return JevResult(
-                    kind=question.kind, model=self.model_name, mechanism=MECHANISM_VOTE,
-                    decision="UNKNOWN", confidence=0.0, threshold=self.threshold,
-                    n=len(replies), abstentions=abstentions, samples=replies,
+                    kind=question.kind,
+                    model=self.model_name,
+                    mechanism=MECHANISM_VOTE,
+                    decision="UNKNOWN",
+                    confidence=0.0,
+                    threshold=self.threshold,
+                    n=len(replies),
+                    abstentions=abstentions,
+                    samples=replies,
                     error="" if total else "no parseable answer (all abstentions)",
                 )
             probs = {"yes": counts["yes"] / total, "no": counts["no"] / total}
             return self._result_from_probs(
-                question, probs, mechanism=MECHANISM_VOTE,
-                n=total, abstentions=abstentions, samples=replies,
+                question,
+                probs,
+                mechanism=MECHANISM_VOTE,
+                n=total,
+                abstentions=abstentions,
+                samples=replies,
             )
 
         if question.kind == KIND_CHOICE:
@@ -563,16 +593,26 @@ class JevEngine:
             total = sum(counts.values())
             if total == 0 or _majority_abstained(len(replies), abstentions):
                 return JevResult(
-                    kind=question.kind, model=self.model_name, mechanism=MECHANISM_VOTE,
+                    kind=question.kind,
+                    model=self.model_name,
+                    mechanism=MECHANISM_VOTE,
                     probabilities={opt: 0.0 for opt in question.options},
-                    decision="UNDECIDED", confidence=0.0, threshold=self.threshold,
-                    n=len(replies), abstentions=abstentions, samples=replies,
+                    decision="UNDECIDED",
+                    confidence=0.0,
+                    threshold=self.threshold,
+                    n=len(replies),
+                    abstentions=abstentions,
+                    samples=replies,
                     error="" if total else "no parseable answer (all abstentions)",
                 )
             probs = {opt: counts[opt] / total for opt in question.options}
             return self._result_from_probs(
-                question, probs, mechanism=MECHANISM_VOTE,
-                n=total, abstentions=abstentions, samples=replies,
+                question,
+                probs,
+                mechanism=MECHANISM_VOTE,
+                n=total,
+                abstentions=abstentions,
+                samples=replies,
             )
 
         # score
@@ -586,18 +626,31 @@ class JevEngine:
                 values.append(value / question.max_value)
         if not values or _majority_abstained(len(replies), abstentions):
             return JevResult(
-                kind=question.kind, model=self.model_name, mechanism=MECHANISM_VOTE,
-                decision="UNKNOWN", confidence=0.0, threshold=self.threshold,
-                n=len(replies), abstentions=abstentions, samples=replies,
+                kind=question.kind,
+                model=self.model_name,
+                mechanism=MECHANISM_VOTE,
+                decision="UNKNOWN",
+                confidence=0.0,
+                threshold=self.threshold,
+                n=len(replies),
+                abstentions=abstentions,
+                samples=replies,
                 error="" if values else "no parseable answer (all abstentions)",
             )
         mean = sum(values) / len(values)
         var = sum((v - mean) ** 2 for v in values) / len(values)
         spread = math.sqrt(var)
         return JevResult(
-            kind=question.kind, model=self.model_name, mechanism=MECHANISM_VOTE,
-            decision=f"{mean:.2f}", confidence=mean, threshold=self.threshold,
-            n=len(values), abstentions=abstentions, value=mean, spread=spread,
+            kind=question.kind,
+            model=self.model_name,
+            mechanism=MECHANISM_VOTE,
+            decision=f"{mean:.2f}",
+            confidence=mean,
+            threshold=self.threshold,
+            n=len(values),
+            abstentions=abstentions,
+            value=mean,
+            spread=spread,
             samples=replies,
         )
 
@@ -615,20 +668,32 @@ class JevEngine:
             p_yes = probs.get("yes", 0.0)
             decision = "TRUE" if p_yes >= self.threshold else "FALSE"
             return JevResult(
-                kind=question.kind, model=self.model_name, mechanism=mechanism,
-                probabilities=probs, decision=decision,
-                confidence=max(p_yes, 1.0 - p_yes), threshold=self.threshold,
-                n=n, abstentions=abstentions, samples=samples,
+                kind=question.kind,
+                model=self.model_name,
+                mechanism=mechanism,
+                probabilities=probs,
+                decision=decision,
+                confidence=max(p_yes, 1.0 - p_yes),
+                threshold=self.threshold,
+                n=n,
+                abstentions=abstentions,
+                samples=samples,
             )
         # choice — the labels preserve the option order from the question.
         ordered = {opt: probs.get(opt, 0.0) for opt in question.options}
         top = max(ordered, key=lambda o: ordered[o])
         decision = top if ordered[top] >= self.threshold else "UNDECIDED"
         return JevResult(
-            kind=question.kind, model=self.model_name, mechanism=mechanism,
-            probabilities=ordered, decision=decision,
-            confidence=ordered[top], threshold=self.threshold,
-            n=n, abstentions=abstentions, samples=samples,
+            kind=question.kind,
+            model=self.model_name,
+            mechanism=mechanism,
+            probabilities=ordered,
+            decision=decision,
+            confidence=ordered[top],
+            threshold=self.threshold,
+            n=n,
+            abstentions=abstentions,
+            samples=samples,
         )
 
 
@@ -646,7 +711,8 @@ def _letter_index(token: str) -> int | None:
 
 
 def _top_logprobs_to_dist(
-    question: JevQuestion, top: list[dict[str, Any]],
+    question: JevQuestion,
+    top: list[dict[str, Any]],
 ) -> dict[str, float] | None:
     """Collapse a first-token ``top_logprobs`` list into a label distribution.
 
@@ -709,9 +775,7 @@ def build_jev_engine(
 
         settings = load_agent_settings()
     model = (
-        model_name
-        or str(getattr(settings, "jev_model", "") or "")
-        or DEFAULT_JEV_MODEL
+        model_name or str(getattr(settings, "jev_model", "") or "") or DEFAULT_JEV_MODEL
     )
     if not model:
         raise ValueError(
@@ -726,25 +790,30 @@ def build_jev_engine(
         # would silently answer with the main/reasoning model when the small
         # Jev model is unreachable — the opposite of "small model for Jev only".
         provider = build_provider(
-            settings, model, provider_override=override, single=True,
+            settings,
+            model,
+            provider_override=override,
+            single=True,
         )
     return JevEngine(
         provider,
         model_name=model,
         samples=(
-            samples if samples is not None
-            else int(getattr(settings, "jev_samples", 5))
+            samples if samples is not None else int(getattr(settings, "jev_samples", 5))
         ),
         temperature=(
-            temperature if temperature is not None
+            temperature
+            if temperature is not None
             else float(getattr(settings, "jev_temperature", 0.7))
         ),
         max_tokens=(
-            max_tokens if max_tokens is not None
+            max_tokens
+            if max_tokens is not None
             else int(getattr(settings, "jev_max_tokens", 512))
         ),
         timeout=(
-            timeout if timeout is not None
+            timeout
+            if timeout is not None
             else float(getattr(settings, "jev_timeout", 60.0))
         ),
         mechanism=mechanism,

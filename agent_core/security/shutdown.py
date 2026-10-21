@@ -8,6 +8,7 @@ mask the shutdown itself.
 
 The store directory can be redirected with ``AGENT1_SECRETS_DIR`` (tests/portable).
 """
+
 from __future__ import annotations
 from agent_core.suppress_log import _suppress_and_log
 
@@ -43,12 +44,12 @@ def safe_signal_break_handler(
     save_memory_fn : callable or None
         Callable that persists agent cross-session memory (``_save_memory``).
     """
-    with _suppress_and_log('Error saving memory during signal break:\n'):
+    with _suppress_and_log("Error saving memory during signal break:\n"):
         if callable(save_memory_fn):
             save_memory_fn()
             logger.info("Memory saved during signal break handler (%s)", memory_path)
 
-    with _suppress_and_log('Error closing trace writer during signal break:\n'):
+    with _suppress_and_log("Error closing trace writer during signal break:\n"):
         if callable(trace_writer_close):
             trace_writer_close()
             logger.info("Trace writer closed during signal break handler")
@@ -85,12 +86,12 @@ def shutdown_for_exit(
     trace_writer_close: Callable[[], Any] | None = None,
 ) -> None:
     """Non-signal cleanup path (e.g. normal REPL exit): same hooks, no hard exit."""
-    with _suppress_and_log('Error saving memory during shutdown:\n'):
+    with _suppress_and_log("Error saving memory during shutdown:\n"):
         if callable(save_memory_fn):
             save_memory_fn()
             logger.info("Memory saved during shutdown (%s)", memory_path)
 
-    with _suppress_and_log('Error closing trace writer during shutdown:\n'):
+    with _suppress_and_log("Error closing trace writer during shutdown:\n"):
         if callable(trace_writer_close):
             trace_writer_close()
             logger.info("Trace writer closed during shutdown")

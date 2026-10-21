@@ -6,6 +6,7 @@ observed failures.  These tests build synthetic corpora and assert the
 baseline/acceptance logic in gates.should_accept_harness plus the snapshot
 shape of corpus_quality.corpus_quality.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -26,18 +27,35 @@ from harnessfix.tracing import (
 
 def _write_completed(traces_dir: Path, task_id: str) -> None:
     writer = TraceWriter(task_id=task_id, directory=traces_dir)
-    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
-                 "outcome": "completed", "termination_reason": "answer"})
+    writer.emit(
+        {
+            "kind": KIND_LOOP_END,
+            "layer": "lifecycle",
+            "outcome": "completed",
+            "termination_reason": "answer",
+        }
+    )
     writer.close()
 
 
 def _write_tool_interface_failure(traces_dir: Path, task_id: str) -> None:
     writer = TraceWriter(task_id=task_id, directory=traces_dir)
-    writer.emit({"kind": KIND_TOOL_ERROR, "layer": "tool_interface",
-                 "exception": "ValidationError",
-                 "message": "schema validation failed for path"})
-    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
-                 "outcome": "completed", "termination_reason": "answer"})
+    writer.emit(
+        {
+            "kind": KIND_TOOL_ERROR,
+            "layer": "tool_interface",
+            "exception": "ValidationError",
+            "message": "schema validation failed for path",
+        }
+    )
+    writer.emit(
+        {
+            "kind": KIND_LOOP_END,
+            "layer": "lifecycle",
+            "outcome": "completed",
+            "termination_reason": "answer",
+        }
+    )
     writer.close()
 
 
@@ -46,15 +64,34 @@ def _write_stuck_cycle(traces_dir: Path, task_id: str) -> None:
     # Three consecutive identical tool calls -> a stuck cycle is diagnosed in
     # the LIFECYCLE layer by diagnose_graph.
     for i in range(3):
-        writer.emit({"kind": KIND_TOOL_CALL, "layer": "tool_interface",
-                     "tool": "read_file", "args_hash": "abc",
-                     "args": {"path": "x"}})
-        writer.emit({"kind": KIND_TOOL_RESULT, "layer": "tool_interface",
-                     "tool": "read_file", "duration_s": 0.1})
-    writer.emit({"kind": KIND_GUARD_TRIGGERED, "layer": "lifecycle",
-                 "guard": GUARD_STUCK})
-    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
-                 "outcome": "stuck", "termination_reason": "stuck"})
+        writer.emit(
+            {
+                "kind": KIND_TOOL_CALL,
+                "layer": "tool_interface",
+                "tool": "read_file",
+                "args_hash": "abc",
+                "args": {"path": "x"},
+            }
+        )
+        writer.emit(
+            {
+                "kind": KIND_TOOL_RESULT,
+                "layer": "tool_interface",
+                "tool": "read_file",
+                "duration_s": 0.1,
+            }
+        )
+    writer.emit(
+        {"kind": KIND_GUARD_TRIGGERED, "layer": "lifecycle", "guard": GUARD_STUCK}
+    )
+    writer.emit(
+        {
+            "kind": KIND_LOOP_END,
+            "layer": "lifecycle",
+            "outcome": "stuck",
+            "termination_reason": "stuck",
+        }
+    )
     writer.close()
 
 
@@ -125,8 +162,12 @@ def test_accept_harness_rejects_dropped_success_rate(tmp_path):
     baseline = corpus_quality(traces)
 
     # Simulate a post run whose completion rate fell (e.g. corrupted corpus).
-    post = CorpusQuality(success_rate=0.0, mechanism_counts={},
-                         layer_counts={"tool_interface": 1}, total=1)
+    post = CorpusQuality(
+        success_rate=0.0,
+        mechanism_counts={},
+        layer_counts={"tool_interface": 1},
+        total=1,
+    )
     assert should_accept_harness(baseline, post, target_layer="tool_interface") is False
 
 
@@ -171,8 +212,14 @@ def test_corpus_quality_keeps_terse_completed_run(tmp_path):
     traces = tmp_path / "traces"
     traces.mkdir()
     writer = TraceWriter(task_id="terse", directory=traces)
-    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
-                 "outcome": "completed", "termination_reason": "answer"})
+    writer.emit(
+        {
+            "kind": KIND_LOOP_END,
+            "layer": "lifecycle",
+            "outcome": "completed",
+            "termination_reason": "answer",
+        }
+    )
     writer.close()
 
     q = corpus_quality(traces)

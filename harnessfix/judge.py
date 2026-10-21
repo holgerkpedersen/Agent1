@@ -44,7 +44,10 @@ _MARKER_RE = re.compile(r"<<[A-Za-z0-9_.:-]+?>>")
 
 #: Heuristic signals a rubric criterion wants for a "fully satisfied" verdict.
 _MARKER_PHRASES: tuple[str, ...] = (
-    "verbatim", "final answer", "on its own line", "line of its own",
+    "verbatim",
+    "final answer",
+    "on its own line",
+    "line of its own",
 )
 
 
@@ -67,6 +70,7 @@ def _norm(value: Any) -> str:
 # Rule-based criteria
 # ---------------------------------------------------------------------------
 
+
 def _rule_marker_in_response(criterion: str, response: str) -> JudgeVerdict | None:
     """Marker-quoting criteria: every marker the criterion names must appear.
 
@@ -81,13 +85,15 @@ def _rule_marker_in_response(criterion: str, response: str) -> JudgeVerdict | No
     missing = [m for m in markers if _norm(m) not in norm_resp]
     if not missing:
         return JudgeVerdict(
-            1.0, "pass",
+            1.0,
+            "pass",
             f"all {len(markers)} marker(s) quoted verbatim",
         )
     # Partial credit: a fraction of the named markers made it through.
     frac = (len(markers) - len(missing)) / len(markers)
     return JudgeVerdict(
-        round(frac, 4), "fail" if frac < 1.0 else "pass",
+        round(frac, 4),
+        "fail" if frac < 1.0 else "pass",
         f"{len(missing)} of {len(markers)} marker(s) missing from the response",
     )
 
@@ -108,7 +114,8 @@ def _rule_run_tool_used(criterion: str, tools_used: int) -> JudgeVerdict | None:
     # termination is implied by reaching the judge at all; tool count decides.
     ok = tools_used >= 1
     return JudgeVerdict(
-        1.0 if ok else 0.0, "pass" if ok else "fail",
+        1.0 if ok else 0.0,
+        "pass" if ok else "fail",
         f"{tools_used} tool call(s) recorded",
     )
 
@@ -134,7 +141,8 @@ def _rule_write_before_read(criterion: str, response: str) -> JudgeVerdict | Non
             1.0, "pass", f"{len(present)} path(s) referenced in the response"
         )
     return JudgeVerdict(
-        0.5, "fail",
+        0.5,
+        "fail",
         "process order not verifiable from text; partial credit awarded",
     )
 
@@ -142,6 +150,7 @@ def _rule_write_before_read(criterion: str, response: str) -> JudgeVerdict | Non
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
 
 def judge_outcome(
     *,
@@ -202,7 +211,8 @@ def judge_outcome(
             if num:
                 score = max(0.0, min(1.0, float(num.group(0))))
                 return JudgeVerdict(
-                    round(score, 4), "pass" if score >= 0.8 else "fail",
+                    round(score, 4),
+                    "pass" if score >= 0.8 else "fail",
                     f"llm judgement {score:.2f}",
                 )
         except Exception as exc:  # pragma: no cover - fail-open to neutral

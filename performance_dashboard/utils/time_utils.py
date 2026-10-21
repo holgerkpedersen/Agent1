@@ -33,7 +33,9 @@ def compute_duration_spans(start_time: float, end_time: Optional[float]) -> time
     return end_dt - start_dt
 
 
-def format_display_label(dt: Optional[datetime], locale_format: str = "%Y-%m-%d %H:%M:%S UTC") -> str:
+def format_display_label(
+    dt: Optional[datetime], locale_format: str = "%Y-%m-%d %H:%M:%S UTC"
+) -> str:
     """Format a datetime into a human-readable display label.
 
     Args:

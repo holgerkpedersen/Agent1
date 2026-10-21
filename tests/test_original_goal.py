@@ -11,6 +11,7 @@ The fix pins the goal into the system prompt as a dynamic block
 the decision-constraints block, repeats an excerpt in the compaction note when
 messages have to be dropped, and persists it in ``agent_memory.json``.
 """
+
 from __future__ import annotations
 
 import json
@@ -117,10 +118,12 @@ class TestOriginalGoalSurvivesCompaction:
         bot._refresh_system_message()
         # One huge body message blows the char budget on its own, so the trim
         # MUST drop it and leave the compaction note behind.
-        bot._chat_history.append({
-            "role": "user",
-            "content": "x" * (_HISTORY_CHAR_BUDGET + 500),
-        })
+        bot._chat_history.append(
+            {
+                "role": "user",
+                "content": "x" * (_HISTORY_CHAR_BUDGET + 500),
+            }
+        )
         bot._chat_history.append({"role": "assistant", "content": "kort svar"})
         trimmed = _trim_chat_history(list(bot._chat_history), bot._original_goal)
         notes = [
@@ -135,10 +138,12 @@ class TestOriginalGoalSurvivesCompaction:
     def test_trim_note_without_goal_is_unchanged(self, bot: Agent) -> None:
         bot._append_user_turn(GOAL, None)
         bot._refresh_system_message()
-        bot._chat_history.append({
-            "role": "user",
-            "content": "x" * (_HISTORY_CHAR_BUDGET + 500),
-        })
+        bot._chat_history.append(
+            {
+                "role": "user",
+                "content": "x" * (_HISTORY_CHAR_BUDGET + 500),
+            }
+        )
         bot._chat_history.append({"role": "assistant", "content": "kort svar"})
         trimmed = _trim_chat_history(list(bot._chat_history))
         notes = [
@@ -276,7 +281,8 @@ class TestGoalRecoveryFromRestoredHistory:
             {
                 "role": "user",
                 "content": agent._HISTORY_TRIM_NOTE.format(dropped=3)
-                + "\nOriginal task (do not lose sight of it): " + GOAL,
+                + "\nOriginal task (do not lose sight of it): "
+                + GOAL,
             },
             {"role": "user", "content": "senere besked"},
         ]
@@ -357,12 +363,16 @@ NEW_PROMPT = "Refactor the pytest timeout budget code."
 class TestGoalRelevanceHelpers:
     def test_content_tokens_drop_stopwords_and_short_words(self) -> None:
         assert agent._content_tokens("Refactor the pytest timeout code") == {
-            "refactor", "pytest", "timeout", "code",
+            "refactor",
+            "pytest",
+            "timeout",
+            "code",
         }
 
     def test_unrelated_prompts_are_not_related(self, bot: Agent) -> None:
         assert not bot._prompts_related(
-            NEW_PROMPT, [OLD_GOAL],
+            NEW_PROMPT,
+            [OLD_GOAL],
         )
 
     def test_related_prompts_are_related(self, bot: Agent) -> None:
@@ -396,7 +406,8 @@ class TestCrossSessionGoalReplacement:
         assert revived._original_goal.startswith("Compare")
 
     def test_unrelated_first_prompt_replaces_restored_goal(
-        self, bot: Agent,
+        self,
+        bot: Agent,
     ) -> None:
         revived = self._revive(bot)
         revived._ensure_original_goal(NEW_PROMPT)
@@ -406,25 +417,22 @@ class TestCrossSessionGoalReplacement:
         # message stays inline, and the body is archived in memory.
         assert all(m["role"] == "system" for m in revived._chat_history)
         assert revived._prior_chat_history
-        assert any(
-            m.get("content") == OLD_GOAL for m in revived._prior_chat_history
-        )
+        assert any(m.get("content") == OLD_GOAL for m in revived._prior_chat_history)
 
     def test_unrelated_prompt_archives_prior_history_to_disk(
-        self, bot: Agent,
+        self,
+        bot: Agent,
     ) -> None:
         revived = self._revive(bot)
         revived._ensure_original_goal(NEW_PROMPT)
-        prior = (
-            Path(agent.CHAT_HISTORY_JSON_PATH).parent
-            / "chat_history_prior.json"
-        )
+        prior = Path(agent.CHAT_HISTORY_JSON_PATH).parent / "chat_history_prior.json"
         assert prior.exists()
         data = json.loads(prior.read_text(encoding="utf-8"))
         assert any(m.get("content") == OLD_GOAL for m in data)
 
     def test_related_first_prompt_keeps_restored_goal(
-        self, bot: Agent,
+        self,
+        bot: Agent,
     ) -> None:
         bot._append_user_turn("Fix the pytest gate budget bug", None)
         bot._save_memory()
@@ -433,9 +441,9 @@ class TestCrossSessionGoalReplacement:
         revived._ensure_original_goal("Continue fixing the pytest gate budget")
         assert revived._original_goal.startswith("Fix the pytest gate")
         assert not revived._prior_chat_history
-        assert any(
-            m.get("role") == "user" for m in revived._chat_history
-        ), "related prompt must keep the restored conversation inline"
+        assert any(m.get("role") == "user" for m in revived._chat_history), (
+            "related prompt must keep the restored conversation inline"
+        )
 
     def test_short_prompt_keeps_restored_goal(self, bot: Agent) -> None:
         revived = self._revive(bot)
@@ -465,7 +473,8 @@ class TestCrossSessionGoalReplacement:
         assert revived._prior_chat_history == []
 
     def test_chat_nlp_first_turn_replaces_restored_goal_end_to_end(
-        self, bot: Agent,
+        self,
+        bot: Agent,
     ) -> None:
         import asyncio
 

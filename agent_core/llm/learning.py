@@ -229,7 +229,8 @@ def record_turn_outcome(
         if quality is not None:
             success = float(quality) >= QUALITY_SUCCESS_THRESHOLD
         task_type = infer_task_type(
-            user_input, mutated_files=list(mutated_files) if mutated_files else None,
+            user_input,
+            mutated_files=list(mutated_files) if mutated_files else None,
         )
         profile_type = profile_type_for_name(profile_name) or DEFAULT_PROFILE_TYPE
         if success:

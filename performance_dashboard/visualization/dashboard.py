@@ -59,17 +59,13 @@ class LayoutManager:
         Returns hierarchical layout structure for frontend renderers.
         """
         # Sort panels by importance (descending), then group them logically
-        sorted_panels = sorted(
-            self._panels, key=lambda p: (-p.importance, p.group)
-        )
+        sorted_panels = sorted(self._panels, key=lambda p: (-p.importance, p.group))
 
         # Determine grid dimensions based on panel count and max width
         total_width = sum(p.dimensions[0] for p in sorted_panels) or 1200
 
         self._grid_cols = max(1, min(len(sorted_panels), math.ceil(total_width / 400)))
-        self._grid_rows = max(
-            1, math.ceil(len(sorted_panels) / self._grid_cols)
-        )
+        self._grid_rows = max(1, math.ceil(len(sorted_panels) / self._grid_cols))
 
         # Build hierarchical layout with group-based nesting
         groups: dict[str, list[dict[str, Any]]] = {}
@@ -167,15 +163,21 @@ class ThemeApplier:
     }
 
     def apply_theme(
-        self, severity: str = SEVERITY_NORMAL, overrides: Optional[dict[str, Any]] = None
+        self,
+        severity: str = SEVERITY_NORMAL,
+        overrides: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """Apply consistent color scheme and typography based on severity.
 
         Returns theme specification for frontend renderers.
         """
-        colors = dict(self._SEVERITY_COLORS.get(severity, self._SEVERITY_COLORS[SEVERITY_NORMAL]))
+        colors = dict(
+            self._SEVERITY_COLORS.get(severity, self._SEVERITY_COLORS[SEVERITY_NORMAL])
+        )
         typography = dict(
-            self._SEVERITY_TYPOGRAPHY.get(severity, self._SEVERITY_TYPOGRAPHY[SEVERITY_NORMAL])
+            self._SEVERITY_TYPOGRAPHY.get(
+                severity, self._SEVERITY_TYPOGRAPHY[SEVERITY_NORMAL]
+            )
         )
 
         theme: dict[str, Any] = {
@@ -232,7 +234,9 @@ class ResponsiveAdapter:
         detail_level = fidelity_levels.get(fidelity, 2)
 
         # Adjust dimensions for context constraints
-        constrained_width = min(width, self._BREAKPOINTS[context][0]) if width else width
+        constrained_width = (
+            min(width, self._BREAKPOINTS[context][0]) if width else width
+        )
         scale_factor = constrained_width / (self._BREAKPOINTS["desktop"][0] or 1)
 
         return {

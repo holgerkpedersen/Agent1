@@ -9,6 +9,7 @@ exactly that reason: it is the region with the fewest patch-couplings.
 Re-exported by ``agent.py``, so ``from agent import _trim_chat_history`` and
 monkeypatches on ``agent._trim_chat_history`` keep working.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,14 +23,56 @@ from agent_core.memory import original_goal_from_block
 #: (:func:`_content_tokens` / :meth:`Agent._prompts_related`) — glue words
 #: that carry no topic signal, so "refactor the pytest timeout code" vs a
 #: benchmark-comparison goal overlap on nothing topic-bearing.
-_GOAL_TOPIC_STOPWORDS = frozenset({
-    "the", "and", "for", "with", "that", "this", "from", "into", "your",
-    "please", "can", "you", "should", "would", "about", "when", "then",
-    "them", "they", "been", "were", "what", "which", "make", "need",
-    "must", "will", "just", "also", "than", "over", "under", "after",
-    "before", "between", "through", "during", "without", "within",
-    "agent", "session", "task", "prompt", "message", "goal", "user",
-})
+_GOAL_TOPIC_STOPWORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "into",
+        "your",
+        "please",
+        "can",
+        "you",
+        "should",
+        "would",
+        "about",
+        "when",
+        "then",
+        "them",
+        "they",
+        "been",
+        "were",
+        "what",
+        "which",
+        "make",
+        "need",
+        "must",
+        "will",
+        "just",
+        "also",
+        "than",
+        "over",
+        "under",
+        "after",
+        "before",
+        "between",
+        "through",
+        "during",
+        "without",
+        "within",
+        "agent",
+        "session",
+        "task",
+        "prompt",
+        "message",
+        "goal",
+        "user",
+    }
+)
 
 _MAX_CHAT_MESSAGES = 60
 
@@ -106,16 +149,15 @@ def _repair_unanswered_tool_calls(
     removed.  A message left with neither content nor calls is dropped.
     """
     answered = {
-        str(m.get("tool_call_id") or "")
-        for m in messages
-        if m.get("role") == "tool"
+        str(m.get("tool_call_id") or "") for m in messages if m.get("role") == "tool"
     }
     out: list[dict[str, Any]] = []
     for m in messages:
         calls = m.get("tool_calls")
         if m.get("role") == "assistant" and calls:
             kept = [
-                tc for tc in calls
+                tc
+                for tc in calls
                 if isinstance(tc, dict) and str(tc.get("id") or "") in answered
             ]
             if len(kept) != len(calls):
@@ -188,7 +230,8 @@ def _content_tokens(text: str) -> set[str]:
     decide whether a restored goal belongs to the live prompt's task.
     """
     return {
-        t for t in re.findall(r"[a-z0-9_]{3,}", text.lower())
+        t
+        for t in re.findall(r"[a-z0-9_]{3,}", text.lower())
         if t not in _GOAL_TOPIC_STOPWORDS
     }
 
@@ -304,7 +347,8 @@ def _first_user_message_text(
 
 
 def _trim_chat_history(
-    messages: list[dict[str, Any]], goal: str | None = None,
+    messages: list[dict[str, Any]],
+    goal: str | None = None,
 ) -> list[dict[str, Any]]:
     """Keep the conversation within a bounded context; returns a new list.
 
@@ -339,7 +383,7 @@ def _trim_chat_history(
         body = list(messages[1:])
     else:
         head = messages[:1]
-        body = list(messages[-(_MAX_CHAT_MESSAGES - 1):])
+        body = list(messages[-(_MAX_CHAT_MESSAGES - 1) :])
         count_dropped = (len(messages) - 1) - len(body)
 
     # Strip large tool-call arguments from assistant messages in the body:
@@ -368,16 +412,16 @@ def _trim_chat_history(
             role = m.get("role")
             prev_role = body[i - 1].get("role") if i else None
             boundary_safe = not (
-                role == "tool" or prev_role == "assistant" and "tool_calls" in body[i - 1]
+                role == "tool"
+                or prev_role == "assistant"
+                and "tool_calls" in body[i - 1]
             )
             if i == len(body) - 1 or boundary_safe:
                 keep_from = i + 1
         trimmed = body[keep_from:]
         dropped = count_dropped + keep_from
     if not dropped:
-        return _repair_unanswered_tool_calls(
-            _drop_orphan_tool_messages(head + body)
-        )
+        return _repair_unanswered_tool_calls(_drop_orphan_tool_messages(head + body))
     note_content = _HISTORY_TRIM_NOTE.format(dropped=dropped)
     goal_text = " ".join(str(goal).split()) if goal else ""
     if goal_text:
@@ -392,7 +436,7 @@ def _trim_chat_history(
     # The compaction note is a message too — it must not push the result over
     # the count cap (the note replaces what it dropped, it does not add to it).
     if len(head) + 1 + len(trimmed) > _MAX_CHAT_MESSAGES and _MAX_CHAT_MESSAGES > 2:
-        trimmed = trimmed[-(_MAX_CHAT_MESSAGES - 2):]
+        trimmed = trimmed[-(_MAX_CHAT_MESSAGES - 2) :]
     return _repair_unanswered_tool_calls(
         _drop_orphan_tool_messages(head + [note] + trimmed)
     )
@@ -412,11 +456,11 @@ def _strip_image_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         content = m.get("content")
         if isinstance(content, list):
             text_blocks = [
-                b for b in content
-                if isinstance(b, dict) and b.get("type") == "text"
+                b for b in content if isinstance(b, dict) and b.get("type") == "text"
             ]
             image_blocks = [
-                b for b in content
+                b
+                for b in content
                 if isinstance(b, dict) and b.get("type") == "image_url"
             ]
             if not image_blocks:
@@ -432,7 +476,8 @@ def _strip_image_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _project_chat_history(
-    messages: list[dict[str, Any]], goal: str | None = None,
+    messages: list[dict[str, Any]],
+    goal: str | None = None,
 ) -> list[dict[str, Any]]:
     """Project a conversation down to what the NEXT session should see.
 

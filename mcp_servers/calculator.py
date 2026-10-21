@@ -8,6 +8,7 @@ Usage:
 
 Zero external dependencies — stdlib only.
 """
+
 from __future__ import annotations
 
 import ast
@@ -22,10 +23,12 @@ from typing import Any
 
 REQUEST_ID_COUNTER = 0
 
+
 def _next_id() -> int:
     global REQUEST_ID_COUNTER
     REQUEST_ID_COUNTER += 1
     return REQUEST_ID_COUNTER
+
 
 def _parse_message(raw: str) -> dict[str, Any]:
     msg = json.loads(raw)
@@ -33,14 +36,19 @@ def _parse_message(raw: str) -> dict[str, Any]:
         raise ValueError("not a JSON object")
     return msg
 
+
 def _make_response(req_id: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
-def _make_error(req_id: Any, code: int, message: str, data: Any = None) -> dict[str, Any]:
+
+def _make_error(
+    req_id: Any, code: int, message: str, data: Any = None
+) -> dict[str, Any]:
     err: dict[str, Any] = {"code": code, "message": message}
     if data is not None:
         err["data"] = data
     return {"jsonrpc": "2.0", "id": req_id, "error": err}
+
 
 def _write(msg: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(msg, separators=(",", ":")) + "\n")
@@ -176,6 +184,7 @@ TOOLS: list[dict[str, Any]] = [
 # Tool dispatch
 # ---------------------------------------------------------------------------
 
+
 def _execute_tool(name: str, args: dict[str, Any]) -> str:
     """Run a tool and return the result as a string."""
     if name == "add":
@@ -200,6 +209,7 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
 # Message routing
 # ---------------------------------------------------------------------------
 
+
 def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
     """Route an incoming JSON-RPC message; return a response dict (or None for notifications)."""
     req_id = msg.get("id")
@@ -212,11 +222,14 @@ def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
 
     # ---- initialize ----
     if method == "initialize":
-        return _make_response(req_id, {
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": SERVER_CAPABILITIES,
-            "serverInfo": SERVER_INFO,
-        })
+        return _make_response(
+            req_id,
+            {
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": SERVER_CAPABILITIES,
+                "serverInfo": SERVER_INFO,
+            },
+        )
 
     # ---- tools/list ----
     if method == "tools/list":
@@ -230,15 +243,21 @@ def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
             return _make_error(req_id, -32602, "missing tool name")
         try:
             text = _execute_tool(tool_name, arguments)
-            return _make_response(req_id, {
-                "content": [{"type": "text", "text": text}],
-                "isError": False,
-            })
+            return _make_response(
+                req_id,
+                {
+                    "content": [{"type": "text", "text": text}],
+                    "isError": False,
+                },
+            )
         except (KeyError, ValueError, TypeError, ZeroDivisionError, SyntaxError) as exc:
-            return _make_response(req_id, {
-                "content": [{"type": "text", "text": f"Error: {exc}"}],
-                "isError": True,
-            })
+            return _make_response(
+                req_id,
+                {
+                    "content": [{"type": "text", "text": f"Error: {exc}"}],
+                    "isError": True,
+                },
+            )
 
     # ---- unknown method ----
     if req_id is not None:
@@ -250,6 +269,7 @@ def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     """Read newline-delimited JSON-RPC from stdin, write responses to stdout."""

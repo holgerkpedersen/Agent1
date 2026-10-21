@@ -21,7 +21,12 @@ class Orchestrator:
     def __enter__(self) -> "Orchestrator":
         return self
 
-    def __exit__(self, exc_type: Optional[type], exc_val: Optional[BaseException], exc_tb: Optional[Any]) -> None:
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[Any],
+    ) -> None:
         if exc_val is not None:
             self._logger.error("Orchestrator exited with exception: %s", exc_val)
         self.shutdown(wait=True)
@@ -43,7 +48,7 @@ class Orchestrator:
         self,
         reasoning_func: Callable[[int, Any], Any],
         context: Any,
-        num_branches: int = 3
+        num_branches: int = 3,
     ) -> List[int]:
         """
         Dispatches multiple speculative reasoning branches in parallel.

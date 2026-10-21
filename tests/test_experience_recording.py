@@ -21,6 +21,7 @@ only ``CHAT_HISTORY_JSON_PATH``.  A single suite run appended 21 phantom
 now redirects the runtime-state paths; the last class pins that redirection so
 it can never silently regress.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -70,8 +71,10 @@ class TestRecordLlmExperienceDirect:
         bot = Agent(workspace=str(tmp_path))
 
         rowid = bot._record_llm_experience(
-            action="llm_decision", outcome=1.0,
-            context={"model": "m", "verdict": "answer"}, success=True,
+            action="llm_decision",
+            outcome=1.0,
+            context={"model": "m", "verdict": "answer"},
+            success=True,
         )
 
         assert rowid == 1
@@ -86,7 +89,9 @@ class TestRecordLlmExperienceDirect:
         assert len(ts) == 19 and ts[10] == "T"
 
     def test_table_schema_matches_mcp_memory_server(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """The MCP columns must stay byte-identical AND come first.
 
@@ -111,12 +116,14 @@ class TestRecordLlmExperienceDirect:
             conn.close()
         # (cid, name, type, notnull, dflt_value, pk) -> name/type, in order.
         observed = [(r[1], r[2]) for r in info]
-        assert observed[:len(_MCP_EXPERIENCE_COLUMNS)] == _MCP_EXPERIENCE_COLUMNS
-        for row in info[len(_MCP_EXPERIENCE_COLUMNS):]:
+        assert observed[: len(_MCP_EXPERIENCE_COLUMNS)] == _MCP_EXPERIENCE_COLUMNS
+        for row in info[len(_MCP_EXPERIENCE_COLUMNS) :]:
             assert row[3] == 0, f"appended column {row[1]!r} must be nullable"
 
     def test_pre_existing_table_is_reused_not_clobbered(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """A DB already holding MCP-written rows must gain an append, not a reset."""
         mem = tmp_path / "agent_memory.json"
@@ -143,7 +150,9 @@ class TestRecordLlmExperienceDirect:
         assert rows[1][1] == "llm_decision"
 
     def test_out_of_range_outcome_is_rejected_without_writing(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
@@ -165,7 +174,9 @@ class TestRecordLlmExperienceDirect:
         assert [(r[1], r[4]) for r in rows] == [("low", 0), ("high", 1)]
 
     def test_context_is_sorted_json_and_defaults_to_empty_object(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
@@ -179,7 +190,9 @@ class TestRecordLlmExperienceDirect:
         assert rows[1][3] == "{}"
 
     def test_never_raises_on_unwritable_location(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """A bad path must silently no-op (decision #014 / #048 contract)."""
         # Occupy the DERIVED db path with a directory: sqlite3.connect then
@@ -193,7 +206,9 @@ class TestRecordLlmExperienceDirect:
         assert bot._record_llm_experience(action="a", outcome=1.0) is None
 
     def test_never_raises_on_non_numeric_outcome(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         mem = tmp_path / "agent_memory.json"
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
@@ -221,8 +236,10 @@ class TestChatNlpRecordsExperience:
     def _run_turn(self, tmp_path: Path, reply: str) -> tuple[Agent, Path]:
         mem = tmp_path / "agent_memory.json"
         hist = tmp_path / "chat_history.json"
-        with patch("agent.AGENT_MEMORY_JSON_PATH", str(mem)), \
-             patch("agent.CHAT_HISTORY_JSON_PATH", str(hist)):
+        with (
+            patch("agent.AGENT_MEMORY_JSON_PATH", str(mem)),
+            patch("agent.CHAT_HISTORY_JSON_PATH", str(hist)),
+        ):
             bot = Agent(workspace=str(tmp_path))
             bot.llm = _FakeLLM(reply)
             asyncio.run(bot.chat_nlp("hello"))
@@ -356,7 +373,10 @@ class TestRuntimeStateIsolation:
     [(0.0, 0), (0.49, 0), (0.5, 1), (1.0, 1)],
 )
 def test_success_threshold_boundaries(
-    tmp_path: Path, monkeypatch, outcome: float, expected_success: int,
+    tmp_path: Path,
+    monkeypatch,
+    outcome: float,
+    expected_success: int,
 ) -> None:
     mem = tmp_path / "agent_memory.json"
     monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))

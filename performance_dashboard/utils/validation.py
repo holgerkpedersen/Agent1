@@ -49,12 +49,18 @@ class MetricSchemaValidator:
     """Confirm measurements contain required fields with values in acceptable ranges."""
 
     def validate_command_metric(self, metric: CommandMetric) -> bool:
-        if not _within_bounds(float(metric["execution_time_ms"]), NON_NEGATIVE_BOUND, math.inf):
+        if not _within_bounds(
+            float(metric["execution_time_ms"]), NON_NEGATIVE_BOUND, math.inf
+        ):
             raise ValueError("execution_time_ms must be non-negative")
-        if not _within_bounds(float(metric["memory_usage_mb"]), NON_NEGATIVE_BOUND, math.inf):
+        if not _within_bounds(
+            float(metric["memory_usage_mb"]), NON_NEGATIVE_BOUND, math.inf
+        ):
             raise ValueError("memory_usage_mb must be non-negative")
         if not _within_bounds(
-            float(metric["cpu_utilization_percent"]), MIN_CPU_UTILIZATION, MAX_CPU_UTILIZATION
+            float(metric["cpu_utilization_percent"]),
+            MIN_CPU_UTILIZATION,
+            MAX_CPU_UTILIZATION,
         ):
             raise ValueError("cpu_utilization_percent must fall within [0.0, 100.0]")
         if not metric["command_name"]:
@@ -68,7 +74,9 @@ class MetricSchemaValidator:
         return True
 
     def validate_task_metric(self, metric: TaskMetric) -> bool:
-        if not _within_bounds(float(metric["duration_seconds"]), NON_NEGATIVE_BOUND, math.inf):
+        if not _within_bounds(
+            float(metric["duration_seconds"]), NON_NEGATIVE_BOUND, math.inf
+        ):
             raise ValueError("duration_seconds must be non-negative")
         if not _within_bounds(
             float(metric["success_rate"]), SUCCESS_RATE_MINIMUM, SUCCESS_RATE_MAXIMUM
@@ -92,9 +100,7 @@ class MetricSchemaValidator:
         elif "duration_seconds" in inner:
             self.validate_task_metric(inner)  # type: ignore[arg-type]
         else:
-            raise TypeError(
-                "record_type must carry CommandMetric or TaskMetric fields"
-            )
+            raise TypeError("record_type must carry CommandMetric or TaskMetric fields")
         return True
 
 
@@ -102,9 +108,13 @@ class FilterParameterValidator:
     """Query validator enforcing filter parameter bounds checking."""
 
     def validate_filter(self, filter_spec: DashboardFilter) -> bool:
-        if not _within_bounds(float(filter_spec["start_time"]), NON_NEGATIVE_BOUND, math.inf):
+        if not _within_bounds(
+            float(filter_spec["start_time"]), NON_NEGATIVE_BOUND, math.inf
+        ):
             raise ValueError("start_time must be non-negative")
-        if not _within_bounds(float(filter_spec["end_time"]), NON_NEGATIVE_BOUND, math.inf):
+        if not _within_bounds(
+            float(filter_spec["end_time"]), NON_NEGATIVE_BOUND, math.inf
+        ):
             raise ValueError("end_time must be non-negative")
         if filter_spec["end_time"] < filter_spec["start_time"]:
             raise ValueError(
@@ -112,7 +122,8 @@ class FilterParameterValidator:
             )
         if not _within_bounds(
             float(filter_spec["minimum_cpu_utilization"]),
-            MIN_CPU_UTILIZATION, MAX_CPU_UTILIZATION,
+            MIN_CPU_UTILIZATION,
+            MAX_CPU_UTILIZATION,
         ):
             raise ValueError("minimum_cpu_utilization must fall within [0.0, 100.0]")
         if not _within_bounds(
@@ -135,7 +146,8 @@ class ThresholdConsistencyVerifier:
             and operator not in EQUALITY_OPERATORS
         ):
             raise ValueError(
-                "comparison_operator must be one of >, >=, <, <=, =, !=; got %r" % operator
+                "comparison_operator must be one of >, >=, <, <=, =, !=; got %r"
+                % operator
             )
         warning_limit = float(threshold["warning_limit"])
         error_limit = float(threshold["error_limit"])
@@ -157,7 +169,9 @@ class ThresholdConsistencyVerifier:
                 )
         else:  # Equality operators require identical limits to avoid contradictions.
             if warning_limit != error_limit:
-                raise ValueError("equality operators require matching warning and error limits")
+                raise ValueError(
+                    "equality operators require matching warning and error limits"
+                )
         return True
 
 
@@ -174,9 +188,7 @@ def validate_command_metric(
         return False
 
 
-def validate_task_metric(
-    validator: MetricSchemaValidator, metric: TaskMetric
-) -> bool:
+def validate_task_metric(validator: MetricSchemaValidator, metric: TaskMetric) -> bool:
     """True when *metric* passes *validator*'s schema checks."""
     try:
         return bool(validator.validate_task_metric(metric))

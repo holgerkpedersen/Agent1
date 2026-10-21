@@ -1,6 +1,7 @@
 """Regression tests: `model ... -p llama` must work even when the user has
 multiple `llm_providers` configured (which wraps the LlamaProvider in a
 FailoverProvider).  Previously `provider.api_url` raised AttributeError."""
+
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -47,7 +48,9 @@ def _multi_settings():
 def test_build_provider_llama_wrapped_in_failover_when_multi():
     """With >1 llm_providers, build_provider returns a FailoverProvider."""
     settings = _multi_settings()
-    provider = build_provider(settings, "llama/Bonsai-27B-Q1_0", provider_override="llama")
+    provider = build_provider(
+        settings, "llama/Bonsai-27B-Q1_0", provider_override="llama"
+    )
     assert type(provider).__name__ == "FailoverProvider"
     # The helper must unwrap to the concrete LlamaProvider (with api_url).
     concrete = _concrete_llama_provider(provider)
@@ -73,7 +76,9 @@ async def test_switch_llama_unwraps_failover(monkeypatch):
     agent = SimpleNamespace()
     agent.llm = SimpleNamespace()
     agent.llm.model_name = "llama/gemma"
-    agent.llm._provider = build_provider(settings, "llama/gemma", provider_override="llama")
+    agent.llm._provider = build_provider(
+        settings, "llama/gemma", provider_override="llama"
+    )
 
     captured = {}
 
@@ -91,9 +96,7 @@ async def test_switch_llama_unwraps_failover(monkeypatch):
     monkeypatch.setattr(
         "agent_core.llm.llama_server.list_served_models", lambda api_url: ["gemma"]
     )
-    monkeypatch.setattr(
-        "agent_core.llm.llama_server.ensure_model_served", _fake_ensure
-    )
+    monkeypatch.setattr("agent_core.llm.llama_server.ensure_model_served", _fake_ensure)
 
     repo = Path(__file__).resolve().parents[1]
 

@@ -19,6 +19,7 @@ Design decisions pinned by these tests:
 * Abstentions (answers with no parseable ``VERDICT:`` line) are skipped, not
   counted as rejects — same semantics as ``ParallelRun.auto_agree``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -55,6 +56,7 @@ def _settings():
 
 # ── gate_enabled ────────────────────────────────────────────────────────
 
+
 class TestGateEnabled:
     def test_off_by_default(self, tmp_path):
         assert gate_enabled(tmp_path) is False
@@ -70,6 +72,7 @@ class TestGateEnabled:
 
 # ── review_plan: real run_parallel with fake providers ─────────────────
 
+
 class TestReviewPlanQuorum:
     def _run_review(self, tmp_path, texts_by_model, **kw):
         """Run the gate over *texts_by_model* with the pref enabled."""
@@ -80,19 +83,28 @@ class TestReviewPlanQuorum:
 
         models = list(texts_by_model)
         agent = SimpleNamespace(
-            workspace=str(tmp_path), llm=SimpleNamespace(model_name=models[0]),
+            workspace=str(tmp_path),
+            llm=SimpleNamespace(model_name=models[0]),
         )
         with patch("agent_core.llm.parallel.build_provider", side_effect=fake_build):
-            return asyncio.run(review_plan(
-                agent, "# Plan\nDo the thing\n",
-                models=models, settings=_settings(), **kw,
-            ))
+            return asyncio.run(
+                review_plan(
+                    agent,
+                    "# Plan\nDo the thing\n",
+                    models=models,
+                    settings=_settings(),
+                    **kw,
+                )
+            )
 
     def test_unanimous_approval_approves(self, tmp_path):
-        outcome = self._run_review(tmp_path, {
-            "m1": "Fine.\nVERDICT: APPROVE",
-            "m2": "OK\nVERDICT: APPROVE",
-        })
+        outcome = self._run_review(
+            tmp_path,
+            {
+                "m1": "Fine.\nVERDICT: APPROVE",
+                "m2": "OK\nVERDICT: APPROVE",
+            },
+        )
         assert outcome.enabled is True
         assert outcome.approved is True
         assert outcome.recorded == 2
@@ -100,11 +112,14 @@ class TestReviewPlanQuorum:
 
     def test_quorum_not_reached_blocks(self, tmp_path):
         # 1/3 approve < 0.6 quorum -> blocked.
-        outcome = self._run_review(tmp_path, {
-            "m1": "OK\nVERDICT: APPROVE",
-            "m2": "Broken.\nVERDICT: REJECT",
-            "m3": "Broken.\nVERDICT: REJECT",
-        })
+        outcome = self._run_review(
+            tmp_path,
+            {
+                "m1": "OK\nVERDICT: APPROVE",
+                "m2": "Broken.\nVERDICT: REJECT",
+                "m3": "Broken.\nVERDICT: REJECT",
+            },
+        )
         assert outcome.enabled is True
         assert outcome.approved is False
         assert "no consensus" in outcome.consensus.lower()
@@ -124,10 +139,13 @@ class TestReviewPlanQuorum:
 
     def test_abstentions_are_skipped_not_rejects(self, tmp_path):
         # m2 never states a verdict -> abstains; the one real vote approves.
-        outcome = self._run_review(tmp_path, {
-            "m1": "OK\nVERDICT: APPROVE",
-            "m2": "Just prose with no verdict line at all.",
-        })
+        outcome = self._run_review(
+            tmp_path,
+            {
+                "m1": "OK\nVERDICT: APPROVE",
+                "m2": "Just prose with no verdict line at all.",
+            },
+        )
         assert outcome.recorded == 1
         assert outcome.approved is True
 
@@ -139,12 +157,17 @@ class TestReviewPlanQuorum:
             return _VerdictProvider(model_name, text="[Error: server down]")
 
         agent = SimpleNamespace(
-            workspace=str(tmp_path), llm=SimpleNamespace(model_name="m1"),
+            workspace=str(tmp_path),
+            llm=SimpleNamespace(model_name="m1"),
         )
         with patch("agent_core.llm.parallel.build_provider", side_effect=fake_build):
-            outcome = asyncio.run(review_plan(
-                agent, "plan text", settings=_settings(),
-            ))
+            outcome = asyncio.run(
+                review_plan(
+                    agent,
+                    "plan text",
+                    settings=_settings(),
+                )
+            )
         assert outcome.enabled is True
         assert outcome.approved is True  # fail-OPEN on infra failure (documented)
         assert "no usable" in outcome.skipped_reason.lower()
@@ -158,18 +181,25 @@ class TestReviewPlanQuorum:
             return _VerdictProvider(model_name)
 
         agent = SimpleNamespace(
-            workspace=str(tmp_path), llm=SimpleNamespace(model_name="only-one"),
+            workspace=str(tmp_path),
+            llm=SimpleNamespace(model_name="only-one"),
         )
         with patch("agent_core.llm.parallel.build_provider", side_effect=fake_build):
-            outcome = asyncio.run(review_plan(
-                agent, "plan text", settings=_settings(), models=["only-one"],
-            ))
+            outcome = asyncio.run(
+                review_plan(
+                    agent,
+                    "plan text",
+                    settings=_settings(),
+                    models=["only-one"],
+                )
+            )
         assert calls == []  # gate must not even dispatch with <2 models
         assert outcome.approved is True
         assert "two" in outcome.skipped_reason.lower()
 
 
 # ── _nlp_plan_start wiring ─────────────────────────────────────────────
+
 
 class _StubAgent:
     """Minimal Agent stand-in for the plan-tool flow."""
@@ -210,7 +240,9 @@ def _patch_gate_run(run):
         recorder.append(kw)
         return run
 
-    return patch("agent_core.llm.parallel.run_parallel", side_effect=recording), recorder
+    return patch(
+        "agent_core.llm.parallel.run_parallel", side_effect=recording
+    ), recorder
 
 
 def _run_with_verdicts(*verdict_texts: str):
@@ -219,9 +251,14 @@ def _run_with_verdicts(*verdict_texts: str):
 
     run = ParallelRun(template_id="plan-review")
     for i, text in enumerate(verdict_texts):
-        run.results.append(ParallelResult(
-            model=f"m{i + 1}", provider="lmstudio", text=text, ok=True,
-        ))
+        run.results.append(
+            ParallelResult(
+                model=f"m{i + 1}",
+                provider="lmstudio",
+                text=text,
+                ok=True,
+            )
+        )
     return run
 
 
@@ -237,9 +274,7 @@ class TestPlanStartWiring:
         agent.workspace = str(tmp_path)
         agent.llm = SimpleNamespace(model_name="m1")
         with patch("agent_core.config.load_agent_settings", _settings):
-            return asyncio.run(
-                agent._nlp_plan_start(args or {"dry_run": True})
-            )
+            return asyncio.run(agent._nlp_plan_start(args or {"dry_run": True}))
 
     def test_pref_off_no_parallel_call_and_plan_starts(self, plan_ws):
         # Default (pref unset): gate invisible — no run_parallel call.
@@ -254,7 +289,8 @@ class TestPlanStartWiring:
     def test_gate_on_unanimous_approval_starts_with_note(self, plan_ws):
         set_pref(plan_ws, CONSUSUS_GATE_PREF, True)
         run = _run_with_verdicts(
-            "Sound.\nVERDICT: APPROVE", "Fine.\nVERDICT: APPROVE",
+            "Sound.\nVERDICT: APPROVE",
+            "Fine.\nVERDICT: APPROVE",
         )
         patcher, recorder = _patch_gate_run(run)
         with patcher:
@@ -266,7 +302,9 @@ class TestPlanStartWiring:
     def test_gate_on_no_consensus_blocks_and_stays_proposed(self, plan_ws):
         set_pref(plan_ws, CONSUSUS_GATE_PREF, True)
         run = _run_with_verdicts(
-            "OK\nVERDICT: APPROVE", "Bad.\nVERDICT: REJECT", "Bad.\nVERDICT: REJECT",
+            "OK\nVERDICT: APPROVE",
+            "Bad.\nVERDICT: REJECT",
+            "Bad.\nVERDICT: REJECT",
         )
         patcher, recorder = _patch_gate_run(run)
         with patcher:

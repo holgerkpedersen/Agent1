@@ -35,9 +35,19 @@ _STATUSES = {STATUS_ACTIVE, STATUS_SUPERSEDED, STATUS_ARCHIVED}
 # ── Category set (curated from tag inventory) ──────────────────────────────
 
 CATEGORIES = {
-    "security", "architecture", "testing", "tracing",
-    "workflow", "quality", "provider", "concurrency",
-    "documentation", "planning", "git", "ops", "ux",
+    "security",
+    "architecture",
+    "testing",
+    "tracing",
+    "workflow",
+    "quality",
+    "provider",
+    "concurrency",
+    "documentation",
+    "planning",
+    "git",
+    "ops",
+    "ux",
 }
 
 #: Negative-existence phrasings ("no test coverage for X", "untested", ...) —
@@ -101,6 +111,7 @@ def normalize_affected_files(
             continue
         if not (ws / rel).exists():
             from agent_core.commands.doc_paths import find_doc
+
             found = find_doc(str(ws), f.rsplit("/", 1)[-1])
             if found:
                 rel = _canonical_rel(ws, found)
@@ -155,10 +166,21 @@ def save_decisions(workspace: str | Path, decisions: list[dict[str, Any]]) -> No
 #: file under ``.pytest_tmp/`` — cannot be verified against the repository, so
 #: the reference must NOT be reported stale just because another checkout (CI)
 #: does not happen to have that directory.
-_TRANSIENT_TOP_DIRS = frozenset({
-    ".git", "__pycache__", ".pytest_cache", ".pytest_tmp", ".mypy_cache",
-    ".ruff_cache", ".docs", "backups", "reports", "checkpoints", "generated",
-})
+_TRANSIENT_TOP_DIRS = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        ".pytest_cache",
+        ".pytest_tmp",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".docs",
+        "backups",
+        "reports",
+        "checkpoints",
+        "generated",
+    }
+)
 
 
 def _is_transient_ref(path: str) -> bool:
@@ -184,9 +206,9 @@ def find_stale_decisions(
     stale: list[dict[str, Any]] = []
     for d in decisions:
         missing = [
-            f for f in d.get("affected_files", [])
-            if not _is_transient_ref(f)
-            and not (Path(str(workspace)) / f).exists()
+            f
+            for f in d.get("affected_files", [])
+            if not _is_transient_ref(f) and not (Path(str(workspace)) / f).exists()
         ]
         if missing:
             d = dict(d)
@@ -214,9 +236,9 @@ def find_open_contradictions(
         if not contradictions:
             continue
         open_ids = [
-            c["id"] for c in contradictions
-            if isinstance(c, dict)
-            and c.get("status") not in ("resolved", "superseded")
+            c["id"]
+            for c in contradictions
+            if isinstance(c, dict) and c.get("status") not in ("resolved", "superseded")
         ]
         if open_ids:
             d = dict(d)
@@ -370,8 +392,7 @@ def find_overlaps(
     new_files = {
         c
         for c in (
-            _canonical_rel(workspace, f)
-            for f in new_decision.get("affected_files", [])
+            _canonical_rel(workspace, f) for f in new_decision.get("affected_files", [])
         )
         if c
     }
@@ -398,12 +419,7 @@ def build_decision_graph(decisions: list[dict[str, Any]]) -> dict[str, Any]:
             "symbols": {symbol_name: [decision_ids]}
         }
     """
-    graph: dict[str, Any] = {
-        "decisions": {},
-        "files": {},
-        "tags": {},
-        "symbols": {}
-    }
+    graph: dict[str, Any] = {"decisions": {}, "files": {}, "tags": {}, "symbols": {}}
 
     for d in decisions:
         d_id = d["id"]
@@ -554,10 +570,12 @@ async def check_contradictions(
         "Does the new decision contradict any past decision? "
         "Be specific — cite decision IDs."
     )
-    response = await agent.llm.chat([
-        {"role": "system", "content": sys_msg},
-        {"role": "user", "content": user_msg},
-    ])
+    response = await agent.llm.chat(
+        [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": user_msg},
+        ]
+    )
     return response if response else "LLM returned no response."
 
 
@@ -616,10 +634,12 @@ async def resolve_contradictions(
         f"Tags: {', '.join(d2.get('tags', []))}\n\n"
         "Analyze both decisions holistically. Propose a resolution."
     )
-    response = await agent.llm.chat([
-        {"role": "system", "content": sys_msg},
-        {"role": "user", "content": user_msg},
-    ])
+    response = await agent.llm.chat(
+        [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": user_msg},
+        ]
+    )
     return response if response else "LLM returned no response."
 
 
@@ -706,9 +726,16 @@ def annotate_candidates(
                 flagged_tokens.add(tok)
 
     for c in candidates:
-        text = " ".join(filter(None, (
-            c.get("title", ""), c.get("context", ""), c.get("decision", ""),
-        )))
+        text = " ".join(
+            filter(
+                None,
+                (
+                    c.get("title", ""),
+                    c.get("context", ""),
+                    c.get("decision", ""),
+                ),
+            )
+        )
         warnings: list[str] = []
 
         if _NEGATIVE_CLAIM_RE.search(text):
@@ -784,10 +811,13 @@ async def extract_from_analysis(
             "do NOT trust or repeat them):\n"
             f"{verification_report}\n"
         )
-    response = await agent.llm.chat([
-        {"role": "system", "content": sys_msg},
-        {"role": "user", "content": user_msg},
-    ], disable_thinking=True)
+    response = await agent.llm.chat(
+        [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": user_msg},
+        ],
+        disable_thinking=True,
+    )
     return _parse_json_array(response)
 
 
@@ -818,17 +848,18 @@ async def extract_from_changes(
         '  "tags": list of keywords\n\n'
         "Output ONLY valid JSON array, no other text."
     )
-    user_msg = (
-        "## Changed files\n" + "\n".join(f"- {f}" for f in files) + "\n"
-    )
+    user_msg = "## Changed files\n" + "\n".join(f"- {f}" for f in files) + "\n"
     if context:
         user_msg += f"\n## Task context\n{context}\n"
     user_msg += "\nExtract the design decisions embodied in these changes."
 
-    response = await agent.llm.chat([
-        {"role": "system", "content": sys_msg},
-        {"role": "user", "content": user_msg},
-    ], disable_thinking=True)
+    response = await agent.llm.chat(
+        [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": user_msg},
+        ],
+        disable_thinking=True,
+    )
     result = _parse_json_array(response)
     ws = str(Path(agent.workspace).resolve())
     return _filter_candidates(result, ws)
@@ -850,7 +881,7 @@ def decisions_as_system_prompt(workspace: str | Path, files: list[str]) -> str:
         "\n\nCRITICAL DESIGN CONSTRAINTS — past decisions that MUST be respected:",
         "These are design choices already documented for this codebase.",
         "Your implementation MUST NOT contradict any of these decisions.",
-        ""
+        "",
     ]
     for d in decisions:
         warnings = d.get("meta_warnings")
@@ -891,8 +922,13 @@ def _filter_candidates(
         if any(t in tags for t in ("decision-tracking", "decide")):
             continue
         if any(t in ("meta", "tooling") for t in tags) and any(
-            f in ["agent_core/decisions.py", "agent_core/commands/decide_cmd.py",
-                  ".decisions.json"] for f in files
+            f
+            in [
+                "agent_core/decisions.py",
+                "agent_core/commands/decide_cmd.py",
+                ".decisions.json",
+            ]
+            for f in files
         ):
             continue
 
@@ -906,9 +942,9 @@ def _filter_candidates(
 
         # Skip if all affected files already exist AND are in existing decisions
         ws_path = Path(workspace) if isinstance(workspace, str) else workspace
-        all_exist = files and all(
-            (ws_path / f).exists() for f in files
-        ) if files else False
+        all_exist = (
+            files and all((ws_path / f).exists() for f in files) if files else False
+        )
         if all_exist and any(f in existing_files for f in files):
             continue
 

@@ -56,9 +56,7 @@ def test_create_subagent_handler(
 ) -> None:
     """_nlp_create_subagent creates a persistent subagent."""
     a = _make_agent(tmp_path, monkeypatch)
-    result = asyncio.run(
-        a._nlp_create_subagent({"name": "test1", "role": "planner"})
-    )
+    result = asyncio.run(a._nlp_create_subagent({"name": "test1", "role": "planner"}))
     assert "Created subagent" in result
     assert "test1" in result
     assert "planner" in result
@@ -73,9 +71,7 @@ def test_create_subagent_with_workspace(
     a = _make_agent(tmp_path, monkeypatch)
     ws = str(tmp_path / "sub")
     result = asyncio.run(
-        a._nlp_create_subagent(
-            {"name": "ws1", "role": "tester", "workspace": ws}
-        )
+        a._nlp_create_subagent({"name": "ws1", "role": "tester", "workspace": ws})
     )
     assert "Created subagent" in result
     sub = a._subagents["ws1"]
@@ -88,9 +84,7 @@ def test_create_subagent_duplicate_name(
     """_nlp_create_subagent rejects duplicate names."""
     a = _make_agent(tmp_path, monkeypatch)
     asyncio.run(a._nlp_create_subagent({"name": "dup", "role": "planner"}))
-    result = asyncio.run(
-        a._nlp_create_subagent({"name": "dup", "role": "planner"})
-    )
+    result = asyncio.run(a._nlp_create_subagent({"name": "dup", "role": "planner"}))
     assert "already exists" in result
 
 
@@ -99,9 +93,7 @@ def test_create_subagent_unknown_role(
 ) -> None:
     """_nlp_create_subagent rejects unknown roles."""
     a = _make_agent(tmp_path, monkeypatch)
-    result = asyncio.run(
-        a._nlp_create_subagent({"name": "x", "role": "nonexistent"})
-    )
+    result = asyncio.run(a._nlp_create_subagent({"name": "x", "role": "nonexistent"}))
     assert "unknown role" in result
 
 
@@ -168,6 +160,7 @@ def test_tools_registered_in_dispatch_table() -> None:
 def test_tools_in_schemas() -> None:
     """New tools have schemas in NLP_TOOL_SCHEMAS."""
     from agent_core.tool_schemas import NLP_TOOL_SCHEMAS, NLP_TOOL_NAMES
+
     assert "create_subagent" in NLP_TOOL_NAMES
     assert "run_subagent_task" in NLP_TOOL_NAMES
     schemas_by_name = {s["function"]["name"]: s for s in NLP_TOOL_SCHEMAS}

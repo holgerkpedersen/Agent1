@@ -16,6 +16,7 @@ answer in text." - any test pinning it would break, so the guard scans for
 it before applying.  The PINNED prefix "NOTE: This exact call has now been
 executed" (tests/test_tool_loop_nlp.py) is preserved byte-for-byte.
 """
+
 from __future__ import annotations
 
 import py_compile
@@ -25,9 +26,7 @@ STUCK_REPEAT_REPAIR_ID = "stuck-repeat-tool-hints"
 
 #: Runtime string fragments this repair alters - the collision guard scans
 #: the test suite for these BEFORE applying (assertions pin runtime output).
-COLLISION_FRAGMENTS: tuple[str, ...] = (
-    "Take a different action or answer in text.",
-)
+COLLISION_FRAGMENTS: tuple[str, ...] = ("Take a different action or answer in text.",)
 
 _TARGET = Path("agent_core/llm/tool_loop.py")
 
@@ -41,7 +40,7 @@ _ANCHOR = '_PATH_MISS_PREFIXES = ("File not found:", "Error reading file:")'
 #: A distinctive line from the hint block, used as an apply/revert state
 #: sentinel so a half-applied tree fails loudly instead of silently.
 _HINT_SENTINEL = "_REPEAT_HINTS: dict[str, str] = {"
-_HINT_BLOCK = '''#: Steering hints appended to the SECOND-consecutive-identical-call note
+_HINT_BLOCK = """#: Steering hints appended to the SECOND-consecutive-identical-call note
 #: (repair stuck-repeat-tool-hints): the model still has budget at strike two,
 #: so a concrete alternative beats waiting for the third strike to stop the
 #: loop.  Keys are tool names; anything unmapped falls back to the default.
@@ -68,7 +67,7 @@ _REPEAT_HINT_DEFAULT = (
     "give your final answer now."
 )
 
-'''
+"""
 
 #: Second-strike suffix: original (reverted) vs hint-routed (applied).
 _OLD_LINE = '"identical. Take a different action or answer in text."'

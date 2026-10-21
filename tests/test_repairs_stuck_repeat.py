@@ -14,6 +14,7 @@ Two pieces are covered here:
    interpreter (subprocess) so the repaired source - not a stale import -
    is what executes.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,8 +25,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
-pytestmark = pytest.mark.harnessfix_self_test
 
 from harnessfix import gates
 from harnessfix.diagnose import diagnose_graph
@@ -38,13 +37,6 @@ from harnessfix.repairs.stuck_repeat import (
     RepairApplyError,
     revert as revert_stuck,
 )
-
-# The real source file, captured at import time (before the root conftest
-# fixture redirects the module's ``_TARGET`` to a temp copy).  These runtime
-# tests apply the repair to the REAL tree -- and restore it -- so the fresh
-# subprocess interpreter executes the repaired source.  The module is marked
-# ``harnessfix_self_test`` so the autonomous gate never runs it mid-loop.
-_REAL_TOOL_LOOP = Path("agent_core/llm/tool_loop.py").resolve()
 from harnessfix.tracing import (
     KIND_GUARD_TRIGGERED,
     KIND_LLM_RESPONSE,
@@ -56,6 +48,15 @@ from harnessfix.tracing import (
     LAYER_TOOL_INTERFACE,
     TraceWriter,
 )
+
+# The real source file, captured at import time (before the root conftest
+# fixture redirects the module's ``_TARGET`` to a temp copy).  These runtime
+# tests apply the repair to the REAL tree -- and restore it -- so the fresh
+# subprocess interpreter executes the repaired source.  The module is marked
+# ``harnessfix_self_test`` so the autonomous gate never runs it mid-loop.
+pytestmark = pytest.mark.harnessfix_self_test
+_REAL_TOOL_LOOP = Path("agent_core/llm/tool_loop.py").resolve()
+
 
 @pytest.fixture(autouse=True)
 def _clean_real_tree_stuck():
@@ -100,7 +101,11 @@ def _graph(steps: list[tuple[str, str, dict]]) -> TraceGraph:
 
 
 def _loop_end(outcome: str = "completed") -> tuple[str, str, dict]:
-    return KIND_LOOP_END, LAYER_LIFECYCLE, {"outcome": outcome, "termination_reason": outcome}
+    return (
+        KIND_LOOP_END,
+        LAYER_LIFECYCLE,
+        {"outcome": outcome, "termination_reason": outcome},
+    )
 
 
 _DRIVER = textwrap.dedent(
@@ -281,7 +286,11 @@ def test_model_quoting_tracer_marker_is_not_context_pressure():
                 LAYER_CONTEXT,
                 {"text": "Here is the section...[truncated 1423 chars]... end."},
             ),
-            (KIND_TOOL_ERROR, LAYER_TOOL_INTERFACE, {"exception": "OSError", "message": "disk"}),
+            (
+                KIND_TOOL_ERROR,
+                LAYER_TOOL_INTERFACE,
+                {"exception": "OSError", "message": "disk"},
+            ),
             _loop_end("cap"),
         ]
     )
@@ -297,9 +306,16 @@ def test_system_note_with_truncation_marker_still_maps_to_context():
             (
                 KIND_GUARD_TRIGGERED,
                 LAYER_LIFECYCLE,
-                {"guard": "budget_exhausted", "note": "context truncated to fit budget"},
+                {
+                    "guard": "budget_exhausted",
+                    "note": "context truncated to fit budget",
+                },
             ),
-            (KIND_TOOL_ERROR, LAYER_TOOL_INTERFACE, {"exception": "OSError", "message": "disk"}),
+            (
+                KIND_TOOL_ERROR,
+                LAYER_TOOL_INTERFACE,
+                {"exception": "OSError", "message": "disk"},
+            ),
             _loop_end("cap"),
         ]
     )
@@ -489,12 +505,31 @@ def test_unmapped_tools_get_the_default_hint(applied_stuck_repair):
 def _write_stuck_trace(traces_dir: Path, task_id: str) -> None:
     writer = TraceWriter(task_id=task_id, directory=traces_dir)
     for _ in range(3):
-        writer.emit({"kind": KIND_TOOL_CALL, "layer": "tool_interface",
-                     "tool": "read", "args_hash": "a"})
-    writer.emit({"kind": KIND_GUARD_TRIGGERED, "layer": "lifecycle",
-                 "guard": "stuck", "iteration": 3, "note": "repeated"})
-    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
-                 "outcome": "stuck", "termination_reason": "stuck"})
+        writer.emit(
+            {
+                "kind": KIND_TOOL_CALL,
+                "layer": "tool_interface",
+                "tool": "read",
+                "args_hash": "a",
+            }
+        )
+    writer.emit(
+        {
+            "kind": KIND_GUARD_TRIGGERED,
+            "layer": "lifecycle",
+            "guard": "stuck",
+            "iteration": 3,
+            "note": "repeated",
+        }
+    )
+    writer.emit(
+        {
+            "kind": KIND_LOOP_END,
+            "layer": "lifecycle",
+            "outcome": "stuck",
+            "termination_reason": "stuck",
+        }
+    )
     writer.close()
 
 
@@ -503,7 +538,6 @@ def test_loop_now_proposes_a_lifecycle_repair_for_stuck_traces(tmp_path, monkeyp
     repair existed); now choose_repair finds stuck-repeat-tool-hints and the
     full gate path runs with it."""
     import harnessfix.repairs.stuck_repeat as mod
-
 
     traces_dir = tmp_path / "traces"
     traces_dir.mkdir()

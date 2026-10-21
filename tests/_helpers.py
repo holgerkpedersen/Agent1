@@ -5,6 +5,7 @@ matching, catalog lookups, and provider routing stay meaningful.  When the
 env var ``AGENT_OPENCODE_MODEL`` is set (CI / .env), the helper returns that
 value instead — giving one knob to retarget all model-aware tests at once.
 """
+
 from __future__ import annotations
 
 import os

@@ -17,6 +17,7 @@ Contract under test:
 4. with no ``stream_fn`` (the default) behaviour is byte-identical: the
    blocking call serves the final answer and nothing is marked streamed.
 """
+
 from __future__ import annotations
 
 from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
@@ -39,8 +40,11 @@ async def _execute_tool(name, args):
 
 def _runner(**kwargs) -> ToolLoopRunner:
     return ToolLoopRunner(
-        max_iterations=10, no_mutation_limit=1, force_after_no_mutation=2,
-        display_mode=DisplayMode.QUIET, **kwargs,
+        max_iterations=10,
+        no_mutation_limit=1,
+        force_after_no_mutation=2,
+        display_mode=DisplayMode.QUIET,
+        **kwargs,
     )
 
 
@@ -55,7 +59,8 @@ class TestForcedSynthesisStreams:
 
         runner = _runner()
         final_text, _ = _loop_runner_sync(
-            runner, fake, _execute_tool, stream_fn=stream_fn)
+            runner, fake, _execute_tool, stream_fn=stream_fn
+        )
 
         assert final_text == "Streamet slutsvar."
         assert runner.final_answer_streamed is True
@@ -77,12 +82,14 @@ class TestForcedSynthesisStreams:
 
         runner = _runner()
         final_text, messages = _loop_runner_sync(
-            runner, fake, _execute_tool, stream_fn=stream_fn)
+            runner, fake, _execute_tool, stream_fn=stream_fn
+        )
 
         assert final_text == "Streamet svar."
         # Exactly one assistant message carries the answer.
         answers = [
-            m for m in messages
+            m
+            for m in messages
             if m.get("role") == "assistant"
             and "Streamet svar." in str(m.get("content"))
         ]
@@ -98,7 +105,8 @@ class TestStreamingFailsOpen:
 
         runner = _runner()
         final_text, _ = _loop_runner_sync(
-            runner, fake, _execute_tool, stream_fn=stream_fn)
+            runner, fake, _execute_tool, stream_fn=stream_fn
+        )
 
         assert final_text == "Blocking answer."
         assert runner.final_answer_streamed is False
@@ -113,7 +121,8 @@ class TestStreamingFailsOpen:
 
         runner = _runner()
         final_text, _ = _loop_runner_sync(
-            runner, fake, _execute_tool, stream_fn=stream_fn)
+            runner, fake, _execute_tool, stream_fn=stream_fn
+        )
 
         assert final_text == "Blocking retry."
         assert runner.final_answer_streamed is False
@@ -126,7 +135,8 @@ class TestStreamingFailsOpen:
 
         runner = _runner()
         final_text, _ = _loop_runner_sync(
-            runner, fake, _execute_tool, stream_fn=stream_fn)
+            runner, fake, _execute_tool, stream_fn=stream_fn
+        )
 
         assert final_text == "Blocking answer."
         assert runner.final_answer_streamed is False
@@ -158,7 +168,8 @@ class TestProviderErrorSentinelIsNotAnAnswer:
 
         runner = _runner()
         final_text, _ = _loop_runner_sync(
-            runner, fake, _execute_tool, stream_fn=stream_fn)
+            runner, fake, _execute_tool, stream_fn=stream_fn
+        )
 
         assert final_text == "Real answer."
         assert runner.final_answer_streamed is False
@@ -171,7 +182,8 @@ class TestProviderErrorSentinelIsNotAnAnswer:
 
         runner = _runner()
         final_text, _ = _loop_runner_sync(
-            runner, fake, _execute_tool, stream_fn=stream_fn)
+            runner, fake, _execute_tool, stream_fn=stream_fn
+        )
 
         assert final_text == "Real answer."
         assert runner.final_answer_streamed is False
@@ -184,7 +196,8 @@ class TestProviderErrorSentinelIsNotAnAnswer:
 
         runner = _runner()
         final_text, _ = _loop_runner_sync(
-            runner, fake, _execute_tool, stream_fn=stream_fn)
+            runner, fake, _execute_tool, stream_fn=stream_fn
+        )
 
         assert final_text == "Real answer."
         assert runner.final_answer_streamed is False
@@ -200,7 +213,8 @@ class TestProviderErrorSentinelIsNotAnAnswer:
 
         runner = _runner()
         final_text, _ = _loop_runner_sync(
-            runner, fake, _execute_tool, stream_fn=stream_fn)
+            runner, fake, _execute_tool, stream_fn=stream_fn
+        )
 
         assert final_text == prose
         assert runner.final_answer_streamed is True

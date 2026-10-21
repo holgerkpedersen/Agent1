@@ -21,14 +21,16 @@ from agent import Agent
 
 def _make_agent() -> Agent:
     """Construct a fully-mocked Agent (mirrors test_clear_history.py)."""
-    with patch("agent.LLMClient"), \
-         patch("agent.resolve_model", return_value="mock-model"), \
-         patch("agent.to_windows_path", side_effect=lambda x: x), \
-         patch("agent.FullRunGate") as gate_cls, \
-         patch("agent.FileSystem"), \
-         patch("agent.FileSearcher"), \
-         patch("agent.ToolDispatcher"), \
-         patch("agent.load_agent_settings", return_value={}):
+    with (
+        patch("agent.LLMClient"),
+        patch("agent.resolve_model", return_value="mock-model"),
+        patch("agent.to_windows_path", side_effect=lambda x: x),
+        patch("agent.FullRunGate") as gate_cls,
+        patch("agent.FileSystem"),
+        patch("agent.FileSearcher"),
+        patch("agent.ToolDispatcher"),
+        patch("agent.load_agent_settings", return_value={}),
+    ):
         agent = Agent(workspace=".")
     # The patched class is a MagicMock: the instance assigned in __init__
     # records calls, so we can assert reset() was invoked by clear_history.

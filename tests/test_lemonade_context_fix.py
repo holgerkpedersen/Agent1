@@ -3,6 +3,7 @@
 These tests drive the real ``LemonadeProvider.chat`` code path with the HTTP
 layer stubbed out, so they do not depend on a running Lemonade server.
 """
+
 import asyncio
 
 from agent_core.llm.lemonade_provider import LemonadeProvider
@@ -21,7 +22,9 @@ def _make_provider(context_length):
         if method == "GET" and url.endswith("/models"):
             if context_length is None:
                 raise OSError("server unreachable")
-            return {"data": [{"id": "qwen3.5-9b-FLM", "context_length": context_length}]}
+            return {
+                "data": [{"id": "qwen3.5-9b-FLM", "context_length": context_length}]
+            }
         captured.append(payload)
         return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
 

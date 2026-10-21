@@ -18,6 +18,7 @@ Read-only contract: this module never calls the LLM and never opens any file
 for writing outside its own unit tests.  Trace strings are never eval/exec'd —
 only the numeric ``duration_s`` and the string ``outcome`` are read.
 """
+
 from __future__ import annotations
 
 import os
@@ -178,7 +179,9 @@ class EvolutionMetricsScorer:
         # the full base), so the two can never contradict each other.
         success = score > 0.0
         latency = _run_latency_s(events)
-        self._metrics.record(ExecutionMetric(score=score, success=success, latency=latency))
+        self._metrics.record(
+            ExecutionMetric(score=score, success=success, latency=latency)
+        )
         return score
 
     def record_trace_file(self, path: str | os.PathLike[str]) -> float | None:

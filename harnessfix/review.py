@@ -61,9 +61,9 @@ def load_reviews(path: Path) -> dict[str, ReviewRecord]:
     for item in data:
         if not isinstance(item, dict) or not item.get("task_id"):
             continue
-        reviews[item["task_id"]] = ReviewRecord(**{
-            k: v for k, v in item.items() if k in ReviewRecord.__dataclass_fields__
-        })
+        reviews[item["task_id"]] = ReviewRecord(
+            **{k: v for k, v in item.items() if k in ReviewRecord.__dataclass_fields__}
+        )
     return reviews
 
 
@@ -234,9 +234,7 @@ def review_table(reviews: dict[str, ReviewRecord]) -> str:
     """Compact table of every review record for the REPL."""
     if not reviews:
         return "No reviews yet — run `review refresh` first."
-    header = (
-        f"{'task_id':<36} {'disp':<11} {'model':<20} {'layer':<24} outcome"
-    )
+    header = f"{'task_id':<36} {'disp':<11} {'model':<20} {'layer':<24} outcome"
     lines = [header, "-" * len(header)]
     for rec in sorted(reviews.values(), key=lambda r: r.task_id):
         disp = rec.disposition or "-"

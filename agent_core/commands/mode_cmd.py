@@ -6,6 +6,7 @@ enforced in the NLP tool loop (schema filtering + executor rejection, see
 :mod:`agent_core.modes`), so while it is active no file in the workspace
 can be changed by the agent.
 """
+
 from __future__ import annotations
 
 from .base import Command
@@ -33,7 +34,7 @@ class ModeCommand(Command):
             "  Mode is per-session state; a restart returns to build."
         )
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         if not args or args[0].lower() in ("show", "status"):
             label = "plan" if agent.is_plan_mode() else "build"
             print(f"Current mode: {label}")

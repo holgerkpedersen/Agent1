@@ -23,6 +23,7 @@ Design rules
 * Outcomes are ``correct`` / ``incorrect`` (the truth value a caller knows
   afterwards, e.g. a human review disposition or a later gate result).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -49,7 +50,10 @@ OUTCOME_VALUES: tuple[str, ...] = (CORRECT, INCORRECT)
 def logging_disabled() -> bool:
     """True when ``AGENT_NO_JEV_LOG`` opts out of telemetry."""
     return os.environ.get(DISABLE_ENV, "").strip().lower() in (
-        "1", "true", "yes", "on",
+        "1",
+        "true",
+        "yes",
+        "on",
     )
 
 
@@ -125,7 +129,9 @@ def record_decision(
 
 
 def load_decisions(
-    *, workspace: str | None = None, last: int | None = None,
+    *,
+    workspace: str | None = None,
+    last: int | None = None,
 ) -> list[dict[str, Any]]:
     """Read the ledger (oldest first); unreadable/malformed lines are skipped."""
     path = log_path(workspace)
@@ -205,7 +211,8 @@ def _p_yes(record: dict[str, Any]) -> float | None:
 
 
 def calibration_bins(
-    records: list[dict[str, Any]], width: float = 0.1,
+    records: list[dict[str, Any]],
+    width: float = 0.1,
 ) -> list[dict[str, Any]]:
     """Predicted-vs-observed bins for labeled yesno decisions.
 
@@ -233,12 +240,14 @@ def calibration_bins(
     for low in sorted(buckets):
         entry = buckets[low]
         n = int(entry["n"])
-        report.append({
-            "bin": f"{low:.1f}-{low + width:.1f}",
-            "n": n,
-            "predicted": entry["predicted"] / n,
-            "observed": entry["correct"] / n,
-        })
+        report.append(
+            {
+                "bin": f"{low:.1f}-{low + width:.1f}",
+                "n": n,
+                "predicted": entry["predicted"] / n,
+                "observed": entry["correct"] / n,
+            }
+        )
     return report
 
 
@@ -268,9 +277,7 @@ def suggest_threshold(
         return None
     best: dict[str, Any] | None = None
     for threshold in thresholds:
-        correct = sum(
-            1 for p_yes, truth in labeled if (p_yes >= threshold) == truth
-        )
+        correct = sum(1 for p_yes, truth in labeled if (p_yes >= threshold) == truth)
         accuracy = correct / len(labeled)
         if best is None or accuracy > best["accuracy"]:
             best = {

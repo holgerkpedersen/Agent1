@@ -1,35 +1,41 @@
 """Tests for deterministic code-claim verification of LLM-generated analysis."""
+
 import asyncio
 import re
 from pathlib import Path
 
-from agent_core.commands.analysis_verifier import VerificationResult, verify_analysis_claims
+from agent_core.commands.analysis_verifier import (
+    VerificationResult,
+    verify_analysis_claims,
+)
 
-_AGENT_PY = "\n".join([
-    '"""Sample agent module for verification tests."""',
-    "import subprocess",
-    "",
-    "def _execute_nlp_tool(self):",
-    "    result = subprocess.run(",
-    "        cmd_to_run,",
-    "        shell=True,",
-    "    )",
-    "    return result",
-    "",
-    "class FileSystem:",
-    "    def read(self, path: str):",
-    "        local_path = self._safe_path(path)",
-    "        with open(local_path) as f:",
-    "            return f.read()",
-    "",
-    "def _safe_path(self, path: str) -> str:",
-    "    if path.startswith('./'):",
-    "        path = path[2:]",
-    "    return path",
-    "",
-    "_FORBIDDEN_PATTERNS = ('eval(',)",
-    *[f"filler_{i} = {i}" for i in range(40)],
-])
+_AGENT_PY = "\n".join(
+    [
+        '"""Sample agent module for verification tests."""',
+        "import subprocess",
+        "",
+        "def _execute_nlp_tool(self):",
+        "    result = subprocess.run(",
+        "        cmd_to_run,",
+        "        shell=True,",
+        "    )",
+        "    return result",
+        "",
+        "class FileSystem:",
+        "    def read(self, path: str):",
+        "        local_path = self._safe_path(path)",
+        "        with open(local_path) as f:",
+        "            return f.read()",
+        "",
+        "def _safe_path(self, path: str) -> str:",
+        "    if path.startswith('./'):",
+        "        path = path[2:]",
+        "    return path",
+        "",
+        "_FORBIDDEN_PATTERNS = ('eval(',)",
+        *[f"filler_{i} = {i}" for i in range(40)],
+    ]
+)
 
 
 class TestVerifyAnalysisClaims:
@@ -47,7 +53,9 @@ class TestVerifyAnalysisClaims:
     def _build_ws(tmp_path: Path) -> Path:
         (tmp_path / "agent.py").write_text(_AGENT_PY, encoding="utf-8")
         (tmp_path / "tools").mkdir()
-        (tmp_path / "tools" / "util.py").write_text("def util_fn():\n    pass\n", encoding="utf-8")
+        (tmp_path / "tools" / "util.py").write_text(
+            "def util_fn():\n    pass\n", encoding="utf-8"
+        )
         security = tmp_path / "agent_core" / "security"
         security.mkdir(parents=True)
         (security / "path_utils.py").write_text(
@@ -91,7 +99,9 @@ class TestVerifyAnalysisClaims:
 
     def test_absence_claim_confirmed_clean(self, tmp_path: Path) -> None:
         ws = self._build_ws(tmp_path)
-        result = asyncio.run(self._verify(ws, "`_is_safe_extension` is not called anywhere."))
+        result = asyncio.run(
+            self._verify(ws, "`_is_safe_extension` is not called anywhere.")
+        )
         assert result.checked >= 1
         assert result.flagged == 0
         assert "0 flagged" in result.text
@@ -136,7 +146,9 @@ class TestVerifyAnalysisClaims:
             "`FileSystem.read` duplicate path normalization."
         )
         result = asyncio.run(self._verify(ws, analysis))
-        assert not any("claimed line 86" in flag for flag in self._flagged_lines(result))
+        assert not any(
+            "claimed line 86" in flag for flag in self._flagged_lines(result)
+        )
 
     def test_stdlib_symbol_not_flagged(self, tmp_path: Path) -> None:
         ws = self._build_ws(tmp_path)
@@ -181,12 +193,16 @@ class TestVerifyAnalysisClaims:
 
     def test_constants_are_recognized_symbols(self, tmp_path: Path) -> None:
         ws = self._build_ws(tmp_path)
-        result = asyncio.run(self._verify(ws, "`_FORBIDDEN_PATTERNS` guards the sanitizer."))
+        result = asyncio.run(
+            self._verify(ws, "`_FORBIDDEN_PATTERNS` guards the sanitizer.")
+        )
         assert result.flagged == 0
 
     def test_symbol_without_file_context_uses_workspace(self, tmp_path: Path) -> None:
         ws = self._build_ws(tmp_path)
-        result = asyncio.run(self._verify(ws, "`util_fn` is reused across the codebase."))
+        result = asyncio.run(
+            self._verify(ws, "`util_fn` is reused across the codebase.")
+        )
         assert result.flagged == 0
 
     def test_annotated_self_attribute_recognized(self, tmp_path: Path) -> None:
@@ -200,7 +216,9 @@ class TestVerifyAnalysisClaims:
             "        self._knowledge_graph: dict[str, Any] = {}\n",
             encoding="utf-8",
         )
-        result = asyncio.run(self._verify(ws, "`_knowledge_graph` holds cross-session state."))
+        result = asyncio.run(
+            self._verify(ws, "`_knowledge_graph` holds cross-session state.")
+        )
         assert result.flagged == 0
 
     def test_multi_file_segment_symbol_ok(self, tmp_path: Path) -> None:
@@ -218,7 +236,9 @@ class TestVerifyAnalysisClaims:
             "    def normalize_path(self, path):\n        return path\n",
             encoding="utf-8",
         )
-        (ws / "tool_router.py").write_text("class ShellCommandHandler:\n    pass\n", encoding="utf-8")
+        (ws / "tool_router.py").write_text(
+            "class ShellCommandHandler:\n    pass\n", encoding="utf-8"
+        )
         analysis = (
             "**DRY violation**: `_normalize_path`, `FileSystem.normalize_path`, `_safe_path`, "
             "`_resolve_nlp_path` all reimplement path resolution; `tool_router.py` ShellCommandHandler "
@@ -232,12 +252,13 @@ class TestVerifyAnalysisClaims:
         reported as OK (not flagged — it's real, just mis-attributed)."""
         ws = self._build_ws(tmp_path)
         (ws / "agent.py").write_text(
-            "class Agent:\n"
-            "    def _normalize_path(self, path):\n        return path\n",
+            "class Agent:\n    def _normalize_path(self, path):\n        return path\n",
             encoding="utf-8",
         )
         (ws / "tool_router.py").write_text("x = 1\n", encoding="utf-8")
-        result = asyncio.run(self._verify(ws, "`tool_router.py` reuses `_normalize_path`."))
+        result = asyncio.run(
+            self._verify(ws, "`tool_router.py` reuses `_normalize_path`.")
+        )
         assert result.flagged == 0
 
     def test_package_module_dotted_ref_resolves(self, tmp_path: Path) -> None:
@@ -262,7 +283,9 @@ class TestWriteVerifiedAnalysis:
         (tmp_path / "agent.py").write_text(_AGENT_PY, encoding="utf-8")
         analysis_md = str(tmp_path / "project_analysis.md")
         analysis = "The bug is in `non_existent.py`."
-        written, checked, flagged = asyncio.run(_write_verified_analysis(analysis, analysis_md, tmp_path))
+        written, checked, flagged = asyncio.run(
+            _write_verified_analysis(analysis, analysis_md, tmp_path)
+        )
         assert written == Path(analysis_md).read_text(encoding="utf-8")
         assert "## Verification Report" in written
         assert "[UNVERIFIED]" in written
@@ -276,7 +299,9 @@ class TestWriteVerifiedAnalysis:
         analysis_md = str(tmp_path / "project_analysis.md")
         with open(analysis_md, "w", encoding="utf-8") as f:
             f.write("placeholder")
-        written, checked, flagged = asyncio.run(_write_verified_analysis("No code references here.", analysis_md, tmp_path))
+        written, checked, flagged = asyncio.run(
+            _write_verified_analysis("No code references here.", analysis_md, tmp_path)
+        )
         assert written == "No code references here."
         assert checked == 0
         assert flagged == 0

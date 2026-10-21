@@ -58,11 +58,24 @@ if TYPE_CHECKING:  # import cycle: harnessfix.gate reads this module back
     from harnessfix.judge import JudgeVerdict
 
 __all__ = [
-    "MARKER_TOKEN", "PASS_THRESHOLD", "RunOutcome", "Scenario",
-    "ScenarioResult", "TransportFactory", "build_main_surface", "main",
-    "make_agent", "parse_args", "print_trend", "run_scenarios",
-    "run_tool_loop", "run_agentic_gate", "load_report_snapshots",
-    "save_report", "SCENARIOS", "DEFAULT_REPETITIONS",
+    "MARKER_TOKEN",
+    "PASS_THRESHOLD",
+    "RunOutcome",
+    "Scenario",
+    "ScenarioResult",
+    "TransportFactory",
+    "build_main_surface",
+    "main",
+    "make_agent",
+    "parse_args",
+    "print_trend",
+    "run_scenarios",
+    "run_tool_loop",
+    "run_agentic_gate",
+    "load_report_snapshots",
+    "save_report",
+    "SCENARIOS",
+    "DEFAULT_REPETITIONS",
 ]
 
 
@@ -84,9 +97,14 @@ _GATE_MAX_ITERATIONS = 150
 #: Tool names that delegate work to other agents. The benchmark measures how
 #: the MAIN loop completes a task on its own, so these are never advertised
 #: to a scenario run and must never be executed by one.
-DELEGATION_TOOLS: frozenset[str] = frozenset({
-    "delegate", "delegate_batch", "create_subagent", "run_subagent_task",
-})
+DELEGATION_TOOLS: frozenset[str] = frozenset(
+    {
+        "delegate",
+        "delegate_batch",
+        "create_subagent",
+        "run_subagent_task",
+    }
+)
 
 
 def report_path() -> Path:
@@ -109,15 +127,16 @@ class TransportFactory(Protocol):
 # Scenario bank
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Scenario:
     """One multi-step benchmark task with a weighted rubric to score it by."""
 
-    id: str          # stable slug (scn-<category>-<n>) used in CLI filters
-    category: str    # shell, file_edit, git, mcp, multi_tool, ... (lower-case)
-    style: str       # instruction style this scenario exercises
-    prompt: str      # task text handed to the agent (contains MARKER_TOKEN)
-    expected_outcome: str   # what a clean run must show (names the marker)
+    id: str  # stable slug (scn-<category>-<n>) used in CLI filters
+    category: str  # shell, file_edit, git, mcp, multi_tool, ... (lower-case)
+    style: str  # instruction style this scenario exercises
+    prompt: str  # task text handed to the agent (contains MARKER_TOKEN)
+    expected_outcome: str  # what a clean run must show (names the marker)
     rubric: tuple[str, ...]  # weighted criteria; each ends with (weight=N)
 
 
@@ -125,9 +144,9 @@ class Scenario:
 class RunOutcome:
     """What one bounded agent run produced — inputs to ``score_run``."""
 
-    response: str          # final assistant text the loop returned
-    turns: int             # assistant messages the loop recorded
-    tools_used: int        # tool calls executed during the run
+    response: str  # final assistant text the loop returned
+    turns: int  # assistant messages the loop recorded
+    tools_used: int  # tool calls executed during the run
 
 
 @dataclass(frozen=True)
@@ -141,13 +160,13 @@ class ScenarioResult:
     scenario: Scenario
     model: str
     profile: str
-    repeat_index: int      # 0-based index among the repetitions (aggregate = 0)
-    response: str          # first repetition's final answer (representative)
-    turns: int             # assistant messages recorded by the loop
-    tools_used: int        # tool calls executed during the run
-    latency_ms: float      # wall-clock ms for the whole scenario
-    passed: bool           # mean score >= PASS_THRESHOLD
-    score: float           # weighted rubric score in [0, 1], averaged over reps
+    repeat_index: int  # 0-based index among the repetitions (aggregate = 0)
+    response: str  # first repetition's final answer (representative)
+    turns: int  # assistant messages recorded by the loop
+    tools_used: int  # tool calls executed during the run
+    latency_ms: float  # wall-clock ms for the whole scenario
+    passed: bool  # mean score >= PASS_THRESHOLD
+    score: float  # weighted rubric score in [0, 1], averaged over reps
     notes: list[str] = field(default_factory=list)  # per-criterion verdicts
     repetitions: list[dict[str, Any]] = field(default_factory=list)
 
@@ -156,78 +175,116 @@ def _build_bank() -> tuple[Scenario, ...]:
     """Return the benchmark scenario bank (the shipped set)."""
     return (
         Scenario(
-            id="scn-shell-1", category="shell", style="plain",
+            id="scn-shell-1",
+            category="shell",
+            style="plain",
             prompt=f"Use the run tool to print exactly `{MARKER_TOKEN}1` and "
-                   "nothing else. This is a single-step task: finish fast.",
+            "nothing else. This is a single-step task: finish fast.",
             expected_outcome=f"The final answer quotes `{MARKER_TOKEN}1` verbatim.",
-            rubric=(f"The assistant's final answer quotes `{MARKER_TOKEN}1` "
-                    f"verbatim {_w(3)}",
-                    f"the run tool was used at least once and the loop "
-                    f"terminated cleanly {_w(2)}"),
+            rubric=(
+                f"The assistant's final answer quotes `{MARKER_TOKEN}1` "
+                f"verbatim {_w(3)}",
+                f"the run tool was used at least once and the loop "
+                f"terminated cleanly {_w(2)}",
+            ),
         ),
         Scenario(
-            id="scn-file-edit-1", category="file_edit", style="plain",
+            id="scn-file-edit-1",
+            category="file_edit",
+            style="plain",
             prompt=f"Create scratch/probe.txt containing exactly `{MARKER_TOKEN}2` "
-                   "followed by a newline, then print the file's contents. "
-                   "Single-step.",
-            expected_outcome=(f"The tool sequence creates `scratch/probe.txt`, writes "
-                             f"`{MARKER_TOKEN}2` and a single trailing newline to it, "
-                             "then reads the file back; the final answer quotes the "
-                             "file contents verbatim."),
-            rubric=(f"the final answer quotes `{MARKER_TOKEN}2` verbatim {_w(5)}",
-                    "a write/write-style tool created scratch/probe.txt before "
-                    f"reading it (reading first is a process error) {_w(3)}"),
+            "followed by a newline, then print the file's contents. "
+            "Single-step.",
+            expected_outcome=(
+                f"The tool sequence creates `scratch/probe.txt`, writes "
+                f"`{MARKER_TOKEN}2` and a single trailing newline to it, "
+                "then reads the file back; the final answer quotes the "
+                "file contents verbatim."
+            ),
+            rubric=(
+                f"the final answer quotes `{MARKER_TOKEN}2` verbatim {_w(5)}",
+                "a write/write-style tool created scratch/probe.txt before "
+                f"reading it (reading first is a process error) {_w(3)}",
+            ),
         ),
         Scenario(
-            id="scn-file-edit-2", category="file_edit", style="verbose",
+            id="scn-file-edit-2",
+            category="file_edit",
+            style="verbose",
             prompt=f"Create scratch/notes.md, write exactly `{MARKER_TOKEN}3` "
-                   "into it and read it back. This is a single-step task: "
-                   "finish as fast as possible.",
-            expected_outcome=(f"`scratch/notes.md` exists with content "
-                             f"`{MARKER_TOKEN}3`; the final answer quotes the file "
-                             "contents verbatim."),
-            rubric=(f"the final answer quotes `{MARKER_TOKEN}3` verbatim {_w(5)}",
-                    "a write/write-style tool created scratch/notes.md before "
-                    f"reading it back; reading first is a process error {_w(3)}"),
+            "into it and read it back. This is a single-step task: "
+            "finish as fast as possible.",
+            expected_outcome=(
+                f"`scratch/notes.md` exists with content "
+                f"`{MARKER_TOKEN}3`; the final answer quotes the file "
+                "contents verbatim."
+            ),
+            rubric=(
+                f"the final answer quotes `{MARKER_TOKEN}3` verbatim {_w(5)}",
+                "a write/write-style tool created scratch/notes.md before "
+                f"reading it back; reading first is a process error {_w(3)}",
+            ),
         ),
         Scenario(
-            id="scn-git-1", category="git", style="verbose",
-            prompt=(f"Commit the staged changes on the current branch with message "
-                   f"`{MARKER_TOKEN}4` and push. Single-step."),
-            expected_outcome=(f"the commit subject contains `{MARKER_TOKEN}4`, "
-                             "it lands on the current checked-out branch, the "
-                             "working tree is clean afterwards; HEAD is not moved "
-                             "and no new branch is created."),
-            rubric=("a git tool stages all changes with a bare `-A` (not `git "
-                    f"add .`) first {_w(2)}",
-                    f"the commit subject contains `{MARKER_TOKEN}4` verbatim {_w(5)}"),
+            id="scn-git-1",
+            category="git",
+            style="verbose",
+            prompt=(
+                f"Commit the staged changes on the current branch with message "
+                f"`{MARKER_TOKEN}4` and push. Single-step."
+            ),
+            expected_outcome=(
+                f"the commit subject contains `{MARKER_TOKEN}4`, "
+                "it lands on the current checked-out branch, the "
+                "working tree is clean afterwards; HEAD is not moved "
+                "and no new branch is created."
+            ),
+            rubric=(
+                "a git tool stages all changes with a bare `-A` (not `git "
+                f"add .`) first {_w(2)}",
+                f"the commit subject contains `{MARKER_TOKEN}4` verbatim {_w(5)}",
+            ),
         ),
         Scenario(
-            id="scn-mcp-1", category="mcp", style="verbose",
-            prompt=(f"Call the `read` tool on scratch/harnessfix/README.md with a "
-                   f"Python one-liner, print its output verbatim, then answer "
-                   f"with `{MARKER_TOKEN}5` on a line of its own. Single-step."),
-            expected_outcome=(f"The final answer ends with a line containing "
-                             f"exactly `{MARKER_TOKEN}5` after the tool output is "
-                             "echoed."),
-            rubric=(f"the final answer contains `{MARKER_TOKEN}5` on a line of its "
-                    f"own {_w(5)}",
-                    "the `read` tool was invoked on "
-                    "scratch/harnessfix/README.md before the final answer "
-                    f"{_w(3)}"),
+            id="scn-mcp-1",
+            category="mcp",
+            style="verbose",
+            prompt=(
+                f"Call the `read` tool on scratch/harnessfix/README.md with a "
+                f"Python one-liner, print its output verbatim, then answer "
+                f"with `{MARKER_TOKEN}5` on a line of its own. Single-step."
+            ),
+            expected_outcome=(
+                f"The final answer ends with a line containing "
+                f"exactly `{MARKER_TOKEN}5` after the tool output is "
+                "echoed."
+            ),
+            rubric=(
+                f"the final answer contains `{MARKER_TOKEN}5` on a line of its "
+                f"own {_w(5)}",
+                "the `read` tool was invoked on "
+                "scratch/harnessfix/README.md before the final answer "
+                f"{_w(3)}",
+            ),
         ),
         Scenario(
-            id="scn-multi-tool-1", category="multi_tool", style="verbose",
-            prompt=(f"Create scratch/a.txt with content `{MARKER_TOKEN}6a`, create "
-                   f"scratch/b.txt with content `{MARKER_TOKEN}6b`, read both files "
-                   f"back, then answer with a line containing `{MARKER_TOKEN}6a` "
-                   f"then a line containing `{MARKER_TOKEN}6b`."),
-            expected_outcome=(f"The final answer contains `{MARKER_TOKEN}6a` on one "
-                             f"line and `{MARKER_TOKEN}6b` on another, in that order."),
-            rubric=(f"the final answer contains `{MARKER_TOKEN}6a` on its own line "
-                    f"{_w(3)}",
-                    f"the final answer contains `{MARKER_TOKEN}6b` on its own line "
-                    f"{_w(4)}"),
+            id="scn-multi-tool-1",
+            category="multi_tool",
+            style="verbose",
+            prompt=(
+                f"Create scratch/a.txt with content `{MARKER_TOKEN}6a`, create "
+                f"scratch/b.txt with content `{MARKER_TOKEN}6b`, read both files "
+                f"back, then answer with a line containing `{MARKER_TOKEN}6a` "
+                f"then a line containing `{MARKER_TOKEN}6b`."
+            ),
+            expected_outcome=(
+                f"The final answer contains `{MARKER_TOKEN}6a` on one "
+                f"line and `{MARKER_TOKEN}6b` on another, in that order."
+            ),
+            rubric=(
+                f"the final answer contains `{MARKER_TOKEN}6a` on its own line {_w(3)}",
+                f"the final answer contains `{MARKER_TOKEN}6b` on its own line {_w(4)}",
+            ),
         ),
     )
 
@@ -247,6 +304,7 @@ SCENARIOS = _build_bank()
 # ---------------------------------------------------------------------------
 # Runner: main loop + main-loop tool surface, injected transport factory
 # ---------------------------------------------------------------------------
+
 
 @contextlib.contextmanager
 def sandbox_workspace() -> Iterator[Path]:
@@ -278,8 +336,13 @@ def sandbox_workspace() -> Iterator[Path]:
         ):
             try:
                 subprocess.run(
-                    argv, cwd=tmp, capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=30,
+                    argv,
+                    cwd=tmp,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=30,
                 )
             except (OSError, subprocess.SubprocessError):
                 break
@@ -307,14 +370,20 @@ def build_main_surface(parent: Agent) -> list[dict[str, Any]]:
     delegate/plan/subagent tools. Fresh dicts per call — the schemas are
     shared module constants and runners must not mutate them.
     """
-    return [dict(s) for s in NLP_TOOL_SCHEMAS
-            if s.get("function", {}).get("name") not in DELEGATION_TOOLS]
+    return [
+        dict(s)
+        for s in NLP_TOOL_SCHEMAS
+        if s.get("function", {}).get("name") not in DELEGATION_TOOLS
+    ]
 
 
 async def run_tool_loop(
-    transport: LLMClient, messages: list[dict[str, Any]],
+    transport: LLMClient,
+    messages: list[dict[str, Any]],
     tool_defs: list[dict[str, Any]],
-    *, repetitions: int = 1, max_iterations: int = _GATE_MAX_ITERATIONS,
+    *,
+    repetitions: int = 1,
+    max_iterations: int = _GATE_MAX_ITERATIONS,
 ) -> list[RunOutcome]:
     """Drive *messages* through the real main-loop runner, one outcome per rep.
 
@@ -327,7 +396,8 @@ async def run_tool_loop(
     outcomes: list[RunOutcome] = []
 
     async def llm_chat_fn(
-        msgs: list[dict[str, Any]], tools: list[dict[str, Any]],
+        msgs: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
     ) -> tuple[str, list[dict[str, Any]]]:
         """One model turn against the injected transport."""
         raw = await transport.chat(msgs, tools=tools)
@@ -354,11 +424,14 @@ async def run_tool_loop(
                 # _encode_tool_response). Spreading calls[0] flat instead put
                 # id/type/function on the message, left "tool_calls" absent,
                 # and silently disabled every tool call a scenario made.
-                updated = [*msgs, {
-                    "role": "assistant",
-                    "content": str(parsed.get("content") or ""),
-                    "tool_calls": calls,
-                }]
+                updated = [
+                    *msgs,
+                    {
+                        "role": "assistant",
+                        "content": str(parsed.get("content") or ""),
+                        "tool_calls": calls,
+                    },
+                ]
                 return str(parsed.get("content") or ""), updated
             content = parsed.get("content")
             text = str(content) if content is not None else raw
@@ -378,7 +451,10 @@ async def run_tool_loop(
     for _rep in range(max(1, int(repetitions))):
         runner = ToolLoopRunner(max_iterations=max_iterations)
         response, final_messages = await runner.run(
-            list(messages), llm_chat_fn, execute_tool, tools=list(tool_defs),
+            list(messages),
+            llm_chat_fn,
+            execute_tool,
+            tools=list(tool_defs),
         )
         turns = sum(1 for m in final_messages if m.get("role") == "assistant")
         tools_used = sum(
@@ -387,9 +463,7 @@ async def run_tool_loop(
             if isinstance(m, dict) and m.get("role") == "assistant"
         )
         outcomes.append(
-            RunOutcome(
-                response=str(response), turns=turns, tools_used=tools_used
-            )
+            RunOutcome(response=str(response), turns=turns, tools_used=tools_used)
         )
 
     return outcomes
@@ -419,8 +493,10 @@ async def run_scenarios(
     results: list[ScenarioResult] = []
 
     for scenario in SCENARIOS:
-        prompt_text = (f"{scenario.prompt}\n(Report your result in text; "
-                       f"{MARKER_TOKEN} must appear verbatim.)")
+        prompt_text = (
+            f"{scenario.prompt}\n(Report your result in text; "
+            f"{MARKER_TOKEN} must appear verbatim.)"
+        )
         started = time.perf_counter()
         outcomes: list[RunOutcome] = []
         for _rep in range(reps):
@@ -429,10 +505,15 @@ async def run_scenarios(
             # the turn agent's LLMClient — exactly what run_tool_loop uses.
             transport: Any = turn_agent.llm
             transport._agent = turn_agent
-            outcomes.extend(await run_tool_loop(
-                transport, [{"role": "user", "content": prompt_text}],
-                build_main_surface(agent), repetitions=1, max_iterations=max_iterations,
-            ))
+            outcomes.extend(
+                await run_tool_loop(
+                    transport,
+                    [{"role": "user", "content": prompt_text}],
+                    build_main_surface(agent),
+                    repetitions=1,
+                    max_iterations=max_iterations,
+                )
+            )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
 
         scores: list[float] = []
@@ -442,17 +523,33 @@ async def run_scenarios(
             score, note = score_run(outcome, scenario.rubric, model, profile)
             scores.append(score)
             notes.append(f"rep {idx}: {note}")
-            rep_rows.append({"repeat_index": idx, "response": outcome.response,
-                             "turns": outcome.turns, "tools_used": outcome.tools_used,
-                             "score": round(score, 4)})
+            rep_rows.append(
+                {
+                    "repeat_index": idx,
+                    "response": outcome.response,
+                    "turns": outcome.turns,
+                    "tools_used": outcome.tools_used,
+                    "score": round(score, 4),
+                }
+            )
         mean = sum(scores) / len(scores) if scores else 0.0
         first = outcomes[0] if outcomes else RunOutcome("", 0, 0)
-        results.append(ScenarioResult(
-            scenario=scenario, model=model, profile=profile, repeat_index=0,
-            response=first.response, turns=first.turns, tools_used=first.tools_used,
-            latency_ms=round(elapsed_ms, 1), passed=mean >= PASS_THRESHOLD,
-            score=round(mean, 4), notes=list(notes), repetitions=list(rep_rows),
-        ))
+        results.append(
+            ScenarioResult(
+                scenario=scenario,
+                model=model,
+                profile=profile,
+                repeat_index=0,
+                response=first.response,
+                turns=first.turns,
+                tools_used=first.tools_used,
+                latency_ms=round(elapsed_ms, 1),
+                passed=mean >= PASS_THRESHOLD,
+                score=round(mean, 4),
+                notes=list(notes),
+                repetitions=list(rep_rows),
+            )
+        )
         print(f"[agentic-bench] scenario {scenario.id} done ({reps} reps)")
 
     return results
@@ -490,8 +587,12 @@ def score_run(
     for text in rubric:
         criterion, weight = parse_rubric(text)
         verdict = judge(
-            outcome.response, outcome.turns, outcome.tools_used,
-            criterion, model, profile,
+            outcome.response,
+            outcome.turns,
+            outcome.tools_used,
+            criterion,
+            model,
+            profile,
         )
         notes.append(f"{verdict.verdict}: {verdict.reason}")
         total += weight * verdict.score
@@ -502,15 +603,23 @@ def score_run(
 
 
 def judge(
-    response: str, turns: int, tools_used: int, rubric_text: str,
-    model: str, profile: str,
+    response: str,
+    turns: int,
+    tools_used: int,
+    rubric_text: str,
+    model: str,
+    profile: str,
 ) -> JudgeVerdict:
     """Judge one rubric line against one run's outcome."""
     from harnessfix.judge import judge_outcome
 
     return judge_outcome(
-        response=response, turns=turns, tools_used=tools_used,
-        rubric_text=rubric_text, model=model, profile=profile,
+        response=response,
+        turns=turns,
+        tools_used=tools_used,
+        rubric_text=rubric_text,
+        model=model,
+        profile=profile,
     )
 
 
@@ -518,9 +627,14 @@ def judge(
 # Report file (consumed by harnessfix/gates.py:run_agentic_gate)
 # ---------------------------------------------------------------------------
 
+
 def save_report(
-    results: list[ScenarioResult], out_path: str | Path | None = None, *,
-    model: str = "", profile: str = "", reps: int = DEFAULT_REPETITIONS,
+    results: list[ScenarioResult],
+    out_path: str | Path | None = None,
+    *,
+    model: str = "",
+    profile: str = "",
+    reps: int = DEFAULT_REPETITIONS,
 ) -> Path:
     """Write the report file for *results* and return its path.
 
@@ -538,23 +652,25 @@ def save_report(
 
     rows: list[dict[str, Any]] = []
     for res in results:
-        rows.append({
-            "id": f"{res.scenario.id}#{res.repeat_index}",
-            "category": res.scenario.category,
-            "style": res.scenario.style,
-            "prompt": res.scenario.prompt,
-            "expected_outcome": res.scenario.expected_outcome,
-            "rubric": list(res.scenario.rubric),
-            "model": res.model,
-            "profile": res.profile,
-            "repeat_index": res.repeat_index,
-            "response": res.response,
-            "turns": res.turns,
-            "tools_used": res.tools_used,
-            "latency_ms": res.latency_ms,
-            "passed": res.passed,
-            "score": res.score,
-        })
+        rows.append(
+            {
+                "id": f"{res.scenario.id}#{res.repeat_index}",
+                "category": res.scenario.category,
+                "style": res.scenario.style,
+                "prompt": res.scenario.prompt,
+                "expected_outcome": res.scenario.expected_outcome,
+                "rubric": list(res.scenario.rubric),
+                "model": res.model,
+                "profile": res.profile,
+                "repeat_index": res.repeat_index,
+                "response": res.response,
+                "turns": res.turns,
+                "tools_used": res.tools_used,
+                "latency_ms": res.latency_ms,
+                "passed": res.passed,
+                "score": res.score,
+            }
+        )
     rows.sort(key=lambda r: (r["id"], r["model"], r["profile"]))
 
     scores = [float(r.get("score", 0.0)) for r in rows]
@@ -579,14 +695,20 @@ def save_report(
             entry = candidate
             break
     if entry is None:
-        entry = {"model": model, "profile": profile, "repetitions": reps,
-                 "runs": [], "display_name": display}
+        entry = {
+            "model": model,
+            "profile": profile,
+            "repetitions": reps,
+            "runs": [],
+            "display_name": display,
+        }
         data["models"].append(entry)
     entry["repetitions"] = reps
     entry["runs"] = rows
     entry["overall_accuracy"] = overall
     data.setdefault("meta", {})["last_run"] = (
-        datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M"))
+        datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
+    )
 
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -625,32 +747,55 @@ def print_trend(model: str, path: str | None = None) -> list[dict[str, Any]]:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     """Parse the benchmark CLI (list / trend / single-scenario flags)."""
     parser = argparse.ArgumentParser(
-        prog="agentic_bench.py", description=__doc__.splitlines()[0].strip(),
+        prog="agentic_bench.py",
+        description=__doc__.splitlines()[0].strip(),
     )
-    parser.add_argument("--model", default="", metavar="MODEL",
-                        help="run every scenario on this model name")
     parser.add_argument(
-        "--scenario", default="", metavar="ID",
+        "--model",
+        default="",
+        metavar="MODEL",
+        help="run every scenario on this model name",
+    )
+    parser.add_argument(
+        "--scenario",
+        default="",
+        metavar="ID",
         help="limit to scenarios whose id/category contains this text "
-             f"({', '.join(s.id for s in SCENARIOS)})",
+        f"({', '.join(s.id for s in SCENARIOS)})",
     )
     parser.add_argument(
-        "--repetitions", type=int, default=DEFAULT_REPETITIONS, metavar="N",
+        "--repetitions",
+        type=int,
+        default=DEFAULT_REPETITIONS,
+        metavar="N",
         help=f"runs per scenario (default {DEFAULT_REPETITIONS})",
     )
     parser.add_argument(
-        "--max-iterations", type=int, default=_GATE_MAX_ITERATIONS,
+        "--max-iterations",
+        type=int,
+        default=_GATE_MAX_ITERATIONS,
         metavar="N",
         help="per-run iteration cap for the main loop "
-             f"(default {_GATE_MAX_ITERATIONS})",
+        f"(default {_GATE_MAX_ITERATIONS})",
     )
-    parser.add_argument("--out", default="", metavar="PATH",
-                        help=f"report file to write (default {report_path()})")
-    parser.add_argument("--trend", metavar="MODEL", nargs="?", const="", default=None,
-                        help="print score history for this model and exit")
+    parser.add_argument(
+        "--out",
+        default="",
+        metavar="PATH",
+        help=f"report file to write (default {report_path()})",
+    )
+    parser.add_argument(
+        "--trend",
+        metavar="MODEL",
+        nargs="?",
+        const="",
+        default=None,
+        help="print score history for this model and exit",
+    )
     return parser.parse_args(argv)
 
 
@@ -662,20 +807,27 @@ async def main(args: argparse.Namespace) -> None:
 
     with sandbox_workspace() as workspace:
         results = await run_scenarios(
-            make_agent(str(workspace), args.model), model=args.model,
-            repetitions=args.repetitions, max_iterations=args.max_iterations,
+            make_agent(str(workspace), args.model),
+            model=args.model,
+            repetitions=args.repetitions,
+            max_iterations=args.max_iterations,
         )
     # Honour --out: the report goes exactly where the caller asked.
-    path = save_report(results, args.out, model=args.model, profile="",
-                       reps=args.repetitions)
+    path = save_report(
+        results, args.out, model=args.model, profile="", reps=args.repetitions
+    )
     avg = sum(r.score for r in results) / len(results)
-    print(f"[agentic-bench] {len(results)} runs on {args.model} "
-          f"({args.repetitions} reps) mean={avg:.1%}")
+    print(
+        f"[agentic-bench] {len(results)} runs on {args.model} "
+        f"({args.repetitions} reps) mean={avg:.1%}"
+    )
     print(f"[agentic-bench] report updated: {path}")
 
 
 def run_agentic_gate(
-    model: str, profile: str = "", out_dir: str | Path | None = None,
+    model: str,
+    profile: str = "",
+    out_dir: str | Path | None = None,
 ) -> float | None:
     """Run the agentic scenarios as a HarnessFix gate; return the mean score.
 
@@ -694,10 +846,14 @@ def run_agentic_gate(
     out = Path(out_dir) / "agentic_bench.json" if out_dir else report_path()
     with sandbox_workspace() as workspace:
         agent = make_agent(str(workspace), model)
-        results = asyncio.run(run_scenarios(
-            agent, model=model, profile=profile,
-            max_iterations=_GATE_MAX_ITERATIONS,
-        ))
+        results = asyncio.run(
+            run_scenarios(
+                agent,
+                model=model,
+                profile=profile,
+                max_iterations=_GATE_MAX_ITERATIONS,
+            )
+        )
     save_report(results, out, model=model, profile=profile, reps=DEFAULT_REPETITIONS)
     if not results:
         return None

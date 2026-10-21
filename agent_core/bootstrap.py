@@ -165,6 +165,7 @@ except Exception:  # pragma: no cover - tracing degrades gracefully if unavailab
     def trace_enabled() -> bool:
         return False
 
+
 if TYPE_CHECKING:
     pass
 
@@ -174,9 +175,7 @@ if TYPE_CHECKING:
 for _stream in (sys.stdout, sys.stderr):
     if _stream is not None:
         try:
-            _stream.reconfigure(
-                encoding="utf-8", errors="replace"
-            )  # type: ignore[union-attr]
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
         except (ValueError, OSError, AttributeError):
             pass
 

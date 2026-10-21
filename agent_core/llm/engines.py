@@ -15,6 +15,7 @@ Radeon iGPU — instead of only failing over between them:
 and :func:`engine_model` let ``multillm --engines npu,igpu`` pick one model per
 accelerator from the live catalogs (falling back to configured defaults).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -72,16 +73,18 @@ class Engine:
 
 
 ENGINES: dict[str, Engine] = {
-    "npu": Engine("npu", "lemonade", DEVICE_NPU,
-                  "AMD XDNA NPU via Lemonade (FastFlowLM/Ryzen AI LLM)"),
-    "igpu": Engine("igpu", "lmstudio", DEVICE_IGPU,
-                   "Radeon iGPU via LM Studio"),
-    "llama": Engine("llama", "llama", DEVICE_IGPU,
-                    "llama.cpp llama-server"),
-    "cloud": Engine("cloud", "opencode", DEVICE_CLOUD,
-                    "hosted opencode gateway"),
-    "openrouter": Engine("openrouter", "openrouter", DEVICE_CLOUD,
-                         "hosted OpenRouter gateway"),
+    "npu": Engine(
+        "npu",
+        "lemonade",
+        DEVICE_NPU,
+        "AMD XDNA NPU via Lemonade (FastFlowLM/Ryzen AI LLM)",
+    ),
+    "igpu": Engine("igpu", "lmstudio", DEVICE_IGPU, "Radeon iGPU via LM Studio"),
+    "llama": Engine("llama", "llama", DEVICE_IGPU, "llama.cpp llama-server"),
+    "cloud": Engine("cloud", "opencode", DEVICE_CLOUD, "hosted opencode gateway"),
+    "openrouter": Engine(
+        "openrouter", "openrouter", DEVICE_CLOUD, "hosted OpenRouter gateway"
+    ),
 }
 
 
@@ -95,7 +98,10 @@ def engine_names() -> list[str]:
 
 
 def engine_model(
-    engine: Engine, settings: Any = None, *, probe: bool = True,
+    engine: Engine,
+    settings: Any = None,
+    *,
+    probe: bool = True,
 ) -> str | None:
     """Pick a concrete model for *engine*.
 
@@ -143,7 +149,10 @@ def engine_model(
 
 
 def resolve_engines(
-    names: list[str], settings: Any = None, *, probe: bool = True,
+    names: list[str],
+    settings: Any = None,
+    *,
+    probe: bool = True,
 ) -> tuple[list[str], dict[str, str], list[str]]:
     """Expand engine names to ``(models, provider_overrides, errors)``.
 

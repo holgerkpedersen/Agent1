@@ -17,6 +17,7 @@ as ``[Error: ...]`` strings; transport-level failures carry a
 ``(connection error)`` marker so :func:`~agent_core.llm.provider.is_connection_failure`
 fails over to the next provider correctly.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -54,7 +55,7 @@ def _http_model_id(model_name: str) -> str:
     tell an NPU model apart from an LM Studio one.
     """
     if model_name.startswith("lemonade/"):
-        return model_name[len("lemonade/"):]
+        return model_name[len("lemonade/") :]
     return model_name
 
 
@@ -217,9 +218,7 @@ class LemonadeProvider:
             raw = resp.read().decode("utf-8", errors="replace")
             return json.loads(raw) if raw.strip() else None
 
-    async def _with_retry(
-        self, factory: Callable[[], Any], *, label: str
-    ) -> Any:
+    async def _with_retry(self, factory: Callable[[], Any], *, label: str) -> Any:
         """Run *factory* with exponential backoff on transient failures.
 
         The factory performs a BLOCKING urllib call — it is dispatched to a
@@ -236,7 +235,7 @@ class LemonadeProvider:
             except (TimeoutError, OSError) as exc:
                 last_error = exc
             if attempt < self._max_retries:
-                wait = self._retry_base_delay * (2 ** attempt)
+                wait = self._retry_base_delay * (2**attempt)
                 print(
                     f"  [retry {attempt + 1}/{self._max_retries}] {label}: "
                     f"{last_error}, waiting {wait:.0f}s...",
@@ -270,9 +269,7 @@ class LemonadeProvider:
         requested_tokens = max_tokens if max_tokens is not None else self.max_tokens
         ctx_limit = self._fetch_context_limit()
         effective_tokens = (
-            requested_tokens
-            if ctx_limit is None
-            else min(requested_tokens, ctx_limit)
+            requested_tokens if ctx_limit is None else min(requested_tokens, ctx_limit)
         )
         payload: dict[str, Any] = {
             "model": _http_model_id(self.model_name),
@@ -286,7 +283,9 @@ class LemonadeProvider:
         try:
             result = await self._with_retry(
                 lambda: self._request(
-                    "POST", f"{self.api_url}/chat/completions", payload,
+                    "POST",
+                    f"{self.api_url}/chat/completions",
+                    payload,
                     timeout=self._api_timeout,
                 ),
                 label="lemonade chat/completions",
@@ -300,15 +299,15 @@ class LemonadeProvider:
                 try:
                     result = await self._with_retry(
                         lambda: self._request(
-                            "POST", f"{self.api_url}/chat/completions", payload,
+                            "POST",
+                            f"{self.api_url}/chat/completions",
+                            payload,
                             timeout=self._api_timeout,
                         ),
                         label="lemonade chat/completions (no tools)",
                     )
                 except urllib.error.HTTPError as exc2:
-                    return _format_http_error(
-                        exc2.code, _read_http_error_detail(exc2)
-                    )
+                    return _format_http_error(exc2.code, _read_http_error_detail(exc2))
                 except (urllib.error.URLError, TimeoutError, OSError) as exc2:
                     return (
                         "[Error: lemonade API request failed (connection "
@@ -332,9 +331,7 @@ class LemonadeProvider:
         message = first.get("message") or {}
         content_raw = message.get("content")
         reasoning_raw = (
-            message.get("reasoning_content")
-            or message.get("reasoning")
-            or ""
+            message.get("reasoning_content") or message.get("reasoning") or ""
         )
 
         tool_calls = message.get("tool_calls")
@@ -357,9 +354,7 @@ class LemonadeProvider:
         )
         if tool_calls:
             return json.dumps({"content": content_raw, "tool_calls": tool_calls})
-        content = _postprocess_content(
-            str(content_raw or ""), str(reasoning_raw or "")
-        )
+        content = _postprocess_content(str(content_raw or ""), str(reasoning_raw or ""))
         return content if content else "(no output)"
 
     async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
@@ -368,11 +363,15 @@ class LemonadeProvider:
 
     async def analyze_code(self, code: str) -> str:
         """Analyze code using the Lemonade model."""
-        return await self.chat([
-            {"role": "system",
-             "content": "Analyze the following code for bugs and improvements."},
-            {"role": "user", "content": code},
-        ])
+        return await self.chat(
+            [
+                {
+                    "role": "system",
+                    "content": "Analyze the following code for bugs and improvements.",
+                },
+                {"role": "user", "content": code},
+            ]
+        )
 
     # ------------------------------------------------------------------
     # model command / health support
@@ -459,7 +458,9 @@ class LemonadeProvider:
             return False, "no lemonade model configured"
         try:
             result = self._request(
-                "POST", f"{self.api_url}/load", {"model_name": bare},
+                "POST",
+                f"{self.api_url}/load",
+                {"model_name": bare},
                 timeout=MODEL_LOAD_TIMEOUT,
             )
         except urllib.error.HTTPError as exc:
@@ -479,7 +480,9 @@ class LemonadeProvider:
             return False, "no lemonade model configured"
         try:
             self._request(
-                "POST", f"{self.api_url}/unload", {"model_name": bare},
+                "POST",
+                f"{self.api_url}/unload",
+                {"model_name": bare},
                 timeout=MODEL_LOAD_TIMEOUT,
             )
         except urllib.error.HTTPError as exc:

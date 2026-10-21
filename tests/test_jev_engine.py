@@ -37,6 +37,7 @@ def _disable_jev_telemetry(monkeypatch):
     """Fake-provider decisions must never pollute the real ledger."""
     monkeypatch.setenv("AGENT_NO_JEV_LOG", "1")
 
+
 # ---------------------------------------------------------------------------
 #  Fakes
 # ---------------------------------------------------------------------------
@@ -51,7 +52,11 @@ class VoteProvider:
         self.model_name = model_name
 
     async def chat(
-        self, messages, tools=None, max_tokens=None, disable_thinking=False,
+        self,
+        messages,
+        tools=None,
+        max_tokens=None,
+        disable_thinking=False,
     ):
         answer = self._answers[self._i % len(self._answers)]
         self._i += 1
@@ -93,9 +98,16 @@ class TestParsers:
     @pytest.mark.parametrize(
         "reply,expected",
         [
-            ("yes", "yes"), ("Yes.", "yes"), ("YES", "yes"),
-            ("yes, definitely", "yes"), ("true", "yes"), ("1", "yes"),
-            ("no", "no"), ("No!", "no"), ("false", "no"), ("0", "no"),
+            ("yes", "yes"),
+            ("Yes.", "yes"),
+            ("YES", "yes"),
+            ("yes, definitely", "yes"),
+            ("true", "yes"),
+            ("1", "yes"),
+            ("no", "no"),
+            ("No!", "no"),
+            ("false", "no"),
+            ("0", "no"),
             ("The proposition is false", "no"),
             ("I cannot answer that", None),
             ("", None),
@@ -150,7 +162,8 @@ class TestPrompt:
         from agent_core.jev_engine import _build_messages
 
         messages = _build_messages(
-            JevQuestion(kind=KIND_YESNO, text="is it evening?"), "moon is up",
+            JevQuestion(kind=KIND_YESNO, text="is it evening?"),
+            "moon is up",
         )
         user = messages[-1]["content"]
         assert "current local date and time" in user
@@ -334,9 +347,14 @@ class TestLogprobs:
 class TestResult:
     def test_summary_and_dict(self):
         result = JevResult(
-            kind=KIND_YESNO, model="m", mechanism=MECHANISM_VOTE,
-            probabilities={"yes": 0.8, "no": 0.2}, decision="TRUE",
-            confidence=0.8, n=5, abstentions=1,
+            kind=KIND_YESNO,
+            model="m",
+            mechanism=MECHANISM_VOTE,
+            probabilities={"yes": 0.8, "no": 0.2},
+            decision="TRUE",
+            confidence=0.8,
+            n=5,
+            abstentions=1,
         )
         text = result.summary()
         assert "P(yes)=0.80" in text
@@ -365,8 +383,12 @@ class TestBuildEngine:
 
         monkeypatch.setattr(prov, "build_provider", fake_build)
         settings = SimpleNamespace(
-            jev_model="google/gemma-4-e4b", jev_provider="", jev_samples=3,
-            jev_temperature=0.5, jev_max_tokens=4, jev_timeout=10.0,
+            jev_model="google/gemma-4-e4b",
+            jev_provider="",
+            jev_samples=3,
+            jev_temperature=0.5,
+            jev_max_tokens=4,
+            jev_timeout=10.0,
         )
         engine = build_jev_engine(settings=settings)
         assert calls["model"] == "google/gemma-4-e4b"
@@ -386,16 +408,21 @@ class TestBuildEngine:
 
         monkeypatch.setattr(prov, "build_provider", fake_build)
         settings = SimpleNamespace(
-            jev_model="x", jev_provider="llama", jev_samples=1,
-            jev_temperature=0.7, jev_max_tokens=8, jev_timeout=5.0,
+            jev_model="x",
+            jev_provider="llama",
+            jev_samples=1,
+            jev_temperature=0.7,
+            jev_max_tokens=8,
+            jev_timeout=5.0,
         )
         build_jev_engine(settings=settings)
         assert calls["override"] == "llama"
 
     def test_injected_provider_skips_build(self):
         engine = build_jev_engine(
-            settings=SimpleNamespace(jev_samples=2, jev_temperature=0.7,
-                                     jev_max_tokens=8, jev_timeout=5.0),
+            settings=SimpleNamespace(
+                jev_samples=2, jev_temperature=0.7, jev_max_tokens=8, jev_timeout=5.0
+            ),
             provider=VoteProvider(["no"]),
             model_name="small",
         )
@@ -407,8 +434,12 @@ class TestBuildEngine:
 
         monkeypatch.setattr(jev, "DEFAULT_JEV_MODEL", "")
         settings = SimpleNamespace(
-            jev_model="", jev_provider="", jev_samples=1,
-            jev_temperature=0.7, jev_max_tokens=8, jev_timeout=5.0,
+            jev_model="",
+            jev_provider="",
+            jev_samples=1,
+            jev_temperature=0.7,
+            jev_max_tokens=8,
+            jev_timeout=5.0,
         )
         with pytest.raises(ValueError):
             build_jev_engine(settings=settings)
@@ -419,14 +450,20 @@ class TestBuildEngine:
         unreachable — the "small model for Jev only" invariant was broken.
         Jev must build ONE provider pinned to the small model."""
         settings = SimpleNamespace(
-            jev_model="qwen2.5-coder-1.5b-instruct", jev_provider="",
-            jev_samples=1, jev_temperature=0.7, jev_max_tokens=8,
+            jev_model="qwen2.5-coder-1.5b-instruct",
+            jev_provider="",
+            jev_samples=1,
+            jev_temperature=0.7,
+            jev_max_tokens=8,
             jev_timeout=5.0,
             llm_providers=(
                 "opencode:opencode-go/deepseek-v4.1-flash",
-                "openrouter", "lmstudio", "llama",
+                "openrouter",
+                "lmstudio",
+                "llama",
             ),
-            llm_provider="opencode", failover_strategy="ordered",
+            llm_provider="opencode",
+            failover_strategy="ordered",
         )
         engine = build_jev_engine(settings=settings)
         assert type(engine.provider).__name__ == "LMStudioProvider"
@@ -437,12 +474,18 @@ class TestBuildEngine:
         from agent_core.llm.provider import build_provider
 
         settings = SimpleNamespace(
-            llm_providers=("opencode:opencode-go/deepseek-v4.1-flash",
-                           "lmstudio", "llama"),
-            llm_provider="opencode", failover_strategy="ordered",
+            llm_providers=(
+                "opencode:opencode-go/deepseek-v4.1-flash",
+                "lmstudio",
+                "llama",
+            ),
+            llm_provider="opencode",
+            failover_strategy="ordered",
         )
         provider = build_provider(
-            settings, "qwen2.5-coder-1.5b-instruct", single=True,
+            settings,
+            "qwen2.5-coder-1.5b-instruct",
+            single=True,
         )
         assert type(provider).__name__ == "LMStudioProvider"
         assert provider.model_name == "qwen2.5-coder-1.5b-instruct"
@@ -471,7 +514,10 @@ class TestEnsureReady:
     def test_ensure_called_once_per_engine(self):
         provider = self._Provider()
         engine = JevEngine(
-            provider, model_name="fake-small", samples=1, mechanism="vote",
+            provider,
+            model_name="fake-small",
+            samples=1,
+            mechanism="vote",
         )
         question = JevQuestion(kind=KIND_YESNO, text="q")
         asyncio.run(engine.decide(question))
@@ -481,7 +527,10 @@ class TestEnsureReady:
     def test_failed_select_warns_but_still_decides(self, capsys):
         provider = self._Provider(ensure_result=(False, "model not found"))
         engine = JevEngine(
-            provider, model_name="fake-small", samples=1, mechanism="vote",
+            provider,
+            model_name="fake-small",
+            samples=1,
+            mechanism="vote",
         )
         result = asyncio.run(engine.decide(JevQuestion(kind=KIND_YESNO, text="q")))
         assert result.decision == "TRUE"
@@ -520,4 +569,3 @@ class TestSettings:
 
         with pytest.raises(ConfigurationError):
             AgentSettings(jev_samples=0)
-

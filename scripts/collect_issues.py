@@ -9,6 +9,7 @@ it is safe to run in pre-commit and in CI.
 Usage:
     python scripts/collect_issues.py
 """
+
 from __future__ import annotations
 
 import sys

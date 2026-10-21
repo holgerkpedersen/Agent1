@@ -45,7 +45,9 @@ def fingerprint_file(path: str) -> str:
 def _is_watched(path: str) -> bool:
     """True for files under the watched package directories."""
     norm = path.replace("\\", "/")
-    return any(norm.startswith(f"{pkg}/") or f"/{pkg}/" in norm for pkg in _WATCHED_PREFIXES)
+    return any(
+        norm.startswith(f"{pkg}/") or f"/{pkg}/" in norm for pkg in _WATCHED_PREFIXES
+    )
 
 
 def loaded_module_fingerprints(entry_script: str | None = None) -> dict[str, str]:

@@ -8,6 +8,7 @@ Exposes tools for querying and managing the agent's persistent memory:
 Reads from agent_memory.db (SQLite) at the workspace root.
 Zero external dependencies — stdlib only.
 """
+
 from __future__ import annotations
 
 import json
@@ -42,7 +43,9 @@ def _make_response(req_id: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
 
-def _make_error(req_id: Any, code: int, message: str, data: Any = None) -> dict[str, Any]:
+def _make_error(
+    req_id: Any, code: int, message: str, data: Any = None
+) -> dict[str, Any]:
     err: dict[str, Any] = {"code": code, "message": message}
     if data is not None:
         err["data"] = data
@@ -70,6 +73,7 @@ SERVER_CAPABILITIES: dict[str, Any] = {"tools": {}}
 # ---------------------------------------------------------------------------
 # Database location
 # ---------------------------------------------------------------------------
+
 
 def _db_path() -> str:
     """Find agent_memory.db at the workspace root."""
@@ -183,17 +187,16 @@ def _fts_is_current(conn: sqlite3.Connection) -> bool:
 
 def _rebuild_fts(conn: sqlite3.Connection) -> None:
     """Rebuild the whole index from `experiences` and record the mark."""
-    conn.execute("CREATE TABLE IF NOT EXISTS experiences_meta "
-                 "(key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS experiences_meta (key TEXT PRIMARY KEY, value TEXT)"
+    )
     max_rowid = conn.execute("SELECT MAX(rowid) FROM experiences").fetchone()[0]
     # An EXTERNAL-CONTENT index stores no copy of the text: it must be
     # maintained through its own commands.  A plain DELETE/INSERT against the
     # virtual table raises "database disk image is malformed"; 'rebuild'
     # reindexes the whole content table in a single pass (cheaper than
     # delete-then-copy, and atomic).
-    conn.execute(
-        "INSERT INTO experiences_fts (experiences_fts) VALUES('rebuild')"
-    )
+    conn.execute("INSERT INTO experiences_fts (experiences_fts) VALUES('rebuild')")
     conn.execute(
         "INSERT INTO experiences_meta (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -221,7 +224,10 @@ def _order_clause(order_by: str | None) -> str:
 
 
 def _search_experiences(
-    conn: sqlite3.Connection, query: str, limit: int, *,
+    conn: sqlite3.Connection,
+    query: str,
+    limit: int,
+    *,
     success: bool | None = None,
     order_by: str | None = None,
 ) -> list:
@@ -271,6 +277,7 @@ def _search_experiences(
 # Formatting helpers
 # ---------------------------------------------------------------------------
 
+
 def _format_table(rows: list[sqlite3.Row], max_rows: int = 50) -> str:
     """Format rows as a text table with aligned columns."""
     if not rows:
@@ -296,7 +303,9 @@ def _format_table(rows: list[sqlite3.Row], max_rows: int = 50) -> str:
         lines.append(" | ".join(sr[h].ljust(col_widths[h]) for h in headers))
     total = len(rows)
     if total > max_rows:
-        lines.append(f"\n... ({total - max_rows} more rows, showing {max_rows} of {total})")
+        lines.append(
+            f"\n... ({total - max_rows} more rows, showing {max_rows} of {total})"
+        )
     else:
         lines.append(f"\n({total} row{'s' if total != 1 else ''})")
     return "\n".join(lines)
@@ -304,7 +313,7 @@ def _format_table(rows: list[sqlite3.Row], max_rows: int = 50) -> str:
 
 def _fmt_size(n: int) -> str:
     if n > 1024 * 1024:
-        return f"{n / (1024*1024):.1f} MB"
+        return f"{n / (1024 * 1024):.1f} MB"
     if n > 1024:
         return f"{n / 1024:.1f} KB"
     return f"{n} B"
@@ -481,6 +490,7 @@ TOOLS: list[dict[str, Any]] = [
 # Tool dispatch
 # ---------------------------------------------------------------------------
 
+
 def _execute_tool(name: str, args: dict[str, Any]) -> str:
     """Run a tool and return the result as a string."""
 
@@ -510,13 +520,14 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
         with _connect() as conn:
             if search:
                 rows = _search_experiences(
-                    conn, search, limit,
+                    conn,
+                    search,
+                    limit,
                     success=(bool(args["success"]) if "success" in args else None),
                     order_by=f"{sort} {order}",
                 )
             else:
-                where = f"WHERE {' AND '.join(where_clauses)}" \
-                    if where_clauses else ""
+                where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
                 rows = conn.execute(
                     f"SELECT * FROM experiences {where} "
                     f"ORDER BY {sort} {order} LIMIT ?",
@@ -563,6 +574,7 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
             raise ValueError("outcome must be between 0.0 and 1.0")
         context = args.get("context", "{}")
         import time
+
         ts = time.strftime("%Y-%m-%dT%H:%M:%S")
         with _connect() as conn:
             cur = conn.execute(
@@ -581,7 +593,9 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
                 "SELECT * FROM evolution_records ORDER BY generation DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-            total = conn.execute("SELECT COUNT(*) as c FROM evolution_records").fetchone()["c"]
+            total = conn.execute(
+                "SELECT COUNT(*) as c FROM evolution_records"
+            ).fetchone()["c"]
         if not rows:
             return "No evolution records found."
         table = _format_table(rows, max_rows=limit)
@@ -589,7 +603,13 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
         scores = [r["fitness_score"] for r in rows if r["fitness_score"] is not None]
         if len(scores) >= 2:
             # rows are DESC by generation, so first=latest, last=oldest
-            trend = "improving" if scores[0] > scores[-1] else "declining" if scores[0] < scores[-1] else "stable"
+            trend = (
+                "improving"
+                if scores[0] > scores[-1]
+                else "declining"
+                if scores[0] < scores[-1]
+                else "stable"
+            )
             summary = (
                 f"\nTrend: {trend}\n"
                 f"  Latest fitness: {scores[0]:.3f}\n"
@@ -643,7 +663,9 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
             ]
             counts = {}
             for t in tables:
-                counts[t] = conn.execute(f"SELECT COUNT(*) as c FROM [{t}]").fetchone()["c"]
+                counts[t] = conn.execute(f"SELECT COUNT(*) as c FROM [{t}]").fetchone()[
+                    "c"
+                ]
         lines = [
             f"Memory database: {db}",
             f"File size: {_fmt_size(size)}",
@@ -656,10 +678,14 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
         exp_total = counts.get("experiences", 0)
         exp_success = 0
         with _connect() as conn:
-            exp_success = conn.execute("SELECT COUNT(*) FROM experiences WHERE success=1").fetchone()[0]
+            exp_success = conn.execute(
+                "SELECT COUNT(*) FROM experiences WHERE success=1"
+            ).fetchone()[0]
         if exp_total > 0:
             lines.append("")
-            lines.append(f"Experience success rate: {exp_success}/{exp_total} ({100*exp_success/exp_total:.0f}%)")
+            lines.append(
+                f"Experience success rate: {exp_success}/{exp_total} ({100 * exp_success / exp_total:.0f}%)"
+            )
         return "\n".join(lines)
 
     raise ValueError(f"Unknown tool: {name}")
@@ -668,6 +694,7 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Message routing
 # ---------------------------------------------------------------------------
+
 
 def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
     """Route an incoming JSON-RPC message; return a response dict (or None for notifications)."""
@@ -679,11 +706,14 @@ def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     if method == "initialize":
-        return _make_response(req_id, {
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": SERVER_CAPABILITIES,
-            "serverInfo": SERVER_INFO,
-        })
+        return _make_response(
+            req_id,
+            {
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": SERVER_CAPABILITIES,
+                "serverInfo": SERVER_INFO,
+            },
+        )
 
     if method == "tools/list":
         return _make_response(req_id, {"tools": TOOLS})
@@ -695,15 +725,27 @@ def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
             return _make_error(req_id, -32602, "missing tool name")
         try:
             text = _execute_tool(tool_name, arguments)
-            return _make_response(req_id, {
-                "content": [{"type": "text", "text": text}],
-                "isError": False,
-            })
-        except (KeyError, ValueError, TypeError, FileNotFoundError, sqlite3.Error) as exc:
-            return _make_response(req_id, {
-                "content": [{"type": "text", "text": f"Error: {exc}"}],
-                "isError": True,
-            })
+            return _make_response(
+                req_id,
+                {
+                    "content": [{"type": "text", "text": text}],
+                    "isError": False,
+                },
+            )
+        except (
+            KeyError,
+            ValueError,
+            TypeError,
+            FileNotFoundError,
+            sqlite3.Error,
+        ) as exc:
+            return _make_response(
+                req_id,
+                {
+                    "content": [{"type": "text", "text": f"Error: {exc}"}],
+                    "isError": True,
+                },
+            )
 
     if req_id is not None:
         return _make_error(req_id, METHOD_NOT_FOUND, f"Unknown method: {method}")
@@ -714,6 +756,7 @@ def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     """Read newline-delimited JSON-RPC from stdin, write responses to stdout."""

@@ -175,7 +175,9 @@ class TaskScheduler:
                         continue
                     deps_satisfied = all(
                         dep_node.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
-                        for dep_node in (self._graph.get_task(dep) for dep in node.dependencies)
+                        for dep_node in (
+                            self._graph.get_task(dep) for dep in node.dependencies
+                        )
                         if dep_node is not None
                     )
                     if deps_satisfied:

@@ -30,9 +30,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Modules extracted from agent.py by the refactor.  New steps add their module
 # here in the same commit that moves the code.
-EXTRACTED_MODULES = (
-    "agent_core/history_compaction.py",
-)
+EXTRACTED_MODULES = ("agent_core/history_compaction.py",)
 
 
 def _source(rel_path: str) -> str:
@@ -89,7 +87,11 @@ def _function_local_names(func) -> set:
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Del):
             bound.add(node.id)
         elif isinstance(node, (ast.comprehension,)):
-            for elt in node.target.elts if isinstance(node.target, (ast.Tuple, ast.List)) else [node.target]:
+            for elt in (
+                node.target.elts
+                if isinstance(node.target, (ast.Tuple, ast.List))
+                else [node.target]
+            ):
                 if isinstance(elt, ast.Name):
                     bound.add(elt.id)
         elif isinstance(node, ast.ExceptHandler) and node.name:
@@ -124,9 +126,7 @@ def _unresolved_global_reads(rel_path: str) -> list:
 
     unresolved = []
     for func in [
-        n
-        for n in tree.body
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]:
         locals_ = _function_local_names(func)
         for node in ast.walk(func):

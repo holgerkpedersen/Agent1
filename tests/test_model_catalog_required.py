@@ -4,6 +4,7 @@ No concrete LLM name may be hardcoded as a fallback in Python code —
 a missing, malformed, or incomplete model_catalog.json must fail loudly
 at import time instead of silently falling back to a specific model.
 """
+
 import importlib
 import json
 
@@ -96,9 +97,7 @@ class TestCatalogLoader:
         with pytest.raises(RuntimeError, match="_defaults"):
             constants._load_model_catalog()
 
-    @pytest.mark.parametrize(
-        "key", ["model", "opencode_model", "openrouter_model"]
-    )
+    @pytest.mark.parametrize("key", ["model", "opencode_model", "openrouter_model"])
     def test_missing_default_key_raises(self, tmp_path, monkeypatch, key):
         p = tmp_path / "model_catalog.json"
         data = _valid_catalog()
@@ -109,9 +108,7 @@ class TestCatalogLoader:
             constants._load_model_catalog()
 
     @pytest.mark.parametrize("chain", [None, []])
-    def test_missing_llm_chain_raises(
-        self, tmp_path, monkeypatch, chain
-    ):
+    def test_missing_llm_chain_raises(self, tmp_path, monkeypatch, chain):
         p = tmp_path / "model_catalog.json"
         data = _valid_catalog()
         if chain is None:
@@ -198,8 +195,14 @@ class TestDefaultsFromCatalog:
         importlib.reload(constants)
         assert constants.DEFAULT_MODEL == constants._DEFAULTS["model"]
         assert constants.DEFAULT_OPENCODE_MODEL == constants._DEFAULTS["opencode_model"]
-        assert constants.DEFAULT_OPENROUTER_MODEL == constants._DEFAULTS["openrouter_model"]
-        assert constants.DEFAULT_LEMONADE_API_BASE == constants._DEFAULTS["lemonade_base_url"]
+        assert (
+            constants.DEFAULT_OPENROUTER_MODEL
+            == constants._DEFAULTS["openrouter_model"]
+        )
+        assert (
+            constants.DEFAULT_LEMONADE_API_BASE
+            == constants._DEFAULTS["lemonade_base_url"]
+        )
 
     def test_env_overrides_still_win(self, monkeypatch):
         monkeypatch.setenv("AGENT_MODEL", "env-model-a")

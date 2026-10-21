@@ -1,7 +1,9 @@
 """Search command for agent interactive mode."""
+
 from .base import Command
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -17,7 +19,7 @@ class SearchCommand(Command):
     def help_text(self) -> str:
         return "search <query>     - Search for string in files"
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         if len(args) < 1:
             self.error("Usage: search <query>")
             return True

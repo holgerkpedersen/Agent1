@@ -10,6 +10,7 @@ Covers (plan phases 2b-4):
 - ``Agent._nlp_delegate_batch``: validation, dedupe + concurrency cap,
   merged per-role reports from parallel isolated children.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -47,8 +48,10 @@ class _EchoLLMClient:
         _EchoLLMClient.instances.append(self)
 
     async def chat(
-        self, messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None, **kwargs: Any,
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
     ) -> str:
         self.calls.append(list(messages))
         if self.script:
@@ -58,13 +61,18 @@ class _EchoLLMClient:
 
 
 def _tool_call_raw(name: str, args: dict[str, Any]) -> str:
-    return json.dumps({
-        "content": "",
-        "tool_calls": [{
-            "id": "c1", "type": "function",
-            "function": {"name": name, "arguments": json.dumps(args)},
-        }],
-    })
+    return json.dumps(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(args)},
+                }
+            ],
+        }
+    )
 
 
 @pytest.fixture()
@@ -104,8 +112,15 @@ class TestIssueRouter:
 
     def test_every_routed_role_exists_in_registry(self) -> None:
         for sample in (
-            "bug", "tests fail", "commit", "docs", "review",
-            "new feature", "vulnerability", "", "latest version of requests?",
+            "bug",
+            "tests fail",
+            "commit",
+            "docs",
+            "review",
+            "new feature",
+            "vulnerability",
+            "",
+            "latest version of requests?",
         ):
             assert get_role(route_issue(sample)) is not None
 
@@ -134,12 +149,19 @@ class TestDelegateTool:
         assert "already running" in out
 
     def test_happy_path_returns_answer_summary_and_meta(
-        self, bot: Agent, tmp_path: Path,
+        self,
+        bot: Agent,
+        tmp_path: Path,
     ) -> None:
         (tmp_path / "m.py").write_text("x = 1\n", encoding="utf-8")
-        out = asyncio.run(bot._nlp_delegate({
-            "role": "planner", "task": "inspect m.py",
-        }))
+        out = asyncio.run(
+            bot._nlp_delegate(
+                {
+                    "role": "planner",
+                    "task": "inspect m.py",
+                }
+            )
+        )
         assert "ack: [SubAgent:planner-1] inspect m.py" in out
         assert "context summary" in out
         assert "[delegate:planner-1] finished (Planner/Triage, plan mode)." in out
@@ -147,18 +169,28 @@ class TestDelegateTool:
         assert bot._active_subagents == set()
 
     def test_plan_mode_parent_caps_build_child(
-        self, bot: Agent, tmp_path: Path,
+        self,
+        bot: Agent,
+        tmp_path: Path,
     ) -> None:
         bot.mode = MODE_PLAN
-        out = asyncio.run(bot._nlp_delegate({
-            "role": "implementer", "task": "write something",
-        }))
+        out = asyncio.run(
+            bot._nlp_delegate(
+                {
+                    "role": "implementer",
+                    "task": "write something",
+                }
+            )
+        )
         assert "capped to read-only" in out
         # And the child really could not have written anything.
         assert not list(tmp_path.glob("*.py"))
 
     def test_timeout_surfaces_as_error_not_crash(
-        self, bot: Agent, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(agent, "_DELEGATE_TIMEOUT_S", 0.01)
 
@@ -183,7 +215,8 @@ class TestDelegateTool:
         assert bot._active_subagents == set()
 
     def test_termination_reason_propagated_on_early_stop(
-        self, bot: Agent,
+        self,
+        bot: Agent,
     ) -> None:
         # Child script: first response is a tool call (list_files), loop
         # budget is 1 iteration -> cap fires and forced synthesis consumes
@@ -207,7 +240,9 @@ class TestDelegateTool:
         assert "synthesized partial answer." in out
 
     def test_child_reads_do_not_inflate_parent_read_streak(
-        self, bot: Agent, tmp_path: Path,
+        self,
+        bot: Agent,
+        tmp_path: Path,
     ) -> None:
         f = tmp_path / "m.py"
         f.write_text("x = 1\n", encoding="utf-8")
@@ -231,27 +266,38 @@ class TestDelegateTool:
 class TestDelegateBatchTool:
     def test_validation(self, bot: Agent) -> None:
         assert "must be a list" in asyncio.run(
-            bot._nlp_delegate_batch({"roles": "planner", "task": "x"}))
+            bot._nlp_delegate_batch({"roles": "planner", "task": "x"})
+        )
         assert "requires 'roles'" in asyncio.run(
-            bot._nlp_delegate_batch({"roles": [], "task": "x"}))
+            bot._nlp_delegate_batch({"roles": [], "task": "x"})
+        )
         assert "unknown role(s): wizard" in asyncio.run(
-            bot._nlp_delegate_batch({"roles": ["wizard"], "task": "x"}))
+            bot._nlp_delegate_batch({"roles": ["wizard"], "task": "x"})
+        )
 
     def test_dedupe_and_concurrency_cap(self, bot: Agent) -> None:
-        out = asyncio.run(bot._nlp_delegate_batch({
-            "roles": ["planner", "reviewer", "security", "tester", "tester"],
-            "task": "triage this",
-        }))
+        out = asyncio.run(
+            bot._nlp_delegate_batch(
+                {
+                    "roles": ["planner", "reviewer", "security", "tester", "tester"],
+                    "task": "triage this",
+                }
+            )
+        )
         assert "3 role(s)" in out
         assert "(2 extra role(s) dropped" in out
         for section in ("### planner", "### reviewer", "### security"):
             assert section in out
 
     def test_parallel_children_answer_independently(self, bot: Agent) -> None:
-        out = asyncio.run(bot._nlp_delegate_batch({
-            "roles": ["planner", "reviewer"],
-            "task": "look at module X",
-        }))
+        out = asyncio.run(
+            bot._nlp_delegate_batch(
+                {
+                    "roles": ["planner", "reviewer"],
+                    "task": "look at module X",
+                }
+            )
+        )
         assert "[delegate_batch:1] 2 role(s)" in out
         # Each child echoed ITS OWN prefixed task back — proof the histories
         # are isolated (planner never saw reviewer's task and vice versa).
@@ -260,9 +306,14 @@ class TestDelegateBatchTool:
 
     def test_batch_children_are_isolated_instances(self, bot: Agent) -> None:
         before = len(_EchoLLMClient.instances)
-        asyncio.run(bot._nlp_delegate_batch({
-            "roles": ["researcher", "documenter"], "task": "t",
-        }))
+        asyncio.run(
+            bot._nlp_delegate_batch(
+                {
+                    "roles": ["researcher", "documenter"],
+                    "task": "t",
+                }
+            )
+        )
         new = _EchoLLMClient.instances[before:]
         assert len(new) == 2
         assert new[0] is not new[1]

@@ -1,8 +1,10 @@
 from pathlib import Path
 
+
 def test_implement_raw_module_does_not_exist():
     """Verify that the dead module _implement_raw.py has been removed."""
     assert not Path("agent_core/commands/_implement_raw.py").exists()
+
 
 def test_no_references_to_dead_symbols():
     """
@@ -21,7 +23,7 @@ def test_no_references_to_dead_symbols():
         "scripts",
         "harnessfix",
         "benchmarks",
-        "tests"
+        "tests",
     ]
 
     found_references = []

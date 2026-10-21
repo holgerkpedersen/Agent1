@@ -3,6 +3,7 @@
 A synthetic failed trace (stuck cycle with provenance reuse) compiles to the
 expected HTIR nodes and links, and round-trips through the reader.
 """
+
 from __future__ import annotations
 
 from harnessfix.htir import TraceGraph, compile_trace
@@ -24,25 +25,80 @@ def _write_failed_trace(tmp_path, task_id: str = "htir-1") -> str:
     emit({"kind": KIND_STEP_START, "layer": "lifecycle", "iteration": 0})
     emit({"kind": KIND_LLM_RESPONSE, "layer": "observability", "text": "read the file"})
     emit(
-        {"kind": KIND_TOOL_CALL, "layer": "tool_interface", "tool": "read", "args_hash": "h1", "args": '{"path": "a.txt"}'}
+        {
+            "kind": KIND_TOOL_CALL,
+            "layer": "tool_interface",
+            "tool": "read",
+            "args_hash": "h1",
+            "args": '{"path": "a.txt"}',
+        }
     )
     emit(
-        {"kind": KIND_TOOL_RESULT, "layer": "tool_interface", "tool": "read", "args_hash": "h1", "result": "important_symbol 12345 found in a.txt"}
+        {
+            "kind": KIND_TOOL_RESULT,
+            "layer": "tool_interface",
+            "tool": "read",
+            "args_hash": "h1",
+            "result": "important_symbol 12345 found in a.txt",
+        }
     )
     # The edit reuses a token from the read result -> provenance link.
     emit(
-        {"kind": KIND_TOOL_CALL, "layer": "tool_interface", "tool": "edit", "args_hash": "h2", "args": '{"path": "a.txt", "old": "important_symbol"}'}
+        {
+            "kind": KIND_TOOL_CALL,
+            "layer": "tool_interface",
+            "tool": "edit",
+            "args_hash": "h2",
+            "args": '{"path": "a.txt", "old": "important_symbol"}',
+        }
     )
     emit(
-        {"kind": KIND_TOOL_RESULT, "layer": "tool_interface", "tool": "edit", "args_hash": "h2", "result": "patched"}
+        {
+            "kind": KIND_TOOL_RESULT,
+            "layer": "tool_interface",
+            "tool": "edit",
+            "args_hash": "h2",
+            "result": "patched",
+        }
     )
     # Stuck cycle: the same probe three times -> guard fires -> loop ends stuck.
     for i in range(3):
         emit({"kind": KIND_STEP_START, "layer": "lifecycle", "iteration": i + 1})
-        emit({"kind": KIND_TOOL_CALL, "layer": "tool_interface", "tool": "search", "args_hash": "h9", "duplicate": i > 0})
-        emit({"kind": KIND_TOOL_RESULT, "layer": "tool_interface", "tool": "search", "args_hash": "h9", "duplicate": i > 0, "result": "same"} )
-    emit({"kind": "guard_triggered", "layer": "lifecycle", "guard": "stuck", "note": "stop repeating"})
-    emit({"kind": KIND_LOOP_END, "layer": "lifecycle", "outcome": "stuck", "termination_reason": "stuck"})
+        emit(
+            {
+                "kind": KIND_TOOL_CALL,
+                "layer": "tool_interface",
+                "tool": "search",
+                "args_hash": "h9",
+                "duplicate": i > 0,
+            }
+        )
+        emit(
+            {
+                "kind": KIND_TOOL_RESULT,
+                "layer": "tool_interface",
+                "tool": "search",
+                "args_hash": "h9",
+                "duplicate": i > 0,
+                "result": "same",
+            }
+        )
+    emit(
+        {
+            "kind": "guard_triggered",
+            "layer": "lifecycle",
+            "guard": "stuck",
+            "note": "stop repeating",
+        }
+    )
+    emit(
+        {
+            "kind": KIND_LOOP_END,
+            "layer": "lifecycle",
+            "outcome": "stuck",
+            "termination_reason": "stuck",
+        }
+    )
     return str(writer.path)
 
 

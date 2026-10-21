@@ -1,4 +1,5 @@
 """String-collision guard tests: repairs must not break test assertions."""
+
 from __future__ import annotations
 
 import json
@@ -53,7 +54,12 @@ def _write_tool_error_trace(traces_dir: Path, task_id: str) -> None:
         }
     )
     writer.emit(
-        {"kind": KIND_LOOP_END, "layer": "lifecycle", "outcome": "completed", "termination_reason": "answer"}
+        {
+            "kind": KIND_LOOP_END,
+            "layer": "lifecycle",
+            "outcome": "completed",
+            "termination_reason": "answer",
+        }
     )
     writer.close()
 
@@ -66,7 +72,9 @@ def _loop_source() -> str:
     return tool_interface._TARGET.read_text(encoding="utf-8")
 
 
-def _write_asserting_test(tests_dir: Path, content: str, name: str = "test_x.py") -> None:
+def _write_asserting_test(
+    tests_dir: Path, content: str, name: str = "test_x.py"
+) -> None:
     tests_dir.mkdir(parents=True, exist_ok=True)
     (tests_dir / name).write_text(content, encoding="utf-8")
 
@@ -115,10 +123,10 @@ class TestFindTestCollisions:
         tests_dir = tmp_path / "tests"
         _write_asserting_test(
             tests_dir,
-            'def test_x():\n'
-            '    assert (\n'
+            "def test_x():\n"
+            "    assert (\n"
             '        "Tool error: boom"\n'
-            '    ) in content\n',
+            "    ) in content\n",
         )
         hits = find_test_collisions(("Tool error: ",), tests_dir)
         assert len(hits) == 1
@@ -156,7 +164,9 @@ class TestFindTestCollisions:
         )
         assert find_test_collisions(("Tool error: ",), tests_dir) == []
         # Opting out of the exclusion still finds it.
-        hits = find_test_collisions(("Tool error: ",), tests_dir, exclude_files=frozenset())
+        hits = find_test_collisions(
+            ("Tool error: ",), tests_dir, exclude_files=frozenset()
+        )
         assert len(hits) == 1
         assert hits[0].path.name == "test_harnessfix_collisions.py"
 
@@ -204,7 +214,9 @@ class TestLoopCollisionGuard:
         monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
         monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
         monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
-        monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+        monkeypatch.setattr(
+            gates, "run_benchmark_gate", lambda model, profile=None: None
+        )
 
         from harnessfix.repairs.tool_interface import revert
 
@@ -276,7 +288,9 @@ class TestLoopCollisionGuard:
         monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
         monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
         monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
-        monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+        monkeypatch.setattr(
+            gates, "run_benchmark_gate", lambda model, profile=None: None
+        )
 
         from harnessfix.repairs.tool_interface import revert
 

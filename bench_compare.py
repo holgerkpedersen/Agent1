@@ -7,6 +7,7 @@ and tokens/question, sorted best-overall first. Read-only: this script writes no
 
 Usage:  python bench_compare.py
 """
+
 from __future__ import annotations
 
 import json
@@ -67,8 +68,9 @@ def main() -> None:
         n_q = sum(len(cats.get(c, {}).get("questions", [])) for c in CATS)
         scoreable = entry.get("total_scoreable")
         correct = entry.get("total_correct")
-        print(f"  {name:<40} questions={n_q:<4} scoreable={scoreable}"
-              f"  correct={correct}")
+        print(
+            f"  {name:<40} questions={n_q:<4} scoreable={scoreable}  correct={correct}"
+        )
 
 
 if __name__ == "__main__":

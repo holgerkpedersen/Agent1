@@ -4,6 +4,7 @@ Adds a threshold-based commitment layer on top of the base orchestrator.
 Speculative branches produce scored candidates; this module decides whether
 to COMMIT to the best candidate or REFUSE (and broaden/re-evaluate).
 """
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, List, Optional
@@ -76,7 +77,9 @@ class ProbabilisticOrchestrator:
             RuntimeError: if the branches do not finish within ``timeout``.
         """
         if self.base_orchestrator is None:
-            raise ValueError("base_orchestrator is required to run speculative deliberation")
+            raise ValueError(
+                "base_orchestrator is required to run speculative deliberation"
+            )
         if not 0.0 <= threshold <= 1.0:
             raise ValueError("threshold must be within [0.0, 1.0]")
 
@@ -93,7 +96,9 @@ class ProbabilisticOrchestrator:
             # they are not committable candidates.
             if result is None or "error" in result:
                 continue
-            candidates.append(ScoredCandidate(result=result, score=float(scorer(result))))
+            candidates.append(
+                ScoredCandidate(result=result, score=float(scorer(result)))
+            )
 
         if not candidates:
             return CommitmentResult(kind=Decision.REFUSE, best=None)

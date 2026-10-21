@@ -133,9 +133,7 @@ class AgentSettings:
     opencode_password: str = field(
         default_factory=lambda: os.environ.get("OPENCODE_SERVER_PASSWORD", "")
     )
-    opencode_model: str = field(
-        default_factory=lambda: DEFAULT_OPENCODE_MODEL
-    )
+    opencode_model: str = field(default_factory=lambda: DEFAULT_OPENCODE_MODEL)
     #: Direct hosted API mode (OpenAI-compatible, the opencode-go gateway).
     #: When a key is available (OPENCODE_API_KEY or opencode's auth.json
     #: store) the provider uses direct API mode with NATIVE tool calling
@@ -319,9 +317,7 @@ def _parse_provider_chain(raw: str | tuple[str, ...] | None) -> tuple[str, ...]:
     if not raw:
         return ("lmstudio",)
     parts = raw if isinstance(raw, tuple) else raw.split(",")
-    cleaned = tuple(
-        part.strip().lower() for part in parts if part.strip()
-    )
+    cleaned = tuple(part.strip().lower() for part in parts if part.strip())
     return cleaned or ("lmstudio",)
 
 
@@ -335,9 +331,7 @@ def _parse_zen_fallbacks(raw: str | None) -> tuple[str, ...]:
     """
     if not raw:
         return ()
-    cleaned = tuple(
-        part.strip() for part in raw.split(",") if part.strip()
-    )
+    cleaned = tuple(part.strip() for part in raw.split(",") if part.strip())
     return cleaned
 
 
@@ -349,6 +343,7 @@ def _store_secret(name: str) -> str:
     """
     try:
         from agent_core.security.secrets import get_secret
+
         return get_secret(name, "")
     except Exception as exc:  # noqa: BLE001
         logger.debug("Secret store lookup failed for %s: %s", name, exc)
@@ -540,9 +535,13 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
     env_vars = _load_env_file(env_path)
 
     merged: dict[str, str] = {**env_vars}
-    for key in ("AGENT_WORKSPACE_ROOT", "AGENT_LLM_API_URL",
-                "AGENT_MAX_CONCURRENT_TOOLS", "AGENT_SEARCH_COMMAND_TIMEOUT_SEC",
-                "AGENT_COMPILATION_CHECK_TIMEOUT_SEC"):
+    for key in (
+        "AGENT_WORKSPACE_ROOT",
+        "AGENT_LLM_API_URL",
+        "AGENT_MAX_CONCURRENT_TOOLS",
+        "AGENT_SEARCH_COMMAND_TIMEOUT_SEC",
+        "AGENT_COMPILATION_CHECK_TIMEOUT_SEC",
+    ):
         if key in os.environ:
             merged[key] = os.environ[key]
 
@@ -660,10 +659,11 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
             os.environ.get("AGENT_JEV_PROVIDER")
             or env_vars.get("AGENT_JEV_PROVIDER")
             or ""
-        ).strip().lower(),
+        )
+        .strip()
+        .lower(),
         jev_samples=_parse_int(
-            os.environ.get("AGENT_JEV_SAMPLES")
-            or env_vars.get("AGENT_JEV_SAMPLES"),
+            os.environ.get("AGENT_JEV_SAMPLES") or env_vars.get("AGENT_JEV_SAMPLES"),
             5,
         ),
         jev_temperature=_parse_float(

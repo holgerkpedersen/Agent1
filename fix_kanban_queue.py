@@ -5,6 +5,7 @@ KANBAN_QUEUE_FILE = Path(r"C:\Dev\Kanban\data\queue-kanban-to-agent1\messages.js
 OFFSET_FILE = KANBAN_QUEUE_FILE.parent / "offset.txt"
 TARGET_ID = "f01a7cb8fb514e7d8e48f8d224b66d24"
 
+
 def fix_queue():
     if not KANBAN_QUEUE_FILE.exists():
         print(f"Error: {KANBAN_QUEUE_FILE} not found")
@@ -38,7 +39,7 @@ def fix_queue():
         "ts": template_msg["ts"],
         "retry_count": 0,
         "processed": False,
-        "seq": 1
+        "seq": 1,
     }
 
     print(f"Creating missing card_create message for {TARGET_ID}")
@@ -51,6 +52,7 @@ def fix_queue():
 
     OFFSET_FILE.write_text("0", encoding="utf-8")
     print("Queue fixed and offset reset to 0.")
+
 
 if __name__ == "__main__":
     fix_queue()

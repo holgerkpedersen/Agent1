@@ -4,6 +4,7 @@ Extracted from agent.py as the t00 shell-concern block (step t01).
 Provides platform-specific command suggestions and subprocess utilities
 used throughout the agent.
 """
+
 from __future__ import annotations
 
 import os
@@ -96,7 +97,12 @@ def run_shell_command(command: str) -> list[str]:
         # Only PowerShell gets the -Command wrapper; cmd.exe keeps the plain
         # string so existing behaviour is unchanged when it is the shell.
         if any(os.environ.get(v) for v in _PS_SESSION_ENV):
-            return [_pwsh_argv("powershell"), *_PS_ARGS, "-Command", _ps_command(command)]
+            return [
+                _pwsh_argv("powershell"),
+                *_PS_ARGS,
+                "-Command",
+                _ps_command(command),
+            ]
         return [command]
 
     shell = (os.environ.get("SHELL") or "sh").strip() or "sh"
@@ -168,9 +174,9 @@ def _pwsh_argv(name: str) -> str:
 #: the trailing ``Write-Host``'s 0, which silenced the failure Hint.
 _PS_EXIT_MARKER = "__AGENT1_EXIT__:"
 _PS_EXIT_SNIPPET = (
-    '; $__a1_ok = $?'
-    '; $__a1_ec = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE }'
-    ' elseif ($__a1_ok) { 0 } else { 1 }'
+    "; $__a1_ok = $?"
+    "; $__a1_ec = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE }"
+    " elseif ($__a1_ok) { 0 } else { 1 }"
     '; Write-Host ("' + _PS_EXIT_MARKER + '" + ($__a1_ec + ""))'
 )
 
@@ -200,7 +206,7 @@ def parse_ps_exit_marker(result: str) -> tuple[str, int | None]:
     idx = result.rfind(marker)
     if idx < 0:
         return result, None
-    tail = result[idx + len(marker):]
+    tail = result[idx + len(marker) :]
     digits = ""
     for ch in tail:
         if ch.isdigit():
@@ -467,16 +473,10 @@ def shape_run_stderr(
     # console width and the break can land mid-word ("c\nmdlet").
     nospace = re.sub(r"\s+", "", cleaned).lower()
     if any(n in nospace for n in _CMD_NOT_FOUND_NEEDLES) or (
-        os.name != "nt"
-        and any(n in nospace for n in _CMD_NOT_FOUND_UNIX_NEEDLES)
+        os.name != "nt" and any(n in nospace for n in _CMD_NOT_FOUND_UNIX_NEEDLES)
     ):
         result += platform_shell_command_hint()
-    if (
-        not out.strip()
-        and not cleaned
-        and returncode == 255
-        and os.name == "nt"
-    ):
+    if not out.strip() and not cleaned and returncode == 255 and os.name == "nt":
         # The Windows cmd.exe whole-pipeline failure path: a `|` runs each
         # stage separately and only the LAST stage's code survives, so an
         # early failure surfaces as 255 with no output at all.
@@ -522,6 +522,7 @@ def pytest_full_suite_timeout() -> float:
     conftest's watchdog share ONE budget implementation.
     """
     from agent_core import pytest_cmd_policy
+
     return pytest_cmd_policy._pytest_full_suite_timeout()
 
 
@@ -535,18 +536,21 @@ def is_full_pytest_command(args: list[str] | str) -> bool:
     misclassified as a full run (see the policy module docstring).
     """
     from agent_core import pytest_cmd_policy
+
     return pytest_cmd_policy._is_full_pytest_command(args)
 
 
 def is_pytest_command(args: list[str] | str) -> bool:
     """Return True if the command is any pytest invocation (delegates to policy)."""
     from agent_core import pytest_cmd_policy
+
     return pytest_cmd_policy._is_pytest_command(args)
 
 
 def is_subset_pytest_command(args: list[str] | str) -> bool:
     """Return True if the pytest invocation targets a subset (not full suite)."""
     from agent_core import pytest_cmd_policy
+
     return pytest_cmd_policy._is_subset_pytest_command(args)
 
 
@@ -581,7 +585,7 @@ SYSTEM_PROMPT = (
     '(python -c "...") or the built-in tools instead of shell pipes - never '
     "construct commands that mix Unix and Windows syntax in a single invocation.\n"
     f"- The shell for the run tool is: {detect_shell()}. On Windows there "
-    "one-liners (python -c \"...\") or the built-in tools; run output is "
+    'one-liners (python -c "...") or the built-in tools; run output is '
     "truncated to 5000 chars automatically. The run tool reports non-zero "
     "exit codes as [EXIT CODE: N] at the end of its output - read it from "
     "there, never chain '...; echo $?' (the model cannot see $? afterwards).\n"
@@ -609,7 +613,7 @@ SYSTEM_PROMPT = (
     "- Git: call the git tool with subcommand='status' FIRST, before staging or "
     "committing. Stage everything with subcommand='add', args='-A' - a bare "
     "'-' is NOT a pathspec and will fail. Commit with subcommand='commit', "
-    "args='-m \"message\"'. A request to \"commit changes\" means the FULL "
+    'args=\'-m "message"\'. A request to "commit changes" means the FULL '
     "sequence status -> add -A -> commit -m -> (only if asked) push; never "
     "push alone, because `git push` only sends commits and would silently "
     "leave staged work behind. Never invent flags.\n"
@@ -620,7 +624,7 @@ SYSTEM_PROMPT = (
     "status` typed as a chat command is executed by the REPL and printed to "
     "stdout, so you never see it. If you called no tool, you do not know what "
     "is staged, committed or pushed. Call the git tool before stating it; an "
-    "unverified \"already committed and pushed\" is a fabrication.\n"
+    'unverified "already committed and pushed" is a fabrication.\n'
     "- If a search finds nothing in source files, state that the symbol does "
     "not exist in the current code - never repeat the same search.\n"
     "- A failing test is a real signal: fix the implementation - never weaken "

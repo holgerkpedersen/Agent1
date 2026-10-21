@@ -58,8 +58,12 @@ def _load_model_catalog() -> dict[str, Any]:
             "(ordered provider failover chain, entries may be 'provider:model')"
         )
     for key in (
-        "opencode_server_url", "opencode_api_base", "opencode_zen_api_base",
-        "llama_base_url", "openrouter_api_base", "lemonade_base_url",
+        "opencode_server_url",
+        "opencode_api_base",
+        "opencode_zen_api_base",
+        "llama_base_url",
+        "openrouter_api_base",
+        "lemonade_base_url",
     ):
         if not str(defaults.get(key) or "").strip():
             raise RuntimeError(f"model catalog must define '_defaults.{key}'")
@@ -75,8 +79,11 @@ def _load_model_catalog() -> dict[str, Any]:
             "model-name substrings to {/think, /no_think} directive pairs"
         )
     for token, pair in thinking_gates.items():
-        if not isinstance(pair, dict) or not str(pair.get("/think") or "").strip() \
-                or not str(pair.get("/no_think") or "").strip():
+        if (
+            not isinstance(pair, dict)
+            or not str(pair.get("/think") or "").strip()
+            or not str(pair.get("/no_think") or "").strip()
+        ):
             raise RuntimeError(
                 f"model catalog '_thinking_gates.{token}' must define both "
                 "'/think' and '/no_think' directives"
@@ -135,9 +142,7 @@ DEFAULT_OPENROUTER_MODEL = (
 #: micro-decisions; it is never the agent's main model.  Absent from an older
 #: catalog -> "" (the Jev engine then reports a clear configuration error
 #: instead of guessing).
-DEFAULT_JEV_MODEL = (
-    os.environ.get("AGENT_JEV_MODEL") or _DEFAULTS.get("jev_model", "")
-)
+DEFAULT_JEV_MODEL = os.environ.get("AGENT_JEV_MODEL") or _DEFAULTS.get("jev_model", "")
 
 #: Default ordered provider failover chain from ``model_catalog.json``
 #: ``_defaults.llm_chain`` (entries may be "provider:model" overrides).
@@ -256,7 +261,11 @@ def resolve_model(explicit: str | None = None) -> str:
 
     provider = provider_for(persisted_model, provider_setting, persisted_provider)
     if provider == "opencode":
-        return persisted_model if persisted_model.startswith("opencode") else opencode_model
+        return (
+            persisted_model
+            if persisted_model.startswith("opencode")
+            else opencode_model
+        )
     if provider == "lemonade" and persisted_model.startswith("lemonade/"):
         # Lemonade/NPU ids are agent-namespaced; the persisted choice is
         # authoritative (there is no LM Studio-style live poll for it).
@@ -280,6 +289,7 @@ def resolve_model(explicit: str | None = None) -> str:
     # here, so an explicit switch still takes effect immediately.
     try:
         from agent_core.llm.lmstudio import get_models_status
+
         models = _live_loaded_models(get_models_status)
         loaded = [m["key"] for m in models if m["loaded"]]
         if loaded:
@@ -297,9 +307,11 @@ def resolve_model(explicit: str | None = None) -> str:
 #  Persistence
 # ---------------------------------------------------------------------------
 
+
 def load_model_json() -> dict[str, Any]:
     """Load persisted model state from model.json."""
     import json as _json
+
     try:
         with open(MODEL_JSON_PATH, "r") as f:
             return cast(dict[str, Any], _json.load(f))
@@ -311,6 +323,7 @@ def load_model_json() -> dict[str, Any]:
 def save_model_json(data: dict[str, Any]) -> None:
     """Persist model state to model.json."""
     import json as _json
+
     try:
         with open(MODEL_JSON_PATH, "w") as f:
             _json.dump(data, f, indent=2)
@@ -406,5 +419,3 @@ __all__: list[str] = [
     "resolve_model",
     "save_model_json",
 ]
-
-

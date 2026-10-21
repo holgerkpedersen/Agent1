@@ -4,6 +4,7 @@ Extracted from agent.py as the first t00 concern (step t01).
 Kept as a separate module so the signal handler has a stable import path
 regardless of how agent.py is refactored.
 """
+
 from __future__ import annotations
 
 import signal
@@ -110,7 +111,9 @@ def current_git_branch(cwd: str | None = None) -> str:
 # ── Interruptible input ─────────────────────────────────────────────────────
 
 
-def interruptible_input(prompt: str = "", executor: Callable[[], str] | None = None) -> str:
+def interruptible_input(
+    prompt: str = "", executor: Callable[[], str] | None = None
+) -> str:
     """Read a line of input, supporting cancellation via Ctrl-C.
 
     On Windows the default input() is used; the executor parameter allows

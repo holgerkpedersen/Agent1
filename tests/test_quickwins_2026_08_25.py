@@ -7,6 +7,7 @@ Covers:
       assistant/tool pair splits)
 - #15 ``multillm --synthesize`` merge call and its failure paths
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -38,13 +39,15 @@ def _msg(role: str, content: str, **kw) -> dict:
 # #1 — decisions in the chat system prompt
 # ---------------------------------------------------------------------------
 
+
 class TestDecisionConstraintsInChat:
     def test_empty_when_no_files_read(self, agent_obj: Agent) -> None:
         agent_obj._files_read.clear()
         assert agent_obj._decision_constraints_block() == ""
 
     def test_block_mentions_decision_for_read_file(
-        self, agent_obj: Agent,
+        self,
+        agent_obj: Agent,
     ) -> None:
         # tool_loop.py is referenced by several recorded decisions.
         agent_obj._files_read.add("agent_core/llm/tool_loop.py")
@@ -63,7 +66,10 @@ class TestDecisionConstraintsInChat:
         assert agent_obj._decision_constraints_block() == ""
 
     def test_chat_nlp_rebuilds_system_message_with_block(
-        self, agent_obj: Agent, tmp_path: Path, monkeypatch,
+        self,
+        agent_obj: Agent,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """chat_nlp must refresh message[0] with the constraints block.
 
@@ -89,7 +95,9 @@ class TestDecisionConstraintsInChat:
             return "done.", kwargs["messages"]
 
         monkeypatch.setattr(
-            agent.ToolLoopRunner, "run", fake_loop_run,
+            agent.ToolLoopRunner,
+            "run",
+            fake_loop_run,
         )
         asyncio.run(fresh.chat_nlp("hello"))
         system = captured["messages"][0]
@@ -105,6 +113,7 @@ class TestDecisionConstraintsInChat:
 # ---------------------------------------------------------------------------
 # #14 — plan-mode answer persistence
 # ---------------------------------------------------------------------------
+
 
 class TestPlanAnswerPersistence:
     def test_persist_writes_plan_proposed_md(self, agent_obj: Agent, tmp_path) -> None:
@@ -127,7 +136,8 @@ class TestPlanAnswerPersistence:
             raise OSError("disk full")
 
         monkeypatch.setattr(
-            "agent_core.commands.doc_paths.new_run_dir", boom,
+            "agent_core.commands.doc_paths.new_run_dir",
+            boom,
         )
         # Must not raise.
         agent_obj._persist_plan_answer("plan text")
@@ -136,6 +146,7 @@ class TestPlanAnswerPersistence:
 # ---------------------------------------------------------------------------
 # #5 — token-aware history trimming
 # ---------------------------------------------------------------------------
+
 
 class TestHistoryCharBudgetTrim:
     def test_small_history_untouched(self) -> None:
@@ -166,9 +177,7 @@ class TestHistoryCharBudgetTrim:
             if "context compaction" not in str(m.get("content"))
         )
         assert body_chars <= _HISTORY_CHAR_BUDGET
-        notes = [
-            m for m in out if "context compaction" in str(m.get("content"))
-        ]
+        notes = [m for m in out if "context compaction" in str(m.get("content"))]
         assert len(notes) == 1
         # Newest messages survive; oldest are gone.
         assert out[-1] == msgs[-1]
@@ -177,17 +186,23 @@ class TestHistoryCharBudgetTrim:
         pair_msg = {
             "role": "assistant",
             "content": "",
-            "tool_calls": [{
-                "id": "c1",
-                "type": "function",
-                "function": {"name": "read", "arguments": "{\"path\": \"a.py\"}"},
-            }],
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "read", "arguments": '{"path": "a.py"}'},
+                }
+            ],
         }
         msgs = [
             _msg("system", "sys"),
             _msg("user", "q"),
             pair_msg,
-            {"role": "tool", "tool_call_id": "c1", "content": "z" * (_HISTORY_CHAR_BUDGET + 10)},
+            {
+                "role": "tool",
+                "tool_call_id": "c1",
+                "content": "z" * (_HISTORY_CHAR_BUDGET + 10),
+            },
             _msg("assistant", "done"),
         ]
         out = _trim_chat_history(msgs)
@@ -214,11 +229,13 @@ class TestHistoryCharBudgetTrim:
             {
                 "role": "assistant",
                 "content": "",
-                "tool_calls": [{
-                    "id": "c1",
-                    "type": "function",
-                    "function": {"name": "write", "arguments": big_args},
-                }],
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "write", "arguments": big_args},
+                    }
+                ],
             },
             {"role": "tool", "tool_call_id": "c1", "content": "ok"},
         ]
@@ -240,6 +257,7 @@ class TestHistoryCharBudgetTrim:
 # #15 — multillm --synthesize
 # ---------------------------------------------------------------------------
 
+
 def _run_with_results(*texts: str) -> ParallelRun:
     run = ParallelRun(template_id="t")
     run.results = [
@@ -250,7 +268,9 @@ def _run_with_results(*texts: str) -> ParallelRun:
 
 
 class TestMultillmSynthesize:
-    def test_flag_parsed_and_question_not_polluted(self, agent_obj: Agent, capsys) -> None:
+    def test_flag_parsed_and_question_not_polluted(
+        self, agent_obj: Agent, capsys
+    ) -> None:
         """--synthesize must not leak into the question text."""
         calls = []
 
@@ -259,9 +279,12 @@ class TestMultillmSynthesize:
             return _run_with_results("", "")  # no usable answers -> skip path
 
         with patch_module(fake_parallel):
-            asyncio.run(MultiLlmCommand().execute(
-                ["what", "is", "x", "--synthesize"], agent_obj,
-            ))
+            asyncio.run(
+                MultiLlmCommand().execute(
+                    ["what", "is", "x", "--synthesize"],
+                    agent_obj,
+                )
+            )
         out = capsys.readouterr().out
         assert "--synthesize" not in out.split("question:")[-1].split("\n")[0]
 
@@ -284,14 +307,19 @@ class TestMultillmSynthesize:
         assert "Answer B says no." in user_text
 
     def test_synthesize_skips_with_fewer_than_two_answers(
-        self, agent_obj: Agent, capsys,
+        self,
+        agent_obj: Agent,
+        capsys,
     ) -> None:
         async def fail_chat(messages, **kw):
             raise AssertionError("LLM must not be called")
 
         agent_obj.llm.chat = fail_chat
         MultiLlmCommand()._synthesize(
-            _run_with_results("only one"), agent_obj, "q", True,
+            _run_with_results("only one"),
+            agent_obj,
+            "q",
+            True,
         )
         assert "needs at least two usable answers" in capsys.readouterr().out
 
@@ -302,7 +330,9 @@ class TestMultillmSynthesize:
         agent_obj.llm.chat = error_chat
         MultiLlmCommand()._synthesize(
             _run_with_results("A text here!", "B text here!"),
-            agent_obj, "q", True,
+            agent_obj,
+            "q",
+            True,
         )
         out = capsys.readouterr().out
         assert "SYNTHESIZED ANSWER" not in out

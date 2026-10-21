@@ -65,7 +65,8 @@ def test_from_env_falls_back_to_env_file(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("HUE_BRIDGE_IP", raising=False)
     monkeypatch.delenv("HUE_API_KEY", raising=False)
     monkeypatch.setattr(
-        hue_bridge_mod, "_read_env_file",
+        hue_bridge_mod,
+        "_read_env_file",
         lambda: {"HUE_BRIDGE_IP": "10.0.0.5", "HUE_API_KEY": "filekey"},
     )
     bridge = HueBridge.from_env()
@@ -80,12 +81,13 @@ def test_from_env_os_environ_wins_over_file(
     monkeypatch.setenv("HUE_BRIDGE_IP", "192.168.1.217")
     monkeypatch.delenv("HUE_API_KEY", raising=False)
     monkeypatch.setattr(
-        hue_bridge_mod, "_read_env_file",
+        hue_bridge_mod,
+        "_read_env_file",
         lambda: {"HUE_BRIDGE_IP": "10.0.0.5", "HUE_API_KEY": "filekey"},
     )
     bridge = HueBridge.from_env()
     assert bridge._base_ip == "192.168.1.217"  # os.environ wins
-    assert bridge._api_key == "filekey"        # missing key comes from file
+    assert bridge._api_key == "filekey"  # missing key comes from file
 
 
 def test_from_env_empty_file_degrades_to_error(
@@ -107,18 +109,20 @@ async def test_list_lights_success(monkeypatch: pytest.MonkeyPatch) -> None:
     bridge = HueBridge.from_env()
 
     # V1 API returns a dict keyed by light ID
-    bridge._get = AsyncMock(return_value={  # type: ignore[attr-defined]
-        "1": {
-            "name": "Lampe 1",
-            "type": "Extended color light",
-            "state": {"on": True, "bri": 203, "ct": 366},
-        },
-        "3": {
-            "name": "Lampe 2",
-            "type": "Extended color light",
-            "state": {"on": False, "bri": 1, "ct": 230},
-        },
-    })
+    bridge._get = AsyncMock(
+        return_value={  # type: ignore[attr-defined]
+            "1": {
+                "name": "Lampe 1",
+                "type": "Extended color light",
+                "state": {"on": True, "bri": 203, "ct": 366},
+            },
+            "3": {
+                "name": "Lampe 2",
+                "type": "Extended color light",
+                "state": {"on": False, "bri": 1, "ct": 230},
+            },
+        }
+    )
 
     lights = await bridge.list_lights()
     assert len(lights) == 2
@@ -148,9 +152,11 @@ async def test_list_lights_missing_state_fields(
     """Lights without bri/ct in state yield None brightness/mirek."""
     _mock_env(monkeypatch)
     bridge = HueBridge.from_env()
-    bridge._get = AsyncMock(return_value={  # type: ignore[attr-defined]
-        "5": {"name": "Minimal", "state": {"on": True}},
-    })
+    bridge._get = AsyncMock(
+        return_value={  # type: ignore[attr-defined]
+            "5": {"name": "Minimal", "state": {"on": True}},
+        }
+    )
     lights = await bridge.list_lights()
     assert len(lights) == 1
     assert lights[0]["brightness"] is None
@@ -164,16 +170,18 @@ async def test_list_lights_missing_state_fields(
 async def test_get_light_success(monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_env(monkeypatch)
     bridge = HueBridge.from_env()
-    bridge._get = AsyncMock(return_value={  # type: ignore[attr-defined]
-        "name": "Desk Lamp",
-        "type": "Extended color light",
-        "state": {
-            "on": True,
-            "bri": 114,
-            "ct": 250,
-            "xy": [0.4, 0.5],
-        },
-    })
+    bridge._get = AsyncMock(
+        return_value={  # type: ignore[attr-defined]
+            "name": "Desk Lamp",
+            "type": "Extended color light",
+            "state": {
+                "on": True,
+                "bri": 114,
+                "ct": 250,
+                "xy": [0.4, 0.5],
+            },
+        }
+    )
     info = await bridge.get_light("3")
     assert info["id"] == "3"
     assert info["name"] == "Desk Lamp"
@@ -318,7 +326,13 @@ async def test_put_error_in_body_with_http_200(monkeypatch: pytest.MonkeyPatch) 
     mock_resp.status_code = 200
     mock_resp.text = '[{"error":{"type":6,"address":"/lights/3/on","description":"parameter, on, not available"}}]'
     mock_resp.json.return_value = [
-        {"error": {"type": 6, "address": "/lights/3/on", "description": "parameter, on, not available"}}
+        {
+            "error": {
+                "type": 6,
+                "address": "/lights/3/on",
+                "description": "parameter, on, not available",
+            }
+        }
     ]
     with patch("httpx.AsyncClient") as mock_cls:
         inst = AsyncMock()
@@ -515,9 +529,7 @@ def _agent_with_mocked_hue(
     bridge = HueBridge("1.2.3.4", "k")
     bridge._get = AsyncMock(return_value={"state": {"bri": current_bri}})  # type: ignore[attr-defined]
     bridge._put = AsyncMock(return_value={})  # type: ignore[attr-defined]
-    monkeypatch.setattr(
-        agent_mod.HueBridge, "from_env", staticmethod(lambda: bridge)
-    )
+    monkeypatch.setattr(agent_mod.HueBridge, "from_env", staticmethod(lambda: bridge))
     return agent_mod.Agent(workspace="."), bridge
 
 
@@ -597,9 +609,7 @@ def test_hue_control_schema_exposes_name_property() -> None:
     """
     from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
 
-    hue = next(
-        t for t in NLP_TOOL_SCHEMAS if t["function"]["name"] == "hue_control"
-    )
+    hue = next(t for t in NLP_TOOL_SCHEMAS if t["function"]["name"] == "hue_control")
     params = hue["function"]["parameters"]
     props = params["properties"]
 
@@ -628,9 +638,7 @@ def test_hue_schema_advertised_colours_all_resolve() -> None:
     from agent_core.hue.bridge import _rgb_from_named_color
     from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
 
-    hue = next(
-        t for t in NLP_TOOL_SCHEMAS if t["function"]["name"] == "hue_control"
-    )
+    hue = next(t for t in NLP_TOOL_SCHEMAS if t["function"]["name"] == "hue_control")
     desc = hue["function"]["parameters"]["properties"]["name"]["description"]
 
     supported_match = re.search(r"Supported:\s*([^.]+)\.", desc)

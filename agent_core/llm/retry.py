@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from typing import Awaitable, Callable, TypeVar, Any
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 #: HTTP statuses worth retrying: rate limiting plus the classic transient
 #: gateway/server failures.  Mirrors ``opencode_provider._TRANSIENT_HTTP_STATUSES``
@@ -44,7 +44,7 @@ class RetryPolicy:
             ConnectionRefusedError,
             OSError,
             TransientHTTPError,
-        )
+        ),
     ):
         self.max_retries = max_retries
         self.base_delay = base_delay
@@ -55,7 +55,7 @@ class RetryPolicy:
         func: Callable[..., Awaitable[T]],
         *args: Any,
         on_retry: Callable[[int, str, float], None] | None = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> T:
         """Execute function with retry on transient errors.
 
@@ -81,7 +81,7 @@ class RetryPolicy:
                 error_msg = str(e)
 
                 if attempt < self.max_retries - 1:
-                    wait_time = self.base_delay * (2 ** attempt)
+                    wait_time = self.base_delay * (2**attempt)
                     if on_retry:
                         on_retry(attempt + 1, error_msg, wait_time)
                     await asyncio.sleep(wait_time)

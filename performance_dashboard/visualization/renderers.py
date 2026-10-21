@@ -28,7 +28,9 @@ class HTMLRenderer:
 
     def render_controls(self, controls: Dict[str, Any]) -> str:
         """Render interactive control markup (filters, refresh buttons)."""
-        html_parts = [self._control_markup(name, spec) for name, spec in controls.items()]
+        html_parts = [
+            self._control_markup(name, spec) for name, spec in controls.items()
+        ]
         return "\n".join(html_parts)
 
     def _wrap_document(self, body_content: str) -> str:
@@ -37,15 +39,15 @@ class HTMLRenderer:
         refresh_ms: int = self._layout.refresh_interval_ms
         theme: str = self._layout.theme_name or "default"
         return (
-            "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
-            f"<meta charset=\"utf-8\">\n<meta http-equiv=\"refresh\" content=\"{refresh_ms / 1000:.1f}\">\n"
+            '<!DOCTYPE html>\n<html lang="en">\n<head>\n'
+            f'<meta charset="utf-8">\n<meta http-equiv="refresh" content="{refresh_ms / 1000:.1f}">\n'
             "<title>Performance Dashboard</title>\n<style>\n"
             f":root {{ --grid-cols: {grid_cols}; --chart-height: {height_px}px; }}\n"
             f".theme-{theme} {{ background:#fff;color:#222;}}\n"
             ".dashboard-grid {{ display:grid;grid-template-columns:repeat(var(--grid-cols),1fr);gap:8px;}}\n"
             ".chart-widget {{ height:var(--chart-height);border:1px solid #ccc;padding:4px;overflow:auto;}}\n"
-            "</style>\n</head>\n<body class=\"theme-{theme\">\n"
-            f"<div class=\"dashboard-grid\">\n{body_content}\n</div>\n</body>\n</html>"
+            '</style>\n</head>\n<body class="theme-{theme">\n'
+            f'<div class="dashboard-grid">\n{body_content}\n</div>\n</body>\n</html>'
         )
 
     def _control_markup(self, name: str, spec: Dict[str, Any]) -> str:
@@ -54,19 +56,17 @@ class HTMLRenderer:
         if control_type == "filter":
             options: List[str] = list(spec.get("options", []))  # type: ignore[arg-type]
             opt_markup: str = "\n".join(
-                f"<option value=\"{opt}\">{opt}</option>" for opt in options
+                f'<option value="{opt}">{opt}</option>' for opt in options
             )
             return (
-                f"<label>{label}: <select name=\"{name}\">\n"
-                "<option value=\"all\">All</option>\n"
+                f'<label>{label}: <select name="{name}">\n'
+                '<option value="all">All</option>\n'
                 f"{opt_markup}\n</select></label>"
             )
         elif control_type == "range":
             min_val: float = spec.get("min", 0.0)  # type: ignore[assignment]
             max_val: float = spec.get("max", 100.0)  # type: ignore[assignment]
-            return (
-                f"<label>{label}: <input type=\"range\" name=\"{name}\" min=\"{min_val}\" max=\"{max_val}\"></label>"
-            )
+            return f'<label>{label}: <input type="range" name="{name}" min="{min_val}" max="{max_val}"></label>'
         else:
             action: str = spec.get("action", "#")  # type: ignore[assignment]
             return f"<button onclick=\"fetch('{action}')\">{label}</button>"
@@ -139,13 +139,21 @@ class TerminalDisplayAdapter:
         v_min: float = min(values)
         v_max: float = max(values)
         span: float = (v_max - v_min) or 1.0
-        grid: List[List[str]] = [[" " for _ in range(self._width)] for _ in range(self._height)]
+        grid: List[List[str]] = [
+            [" " for _ in range(self._width)] for _ in range(self._height)
+        ]
         normalized_positions: List[Tuple[int, int]] = []
         for idx, point in enumerate(points):
-            x_pos: int = min(int(idx / max(len(points) - 1, 1) * (self._width - 1)), self._width - 1)
-            y_pos: int = self._height - 1 - min(
-                int((point.value - v_min) / span * (self._height - 1)),
-                self._height - 1,
+            x_pos: int = min(
+                int(idx / max(len(points) - 1, 1) * (self._width - 1)), self._width - 1
+            )
+            y_pos: int = (
+                self._height
+                - 1
+                - min(
+                    int((point.value - v_min) / span * (self._height - 1)),
+                    self._height - 1,
+                )
             )
             normalized_positions.append((x_pos, y_pos))
             grid[y_pos][x_pos] = "*"
@@ -180,7 +188,9 @@ class TerminalDisplayAdapter:
         header: str = f"ASCII Histogram (bins={bins}, max_count={max_count})"
         return "\n".join([header] + rows)
 
-    def _draw_line(self, grid: List[List[str]], x0: int, y0: int, x1: int, y1: int) -> None:
+    def _draw_line(
+        self, grid: List[List[str]], x0: int, y0: int, x1: int, y1: int
+    ) -> None:
         """Bresenham-style line drawing onto the ASCII grid."""
         dx: int = abs(x1 - x0)
         dy: int = abs(y1 - y0)
@@ -234,7 +244,9 @@ class DashboardStateSerializer:
         layout_data: Dict[str, Any] = state.get("layout", {})  # type: ignore[assignment]
         return _rebuild_layout(layout_data)
 
-    def _compute_summary(self, records: List[PerformanceRecord]) -> Optional[StatisticalSummary]:
+    def _compute_summary(
+        self, records: List[PerformanceRecord]
+    ) -> Optional[StatisticalSummary]:
         """Compute a statistical summary from record metric scalars."""
         values: List[float] = []
         for rec in records:
@@ -305,7 +317,7 @@ def _std_deviation(values: List[float], mean_val: float) -> float:
     if len(values) < 2:
         return 0.0
     variance: float = sum((v - mean_val) ** 2 for v in values) / len(values)
-    return variance ** 0.5
+    return variance**0.5
 
 
 def _percentile(sorted_vals: List[float], pct: float) -> float:
@@ -348,8 +360,11 @@ class LayoutTranslator:
                 "type": order_name,
                 "grid_position": len(sections),
                 "records": _classify_records(records),
-                "summary": DashboardStateSerializer(self._layout)._compute_summary(records).model_dump()  # type: ignore[union-attr]
-                if DashboardStateSerializer(self._layout)._compute_summary(records) is not None  # noqa: SIM222
+                "summary": DashboardStateSerializer(self._layout)
+                ._compute_summary(records)
+                .model_dump()  # type: ignore[union-attr]
+                if DashboardStateSerializer(self._layout)._compute_summary(records)
+                is not None  # noqa: SIM222
                 else None,
             }
             sections.append(section)
@@ -362,7 +377,9 @@ class LayoutTranslator:
     def translate_from_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Translate from a serialized dashboard state."""
         records_data: List[Any] = list(state.get("records", []))  # type: ignore[arg-type]
-        reconstructed_records: List[PerformanceRecord] = [_reconstruct_record(r) for r in records_data if isinstance(r, dict)]  # noqa: E501
+        reconstructed_records: List[PerformanceRecord] = [
+            _reconstruct_record(r) for r in records_data if isinstance(r, dict)
+        ]  # noqa: E501
         return self.translate(reconstructed_records)
 
 

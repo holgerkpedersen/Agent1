@@ -25,6 +25,7 @@ def _quality_scorer(result: dict) -> float:
 def test_pipeline_commits_best_branch():
     """The highest-scoring branch above threshold is committed to."""
     with Orchestrator(agents=[], max_workers=4) as base:
+
         def reasoning_func(branch_id: int, context: dict) -> dict:
             return {"branch": branch_id, "quality": [0.2, 0.9, 0.5][branch_id]}
 
@@ -47,6 +48,7 @@ def test_pipeline_commits_best_branch():
 def test_pipeline_refuses_when_all_below_threshold():
     """No branch reaches the threshold -> REFUSE with no committed candidate."""
     with Orchestrator(agents=[], max_workers=4) as base:
+
         def reasoning_func(branch_id: int, context: dict) -> dict:
             return {"branch": branch_id, "quality": [0.1, 0.3, 0.2][branch_id]}
 
@@ -67,6 +69,7 @@ def test_pipeline_refuses_when_all_below_threshold():
 def test_pipeline_skips_failed_branches():
     """A branch that raises is excluded from candidates; others still commit."""
     with Orchestrator(agents=[], max_workers=4) as base:
+
         def reasoning_func(branch_id: int, context: dict) -> dict:
             if branch_id == 1:
                 raise ValueError("branch blew up")
@@ -91,6 +94,7 @@ def test_pipeline_skips_failed_branches():
 def test_pipeline_refuses_when_all_branches_fail():
     """Every branch raising leaves no committable candidate -> REFUSE."""
     with Orchestrator(agents=[], max_workers=4) as base:
+
         def reasoning_func(branch_id: int, context: dict) -> dict:
             raise RuntimeError("branch %d failed" % branch_id)
 
@@ -123,6 +127,7 @@ def test_pipeline_requires_base_orchestrator():
 def test_pipeline_rejects_out_of_range_threshold():
     """An invalid threshold fails fast with a threshold-specific error."""
     with Orchestrator(agents=[], max_workers=4) as base:
+
         def reasoning_func(branch_id: int, context: dict) -> dict:
             return {"branch": branch_id, "quality": 0.5}
 
@@ -141,6 +146,7 @@ def test_pipeline_rejects_out_of_range_threshold():
 def test_pipeline_times_out_when_branches_stall():
     """Branches that outlive the timeout abort the pipeline loudly."""
     with Orchestrator(agents=[], max_workers=4) as base:
+
         def reasoning_func(branch_id: int, context: dict) -> dict:
             time.sleep(0.5)
             return {"branch": branch_id, "quality": 0.9}

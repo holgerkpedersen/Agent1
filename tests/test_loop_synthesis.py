@@ -5,6 +5,7 @@ The loop guarantees it never ends without a usable text answer (decision
 chat_nlp falls back to a concrete activity summary instead of a cryptic
 "no response" message.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,22 +25,27 @@ class _Sink:
 
 class TestForcedSynthesisRetry:
     def test_empty_synthesis_retried_and_traced(self):
-        fake = _ScriptedLLM([
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "b.py"}),
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "b.py"}),
-            "",
-            "Det konkrete svar om trace-analysen.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "b.py"}),
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "b.py"}),
+                "",
+                "Det konkrete svar om trace-analysen.",
+            ]
+        )
         sink = _Sink()
 
         async def execute_tool(name, args):
             return "x"
 
         runner = ToolLoopRunner(
-            max_iterations=10, no_mutation_limit=1, force_after_no_mutation=2,
-            display_mode=DisplayMode.QUIET, trace=sink,
+            max_iterations=10,
+            no_mutation_limit=1,
+            force_after_no_mutation=2,
+            display_mode=DisplayMode.QUIET,
+            trace=sink,
         )
         final_text, _ = _loop_runner_sync(runner, fake, execute_tool)
 
@@ -58,20 +64,25 @@ class TestForcedSynthesisRetry:
         assert fake.calls[-1][1] == [] and fake.calls[-2][1] == []
 
     def test_synthesis_llm_response_events_traced(self):
-        fake = _ScriptedLLM([
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "b.py"}),
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "b.py"}),
-            "Svar.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "b.py"}),
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "b.py"}),
+                "Svar.",
+            ]
+        )
         sink = _Sink()
 
         async def execute_tool(name, args):
             return "x"
 
         runner = ToolLoopRunner(
-            max_iterations=10, no_mutation_limit=1, force_after_no_mutation=2, trace=sink,
+            max_iterations=10,
+            no_mutation_limit=1,
+            force_after_no_mutation=2,
+            trace=sink,
         )
         _loop_runner_sync(runner, fake, execute_tool)
 
@@ -79,27 +90,36 @@ class TestForcedSynthesisRetry:
         assert "guard_triggered" in kinds
         # The forced call(s) appear as llm_response with tool_calls_requested=0
         # (decision #034: every loop event is traced).
-        synthesis = [e for e in sink.events if e["kind"] == "llm_response" and e.get("tool_calls_requested") == 0]
+        synthesis = [
+            e
+            for e in sink.events
+            if e["kind"] == "llm_response" and e.get("tool_calls_requested") == 0
+        ]
         assert synthesis, "missing traced synthesis response"
         gi = kinds.index("guard_triggered")
         assert kinds[gi + 1] == "llm_response"
 
     def test_stats_recorded_for_fallback(self):
-        fake = _ScriptedLLM([
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "b.py"}),
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "b.py"}),
-            ("read", {"path": "a.py"}),
-            "Svar.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "b.py"}),
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "b.py"}),
+                ("read", {"path": "a.py"}),
+                "Svar.",
+            ]
+        )
         sink = _Sink()
 
         async def execute_tool(name, args):
             return "x"
 
         runner = ToolLoopRunner(
-            max_iterations=10, no_mutation_limit=1, force_after_no_mutation=3, trace=sink,
+            max_iterations=10,
+            no_mutation_limit=1,
+            force_after_no_mutation=3,
+            trace=sink,
         )
         _loop_runner_sync(runner, fake, execute_tool)
 
@@ -144,14 +164,21 @@ class TestFinalAnswerFallback:
                 # on the third consecutive identical call.  Forced-synthesis
                 # calls return empty output.
                 if self.calls <= 3:
-                    return json.dumps({
-                        "content": "",
-                        "tool_calls": [{
-                            "id": f"c{self.calls}", "type": "function",
-                            "function": {"name": "search",
-                                        "arguments": json.dumps({"query": "x"})},
-                        }],
-                    })
+                    return json.dumps(
+                        {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": f"c{self.calls}",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "search",
+                                        "arguments": json.dumps({"query": "x"}),
+                                    },
+                                }
+                            ],
+                        }
+                    )
                 return "(no output)"
 
         fake = _Fake()
@@ -173,7 +200,13 @@ class TestFinalAnswerFallback:
             if isinstance(parsed, dict) and parsed.get("tool_calls"):
                 parsed.pop("role", None)
                 updated = list(messages)
-                updated.append({"role": "assistant", "content": parsed.get("content") or "", **parsed})
+                updated.append(
+                    {
+                        "role": "assistant",
+                        "content": parsed.get("content") or "",
+                        **parsed,
+                    }
+                )
                 return str(parsed.get("content") or ""), updated
             updated = list(messages) + [{"role": "assistant", "content": raw}]
             return raw, updated

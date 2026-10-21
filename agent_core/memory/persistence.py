@@ -7,6 +7,7 @@ memory stats, history clearing, and the LLM-experience ledger.  Each former
 (``CHAT_HISTORY_JSON_PATH`` / ``AGENT_MEMORY_JSON_PATH``) are resolved
 lazily from the ``agent`` module so test monkeypatches are honoured.
 """
+
 from __future__ import annotations
 
 import json
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 def _agent_mod() -> Any:
     """The ``agent`` module, resolved lazily (agent.py imports this module)."""
     import agent as _agent_mod
+
     return _agent_mod
 
 
@@ -43,24 +45,36 @@ def _persist_plan_answer(agent: "Agent", plan_text: str) -> None:
     later (plan item D-#14).  Best-effort: a write failure must never
     lose the already-printed answer or crash the turn.
     """
-    with _suppress_and_log('Could not persist plan-mode answer:\n'):
+    with _suppress_and_log("Could not persist plan-mode answer:\n"):
         from agent_core.commands.doc_paths import new_run_dir
-        out = new_run_dir(agent.workspace) / 'plan_proposed.md'
-        out.write_text(f'# Proposed plan\n\n_Generated in plan mode on {datetime.now():%Y-%m-%d %H:%M}. Review before applying — switch to build mode to implement._\n\n{plan_text}\n', encoding='utf-8')
-        print(yellow(f'\n  [plan] Saved to {out}'))
+
+        out = new_run_dir(agent.workspace) / "plan_proposed.md"
+        out.write_text(
+            f"# Proposed plan\n\n_Generated in plan mode on {datetime.now():%Y-%m-%d %H:%M}. Review before applying — switch to build mode to implement._\n\n{plan_text}\n",
+            encoding="utf-8",
+        )
+        print(yellow(f"\n  [plan] Saved to {out}"))
 
 
 def memory_stats(agent: "Agent") -> dict[str, Any]:
     """Return summary of current memory state."""
-    stale = getattr(agent, 'check_stale_files')()
-    return {'chat_history': len(agent._chat_history), 'files_read': len(agent._files_read), 'stale_files': len(stale), 'history': len(agent._history), 'working_memory': len(agent._working_memory), 'semantic_index': len(agent._semantic_index), 'knowledge_graph': len(agent._knowledge_graph)}
+    stale = getattr(agent, "check_stale_files")()
+    return {
+        "chat_history": len(agent._chat_history),
+        "files_read": len(agent._files_read),
+        "stale_files": len(stale),
+        "history": len(agent._history),
+        "working_memory": len(agent._working_memory),
+        "semantic_index": len(agent._semantic_index),
+        "knowledge_graph": len(agent._knowledge_graph),
+    }
 
 
 def clear_history(agent: "Agent") -> None:
     """Clear all agent state."""
     agent._history = []
     agent._chat_history.clear()
-    if hasattr(agent, '_conversation'):
+    if hasattr(agent, "_conversation"):
         agent._conversation.clear()
     agent._turn_start_index = 0
     agent._turn_run_id = None
@@ -69,7 +83,7 @@ def clear_history(agent: "Agent") -> None:
     agent._active_subagents.clear()
     agent._delegate_counter = 0
     agent._pending_effects = None
-    agent._original_goal = ''
+    agent._original_goal = ""
     agent._goal_from_restore = False
     agent._prior_chat_history = []
     agent._files_read.clear()
@@ -81,11 +95,11 @@ def clear_history(agent: "Agent") -> None:
         os.remove(_agent_mod().CHAT_HISTORY_JSON_PATH)
         os.remove(_agent_mod().AGENT_MEMORY_JSON_PATH)
     except OSError as e:
-        logger.warning('Could not remove persisted state files: %s', e)
+        logger.warning("Could not remove persisted state files: %s", e)
     try:
         agent._full_run_gate.reset()
     except Exception:
-        logger.debug('full-run gate reset failed', exc_info=True)
+        logger.debug("full-run gate reset failed", exc_info=True)
 
 
 def _load_chat_history(agent: "Agent") -> list[dict[str, Any]]:
@@ -96,21 +110,29 @@ def _load_chat_history(agent: "Agent") -> list[dict[str, Any]]:
     instead of forgetting it.  A corrupt file is quarantined (see
     :func:`_read_json_quarantining`) instead of being silently dropped.
     """
-    data = _read_json_quarantining(_agent_mod().CHAT_HISTORY_JSON_PATH, 'chat history')
+    data = _read_json_quarantining(_agent_mod().CHAT_HISTORY_JSON_PATH, "chat history")
     if not isinstance(data, list):
         return []
-    messages = [m for m in data if isinstance(m, dict) and m.get('role') in ('system', 'user', 'assistant', 'tool') and (LOOP_NOTE_TAG_KEY not in m)]
+    messages = [
+        m
+        for m in data
+        if isinstance(m, dict)
+        and m.get("role") in ("system", "user", "assistant", "tool")
+        and (LOOP_NOTE_TAG_KEY not in m)
+    ]
     for m in messages:
-        for tc in m.get('tool_calls', []):
-            func = tc.get('function') or {}
-            args_str = func.get('arguments', '{}')
+        for tc in m.get("tool_calls", []):
+            func = tc.get("function") or {}
+            args_str = func.get("arguments", "{}")
             try:
                 parsed = json.loads(args_str)
                 if not isinstance(parsed, dict):
-                    func['arguments'] = '{}'
+                    func["arguments"] = "{}"
             except (json.JSONDecodeError, TypeError):
-                func['arguments'] = '{}'
-    return _project_chat_history(_strip_image_blocks(messages), getattr(agent, '_original_goal', ''))
+                func["arguments"] = "{}"
+    return _project_chat_history(
+        _strip_image_blocks(messages), getattr(agent, "_original_goal", "")
+    )
 
 
 def _save_chat_history(agent: "Agent") -> None:
@@ -124,15 +146,21 @@ def _save_chat_history(agent: "Agent") -> None:
     never leave a half-written JSON that would be silently dropped on the
     next load.
     """
-    payload = json.dumps(_project_chat_history(_strip_image_blocks(agent._chat_history), agent._original_goal), ensure_ascii=False, indent=2)
+    payload = json.dumps(
+        _project_chat_history(
+            _strip_image_blocks(agent._chat_history), agent._original_goal
+        ),
+        ensure_ascii=False,
+        indent=2,
+    )
     chat_path = _agent_mod().CHAT_HISTORY_JSON_PATH
-    tmp_path = chat_path + '.tmp'
+    tmp_path = chat_path + ".tmp"
     try:
-        with open(tmp_path, 'w', encoding='utf-8') as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(payload)
         os.replace(tmp_path, chat_path)
     except OSError as e:
-        logger.warning('Failed to save chat history: %s', e)
+        logger.warning("Failed to save chat history: %s", e)
 
 
 def _load_memory(agent: "Agent") -> None:
@@ -145,25 +173,27 @@ def _load_memory(agent: "Agent") -> None:
     empty defaults, so the bytes stay inspectable instead of being
     clobbered by the next save.
     """
-    data = _read_json_quarantining(_agent_mod().AGENT_MEMORY_JSON_PATH, 'agent memory')
+    data = _read_json_quarantining(_agent_mod().AGENT_MEMORY_JSON_PATH, "agent memory")
     if not isinstance(data, dict):
         return
-    files = data.get('files_read')
+    files = data.get("files_read")
     if isinstance(files, list):
         agent._files_read = {str(p) for p in files}
-    index = data.get('semantic_index')
+    index = data.get("semantic_index")
     if isinstance(index, dict):
-        agent._semantic_index = defaultdict(set, {k: set(v) for k, v in index.items() if isinstance(v, list)})
-    kg = data.get('knowledge_graph')
+        agent._semantic_index = defaultdict(
+            set, {k: set(v) for k, v in index.items() if isinstance(v, list)}
+        )
+    kg = data.get("knowledge_graph")
     if isinstance(kg, dict):
         agent._knowledge_graph = kg
-    wm = data.get('working_memory')
+    wm = data.get("working_memory")
     if isinstance(wm, list):
         agent._working_memory = wm
-    hist = data.get('history')
+    hist = data.get("history")
     if isinstance(hist, list):
         agent._history = hist
-    goal = data.get('original_goal')
+    goal = data.get("original_goal")
     if isinstance(goal, str):
         agent._original_goal = goal
         if goal:
@@ -175,18 +205,36 @@ def _save_memory(agent: "Agent") -> None:
 
     Atomic like :meth:`_save_chat_history` (tmp file + ``os.replace``).
     """
-    data = {'files_read': sorted(agent._files_read), 'semantic_index': {k: sorted(v) for k, v in agent._semantic_index.items()}, 'knowledge_graph': agent._knowledge_graph, 'working_memory': agent._working_memory, 'history': agent._history, 'original_goal': agent._original_goal}
+    data = {
+        "files_read": sorted(agent._files_read),
+        "semantic_index": {k: sorted(v) for k, v in agent._semantic_index.items()},
+        "knowledge_graph": agent._knowledge_graph,
+        "working_memory": agent._working_memory,
+        "history": agent._history,
+        "original_goal": agent._original_goal,
+    }
     memory_path = _agent_mod().AGENT_MEMORY_JSON_PATH
-    tmp_path = memory_path + '.tmp'
+    tmp_path = memory_path + ".tmp"
     try:
-        with open(tmp_path, 'w', encoding='utf-8') as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, memory_path)
     except OSError:
-        logger.warning('Failed to save agent memory:\n%s', traceback.format_exc())
+        logger.warning("Failed to save agent memory:\n%s", traceback.format_exc())
 
 
-def _record_llm_experience(agent: "Agent", action: str, outcome: float, context: dict[str, Any] | None=None, success: bool | None=None, decision_llm: str | None=None, decision_prompt: Any=None, run_id: str | None=None, latency_ms: float | None=None, token_usage: int | None=None) -> int | None:
+def _record_llm_experience(
+    agent: "Agent",
+    action: str,
+    outcome: float,
+    context: dict[str, Any] | None = None,
+    success: bool | None = None,
+    decision_llm: str | None = None,
+    decision_prompt: Any = None,
+    run_id: str | None = None,
+    latency_ms: float | None = None,
+    token_usage: int | None = None,
+) -> int | None:
     """Record an LLM decision/outcome into agent_memory.db (experiences).
 
     Mirrors the MCP ``record_experience`` schema so a direct write is
@@ -237,27 +285,58 @@ def _record_llm_experience(agent: "Agent", action: str, outcome: float, context:
         if success is None:
             success = 1 if outcome >= 0.5 else 0
         ctx_str = json.dumps(context or {}, ensure_ascii=False, sort_keys=True)
-        ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+        ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         import sqlite3
-        from agent_core.memory.attribution import ensure_attribution_schema, prompt_sha256, record_llm_decision, resolve_decision_llm
+        from agent_core.memory.attribution import (
+            ensure_attribution_schema,
+            prompt_sha256,
+            record_llm_decision,
+            resolve_decision_llm,
+        )
+
         if decision_llm is None:
             decision_llm = resolve_decision_llm(agent)
-        prompt_hash = prompt_sha256(decision_prompt) if decision_prompt is not None else None
-        db_path = _agent_mod().AGENT_MEMORY_JSON_PATH.replace('.json', '.db')
+        prompt_hash = (
+            prompt_sha256(decision_prompt) if decision_prompt is not None else None
+        )
+        db_path = _agent_mod().AGENT_MEMORY_JSON_PATH.replace(".json", ".db")
         conn = sqlite3.connect(db_path, timeout=5.0)
         try:
             ensure_attribution_schema(conn)
             if decision_llm is None:
-                cur = conn.execute('INSERT INTO experiences (timestamp, action, outcome, context, success) VALUES (?, ?, ?, ?, ?)', (ts, action, outcome, ctx_str, 1 if success else 0))
+                cur = conn.execute(
+                    "INSERT INTO experiences (timestamp, action, outcome, context, success) VALUES (?, ?, ?, ?, ?)",
+                    (ts, action, outcome, ctx_str, 1 if success else 0),
+                )
                 conn.commit()
                 return int(cur.lastrowid)
-            cur = conn.execute('INSERT INTO experiences (timestamp, action, outcome, context, success, decision_llm, decision_prompt_hash, decision_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', (ts, action, outcome, ctx_str, 1 if success else 0, decision_llm, prompt_hash, ts))
+            cur = conn.execute(
+                "INSERT INTO experiences (timestamp, action, outcome, context, success, decision_llm, decision_prompt_hash, decision_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    ts,
+                    action,
+                    outcome,
+                    ctx_str,
+                    1 if success else 0,
+                    decision_llm,
+                    prompt_hash,
+                    ts,
+                ),
+            )
             rowid = int(cur.lastrowid)
-            record_llm_decision(conn, run_id=run_id, model_name=decision_llm, prompt_sha256=prompt_hash, outcome_experience_id=rowid, latency_ms=latency_ms, token_usage=token_usage)
+            record_llm_decision(
+                conn,
+                run_id=run_id,
+                model_name=decision_llm,
+                prompt_sha256=prompt_hash,
+                outcome_experience_id=rowid,
+                latency_ms=latency_ms,
+                token_usage=token_usage,
+            )
             conn.commit()
             return rowid
         finally:
             conn.close()
     except Exception as exc:
-        logger.debug('Could not record LLM experience (no-op): %s', exc)
+        logger.debug("Could not record LLM experience (no-op): %s", exc)
         return None

@@ -57,7 +57,9 @@ def verify_plugin_interface(plugin: PluginInterface) -> bool:
     )
 
 
-def load_plugin_class_from_path(path: Path, class_name: str) -> Optional[Type[BasePlugin]]:
+def load_plugin_class_from_path(
+    path: Path, class_name: str
+) -> Optional[Type[BasePlugin]]:
     """Dynamically discover and load a ``BasePlugin`` subclass from a file path."""
     if not path.exists():
         return None
@@ -75,4 +77,8 @@ def load_plugin_class_from_path(path: Path, class_name: str) -> Optional[Type[Ba
     return None
 
 
-__all__: List[str] = ["BasePlugin", "verify_plugin_interface", "load_plugin_class_from_path"]
+__all__: List[str] = [
+    "BasePlugin",
+    "verify_plugin_interface",
+    "load_plugin_class_from_path",
+]

@@ -14,6 +14,7 @@ sections. Two compounding causes:
 This file pins ``dedupe_repeated_sections`` / ``extract_section`` and the
 analysis-mode dedupe inside ``strip_reasoning``.
 """
+
 from agent_core.commands.reasoning_strip import (
     dedupe_repeated_sections,
     extract_section,
@@ -88,14 +89,20 @@ class TestDedupeRepeatedSections:
 
     def test_distinct_sections_all_survive(self) -> None:
         out = dedupe_repeated_sections(BLOCKED_RESPONSE)
-        for marker in ("## 1. SCOPE", "## 6. MISSING INFORMATION",
-                       "## 7. CLARIFYING QUESTIONS", "## 8. SUCCESS METRICS"):
+        for marker in (
+            "## 1. SCOPE",
+            "## 6. MISSING INFORMATION",
+            "## 7. CLARIFYING QUESTIONS",
+            "## 8. SUCCESS METRICS",
+        ):
             assert out.count(marker) == 1, marker
 
     def test_triple_duplicate_kept_once(self) -> None:
-        r = ("## 7. CLARIFYING QUESTIONS\n- copy alpha\n"
-             "## 7. CLARIFYING QUESTIONS\n- copy beta\n"
-             "## 7. CLARIFYING QUESTIONS\n- copy gamma\n")
+        r = (
+            "## 7. CLARIFYING QUESTIONS\n- copy alpha\n"
+            "## 7. CLARIFYING QUESTIONS\n- copy beta\n"
+            "## 7. CLARIFYING QUESTIONS\n- copy gamma\n"
+        )
         out = dedupe_repeated_sections(r)
         assert out.count("## 7. CLARIFYING QUESTIONS") == 1
         assert "copy alpha" in out
@@ -135,7 +142,7 @@ class TestExtractSection:
         r = BLOCKED_RESPONSE.replace(
             "## 8. SUCCESS METRICS",
             "## 7. CLARIFYING QUESTIONS\n"
-            "- What weighting defines \"critical\" — security severity, blast radius, performance impact, or a mix?\n"
+            '- What weighting defines "critical" — security severity, blast radius, performance impact, or a mix?\n'
             "- What is the required output format — a markdown report, inline code annotations, or a structured list with rationale per region?\n"
             "\n"
             "## 8. SUCCESS METRICS",
@@ -170,7 +177,7 @@ class TestStripReasoningAnalysisDedupe:
         r = BLOCKED_RESPONSE.replace(
             "**BLOCKED:** yes",
             "## 7. CLARIFYING QUESTIONS\n"
-            "- What weighting defines \"critical\" — security severity, blast radius, performance impact, or a mix?\n"
+            '- What weighting defines "critical" — security severity, blast radius, performance impact, or a mix?\n'
             "- What is the required output format — a markdown report, inline code annotations, or a structured list with rationale per region?\n"
             "\n"
             "**BLOCKED:** yes",
@@ -199,8 +206,7 @@ class TestStripReasoningAnalysisDedupe:
     def test_clean_sections_path_dedupes(self) -> None:
         """Refinement-bearing responses go through _clean_analysis_sections."""
         r = BLOCKED_RESPONSE.replace("**BLOCKED:** yes", "**BLOCKED:** no") + (
-            "\n## Refinement (self-critique)\n"
-            "- gap one\n"
+            "\n## Refinement (self-critique)\n- gap one\n"
         )
         out = strip_reasoning(r, mode="analysis")
         assert out.count("## 7. CLARIFYING QUESTIONS") == 1

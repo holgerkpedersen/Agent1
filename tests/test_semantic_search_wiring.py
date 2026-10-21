@@ -15,6 +15,7 @@ These tests pin the new query-aware path:
 The embedding backend is the only test double (LM Studio is external); the
 vector maths, ranking and prompt assembly are all production code.
 """
+
 from __future__ import annotations
 
 import json
@@ -69,7 +70,10 @@ def _memories() -> list[dict]:
     return [
         {"metadata": {"text": "user prefers pytest"}, "similarity_score": 0.0},
         {"metadata": {"text": "deploy uses blue-green"}, "similarity_score": 0.0},
-        {"metadata": {"text": "database migrations run nightly"}, "similarity_score": 0.0},
+        {
+            "metadata": {"text": "database migrations run nightly"},
+            "similarity_score": 0.0,
+        },
     ]
 
 
@@ -84,7 +88,9 @@ def setup_function() -> None:
 
 def test_search_ranks_most_similar_first() -> None:
     ranked = semantic_search_memories(
-        _memories(), "pytest failures in the suite", k=3,
+        _memories(),
+        "pytest failures in the suite",
+        k=3,
         embedding_service=FakeEmbedder(),
     )
     texts = [m["metadata"]["text"] for m in ranked]
@@ -106,26 +112,41 @@ def test_search_respects_k() -> None:
 
 def test_search_returns_empty_when_embeddings_unavailable() -> None:
     """Zero vectors => no meaningful ranking => [] (caller falls back)."""
-    assert semantic_search_memories(
-        _memories(), "pytest", embedding_service=ZeroEmbedder()
-    ) == []
+    assert (
+        semantic_search_memories(
+            _memories(), "pytest", embedding_service=ZeroEmbedder()
+        )
+        == []
+    )
 
 
 def test_search_never_raises_on_broken_backend() -> None:
-    assert semantic_search_memories(
-        _memories(), "pytest", embedding_service=BrokenEmbedder()
-    ) == []
+    assert (
+        semantic_search_memories(
+            _memories(), "pytest", embedding_service=BrokenEmbedder()
+        )
+        == []
+    )
 
 
 def test_search_empty_without_query_or_memories() -> None:
-    assert semantic_search_memories([], "pytest", embedding_service=FakeEmbedder()) == []
-    assert semantic_search_memories(_memories(), "", embedding_service=FakeEmbedder()) == []
-    assert semantic_search_memories(_memories(), "   ", embedding_service=FakeEmbedder()) == []
+    assert (
+        semantic_search_memories([], "pytest", embedding_service=FakeEmbedder()) == []
+    )
+    assert (
+        semantic_search_memories(_memories(), "", embedding_service=FakeEmbedder())
+        == []
+    )
+    assert (
+        semantic_search_memories(_memories(), "   ", embedding_service=FakeEmbedder())
+        == []
+    )
 
 
 def test_search_accepts_plain_string_memories() -> None:
     ranked = semantic_search_memories(
-        ["alpha pytest note", "deploy beta"], "pytest",
+        ["alpha pytest note", "deploy beta"],
+        "pytest",
         embedding_service=FakeEmbedder(),
     )
     assert ranked[0]["metadata"]["text"] == "alpha pytest note"
@@ -156,7 +177,8 @@ def test_search_reindexes_after_memory_added() -> None:
 def test_search_skips_blank_texts() -> None:
     ranked = semantic_search_memories(
         [{"metadata": {"text": "   "}}, {"metadata": {"text": "pytest rocks"}}],
-        "pytest", embedding_service=FakeEmbedder(),
+        "pytest",
+        embedding_service=FakeEmbedder(),
     )
     assert [m["metadata"]["text"] for m in ranked] == ["pytest rocks"]
 

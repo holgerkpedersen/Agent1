@@ -11,6 +11,7 @@ from harnessfix.kanban_bridge import (
 
 KANBAN_QUEUE_FILE = Path(r"C:\Dev\Kanban\data\queue-kanban-to-agent1\messages.jsonl")
 
+
 def sync():
     if not KANBAN_QUEUE_FILE.exists():
         print(f"Error: Kanban queue file not found at {KANBAN_QUEUE_FILE}")
@@ -82,6 +83,7 @@ def sync():
     print(f"Processed: {processed_count}")
     print(f"Successes: {success_count}")
     print(f"Failures:  {fail_count}")
+
 
 if __name__ == "__main__":
     sync()

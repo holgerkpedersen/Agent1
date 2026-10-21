@@ -11,6 +11,7 @@ know how to get any." Fixes under test:
    AlertSystem with default rules, so /api/alerts returns rules instead of
    ``{"error": "alert evaluator unavailable"}``.
 """
+
 from __future__ import annotations
 
 import json

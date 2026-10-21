@@ -27,6 +27,7 @@ while still catching a plan that really targets a security-guarded path.
 
 Pure in-memory checks against the real gate class: no LLM, no subagents.
 """
+
 from __future__ import annotations
 
 import pathlib

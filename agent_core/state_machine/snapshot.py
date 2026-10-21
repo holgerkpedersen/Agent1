@@ -3,23 +3,28 @@ from typing import Any, Optional, List
 
 class StateMachineError(Exception):
     """Base exception for all state machine related errors."""
+
     pass
 
 
 class InvalidTransitionError(StateMachineError):
     """Raised when a requested transition is not permitted by the rules."""
+
     pass
 
 
 class MissingStateError(StateMachineError):
     """Raised when a transition refers to a state that does not exist."""
+
     pass
 
 
 class Snapshot:
     """Represents a point-in-time capture of the StateMachine's status."""
 
-    def __init__(self, current_state: str, history: List[str], metadata: dict[str, Any]) -> None:
+    def __init__(
+        self, current_state: str, history: List[str], metadata: dict[str, Any]
+    ) -> None:
         self.current_state = current_state
         self.history = history
         self.metadata = metadata
@@ -55,7 +60,7 @@ class StateMachine:
         return Snapshot(
             current_state=self._current_state,
             history=list(self._history),
-            metadata=dict(self._metadata)
+            metadata=dict(self._metadata),
         )
 
     def rollback_latest(self) -> Snapshot:

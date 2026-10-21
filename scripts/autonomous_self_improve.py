@@ -38,6 +38,7 @@ Usage
     python scripts/autonomous_self_improve.py --max-iterations 5
     python scripts/autonomous_self_improve.py --model qwen3.5-32b --no-benchmark
 """
+
 from __future__ import annotations
 
 import argparse
@@ -65,8 +66,13 @@ SUMMARY_PATH = REPO_ROOT / "reports" / "harnessfix" / "summary.json"
 def _git(args: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
-            ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", check=check,
+            ["git", *args],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=check,
         )
     except FileNotFoundError as exc:
         # git is not on PATH for this process.  Surface a clear, actionable
@@ -126,15 +132,12 @@ def build_repair_rationale(repair_id: str | None, summary: dict[str, Any]) -> st
                 f"(not an invented one)."
             )
     else:
-        lines.append(
-            "Corpus evidence: no trace corpus available to target the repair."
-        )
+        lines.append("Corpus evidence: no trace corpus available to target the repair.")
 
     br, pr = summary.get("baseline_rate"), summary.get("post_rate")
     if br is not None and pr is not None:
         lines.append(
-            f"LLM benchmark cross-check: baseline={br}% -> post={pr}% "
-            f"(no regression)."
+            f"LLM benchmark cross-check: baseline={br}% -> post={pr}% (no regression)."
         )
     else:
         lines.append(
@@ -170,8 +173,10 @@ def _commit_repair(iteration: int, summary: dict[str, Any]) -> bool:
     # repair, do NOT fall back to `git add -A` (that is exactly the bug that
     # committed unrelated work).  Skip the commit instead.
     if not files:
-        print(f"[autonomous] WARNING: repair {repair_id!r} has no file list; "
-              f"refusing to commit (skipping to avoid a blanket add).")
+        print(
+            f"[autonomous] WARNING: repair {repair_id!r} has no file list; "
+            f"refusing to commit (skipping to avoid a blanket add)."
+        )
         return False
 
     rationale = build_repair_rationale(repair_id, summary)
@@ -192,7 +197,9 @@ def _commit_repair(iteration: int, summary: dict[str, Any]) -> bool:
     return True
 
 
-def _consolidate_wiki(trace_dir: Path, output_dir: Path, summary: dict[str, Any] | None = None) -> int:
+def _consolidate_wiki(
+    trace_dir: Path, output_dir: Path, summary: dict[str, Any] | None = None
+) -> int:
     """Absorb this iteration's traces into the persistent wiki (WikiSkill).
 
     Returns the post-consolidation page count.  Fail-open — never raises;
@@ -200,6 +207,7 @@ def _consolidate_wiki(trace_dir: Path, output_dir: Path, summary: dict[str, Any]
     """
     try:
         from harnessfix.wiki import consolidate
+
         pages = consolidate(trace_dir, output_dir / "wiki")
         return len(pages)
     except Exception as exc:  # pragma: no cover - defensive
@@ -209,7 +217,9 @@ def _consolidate_wiki(trace_dir: Path, output_dir: Path, summary: dict[str, Any]
         return 0
 
 
-def _record_iteration(iteration: int, summary: dict[str, Any], output_dir: Path) -> None:
+def _record_iteration(
+    iteration: int, summary: dict[str, Any], output_dir: Path
+) -> None:
     """Append one finished-iteration record to the dashboard history log."""
     try:
         head = _git(["rev-parse", "HEAD"], check=False).stdout.strip()
@@ -217,26 +227,28 @@ def _record_iteration(iteration: int, summary: dict[str, Any], output_dir: Path)
         head = ""
     baseline = summary.get("harness_baseline") or {}
     post = summary.get("harness_post") or {}
-    append_history({
-        "iteration": iteration,
-        "timestamp": _git_time(),
-        "verdict": summary.get("verdict"),
-        "accepted": bool(summary.get("accepted")),
-        "proposed_repair": summary.get("proposed_repair"),
-        "accepted_repair": summary.get("accepted_repair"),
-        "repair_applied": summary.get("repair_applied"),
-        "tests_passed": summary.get("tests_passed"),
-        "security_passed": summary.get("security_passed"),
-        "harness_baseline_rate": baseline.get("success_rate"),
-        "harness_post_rate": post.get("success_rate"),
-        "repair_rationale": build_repair_rationale(
-            summary.get("accepted_repair") or summary.get("proposed_repair"),
-            summary,
-        ),
-        "git_head": head,
-        # WikiSkill: wiki page count at end of this iteration (dashboard history column).
-        "wiki_page_count": summary.get("wiki_page_count", 0),
-    })
+    append_history(
+        {
+            "iteration": iteration,
+            "timestamp": _git_time(),
+            "verdict": summary.get("verdict"),
+            "accepted": bool(summary.get("accepted")),
+            "proposed_repair": summary.get("proposed_repair"),
+            "accepted_repair": summary.get("accepted_repair"),
+            "repair_applied": summary.get("repair_applied"),
+            "tests_passed": summary.get("tests_passed"),
+            "security_passed": summary.get("security_passed"),
+            "harness_baseline_rate": baseline.get("success_rate"),
+            "harness_post_rate": post.get("success_rate"),
+            "repair_rationale": build_repair_rationale(
+                summary.get("accepted_repair") or summary.get("proposed_repair"),
+                summary,
+            ),
+            "git_head": head,
+            # WikiSkill: wiki page count at end of this iteration (dashboard history column).
+            "wiki_page_count": summary.get("wiki_page_count", 0),
+        }
+    )
 
 
 def _git_time() -> float:
@@ -250,6 +262,7 @@ def _git_time() -> float:
 
 def _now() -> float:
     import time as _t
+
     return _t.time()
 
 
@@ -330,11 +343,16 @@ def run_issue_loop(
             print("[autonomous] Kill-switch detected — halting issue loop.")
             return
         issues = issue_store.load_issues()
-        eligible = [i for i in issue_store.open_issues(issues, max_level=level_cap)
-                    if i["id"] not in deferred]
+        eligible = [
+            i
+            for i in issue_store.open_issues(issues, max_level=level_cap)
+            if i["id"] not in deferred
+        ]
         if not eligible:
-            print("[autonomous] No eligible issues remain (at or below "
-                  f"AGENT_AUTONOMY_LEVEL={level_cap}).")
+            print(
+                "[autonomous] No eligible issues remain (at or below "
+                f"AGENT_AUTONOMY_LEVEL={level_cap})."
+            )
             return
 
         issue = eligible[0]
@@ -347,30 +365,46 @@ def run_issue_loop(
         pushed = _git(["stash", "push", "-u", "-m", checkpoint], check=False)
         have_checkpoint = pushed.returncode == 0 and pre_dirty
         if pre_dirty and not have_checkpoint:
-            print(f"[autonomous] WARNING: git stash push failed (rc="
-                  f"{pushed.returncode}); continuing without a checkpoint.")
-        print(f"\n[autonomous] === issue iteration {iteration}/{max_iterations} "
-              f"=== {issue['id']}")
+            print(
+                f"[autonomous] WARNING: git stash push failed (rc="
+                f"{pushed.returncode}); continuing without a checkpoint."
+            )
+        print(
+            f"\n[autonomous] === issue iteration {iteration}/{max_iterations} "
+            f"=== {issue['id']}"
+        )
         try:
             summary = issue_loop.resolve_issue(
-                issue, agent, level_cap=level_cap,
-                run_benchmark=not no_benchmark, model=model, profile=profile,
+                issue,
+                agent,
+                level_cap=level_cap,
+                run_benchmark=not no_benchmark,
+                model=model,
+                profile=profile,
             )
         except Exception as exc:  # noqa: BLE001 - never let one bad issue crash the driver
-            print(f"[autonomous] issue iteration {iteration} raised "
-                  f"{type(exc).__name__}: {exc}")
+            print(
+                f"[autonomous] issue iteration {iteration} raised "
+                f"{type(exc).__name__}: {exc}"
+            )
             if have_checkpoint:
                 _git(["stash", "pop"], check=False)
             return
 
         verdict = summary.get("verdict")
         print(f"[autonomous] issue {issue['id']} -> {verdict}")
-        _record_iteration(iteration, {
-            "verdict": verdict,
-            "accepted": bool(summary.get("accepted")),
-            "proposed_repair": summary.get("issue_id"),
-            "accepted_repair": summary.get("issue_id") if summary.get("accepted") else None,
-        }, output_dir)
+        _record_iteration(
+            iteration,
+            {
+                "verdict": verdict,
+                "accepted": bool(summary.get("accepted")),
+                "proposed_repair": summary.get("issue_id"),
+                "accepted_repair": summary.get("issue_id")
+                if summary.get("accepted")
+                else None,
+            },
+            output_dir,
+        )
         if summary.get("accepted"):
             _commit_issue(iteration, summary)
             if have_checkpoint:
@@ -387,8 +421,10 @@ def run_issue_loop(
         else:
             _git(["checkout", "--", "."], check=False)
         deferred.add(issue["id"])
-        print(f"[autonomous] issue {issue['id']} not accepted ({verdict}) — "
-              f"deferred and continuing.")
+        print(
+            f"[autonomous] issue {issue['id']} not accepted ({verdict}) — "
+            f"deferred and continuing."
+        )
         continue
 
 
@@ -458,37 +494,67 @@ def main(argv: list[str] | None = None) -> int:
         prog="autonomous_self_improve",
         description="Run the HarnessFix loop autonomously (machine-gated).",
     )
-    parser.add_argument("--traces", type=Path, default=None,
-                        help="trace corpus dir (default: reports/traces)")
-    parser.add_argument("--model", default=None, help="optional LLM benchmark cross-check model (needs a live API); omit to gate on offline harness quality only")
-    parser.add_argument("--profile", default=None, help="benchmark profile tag (decision #055)")
-    parser.add_argument("--no-benchmark", action="store_true",
-                        help="never run the benchmark subprocess, even if --model is set (offline-only gate)")
-    parser.add_argument("--max-iterations", type=int, default=5, help="cap on loop iterations")
-    parser.add_argument("--source", default="both", choices=("issues", "catalog", "both"),
-                        help="what to work on: 'issues' (.issues.json), 'catalog' "
-                             "(HarnessFix repairs), or 'both' (issues first, then catalog)")
-    parser.add_argument("--auto", action="store_true",
-                        help="engages autonomous mode (same as AGENT_AUTONOMOUS=1)")
+    parser.add_argument(
+        "--traces",
+        type=Path,
+        default=None,
+        help="trace corpus dir (default: reports/traces)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="optional LLM benchmark cross-check model (needs a live API); omit to gate on offline harness quality only",
+    )
+    parser.add_argument(
+        "--profile", default=None, help="benchmark profile tag (decision #055)"
+    )
+    parser.add_argument(
+        "--no-benchmark",
+        action="store_true",
+        help="never run the benchmark subprocess, even if --model is set (offline-only gate)",
+    )
+    parser.add_argument(
+        "--max-iterations", type=int, default=5, help="cap on loop iterations"
+    )
+    parser.add_argument(
+        "--source",
+        default="both",
+        choices=("issues", "catalog", "both"),
+        help="what to work on: 'issues' (.issues.json), 'catalog' "
+        "(HarnessFix repairs), or 'both' (issues first, then catalog)",
+    )
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="engages autonomous mode (same as AGENT_AUTONOMOUS=1)",
+    )
     args = parser.parse_args(argv)
 
-    if not (os.environ.get("AGENT_AUTONOMOUS", "").strip().lower() in ("1", "true", "yes", "on")
-            or args.auto):
-        print("[autonomous] Refusing to run: set AGENT_AUTONOMOUS=1 (or pass --auto) to engage.")
+    if not (
+        os.environ.get("AGENT_AUTONOMOUS", "").strip().lower()
+        in ("1", "true", "yes", "on")
+        or args.auto
+    ):
+        print(
+            "[autonomous] Refusing to run: set AGENT_AUTONOMOUS=1 (or pass --auto) to engage."
+        )
         return 2
 
     trace_dir = args.traces or (REPO_ROOT / "reports" / "traces")
     output_dir = REPO_ROOT / "reports" / "harnessfix"
 
-    print(f"[autonomous] Starting self-improvement loop "
-          f"(max_iterations={args.max_iterations}, "
-          f"model={args.model or 'default (resolve_model)'}"
-          f"{' [benchmark disabled]' if args.no_benchmark else ''}"
-          f"{' — model drives fix-generation + benchmark' if args.model else ''})")
+    print(
+        f"[autonomous] Starting self-improvement loop "
+        f"(max_iterations={args.max_iterations}, "
+        f"model={args.model or 'default (resolve_model)'}"
+        f"{' [benchmark disabled]' if args.no_benchmark else ''}"
+        f"{' — model drives fix-generation + benchmark' if args.model else ''})"
+    )
 
     level_cap = int(os.environ.get("AGENT_AUTONOMY_LEVEL", "") or 1)
     if args.source in ("issues", "both"):
         from agent import Agent
+
         # Pass the selected model through to the Agent so that fix generation
         # (the `fix` command / LLM calls) actually uses it.  Previously --model
         # only reached the optional benchmark gate, so generation silently fell
@@ -496,16 +562,22 @@ def main(argv: list[str] | None = None) -> int:
         # default via resolve_model() (persisted / AGENT_MODEL / live LM Studio).
         agent = Agent(workspace=str(REPO_ROOT), model_name=args.model)
         run_issue_loop(
-            max_iterations=args.max_iterations, level_cap=level_cap, agent=agent,
-            no_benchmark=args.no_benchmark, model=args.model, profile=args.profile,
+            max_iterations=args.max_iterations,
+            level_cap=level_cap,
+            agent=agent,
+            no_benchmark=args.no_benchmark,
+            model=args.model,
+            profile=args.profile,
         )
         if args.source == "issues":
             return 0
 
     for iteration in range(1, args.max_iterations + 1):
         if _stop_requested():
-            print("[autonomous] Kill-switch detected — halting before iteration "
-                  f"{iteration}.")
+            print(
+                "[autonomous] Kill-switch detected — halting before iteration "
+                f"{iteration}."
+            )
             return 0
 
         # Scoped checkpoint: snapshot ONLY the file(s) a catalog repair can
@@ -526,18 +598,23 @@ def main(argv: list[str] | None = None) -> int:
             "silent for several minutes; live state is in "
             "reports/harnessfix/run_status.json."
         )
-        write_progress({
-            "iteration": iteration,
-            "max_iterations": args.max_iterations,
-            "running": True,
-            "phase": "loop_iteration_start",
-            "model": args.model or "none (offline harness-quality gate)",
-            "no_benchmark": args.no_benchmark,
-        })
+        write_progress(
+            {
+                "iteration": iteration,
+                "max_iterations": args.max_iterations,
+                "running": True,
+                "phase": "loop_iteration_start",
+                "model": args.model or "none (offline harness-quality gate)",
+                "no_benchmark": args.no_benchmark,
+            }
+        )
         try:
             summary = run_iteration(
-                iteration, model=args.model, profile=args.profile,
-                trace_dir=trace_dir, output_dir=output_dir,
+                iteration,
+                model=args.model,
+                profile=args.profile,
+                trace_dir=trace_dir,
+                output_dir=output_dir,
                 no_benchmark=args.no_benchmark,
             )
         except SystemExit as exc:
@@ -550,14 +627,18 @@ def main(argv: list[str] | None = None) -> int:
             # A Ctrl+C during a long gate run is a BaseException, so it is NOT
             # caught by `except Exception` below.  Restore the checkpoint first
             # so the tree is not left dirty, then re-raise to actually stop.
-            print("[autonomous] Interrupted (KeyboardInterrupt) — restoring "
-                  "checkpoint and halting.")
+            print(
+                "[autonomous] Interrupted (KeyboardInterrupt) — restoring "
+                "checkpoint and halting."
+            )
             _restore_snapshot(snapshot)
             raise
         except Exception as exc:  # noqa: BLE001 - never let one bad iteration
             # crash the whole driver with a dirty tree.  Log, restore the
             # checkpoint, and stop so the human can inspect.
-            print(f"[autonomous] Iteration {iteration} raised {type(exc).__name__}: {exc}")
+            print(
+                f"[autonomous] Iteration {iteration} raised {type(exc).__name__}: {exc}"
+            )
             _restore_snapshot(snapshot)
             clear_progress()
             return 1
@@ -577,17 +658,21 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # pragma: no cover - defensive
             print(f"Silenced wiki re-consolidation error: {exc}")
 
-        write_progress({
-            "iteration": iteration,
-            "phase": "finished_iteration",
-            "verdict": verdict,
-            "accepted": bool(summary.get("accepted")),
-        })
+        write_progress(
+            {
+                "iteration": iteration,
+                "phase": "finished_iteration",
+                "verdict": verdict,
+                "accepted": bool(summary.get("accepted")),
+            }
+        )
 
         if verdict == "accepted":
             committed = _commit_repair(iteration, summary)
-            print(f"[autonomous] Repair accepted and "
-                  f"{'committed' if committed else 'already clean'}.")
+            print(
+                f"[autonomous] Repair accepted and "
+                f"{'committed' if committed else 'already clean'}."
+            )
             if not committed:
                 # An accepted repair that leaves nothing to commit is a
                 # contradiction: the tree was clean at commit time, so the

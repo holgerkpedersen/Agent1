@@ -30,8 +30,10 @@ logger = logging.getLogger(__name__)
 # Enums and Constants
 # ---------------------------------------------------------------------------
 
+
 class MetricType(str, Enum):
     """Supported metric types."""
+
     COUNTER = "counter"
     GAUGE = "gauge"
     HISTOGRAM = "histogram"
@@ -40,6 +42,7 @@ class MetricType(str, Enum):
 
 class StorageBackend(str, Enum):
     """Available storage backends."""
+
     PROMETHEUS = "prometheus"
     INFLUXDB = "influxdb"
     REDIS = "redis"
@@ -56,9 +59,11 @@ METRIC_NAME_PATTERN: str = r"^[a-zA-Z_:][a-zA-Z0-9_:]*$"
 # Data Models
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class MetricPoint:
     """A single metric data point."""
+
     timestamp: datetime
     value: float
     labels: Dict[str, str] = field(default_factory=dict)
@@ -74,6 +79,7 @@ class MetricPoint:
 @dataclass
 class MetricSeries:
     """A series of metric data points for a given metric name and labels."""
+
     name: str
     type: MetricType = MetricType.GAUGE
     points: List[MetricPoint] = field(default_factory=list)
@@ -96,6 +102,7 @@ class MetricSeries:
 @dataclass
 class QueryRequest:
     """Represents a query request to the metrics store."""
+
     metric_name: str
     start_time: datetime
     end_time: datetime
@@ -125,6 +132,7 @@ class QueryRequest:
 @dataclass
 class QueryResult:
     """Represents the result of a metrics query."""
+
     series_list: List[MetricSeries] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -144,13 +152,12 @@ class QueryResult:
 # Abstract Backend Interface
 # ---------------------------------------------------------------------------
 
+
 class MetricsBackend(ABC):
     """Abstract base class for metrics storage backends."""
 
     @abstractmethod
-    async def query(
-        self, request: QueryRequest
-    ) -> QueryResult:
+    async def query(self, request: QueryRequest) -> QueryResult:
         """Execute a metric query and return results.
 
         Args:
@@ -161,9 +168,7 @@ class MetricsBackend(ABC):
         """
 
     @abstractmethod
-    async def write(
-        self, series: MetricSeries
-    ) -> None:
+    async def write(self, series: MetricSeries) -> None:
         """Persist a metric series to the backend.
 
         Args:
@@ -179,6 +184,7 @@ class MetricsBackend(ABC):
 # Concrete Backends
 # ---------------------------------------------------------------------------
 
+
 class PrometheusBackend(MetricsBackend):
     """Prometheus metrics backend using the HTTP API."""
 
@@ -187,13 +193,21 @@ class PrometheusBackend(MetricsBackend):
         self._session: Optional[Any] = None  # aiohttp session placeholder
 
     async def query(self, request: QueryRequest) -> QueryResult:
-        logger.debug("Querying Prometheus at %s for metric '%s'", self.endpoint, request.metric_name)
+        logger.debug(
+            "Querying Prometheus at %s for metric '%s'",
+            self.endpoint,
+            request.metric_name,
+        )
 
         # Simulated implementation — in production this would use aiohttp
-        result = QueryResult(metadata={"backend": "prometheus", "endpoint": self.endpoint})
+        result = QueryResult(
+            metadata={"backend": "prometheus", "endpoint": self.endpoint}
+        )
 
         if not self._session:
-            logger.warning("Prometheus backend session not initialized; returning empty results")
+            logger.warning(
+                "Prometheus backend session not initialized; returning empty results"
+            )
             return result
 
         query_str = request.metric_name
@@ -215,17 +229,26 @@ class PrometheusBackend(MetricsBackend):
         # Simulate some sample points for demonstration purposes
         simulated_points: List[MetricPoint] = []
         current_time = request.start_time
-        while current_time <= request.end_time and len(simulated_points) < MAX_QUERY_RESULTS:
+        while (
+            current_time <= request.end_time
+            and len(simulated_points) < MAX_QUERY_RESULTS
+        ):
             value = float(hash((request.metric_name, str(current_time))) % 1000) / 10.0
             simulated_points.append(MetricPoint(timestamp=current_time, value=value))
             current_time += request.step
 
-        series = MetricSeries(name=request.metric_name, type=MetricType.GAUGE, points=simulated_points)
+        series = MetricSeries(
+            name=request.metric_name, type=MetricType.GAUGE, points=simulated_points
+        )
         result.series_list.append(series)
         return result
 
     async def write(self, series: MetricSeries) -> None:
-        logger.info("Writing %d points to Prometheus for metric '%s'", len(series.points), series.name)
+        logger.info(
+            "Writing %d points to Prometheus for metric '%s'",
+            len(series.points),
+            series.name,
+        )
         # In a real implementation this would POST to /api/v1/write or use remote_write protocol.
         pass
 
@@ -237,7 +260,9 @@ class PrometheusBackend(MetricsBackend):
 class InfluxDBBackend(MetricsBackend):
     """InfluxDB v2 metrics backend."""
 
-    def __init__(self, org: str, bucket: str, token: str, url: str = "http://localhost:8086") -> None:
+    def __init__(
+        self, org: str, bucket: str, token: str, url: str = "http://localhost:8086"
+    ) -> None:
         self.org = org
         self.bucket = bucket
         self.token = token
@@ -245,9 +270,13 @@ class InfluxDBBackend(MetricsBackend):
         self._client: Optional[Any] = None  # influxdb_client.AsyncClient placeholder
 
     async def query(self, request: QueryRequest) -> QueryResult:
-        logger.debug("Querying InfluxDB at %s for metric '%s'", self.url, request.metric_name)
+        logger.debug(
+            "Querying InfluxDB at %s for metric '%s'", self.url, request.metric_name
+        )
 
-        result = QueryResult(metadata={"backend": "influxdb", "org": self.org, "bucket": self.bucket})
+        result = QueryResult(
+            metadata={"backend": "influxdb", "org": self.org, "bucket": self.bucket}
+        )
 
         if not self._client:
             logger.warning("InfluxDB client not initialized; returning empty results")
@@ -263,17 +292,26 @@ class InfluxDBBackend(MetricsBackend):
 
         simulated_points = []
         current_time = request.start_time
-        while current_time <= request.end_time and len(simulated_points) < MAX_QUERY_RESULTS:
+        while (
+            current_time <= request.end_time
+            and len(simulated_points) < MAX_QUERY_RESULTS
+        ):
             value = float(hash((request.metric_name, str(current_time))) % 500) / 10.0
             simulated_points.append(MetricPoint(timestamp=current_time, value=value))
             current_time += request.step
 
-        series = MetricSeries(name=request.metric_name, type=MetricType.GAUGE, points=simulated_points)
+        series = MetricSeries(
+            name=request.metric_name, type=MetricType.GAUGE, points=simulated_points
+        )
         result.series_list.append(series)
         return result
 
     async def write(self, series: MetricSeries) -> None:
-        logger.info("Writing %d points to InfluxDB for metric '%s'", len(series.points), series.name)
+        logger.info(
+            "Writing %d points to InfluxDB for metric '%s'",
+            len(series.points),
+            series.name,
+        )
         # In production: self._client.write_api().write(bucket=self.bucket, org=self.org, record=...)
         pass
 
@@ -314,7 +352,9 @@ class RedisBackend(MetricsBackend):
                         for p in series_dict["points"]
                     ]
                     mt = MetricType(series_dict.get("type", "gauge"))
-                    result.series_list.append(MetricSeries(name=series_dict["name"], type=mt, points=points))
+                    result.series_list.append(
+                        MetricSeries(name=series_dict["name"], type=mt, points=points)
+                    )
                 logger.debug("Cache hit for key '%s'", request.cache_key)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to deserialize Redis cache data: %s", exc)
@@ -326,7 +366,11 @@ class RedisBackend(MetricsBackend):
         serialized = pickle.dumps(series.to_dict())
         key = f"metric:{series.name}"
         await client.setex(key, DEFAULT_CACHE_TTL, serialized)  # type: ignore[union-attr]
-        logger.debug("Wrote metric series '%s' to Redis with TTL=%ds", series.name, DEFAULT_CACHE_TTL)
+        logger.debug(
+            "Wrote metric series '%s' to Redis with TTL=%ds",
+            series.name,
+            DEFAULT_CACHE_TTL,
+        )
 
     async def close(self) -> None:
         if self._client is not None:
@@ -351,12 +395,15 @@ class MemoryBackend(MetricsBackend):
                 return result
 
             filtered_points = [
-                p for p in series.points
+                p
+                for p in series.points
                 if request.start_time <= p.timestamp <= request.end_time
                 and all(p.labels.get(k) == v for k, v in request.labels.items())
             ]
 
-        new_series = MetricSeries(name=request.metric_name, type=series.type, points=filtered_points)
+        new_series = MetricSeries(
+            name=request.metric_name, type=series.type, points=filtered_points
+        )
         result.series_list.append(new_series)
         return result
 
@@ -370,7 +417,11 @@ class MemoryBackend(MetricsBackend):
             else:
                 existing.add_point(*series.points)  # noqa: F841 — placeholder logic
 
-        logger.debug("Wrote %d points to memory backend for metric '%s'", len(series.points), series.name)
+        logger.debug(
+            "Wrote %d points to memory backend for metric '%s'",
+            len(series.points),
+            series.name,
+        )
 
     async def close(self) -> None:
         with self._lock:
@@ -386,7 +437,11 @@ class FilesystemBackend(MetricsBackend):
 
     async def query(self, request: QueryRequest) -> QueryResult:
         file_path = self._file_for_metric(request.metric_name)
-        logger.debug("Querying filesystem at %s for metric '%s'", str(file_path), request.metric_name)
+        logger.debug(
+            "Querying filesystem at %s for metric '%s'",
+            str(file_path),
+            request.metric_name,
+        )
 
         result = QueryResult(metadata={"backend": "filesystem", "path": str(file_path)})
 
@@ -409,13 +464,17 @@ class FilesystemBackend(MetricsBackend):
                 for p in series_dict.get("points", [])
             ]
             mt = MetricType(series_dict.get("type", "gauge"))
-            result.series_list.append(MetricSeries(name=series_dict["name"], type=mt, points=points))
+            result.series_list.append(
+                MetricSeries(name=series_dict["name"], type=mt, points=points)
+            )
 
         return result
 
     async def write(self, series: MetricSeries) -> None:
         file_path = self._file_for_metric(series.name)
-        logger.debug("Writing metric '%s' to filesystem at %s", series.name, str(file_path))
+        logger.debug(
+            "Writing metric '%s' to filesystem at %s", series.name, str(file_path)
+        )
 
         existing_data = {"series": []}
         if file_path.exists():
@@ -428,7 +487,9 @@ class FilesystemBackend(MetricsBackend):
         found_existing = False
         for i, s in enumerate(existing_data["series"]):
             if s["name"] == series.name and s.get("type") == series.type.value:
-                existing_data["series"][i]["points"].extend([p.to_dict() for p in series.points])
+                existing_data["series"][i]["points"].extend(
+                    [p.to_dict() for p in series.points]
+                )
                 found_existing = True
                 break
 
@@ -441,7 +502,9 @@ class FilesystemBackend(MetricsBackend):
         logger.debug("Filesystem backend closed (no persistent resources)")
 
     def _file_for_metric(self, metric_name: str) -> Path:
-        safe_name = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in metric_name)
+        safe_name = "".join(
+            c if c.isalnum() or c in ("_", "-") else "_" for c in metric_name
+        )
         return self.base_dir / f"{safe_name}.json"
 
 
@@ -449,10 +512,13 @@ class FilesystemBackend(MetricsBackend):
 # Cache Layer (Decorator-based LRU + TTL cache)
 # ---------------------------------------------------------------------------
 
+
 class MetricsCache:
     """A hybrid LRU/TTL cache layer wrapping backend queries."""
 
-    def __init__(self, max_size: int = 1024, default_ttl: int = DEFAULT_CACHE_TTL) -> None:
+    def __init__(
+        self, max_size: int = 1024, default_ttl: int = DEFAULT_CACHE_TTL
+    ) -> None:
         self.max_size = max_size
         self.default_ttl = default_ttl
         self._cache: Dict[str, Tuple[Any, float]] = {}
@@ -490,6 +556,7 @@ class MetricsCache:
 # ---------------------------------------------------------------------------
 # Main Metrics Store Facade
 # ---------------------------------------------------------------------------
+
 
 class MetricsStore:
     """Main facade for querying and storing metrics across multiple backends.
@@ -535,17 +602,23 @@ class MetricsStore:
             requested_names = {self.primary_backend_name, *self.fallback_backend_names}
             for name in requested_names:
                 if name not in backend_instances:
-                    logger.warning("Unknown backend '%s'; skipping initialization", name)
+                    logger.warning(
+                        "Unknown backend '%s'; skipping initialization", name
+                    )
                     continue
                 self._backends[name] = backend_instances[name]
 
             self._initialized = True
 
-    async def _get_backend(self, backend_name: StorageBackend) -> Optional[MetricsBackend]:
+    async def _get_backend(
+        self, backend_name: StorageBackend
+    ) -> Optional[MetricsBackend]:
         """Retrieve a backend instance, initializing if necessary."""
         if not self._initialized:
             # Run synchronous initialization in executor to avoid blocking event loop unnecessarily.
-            await asyncio.get_event_loop().run_in_executor(None, self._ensure_initialized)
+            await asyncio.get_event_loop().run_in_executor(
+                None, self._ensure_initialized
+            )
 
         return self._backends.get(backend_name)
 
@@ -556,7 +629,9 @@ class MetricsStore:
         # Check cache first if enabled.
         cached_result = None
         if self.cache_enabled and self._cache_layer is not None:
-            cached_result = await self._cache_layer.get_cached(request.cache_key, ttl=request.cache_ttl)
+            cached_result = await self._cache_layer.get_cached(
+                request.cache_key, ttl=request.cache_ttl
+            )
 
         if cached_result is not None:
             logger.debug("Cache hit for query '%s'", request.metric_name)
@@ -573,15 +648,25 @@ class MetricsStore:
 
             try:
                 result = await asyncio.wait_for(backend.query(request), timeout=30.0)
-                logger.debug("Successfully queried '%s' via %s", request.metric_name, backend_name.value)
+                logger.debug(
+                    "Successfully queried '%s' via %s",
+                    request.metric_name,
+                    backend_name.value,
+                )
 
                 # Cache successful results.
                 if self.cache_enabled and self._cache_layer is not None:
-                    await self._cache_layer.set_cached(request.cache_key, result, ttl=request.cache_ttl)
+                    await self._cache_layer.set_cached(
+                        request.cache_key, result, ttl=request.cache_ttl
+                    )
 
                 return result
             except asyncio.TimeoutError as exc:
-                logger.warning("Timeout querying backend %s for metric '%s'", backend_name.value, request.metric_name)
+                logger.warning(
+                    "Timeout querying backend %s for metric '%s'",
+                    backend_name.value,
+                    request.metric_name,
+                )
                 last_error = exc
             except Exception as exc:  # noqa: BLE001
                 logger.error(
@@ -597,17 +682,23 @@ class MetricsStore:
                 f"All backends failed to query metric '{request.metric_name}'"
             ) from last_error
 
-        logger.warning("No available backend for querying metric '%s'", request.metric_name)
+        logger.warning(
+            "No available backend for querying metric '%s'", request.metric_name
+        )
         return QueryResult(metadata={"status": "no_backend_available"})
 
     async def write(self, series: MetricSeries) -> None:
         """Write a metric series to the primary backend."""
         if not self._initialized:
-            await asyncio.get_event_loop().run_in_executor(None, self._ensure_initialized)
+            await asyncio.get_event_loop().run_in_executor(
+                None, self._ensure_initialized
+            )
 
         backend = self._backends.get(self.primary_backend_name)
         if backend is None:
-            raise RuntimeError(f"Primary backend '{self.primary_backend_name}' not available")
+            raise RuntimeError(
+                f"Primary backend '{self.primary_backend_name}' not available"
+            )
 
         try:
             await asyncio.wait_for(backend.write(series), timeout=30.0)
@@ -632,8 +723,10 @@ class MetricsStore:
 # Convenience Functions and Decorators
 # ---------------------------------------------------------------------------
 
+
 def async_retry(max_attempts: int = 3, delay_seconds: float = 1.0):
     """Decorator to retry an async function with exponential backoff."""
+
     def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -644,7 +737,11 @@ def async_retry(max_attempts: int = 3, delay_seconds: float = 1.0):
                 except Exception as exc:  # noqa: BLE001
                     attempts += 1
                     if attempts >= max_attempts:
-                        logger.error("Retry exhausted for %s after %d attempts", func.__name__, max_attempts)
+                        logger.error(
+                            "Retry exhausted for %s after %d attempts",
+                            func.__name__,
+                            max_attempts,
+                        )
                         raise
                     sleep_time = delay_seconds * (2 ** (attempts - 1))
                     logger.warning(
@@ -671,6 +768,7 @@ def normalize_metric_name(name: str) -> str:
 
     # Replace invalid characters with underscores.
     import re  # noqa: PLC0415 — local import for clarity
+
     normalized = re.sub(r"[^a-zA-Z0-9_:]", "_", cleaned)
     return normalized
 
@@ -722,11 +820,10 @@ def get_default_metrics_store(
 # Example Usage / Smoke Test (when run directly)
 # ---------------------------------------------------------------------------
 
+
 async def _example_usage() -> None:
     """Demonstrates basic usage of the metrics store."""
-    store = MetricsStore(
-        primary_backend=StorageBackend.MEMORY, cache_enabled=True
-    )
+    store = MetricsStore(primary_backend=StorageBackend.MEMORY, cache_enabled=True)
 
     now = datetime.utcnow()
     request = build_query_request(
@@ -740,8 +837,12 @@ async def _example_usage() -> None:
 
     # Write some data points.
     series = MetricSeries(
-        name="cpu_utilization", type=MetricType.GAUGE,
-        points=[MetricPoint(timestamp=now - timedelta(minutes=i), value=float(i * 10)) for i in range(5)],
+        name="cpu_utilization",
+        type=MetricType.GAUGE,
+        points=[
+            MetricPoint(timestamp=now - timedelta(minutes=i), value=float(i * 10))
+            for i in range(5)
+        ],
     )
     await store.write(series)
 
