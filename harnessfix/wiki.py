@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re as _re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -467,8 +468,6 @@ def clear_wiki_cache() -> None:
 
 
 # --- internal helpers -------------------------------------------------------
-
-import re as _re
 
 _FILE_RE = _re.compile(r"[\w./\\\-]+\.\w+")
 _ERROR_RE = _re.compile(

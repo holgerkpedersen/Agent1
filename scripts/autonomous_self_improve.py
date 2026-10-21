@@ -55,9 +55,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from harnessfix.progress import append_history, clear_progress, write_progress
-from harnessfix import issue_loop
-from harnessfix import issues as issue_store
+from harnessfix.progress import (  # noqa: E402  (after the sys.path bootstrap above)
+    append_history,
+    clear_progress,
+    write_progress,
+)
+from harnessfix import issue_loop  # noqa: E402  (after the sys.path bootstrap above)
+from harnessfix import issues as issue_store  # noqa: E402  (after the sys.path bootstrap above)
 
 STOP_FILENAME = "STOP_AUTONOMOUS"
 SUMMARY_PATH = REPO_ROOT / "reports" / "harnessfix" / "summary.json"
