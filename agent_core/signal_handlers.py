@@ -83,6 +83,16 @@ def install(agent: Optional[Any] = None) -> None:
         signal.signal(signal.SIGBREAK, _signal_break_with_cleanup)
     else:
         signal.signal(signal.SIGINT, _signal_break_with_cleanup)
+        # Ctrl-Z on POSIX sends SIGTSTP, whose default action suspends the
+        # whole REPL (the shell then drops back to its prompt and the chat is
+        # lost). Swallow it with a Python-level no-op handler: unlike SIG_IGN,
+        # a handler is reset to default on exec(), so child shell commands
+        # started by the agent keep normal job-control behaviour.
+        signal.signal(signal.SIGTSTP, _ignore_signal)
+
+
+def _ignore_signal(signum: int, frame) -> None:
+    """No-op signal handler (used for SIGTSTP)."""
 
 
 # ── Git branch ───────────────────────────────────────────────────────────────
