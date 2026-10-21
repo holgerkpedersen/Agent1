@@ -454,6 +454,57 @@ def test_collision_fragment_has_no_pins_in_test_suite():
     assert find_test_collisions((fragment,)) == []
 
 
+def test_apply_and_revert_survive_a_formatter_reflow(tmp_path, monkeypatch):
+    """Regression: the repair must not depend on the byte-exact SPELLING of
+    the applied suffix.
+
+    A formatter (ruff) reflows the concatenation onto a second line, so the
+    applied form appears as::
+
+        "identical. "
+        + _REPEAT_HINTS.get(tool_name, _REPEAT_HINT_DEFAULT)
+
+    A literal ``in`` test on the single-line spelling then fails, and the
+    repair raises "pattern not found" even though the tree IS in the applied
+    state - which broke the repair loop and left the harness unable to
+    revert.  This test pins BOTH layouts: apply detects the wrapped form as
+    already-applied, and revert restores it byte-for-byte.
+    """
+    import harnessfix.repairs.stuck_repeat as mod
+
+    original = _original_source()
+    local = tmp_path / "agent_core" / "llm" / "tool_loop.py"
+    local.parent.mkdir(parents=True)
+    local.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(mod, "_TARGET", local)
+
+    mod.apply()
+
+    # Build BOTH spellings of the applied suffix and check each one is
+    # recognised as "already applied" and reverts byte-for-byte.  The
+    # single-line spelling is what a hand-written edit looks like; the
+    # wrapped spelling is what a formatter produces.
+    lookup = "_REPEAT_HINTS.get(tool_name, _REPEAT_HINT_DEFAULT)"
+    single = f'"identical. " + {lookup}'
+    wrapped = '"identical. "\n' + " " * 28 + f"+ {lookup}"
+    for label, spelling in (("single-line", single), ("wrapped", wrapped)):
+        # Rewrite whatever apply() produced into the spelling under test.
+        current = local.read_text(encoding="utf-8")
+        rewritten = current.replace(single, spelling).replace(wrapped, spelling)
+        assert spelling in rewritten, f"could not build the {label} spelling"
+        local.write_text(rewritten, encoding="utf-8")
+
+        # The spelling must be recognised as already applied ...
+        assert mod.is_applied() is True, f"{label} spelling not detected"
+        summary = mod.apply()
+        assert "already applied (no-op)" in summary, f"{label} spelling not detected"
+        # ... and revert must restore the original bytes exactly.
+        mod.revert()
+        assert local.read_text(encoding="utf-8") == original, f"{label} revert differs"
+        # Re-apply so the next iteration starts from the applied state.
+        mod.apply()
+
+
 # ---------------------------------------------------------------------------
 # 3. Runtime behaviour through the REAL ToolLoopRunner (repair applied,
 #    executed in a fresh interpreter so the repaired source is what runs)

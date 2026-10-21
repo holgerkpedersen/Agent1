@@ -244,6 +244,7 @@ def test_system_prompt_is_module_constant() -> None:
 
 def test_chat_nlp_uses_system_prompt_constant(monkeypatch) -> None:
     import inspect
+    import re
 
     # The system prompt must come from the shared module constant — now built
     # inside _refresh_system_message (chat_nlp's first pipeline phase).
@@ -266,6 +267,11 @@ def test_chat_nlp_uses_system_prompt_constant(monkeypatch) -> None:
     assert content.startswith(sentinel)
     # ...with the dynamic blocks still appended on top of it.
     assert len(content) > len(sentinel)
+
+    # Structural guard kept from origin/master: tolerant of the formatter's
+    # quote style and of any whitespace between key, colon and constant.
+    src = inspect.getsource(refresh)
+    assert re.search(r"""["']content["']\s*:\s*_SYSTEM_PROMPT""", src)
     # ...and chat_nlp must delegate to that phase instead of inlining a prompt.
     loop_src = inspect.getsource(agent.Agent.chat_nlp)
     assert "_refresh_system_message(" in loop_src

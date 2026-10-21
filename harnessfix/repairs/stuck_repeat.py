@@ -20,6 +20,7 @@ executed" (tests/test_tool_loop_nlp.py) is preserved byte-for-byte.
 from __future__ import annotations
 
 import py_compile
+import re
 from pathlib import Path
 
 STUCK_REPEAT_REPAIR_ID = "stuck-repeat-tool-hints"
@@ -70,8 +71,32 @@ _REPEAT_HINT_DEFAULT = (
 """
 
 #: Second-strike suffix: original (reverted) vs hint-routed (applied).
+#:
+#: The two forms are matched with REGEX, not with a literal ``in`` test: a
+#: formatter (ruff) reflows the concatenation onto a second line, so the
+#: byte-exact spelling of the applied form depends on the formatter's line
+#: width, not on this module.  Matching the two halves separately keeps
+#: apply/revert working on the single-line AND the wrapped layout.
 _OLD_LINE = '"identical. Take a different action or answer in text."'
 _NEW_LINE = '"identical. " + _REPEAT_HINTS.get(tool_name, _REPEAT_HINT_DEFAULT)'
+
+#: Regex form of the reverted suffix (see above).
+_OLD_RE = re.compile(r'"identical\. Take a different action or answer in text\."')
+
+#: Regex form of the applied suffix: the literal and the hint lookup, with
+#: any amount of whitespace between them - including the newline a formatter
+#: inserts when the joined line does not fit the line length.
+_NEW_RE = re.compile(
+    r'"identical\. "[ \t\r\n]*\+[ \t\r\n]*'
+    r"_REPEAT_HINTS\.get\([ \t\r\n]*tool_name[ \t\r\n]*,[ \t\r\n]*"
+    r"_REPEAT_HINT_DEFAULT[ \t\r\n]*\)"
+)
+
+
+def _indent_of(source: str, pos: int) -> str:
+    """Leading whitespace of the source line that contains *pos*."""
+    line_start = source.rfind("\n", 0, pos) + 1
+    return source[line_start:pos]
 
 
 class RepairApplyError(RuntimeError):
@@ -88,19 +113,30 @@ def _verify() -> None:
 def apply() -> str:
     """Apply the repair; returns a short diff summary."""
     source = _TARGET.read_text(encoding="utf-8")
-    if _NEW_LINE in source:
+    if _NEW_RE.search(source):
         return "already applied (no-op)"
     if _ANCHOR not in source:
         raise RepairApplyError(f"anchor not found in {_TARGET}: {_ANCHOR}")
-    if _OLD_LINE not in source:
+    match = _OLD_RE.search(source)
+    if match is None:
         raise RepairApplyError(f"pattern not found in {_TARGET}")
     if _HINT_SENTINEL in source:
         raise RepairApplyError(
             f"inconsistent state in {_TARGET}: hint table present but note "
             "not routed through it"
         )
+    indent = _indent_of(source, match.start())
+    # The applied form keeps the lookup on its own line: that is how the
+    # formatter lays it out, so the repaired tree stays formatter-clean.
+    # The match starts AT the literal, so the line's own indentation is
+    # already in ``source`` - only the NEW second line needs one.
+    source = (
+        source[: match.start()]
+        + '"identical. "\n'
+        + f"{indent}+ _REPEAT_HINTS.get(tool_name, _REPEAT_HINT_DEFAULT)"
+        + source[match.end() :]
+    )
     source = source.replace(_ANCHOR, _HINT_BLOCK + _ANCHOR, 1)
-    source = source.replace(_OLD_LINE, _NEW_LINE, 1)
     _TARGET.write_text(source, encoding="utf-8")
     _verify()
     return (
@@ -112,17 +148,24 @@ def apply() -> str:
 def revert() -> None:
     """Revert the repair (restore the original second-strike note)."""
     source = _TARGET.read_text(encoding="utf-8")
-    if _OLD_LINE in source:
+    if _OLD_RE.search(source):
         if _HINT_SENTINEL not in source:
             return  # nothing to revert
         raise RepairApplyError(
             f"inconsistent state in {_TARGET}: hint table present although "
             "the note is reverted"
         )
-    if _NEW_LINE not in source:
+    match = _NEW_RE.search(source)
+    if match is None:
         raise RepairApplyError(f"repaired pattern not found in {_TARGET}")
+    # The match starts AT the literal, so the line's own indentation is
+    # already in ``source`` - the replacement must not add another one.
+    source = (
+        source[: match.start()]
+        + '"identical. Take a different action or answer in text."'
+        + source[match.end() :]
+    )
     source = source.replace(_HINT_BLOCK + _ANCHOR, _ANCHOR, 1)
-    source = source.replace(_NEW_LINE, _OLD_LINE, 1)
     _TARGET.write_text(source, encoding="utf-8")
     _verify()
 
@@ -134,4 +177,4 @@ def is_applied() -> bool:
     skip an already-applied candidate without mutating the tree.
     """
     source = _TARGET.read_text(encoding="utf-8")
-    return _NEW_LINE in source and _HINT_SENTINEL in source
+    return _NEW_RE.search(source) is not None and _HINT_SENTINEL in source

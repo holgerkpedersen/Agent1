@@ -2410,7 +2410,7 @@ class TestDisplayModes:
         _loop_runner_sync(runner, fake, execute_tool)
 
         out = capsys.readouterr().out
-        # Round 2's intent block (after [intent 2]) shows the proof from round 1's result.
+        # Round 2's intent block shows the proof from round 1's result.
         round2 = out.split("[intent 2]")[-1]
         assert "proof: content of a.py" in round2
         # Round 2's why diagnoses from the proof (previous read result).
