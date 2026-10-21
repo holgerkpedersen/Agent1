@@ -16,7 +16,9 @@ import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from agent_core.bootstrap import CORRELATION_ID_CTX, CorrelationIdContext, get_last_metrics
+from agent_core.bootstrap import (
+    CORRELATION_ID_CTX, CorrelationIdContext, get_last_metrics
+)
 from agent_core.colors import gray, green, magenta, red, yellow
 from agent_core.config import AgentDisplayMode
 from agent_core.history_compaction import _trim_chat_history

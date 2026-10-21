@@ -32,8 +32,6 @@ def test_paste_empty_input_does_not_call_llm():
 
 
 def test_paste_end_key_hint_matches_platform():
-    import sys
-    from unittest import mock
     cmd = PasteCommand()
     with mock.patch("agent_core.commands.paste_cmd._sys.platform", "linux"):
         assert "Ctrl+D" in cmd.help_text

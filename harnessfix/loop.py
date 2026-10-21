@@ -24,7 +24,9 @@ from .repairs import collisions, repairs_for_layer
 from .tracing import TRACE_DIR
 
 try:
-    from .wiki import consolidate as _consolidate_wiki, format_wiki_notes as _format_wiki_notes
+    from .wiki import (
+        consolidate as _consolidate_wiki, format_wiki_notes as _format_wiki_notes
+    )
 except Exception:  # pragma: no cover - wiki is additive; never block the loop.
     _consolidate_wiki = None
     _format_wiki_notes = None

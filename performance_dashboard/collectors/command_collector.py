@@ -12,8 +12,12 @@ except ImportError:  # pragma: no cover - platform dependent
     resource = None  # type: ignore[assignment]
 
 from performance_dashboard.models import CommandMetric, PerformanceRecord
-from performance_dashboard.utils.time_utils import align_to_bucket, get_current_timestamp
-from performance_dashboard.utils.validation import MetricSchemaValidator, validate_command_metric
+from performance_dashboard.utils.time_utils import (
+    align_to_bucket, get_current_timestamp
+)
+from performance_dashboard.utils.validation import (
+    MetricSchemaValidator, validate_command_metric
+)
 
 
 _MEMORY_PATTERN = re.compile(

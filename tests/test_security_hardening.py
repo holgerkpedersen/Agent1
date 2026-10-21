@@ -106,13 +106,17 @@ class TestShellOps:
 
 class TestToolRouterDelegation:
     def test_handler_uses_shared_allowlist(self):
-        from tool_router import ShellCommandHandler, ShellCommandArgs, ToolExecutionError
+        from tool_router import (
+            ShellCommandHandler, ShellCommandArgs, ToolExecutionError
+        )
         handler = ShellCommandHandler()
         with pytest.raises(ToolExecutionError):
             handler.execute(ShellCommandArgs(command="rm -rf /"))
 
     def test_handler_rejects_chaining(self):
-        from tool_router import ShellCommandHandler, ShellCommandArgs, ToolExecutionError
+        from tool_router import (
+            ShellCommandHandler, ShellCommandArgs, ToolExecutionError
+        )
         handler = ShellCommandHandler()
         with pytest.raises(ToolExecutionError):
             handler.execute(ShellCommandArgs(command="python; rm -rf /"))

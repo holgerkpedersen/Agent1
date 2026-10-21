@@ -41,7 +41,9 @@ from pathlib import Path
 
 from .base import Command, show_file_diff, save_file_py, read_choice, stop_requested
 from .doc_paths import find_doc
-from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
+from agent_core.decisions import (
+    decisions_as_system_prompt, extract_from_changes, add_decision
+)
 from agent_core.subprocess_utils import shell_info as _shell_info
 from .implement_cmd import (
     _apply_patch as _impl_apply_patch,
@@ -2489,7 +2491,9 @@ class FixCommand(Command):
             if added:
                 print(f"  [fix] added missing import(s) the patch needed: {', '.join(added)}")
             if _has_return_error and _return_error_line is not None:
-                from agent_core.commands.fix_cmd import _enclosing_function_extent, _function_can_fall_off_end
+                from agent_core.commands.fix_cmd import (
+                    _enclosing_function_extent, _function_can_fall_off_end
+                )
                 extent = _enclosing_function_extent(result.split('\n'), _return_error_line)
                 if extent:
                     _, end_line = extent

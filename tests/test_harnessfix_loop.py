@@ -434,7 +434,9 @@ def test_loop_accepts_repair_that_adds_no_new_failures(tmp_path, monkeypatch):
     that introduces no NEW failures, so the autonomous loop is not permanently
     blocked by a non-100%-green suite.  This is the exact scenario that made
     the loop reject everything and stop at iteration 1."""
-    from harnessfix.repairs.stuck_repeat import STUCK_REPEAT_REPAIR_ID, revert as revert_stuck
+    from harnessfix.repairs.stuck_repeat import (
+        STUCK_REPEAT_REPAIR_ID, revert as revert_stuck
+    )
 
     traces_dir = tmp_path / "traces"
     traces_dir.mkdir()

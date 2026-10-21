@@ -18,10 +18,16 @@ from agent_core.colors import yellow
 from agent_core.config import AgentDisplayMode
 from agent_core.file_history import file_notes_block
 from agent_core.habits import habits_block, load_habits
-from agent_core.history_compaction import _content_tokens, _is_compaction_note, _recover_original_goal, _strip_turn_wrappers
-from agent_core.memory import load_semantic_memory, semantic_memory_block, semantic_search_memories
+from agent_core.history_compaction import (
+    _content_tokens, _is_compaction_note, _recover_original_goal, _strip_turn_wrappers
+)
+from agent_core.memory import (
+    load_semantic_memory, semantic_memory_block, semantic_search_memories
+)
 from agent_core.memory.types import MAX_GOAL_CHARS, original_goal_block
-from agent_core.skills import discover_skills, load_skill_index, match_skills_for_input, skill_hint_block
+from agent_core.skills import (
+    discover_skills, load_skill_index, match_skills_for_input, skill_hint_block
+)
 from agent_core.types import _GOAL_RELATED_THRESHOLD
 
 if TYPE_CHECKING:  # pragma: no cover - typing only

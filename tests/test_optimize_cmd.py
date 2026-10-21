@@ -19,7 +19,12 @@ from agent_core.commands.optimize_cmd import (
     SYSTEM_OVERHEAD_TOKENS,
     _surgically_revert_regressions,
 )
-from agent_core.patterns import analyze as static_analyze, detect_list_append_join, detect_none_eq, detect_fstring_without_placeholder, detect_iter_dict_keys, detect_type_comparison, detect_mutable_default_arg, detect_redundant_bool_expr, detect_missing_context_manager, _docstring_lines
+from agent_core.patterns import (
+    analyze as static_analyze, detect_list_append_join, detect_none_eq,
+    detect_fstring_without_placeholder, detect_iter_dict_keys, detect_type_comparison,
+    detect_mutable_default_arg, detect_redundant_bool_expr,
+    detect_missing_context_manager, _docstring_lines
+)
 
 
 def _numbered_context(user_content: str) -> list[tuple[int, str]]:
@@ -164,7 +169,9 @@ class TestRequestMaxTokens:
         assert _request_max_tokens(100) >= 8192
 
     def test_hard_ceiling_respected(self) -> None:
-        from agent_core.commands.optimize_cmd import _request_max_tokens, REGION_HARD_MAX_TOKENS
+        from agent_core.commands.optimize_cmd import (
+            _request_max_tokens, REGION_HARD_MAX_TOKENS
+        )
         assert _request_max_tokens(100, context_tokens=1000000) <= REGION_HARD_MAX_TOKENS
         assert _request_max_tokens(100000000, context_tokens=None) == REGION_HARD_MAX_TOKENS
 
@@ -452,7 +459,9 @@ class TestLoopScopeDedent:
     def test_post_loop_concat_in_method_not_flagged(self) -> None:
         """`combined += "".join(...)` placed after a loop, inside a method,
         must not trigger string_concat_in_loop (the bug from analyze_cmd.py)."""
-        from agent_core.patterns import detect_string_concat_in_loop, detect_file_read_in_loop, detect_regex_in_loop
+        from agent_core.patterns import (
+            detect_string_concat_in_loop, detect_file_read_in_loop, detect_regex_in_loop
+        )
         code = textwrap.dedent("""\
             async def _deep_analyze(self, path):
                 combined = content
@@ -2867,7 +2876,9 @@ class TestMechanicalListAppendJoin:
         assert hunk is None
 
     def test_count_reduction(self) -> None:
-        from agent_core.commands.optimize_cmd import _fix_list_append_join, _count_pattern
+        from agent_core.commands.optimize_cmd import (
+            _fix_list_append_join, _count_pattern
+        )
         from agent_core.patch_utils import apply_patch
         code = textwrap.dedent("""\
             def f(items):

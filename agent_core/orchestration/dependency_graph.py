@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from typing import Callable, Dict, Iterable, Iterator, List, Optional, Protocol, Set, Tuple, cast
+from typing import (
+    Callable, Dict, Iterable, Iterator, List, Optional, Protocol, Set, Tuple, cast
+)
 
 try:  # pragma: no cover - networkx is an optional dependency in some envs
     import networkx as nx

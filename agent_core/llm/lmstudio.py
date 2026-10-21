@@ -22,7 +22,9 @@ from agent_core.constants import (
     LOOP_NOTE_TAG_KEY,
 )
 from agent_core.config import lmstudio_base_url
-from agent_core.timeout import DEFAULT_CHAT_TIMEOUT, HEALTH_CHECK_TIMEOUT, HTTP_READ_TIMEOUT, MODEL_LOAD_TIMEOUT
+from agent_core.timeout import (
+    DEFAULT_CHAT_TIMEOUT, HEALTH_CHECK_TIMEOUT, HTTP_READ_TIMEOUT, MODEL_LOAD_TIMEOUT
+)
 
 logger = logging.getLogger(__name__)
 

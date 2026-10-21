@@ -57,7 +57,9 @@ from .base import (
 from .doc_paths import latest_run_dir, new_run_dir
 from .reasoning_strip import dedupe_repeated_sections, extract_section, strip_reasoning
 from agent_core import to_windows_path
-from agent_core.decisions import add_decision, annotate_candidates, extract_from_analysis
+from agent_core.decisions import (
+    add_decision, annotate_candidates, extract_from_analysis
+)
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:

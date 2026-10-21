@@ -4,7 +4,9 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from performance_dashboard.analytics.aggregator import StatisticalSummaryGenerator
-from performance_dashboard.analytics.processor import _extract_metric_scalar, analyze_time_series_trends
+from performance_dashboard.analytics.processor import (
+    _extract_metric_scalar, analyze_time_series_trends
+)
 from performance_dashboard.models import (
     AlertThreshold,
     CommandMetric,
@@ -13,7 +15,9 @@ from performance_dashboard.models import (
     TimeSeriesPoint,
     TrendAnalysisResult,
 )
-from performance_dashboard.utils.time_utils import format_display_label, normalize_timezone
+from performance_dashboard.utils.time_utils import (
+    format_display_label, normalize_timezone
+)
 from performance_dashboard.utils.validation import _within_bounds
 
 

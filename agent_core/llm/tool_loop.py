@@ -34,7 +34,9 @@ from harnessfix.tracing import (
 )
 
 try:
-    from agent_core.colors import cyan, green, red, yellow, magenta, gray, colorize_result
+    from agent_core.colors import (
+        cyan, green, red, yellow, magenta, gray, colorize_result
+    )
 except Exception:  # pragma: no cover - colors degrade gracefully if unavailable
     def _identity(text: str, *, bold: bool = False) -> str:  # noqa: ARG001
         return text

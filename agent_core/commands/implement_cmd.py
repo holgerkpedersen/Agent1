@@ -14,7 +14,9 @@ from pathlib import Path
 from .base import Command, auto_choice, show_file_diff, read_input, stop_requested
 from .doc_paths import find_input
 from agent_core import to_windows_path, workspace_path
-from agent_core.decisions import decisions_as_system_prompt, extract_from_changes, add_decision
+from agent_core.decisions import (
+    decisions_as_system_prompt, extract_from_changes, add_decision
+)
 from agent_core.subprocess_utils import shell_info as _shell_info
 
 from typing import TYPE_CHECKING, Any
@@ -1426,7 +1428,9 @@ class ImplementCommand(Command):
         """Run fast static checks on new files (no LLM). Safe to call always."""
         print(f"\n{'─'*40}")
         found = 0
-        from agent_core.patterns import detect_module_collisions, detect_class_conflicts, detect_unwired_modules
+        from agent_core.patterns import (
+            detect_module_collisions, detect_class_conflicts, detect_unwired_modules
+        )
 
         collisions = detect_module_collisions(py_new)
         if collisions:
@@ -2230,7 +2234,9 @@ class ImplementCommand(Command):
                         except SyntaxError:
                             print(f"  WARNING: [FILE: {filename}] — generated content has syntax errors, skipping")
                             continue
-                        from agent_core.patch_utils import compute_diff, apply_patch, split_source_lines
+                        from agent_core.patch_utils import (
+                            compute_diff, apply_patch, split_source_lines
+                        )
                         computed = compute_diff(existing_text, content, filename)
                         if computed.strip():
                             ok, patched = apply_patch(computed, split_source_lines(existing_text))
@@ -3504,7 +3510,10 @@ class ImplementCommand(Command):
                     issues_found.append(f"Nearly identical files: {fa} and {fb} — consider merging")
 
             # ---- Cross-file attribute & wiring checks ----
-            from agent_core.patterns import detect_module_collisions, detect_attribute_errors, detect_unwired_modules, detect_class_conflicts
+            from agent_core.patterns import (
+                detect_module_collisions, detect_attribute_errors,
+                detect_unwired_modules, detect_class_conflicts
+            )
 
             collisions = detect_module_collisions(py_new, existing_files=list(all_content.keys()))
             if collisions:

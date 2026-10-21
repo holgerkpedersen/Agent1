@@ -3,7 +3,9 @@ import asyncio
 import re
 from pathlib import Path
 
-from agent_core.commands.analysis_verifier import VerificationResult, verify_analysis_claims
+from agent_core.commands.analysis_verifier import (
+    VerificationResult, verify_analysis_claims
+)
 
 _AGENT_PY = "\n".join([
     '"""Sample agent module for verification tests."""',

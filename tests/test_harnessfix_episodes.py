@@ -17,7 +17,9 @@ import os
 
 import pytest
 
-from harnessfix.episodes import Episode, clear_episode_cache, extract_episode, successful_episodes
+from harnessfix.episodes import (
+    Episode, clear_episode_cache, extract_episode, successful_episodes
+)
 from harnessfix.embed import HashEmbedder, build_embedder
 from harnessfix.retrieval import EpisodeIndex, clear_index_cache, format_episodic_notes
 

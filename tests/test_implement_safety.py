@@ -634,7 +634,9 @@ class TestFixBlockParsing:
         assert "+new" in m.group(2)
 
     def test_short_response_without_blocks_returns_none(self) -> None:
-        from agent_core.commands.implement_cmd import _find_patch_block, _find_file_block
+        from agent_core.commands.implement_cmd import (
+            _find_patch_block, _find_file_block
+        )
 
         assert _find_patch_block("no code here") is None
         assert _find_file_block("no code here") is None

@@ -142,7 +142,9 @@ def resolve_display_mode() -> "AgentDisplayMode":
     killing intent/quiet/clean while every test kept passing (they patch the
     resolver instead of calling it).
     """
-    from agent_core.config import AgentDisplayMode, _parse_display_mode, load_agent_settings
+    from agent_core.config import (
+        AgentDisplayMode, _parse_display_mode, load_agent_settings
+    )
 
     try:
         return load_agent_settings().display_mode

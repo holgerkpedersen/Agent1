@@ -239,7 +239,10 @@ def _record_llm_experience(agent: "Agent", action: str, outcome: float, context:
         ctx_str = json.dumps(context or {}, ensure_ascii=False, sort_keys=True)
         ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
         import sqlite3
-        from agent_core.memory.attribution import ensure_attribution_schema, prompt_sha256, record_llm_decision, resolve_decision_llm
+        from agent_core.memory.attribution import (
+            ensure_attribution_schema, prompt_sha256, record_llm_decision,
+            resolve_decision_llm
+        )
         if decision_llm is None:
             decision_llm = resolve_decision_llm(agent)
         prompt_hash = prompt_sha256(decision_prompt) if decision_prompt is not None else None

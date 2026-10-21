@@ -112,7 +112,9 @@ def file_notes_block(
         if not paths:
             return ""
 
-        from harnessfix.history import file_history  # local import: stdlib-only at import time
+        from harnessfix.history import (
+            file_history  # local import: stdlib-only at import time
+        )
 
         body: list[str] = []
         for target in paths[:max(1, int(max_files))]:

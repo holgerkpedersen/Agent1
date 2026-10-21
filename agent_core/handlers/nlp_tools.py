@@ -24,7 +24,9 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from agent_core.shell_utils import run_subprocess_captured as _shell_run_subprocess_captured
+from agent_core.shell_utils import (
+    run_subprocess_captured as _shell_run_subprocess_captured
+)
 from agent_core.pytest_cmd_policy import pytest_flag_conflict as _pytest_flag_conflict
 
 if TYPE_CHECKING:  # pragma: no cover - typing only

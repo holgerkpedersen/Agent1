@@ -9,7 +9,9 @@ canonical workspace-relative form.
 """
 from pathlib import Path
 
-from agent_core.commands.fix_cmd import _decision_constraints_for, _decision_workspace_for
+from agent_core.commands.fix_cmd import (
+    _decision_constraints_for, _decision_workspace_for
+)
 from agent_core.decisions import add_decision, load_decisions
 
 
