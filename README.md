@@ -96,6 +96,8 @@ Type `quit` or `exit` to leave.
 | `model <name>` | Switch model |
 | `mode plan` | Read-only research mode (no writes) |
 | `mode build` | Full access mode (default) |
+| `display intent` | Show the model's intent + planned calls before they run |
+| `display verbose\|clean\|quiet` | Adjust how much tool activity is printed |
 | `clear` | View and clear memory |
 
 Run `help` inside the REPL for the full list.
@@ -174,6 +176,37 @@ detection, class-name collision prevention, post-write rejection...
 - **Verified writes** — after every `write`/`edit`, a `py_compile` check confirms the file is valid Python.
 - **Error recovery** — tool errors feed back to the model, which can retry with a different approach.
 - **Conversation history** — follow-up questions build on previous answers.
+
+### Seeing the intent behind each call
+
+`display intent` prints the model's reasoning *before* it acts, so you can tell
+what it is trying to do and why — not just what it did:
+
+```
+> display intent
+Display mode set to 'intent' (persisted to .env).
+
+> What does the ToolRouter class do?
+
+  [intent 1]
+    I need to find where ToolRouter is defined before I can explain it.
+    -> search(query=ToolRouter)
+      why: to locate 'ToolRouter' in the workspace
+  [tool] search(query=ToolRouter)
+  [result] Found 14 matches in 6 files
+
+  [intent 2]
+    proof: Found 14 matches in 6 files
+    -> read(path=agent_core/llm/tool_router.py)
+      why: to inspect agent_core/llm/tool_router.py
+```
+
+Every round shows the model's narration, a `proof:` line summarizing what the
+previous call established, the planned calls with full arguments, and a `why:`
+line that reasons from that proof. When the model writes no narration, a short
+heuristic `why:` still explains the call, so nothing is ever a silent action.
+Modes: `verbose` (default), `clean`, `quiet`, `intent` — see
+[USAGE.md](USAGE.md#display-modes--seeing-what-the-llm-is-trying-to-do).
 
 ### Read-only research mode
 

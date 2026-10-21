@@ -17,6 +17,7 @@ Run: `python agent.py`
 | `fix <file> --desc "..."`    | Describe an issue, LLM fixes it     |
 | `model <name>`               | Switch LLM model                    |
 | `model list`                 | List available models               |
+| `display [mode]`             | Show/set output verbosity (see below) |
 | `clear`                      | View and clear memory               |
 | `cleanup`                    | Find orphaned files                 |
 | `optimize <file>`            | Find speed/memory/quality issues    |
@@ -48,6 +49,76 @@ collisions, and unwired modules (see implement_cmd.py).
 - **Verified writes**: `write`/`edit` append a `py_compile` verification summary so the model reports verified changes.
 - **Error recovery**: a failed tool returns its error to the model, which can retry differently.
 - **Tool schemas live in `agent_core/tool_schemas.py`** — the exact set the dispatcher can execute (`NLP_TOOL_NAMES`).
+
+---
+
+## Display modes — seeing what the LLM is trying to do
+
+By default you see each call as `[tool] name(args)` *after* the model decided
+it. That tells you **what** happened, not **why**. Use `display` to change how
+much of the model's intent is shown:
+
+```
+> display                 show the current mode
+> display intent          the model's intent + planned calls, before they run
+> display clean           one reason line per call, summarized results
+> display verbose         every call + full result (default)
+> display quiet           only the final answer
+```
+
+The choice is written to `AGENT_DISPLAY_MODE` in `.env`, so it survives a REPL
+restart. You can also set that variable by hand (see `.env.example`).
+
+### `intent` — the model explains itself before acting
+
+In `intent` mode the agent prints one `[intent N]` block per LLM round, **before
+any tool in that round runs**:
+
+```
+> What does the ToolRouter class do?
+
+  [intent 1]
+    I need to find where ToolRouter is defined before I can explain it.
+    -> search(query=ToolRouter)
+      why: to locate 'ToolRouter' in the workspace
+  [tool] search(query=ToolRouter)
+  [result] Found 14 matches in 6 files
+
+  [intent 2]
+    proof: Found 14 matches in 6 files
+    -> read(path=agent_core/llm/tool_router.py)
+      why: to inspect agent_core/llm/tool_router.py
+  [tool] read(path=agent_core/llm/tool_router.py)
+  [result] ...
+
+The ToolRouter class routes natural language prompts to registered tools...
+```
+
+Each block has up to four parts, and each answers a different question:
+
+| Line | Answers | Where it comes from |
+| ---- | ------- | ------------------- |
+| narration | *What is the model trying to achieve?* | The model's own sentence, printed in full |
+| `proof:` | *What did the last call establish?* | A one-line summary of the previous tool result |
+| `-> name(args)` | *Which call is next, exactly?* | The planned call, arguments shown in full |
+| `why:` | *Why this call, given that proof?* | The model's reasoning, or a heuristic when it wrote none |
+
+Two design points make the intent trustworthy rather than decorative:
+
+- **The `why:` reasons from evidence.** Round 2's `why:` is derived from the
+  `proof:` line of round 1's result, so you can follow the chain of reasoning
+  call by call instead of seeing isolated actions.
+- **No bare calls.** Models often emit tool calls with no narration at all.
+  When that happens the display falls back to a short heuristic `why:` (for
+  example `to inspect a.py`), so no planned call is ever left unexplained.
+
+The mode also nudges the model: while `intent` is on, the system prompt asks it
+to write one short sentence (about 20 words) before each tool call. The
+narration is therefore usually the model's real intent — not text reconstructed
+after the fact. Narration and arguments are printed in **full** (never
+truncated), and tool *results* are summarized, so the intent stays more visible
+than the output. The model still receives every full result payload — only the
+console display is shortened.
 
 ---
 

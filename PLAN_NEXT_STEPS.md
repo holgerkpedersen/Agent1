@@ -1,19 +1,32 @@
 # Next Steps — Plan (branch: master)
 
-## Current state (verified this session: git status, `ruff check . --statistics`, full pytest)
+## Current state (verified this session: git status, `git log`, full pytest)
 
-Branch `master` is **clean and in sync with `origin/master`** (HEAD `2623dfc`).
+Branch `master` is **clean and in sync with `origin/master`** (HEAD `d2a4a80`).
 There is no second agent: this session owns push, and pushes work from here
 (remote is a plain HTTPS URL, credential helper caches the valid token).
 
 Latest commits:
+- `d2a4a80` Merge branch 'master' (resolved the earlier divergence).
+- `53fc18d` feat: make LLM intent display evidence-aware — INTENT mode now
+  prints a `proof:` line from the previous tool result, and the per-call
+  `why:` reasons from that evidence.
+- `2a616c4` feat: show LLM intent with reasoning in INTENT display mode —
+  `display intent` prints one `[intent N]` block per LLM round BEFORE its
+  tools run (narration + planned calls with full args + a `why:` line), and
+  the system prompt asks the model to narrate one short sentence per round.
+- `7eb9121` feat(repl): enable readline line editing and command recall history.
 - `2623dfc` style(lint): wrap 38 over-long import lines (E501) + drop unused
-  `import sys` (F401). E501 2619 -> 2581. Each touched file py_compile-checked
-  before writing; F821 clean; all touched modules import at runtime.
-- `69a6a41` fix: Linux CI regressions in `_norm`, `kill_process_tree`, autoreview
-  corpus test.
-- `d16a1de` fix(paste): show the platform EOF key (Ctrl+D on POSIX) + tests.
-- `d2de06f` fix(repl): ignore SIGTSTP so Ctrl-Z in pasted input does not suspend.
+  `import sys` (F401). E501 2619 -> 2581.
+
+### INTENT display mode — now documented
+
+The feature is complete and its docs were added in the docs commit
+(`docs: document the display command and the INTENT mode`): `USAGE.md` has the
+mode table + a worked `[intent N]` transcript, `README.md` has the `display`
+rows and a short example, and `.env.example` lists `intent` in the
+`AGENT_DISPLAY_MODE` comment. Tests: `tests/test_display_cmd.py` (17) plus the
+INTENT cases in `tests/test_tool_loop_nlp.py`.
 
 Verified lint (repo-wide, ruff, line-length 88 from `pyproject.toml`):
 - E501 **2581** (was 2619). Of these, ~2069 are long **string literals**
@@ -30,13 +43,13 @@ CI gate (`.github/workflows/ci.yml`, ubuntu + windows, py3.12):
 - **advisory** (continue-on-error): full `ruff check`, `mypy agent_core --strict`.
 - `PYTEST_FULL_SUITE_TIMEOUT=1800` is set in the workflow env for runners.
 
-Full suite (this session): **3774 passed, 22 failed, 19 skipped** in ~364 s.
-All 22 failures are **pre-existing** — they reproduce on a clean tree with the
-lint changes stashed (verified). They are: stateful pytest-gate tests
+Full suite (last measured on `2623dfc`): **3774 passed, 22 failed, 19 skipped**
+in ~364 s. All 22 failures are **pre-existing** — they reproduce on a clean tree
+with the lint changes stashed (verified). They are: stateful pytest-gate tests
 (`test_pytest_full_run_gate.py`, which inspect the live session's full-run
 budget), latency benchmarks (`test_decisions_performance.py`,
 `tests/performance/test_decision_latency.py`), and
-`test_clear_history{,_gate_reset}.py`. None import the files touched by `2623dfc`.
+`test_clear_history{,_gate_reset}.py`.
 
 ## .env (untracked; de-duplicated this session)
 
