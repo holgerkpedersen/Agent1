@@ -2385,6 +2385,37 @@ class TestDisplayModes:
         # Round 2 is also explained (bare call -> heuristic why).
         assert "why: to locate 'symbol' in the workspace" in out
 
+    def test_intent_proof_line_uses_previous_result(self, capsys):
+        """INTENT mode prints a ``proof:`` line from the previous result, and
+        the next round's ``why:`` diagnoses from that evidence."""
+        from agent_core.llm.tool_loop import ToolLoopRunner
+
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                ("edit", {"path": "a.py", "old_text": "x", "new_text": "y"}),
+                "Answer.",
+            ]
+        )
+        results = []
+
+        async def execute_tool(name, args):
+            if name == "read":
+                results.append("content of a.py\nline with x here\n")
+                return results[-1]
+            results.append("[verify] py_compile OK: a.py")
+            return results[-1]
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="intent")
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        # Round 2's intent block (after [intent 2]) shows the proof from round 1's result.
+        round2 = out.split("[intent 2]")[-1]
+        assert "proof: content of a.py" in round2
+        # Round 2's why diagnoses from the proof (previous read result).
+        assert "why: to patch a.py" in round2
+
     def test_clean_folds_narration_preamble_in_chat_nlp(self, tmp_path):
         """In CLEAN mode chat_nlp folds a stray 'I will ...' narration into a
         short preamble so the report reads as one coherent answer."""

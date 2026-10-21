@@ -1103,9 +1103,11 @@ class ToolLoopRunner:
 
             #: INTENT mode: show what the model is about to do BEFORE any tool
             #: runs — its narration (if any) plus each planned call — so the
-            #: user can follow the agent's plan round by round.
+            #: user can follow the agent's plan round by round.  ``prev_result``
+            #: is the proof from the previous step; each planned call's ``why:``
+            #: line ties the next action back to that proof.
             if self.display_mode == DisplayMode.INTENT:
-                _print_intent(iteration, prev_text, tool_calls)
+                _print_intent(iteration, prev_text, tool_calls, prev_result)
 
             # Seed this batch's duplicate detection with the FULL key set of
             # the previous batch: any key re-issued in consecutive batches is
@@ -1220,12 +1222,16 @@ class ToolLoopRunner:
                         print(f"  {yellow('[result]')} {colorize_result(summary)}")
                     elif self.display_mode == DisplayMode.INTENT:
                         # INTENT: the intent block already announced the call;
-                        # show a summarized result so intent stays more visible
-                        # than raw tool output.
+                        # show a summarized result plus a one-line proof of what
+                        # it verified, so the next round's ``why:`` can diagnose
+                        # from evidence rather than guesswork.
                         summary = _summarize_result(tool_name, result_str)[
                             :_RESULT_DISPLAY_LIMIT
                         ]
                         print(f"  {yellow('[result]')} {colorize_result(summary)}")
+                        print(
+                            f"    {gray('proof: ' + _summarize_proof(result_str))}"
+                        )
                     else:
                         shown = colorize_result(result_str[:_RESULT_DISPLAY_LIMIT])
                         if "tool error:" in shown.lower() or "error" in shown.lower():
@@ -1768,19 +1774,23 @@ class ToolLoopRunner:
         return True
 
 
-def _print_intent(iteration: int, narration: str, tool_calls: list[Any]) -> None:
+def _print_intent(iteration: int, narration: str, tool_calls: list[Any], prev_result: str = "") -> None:
     """INTENT display: print one block per LLM round before its tool calls run.
 
-    Shows the model's own narration (printed in FULL — never truncated) and
-    each planned call with its FULL arguments plus a human-readable ``why:``
-    explanation for every call, so the user can follow the agent's plan
-    round by round.  The intent block is the primary readout; tool results
-    are summarized (not dumped) so intent stays more visible than output.
+    Shows the model's own narration (printed in FULL — never truncated) and,
+    when there is a previous result, a one-line ``proof:`` of what that result
+    verified.  Each planned call is printed with its FULL arguments (never
+    truncated) plus a human-readable ``why:`` explanation that diagnoses the
+    next action FROM the previous proof, so the user can see both what the
+    agent will do and the evidence it is acting on.  Tool results are
+    summarized (not dumped) so intent stays more visible than output.
     """
     print(f"  {magenta(f'[intent {iteration + 1}]')}")
     text = " ".join(_narration_text(narration).split())
     if text:
         print(f"    {gray(text)}")
+    if prev_result:
+        print(f"    {gray('proof: ' + _summarize_proof(prev_result))}")
     for tc in tool_calls:
         if not isinstance(tc, dict):
             continue
@@ -1793,7 +1803,7 @@ def _print_intent(iteration: int, narration: str, tool_calls: list[Any]) -> None
         except (json.JSONDecodeError, TypeError):
             args = {}
         print(f"    {yellow('->')} {cyan(name)}({gray(_fmt_args_full(args))})")
-        print(f"      {gray('why: ' + _short_intent_why(name, args))}")
+        print(f"      {gray('why: ' + _short_intent_why(name, args, prev_result))}")
 
 
 def _narration_text(content: Any) -> str:
@@ -1839,24 +1849,28 @@ def _fmt_args_full(args: dict[str, Any]) -> str:
     return ", ".join(pieces)
 
 
-def _derive_reason(tool_name: str, args: dict[str, Any], prior_text: str | None) -> str:
+def _derive_reason(tool_name: str, args: dict[str, Any], prior_text: str | None, prev_result: str = "") -> str:
     """Build a short human-readable reason for why a tool call was made.
 
     Uses the model's own reasoning when it supplied one (via ``assistant``
     message content), otherwise falls back to a small heuristic keyed on the
-    tool name and its arguments so bare calls are never unexplained."""
+    tool name and its arguments so bare calls are never unexplained.  When a
+    previous result proof exists, the reason diagnoses the next action FROM
+    that evidence."""
     if prior_text:
         first = " ".join(prior_text.split())[:260]
         return f"{tool_name}({_fmt_args(args)}) — {first}"
-    return f"{tool_name}({_fmt_args(args)}) — {_short_intent_why(tool_name, args)}"
+    return f"{tool_name}({_fmt_args(args)}) — {_short_intent_why(tool_name, args, prev_result)}"
 
 
-def _short_intent_why(tool_name: str, args: dict[str, Any]) -> str:
+def _short_intent_why(tool_name: str, args: dict[str, Any], prev_result: str = "") -> str:
     """Short explanation for ONE planned call when the model wrote no narration.
 
     Heuristic keyed on the tool name + arguments.  Shared by INTENT mode (the
     per-call ``why:`` line) and CLEAN mode's :func:`_derive_reason` fallback,
-    so a bare tool call always carries an explanation in both modes.
+    so a bare tool call always carries an explanation in both modes.  When a
+    previous result proof exists, the ``why:`` diagnoses the next call from
+    that evidence rather than from a bare heuristic.
     """
     arg_summary = _fmt_args(args) or ""
     if tool_name == "read":
@@ -1884,6 +1898,25 @@ def _short_intent_why(tool_name: str, args: dict[str, Any]) -> str:
         target = arg_summary or "(code)"
         return f"to review {target}"
     return "model action"
+
+
+def _summarize_proof(result_str: str) -> str:
+    """One-line proof of what a tool result verified (INTENT display only).
+
+    Extracts the strongest end-user-visible evidence from a result so the
+    NEXT round's ``why:`` can diagnose from proof instead of guesswork.
+    """
+    if not result_str:
+        return "nothing returned — no proof yet"
+    lines = [ln for ln in result_str.splitlines() if ln.strip()]
+    if not lines:
+        return "empty result — no proof yet"
+    # Verification line from write/edit/fix is end-user evidence — keep it.
+    for ln in lines:
+        if ln.startswith("[verify] py_compile"):
+            return ln.strip()
+    # First non-empty line is the strongest signal.
+    return lines[0][:140] + ("..." if len(lines[0]) > 140 else "")
 
 
 def _summarize_result(tool_name: str, result_str: str) -> str:
