@@ -21,14 +21,13 @@ Two rules now hold:
 from __future__ import annotations
 
 import asyncio
-import importlib
 import subprocess
 
 import pytest
 
 import agent
+import conftest
 import agent_core.pytest_gate as agent_core_pytest_gate
-conftest = importlib.import_module("conftest")
 from agent import Agent
 from agent_core.pytest_gate import (
     DEFAULT_FULL_SUITE_TIMEOUT,

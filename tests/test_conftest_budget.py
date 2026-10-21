@@ -258,10 +258,13 @@ class TestSessionHooks:
         env_file.write_text("", encoding="utf-8")
         monkeypatch.setattr(conftest, "_ENV_FILE", env_file)
         session = type(
-            "S", (), {"_is_full_run": True, "_full_run_started": time.monotonic() - 42.0}
+            "S",
+            (),
+            {"_is_full_run": True, "_full_run_started": time.monotonic() - 42.0},
         )()
         conftest.pytest_sessionfinish(session, 0)
-        assert "PYTEST_LAST_FULL_RUN_SECONDS=42.0" in env_file.read_text(encoding="utf-8")
+        recorded = env_file.read_text(encoding="utf-8")
+        assert "PYTEST_LAST_FULL_RUN_SECONDS=42.0" in recorded
 
     def test_sessionfinish_skips_targeted_run(self, tmp_path, monkeypatch):
         env_file = tmp_path / ".env"

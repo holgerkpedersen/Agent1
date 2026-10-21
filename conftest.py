@@ -460,7 +460,8 @@ def _get_env_value(key: str) -> str:
 def _resolve_budget() -> float:
     """max(configured floor, last recorded full-run duration * (1 + margin))."""
     try:
-        floor = float(_get_env_value(_FULL_SUITE_TIMEOUT_KEY) or _DEFAULT_FULL_SUITE_TIMEOUT)
+        floor_raw = _get_env_value(_FULL_SUITE_TIMEOUT_KEY)
+        floor = float(floor_raw or _DEFAULT_FULL_SUITE_TIMEOUT)
     except ValueError:
         floor = _DEFAULT_FULL_SUITE_TIMEOUT
     try:
@@ -476,8 +477,9 @@ def _watchdog_loop(started: float, budget: float, stop: threading.Event) -> None
         elapsed = time.monotonic() - started
         if elapsed > budget:
             print(
-                f"\n[conftest] full pytest run exceeded {budget:.0f}s budget — aborting "
-                f"(see PYTEST_FULL_SUITE_TIMEOUT / PYTEST_LAST_FULL_RUN_SECONDS in .env).",
+                f"\n[conftest] full pytest run exceeded {budget:.0f}s budget — "
+                f"aborting (see PYTEST_FULL_SUITE_TIMEOUT / "
+                f"PYTEST_LAST_FULL_RUN_SECONDS in .env).",
                 flush=True,
             )
             # os._exit skips pytest_sessionfinish, so without this the next run
@@ -498,10 +500,13 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         return
     budget = _resolve_budget()
     session._full_run_budget = budget
+    floor_raw = _get_env_value(_FULL_SUITE_TIMEOUT_KEY)
+    floor_shown = floor_raw or _DEFAULT_FULL_SUITE_TIMEOUT
+    last_shown = _get_env_value(_LAST_FULL_RUN_KEY) or "n/a"
     print(
         f"\n[conftest] full pytest run budget: {budget:.0f}s "
-        f"(floor {_get_env_value(_FULL_SUITE_TIMEOUT_KEY) or _DEFAULT_FULL_SUITE_TIMEOUT}s, "
-        f"last run {_get_env_value(_LAST_FULL_RUN_KEY) or 'n/a'}s + {_FULL_SUITE_MARGIN:.0%} margin)",
+        f"(floor {floor_shown}s, last run {last_shown}s + "
+        f"{_FULL_SUITE_MARGIN:.0%} margin)",
         flush=True,
     )
     _watchdog_stop.clear()
