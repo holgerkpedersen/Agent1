@@ -54,6 +54,10 @@ from agent_core.bootstrap import (
 )
 from agent_dashboard import record_command_metrics
 from agent_core.colors import blue, cyan, gray, green, yellow
+from agent_core.line_editing import (
+    enable as _enable_line_editing,
+    save_history as _save_line_history,
+)
 from agent_core.signal_handlers import (
     current_git_branch as _current_git_branch,
     install as _install_signal_handlers,
@@ -75,6 +79,23 @@ def _agent_mod() -> Any:
     import agent as _agent_mod
 
     return _agent_mod
+
+
+def _start_line_editing(agent: Any = None) -> bool:
+    """Turn on terminal line editing (arrow keys, command recall).
+
+    Without ``readline`` the terminal stays in canonical mode: the up arrow
+    does not recall the previous command and the raw escape bytes end up in
+    the command text.  The history is stored in ``<workspace>/.agent_history``.
+
+    Returns True when line editing is active.
+    """
+    workspace = getattr(agent, "workspace", None)
+    try:
+        return _enable_line_editing(workspace=workspace)
+    except Exception:  # pragma: no cover - readline must never break the REPL
+        logger.debug("line editing unavailable", exc_info=True)
+        return False
 
 
 _INCOMPLETE_MARKERS = (
@@ -328,6 +349,7 @@ async def run_interactive() -> None:
 
     _code_snapshot = loaded_module_fingerprints(__file__)
     _install_signal_handlers(agent)
+    _start_line_editing(agent)
     while True:
         try:
             branch = _current_git_branch() or "?"
@@ -336,6 +358,7 @@ async def run_interactive() -> None:
             if user_input is None:
                 agent._save_memory()
                 save_meta_policy_weights()
+                _save_line_history(workspace=getattr(agent, "workspace", None))
                 _warn_uncommitted(agent)
                 break
             if not user_input:
@@ -343,6 +366,7 @@ async def run_interactive() -> None:
             if user_input.lower() in ["quit", "exit", "q"]:
                 agent._save_memory()
                 save_meta_policy_weights()
+                _save_line_history(workspace=getattr(agent, "workspace", None))
                 _warn_uncommitted(agent)
                 print(green("Goodbye!"))
                 break
@@ -391,6 +415,7 @@ async def run_interactive() -> None:
                 print(yellow("\n[stdin] Input stream ended — shutting down."))
             agent._save_memory()
             save_meta_policy_weights()
+            _save_line_history(workspace=getattr(agent, "workspace", None))
             _warn_uncommitted(agent)
             break
 
