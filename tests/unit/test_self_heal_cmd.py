@@ -62,7 +62,8 @@ class TestWriteReview:
 
         # Two changes separated by >2*context (7) unchanged lines -> two hunks.
         def _body(a: int, c: int) -> str:
-            return f"a = {a}\n\n".join(f"k{i}" for i in range(1, 10)) + f"\nc = {c}\n"
+            body = "\n".join(f"k{i}" for i in range(1, 10))
+            return f"a = {a}\n{body}\nc = {c}\n"
 
         target.write_text(_body(1, 3), encoding="utf-8")
 

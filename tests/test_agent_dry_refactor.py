@@ -244,13 +244,16 @@ def test_system_prompt_is_module_constant() -> None:
 
 def test_chat_nlp_uses_system_prompt_constant() -> None:
     import inspect
+    import re
 
     # The system prompt must come from the shared module constant — now built
     # inside _refresh_system_message (chat_nlp's first pipeline phase).
     # The dict is built with unquoted keys since the AST-based prompt builder
     # landed, so match the key/value pair, not the JSON-style quoting.
     src = inspect.getsource(agent.Agent._refresh_system_message)
-    assert "'content': _SYSTEM_PROMPT" in src
+    # The quote style belongs to the formatter; what matters is that the
+    # system prompt comes from the shared module constant.
+    assert re.search(r"""["']content["']\s*:\s*_SYSTEM_PROMPT""", src)
     # ...and chat_nlp must delegate to that phase instead of inlining a prompt.
     loop_src = inspect.getsource(agent.Agent.chat_nlp)
     assert "_refresh_system_message(" in loop_src
