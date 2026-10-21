@@ -13,9 +13,17 @@ class PasteCommand(Command):
     def name(self) -> str:
         return "paste"
 
+    @staticmethod
+    def end_key_hint() -> str:
+        """Key that ends stdin on this platform (EOF). Ctrl+Z only on Windows."""
+        if _sys.platform == "win32":
+            return "Ctrl+Z and Enter"
+        return "Ctrl+D"
+
     @property
     def help_text(self) -> str:
-        return "paste [--workspace <path>] - Paste multiline text for AI analysis (Ctrl+Z / Ctrl+D to finish)"
+        return (f"paste [--workspace <path>] - Paste multiline text for AI analysis "
+                f"({self.end_key_hint()} to finish)")
 
     async def execute(self, args: list[str], agent: 'Agent') -> bool:
         workspace = None
@@ -25,7 +33,7 @@ class PasteCommand(Command):
             if idx + 1 < len(parsed_args):
                 workspace = _os.path.abspath(parsed_args[idx + 1])
 
-        print("Paste text, then press Ctrl+Z and Enter to finish:")
+        print(f"Paste text, then press {self.end_key_hint()} to finish:")
         text = _sys.stdin.read()
         if not text.strip():
             self.error("No text provided")
