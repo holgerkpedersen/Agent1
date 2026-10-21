@@ -14,7 +14,6 @@ arrow for real, so it fails on the old code and passes on the new one.
 from __future__ import annotations
 
 import os
-import pty
 import select
 import sys
 import time
@@ -23,6 +22,14 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# pty is POSIX-only; on Windows the import itself fails at collection time,
+# before the skipif mark below can take effect. Guard it so the module can be
+# collected (and skipped) on every platform.
+try:
+    import pty  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - Windows has no pty/termios
+    pty = None  # type: ignore[assignment]
 
 pytestmark = pytest.mark.skipif(
     sys.platform == "win32", reason="pty test needs a POSIX pseudo terminal"
