@@ -47,7 +47,9 @@ class PromptCache:
                 self._store[key] = (version, text)
                 return text
 
-        fallback = _DEFAULT_TEMPLATES.get(key, "Please analyze and respond to the following task: {task}")
+        fallback = _DEFAULT_TEMPLATES.get(
+            key, "Please analyze and respond to the following task: {task}"
+        )
         self._store[key] = (-1, fallback)
         return fallback
 
@@ -79,7 +81,11 @@ class PromptCache:
         save_template(task_type, profile_type, version, template_text)
         self._store[(task_type, profile_type)] = (version, template_text)
 
-    def evict(self, task_type: Optional[str] = None, profile_type: Optional[str] = None) -> int:
+    def evict(
+        self,
+        task_type: Optional[str] = None,
+        profile_type: Optional[str] = None,
+    ) -> int:
         """Remove cached entries.  Omit both args to clear everything."""
         before = len(self._store)
         keys_to_remove = [
@@ -97,10 +103,25 @@ class PromptCache:
 
 
 _DEFAULT_TEMPLATES: dict[tuple[str, str], str] = {
-    ("implement", "fast_codegen"): "Generate a minimal implementation of the following task: {task}",
-    ("implement", "deep_analysis"): "Thoroughly analyze and implement the following task with full error handling: {task}",
-    ("implement", "precise"): "Implement only what is strictly required for this task, nothing more: {task}",
-    ("fix", "fast_codegen"): "Fix the bug described below. Output only the corrected code: {task}",
-    ("fix", "deep_analysis"): "Diagnose and fix the root cause of this issue. Explain your reasoning: {task}",
-    ("fix", "precise"): "Apply the minimal change needed to resolve this issue: {task}",
+    ("implement", "fast_codegen"): (
+        "Generate a minimal implementation of the following task: {task}"
+    ),
+    ("implement", "deep_analysis"): (
+        "Thoroughly analyze and implement the following task "
+        "with full error handling: {task}"
+    ),
+    ("implement", "precise"): (
+        "Implement only what is strictly required for this task, "
+        "nothing more: {task}"
+    ),
+    ("fix", "fast_codegen"): (
+        "Fix the bug described below. Output only the corrected code: {task}"
+    ),
+    ("fix", "deep_analysis"): (
+        "Diagnose and fix the root cause of this issue. "
+        "Explain your reasoning: {task}"
+    ),
+    ("fix", "precise"): (
+        "Apply the minimal change needed to resolve this issue: {task}"
+    ),
 }

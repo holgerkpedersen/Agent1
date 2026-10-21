@@ -238,10 +238,12 @@ FULL_SUITE_MARGIN = 0.50
 def full_suite_timeout() -> float:
     """Seconds a pytest run may take: ``max(floor, last_full_run * 1.5)``.
 
-    Process env wins over the repo ``.env`` for both keys, mirroring
-    :func:`max_full_runs_from_env`.  Once a run has been measured the
-    measurement is the source of truth, so the budget tracks the machine
-    instead of a guessed constant.
+    The FLOOR (``PYTEST_FULL_SUITE_TIMEOUT``) is a setting, so process env wins
+    over the repo ``.env`` — that is how CI raises it per job.  The MEASURED
+    duration (``PYTEST_LAST_FULL_RUN_SECONDS``) is read from the ``.env`` file
+    only: the ubuntu and windows CI jobs write it on the same checkout, and a
+    process-env override would let the faster job shrink the slower job's
+    budget.  Mirrors ``conftest._get_env_value``.
     """
     raw_floor = os.environ.get(FULL_SUITE_TIMEOUT_ENV)
     if raw_floor is None:
@@ -251,9 +253,7 @@ def full_suite_timeout() -> float:
     except ValueError:
         floor = DEFAULT_FULL_SUITE_TIMEOUT
 
-    raw_last = os.environ.get(LAST_FULL_RUN_ENV)
-    if raw_last is None:
-        raw_last = _read_env_file_value(LAST_FULL_RUN_ENV)
+    raw_last = _read_env_file_value(LAST_FULL_RUN_ENV)
     try:
         last = float((raw_last or "").strip() or 0.0)
     except ValueError:

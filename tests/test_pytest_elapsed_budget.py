@@ -21,12 +21,14 @@ Two rules now hold:
 from __future__ import annotations
 
 import asyncio
+import importlib
 import subprocess
 
 import pytest
 
 import agent
 import agent_core.pytest_gate as agent_core_pytest_gate
+conftest = importlib.import_module("conftest")
 from agent import Agent
 from agent_core.pytest_gate import (
     DEFAULT_FULL_SUITE_TIMEOUT,
@@ -192,6 +194,50 @@ class TestBudgetIsMeasuredNotGuessed:
         """The old 600s floor was below the measured 861.5s full run."""
         assert DEFAULT_FULL_SUITE_TIMEOUT > MEASURED_FULL_RUN_SECONDS
         assert agent._FULL_SUITE_MARGIN == agent_core_pytest_gate.FULL_SUITE_MARGIN
+
+    def test_measured_duration_ignores_process_env(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A CI matrix must not let the faster job shrink the slower job's budget.
+
+        The ubuntu and windows jobs write ``PYTEST_LAST_FULL_RUN_SECONDS`` in
+        ``.env`` on the same checkout; a process-env value for that key is not
+        a setting, so it must be ignored (``.env`` is the measurement's only
+        source).  The floor key keeps its env override — that is how CI raises
+        it per job.
+        """
+        monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "100")
+        monkeypatch.setenv("PYTEST_LAST_FULL_RUN_SECONDS", "100")
+        monkeypatch.setattr(
+            agent_core_pytest_gate, "_ENV_FILE_PATH", str(tmp_path / ".env"),
+        )
+        (tmp_path / ".env").write_text(
+            "PYTEST_LAST_FULL_RUN_SECONDS=1000\n", encoding="utf-8",
+        )
+        # Floor 100 (env) so the measurement is the binding term: .env's
+        # 1000*1.5=1500 wins, NOT the env's 100*1.5=150.
+        assert full_suite_timeout() == 1500.0
+
+    def test_conftest_measured_duration_ignores_process_env(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Same rule in the in-suite watchdog, so tool and watchdog agree."""
+        monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "100")
+        monkeypatch.setenv("PYTEST_LAST_FULL_RUN_SECONDS", "100")
+        monkeypatch.setattr(conftest, "_ENV_FILE", tmp_path / ".env")
+        (tmp_path / ".env").write_text(
+            "PYTEST_LAST_FULL_RUN_SECONDS=1000\n", encoding="utf-8",
+        )
+        assert conftest._resolve_budget() == 1500.0
+
+    def test_conftest_floor_still_reads_process_env(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The floor stays overridable — CI sets it per job in the env."""
+        monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "1800")
+        monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
+        monkeypatch.setattr(conftest, "_ENV_FILE", tmp_path / "absent.env")
+        assert conftest._resolve_budget() == 1800.0
 
 
 class TestElapsedRecording:

@@ -24,13 +24,32 @@ _REPO_ROOT = Path(conftest.__file__).resolve().parent
 class TestResolveBudget:
     def test_floor_wins_when_last_run_small(self, monkeypatch):
         monkeypatch.setenv(conftest._FULL_SUITE_TIMEOUT_KEY, "600")
-        monkeypatch.setenv(conftest._LAST_FULL_RUN_KEY, "10")
+        monkeypatch.delenv(conftest._LAST_FULL_RUN_KEY, raising=False)
+        monkeypatch.setattr(
+            conftest, "_load_env",
+            lambda: {conftest._LAST_FULL_RUN_KEY: "10"},
+        )
         assert conftest._resolve_budget() == 600.0
 
     def test_last_run_with_margin_wins_when_larger(self, monkeypatch):
         monkeypatch.setenv(conftest._FULL_SUITE_TIMEOUT_KEY, "600")
-        monkeypatch.setenv(conftest._LAST_FULL_RUN_KEY, "1000")
+        monkeypatch.delenv(conftest._LAST_FULL_RUN_KEY, raising=False)
+        monkeypatch.setattr(
+            conftest, "_load_env",
+            lambda: {conftest._LAST_FULL_RUN_KEY: "1000"},
+        )
         assert conftest._resolve_budget() == 1500.0  # 1000 * 1.50
+
+    def test_last_run_measurement_ignores_process_env(self, monkeypatch):
+        """The measurement comes from the file the watchdog writes, never from
+        the process env: CI's ubuntu and windows jobs write it on one checkout,
+        and an env override would let the faster job shrink the slower job's
+        budget (``_LAST_FULL_RUN_FILE_ONLY``)."""
+        monkeypatch.setenv(conftest._FULL_SUITE_TIMEOUT_KEY, "600")
+        monkeypatch.setenv(conftest._LAST_FULL_RUN_KEY, "1000")
+        monkeypatch.setattr(conftest, "_load_env", lambda: {})
+        assert conftest._resolve_budget() == 600.0
+        assert conftest._get_env_value(conftest._LAST_FULL_RUN_KEY) == ""
 
     def test_invalid_values_fall_back_to_default(self, monkeypatch):
         monkeypatch.delenv(conftest._FULL_SUITE_TIMEOUT_KEY, raising=False)

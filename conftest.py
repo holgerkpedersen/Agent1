@@ -350,6 +350,15 @@ _SUBSET_FLAGS = {
     "--nf", "--new-first", "--failed-first", "--testmon",
 }
 
+#: Source of the last real full-run duration, shared by the budget the NEXT
+#: run gets (``_resolve_budget``) and the CI job budget the ``run`` tool
+#: enforces (``agent_core.pytest_gate``).  Read from ``.env`` ONLY, never from
+#: the process env: in CI the ubuntu and windows jobs write this key on the
+#: same checkout, and a process-env override would let the faster job shrink
+#: the slower job's budget.
+_LAST_FULL_RUN_FILE_ONLY = True
+
+
 _watchdog_stop = threading.Event()
 
 
@@ -436,9 +445,15 @@ def _is_full_run(config: pytest.Config) -> bool:
 
 
 def _get_env_value(key: str) -> str:
-    """Budget value for a key: process env wins, else repo .env."""
-    if key in os.environ:
-        return os.environ[key].strip()
+    """Budget value for a key: process env wins, else repo ``.env``.
+
+    ``PYTEST_LAST_FULL_RUN_SECONDS`` is the exception (``_LAST_FULL_RUN_FILE_ONLY``):
+    it is a measurement, not a setting, so only the file the watchdog writes
+    is trusted.
+    """
+    if not (_LAST_FULL_RUN_FILE_ONLY and key == _LAST_FULL_RUN_KEY):
+        if key in os.environ:
+            return os.environ[key].strip()
     return _load_env().get(key, "").strip()
 
 
