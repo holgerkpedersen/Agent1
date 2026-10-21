@@ -2416,6 +2416,135 @@ class TestDisplayModes:
         # Round 2's why diagnoses from the proof (previous read result).
         assert "why: to patch a.py" in round2
 
+    def test_intent_why_diagnoses_from_proof_when_model_gives_no_reason(self, capsys):
+        """The ``why:`` line must show the model's REASONING, not just a canned
+        verb: when the round carries no narration, the explanation is built
+        from the previous result's proof — i.e. the evidence that motivated
+        the call — instead of the bare tool-name heuristic."""
+        from agent_core.llm.tool_loop import ToolLoopRunner
+
+        fake = _ScriptedLLM(
+            [
+                ("search", {"query": "symbol"}),
+                ("read", {"path": "a.py"}),
+                "Answer.",
+            ]
+        )
+
+        async def execute_tool(name, args):
+            return "Found 14 matches in 6 files"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="intent")
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        round2 = out.split("[intent 2]")[-1]
+        why = next(ln for ln in round2.splitlines() if "why:" in ln)
+        # The reason cites the evidence from the previous result...
+        assert "14 matches" in why
+        # ...not merely the canned heuristic, which must not be the whole reason.
+        assert why.strip() != "why: to inspect a.py"
+
+    def test_intent_why_degrades_cleanly_without_proof(self, capsys):
+        """With no previous result there is no evidence to reason from, so the
+        ``why:`` falls back to the plain heuristic with no dangling separator."""
+        from agent_core.llm.tool_loop import ToolLoopRunner
+
+        fake = _ScriptedLLM([("read", {"path": "a.py"}), "Answer."])
+
+        async def execute_tool(name, args):
+            return "ok"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="intent")
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        assert "why: to inspect a.py" in out
+
+    def test_intent_proof_line_is_not_repeated_after_result(self, capsys):
+        """The ``proof:`` line must appear ONCE — in the next round's intent
+        block, where the ``why:`` consumes it.  Printing it again right after
+        ``[result]`` repeated the identical line on screen (regression)."""
+        from agent_core.llm.tool_loop import ToolLoopRunner
+
+        fake = _ScriptedLLM(
+            [
+                ("search", {"query": "symbol"}),
+                ("read", {"path": "a.py"}),
+                "Answer.",
+            ]
+        )
+
+        async def execute_tool(name, args):
+            return "Found 14 matches in 6 files"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="intent")
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        # Round 2's intent block still carries the proof (the feature survives)...
+        assert "proof: Found 14 matches in 6 files" in out
+        # ...but exactly once: no duplicate right after the [result] line.
+        assert out.count("proof: Found 14 matches in 6 files") == 1
+        # The result block is immediately followed by the next intent block.
+        round1 = out.split("[intent 2]")[0]
+        assert "proof:" not in round1
+
+    def test_summarize_result_does_not_repeat_verify_line(self):
+        """``_summarize_result`` hoists the ``[verify] py_compile`` line above
+        the summary; it must not also leave it in the body, which printed the
+        same verification line twice under ``[result]`` (regression)."""
+        from agent_core.llm.tool_loop import _summarize_result
+
+        summary = _summarize_result(
+            "edit", "Written a.py\n[verify] py_compile OK: a.py\n"
+        )
+        assert "[verify] py_compile OK: a.py" in summary
+        assert summary.count("[verify] py_compile OK: a.py") == 1
+
+    def test_summarize_proof_returns_empty_string_when_nothing_proved(self):
+        """``_summarize_proof`` must signal "no proof" with ``""`` — the single
+        source of truth callers gate on.  A placeholder sentence made callers
+        re-detect emptiness by matching that text, which desynced silently if
+        the wording changed."""
+        from agent_core.llm.tool_loop import _summarize_proof
+
+        assert _summarize_proof("") == ""
+        assert _summarize_proof("   \n  \n") == ""
+        # Real evidence is still returned verbatim.
+        assert _summarize_proof("Found 3 matches") == "Found 3 matches"
+
+    def test_intent_prints_no_proof_line_when_result_proved_nothing(self, capsys):
+        """A result that proved nothing yields no ``proof:`` line (no dangling
+        placeholder), and the ``why:`` still degrades to the plain heuristic.
+
+        The result is WHITESPACE-ONLY on purpose: that is the discriminating
+        input — the old code treated a truthy-but-blank result as evidence and
+        printed ``proof: empty result — no proof yet``.
+        """
+        from agent_core.llm.tool_loop import ToolLoopRunner
+
+        fake = _ScriptedLLM(
+            [
+                ("search", {"query": "symbol"}),
+                ("read", {"path": "a.py"}),
+                "Answer.",
+            ]
+        )
+
+        async def execute_tool(name, args):
+            return "   \n  \n"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="intent")
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        assert "proof:" not in out
+        assert "no proof yet" not in out
+        # No evidence -> no bogus "because the last step showed" claim.
+        assert "because the last step showed" not in out
+        assert "why: to inspect a.py" in out
+
     def test_clean_folds_narration_preamble_in_chat_nlp(self, tmp_path):
         """In CLEAN mode chat_nlp folds a stray 'I will ...' narration into a
         short preamble so the report reads as one coherent answer."""

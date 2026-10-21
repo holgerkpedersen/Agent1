@@ -242,15 +242,30 @@ def test_system_prompt_is_module_constant() -> None:
     assert agent._detect_shell() in agent._SYSTEM_PROMPT
 
 
-def test_chat_nlp_uses_system_prompt_constant() -> None:
+def test_chat_nlp_uses_system_prompt_constant(monkeypatch) -> None:
     import inspect
 
     # The system prompt must come from the shared module constant — now built
     # inside _refresh_system_message (chat_nlp's first pipeline phase).
-    # The dict is built with unquoted keys since the AST-based prompt builder
-    # landed, so match the key/value pair, not the JSON-style quoting.
-    src = inspect.getsource(agent.Agent._refresh_system_message)
-    assert "'content': _SYSTEM_PROMPT" in src
+    #
+    # Asserted BEHAVIOURALLY, not by matching source text: a source-text check
+    # broke merely because the dict literal's quote style changed, which is not
+    # the contract.  Swapping the module constant for a sentinel proves the real
+    # prompt is READ FROM that constant, whatever the surrounding syntax is.
+    refresh = agent.Agent._refresh_system_message
+    sentinel = "SENTINEL_BASE_PROMPT_XYZ"
+    monkeypatch.setitem(refresh.__globals__, "_SYSTEM_PROMPT", sentinel)
+
+    a = _make_agent()
+    a._chat_history = []  # drop the history built at construction
+    a._refresh_system_message("hello")
+
+    assert a._chat_history[0]["role"] == "system"
+    content = str(a._chat_history[0]["content"])
+    # The base prompt IS the module constant...
+    assert content.startswith(sentinel)
+    # ...with the dynamic blocks still appended on top of it.
+    assert len(content) > len(sentinel)
     # ...and chat_nlp must delegate to that phase instead of inlining a prompt.
     loop_src = inspect.getsource(agent.Agent.chat_nlp)
     assert "_refresh_system_message(" in loop_src

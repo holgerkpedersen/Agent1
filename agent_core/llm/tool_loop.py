@@ -1222,16 +1222,16 @@ class ToolLoopRunner:
                         print(f"  {yellow('[result]')} {colorize_result(summary)}")
                     elif self.display_mode == DisplayMode.INTENT:
                         # INTENT: the intent block already announced the call;
-                        # show a summarized result plus a one-line proof of what
-                        # it verified, so the next round's ``why:`` can diagnose
-                        # from evidence rather than guesswork.
+                        # show a summarized result so intent stays more visible
+                        # than raw tool output.  The one-line ``proof:`` of what
+                        # this result established is printed ONCE, at the top of
+                        # the NEXT round's intent block (where the ``why:``
+                        # consumes it) — printing it here as well repeated the
+                        # same line twice on screen.
                         summary = _summarize_result(tool_name, result_str)[
                             :_RESULT_DISPLAY_LIMIT
                         ]
                         print(f"  {yellow('[result]')} {colorize_result(summary)}")
-                        print(
-                            f"    {gray('proof: ' + _summarize_proof(result_str))}"
-                        )
                     else:
                         shown = colorize_result(result_str[:_RESULT_DISPLAY_LIMIT])
                         if "tool error:" in shown.lower() or "error" in shown.lower():
@@ -1789,8 +1789,11 @@ def _print_intent(iteration: int, narration: str, tool_calls: list[Any], prev_re
     text = " ".join(_narration_text(narration).split())
     if text:
         print(f"    {gray(text)}")
-    if prev_result:
-        print(f"    {gray('proof: ' + _summarize_proof(prev_result))}")
+    # One proof line, computed once: ``_summarize_proof`` returns "" when the
+    # previous result proved nothing, so no empty ``proof:`` line is printed.
+    proof = _summarize_proof(prev_result) if prev_result else ""
+    if proof:
+        print(f"    {gray('proof: ' + proof)}")
     for tc in tool_calls:
         if not isinstance(tc, dict):
             continue
@@ -1869,9 +1872,39 @@ def _short_intent_why(tool_name: str, args: dict[str, Any], prev_result: str = "
     Heuristic keyed on the tool name + arguments.  Shared by INTENT mode (the
     per-call ``why:`` line) and CLEAN mode's :func:`_derive_reason` fallback,
     so a bare tool call always carries an explanation in both modes.  When a
-    previous result proof exists, the ``why:`` diagnoses the next call from
-    that evidence rather than from a bare heuristic.
+    previous result proof exists, the ``why:`` cites that evidence (the
+    reasoning behind the call) and only falls back to the bare heuristic when
+    there is no proof to reason from.
     """
+    base = _why_base(tool_name, args)
+    evidence = _evidence_from_proof(prev_result)
+    if evidence:
+        # Show the model's REASONING, not just a canned verb: tie the planned
+        # call back to the evidence that motivated it.  This is the point of
+        # INTENT mode — the user sees WHY, not merely WHAT.
+        return f"{base} — because the last step showed: {evidence}"
+    return base
+
+
+def _evidence_from_proof(prev_result: str) -> str:
+    """The usable evidence from a previous result, or ``""`` when there is none.
+
+    ``_summarize_proof`` returns ``""`` when the result proved nothing, so this
+    simply forwards that contract — the ``why:`` line never claims to reason
+    from evidence that does not exist, without re-detecting emptiness here.
+    """
+    summary = _summarize_proof(prev_result)
+    if not summary:
+        return ""
+    # Keep the evidence SHORT: the full ``proof:`` line is already printed one
+    # line above, so a verbatim repeat would be noise rather than reasoning.
+    if len(summary) > 80:
+        summary = summary[:77].rstrip() + "..."
+    return summary
+
+
+def _why_base(tool_name: str, args: dict[str, Any]) -> str:
+    """The bare tool-name/argument verb phrase, with no evidence appended."""
     arg_summary = _fmt_args(args) or ""
     if tool_name == "read":
         path = str(args.get("path", ""))[:60]
@@ -1901,16 +1934,21 @@ def _short_intent_why(tool_name: str, args: dict[str, Any], prev_result: str = "
 
 
 def _summarize_proof(result_str: str) -> str:
-    """One-line proof of what a tool result verified (INTENT display only).
+    """One-line proof of what a tool result verified, or ``""`` if there is none.
 
     Extracts the strongest end-user-visible evidence from a result so the
     NEXT round's ``why:`` can diagnose from proof instead of guesswork.
+
+    Returns ``""`` (not a placeholder sentence) when there is nothing to prove.
+    This is the single source of truth for "is there a proof": callers gate on
+    truthiness, so an absent proof stays distinguishable from real evidence and
+    no caller has to re-detect emptiness by matching placeholder text.
     """
-    if not result_str:
-        return "nothing returned — no proof yet"
+    if not result_str or not result_str.strip():
+        return ""
     lines = [ln for ln in result_str.splitlines() if ln.strip()]
     if not lines:
-        return "empty result — no proof yet"
+        return ""
     # Verification line from write/edit/fix is end-user evidence — keep it.
     for ln in lines:
         if ln.startswith("[verify] py_compile"):
@@ -1926,8 +1964,6 @@ def _summarize_result(tool_name: str, result_str: str) -> str:
         return "(no output)"
     lines = result_str.splitlines()
     n = len(lines)
-    head = "\n".join(lines[:6])
-    tail = "\n".join(lines[-3:]) if n > 9 else ""
 
     # Verification line from write/edit/fix is end-user evidence — keep it.
     verify_match = None
@@ -1936,10 +1972,18 @@ def _summarize_result(tool_name: str, result_str: str) -> str:
             verify_match = ln.strip()
             break
 
+    # The verify line is hoisted above the summary, so drop it from the body
+    # lines — leaving it in ``head`` printed the same line twice.
+    if verify_match is not None:
+        lines = [ln for ln in lines if ln.strip() != verify_match]
+
+    head = "\n".join(lines[:6])
+    tail = "\n".join(lines[-3:]) if len(lines) > 9 else ""
+
     summary = f"{n} line(s) returned"
     if head:
         summary += f":\n{head}"
-    if tail and n > 9:
+    if tail:
         summary += f"\n... [truncated — see full result in model context] ...\n{tail}"
     if verify_match:
         summary = f"{verify_match}\n{summary}"
