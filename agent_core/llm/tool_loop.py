@@ -1218,6 +1218,14 @@ class ToolLoopRunner:
                             :_RESULT_DISPLAY_LIMIT
                         ]
                         print(f"  {yellow('[result]')} {colorize_result(summary)}")
+                    elif self.display_mode == DisplayMode.INTENT:
+                        # INTENT: the intent block already announced the call;
+                        # show a summarized result so intent stays more visible
+                        # than raw tool output.
+                        summary = _summarize_result(tool_name, result_str)[
+                            :_RESULT_DISPLAY_LIMIT
+                        ]
+                        print(f"  {yellow('[result]')} {colorize_result(summary)}")
                     else:
                         shown = colorize_result(result_str[:_RESULT_DISPLAY_LIMIT])
                         if "tool error:" in shown.lower() or "error" in shown.lower():
@@ -1764,9 +1772,10 @@ def _print_intent(iteration: int, narration: str, tool_calls: list[Any]) -> None
     """INTENT display: print one block per LLM round before its tool calls run.
 
     Shows the model's own narration (printed in FULL — never truncated) and
-    each planned call with its arguments.  When the model wrote no narration
-    (a bare tool-call round — the common case), every planned call gets a
-    short ``why:`` line so no intent is ever an unexplained bare call.
+    each planned call with its FULL arguments plus a human-readable ``why:``
+    explanation for every call, so the user can follow the agent's plan
+    round by round.  The intent block is the primary readout; tool results
+    are summarized (not dumped) so intent stays more visible than output.
     """
     print(f"  {magenta(f'[intent {iteration + 1}]')}")
     text = " ".join(_narration_text(narration).split())
@@ -1783,9 +1792,8 @@ def _print_intent(iteration: int, narration: str, tool_calls: list[Any]) -> None
                 args = {}
         except (json.JSONDecodeError, TypeError):
             args = {}
-        print(f"    {yellow('->')} {cyan(name)}({gray(_fmt_args(args))})")
-        if not text:
-            print(f"      {gray('why: ' + _short_intent_why(name, args))}")
+        print(f"    {yellow('->')} {cyan(name)}({gray(_fmt_args_full(args))})")
+        print(f"      {gray('why: ' + _short_intent_why(name, args))}")
 
 
 def _narration_text(content: Any) -> str:
@@ -1816,6 +1824,18 @@ def _fmt_args(args: dict[str, Any]) -> str:
         if key not in _COMMAND_KEYS and len(text) > 60:
             text = text[:57] + "..."
         pieces.append(f"{key}={text}")
+    return ", ".join(pieces)
+
+
+def _fmt_args_full(args: dict[str, Any]) -> str:
+    """Render tool arguments in FULL for the INTENT display.
+
+    Unlike :func:`_fmt_args`, no value is truncated and every key is shown,
+    so the user sees the complete planned call before it executes.
+    """
+    pieces = []
+    for key, value in args.items():
+        pieces.append(f"{key}={value}")
     return ", ".join(pieces)
 
 

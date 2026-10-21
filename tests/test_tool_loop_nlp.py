@@ -2331,8 +2331,8 @@ class TestDisplayModes:
 
     def test_intent_narration_is_printed_in_full(self, capsys):
         """When the model DID write narration, it is the intent explanation
-        and must be printed in full — never truncated — with no heuristic
-        ``why:`` lines duplicating it."""
+        and must be printed in full — never truncated.  Every planned call
+        also gets a ``why:`` line so no intent is ever an unexplained bare call."""
         from agent_core.llm.tool_loop import ToolLoopRunner
 
         long_note = (
@@ -2357,7 +2357,8 @@ class TestDisplayModes:
         assert "[intent 1]" in out
         # Tail of the narration is present -> nothing was cut off.
         assert long_note.split()[-1] in out
-        assert "why:" not in out
+        # Every planned call carries a why: explanation, even with narration.
+        assert "why: to inspect a.py" in out
 
     def test_intent_block_printed_for_every_llm_round(self, capsys):
         """INTENT mode writes one block per LLM round, not just the first."""
