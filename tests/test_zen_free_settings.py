@@ -12,6 +12,7 @@ for the opencode-zen FREE tier:
 4. ``_zen_free_catalog()`` in model_cmd uses the configurable default.
 5. ``DEFAULT_OPENCODE_MODEL`` reads ``AGENT_OPENCODE_MODEL`` from .env.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -119,10 +120,13 @@ def test_zen_free_fallbacks_fallback_on_settings_error(
     """_zen_free_fallbacks() returns an empty list when settings and discovery fail."""
     from agent_core.llm.opencode_provider import _zen_free_fallbacks, OpencodeProvider
 
-    with patch(
-        "agent_core.config.load_agent_settings",
-        side_effect=RuntimeError("settings broken"),
-    ), patch.object(OpencodeProvider, "list_models", return_value=[]):
+    with (
+        patch(
+            "agent_core.config.load_agent_settings",
+            side_effect=RuntimeError("settings broken"),
+        ),
+        patch.object(OpencodeProvider, "list_models", return_value=[]),
+    ):
         result = _zen_free_fallbacks()
     assert result == []
 
@@ -133,7 +137,9 @@ def test_zen_free_fallbacks_fallback_on_settings_error(
 def test_zen_free_catalog_uses_configurable_default(
     monkeypatch: pytest.MonkeyPatch, workspace: Path
 ) -> None:
-    """model_cmd._zen_free_catalog() passes settings.zen_free_default to the provider."""
+    """model_cmd._zen_free_catalog() passes
+    settings.zen_free_default to the provider.
+    """
     from agent_core.commands.model_cmd import ModelCommand
 
     cmd = ModelCommand.__new__(ModelCommand)
@@ -153,10 +159,9 @@ def test_zen_free_catalog_uses_configurable_default(
         def list_models(self):
             return ["opencode-zen/custom-free"]
 
-    with patch(
-        "agent_core.llm.opencode_provider.OpencodeProvider", _FakeProvider
-    ), patch(
-        "agent_core.config.load_agent_settings", return_value=fake_settings
+    with (
+        patch("agent_core.llm.opencode_provider.OpencodeProvider", _FakeProvider),
+        patch("agent_core.config.load_agent_settings", return_value=fake_settings),
     ):
         result = cmd._zen_free_catalog()
 
@@ -182,11 +187,12 @@ def test_zen_free_catalog_falls_back_on_settings_error(
         def list_models(self):
             return []
 
-    with patch(
-        "agent_core.llm.opencode_provider.OpencodeProvider", _FakeProvider
-    ), patch(
-        "agent_core.config.load_agent_settings",
-        side_effect=RuntimeError("settings broken"),
+    with (
+        patch("agent_core.llm.opencode_provider.OpencodeProvider", _FakeProvider),
+        patch(
+            "agent_core.config.load_agent_settings",
+            side_effect=RuntimeError("settings broken"),
+        ),
     ):
         result = cmd._zen_free_catalog()
 

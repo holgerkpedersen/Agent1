@@ -5,6 +5,7 @@ would propagate out of run_loop and crash the autonomous driver with a dirty
 tree.  Gates are meant to be non-blocking fallbacks, so on any failure they
 must return a safe value (False for test/security, None for benchmark).
 """
+
 import subprocess
 import sys
 
@@ -50,10 +51,7 @@ def test_test_gate_strict_mode_requires_all_green(monkeypatch):
     """Without a baseline, the gate is strict: any failure rejects."""
 
     def _fake_run(*_a, **_k):
-        out = (
-            "FAILED tests/x.py::TestY::test_z\n"
-            "1 failed, 9 passed in 0.10s\n"
-        )
+        out = "FAILED tests/x.py::TestY::test_z\n1 failed, 9 passed in 0.10s\n"
         return type("P", (), {"returncode": 1, "stdout": out, "stderr": ""})()
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
@@ -67,10 +65,7 @@ def test_test_gate_regression_mode_accepts_pre_existing_failures(monkeypatch):
 
     def _fake_run(*_a, **_k):
         # Post-repair run: same single failure as the baseline, nothing new.
-        out = (
-            "FAILED tests/x.py::TestY::test_z\n"
-            "1 failed, 9 passed in 0.10s\n"
-        )
+        out = "FAILED tests/x.py::TestY::test_z\n1 failed, 9 passed in 0.10s\n"
         return type("P", (), {"returncode": 1, "stdout": out, "stderr": ""})()
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
@@ -155,10 +150,22 @@ def test_run_harness_quality_gate_returns_snapshot(tmp_path):
     traces = tmp_path / "traces"
     traces.mkdir()
     writer = TraceWriter(task_id="ti1", directory=traces)
-    writer.emit({"kind": KIND_TOOL_ERROR, "layer": "tool_interface",
-                 "exception": "ValidationError", "message": "schema validation failed"})
-    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
-                 "outcome": "completed", "termination_reason": "answer"})
+    writer.emit(
+        {
+            "kind": KIND_TOOL_ERROR,
+            "layer": "tool_interface",
+            "exception": "ValidationError",
+            "message": "schema validation failed",
+        }
+    )
+    writer.emit(
+        {
+            "kind": KIND_LOOP_END,
+            "layer": "lifecycle",
+            "outcome": "completed",
+            "termination_reason": "answer",
+        }
+    )
     writer.close()
 
     q = gates.run_harness_quality_gate(traces)
@@ -177,16 +184,33 @@ def test_should_accept_harness_targets_corpus_layer(tmp_path):
     from harnessfix.tracing import KIND_LOOP_END, KIND_TOOL_ERROR, TraceWriter
 
     writer = TraceWriter(task_id="ti1", directory=traces)
-    writer.emit({"kind": KIND_TOOL_ERROR, "layer": "tool_interface",
-                 "exception": "ValidationError", "message": "schema validation failed"})
-    writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle",
-                 "outcome": "completed", "termination_reason": "answer"})
+    writer.emit(
+        {
+            "kind": KIND_TOOL_ERROR,
+            "layer": "tool_interface",
+            "exception": "ValidationError",
+            "message": "schema validation failed",
+        }
+    )
+    writer.emit(
+        {
+            "kind": KIND_LOOP_END,
+            "layer": "lifecycle",
+            "outcome": "completed",
+            "termination_reason": "answer",
+        }
+    )
     writer.close()
     baseline = corpus_quality(traces)
     post = corpus_quality(traces)  # static corpus -> identical
 
-    assert gates.should_accept_harness(baseline, post, target_layer="tool_interface") is True
-    assert gates.should_accept_harness(baseline, post, target_layer="lifecycle") is False
+    assert (
+        gates.should_accept_harness(baseline, post, target_layer="tool_interface")
+        is True
+    )
+    assert (
+        gates.should_accept_harness(baseline, post, target_layer="lifecycle") is False
+    )
 
 
 def test_should_accept_harness_unavailable_is_non_blocking():
@@ -194,6 +218,7 @@ def test_should_accept_harness_unavailable_is_non_blocking():
 
 
 # ── Agentic-scenario gate (plan item #12) ────────────────────────────────
+
 
 def test_agentic_gate_none_without_model():
     """No model -> non-blocking None, exactly like the benchmark gate.
@@ -249,5 +274,3 @@ def test_should_accept_agentic_tolerance():
     """A drop within the tolerance is accepted."""
     assert gates.should_accept_agentic(80.0, 78.0, regression_tolerance=5.0) is True
     assert gates.should_accept_agentic(80.0, 70.0, regression_tolerance=5.0) is False
-
-

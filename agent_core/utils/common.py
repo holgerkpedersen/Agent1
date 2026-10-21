@@ -3,6 +3,7 @@ from typing import Any, Optional
 
 import json
 
+
 def convert_value(value: str) -> Any:
     """Converts a string value to its appropriate Python type."""
 
@@ -22,6 +23,7 @@ def convert_value(value: str) -> Any:
     except (json.JSONDecodeError, ValueError):
         return val
 
+
 def get_nested(data: dict[str, Any], key_path: str | list[str]) -> Any:
     """Retrieves a value from a nested dictionary using a dot-separated string or list of keys."""
     keys = key_path.split(".") if isinstance(key_path, str) else key_path
@@ -33,6 +35,7 @@ def get_nested(data: dict[str, Any], key_path: str | list[str]) -> Any:
         else:
             return None
     return current
+
 
 def set_nested(data: dict[str, Any], key_path: str | list[str], value: Any) -> None:
     """Sets a value in a nested dictionary, creating intermediate dictionaries if necessary."""
@@ -46,6 +49,7 @@ def set_nested(data: dict[str, Any], key_path: str | list[str], value: Any) -> N
         current = current[key]
 
     current[keys[-1]] = value
+
 
 def setup_logging(config_manager: Optional[Any] = None) -> None:
     """Configures the global logging system based on the provided configuration manager."""

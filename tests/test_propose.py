@@ -31,12 +31,7 @@ def _write_tree(tmp_path: Path, files: dict[str, str]) -> None:
 def test_in_memory_apply_patch_adds_line(tmp_path: Path) -> None:
     _write_tree(tmp_path, {"mod.py": "def f():\n    return 1\n"})
     existing = (tmp_path / "mod.py").read_text()
-    patch = (
-        "@@ -1,2 +1,3 @@\n"
-        " def f():\n"
-        "+    pass\n"
-        "     return 1\n"
-    )
+    patch = "@@ -1,2 +1,3 @@\n def f():\n+    pass\n     return 1\n"
     ok, result = pc.in_memory_apply_patch("mod.py", existing, patch)
     assert ok, result
     assert "    pass\n" in result
@@ -47,12 +42,7 @@ def test_in_memory_apply_patch_adds_line(tmp_path: Path) -> None:
 def test_in_memory_apply_patch_rejects_syntax_break(tmp_path: Path) -> None:
     _write_tree(tmp_path, {"mod.py": "def f():\n    return 1\n"})
     existing = (tmp_path / "mod.py").read_text()
-    patch = (
-        "@@ -1,2 +1,2 @@\n"
-        " def f():\n"
-        "-    return 1\n"
-        "+    return (\n"
-    )
+    patch = "@@ -1,2 +1,2 @@\n def f():\n-    return 1\n+    return (\n"
     ok, result = pc.in_memory_apply_patch("mod.py", existing, patch)
     assert not ok
     assert "syntax" in str(result).lower()
@@ -78,9 +68,7 @@ def test_gate_accepts_clean_new_file(tmp_path: Path) -> None:
 
 
 def test_gate_rejects_broken_syntax(tmp_path: Path) -> None:
-    status, reason, _ = pc.gate_file(
-        "broken.py", "def h(\n    pass\n", str(tmp_path)
-    )
+    status, reason, _ = pc.gate_file("broken.py", "def h(\n    pass\n", str(tmp_path))
     assert status == "rejected"
     assert "compile" in reason.lower()
 
@@ -92,7 +80,8 @@ def test_gate_rejects_wholesale_rewrite_of_existing(tmp_path: Path) -> None:
     # A drastically different body (similarity < 0.5) must be rejected unless
     # allow_rewrite is set — same guard as the real implement write loop.
     status, reason, _ = pc.gate_file(
-        "pkg/keep.py", "import os\n\ndef totally_different():\n    return os.getcwd()\n",
+        "pkg/keep.py",
+        "import os\n\ndef totally_different():\n    return os.getcwd()\n",
         str(tmp_path),
     )
     assert status == "rejected"
@@ -102,8 +91,10 @@ def test_gate_rejects_wholesale_rewrite_of_existing(tmp_path: Path) -> None:
 def test_gate_allows_rewrite_with_allow_rewrite(tmp_path: Path) -> None:
     _write_tree(tmp_path, {"pkg/keep.py": "A = 1\n"})
     status, _, _ = pc.gate_file(
-        "pkg/keep.py", "import os\n\ndef totally_different():\n    return os.getcwd()\n",
-        str(tmp_path), allow_rewrite=True,
+        "pkg/keep.py",
+        "import os\n\ndef totally_different():\n    return os.getcwd()\n",
+        str(tmp_path),
+        allow_rewrite=True,
     )
     assert status == "accepted"
 
@@ -112,7 +103,9 @@ def test_gate_auto_repairs_dangerous_root_filename(tmp_path: Path) -> None:
     # A bare root-level .py (collision target) is auto-repaired into a subpkg.
     status, _, eff = pc.gate_file("utils.py", "def q():\n    return 1\n", str(tmp_path))
     assert status == "accepted"
-    assert "/" in eff, "dangerous root filename should be auto-repaired into a subpackage"
+    assert "/" in eff, (
+        "dangerous root filename should be auto-repaired into a subpackage"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -123,7 +116,9 @@ def test_emit_proposal_creates_bundle_and_patch(tmp_path: Path) -> None:
     generated = {"orig.py": "x = 2\n", "new.py": "def f():\n    return 1\n"}
     outcomes = {"orig.py": "accepted", "new.py": "accepted"}
     out = pc.emit_proposal(
-        generated, str(tmp_path), outcomes,
+        generated,
+        str(tmp_path),
+        outcomes,
         meta={"command": "implement --propose", "model": "test"},
         out_dir=str(tmp_path / "reports" / "proposals" / "t1"),
     )
@@ -143,7 +138,9 @@ def test_emit_proposal_records_rejected_files(tmp_path: Path) -> None:
     generated = {"bad.py": "def h(\n"}
     outcomes = {"bad.py": "rejected — does not compile: ..."}
     out = pc.emit_proposal(
-        generated, str(tmp_path), outcomes,
+        generated,
+        str(tmp_path),
+        outcomes,
         meta={"command": "implement --propose"},
         out_dir=str(tmp_path / "reports" / "proposals" / "t2"),
     )
@@ -159,7 +156,8 @@ def test_propose_never_writes_the_tree(tmp_path: Path) -> None:
     before = {p.name: p.read_text() for p in tmp_path.rglob("*.py")}
     generated = {"src.py": "old = 2\n", "extra.py": "y = 9\n"}
     pc.emit_proposal(
-        generated, str(tmp_path),
+        generated,
+        str(tmp_path),
         {"src.py": "accepted", "extra.py": "accepted"},
         meta={"command": "implement --propose"},
         out_dir=str(tmp_path / "reports" / "proposals" / "t3"),

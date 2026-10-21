@@ -40,9 +40,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Directories that are not part of the linted source tree.
 SKIP_DIRS = {
-    ".git", ".venv", "venv", "node_modules", "__pycache__",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", "site-packages",
-    "build", "dist", ".eggs",
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "site-packages",
+    "build",
+    "dist",
+    ".eggs",
 }
 
 
@@ -126,9 +135,19 @@ def test_no_dead_local_assignments_in_tree() -> None:
     rather than noise.
     """
     proc = subprocess.run(
-        [sys.executable, "-m", "ruff", "check", "--output-format=concise",
-         "--select", "F841", "."],
-        cwd=str(REPO_ROOT), capture_output=True, text=True,
+        [
+            sys.executable,
+            "-m",
+            "ruff",
+            "check",
+            "--output-format=concise",
+            "--select",
+            "F841",
+            ".",
+        ],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
     )
     assert proc.returncode == 0, (
         "F841 dead local assignments reintroduced:\n" + proc.stdout + proc.stderr
@@ -172,6 +191,5 @@ def test_autonomous_rationale_passes_the_constant_unchanged() -> None:
     assert call_args, "no build_repair_rationale(...) call found"
     for arg in call_args:
         assert not isinstance(arg, ast.NamedExpr), (
-            f"build_repair_rationale called with a walrus expression: "
-            f"{ast.dump(arg)}"
+            f"build_repair_rationale called with a walrus expression: {ast.dump(arg)}"
         )

@@ -43,9 +43,7 @@ class RollingWindowAggregator:
     def __init__(self, threshold_seconds: float = 60.0) -> None:
         self.threshold_seconds = threshold_seconds
 
-    def statistical_summary(
-        self, values: list[float]
-    ) -> StatisticalSummary | None:
+    def statistical_summary(self, values: list[float]) -> StatisticalSummary | None:
         """Compute distribution statistics; None for an empty population."""
         if not values:
             return None
@@ -53,7 +51,8 @@ class RollingWindowAggregator:
         n = len(sorted_vals)
         mean_val = sum(sorted_vals) / n
         median_val = (
-            sorted_vals[n // 2] if n % 2 == 1
+            sorted_vals[n // 2]
+            if n % 2 == 1
             else (sorted_vals[n // 2 - 1] + sorted_vals[n // 2]) / 2.0
         )
         variance = sum((v - mean_val) ** 2 for v in sorted_vals) / n if n > 0 else 0.0
@@ -62,7 +61,7 @@ class RollingWindowAggregator:
         return StatisticalSummary(
             mean_value=mean_val,
             median_value=median_val,
-            standard_deviation=variance ** 0.5,
+            standard_deviation=variance**0.5,
             percentile_95=sorted_vals[max(p95_idx, 0)],
             percentile_99=sorted_vals[max(p99_idx, 0)],
             sample_count=n,
@@ -72,8 +71,7 @@ class RollingWindowAggregator:
         self, records: list[MetricRecord]
     ) -> StatisticalSummary | None:
         """Reduce mixed metric records to one summary over their scalars."""
-        scalars = [s for s in map(_extract_metric_scalar, records)
-                   if s is not None]
+        scalars = [s for s in map(_extract_metric_scalar, records) if s is not None]
         return self.statistical_summary(scalars)
 
 
@@ -146,11 +144,25 @@ def generate_comparative_reports(
         comparison_summary = comparison_dists[key]
 
         trend_result = TrendAnalysisResult(
-            trend_direction="improving" if comparison_summary.mean_value < baseline_summary.mean_value else "degrading",
-            slope_coefficient=comparison_summary.mean_value - baseline_summary.mean_value,
-            confidence_score=max(0.0, min(1.0, 1.0 - abs(comparison_summary.mean_value - baseline_summary.mean_value) / max(baseline_summary.standard_deviation, 1e-6))),
+            trend_direction="improving"
+            if comparison_summary.mean_value < baseline_summary.mean_value
+            else "degrading",
+            slope_coefficient=comparison_summary.mean_value
+            - baseline_summary.mean_value,
+            confidence_score=max(
+                0.0,
+                min(
+                    1.0,
+                    1.0
+                    - abs(comparison_summary.mean_value - baseline_summary.mean_value)
+                    / max(baseline_summary.standard_deviation, 1e-6),
+                ),
+            ),
             time_window_seconds=60.0,
-            anomaly_detected=abs(comparison_summary.mean_value - baseline_summary.mean_value) > (2 * baseline_summary.standard_deviation),
+            anomaly_detected=abs(
+                comparison_summary.mean_value - baseline_summary.mean_value
+            )
+            > (2 * baseline_summary.standard_deviation),
         )
 
         report[key] = trend_result
@@ -188,7 +200,9 @@ def _build_trend_result(
     )
 
 
-def analyze_time_series_trends(points: list[TimeSeriesPoint]) -> TrendAnalysisResult | None:
+def analyze_time_series_trends(
+    points: list[TimeSeriesPoint],
+) -> TrendAnalysisResult | None:
     """Analyze trends from a series of time-series points."""
     if not points or len(points) < 2:
         return None

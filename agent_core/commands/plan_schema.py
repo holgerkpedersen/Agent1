@@ -7,6 +7,7 @@ This module centralizes all structural definitions for the plan workflow:
 * :class:`PlanLogEntry` for JSONL audit logging.
 * :func:`validate_plan_markdown` for structural schema compliance.
 """
+
 from __future__ import annotations
 
 import enum
@@ -15,49 +16,62 @@ from typing import List, Optional, Any
 
 # ── Enums ────────────────────────────────────────────────────────────────
 
+
 class PlanStatus(enum.Enum):
     """Lifecycle status of a plan document."""
+
     PROPOSED = "proposed"
     EXECUTING = "executing"
     EXECUTED = "executed"
     FAILED = "failed"
 
+
 class PlanTransition(enum.Enum):
     """Permitted state transitions."""
+
     SUBMIT = "submit"
     START = "start"
     FINISH = "finish"
     ERROR = "error"
 
+
 # ── Dataclasses ──────────────────────────────────────────────────────────
+
 
 @dataclass
 class PlanMetadata:
     """Deserialized header from a plan markdown file."""
+
     id: str
     title: str
     status: PlanStatus = PlanStatus.PROPOSED
     author: str = "agent"
     tags: List[str] = field(default_factory=list)
 
+
 @dataclass
 class DryRunResult:
     """Outcome of a plan dry-run validation."""
+
     valid: bool
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     affected_files: List[str] = field(default_factory=list)
 
+
 @dataclass
 class DecisionGateResult:
     """Outcome of checking a plan against decisions.json constraints."""
+
     passed: bool
     violations: List[str] = field(default_factory=list)
     metadata: Optional[dict[str, Any]] = None
 
+
 @dataclass
 class PlanLogEntry:
     """JSONL audit log entry for plan lifecycle events."""
+
     plan_id: str
     timestamp: str
     transition: PlanTransition
@@ -73,20 +87,18 @@ class PlanLogEntry:
             d["status"] = d["status"].value
         return d
 
+
 # ── Constants ────────────────────────────────────────────────────────────
 
 # Protected filenames/regex patterns for plan audit trails
-PROTECTED_PLAN_FILENAMES: frozenset[str] = frozenset({
-    "plan_proposed.md",
-    ".plans.json"
-})
+PROTECTED_PLAN_FILENAMES: frozenset[str] = frozenset(
+    {"plan_proposed.md", ".plans.json"}
+)
 
 # ── Markdown Validation ─────────────────────────────────────────────────
 
-_REQUIRED_HEADINGS = [
-    "# Proposed Plan",
-    "## Tasks"
-]
+_REQUIRED_HEADINGS = ["# Proposed Plan", "## Tasks"]
+
 
 def validate_plan_markdown(content: str) -> tuple[bool, List[str]]:
     """Verify that plan markdown follows the required schema."""

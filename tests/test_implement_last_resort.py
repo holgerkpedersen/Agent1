@@ -51,13 +51,7 @@ BROKEN_PATCH = (
     "+    return 2\n"
 )
 
-DIRECT_FILE = (
-    "[FILE: pkg/mod_me.py]\n"
-    "```python\n"
-    "def foo():\n"
-    "    return 42\n"
-    "```"
-)
+DIRECT_FILE = "[FILE: pkg/mod_me.py]\n```python\ndef foo():\n    return 42\n```"
 
 
 def _make_workspace(tmp_path: Path) -> Path:
@@ -91,15 +85,11 @@ def _run(tmp_path: Path, responses: list[str]) -> tuple[bool, str, int]:
         return DIRECT_FILE
 
     agent = SimpleNamespace(workspace=str(tmp_path), llm=SimpleNamespace(chat=chat))
-    with patch(
-        "agent_core.commands.implement_cmd.auto_choice", return_value="y"
-    ):
+    with patch("agent_core.commands.implement_cmd.auto_choice", return_value="y"):
         # --modify selects modify mode, without which a [PATCH:] block is
         # never parsed at all (see `if modify_mode and not matches:`).
         result = asyncio.run(
-            ImplementCommand().execute(
-                [str(tmp_path / "tasks.md"), "--modify"], agent
-            )
+            ImplementCommand().execute([str(tmp_path / "tasks.md"), "--modify"], agent)
         )
     return result, "", len(calls)
 
@@ -109,7 +99,7 @@ def test_failed_self_correction_reaches_direct_generation(tmp_path, capsys):
     result, _, calls = _run(
         tmp_path,
         [
-            BROKEN_PATCH,       # generated patch cannot apply -> ok is False
+            BROKEN_PATCH,  # generated patch cannot apply -> ok is False
             "I am unable to produce a corrected patch.",  # no usable block
         ],
     )

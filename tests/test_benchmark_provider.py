@@ -22,7 +22,11 @@ class TestResolveBaseUrl:
         # Unknown providers must not crash the run by producing a broken URL;
         # they fall back to the default provider's endpoint.
         url = benchmark.resolve_base_url("ollama")
-        assert url == benchmark.PROVIDER_BASE_URLS[benchmark.DEFAULT_PROVIDER] + "/chat/completions"
+        assert (
+            url
+            == benchmark.PROVIDER_BASE_URLS[benchmark.DEFAULT_PROVIDER]
+            + "/chat/completions"
+        )
 
     def test_explicit_url_wins_over_provider(self):
         # Explicit --url always beats the --provider default, for any provider.
@@ -34,7 +38,9 @@ class TestResolveBaseUrl:
         assert url == "http://192.168.0.71:8080/v1/chat/completions"
 
     def test_full_chat_completions_url_is_not_double_suffixed(self):
-        url = benchmark.resolve_base_url("llama", "http://192.168.0.71:8080/v1/chat/completions/")
+        url = benchmark.resolve_base_url(
+            "llama", "http://192.168.0.71:8080/v1/chat/completions/"
+        )
         assert url == "http://192.168.0.71:8080/v1/chat/completions"
 
     def test_trailing_slash_on_base_url_is_normalized(self):

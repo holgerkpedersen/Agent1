@@ -37,7 +37,7 @@ class ProposeCommand(Command):
             "- Generate a reviewed diff bundle; never writes the tree"
         )
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         # Forward to implement --propose so all generation logic is reused.
         # argparse-style flags already understood by implement are passed
         # through verbatim; we just guarantee --propose is present.

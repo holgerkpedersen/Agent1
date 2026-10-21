@@ -23,6 +23,7 @@ so assertions pinning the old string are unaffected.  The repair's own
 runtime string is registered as a collision fragment so the guard can skip it
 if any test pins it.
 """
+
 from __future__ import annotations
 
 import py_compile
@@ -44,9 +45,9 @@ FILES: tuple[str, ...] = (str(_TARGET),)
 
 #: Anchor 1: the mutation-tool set, above which the reconnect note constant
 #: and the mutation-tracking accumulator are inserted.
-_ANCHOR_MUT = "MUTATING_TOOLS = frozenset({\"write\", \"edit\", \"fix\"})"
-_HINT_SENTINEL = '_RESUME_NOTE = ('
-_INSERT_BLOCK = '''#: Injected when a run ends non-completed AFTER mutating the workspace
+_ANCHOR_MUT = 'MUTATING_TOOLS = frozenset({"write", "edit", "fix"})'
+_HINT_SENTINEL = "_RESUME_NOTE = ("
+_INSERT_BLOCK = """#: Injected when a run ends non-completed AFTER mutating the workspace
 #: (repair abandonment-resume-protocol): the model has no memory of what it
 #: touched, so without this it starts the next turn cold and repeats or
 #: contradicts the half-applied work.  Travels as a "user" message (strict
@@ -62,7 +63,7 @@ _RESUME_NOTE = (
 #: here because harnessfix.tracing does not expose a dedicated enum value.
 GUARD_RESUME = "abandonment_resume"
 
-'''
+"""
 
 #: Anchor 2: the synthesis block's final "else: termination_reason = answer"
 #: line.  The reconnect note is appended to the SAME current_messages the
@@ -72,25 +73,25 @@ _ANCHOR_END = '            self.termination_reason = "answer"'
 _OLD_END = '            self.termination_reason = "answer"'
 _NEW_END = (
     '            self.termination_reason = "answer"\n'
-    '        #: Abandonment-after-mutation resume protocol (repair\n'
-    '        #: abandonment-resume-protocol): when the run was interrupted\n'
-    '        #: after mutating the workspace, the model has no memory of what\n'
-    '        #: it touched.  Name the mutated files so the next turn RESUMES\n'
-    '        #: instead of restarting (decision #052; corpus: 8/263 traces).\n'
+    "        #: Abandonment-after-mutation resume protocol (repair\n"
+    "        #: abandonment-resume-protocol): when the run was interrupted\n"
+    "        #: after mutating the workspace, the model has no memory of what\n"
+    "        #: it touched.  Name the mutated files so the next turn RESUMES\n"
+    "        #: instead of restarting (decision #052; corpus: 8/263 traces).\n"
     '        if self._mutated_files and self.termination_reason != "answer":\n'
-    '            note = _RESUME_NOTE.format(\n'
+    "            note = _RESUME_NOTE.format(\n"
     '                files=", ".join(sorted(self._mutated_files)),\n'
-    '            )\n'
+    "            )\n"
     '            current_messages.append({"role": "user", "content": note})\n'
-    '            injected_notes.append(note)\n'
-    '            self._emit(\n'
-    '                KIND_GUARD_TRIGGERED,\n'
-    '                LAYER_LIFECYCLE,\n'
-    '                guard=GUARD_RESUME,\n'
-    '                iteration=iteration,\n'
-    '                note=note,\n'
-    '                affected_files=sorted(self._mutated_files),\n'
-    '            )'
+    "            injected_notes.append(note)\n"
+    "            self._emit(\n"
+    "                KIND_GUARD_TRIGGERED,\n"
+    "                LAYER_LIFECYCLE,\n"
+    "                guard=GUARD_RESUME,\n"
+    "                iteration=iteration,\n"
+    "                note=note,\n"
+    "                affected_files=sorted(self._mutated_files),\n"
+    "            )"
 )
 
 

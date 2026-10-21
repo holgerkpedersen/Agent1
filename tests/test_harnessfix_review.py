@@ -1,6 +1,5 @@
 """Tests for harnessfix.review — the human verification gate (decision #053)."""
 
-
 import pytest
 
 from harnessfix.review import (
@@ -19,18 +18,39 @@ from harnessfix.tracing import TraceWriter
 
 
 def _failed_trace(writer: TraceWriter, *, meta: bool = True) -> None:
-    begin = {"kind": "task_begin", "layer": "context",
-             "user_input": "fix the flaky gate"}
+    begin = {
+        "kind": "task_begin",
+        "layer": "context",
+        "user_input": "fix the flaky gate",
+    }
     if meta:
         begin["model"] = "qwen3.8-27b"
         begin["profile"] = "deep-analysis"
     writer.emit(begin)
-    writer.emit({"kind": "tool_call", "layer": "tool_interface",
-                 "tool": "write", "args_hash": "w"})
-    writer.emit({"kind": "tool_result", "layer": "tool_interface",
-                 "tool": "write", "affected_files": ["a.py"]})
-    writer.emit({"kind": "tool_error", "layer": "tool_interface",
-                 "exception": "PermissionError", "message": "denied"})
+    writer.emit(
+        {
+            "kind": "tool_call",
+            "layer": "tool_interface",
+            "tool": "write",
+            "args_hash": "w",
+        }
+    )
+    writer.emit(
+        {
+            "kind": "tool_result",
+            "layer": "tool_interface",
+            "tool": "write",
+            "affected_files": ["a.py"],
+        }
+    )
+    writer.emit(
+        {
+            "kind": "tool_error",
+            "layer": "tool_interface",
+            "exception": "PermissionError",
+            "message": "denied",
+        }
+    )
     writer.emit({"kind": "loop_end", "layer": "lifecycle", "outcome": "error"})
 
 
@@ -43,8 +63,15 @@ def test_build_reviews_covers_only_failed_metadata_traces(tmp_path):
     failed.close()
 
     ok = TraceWriter(task_id="tok", directory=traces)
-    ok.emit({"kind": "task_begin", "layer": "context", "user_input": "hi",
-             "model": "m", "profile": "p"})
+    ok.emit(
+        {
+            "kind": "task_begin",
+            "layer": "context",
+            "user_input": "hi",
+            "model": "m",
+            "profile": "p",
+        }
+    )
     ok.emit({"kind": "loop_end", "layer": "lifecycle", "outcome": "completed"})
     ok.close()
 
@@ -158,8 +185,15 @@ def test_load_missing_or_corrupt_ledger_is_empty(tmp_path):
 
 
 def test_review_table_renders(tmp_path):
-    reviews = {"t1": ReviewRecord(task_id="t1", model="m", root_layer="lifecycle",
-                                  outcome="stuck", disposition="bug")}
+    reviews = {
+        "t1": ReviewRecord(
+            task_id="t1",
+            model="m",
+            root_layer="lifecycle",
+            outcome="stuck",
+            disposition="bug",
+        )
+    }
     table = review_table(reviews)
     assert "t1" in table and "bug" in table and "lifecycle" in table
 

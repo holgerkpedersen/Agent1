@@ -13,10 +13,12 @@ except ImportError:  # pragma: no cover - platform dependent
 
 from performance_dashboard.models import CommandMetric, PerformanceRecord
 from performance_dashboard.utils.time_utils import (
-    align_to_bucket, get_current_timestamp
+    align_to_bucket,
+    get_current_timestamp,
 )
 from performance_dashboard.utils.validation import (
-    MetricSchemaValidator, validate_command_metric
+    MetricSchemaValidator,
+    validate_command_metric,
 )
 
 
@@ -28,9 +30,7 @@ _CPU_PATTERN = re.compile(
     r"(?:CPU\s*utilization|cpu):\s*(?P<value>[\d.]+)%", re.IGNORECASE
 )
 _COMMAND_PATTERN = re.compile(r"Command:\s*(?P<name>\S+)", re.IGNORECASE)
-_RETURN_CODE_PATTERN = re.compile(
-    r"Return\s*code:\s*(?P<code>-?\d+)", re.IGNORECASE
-)
+_RETURN_CODE_PATTERN = re.compile(r"Return\s*code:\s*(?P<code>-?\d+)", re.IGNORECASE)
 
 
 def _convert_memory_unit(value: float, unit: str) -> float:
@@ -66,13 +66,17 @@ def parse_execution_logs(log_text: str) -> dict[str, object]:
         extracted["command_name"] = str(command_match.group("name"))
 
     return_code_match = _RETURN_CODE_PATTERN.search(log_text)
-    if return_code_match is not None and isinstance(return_code_match.group("code"), str):
+    if return_code_match is not None and isinstance(
+        return_code_match.group("code"), str
+    ):
         extracted["return_code"] = int(return_code_match.group("code"))
 
     return extracted
 
 
-def normalize_metric_formats(raw: dict[str, object] | list[object]) -> CommandMetric | None:
+def normalize_metric_formats(
+    raw: dict[str, object] | list[object],
+) -> CommandMetric | None:
     """Convert arbitrary metric representations into a validated CommandMetric.
 
     Uses isinstance narrowing guards to reject malformed inputs (wrong field

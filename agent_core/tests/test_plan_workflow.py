@@ -7,6 +7,7 @@ Covers:
 * File protection for plan files (file_protection)
 * Decision gating against .decisions.json (plan_decision_gate)
 """
+
 from __future__ import annotations
 
 import json
@@ -35,6 +36,7 @@ from agent import Agent
 
 
 # ── plan_schema ──────────────────────────────────────────────────────────
+
 
 class TestPlanSchema:
     """Tests for plan schema enums, dataclasses, and markdown validation."""
@@ -100,6 +102,7 @@ class TestPlanSchema:
 
 
 # ── plan_lifecycle ───────────────────────────────────────────────────────
+
 
 class TestPlanLifecycle:
     """Tests for lifecycle transitions and JSONL audit logging."""
@@ -210,6 +213,7 @@ class TestPlanLifecycle:
 
 # ── plan_dry_run ─────────────────────────────────────────────────────────
 
+
 class TestPlanDryRun:
     """Tests for dry-run safety gate."""
 
@@ -241,11 +245,21 @@ class TestPlanDryRun:
         assert "agent_core/bar.py" in result.affected_files
 
     def test_mutating_tools_constant(self):
-        expected = {"write", "edit", "fix", "delete_file", "run", "git", "delegate", "delegate_batch"}
+        expected = {
+            "write",
+            "edit",
+            "fix",
+            "delete_file",
+            "run",
+            "git",
+            "delegate",
+            "delegate_batch",
+        }
         assert MUTATING_TOOLS == expected
 
 
 # ── file_protection ──────────────────────────────────────────────────────
+
 
 class TestPlanFileProtection:
     """Tests for plan file protection rules in file_protection module."""
@@ -273,6 +287,7 @@ class TestPlanFileProtection:
 
 
 # ── plan_decision_gate ───────────────────────────────────────────────────
+
 
 class TestPlanDecisionGate:
     """Tests for decision gate validation against .decisions.json."""
@@ -308,7 +323,9 @@ class TestPlanDecisionGate:
         ]
         (tmp_path / ".decisions.json").write_text(json.dumps(decisions))
         gate = PlanDecisionGate(tmp_path)
-        content = "# Plan\n\nModify `agent_core/security/guard.py` to update security logic\n"
+        content = (
+            "# Plan\n\nModify `agent_core/security/guard.py` to update security logic\n"
+        )
         result = gate.validate(content)
         assert result.passed is False
         assert len(result.violations) > 0
@@ -340,22 +357,26 @@ class TestPlanDecisionGate:
 
 # ── NLP plan tools registration ─────────────────────────────────────────
 
+
 class TestPlanNlpToolsRegistration:
     """Verify plan tools appear in schemas and handler dict."""
 
     def test_plan_tools_in_nlp_tool_schemas(self):
         from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
+
         names = {t["function"]["name"] for t in NLP_TOOL_SCHEMAS}
         for tool in ("plan_status", "plan_start", "plan_step", "plan_finish"):
             assert tool in names, f"{tool} missing from NLP_TOOL_SCHEMAS"
 
     def test_plan_tools_in_nlp_tool_names(self):
         from agent_core.tool_schemas import NLP_TOOL_NAMES
+
         for tool in ("plan_status", "plan_start", "plan_step", "plan_finish"):
             assert tool in NLP_TOOL_NAMES, f"{tool} missing from NLP_TOOL_NAMES"
 
     def test_plan_handlers_registered(self):
         from agent import Agent
+
         agent = Agent.__new__(Agent)
         agent.workspace = tempfile.mkdtemp()
         handlers = agent._nlp_tool_handlers()
@@ -364,6 +385,7 @@ class TestPlanNlpToolsRegistration:
 
 
 # ── Regression tests for bug fixes ─────────────────────────────────────
+
 
 class TestLifecycleRegression:
     """Regression: start_plan must log the *destination* path, not source."""
@@ -484,10 +506,14 @@ class TestRunPlanPersistence:
     @staticmethod
     def _tasks():
         from agent_core.plan_execution.parser import PlanTask
+
         return [
             PlanTask(id="T1", description="task one", role="implementer"),
             PlanTask(
-                id="T2", description="task two", role="implementer", depends_on=["T1"],
+                id="T2",
+                description="task two",
+                role="implementer",
+                depends_on=["T1"],
             ),
         ]
 
@@ -555,10 +581,13 @@ class TestRunPlanPersistence:
         # T2's input_data must contain the upstream result from T1.
         t2_rec = next(r for r in snap["tasks"] if r["task_id"] == "T2")
         assert "input_data" in t2_rec
-        assert "T1" in t2_rec["input_data"], f"Expected T1 in input_data: {t2_rec['input_data']}"
+        assert "T1" in t2_rec["input_data"], (
+            f"Expected T1 in input_data: {t2_rec['input_data']}"
+        )
 
     def test_run_plan_no_persistence_when_dir_none(self, tmp_path: Path):
         """When plan_dir is None (default), no files should be written."""
+
         class FakeSub:
             async def respond(self, desc):
                 return "ok"
@@ -577,7 +606,9 @@ class TestRunPlanPersistence:
         run_dir = tmp_path / ".docs"
         if run_dir.exists():
             for f in run_dir.iterdir():
-                assert not f.name.startswith("dep_"), \
+                assert not f.name.startswith("dep_"), (
                     f"dep result should not be written without plan_dir: {f}"
-                assert f.name != "plan_execution_report.md", \
+                )
+                assert f.name != "plan_execution_report.md", (
                     "execution report should not be written without plan_dir"
+                )

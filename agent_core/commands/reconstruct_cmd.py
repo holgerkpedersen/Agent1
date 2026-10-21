@@ -20,6 +20,7 @@ Usage::
                      [--from <n>] [--event <kind>] [--save-prefix <dir>]
                      [--apply]
 """
+
 from __future__ import annotations
 
 import json
@@ -86,7 +87,9 @@ def _parse_trace(filepath: str) -> list[_FileOp]:
                 # Parse the args from the misnamed "args_hash" field.
                 args_raw = rec.get("args_hash", "{}")
                 try:
-                    args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                    args = (
+                        json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                    )
                 except json.JSONDecodeError:
                     continue
                 path = args.get("path", "")
@@ -95,22 +98,26 @@ def _parse_trace(filepath: str) -> list[_FileOp]:
                 # Normalise backslashes for consistency.
                 path = path.replace("\\", "/")
                 if tool == "write":
-                    ops.append(_FileOp(
-                        ts=ts,
-                        kind="write",
-                        path=path,
-                        content=args.get("content", ""),
-                        source=basename,
-                    ))
+                    ops.append(
+                        _FileOp(
+                            ts=ts,
+                            kind="write",
+                            path=path,
+                            content=args.get("content", ""),
+                            source=basename,
+                        )
+                    )
                 elif tool == "edit":
-                    ops.append(_FileOp(
-                        ts=ts,
-                        kind="edit",
-                        path=path,
-                        old_text=args.get("old_text", ""),
-                        new_text=args.get("new_text", ""),
-                        source=basename,
-                    ))
+                    ops.append(
+                        _FileOp(
+                            ts=ts,
+                            kind="edit",
+                            path=path,
+                            old_text=args.get("old_text", ""),
+                            new_text=args.get("new_text", ""),
+                            source=basename,
+                        )
+                    )
     except OSError as exc:
         print(f"  Warning: could not read {filepath}: {exc}")
     return ops
@@ -138,9 +145,7 @@ def _collect_files(traces_dir: str) -> list[str]:
     return files
 
 
-def _resolve_range(
-    files: list[str], start: str | None, end: str | None
-) -> list[str]:
+def _resolve_range(files: list[str], start: str | None, end: str | None) -> list[str]:
     """Slice the file list to the [start, end] inclusive range."""
     start_idx = 0
     end_idx = len(files)
@@ -217,14 +222,15 @@ class ReplaySession:
         self.path = path
         self.events: list[dict[str, Any]] = _read_events(path)
         self.cursor = 0
-        self._meta = next(
-            (e for e in self.events if e.get("kind") == "task_begin"), {}
-        )
+        self._meta = next((e for e in self.events if e.get("kind") == "task_begin"), {})
 
     # ── meta ──────────────────────────────────────────────────────────
     @property
     def task_id(self) -> str:
-        return str(self._meta.get("task_id", "") or (self.events[0].get("task_id", "") if self.events else ""))
+        return str(
+            self._meta.get("task_id", "")
+            or (self.events[0].get("task_id", "") if self.events else "")
+        )
 
     @property
     def model(self) -> str:
@@ -434,9 +440,7 @@ def _read_events(path: str) -> list[dict[str, Any]]:
     return events
 
 
-def _resolve_task_path(
-    traces_dir: str, task: str
-) -> str | None:
+def _resolve_task_path(traces_dir: str, task: str) -> str | None:
     """Resolve a task id / filename / prefix to a .jsonl path under traces_dir."""
     if os.path.isabs(task) and task.endswith(".jsonl") and os.path.isfile(task):
         return task
@@ -557,7 +561,9 @@ class ReconstructCommand(Command):
             if last_write_idx == -1:
                 # No write found — file must already exist; we can't create it
                 # from edits alone.
-                print(f"  SKIP: {path} — no write operation found (edits only, file must exist)")
+                print(
+                    f"  SKIP: {path} — no write operation found (edits only, file must exist)"
+                )
                 skipped += len(ops)
                 continue
 
@@ -615,9 +621,11 @@ class ReconstructCommand(Command):
             written += 1
 
         # ── Summary ─────────────────────────────────────────────────────
-        print(f"\n  Done: {len(file_results)} file(s), "
-              f"{applied} op(s) applied, {skipped} skipped, "
-              f"{edit_warnings} warning(s)")
+        print(
+            f"\n  Done: {len(file_results)} file(s), "
+            f"{applied} op(s) applied, {skipped} skipped, "
+            f"{edit_warnings} warning(s)"
+        )
         if dry_run:
             print("  (dry-run — no files were written)")
         elif written:
@@ -673,7 +681,9 @@ class ReconstructCommand(Command):
                 return True
 
         if not task:
-            self.error("Usage: reconstruct replay <task> [--from <n>] [--event <kind>] [--save-prefix <dir>] [--apply]")
+            self.error(
+                "Usage: reconstruct replay <task> [--from <n>] [--event <kind>] [--save-prefix <dir>] [--apply]"
+            )
             return True
         if not os.path.isdir(traces_dir):
             self.error(f"Traces directory not found: {traces_dir}")
@@ -690,11 +700,15 @@ class ReconstructCommand(Command):
             return True
 
         print(f"\n  == REPLAY {session.task_id} ==")
-        print(f"  model={session.model or '-'} profile={session.profile or '-'} "
-              f"outcome={session.outcome or '-'}")
+        print(
+            f"  model={session.model or '-'} profile={session.profile or '-'} "
+            f"outcome={session.outcome or '-'}"
+        )
         print(f"  prompt: {_shorten(session.prompt, 160) or '(none)'}")
-        print(f"  events: {len(session.events)}  |  affected files: "
-              f"{len(session.affected_files)}")
+        print(
+            f"  events: {len(session.events)}  |  affected files: "
+            f"{len(session.affected_files)}"
+        )
         print(f"  Companion: `review show {session.task_id}` (review ledger)")
         if session.affected_files:
             print("  files:")
@@ -706,7 +720,11 @@ class ReconstructCommand(Command):
             session.goto(from_idx)
         if event_filter:
             idx = next(
-                (k for k, e in enumerate(session.events) if e.get("kind") == event_filter),
+                (
+                    k
+                    for k, e in enumerate(session.events)
+                    if e.get("kind") == event_filter
+                ),
                 None,
             )
             if idx is None:
@@ -721,15 +739,19 @@ class ReconstructCommand(Command):
             for ev in session.events:
                 if event_filter and ev.get("kind") != event_filter:
                     continue
-                print("  " + session.describe(ev, show_content=True).replace("\n", "\n  "))
+                print(
+                    "  " + session.describe(ev, show_content=True).replace("\n", "\n  ")
+                )
             print(f"\n  End of replay ({len(session.events)} events).")
             if apply:
                 self._replay_apply(session, save_prefix or workspace, agent)
             return True
 
         # Interactive loop.
-        print("\n  Step controls: n/next  p/prev  g <n>/goto  f <path>  "
-              "d <path>  l/ledger  s/stop")
+        print(
+            "\n  Step controls: n/next  p/prev  g <n>/goto  f <path>  "
+            "d <path>  l/ledger  s/stop"
+        )
         print("  (empty = next; 's' quits)\n")
         cur = session.current_event()
         if cur is not None:
@@ -768,8 +790,10 @@ class ReconstructCommand(Command):
                 arg = resp.split(maxsplit=1)[1].strip() if " " in resp else ""
                 self._replay_show_diff(session, arg)
             elif resp in ("l", "ledger"):
-                print(f"  ledger: review show {session.task_id}  "
-                      f"(outcome={session.outcome or '-'})")
+                print(
+                    f"  ledger: review show {session.task_id}  "
+                    f"(outcome={session.outcome or '-'})"
+                )
             else:
                 print("  unknown: n/p/g/f/d/l/s")
                 continue
@@ -790,7 +814,8 @@ class ReconstructCommand(Command):
         norm = path.replace("\\", "/")
         # Match by exact path or by basename stem.
         candidates = [
-            f for f in session.affected_files
+            f
+            for f in session.affected_files
             if f.replace("\\", "/") == norm
             or f.replace("\\", "/").endswith("/" + norm)
             or os.path.basename(f).lower() == os.path.basename(norm).lower()
@@ -816,7 +841,9 @@ class ReconstructCommand(Command):
         p = str(args.get("path", "")).replace("\\", "/")
         current = session.file_state_at_cursor(p) or ""
         if nxt.get("kind") == "write":
-            print(f"  upcoming write -> {p} ({len(str(args.get('content', '')))} bytes)")
+            print(
+                f"  upcoming write -> {p} ({len(str(args.get('content', '')))} bytes)"
+            )
             show_file_diff(os.path.basename(p), current, str(args.get("content", "")))
         else:
             new, ok = _apply_edit(
@@ -827,9 +854,13 @@ class ReconstructCommand(Command):
             if not ok:
                 print(f"  upcoming edit on {p}: old_text not present at cursor")
                 show_file_diff(
-                    os.path.basename(p), current,
-                    current.replace(str(args.get("old_text", "")), str(args.get("new_text", "")), 1)
-                    if str(args.get("old_text", "")) in current else current,
+                    os.path.basename(p),
+                    current,
+                    current.replace(
+                        str(args.get("old_text", "")), str(args.get("new_text", "")), 1
+                    )
+                    if str(args.get("old_text", "")) in current
+                    else current,
                 )
             else:
                 print(f"  upcoming edit -> {p}")
@@ -845,8 +876,10 @@ class ReconstructCommand(Command):
         if not final:
             print("  nothing to reconstruct.")
             return
-        print(f"  --apply: writing {len(final)} reconstructed file(s) "
-              f"under prefix {prefix}")
+        print(
+            f"  --apply: writing {len(final)} reconstructed file(s) "
+            f"under prefix {prefix}"
+        )
         for p, content in final.items():
             # Resolve target: if prefix is the workspace and path is absolute,
             # write in place; otherwise stage under prefix.

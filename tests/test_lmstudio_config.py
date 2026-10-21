@@ -6,6 +6,7 @@ backward compatible) and the ``1234`` default.  Before this, every consumer
 hardcoded its own URL (and ``module_similarity`` even defaulted to the wrong
 port, 1235).
 """
+
 from __future__ import annotations
 
 import pytest

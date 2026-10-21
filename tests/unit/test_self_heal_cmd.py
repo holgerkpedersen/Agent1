@@ -1,4 +1,5 @@
 """Tests for write_cmd per-hunk review (plan 31) and self_heal (plan 29-30)."""
+
 import asyncio
 import textwrap
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ class TestWriteReview:
 
     def test_yes_skips_review_and_overwrites(self, tmp_path):
         from agent_core.commands.write_cmd import WriteCommand
+
         target = tmp_path / "a.py"
         target.write_text("old = 1\n", encoding="utf-8")
 
@@ -25,12 +27,15 @@ class TestWriteReview:
                 target.write_text(content, encoding="utf-8")
                 return "written"
 
-        ok = asyncio.run(WriteCommand().execute([str(target), "new = 2\n", "--yes"], FakeAgent()))
+        ok = asyncio.run(
+            WriteCommand().execute([str(target), "new = 2\n", "--yes"], FakeAgent())
+        )
         assert ok is True
         assert target.read_text(encoding="utf-8") == "new = 2\n"
 
     def test_review_rejects_hunks_keeps_original(self, tmp_path):
         from agent_core.commands.write_cmd import WriteCommand
+
         target = tmp_path / "a.py"
         target.write_text("a = 1\nb = 2\n", encoding="utf-8")
 
@@ -44,16 +49,20 @@ class TestWriteReview:
 
         # read_choice returns False for every hunk -> nothing applied.
         with patch("agent_core.commands.write_cmd.read_choice", return_value=False):
-            ok = asyncio.run(WriteCommand().execute([str(target), "a = 9\nb = 9\n"], FakeAgent()))
+            ok = asyncio.run(
+                WriteCommand().execute([str(target), "a = 9\nb = 9\n"], FakeAgent())
+            )
         assert ok is True
         assert target.read_text(encoding="utf-8") == "a = 1\nb = 2\n"
 
     def test_review_approves_selected_hunk(self, tmp_path):
         from agent_core.commands.write_cmd import WriteCommand
+
         target = tmp_path / "a.py"
+
         # Two changes separated by >2*context (7) unchanged lines -> two hunks.
         def _body(a: int, c: int) -> str:
-            return f"a = {a}\n" + "\n".join(f"k{i}" for i in range(1, 10)) + f"\nc = {c}\n"
+            return f"a = {a}\n\n".join(f"k{i}" for i in range(1, 10)) + f"\nc = {c}\n"
 
         target.write_text(_body(1, 3), encoding="utf-8")
 
@@ -67,10 +76,13 @@ class TestWriteReview:
 
         answers = iter([True, False])  # approve first hunk, reject second
 
-        with patch("agent_core.commands.write_cmd.read_choice", side_effect=lambda p: next(answers)):
-            ok = asyncio.run(WriteCommand().execute(
-                [str(target), _body(9, 9)], FakeAgent()
-            ))
+        with patch(
+            "agent_core.commands.write_cmd.read_choice",
+            side_effect=lambda p: next(answers),
+        ):
+            ok = asyncio.run(
+                WriteCommand().execute([str(target), _body(9, 9)], FakeAgent())
+            )
         assert ok is True
         result = target.read_text(encoding="utf-8")
         assert "a = 9" in result
@@ -88,13 +100,18 @@ class TestSelfHeal:
             FAILED tests/test_foo.py::test_x - AssertionError
             FAILED tests/test_bar.py::test_y - ValueError
         """)
-        assert SelfHealCommand._failing_files(output) == ["tests/test_foo.py", "tests/test_bar.py"]
+        assert SelfHealCommand._failing_files(output) == [
+            "tests/test_foo.py",
+            "tests/test_bar.py",
+        ]
 
     def test_failing_files_empty_when_green(self):
         assert SelfHealCommand._failing_files("1 passed in 0.01s") == []
 
     def test_run_pytest_green(self, tmp_path):
-        (tmp_path / "test_ok.py").write_text("def test_one():\n    assert 1 == 1\n", encoding="utf-8")
+        (tmp_path / "test_ok.py").write_text(
+            "def test_one():\n    assert 1 == 1\n", encoding="utf-8"
+        )
         rc, _ = SelfHealCommand._run_pytest(str(tmp_path))
         assert rc == 0
 
@@ -132,6 +149,7 @@ class TestSelfHeal:
         cmd = SelfHealCommand()
         cmd.backups = {str(prod): (str(prod) + ".heal_bak", "orig")}
         import shutil
+
         shutil.copyfile(str(prod), str(prod) + ".heal_bak")
         prod.write_text("def grow(x):\n    return x + 1\n", encoding="utf-8")
         cmd._revert_all()

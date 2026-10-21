@@ -19,7 +19,11 @@ class AggregationEngine:
     def ingest(self, record: PerformanceRecord) -> bool:
         # PerformanceRecord is a TypedDict (plain dict at runtime): verify
         # shape instead of isinstance(), which raises TypeError here.
-        if not isinstance(record, dict) or "record_type" not in record or "timestamp" not in record:
+        if (
+            not isinstance(record, dict)
+            or "record_type" not in record
+            or "timestamp" not in record
+        ):
             return False
         self._records.append(record)
         return True
@@ -112,16 +116,17 @@ class TrendDetector:
 
     def add_point(self, point: TimeSeriesPoint) -> bool:
         # TimeSeriesPoint is a TypedDict: shape check, not isinstance().
-        if not isinstance(point, dict) or "value" not in point or "timestamp" not in point:
+        if (
+            not isinstance(point, dict)
+            or "value" not in point
+            or "timestamp" not in point
+        ):
             return False
         self._points.append(point)
         return True
 
-    def detect_trends(
-        self, window_seconds: int = 600
-    ) -> Optional[TrendAnalysisResult]:
-        filtered = [p for p in self._points
-                    if isinstance(p.get("value"), (int, float))]
+    def detect_trends(self, window_seconds: int = 600) -> Optional[TrendAnalysisResult]:
+        filtered = [p for p in self._points if isinstance(p.get("value"), (int, float))]
         if not filtered:
             return None
         result = analyze_time_series_trends(filtered)
@@ -154,7 +159,9 @@ class CorrelationMapper:
                     continue
                 rt = r["record_type"]
                 if "execution_time_ms" in rt:
-                    self._command_data.setdefault(str(rt["command_name"]), []).append(scalar)
+                    self._command_data.setdefault(str(rt["command_name"]), []).append(
+                        scalar
+                    )
                 elif "duration_seconds" in rt:
                     self._task_data.setdefault(str(rt["task_id"]), []).append(scalar)
 
@@ -197,10 +204,12 @@ def _statistical_summary(values: List[float]) -> Optional[StatisticalSummary]:
     n = len(sorted_vals)
     mean_val = sum(sorted_vals) / n
     median_val = (
-        sorted_vals[n // 2] if n % 2 == 1 else (sorted_vals[n // 2 - 1] + sorted_vals[n // 2]) / 2.0
+        sorted_vals[n // 2]
+        if n % 2 == 1
+        else (sorted_vals[n // 2 - 1] + sorted_vals[n // 2]) / 2.0
     )
     variance = sum((v - mean_val) ** 2 for v in sorted_vals) / n if n > 0 else 0.0
-    std_dev = variance ** 0.5
+    std_dev = variance**0.5
     p95_idx = int(n * 0.95) - 1 if n >= 2 else 0
     p99_idx = int(n * 0.99) - 1 if n >= 2 else 0
     percentile_95 = sorted_vals[max(p95_idx, 0)]

@@ -10,7 +10,9 @@ def _provider(model: str) -> LMStudioProvider:
 
 
 def test_build_payload_default_has_no_thinking_field() -> None:
-    payload = _provider("laguna-s-2.1")._build_payload([{"role": "user", "content": "hi"}])
+    payload = _provider("laguna-s-2.1")._build_payload(
+        [{"role": "user", "content": "hi"}]
+    )
     assert payload["model"] == "laguna-s-2.1"
     assert "thinking" not in payload
     assert "chat_template_kwargs" not in payload
@@ -50,7 +52,10 @@ def test_build_payload_qwen_adds_chat_template_kwargs() -> None:
     payload = _provider("qwen3.6-27b-mtp")._build_payload(
         [{"role": "user", "content": "hi"}], disable_thinking=True
     )
-    assert payload["chat_template_kwargs"] == {"enable_thinking": False, "preserve_thinking": False}
+    assert payload["chat_template_kwargs"] == {
+        "enable_thinking": False,
+        "preserve_thinking": False,
+    }
     assert payload["reasoning"] == "off"
 
 
@@ -78,7 +83,10 @@ def test_build_payload_merges_tools_and_stream() -> None:
     )
     assert payload["tools"] == [{"type": "function"}]
     assert payload["stream"] is True
-    assert payload["chat_template_kwargs"] == {"enable_thinking": False, "preserve_thinking": False}
+    assert payload["chat_template_kwargs"] == {
+        "enable_thinking": False,
+        "preserve_thinking": False,
+    }
 
 
 def test_build_payload_sets_cache_prompt() -> None:
@@ -88,7 +96,9 @@ def test_build_payload_sets_cache_prompt() -> None:
     each tool-loop iteration only re-processes the new suffix instead of the
     whole growing transcript — this is what prevents the slow prefill ramp
     that tripped ``LMSTUDIO_CHAT_TIMEOUT``."""
-    payload = _provider("qwen3.6-27b-mtp")._build_payload([{"role": "user", "content": "hi"}])
+    payload = _provider("qwen3.6-27b-mtp")._build_payload(
+        [{"role": "user", "content": "hi"}]
+    )
     assert payload.get("cache_prompt") is True
 
 
@@ -102,11 +112,18 @@ def test_stream_payload_also_sets_cache_prompt() -> None:
 
 
 def test_known_models_extra_only_for_qwen_and_laguna() -> None:
-    allowed = {"qwen3.5-9b-mtp", "qwen3.6-27b-mtp", "qwen3-coder-30b-a3b-instruct", "laguna-s-2.1"}
+    allowed = {
+        "qwen3.5-9b-mtp",
+        "qwen3.6-27b-mtp",
+        "qwen3-coder-30b-a3b-instruct",
+        "laguna-s-2.1",
+    }
     for name, info in KNOWN_MODELS.items():
         if name in allowed:
             extra = info.get("disable_thinking_kwargs", {})
-            assert extra.get("chat_template_kwargs", {}).get("enable_thinking") is False, name
+            assert (
+                extra.get("chat_template_kwargs", {}).get("enable_thinking") is False
+            ), name
             if name == "laguna-s-2.1":
                 assert extra.get("reasoning") == "off", name
         else:
@@ -163,19 +180,23 @@ class TestSanitizeMessageRoles:
         return _provider(model)._build_payload(messages)
 
     def test_leading_system_block_preserved(self):
-        payload = self._payload([
-            {"role": "system", "content": "SYS"},
-            {"role": "user", "content": "hej"},
-        ])
+        payload = self._payload(
+            [
+                {"role": "system", "content": "SYS"},
+                {"role": "user", "content": "hej"},
+            ]
+        )
         assert payload["messages"][0] == {"role": "system", "content": "SYS"}
 
     def test_mid_conversation_system_converted_to_user(self):
-        payload = self._payload([
-            {"role": "system", "content": "SYS"},
-            {"role": "user", "content": "hej"},
-            {"role": "system", "content": "BUDGET WARNING: wrap up"},
-            {"role": "assistant", "content": "svar"},
-        ])
+        payload = self._payload(
+            [
+                {"role": "system", "content": "SYS"},
+                {"role": "user", "content": "hej"},
+                {"role": "system", "content": "BUDGET WARNING: wrap up"},
+                {"role": "assistant", "content": "svar"},
+            ]
+        )
         msgs = payload["messages"]
         assert msgs[0]["role"] == "system"
         assert msgs[2]["role"] == "user"
@@ -184,33 +205,47 @@ class TestSanitizeMessageRoles:
         assert msgs[3]["role"] == "assistant"
 
     def test_consecutive_mid_list_systems_all_converted(self):
-        payload = self._payload([
-            {"role": "user", "content": "a"},
-            {"role": "system", "content": "n1"},
-            {"role": "system", "content": "n2"},
-            {"role": "user", "content": "b"},
-        ])
+        payload = self._payload(
+            [
+                {"role": "user", "content": "a"},
+                {"role": "system", "content": "n1"},
+                {"role": "system", "content": "n2"},
+                {"role": "user", "content": "b"},
+            ]
+        )
         roles = [m["role"] for m in payload["messages"]]
         assert roles == ["user", "user", "user", "user"]
 
     def test_history_without_system_untouched(self):
-        payload = self._payload([
-            {"role": "user", "content": "a"},
-            {"role": "assistant", "content": "b"},
-        ])
+        payload = self._payload(
+            [
+                {"role": "user", "content": "a"},
+                {"role": "assistant", "content": "b"},
+            ]
+        )
         assert [m["role"] for m in payload["messages"]] == ["user", "assistant"]
 
     def test_orphan_tool_messages_dropped(self):
         """tool messages without a matching assistant tool_calls are dropped —
         strict gateways 400 on orphans (opencode Console Go)."""
-        payload = self._payload([
-            {"role": "user", "content": "a"},
-            {"role": "assistant", "content": "",
-             "tool_calls": [{"id": "c1", "type": "function",
-                             "function": {"name": "x", "arguments": "{}"}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": "res"},
-            {"role": "tool", "tool_call_id": "ghost", "content": "orphan"},
-        ])
+        payload = self._payload(
+            [
+                {"role": "user", "content": "a"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "c1",
+                            "type": "function",
+                            "function": {"name": "x", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "c1", "content": "res"},
+                {"role": "tool", "tool_call_id": "ghost", "content": "orphan"},
+            ]
+        )
         ids = [m.get("tool_call_id") for m in payload["messages"]]
         assert "ghost" not in ids
         assert "c1" in ids
@@ -241,8 +276,8 @@ class TestScaledTimeout:
 
     def test_timeout_scales_with_prefill_tokens(self, monkeypatch):
         p = self._prov(monkeypatch)
-        small = p._scaled_timeout(self._payload(1_000))    # ~285 tokens -> floor
-        big = p._scaled_timeout(self._payload(100_000))    # ~28.5k tokens -> minutes
+        small = p._scaled_timeout(self._payload(1_000))  # ~285 tokens -> floor
+        big = p._scaled_timeout(self._payload(100_000))  # ~28.5k tokens -> minutes
         assert small == 600
         assert big > 600
         assert big <= 3600
@@ -256,16 +291,21 @@ class TestScaledTimeout:
         empty = {"messages": [{"role": "user", "content": ""}]}
         with_tools = {
             "messages": [{"role": "user", "content": ""}],
-            "tools": [{
-                "type": "function",
-                "function": {"name": "x", "description": "y" * 10_000},
-            }],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "x", "description": "y" * 10_000},
+                }
+            ],
         }
-        assert p._estimate_prompt_tokens(with_tools) > \
-            p._estimate_prompt_tokens(empty) + 1_000
+        assert (
+            p._estimate_prompt_tokens(with_tools)
+            > p._estimate_prompt_tokens(empty) + 1_000
+        )
 
     def test_chat_passes_scaled_timeout_to_request(self, monkeypatch):
         import json
+
         p = self._prov(monkeypatch)
         captured = {}
 
@@ -277,6 +317,7 @@ class TestScaledTimeout:
 
         monkeypatch.setattr(p, "_make_request", fake_make_request)
         import asyncio
+
         out = asyncio.run(p.chat([{"role": "user", "content": "x" * 300_000}]))
         assert out == "ok"
         assert captured["timeout"] is not None
@@ -301,26 +342,28 @@ class TestChatLogprobs:
         def fake_make_request(payload, timeout=None):
             captured["payload"] = payload
             return {
-                "choices": [{
-                    "message": {"content": "yes"},
-                    "logprobs": {
-                        "content": [{
-                            "token": "yes",
-                            "logprob": -0.22,
-                            "top_logprobs": [
-                                {"token": "yes", "logprob": -0.22},
-                                {"token": "no", "logprob": -1.6},
+                "choices": [
+                    {
+                        "message": {"content": "yes"},
+                        "logprobs": {
+                            "content": [
+                                {
+                                    "token": "yes",
+                                    "logprob": -0.22,
+                                    "top_logprobs": [
+                                        {"token": "yes", "logprob": -0.22},
+                                        {"token": "no", "logprob": -1.6},
+                                    ],
+                                }
                             ],
-                        }],
-                    },
-                }]
+                        },
+                    }
+                ]
             }
 
         p = self._prov(monkeypatch)
         monkeypatch.setattr(p, "_make_request", fake_make_request)
-        content, top = asyncio.run(
-            p.chat_logprobs([{"role": "user", "content": "q"}])
-        )
+        content, top = asyncio.run(p.chat_logprobs([{"role": "user", "content": "q"}]))
         assert content == "yes"
         assert top is not None and top[0]["token"] == "yes"
         assert captured["payload"]["logprobs"] is True
@@ -331,14 +374,13 @@ class TestChatLogprobs:
 
         p = self._prov(monkeypatch)
         monkeypatch.setattr(
-            p, "_make_request",
+            p,
+            "_make_request",
             lambda payload, timeout=None: {
                 "choices": [{"message": {"content": "yes"}}],
             },
         )
-        content, top = asyncio.run(
-            p.chat_logprobs([{"role": "user", "content": "q"}])
-        )
+        content, top = asyncio.run(p.chat_logprobs([{"role": "user", "content": "q"}]))
         assert content == "yes"
         assert top is None
 
@@ -351,9 +393,7 @@ class TestChatLogprobs:
             raise RuntimeError("HTTP Error 400: no models loaded")
 
         monkeypatch.setattr(p, "_make_request", boom)
-        content, top = asyncio.run(
-            p.chat_logprobs([{"role": "user", "content": "q"}])
-        )
+        content, top = asyncio.run(p.chat_logprobs([{"role": "user", "content": "q"}]))
         assert content.startswith("[Error:")
         assert top is None
 
@@ -365,7 +405,8 @@ class TestChatLogprobs:
         monkeypatch.setenv("LMSTUDIO_URL", "http://localhost:1234/v1")
         p = _provider("qwen2.5-coder-1.5b-instruct")
         monkeypatch.setattr(
-            p, "_make_request",
+            p,
+            "_make_request",
             lambda payload, timeout=None: {
                 "choices": [{"message": {"content": "yes"}}],
             },
@@ -386,12 +427,14 @@ class TestEnsureModelLoaded:
 
     def test_already_loaded_skips_load(self, monkeypatch):
         monkeypatch.setattr(
-            _lmstudio_mod, "get_models_status",
+            _lmstudio_mod,
+            "get_models_status",
             lambda: [{"key": "qwen2.5-coder-1.5b-instruct", "loaded": True}],
         )
         called: list[str] = []
         monkeypatch.setattr(
-            _lmstudio_mod, "load_model",
+            _lmstudio_mod,
+            "load_model",
             lambda key, *a, **k: called.append(key) or (True, "loaded"),
         )
         ok, msg = self._prov().ensure_model_loaded()
@@ -401,7 +444,8 @@ class TestEnsureModelLoaded:
 
     def test_not_loaded_is_loaded(self, monkeypatch):
         monkeypatch.setattr(
-            _lmstudio_mod, "get_models_status",
+            _lmstudio_mod,
+            "get_models_status",
             lambda: [{"key": "qwen2.5-coder-1.5b-instruct", "loaded": False}],
         )
         called: list[str] = []
@@ -420,7 +464,8 @@ class TestEnsureModelLoaded:
         monkeypatch.setattr(_lmstudio_mod, "get_models_status", lambda: [])
         called: list[int] = []
         monkeypatch.setattr(
-            _lmstudio_mod, "load_model",
+            _lmstudio_mod,
+            "load_model",
             lambda *a, **k: called.append(1) or (True, "x"),
         )
         ok, msg = self._prov().ensure_model_loaded()
@@ -430,11 +475,14 @@ class TestEnsureModelLoaded:
 
     def test_load_failure_is_reported(self, monkeypatch):
         monkeypatch.setattr(
-            _lmstudio_mod, "get_models_status",
+            _lmstudio_mod,
+            "get_models_status",
             lambda: [{"key": "qwen2.5-coder-1.5b-instruct", "loaded": False}],
         )
         monkeypatch.setattr(
-            _lmstudio_mod, "load_model", lambda *a, **k: (False, "not found"),
+            _lmstudio_mod,
+            "load_model",
+            lambda *a, **k: (False, "not found"),
         )
         ok, msg = self._prov().ensure_model_loaded()
         assert ok is False
@@ -455,8 +503,9 @@ class TestContextLimitExtraction:
 
         def fake_status():
             calls.append(1)
-            return [{"key": "qwen/qwen3.8-27b", "loaded": True,
-                     "context_length": 262_144}]
+            return [
+                {"key": "qwen/qwen3.8-27b", "loaded": True, "context_length": 262_144}
+            ]
 
         monkeypatch.setattr(_lmstudio_mod, "get_models_status", fake_status)
         assert provider.context_length() == 262_144
@@ -481,9 +530,9 @@ class TestContextLimitExtraction:
     def test_model_absent_from_catalog_is_failsoft(self, monkeypatch) -> None:
         provider = _provider("qwen/qwen3.8-27b")
         monkeypatch.setattr(
-            _lmstudio_mod, "get_models_status",
+            _lmstudio_mod,
+            "get_models_status",
             lambda: [{"key": "some-other-model", "context_length": 8_192}],
         )
         assert provider.context_length() is None
         assert provider.context_limit is None
-

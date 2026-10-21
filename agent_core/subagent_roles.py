@@ -13,6 +13,7 @@ fit-for-purpose child agent:
 
 This module stays import-free of ``agent`` (agent_core namespace rule).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -69,10 +70,18 @@ ROLES: dict[str, SubagentRole] = {
             name="implementer",
             title="Implementer",
             mode=MODE_BUILD,
-            tools_allowed=frozenset({
-                "search", "read", "list_files", "definitions", "references",
-                "write", "edit", "run",
-            }),
+            tools_allowed=frozenset(
+                {
+                    "search",
+                    "read",
+                    "list_files",
+                    "definitions",
+                    "references",
+                    "write",
+                    "edit",
+                    "run",
+                }
+            ),
             system_prompt=(
                 "You are the Implementer subagent. Execute exactly ONE assigned "
                 "task: make the minimal correct change with write/edit, verify "
@@ -84,9 +93,17 @@ ROLES: dict[str, SubagentRole] = {
             name="tester",
             title="Tester",
             mode=MODE_BUILD,
-            tools_allowed=frozenset({
-                "search", "read", "list_files", "write", "edit", "run", "tests",
-            }),
+            tools_allowed=frozenset(
+                {
+                    "search",
+                    "read",
+                    "list_files",
+                    "write",
+                    "edit",
+                    "run",
+                    "tests",
+                }
+            ),
             system_prompt=(
                 "You are the Tester subagent. Own the red→green cycle: write "
                 "pytest regression tests under tests/, run them, and report "
@@ -98,10 +115,20 @@ ROLES: dict[str, SubagentRole] = {
             name="debugger",
             title="Debugger/Fixer",
             mode=MODE_BUILD,
-            tools_allowed=frozenset({
-                "search", "read", "list_files", "definitions", "references",
-                "diff", "edit", "write", "run", "tests",
-            }),
+            tools_allowed=frozenset(
+                {
+                    "search",
+                    "read",
+                    "list_files",
+                    "definitions",
+                    "references",
+                    "diff",
+                    "edit",
+                    "write",
+                    "run",
+                    "tests",
+                }
+            ),
             system_prompt=(
                 "You are the Debugger/Fixer subagent. You receive a failing "
                 "traceback or wrong behaviour. Find the root cause (not the "
@@ -126,9 +153,16 @@ ROLES: dict[str, SubagentRole] = {
             name="integrator",
             title="Integrator",
             mode=MODE_BUILD,
-            tools_allowed=frozenset({
-                "search", "read", "list_files", "diff", "git", "run",
-            }),
+            tools_allowed=frozenset(
+                {
+                    "search",
+                    "read",
+                    "list_files",
+                    "diff",
+                    "git",
+                    "run",
+                }
+            ),
             system_prompt=(
                 "You are the Integrator subagent. Handle git discipline: stage "
                 "and commit coherent change sets with conventional-commit "
@@ -166,9 +200,15 @@ ROLES: dict[str, SubagentRole] = {
             name="documenter",
             title="Documenter",
             mode=MODE_BUILD,
-            tools_allowed=frozenset({
-                "search", "read", "list_files", "write", "edit",
-            }),
+            tools_allowed=frozenset(
+                {
+                    "search",
+                    "read",
+                    "list_files",
+                    "write",
+                    "edit",
+                }
+            ),
             system_prompt=(
                 "You are the Documenter subagent. After behaviour changes, repair "
                 "documentation drift: README, USAGE, Architecture and CHANGES "

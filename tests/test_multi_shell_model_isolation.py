@@ -21,6 +21,7 @@ recovery path, not the bug.
 Hermetic: every LM Studio / settings touchpoint is monkeypatched, so no real
 server or model.json is touched.
 """
+
 from typing import Any
 
 import pytest
@@ -30,15 +31,18 @@ import pytest
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 
+
 def _fake_models(loaded_key: str) -> list[dict[str, Any]]:
-    return [{
-        "key": loaded_key,
-        "display_name": "Fake Model",
-        "params_string": "9B",
-        "size_bytes": 1_000_000,
-        "loaded": True,
-        "instance_id": "inst-1",
-    }]
+    return [
+        {
+            "key": loaded_key,
+            "display_name": "Fake Model",
+            "params_string": "9B",
+            "size_bytes": 1_000_000,
+            "loaded": True,
+            "instance_id": "inst-1",
+        }
+    ]
 
 
 @pytest.fixture()
@@ -63,10 +67,14 @@ def lmstudio_env(monkeypatch):
     )
     monkeypatch.setattr(
         "agent_core.config.load_agent_settings",
-        lambda: type("S", (), {
-            "llm_provider": "lmstudio",
-            "opencode_model": "opencode-go/deepseek-v4-flash",
-        })(),
+        lambda: type(
+            "S",
+            (),
+            {
+                "llm_provider": "lmstudio",
+                "opencode_model": "opencode-go/deepseek-v4-flash",
+            },
+        )(),
     )
     # Never write real files from these tests.
     saved: dict[str, Any] = {}
@@ -76,10 +84,14 @@ def lmstudio_env(monkeypatch):
     )
 
     def _make_agent(current: str):
-        provider = type("P", (), {
-            "model_name": current,
-            "_profile_name": None,
-        })()
+        provider = type(
+            "P",
+            (),
+            {
+                "model_name": current,
+                "_profile_name": None,
+            },
+        )()
         llm = type("L", (), {"model_name": current, "_provider": provider})()
         return type("A", (), {"llm": llm})()
 
@@ -89,6 +101,7 @@ def lmstudio_env(monkeypatch):
 # ---------------------------------------------------------------------------
 # Leak 1: `model list` must never switch or persist
 # ---------------------------------------------------------------------------
+
 
 class TestModelListIsReadOnly:
     def test_list_does_not_switch_when_another_shell_loaded_otherwise(
@@ -137,6 +150,7 @@ class TestModelListIsReadOnly:
 # Leak 2: resolve_model priority — persisted choice beats the live poll
 # ---------------------------------------------------------------------------
 
+
 class TestResolveModelPrefersPersistedOverLivePoll:
     @staticmethod
     def _patch_common(monkeypatch, persisted: dict[str, Any]) -> None:
@@ -145,15 +159,17 @@ class TestResolveModelPrefersPersistedOverLivePoll:
         monkeypatch.setattr(const, "load_model_json", lambda: persisted)
         monkeypatch.setattr(
             "agent_core.config.load_agent_settings",
-            lambda: type("S", (), {
-                "llm_provider": "lmstudio",
-                "opencode_model": "opencode-go/deepseek-v4-flash",
-            })(),
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "lmstudio",
+                    "opencode_model": "opencode-go/deepseek-v4-flash",
+                },
+            )(),
         )
 
-    def test_new_session_keeps_persisted_model_not_other_shells_vram(
-        self, monkeypatch
-    ):
+    def test_new_session_keeps_persisted_model_not_other_shells_vram(self, monkeypatch):
         import agent_core.constants as const
 
         self._patch_common(
@@ -179,12 +195,12 @@ class TestResolveModelPrefersPersistedOverLivePoll:
         # Nothing persisted yet → adopting the loaded model is correct.
         assert const.resolve_model(None) == "qwen3.5-9b-mtp"
 
-    def test_unknown_persisted_model_falls_through_to_live_poll(
-        self, monkeypatch
-    ):
+    def test_unknown_persisted_model_falls_through_to_live_poll(self, monkeypatch):
         import agent_core.constants as const
 
-        self._patch_common(monkeypatch, {"model": "not-a-real-model", "provider": "lmstudio"})
+        self._patch_common(
+            monkeypatch, {"model": "not-a-real-model", "provider": "lmstudio"}
+        )
         monkeypatch.setattr(
             "agent_core.llm.lmstudio.get_models_status",
             lambda: _fake_models("qwen3.5-9b-mtp"),
@@ -196,6 +212,7 @@ class TestResolveModelPrefersPersistedOverLivePoll:
 # ---------------------------------------------------------------------------
 # Leak 3: end-to-end through the REAL LLMClient constructor
 # ---------------------------------------------------------------------------
+
 
 class TestSessionPinThroughRealLLMClient:
     def test_llmclient_startup_pins_persisted_model_despite_foreign_vram(
@@ -211,10 +228,14 @@ class TestSessionPinThroughRealLLMClient:
         )
         monkeypatch.setattr(
             "agent_core.config.load_agent_settings",
-            lambda: type("S", (), {
-                "llm_provider": "lmstudio",
-                "opencode_model": "opencode-go/deepseek-v4-flash",
-            })(),
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "lmstudio",
+                    "opencode_model": "opencode-go/deepseek-v4-flash",
+                },
+            )(),
         )
         monkeypatch.setattr(
             "agent_core.llm.lmstudio.get_models_status",
@@ -239,6 +260,7 @@ class TestSessionPinThroughRealLLMClient:
 # resettable so the isolation tests above still see their own poll.
 # ---------------------------------------------------------------------------
 
+
 class TestLivePollIsCached:
     def test_poll_runs_once_for_many_resolutions(self, monkeypatch) -> None:
         import agent_core.constants as const
@@ -247,10 +269,14 @@ class TestLivePollIsCached:
         monkeypatch.setattr(const, "load_model_json", lambda: {})
         monkeypatch.setattr(
             "agent_core.config.load_agent_settings",
-            lambda: type("S", (), {
-                "llm_provider": "lmstudio",
-                "opencode_model": "opencode-go/deepseek-v4-flash",
-            })(),
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "lmstudio",
+                    "opencode_model": "opencode-go/deepseek-v4-flash",
+                },
+            )(),
         )
         calls = {"n": 0}
 
@@ -258,9 +284,7 @@ class TestLivePollIsCached:
             calls["n"] += 1
             return _fake_models("qwen3.5-9b-mtp")
 
-        monkeypatch.setattr(
-            "agent_core.llm.lmstudio.get_models_status", _poll
-        )
+        monkeypatch.setattr("agent_core.llm.lmstudio.get_models_status", _poll)
 
         for _ in range(5):
             assert const.resolve_model(None) == "qwen3.5-9b-mtp"
@@ -272,10 +296,14 @@ class TestLivePollIsCached:
         monkeypatch.setattr(const, "load_model_json", lambda: {})
         monkeypatch.setattr(
             "agent_core.config.load_agent_settings",
-            lambda: type("S", (), {
-                "llm_provider": "lmstudio",
-                "opencode_model": "opencode-go/deepseek-v4-flash",
-            })(),
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "lmstudio",
+                    "opencode_model": "opencode-go/deepseek-v4-flash",
+                },
+            )(),
         )
         seen: list[str] = []
 
@@ -291,9 +319,7 @@ class TestLivePollIsCached:
         const.reset_live_poll_cache()
         assert const.resolve_model(None) == "model-1"
 
-    def test_autouse_fixture_clears_the_cache_between_tests(
-        self, monkeypatch
-    ) -> None:
+    def test_autouse_fixture_clears_the_cache_between_tests(self, monkeypatch) -> None:
         """Pin the conftest autouse reset itself.
 
         Without it the isolation tests above pass only by luck: they all fake
@@ -307,10 +333,14 @@ class TestLivePollIsCached:
         monkeypatch.setattr(const, "load_model_json", lambda: {})
         monkeypatch.setattr(
             "agent_core.config.load_agent_settings",
-            lambda: type("S", (), {
-                "llm_provider": "lmstudio",
-                "opencode_model": "opencode-go/deepseek-v4-flash",
-            })(),
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "lmstudio",
+                    "opencode_model": "opencode-go/deepseek-v4-flash",
+                },
+            )(),
         )
         monkeypatch.setattr(
             "agent_core.llm.lmstudio.get_models_status",
@@ -319,9 +349,7 @@ class TestLivePollIsCached:
         # Deliberately DO NOT reset: poison the process-wide cache.
         assert const.resolve_model(None) == "leaked-from-a-prior-test"
 
-    def test_cache_does_not_survive_into_the_next_test(
-        self, monkeypatch
-    ) -> None:
+    def test_cache_does_not_survive_into_the_next_test(self, monkeypatch) -> None:
         """Runs AFTER ``test_autouse_fixture_clears_the_cache_between_tests``.
 
         That test leaves ``leaked-from-a-prior-test`` in the process-wide
@@ -338,10 +366,14 @@ class TestLivePollIsCached:
         monkeypatch.setattr(const, "load_model_json", lambda: {})
         monkeypatch.setattr(
             "agent_core.config.load_agent_settings",
-            lambda: type("S", (), {
-                "llm_provider": "lmstudio",
-                "opencode_model": "opencode-go/deepseek-v4-flash",
-            })(),
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "lmstudio",
+                    "opencode_model": "opencode-go/deepseek-v4-flash",
+                },
+            )(),
         )
         monkeypatch.setattr(
             "agent_core.llm.lmstudio.get_models_status",
@@ -359,10 +391,14 @@ class TestLivePollIsCached:
         monkeypatch.setattr(const, "load_model_json", lambda: {})
         monkeypatch.setattr(
             "agent_core.config.load_agent_settings",
-            lambda: type("S", (), {
-                "llm_provider": "lmstudio",
-                "opencode_model": "opencode-go/deepseek-v4-flash",
-            })(),
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "lmstudio",
+                    "opencode_model": "opencode-go/deepseek-v4-flash",
+                },
+            )(),
         )
         calls = {"n": 0}
 

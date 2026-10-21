@@ -9,6 +9,7 @@ from .doc_paths import find_input, resolve_output
 from .plan_verifier import check_doc, apply_report, summarize
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -19,10 +20,14 @@ def _detect_subpackages(workspace: str) -> list[str]:
         return []
     pkgs = set()
     for root, dirs, files in os.walk(workspace):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('__pycache__', '.pytest_cache')]
-        if '__init__.py' in files:
-            rel = os.path.relpath(root, workspace).replace('\\', '/')
-            pkgs.add(rel if rel != '.' else root.rsplit(os.sep, 1)[-1])
+        dirs[:] = [
+            d
+            for d in dirs
+            if not d.startswith(".") and d not in ("__pycache__", ".pytest_cache")
+        ]
+        if "__init__.py" in files:
+            rel = os.path.relpath(root, workspace).replace("\\", "/")
+            pkgs.add(rel if rel != "." else root.rsplit(os.sep, 1)[-1])
     return sorted(pkgs)
 
 
@@ -32,25 +37,41 @@ def _collision_scan(workspace: str) -> str:
         return ""
     taken: dict[str, list[str]] = {}
     for root, dirs, files in os.walk(workspace):
-        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
+        dirs[:] = [
+            d
+            for d in dirs
+            if d not in (".git", "__pycache__", ".pytest_cache", "backups")
+        ]
         for f in files:
             if not f.endswith(".py"):
                 continue
             try:
                 with open(os.path.join(root, f), "r", encoding="utf-8") as fh:
-                    names = {m.group(1) for m in re.finditer(r'^(?:class|def)\s+(\w+)', fh.read(), re.MULTILINE) if not m.group(1).startswith("__")}
+                    names = {
+                        m.group(1)
+                        for m in re.finditer(
+                            r"^(?:class|def)\s+(\w+)", fh.read(), re.MULTILINE
+                        )
+                        if not m.group(1).startswith("__")
+                    }
                 if names:
-                    rel_dir = os.path.relpath(root, workspace).replace("\\", "/").rstrip(".")
+                    rel_dir = (
+                        os.path.relpath(root, workspace).replace("\\", "/").rstrip(".")
+                    )
                     taken.setdefault(rel_dir, []).extend(sorted(names)[:20])
             except Exception:
                 print(f"Warning: Failed to scan {root}/{f}")
     if not taken:
         return ""
-    lines = ["",
-             "CRITICAL: These class and function names already exist in the project.",
-             "DO NOT create new files that define these same names in the same directory:",
+    lines = [
+        "",
+        "CRITICAL: These class and function names already exist in the project.",
+        "DO NOT create new files that define these same names in the same directory:",
     ]
-    lines += [f"  {d or 'root'}: {', '.join(names[:12])}" for d, names in sorted(taken.items())[:12]]
+    lines += [
+        f"  {d or 'root'}: {', '.join(names[:12])}"
+        for d, names in sorted(taken.items())[:12]
+    ]
     lines.append("If you need to add functionality to these, modify the existing file.")
     return "\n\n".join(lines)
 
@@ -64,11 +85,13 @@ class TaskplanCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return ("taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks\n"
-                "  Output is regression-checked (paths, duplicate definitions);\n"
-                "  flagged claims pause for confirmation unless --force.")
+        return (
+            "taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks\n"
+            "  Output is regression-checked (paths, duplicate definitions);\n"
+            "  flagged claims pause for confirmation unless --force."
+        )
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         if len(args) < 2:
             self.error("Usage: taskplan <analysis.md> <plan.md> [tasks.md]")
             return True
@@ -84,8 +107,11 @@ class TaskplanCommand(Command):
         plan_file = find_input(ws, clean_args[1])
         # Bare output filenames go to .docs/<timestamp>/ (the input's run
         # folder when it has one) — explicit paths are kept.
-        tasks_file = resolve_output(ws, clean_args[2] if len(clean_args) > 2 else "tasks.md",
-                                    sibling_of=analysis_file)
+        tasks_file = resolve_output(
+            ws,
+            clean_args[2] if len(clean_args) > 2 else "tasks.md",
+            sibling_of=analysis_file,
+        )
 
         try:
             with open(analysis_file, "r", encoding="utf-8") as f:
@@ -120,8 +146,14 @@ class TaskplanCommand(Command):
         path_rule = f"\n\nPATH RULES: New files MUST use a sub-package prefix (`{pkg_list}/`). BAD: bare filenames or `src/` without subdirectory.\nSIZE RULES: New files max 150 lines (SRP). Split large concepts. Modifying: minimal changes only."
 
         messages = [
-            {"role": "system", "content": "You are an expert project manager. Create a detailed task plan for implementing code changes. Break down work into concrete, actionable tasks with clear descriptions. Include task dependencies and priority.\n\nFollow the PATH and SIZE rules in the prompt below."},
-            {"role": "user", "content": f"Create a task implementation plan from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\n## Existing entities.py:\n{entities_content if entities_content else 'No entities.py found'}\n\nGenerate a tasks.md file with specific implementation tasks, organized by file, with clear steps for new and existing files. Ensure tasks respect the entity definitions in entities.py.{collision_warning}{path_rule}"}
+            {
+                "role": "system",
+                "content": "You are an expert project manager. Create a detailed task plan for implementing code changes. Break down work into concrete, actionable tasks with clear descriptions. Include task dependencies and priority.\n\nFollow the PATH and SIZE rules in the prompt below.",
+            },
+            {
+                "role": "user",
+                "content": f"Create a task implementation plan from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\n## Existing entities.py:\n{entities_content if entities_content else 'No entities.py found'}\n\nGenerate a tasks.md file with specific implementation tasks, organized by file, with clear steps for new and existing files. Ensure tasks respect the entity definitions in entities.py.{collision_warning}{path_rule}",
+            },
         ]
         tasks = await agent.llm.chat(messages)
 
@@ -131,11 +163,14 @@ class TaskplanCommand(Command):
         if not result.clean and not force:
             answer = auto_choice(
                 "  Taskplan has unverifiable/colliding claims — write anyway? (y/N): ",
-                default="n", auto_default="n",
+                default="n",
+                auto_default="n",
             )
             if answer.strip().lower() not in ("y", "yes"):
-                print("[taskplan] Halted — regenerate with corrected paths "
-                      "(or rerun with --force).")
+                print(
+                    "[taskplan] Halted — regenerate with corrected paths "
+                    "(or rerun with --force)."
+                )
                 return True
         content = apply_report(content, result)
 

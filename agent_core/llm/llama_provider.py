@@ -134,6 +134,7 @@ def _shard_stem(stem: str) -> str:
     Non-sharded stems are returned unchanged.
     """
     import re
+
     return re.sub(r"-\d{5}-of-\d{5}$", "", stem)
 
 
@@ -163,8 +164,9 @@ class LlamaProvider:
         # ``_server_model_id``).
         self.model_name = name if name.startswith("llama/") else f"llama/{name}"
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        self.api_url = (api_url or os.environ.get("AGENT_LLAMA_URL")
-                        or DEFAULT_LLAMA_BASE_URL).rstrip("/")
+        self.api_url = (
+            api_url or os.environ.get("AGENT_LLAMA_URL") or DEFAULT_LLAMA_BASE_URL
+        ).rstrip("/")
         self.retry_policy = retry_policy or RetryPolicy(max_retries=3, base_delay=2.0)
         self.temperature: float = 0.7
         self.max_tokens: int = 50000
@@ -207,7 +209,7 @@ class LlamaProvider:
         if self._cached_server_model_id:
             return self._cached_server_model_id
         name = self.model_name
-        return name[len("llama/"):] if name.startswith("llama/") else name
+        return name[len("llama/") :] if name.startswith("llama/") else name
 
     def refresh_server_model_id(self) -> str | None:
         """Ask the running llama-server which model it actually serves.
@@ -226,7 +228,11 @@ class LlamaProvider:
             with urllib.request.urlopen(req, timeout=MODEL_REFRESH_TIMEOUT) as resp:
                 data = json.loads(resp.read().decode())
             items = data.get("data") if isinstance(data, dict) else []
-            ids = [m.get("id") for m in (items or []) if isinstance(m, dict) and m.get("id")]
+            ids = [
+                m.get("id")
+                for m in (items or [])
+                if isinstance(m, dict) and m.get("id")
+            ]
             if ids:
                 self._cached_server_model_id = ids[0]
                 return self._cached_server_model_id
@@ -250,6 +256,7 @@ class LlamaProvider:
             return None
         self._context_probed = True
         from .llama_server import _http_json, _server_base_url
+
         try:
             base = _server_base_url(self.api_url)
             status, body = _http_json("GET", f"{base}/props", timeout=5.0)
@@ -262,7 +269,7 @@ class LlamaProvider:
             # Older builds / different entrypoints: meta.n_ctx per model.
             status, body = _http_json("GET", f"{self.api_url}/models", timeout=5.0)
             if status == 200 and isinstance(body, dict):
-                for m in (body.get("data") or []):
+                for m in body.get("data") or []:
                     if not isinstance(m, dict):
                         continue
                     meta = m.get("meta")
@@ -297,6 +304,7 @@ class LlamaProvider:
         """
         from .lmstudio import sanitize_message_roles
         from .harmony import apply_harmony_prompt
+
         model_info = KNOWN_MODELS.get(self.model_name, {})
         max_tok = override_max_tokens or self.max_tokens
         shaped = apply_harmony_prompt(
@@ -344,7 +352,9 @@ class LlamaProvider:
                 raise TransientHTTPError(exc.code, detail) from exc
             raise RuntimeError(f"HTTP Error {exc.code}: {detail}") from exc
 
-    def _make_request(self, payload: dict[str, Any], timeout: int | None = None) -> dict[str, Any]:
+    def _make_request(
+        self, payload: dict[str, Any], timeout: int | None = None
+    ) -> dict[str, Any]:
         """Non-streaming chat completion (runs in a thread for async).
 
         Self-heals the "model not found" 400: llama-server loads exactly one
@@ -361,14 +371,18 @@ class LlamaProvider:
             return self._post_chat(payload, t)
         except RuntimeError as exc:
             msg = str(exc)
-            if ("model" in msg.lower() and "not found" in msg.lower()
-                    and sent_id == self._server_model_id()):
+            if (
+                "model" in msg.lower()
+                and "not found" in msg.lower()
+                and sent_id == self._server_model_id()
+            ):
                 refreshed = self.refresh_server_model_id()
                 if refreshed and refreshed != sent_id:
                     payload = dict(payload)
                     payload["model"] = refreshed
-                    print(f"  [llama] server serves '{refreshed}'; "
-                          f"retrying with that id")
+                    print(
+                        f"  [llama] server serves '{refreshed}'; retrying with that id"
+                    )
                     return self._post_chat(payload, t)
             raise
 
@@ -388,7 +402,9 @@ class LlamaProvider:
             with self._open_chat(req, timeout) as response:
                 return cast(dict[str, Any], json.loads(response.read().decode()))
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"llama-server returned non-JSON response: {exc}") from exc
+            raise RuntimeError(
+                f"llama-server returned non-JSON response: {exc}"
+            ) from exc
 
     def _check_thinking_error(
         self, content: str, reasoning: str, finish_reason: str | None = None
@@ -397,15 +413,23 @@ class LlamaProvider:
         error string (or None).  Mirrors LMStudioProvider's guard so callers
         see a consistent [Error: ...] message."""
         if not content and reasoning and len(reasoning) > 500:
-            return ("[Error: model consumed "
-                    f"{len(reasoning)} reasoning bytes with no output. "
-                    "Retry with thinking disabled or a larger output budget.]")
-        if (finish_reason == "length" and reasoning and len(reasoning) > 300
-                and (not content or len(content) < len(reasoning))):
-            return ("[Error: model hit the output limit "
-                    f"({len(reasoning)} reasoning bytes) and the response was "
-                    "truncated before the output could complete. Retry with "
-                    "thinking disabled or a larger output budget.]")
+            return (
+                "[Error: model consumed "
+                f"{len(reasoning)} reasoning bytes with no output. "
+                "Retry with thinking disabled or a larger output budget.]"
+            )
+        if (
+            finish_reason == "length"
+            and reasoning
+            and len(reasoning) > 300
+            and (not content or len(content) < len(reasoning))
+        ):
+            return (
+                "[Error: model hit the output limit "
+                f"({len(reasoning)} reasoning bytes) and the response was "
+                "truncated before the output could complete. Retry with "
+                "thinking disabled or a larger output budget.]"
+            )
         return None
 
     async def chat(
@@ -423,12 +447,17 @@ class LlamaProvider:
         if self.context_limit is None and not self._context_probed:
             self.context_length()
         payload = self._build_payload(
-            messages, tools, override_max_tokens=max_tokens, disable_thinking=disable_thinking,
+            messages,
+            tools,
+            override_max_tokens=max_tokens,
+            disable_thinking=disable_thinking,
         )
         label = f"[model: {payload['model']}]"
         if self._profile_name:
-            label = (f"[model: {payload['model']} | profile={self._profile_name} "
-                     f"t={self.temperature} tok={self.max_tokens}]")
+            label = (
+                f"[model: {payload['model']} | profile={self._profile_name} "
+                f"t={self.temperature} tok={self.max_tokens}]"
+            )
         if label != self._last_label:
             print(f"  {label}", end="", flush=True)
             self._last_label = label
@@ -443,28 +472,43 @@ class LlamaProvider:
                 content = message.get("content") or ""
                 reasoning = message.get("reasoning_content") or ""
                 usage = result.get("usage") if isinstance(result, dict) else None
-                prompt_tokens = int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
-                completion_tokens = int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0
+                prompt_tokens = (
+                    int(usage.get("prompt_tokens") or 0)
+                    if isinstance(usage, dict)
+                    else 0
+                )
+                completion_tokens = (
+                    int(usage.get("completion_tokens") or 0)
+                    if isinstance(usage, dict)
+                    else 0
+                )
                 self.last_response_metrics = ResponseMetrics(
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     latency_ms=elapsed_ms,
-                    cost=estimate_cost(prompt_tokens, completion_tokens, self.model_name, "llama"),
+                    cost=estimate_cost(
+                        prompt_tokens, completion_tokens, self.model_name, "llama"
+                    ),
                 )
                 if tools and message.get("tool_calls"):
                     return json.dumps(message)
                 thinking_err = self._check_thinking_error(
-                    content, reasoning, finish_reason=choice.get("finish_reason"))
+                    content, reasoning, finish_reason=choice.get("finish_reason")
+                )
                 if thinking_err:
                     return thinking_err
                 return content or reasoning
             return ""
 
         def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
-            print(f"  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s...")
+            print(
+                f"  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s..."
+            )
 
         try:
-            return await self.retry_policy.execute_with_retry(_do_request, on_retry=_on_retry)
+            return await self.retry_policy.execute_with_retry(
+                _do_request, on_retry=_on_retry
+            )
         except Exception as e:  # noqa: BLE001 - never raise to callers
             return f"[Error: {e}]"
 
@@ -478,8 +522,10 @@ class LlamaProvider:
             req = urllib.request.Request(
                 f"{self.api_url}/chat/completions",
                 data=data,
-                headers={"Content-Type": "application/json",
-                         "Authorization": f"Bearer {self.api_key}"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}",
+                },
                 method="POST",
             )
             full_content = ""
@@ -510,16 +556,21 @@ class LlamaProvider:
                         logger.warning("llama-server stream JSON decode error: %s", e)
             print()
             thinking_err = self._check_thinking_error(
-                full_content, reasoning_content, finish_reason=finish_reason)
+                full_content, reasoning_content, finish_reason=finish_reason
+            )
             if thinking_err:
                 return thinking_err
             return full_content
 
         def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
-            print(f"\n  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s...")
+            print(
+                f"\n  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s..."
+            )
 
         try:
-            return await self.retry_policy.execute_with_retry(_do_stream, on_retry=_on_retry)
+            return await self.retry_policy.execute_with_retry(
+                _do_stream, on_retry=_on_retry
+            )
         except Exception as e:  # noqa: BLE001 - never raise to callers
             return f"[llama-server stream error: {e}]"
 
@@ -590,7 +641,11 @@ class LlamaProvider:
         Management endpoints like ``POST /shutdown`` live at the server root,
         not under ``/v1``.
         """
-        return self.api_url.rsplit("/v1", 1)[0] if self.api_url.endswith("/v1") else self.api_url
+        return (
+            self.api_url.rsplit("/v1", 1)[0]
+            if self.api_url.endswith("/v1")
+            else self.api_url
+        )
 
     def shutdown(self) -> tuple[bool, str]:
         """Shut down the llama-server process, unloading whatever model it has.

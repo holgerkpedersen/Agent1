@@ -79,9 +79,7 @@ class AnalyzeCommand:
         print(f"Functions detected: {len(signatures)}")
         for func_name, params, return_annotation in signatures:
             param_str = ", ".join(params) if params else ""
-            annotation_str = (
-                f" -> {return_annotation}" if return_annotation else ""
-            )
+            annotation_str = f" -> {return_annotation}" if return_annotation else ""
             print(f"  def {func_name}({param_str}){annotation_str}")
 
         print(f"Complexity estimate: {complexity_score}")
@@ -103,9 +101,7 @@ class AnalyzeCommand:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 param_names: list[str] = [arg.arg for arg in node.args.args]
                 return_annotation: str | None = None
-                if node.returns is not None and isinstance(
-                    node.returns, ast.Name
-                ):
+                if node.returns is not None and isinstance(node.returns, ast.Name):
                     return_annotation = node.returns.id
 
                 signatures.append((node.name, param_names, return_annotation))

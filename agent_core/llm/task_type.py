@@ -36,15 +36,15 @@ __all__ = ["TaskType", "infer_task_type"]
 _RULES: tuple[tuple[tuple[str, ...], TaskType], ...] = (
     # Fixes beat everything: a traceback is a fix request even if it also
     # mentions tests ("the test suite fails") or performance.
-    (("fix", "error", "bug", "traceback", "regression", "failing", "crash"),
-     TaskType.FIX),
+    (
+        ("fix", "error", "bug", "traceback", "regression", "failing", "crash"),
+        TaskType.FIX,
+    ),
     # Test/coverage work is analysis of the suite, checked BEFORE the generic
     # analyze bucket only in ordering terms (both map differently: see map).
     (("test", "pytest", "coverage"), TaskType.ANALYZE),
-    (("optimize", "slow", "latency", "speed up", "performance"),
-     TaskType.OPTIMIZE),
-    (("implement", "add ", "create", "feature", "build", "write "),
-     TaskType.IMPLEMENT),
+    (("optimize", "slow", "latency", "speed up", "performance"), TaskType.OPTIMIZE),
+    (("implement", "add ", "create", "feature", "build", "write "), TaskType.IMPLEMENT),
     (("workflow", "pipeline", "chain"), TaskType.WORKFLOW),
     (("tune", "profile", "benchmark"), TaskType.PERF_TUNING),
     (("analyze", "investigate", "explain", "why", "read"), TaskType.ANALYZE),

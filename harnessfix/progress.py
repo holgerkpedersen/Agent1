@@ -18,6 +18,7 @@ Two artifacts are maintained under ``reports/harnessfix/``:
 All writes are atomic (temp file + ``os.replace``) so a half-written beacon can
 never be read by the dashboard, and reads tolerate a missing/corrupt file.
 """
+
 from __future__ import annotations
 
 import json
@@ -50,6 +51,7 @@ def status_path() -> Path:
 def history_path() -> Path:
     """Path of the live run_history.jsonl beacon (see :func:`output_dir`)."""
     return HISTORY_PATH
+
 
 #: Phases the loop moves through, in rough order.  Used only for stable labels
 #: and human-readable ordering in the UI; the beacon stores a free-form string.

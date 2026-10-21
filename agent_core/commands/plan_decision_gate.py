@@ -16,6 +16,7 @@ failed gate aborts the whole run:
   line number (``3007``), flagging "references resolved decision '007'".
   Ids now match only on a token boundary (see :func:`_references_decision`).
 """
+
 from __future__ import annotations
 
 import json
@@ -136,7 +137,10 @@ class PlanDecisionGate:
 
                     # Decision 001: Schema validation must remain
                     if "pydantic-schema" in tags or "input-validation" in tags:
-                        if "json.loads" in plan_content and "pydantic" not in plan_content:
+                        if (
+                            "json.loads" in plan_content
+                            and "pydantic" not in plan_content
+                        ):
                             violations.append(
                                 f"Decision {decision_id} ({title}): Plan uses raw json.loads instead of Pydantic schema validation"
                             )
@@ -194,6 +198,8 @@ class PlanDecisionGate:
             # Same file named at different depths, e.g. `agent.py` vs
             # `pkg/agent.py` — require the shorter path to be a suffix at a
             # component boundary.
-            if plan_norm.endswith("/" + decision_norm) or decision_norm.endswith("/" + plan_norm):
+            if plan_norm.endswith("/" + decision_norm) or decision_norm.endswith(
+                "/" + plan_norm
+            ):
                 return True
         return False

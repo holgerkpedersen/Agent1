@@ -89,7 +89,7 @@ def _flag_value(args: list[str], flag: str) -> str | None:
                 return _unquote(args[i + 1])
             return None
         if arg.startswith(flag + "="):
-            return _unquote(arg[len(flag) + 1:])
+            return _unquote(arg[len(flag) + 1 :])
     return None
 
 
@@ -132,7 +132,9 @@ class ReviewCommand(Command):
         if trace_dir is None:
             self.error("Usage: review refresh [--trace-dir <dir>] [--diags-dir <dir>]")
             return True
-        diags_dir = _flag_path(args, "--diags-dir", agent, "reports/harnessfix/diagnoses")
+        diags_dir = _flag_path(
+            args, "--diags-dir", agent, "reports/harnessfix/diagnoses"
+        )
         if diags_dir is None:
             self.error("Usage: review refresh [--trace-dir <dir>] [--diags-dir <dir>]")
             return True
@@ -151,8 +153,10 @@ class ReviewCommand(Command):
         reviews = merge_existing_reviews(reviews, existing, trace_dir)
         save_reviews(reviews, self._reviews_path(agent))
         labeled = sum(1 for r in reviews.values() if r.is_labeled())
-        print(f"Reviewed {len(reviews)} failed task(s) "
-              f"({labeled} labeled) from {trace_dir}")
+        print(
+            f"Reviewed {len(reviews)} failed task(s) "
+            f"({labeled} labeled) from {trace_dir}"
+        )
         return True
 
     # ── list ────────────────────────────────────────────────────────────
@@ -162,8 +166,10 @@ class ReviewCommand(Command):
         print(review_table(reviews))
         unreviewed = [r for r in reviews.values() if not r.is_labeled()]
         if unreviewed:
-            print(f"\n{len(unreviewed)} unreviewed — `review auto` labels them "
-                  "for you, or `review label <task> auto` for one.")
+            print(
+                f"\n{len(unreviewed)} unreviewed — `review auto` labels them "
+                "for you, or `review label <task> auto` for one."
+            )
         return True
 
     # ── show ────────────────────────────────────────────────────────────
@@ -175,21 +181,35 @@ class ReviewCommand(Command):
         reviews = load_reviews(self._reviews_path(agent))
         rec = reviews.get(_unquote(args[0]))
         if rec is None:
-            print(f"No review record for task {args[0]}. Run `review refresh`, "
-                  f"or `review label {args[0]} auto` to have the agent review it.")
+            print(
+                f"No review record for task {args[0]}. Run `review refresh`, "
+                f"or `review label {args[0]} auto` to have the agent review it."
+            )
             return True
-        for key in ("task_id", "prompt", "model", "profile", "outcome",
-                    "guards", "affected_files", "root_layer", "mechanism",
-                    "disposition", "note", "review_date", "source"):
+        for key in (
+            "task_id",
+            "prompt",
+            "model",
+            "profile",
+            "outcome",
+            "guards",
+            "affected_files",
+            "root_layer",
+            "mechanism",
+            "disposition",
+            "note",
+            "review_date",
+            "source",
+        ):
             val = getattr(rec, key)
             if isinstance(val, list):
                 # Deduplicate guards while preserving order; show repeat count
                 if key == "guards" and val:
                     from collections import Counter
+
                     counts = Counter(val)
                     val = ", ".join(
-                        f"{g} x{n}" if n > 1 else g
-                        for g, n in counts.items()
+                        f"{g} x{n}" if n > 1 else g for g, n in counts.items()
                     )
                 else:
                     val = ", ".join(val)
@@ -200,7 +220,9 @@ class ReviewCommand(Command):
 
     async def _cmd_label(self, args: list[str], agent: "Agent") -> bool:
         if len(args) < 2:
-            self.error("Usage: review label <task> <bug|regression|noise|ok|auto> [--note \"...\"]")
+            self.error(
+                'Usage: review label <task> <bug|regression|noise|ok|auto> [--note "..."]'
+            )
             return True
         task_id = _unquote(args[0])
         disposition = _unquote(args[1]).lower()
@@ -238,7 +260,10 @@ class ReviewCommand(Command):
         return True
 
     async def _auto_label_one(
-        self, task_id: str, note: str, reviews: dict[str, ReviewRecord],
+        self,
+        task_id: str,
+        note: str,
+        reviews: dict[str, ReviewRecord],
         agent: "Agent",
     ) -> bool:
         trace = Path(agent.workspace) / "reports" / "traces" / f"{task_id}.jsonl"
@@ -263,15 +288,20 @@ class ReviewCommand(Command):
         full_note = note or verdict.note
         try:
             label_review(
-                reviews, task_id, verdict.disposition,
-                note=full_note, source="agent",
+                reviews,
+                task_id,
+                verdict.disposition,
+                note=full_note,
+                source="agent",
             )
         except ValueError as exc:
             self.error(str(exc))
             return True
         save_reviews(reviews, self._reviews_path(agent))
-        print(f"Agent reviewed {task_id}: {verdict.disposition} "
-              f"(confidence {verdict.confidence})")
+        print(
+            f"Agent reviewed {task_id}: {verdict.disposition} "
+            f"(confidence {verdict.confidence})"
+        )
         return True
 
     # ── export ──────────────────────────────────────────────────────────

@@ -28,13 +28,13 @@ _BOLD = "\033[1m"
 
 #: Foreground palette used across the REPL.
 _PALETTE: dict[str, str] = {
-    "cyan": "\033[36m",   # tool/command names
+    "cyan": "\033[36m",  # tool/command names
     "green": "\033[32m",  # successful results / verify ✓
-    "red": "\033[31m",    # errors, warnings, blocked commands
+    "red": "\033[31m",  # errors, warnings, blocked commands
     "yellow": "\033[33m",  # status/info markers ([STDERR], hints)
-    "blue": "\033[34m",   # info banners / headers
+    "blue": "\033[34m",  # info banners / headers
     "magenta": "\033[35m",  # special markers (auto-continue, stopped)
-    "gray": "\033[90m",   # muted secondary text
+    "gray": "\033[90m",  # muted secondary text
 }
 
 
@@ -42,7 +42,7 @@ def _wrap(text: str, color: str, bold: bool = False) -> str:
     """Wrap *text* in ANSI codes if color is enabled; otherwise return as-is."""
     if not _ENABLED or not text:
         return text
-    prefix = (color + (_BOLD if bold else ""))
+    prefix = color + (_BOLD if bold else "")
     # Reset only at the end so nested spans stay consistent.
     return f"{prefix}{text}{_RESET}"
 
@@ -110,7 +110,11 @@ def colorize_result(result: str) -> str:
             continue
 
         # STDERR / hints — yellow.
-        if line.startswith("[stderr]") or low.startswith("hint:") or "unix command hint" in low:
+        if (
+            line.startswith("[stderr]")
+            or low.startswith("hint:")
+            or "unix command hint" in low
+        ):
             out_lines.append(yellow(line))
             continue
 

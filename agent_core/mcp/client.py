@@ -6,6 +6,7 @@ declared JSON schema BEFORE the call leaves the process, and results are
 size-capped so one chatty tool cannot balloon the agent's context (the
 read-loop spiral of 2026-08-25 must not be re-importable through MCP).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -39,6 +40,7 @@ def truncate_result(text: str) -> str:
 # ---------------------------------------------------------------------------
 # Minimal JSON-Schema argument validation (fail-closed before network IO)
 # ---------------------------------------------------------------------------
+
 
 def validate_against_schema(schema: Any, value: Any, where: str = "args") -> str | None:
     """Return an error string when *value* violates *schema*, else None."""
@@ -148,7 +150,9 @@ class McpClient:
         if err:
             raise McpProtocolError(f"argument validation failed: {err}")
         result = self._transport.request(
-            "tools/call", {"name": name, "arguments": args}, self._timeout_s,
+            "tools/call",
+            {"name": name, "arguments": args},
+            self._timeout_s,
         )
         if not isinstance(result, dict):
             raise McpProtocolError("tools/call returned a non-object result")
@@ -169,6 +173,7 @@ class McpClient:
                     parts.append(f"[{block.get('type', 'binary')} data omitted]")
         if not parts and "structuredContent" in result:
             import json
+
             parts.append(json.dumps(result["structuredContent"], ensure_ascii=False))
         return "\n".join(parts)
 
@@ -181,7 +186,9 @@ class McpClient:
 
     def resources_read(self, uri: str) -> str:
         result = self._transport.request(
-            "resources/read", {"uri": uri}, self._timeout_s,
+            "resources/read",
+            {"uri": uri},
+            self._timeout_s,
         )
         if not isinstance(result, dict):
             raise McpProtocolError("resources/read returned a non-object result")
@@ -193,6 +200,7 @@ class McpClient:
                     if isinstance(block.get("text"), str):
                         texts.append(block["text"])
                     elif "uri" in block:
-                        texts.append(f"[{block.get('mimeType', 'resource')}: "
-                                     f"{block['uri']}]")
+                        texts.append(
+                            f"[{block.get('mimeType', 'resource')}: {block['uri']}]"
+                        )
         return truncate_result("\n".join(texts))

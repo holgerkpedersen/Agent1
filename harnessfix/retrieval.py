@@ -15,6 +15,7 @@ The feature is opt-in via ``AGENT_RAG_EPISODES`` (default off) so the default
 prompt is byte-identical to before.  When disabled, or when the corpus has no
 successful episodes, ``format_episodic_notes`` returns ``""``.
 """
+
 from __future__ import annotations
 
 import os
@@ -74,7 +75,9 @@ def _query_signals(query: str) -> tuple[set[str], set[str]]:
 class EpisodeIndex:
     """In-memory semantic index over successful episodes (per process)."""
 
-    def __init__(self, episodes: Iterable[Episode], embedder: Optional[Embedder] = None) -> None:
+    def __init__(
+        self, episodes: Iterable[Episode], embedder: Optional[Embedder] = None
+    ) -> None:
         self._embedder = embedder or _embedder()
         self._episodes: List[Episode] = list(episodes)
         self._db = VectorDatabase(dimension=self._embedder.dim)
@@ -84,11 +87,15 @@ class EpisodeIndex:
             self._db.add_vector(vec, {"episode_index": i})
 
     @classmethod
-    def for_workspace(cls, workspace: str, embedder: Optional[Embedder] = None) -> "EpisodeIndex":
+    def for_workspace(
+        cls, workspace: str, embedder: Optional[Embedder] = None
+    ) -> "EpisodeIndex":
         eps = successful_episodes(workspace)
         return cls(eps, embedder=embedder)
 
-    def retrieve(self, query: str, mode: str = "implement", k: int = 3) -> List[Episode]:
+    def retrieve(
+        self, query: str, mode: str = "implement", k: int = 3
+    ) -> List[Episode]:
         if not self._episodes:
             return []
         q_vec = self._embedder.from_string(query)
@@ -104,7 +111,8 @@ class EpisodeIndex:
                 filtered = [
                     (sim, ep)
                     for sim, ep in scored
-                    if (q_stems & set(ep.file_stems)) or (q_errors & set(ep.error_classes))
+                    if (q_stems & set(ep.file_stems))
+                    or (q_errors & set(ep.error_classes))
                 ]
                 if filtered:
                     filtered.sort(key=lambda x: x[0], reverse=True)
@@ -117,7 +125,9 @@ class EpisodeIndex:
 _INDEX_CACHE: dict[str, EpisodeIndex] = {}
 
 
-def get_index(workspace: str, embedder: Optional[Embedder] = None) -> Optional[EpisodeIndex]:
+def get_index(
+    workspace: str, embedder: Optional[Embedder] = None
+) -> Optional[EpisodeIndex]:
     """Cached per-workspace index (rebuilt when the episode cache is cleared)."""
     key = os.path.abspath(workspace)
     if key in _INDEX_CACHE:

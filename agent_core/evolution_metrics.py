@@ -1,10 +1,12 @@
 from typing import Any
 
+
 class ExecutionMetric:
     def __init__(self, score: float, success: bool, latency: float) -> None:
         self.score = score
         self.success = success
         self.latency = latency
+
 
 class EvolutionMetrics:
     def __init__(self, window_size: int = 10, threshold: float = 0.75) -> None:
@@ -46,5 +48,5 @@ class EvolutionMetrics:
             "threshold": self.threshold,
             "average_score": self.average_score(),
             "history_count": len(self._history),
-            "should_evolve": self.should_evolve()
+            "should_evolve": self.should_evolve(),
         }

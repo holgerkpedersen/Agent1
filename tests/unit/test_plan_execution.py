@@ -4,6 +4,7 @@ No LLM / no live agent required: the executor seam (``run_plan``) is exercised
 with a fake ``executor_factory`` so the dependency scheduling is fully tested
 in isolation.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -20,7 +21,9 @@ from agent_core.orchestration.dependency_graph import CycleError
 # ── parser: markdown ────────────────────────────────────────────────────
 def test_md_parse_single_task_default_role():
     tasks = parse_plan_tasks("## Tasks\n- [T1] write the thing\n", fmt="md")
-    assert tasks == [PlanTask(id="T1", description="write the thing", role="implementer")]
+    assert tasks == [
+        PlanTask(id="T1", description="write the thing", role="implementer")
+    ]
 
 
 def test_md_parse_multi_with_role_and_deps():
@@ -97,7 +100,9 @@ async def _fake_executor_factory(collect):
         async def exec(input_data):
             collect.append((task.id, sorted(input_data.keys())))
             return {"success": True, "result": f"done {task.id}"}
+
         return exec
+
     return make
 
 
@@ -110,7 +115,8 @@ async def test_run_plan_orders_and_completes():
         PlanTask(id="T2", description="c", depends_on=["T1"]),
     ]
     snapshot = await run_plan(
-        agent=None, tasks=tasks,
+        agent=None,
+        tasks=tasks,
         executor_factory=await _fake_executor_factory(calls),
     )
     # All three reached a terminal state.
@@ -127,7 +133,9 @@ async def test_run_plan_dry_run_spawns_nothing():
     calls: list[tuple[str, list[str]]] = []
     tasks = [PlanTask(id="T1", description="a")]
     snapshot = await run_plan(
-        agent=None, tasks=tasks, dry_run=True,
+        agent=None,
+        tasks=tasks,
+        dry_run=True,
         executor_factory=await _fake_executor_factory(calls),
     )
     assert calls == []

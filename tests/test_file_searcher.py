@@ -5,6 +5,7 @@ char-by-char (per-character output lines), and the searcher matched
 runtime state files (.git logs, chat_history.json, mypy caches) instead
 of source code.
 """
+
 import asyncio
 
 from agent_core.file_searcher import FileSearcher
@@ -168,13 +169,15 @@ class TestSearchToolHandler:
 
     def test_search_tool_returns_one_line_per_match(self, tmp_path):
         from agent import Agent
+
         (tmp_path / "mod.py").write_text(
             "def target_fn():\n    return 1\n", encoding="utf-8"
         )
 
         async def run():
             return await Agent(workspace=str(tmp_path))._execute_tool_call(
-                "search", {"query": "target_fn", "path": "."},
+                "search",
+                {"query": "target_fn", "path": "."},
             )
 
         result = asyncio.run(run())
@@ -185,17 +188,20 @@ class TestSearchToolHandler:
 
     def test_search_tool_no_match_message(self, tmp_path):
         from agent import Agent
+
         (tmp_path / "a.py").write_text("x = 1", encoding="utf-8")
 
         async def run():
             return await Agent(workspace=str(tmp_path))._execute_tool_call(
-                "search", {"query": "never-present", "path": "."},
+                "search",
+                {"query": "never-present", "path": "."},
             )
 
         assert "No files found matching that query." in asyncio.run(run())
 
     def test_search_tool_excludes_chat_history(self, tmp_path):
         from agent import Agent
+
         (tmp_path / "src.py").write_text(
             "def real_symbol():\n    pass\n", encoding="utf-8"
         )
@@ -205,7 +211,8 @@ class TestSearchToolHandler:
 
         async def run():
             return await Agent(workspace=str(tmp_path))._execute_tool_call(
-                "search", {"query": "real_symbol", "path": "."},
+                "search",
+                {"query": "real_symbol", "path": "."},
             )
 
         result = asyncio.run(run())
@@ -219,6 +226,7 @@ class TestSearchToolHandler:
         import os as _os
 
         from agent import Agent
+
         # A file *outside* the workspace that also contains the needle — it must
         # never appear in results when path='.'.
         outside = _os.path.join(_os.getcwd(), "needle_marker_outside.py")

@@ -37,6 +37,7 @@ byte-identical — the same contract ``Agent._record_llm_experience`` honours.
 Nothing here ever raises: a missing, locked or read-only DB must degrade to a
 silent no-op, never break a turn.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -104,11 +105,17 @@ def prompt_sha256(prompt: Any) -> str:
         try:
             clean = [
                 {k: v for k, v in m.items() if not str(k).startswith("_")}
-                if isinstance(m, dict) else m
+                if isinstance(m, dict)
+                else m
                 for m in prompt
             ]
-            canonical = json.dumps(clean, ensure_ascii=False, sort_keys=True,
-                                   separators=(",", ":"), default=str)
+            canonical = json.dumps(
+                clean,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
         except (TypeError, ValueError):
             canonical = str(prompt)
     return hashlib.sha256(canonical.encode("utf-8", errors="replace")).hexdigest()
@@ -178,8 +185,9 @@ def resolve_decision_llm(agent: Any) -> str | None:
     for candidate in (
         getattr(agent, "model_name", None),
         getattr(getattr(agent, "llm", None), "model_name", None),
-        getattr(getattr(getattr(agent, "llm", None), "_provider", None),
-                "model_name", None),
+        getattr(
+            getattr(getattr(agent, "llm", None), "_provider", None), "model_name", None
+        ),
     ):
         if isinstance(candidate, str) and candidate:
             return candidate
@@ -222,8 +230,11 @@ def experiences_by_llm(db_path: str) -> list[dict[str, Any]]:
         "GROUP BY decision_llm ORDER BY COUNT(*) DESC, decision_llm ASC",
     )
     return [
-        {"decision_llm": r[0], "experiences": int(r[1]),
-         "avg_outcome": float(r[2]) if r[2] is not None else None}
+        {
+            "decision_llm": r[0],
+            "experiences": int(r[1]),
+            "avg_outcome": float(r[2]) if r[2] is not None else None,
+        }
         for r in rows
     ]
 
@@ -240,17 +251,20 @@ def success_rate_by_model(db_path: str) -> list[dict[str, Any]]:
     for llm, total, successes in rows:
         total_i = int(total)
         ok = int(successes or 0)
-        out.append({
-            "decision_llm": llm,
-            "total": total_i,
-            "successes": ok,
-            "success_rate": (ok / total_i) if total_i else None,
-        })
+        out.append(
+            {
+                "decision_llm": llm,
+                "total": total_i,
+                "successes": ok,
+                "success_rate": (ok / total_i) if total_i else None,
+            }
+        )
     return out
 
 
 def decision_latency_histogram(
-    db_path: str, bucket_ms: float = 100.0,
+    db_path: str,
+    bucket_ms: float = 100.0,
 ) -> list[dict[str, Any]]:
     """Latency histogram of logged decisions, bucketed to *bucket_ms*.
 
@@ -266,9 +280,7 @@ def decision_latency_histogram(
         "GROUP BY bucket ORDER BY bucket ASC",
         (float(bucket_ms),),
     )
-    return [
-        {"bucket_ms": int(r[0]) * bucket_ms, "count": int(r[1])} for r in rows
-    ]
+    return [{"bucket_ms": int(r[0]) * bucket_ms, "count": int(r[1])} for r in rows]
 
 
 def attribution_summary(db_path: str) -> dict[str, Any]:

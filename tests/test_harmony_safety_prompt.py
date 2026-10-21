@@ -10,6 +10,7 @@ unnecessary fatal changes".  These tests pin:
   * the payload wiring in ``LlamaProvider._build_payload``,
   * the safety rules in ``agent._SYSTEM_PROMPT`` itself.
 """
+
 from agent_core.shell_utils import SYSTEM_PROMPT as _SYSTEM_PROMPT
 from agent_core.llm.harmony import (
     HARMONY_GIT_ADDENDUM,
@@ -39,17 +40,16 @@ class TestIsHarmonyModel:
 
 class TestApplyHarmonyPrompt:
     def test_prepends_system_message_when_history_starts_with_user(self):
-        msgs = apply_harmony_prompt(
-            [{"role": "user", "content": "hi"}], "gpt-oss-20b")
+        msgs = apply_harmony_prompt([{"role": "user", "content": "hi"}], "gpt-oss-20b")
         assert msgs[0]["role"] == "system"
         assert HARMONY_SAFETY_ADDENDUM.strip() in msgs[0]["content"]
         assert msgs[1] == {"role": "user", "content": "hi"}
 
     def test_merges_into_existing_leading_system_message(self):
         msgs = apply_harmony_prompt(
-            [{"role": "system", "content": "BASE"},
-             {"role": "user", "content": "hi"}],
-            "gpt-oss-20b")
+            [{"role": "system", "content": "BASE"}, {"role": "user", "content": "hi"}],
+            "gpt-oss-20b",
+        )
         assert msgs[0]["role"] == "system"
         assert "BASE" in msgs[0]["content"]
         assert HARMONY_SAFETY_ADDENDUM.strip() in msgs[0]["content"]
@@ -57,7 +57,8 @@ class TestApplyHarmonyPrompt:
 
     def test_is_idempotent(self):
         once = apply_harmony_prompt(
-            [{"role": "system", "content": "BASE"}], "gpt-oss-20b")
+            [{"role": "system", "content": "BASE"}], "gpt-oss-20b"
+        )
         twice = apply_harmony_prompt(once, "gpt-oss-20b")
         content = twice[0]["content"]
         assert content.count(HARMONY_SAFETY_ADDENDUM.strip()) == 1
@@ -72,7 +73,8 @@ class TestApplyHarmonyPrompt:
 
     def test_prepended_system_carries_git_addendum(self):
         msgs = apply_harmony_prompt(
-            [{"role": "user", "content": "commit changes"}], "gpt-oss-20b")
+            [{"role": "user", "content": "commit changes"}], "gpt-oss-20b"
+        )
         content = msgs[0]["content"]
         assert HARMONY_GIT_ADDENDUM.strip() in content
         assert HARMONY_SAFETY_ADDENDUM.strip() in content
@@ -91,8 +93,7 @@ class TestApplyHarmonyPrompt:
 
 class TestLlamaPayloadWiring:
     def test_payload_for_gpt_oss_carries_safety_addendum(self):
-        prov = LlamaProvider(model_name="llama/oss-20b",
-                             api_url="http://h/v1")
+        prov = LlamaProvider(model_name="llama/oss-20b", api_url="http://h/v1")
         prov._cached_server_model_id = "gpt-oss-20b-MXFP4"
         payload = prov._build_payload([{"role": "user", "content": "hi"}])
         first = payload["messages"][0]
@@ -100,8 +101,9 @@ class TestLlamaPayloadWiring:
         assert HARMONY_SAFETY_ADDENDUM.strip() in first["content"]
 
     def test_payload_for_other_model_has_no_addendum(self):
-        prov = LlamaProvider(model_name="llama/qwen3-coder-30b-a3b-instruct",
-                             api_url="http://h/v1")
+        prov = LlamaProvider(
+            model_name="llama/qwen3-coder-30b-a3b-instruct", api_url="http://h/v1"
+        )
         prov._cached_server_model_id = "qwen3-coder-30b-a3b-instruct"
         payload = prov._build_payload([{"role": "user", "content": "hi"}])
         joined = " ".join(str(m.get("content") or "") for m in payload["messages"])

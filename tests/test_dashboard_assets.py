@@ -14,6 +14,7 @@ Root causes fixed:
    icon source was registered; static/assets/agent1-icon-bundle.js now
    registers every icon used by the dashboard via addIcon().
 """
+
 from __future__ import annotations
 
 import json
@@ -88,11 +89,15 @@ def test_frontend_libraries_are_vendored() -> None:
         assert os.path.isfile(path), f"missing vendored library: {rel}"
         assert os.path.getsize(path) > 10_000, f"suspiciously small library: {rel}"
 
-    css = open(os.path.join(REPO, LIBS[0]), encoding="utf-8",
-               errors="replace").read()
+    css = open(os.path.join(REPO, LIBS[0]), encoding="utf-8", errors="replace").read()
     # Layout classes the round navbar buttons depend on:
-    for cls in (".rounded-circle", ".d-flex", ".justify-content-center",
-                ".align-items-center", ".flex-wrap"):
+    for cls in (
+        ".rounded-circle",
+        ".d-flex",
+        ".justify-content-center",
+        ".align-items-center",
+        ".flex-wrap",
+    ):
         assert cls in css, f"bootstrap.min.css lacks {cls} -> buttons misalign"
 
 
@@ -109,20 +114,28 @@ def test_icon_bundle_registers_all_dashboard_icons_offline() -> None:
     assert match, "agent1-icon-bundle.js has no ICONS registry"
     icons = json.loads(match.group(1))
     # Icons used by partials/_header.html and _sidebar.html:
-    for name in ("tabler:palette", "heroicons:bars-3-solid", "mdi:github",
-                 "solar:home-smile-angle-outline", "line-md:gauge"):
+    for name in (
+        "tabler:palette",
+        "heroicons:bars-3-solid",
+        "mdi:github",
+        "solar:home-smile-angle-outline",
+        "line-md:gauge",
+    ):
         assert name in icons, f"offline icon bundle lacks {name}"
     assert len(icons) >= 14
     # Regression guard (cropped-icons bug): every record MUST carry explicit
     # width/height. addIcon() without dimensions falls back to a bogus
     # 16x16 viewBox and crops any icon drawn on a larger grid (24/1024/...).
     for name, rec in icons.items():
-        assert isinstance(rec.get("width"), (int, float)) and \
-            rec["width"] > 0, f"{name}: missing width -> icon renders cropped"
-        assert isinstance(rec.get("height"), (int, float)) and \
-            rec["height"] > 0, f"{name}: missing height -> icon renders cropped"
-        assert "<svg" not in str(rec.get("body", "")), \
+        assert isinstance(rec.get("width"), (int, float)) and rec["width"] > 0, (
+            f"{name}: missing width -> icon renders cropped"
+        )
+        assert isinstance(rec.get("height"), (int, float)) and rec["height"] > 0, (
+            f"{name}: missing height -> icon renders cropped"
+        )
+        assert "<svg" not in str(rec.get("body", "")), (
             f"{name}: body must be inner SVG content only"
+        )
 
 
 def test_theme_button_script_does_not_write_text_into_button(base_url: str) -> None:
@@ -130,8 +143,9 @@ def test_theme_button_script_does_not_write_text_into_button(base_url: str) -> N
     status, body = _get(base_url + "/static/ttheme/js/app.js")
     assert status == 200
     code_only = re.sub(rb"//[^\n]*|/\*.*?\*/", b"", body, flags=re.S)
-    assert not re.search(rb"\.innerText\s*=", code_only), \
+    assert not re.search(rb"\.innerText\s*=", code_only), (
         "app.js assigns innerText into the theme button again"
+    )
 
 
 def test_header_buttons_keep_round_shape_classes(base_url: str) -> None:
@@ -139,10 +153,13 @@ def test_header_buttons_keep_round_shape_classes(base_url: str) -> None:
     assert status == 200
     html = body.decode("utf-8")
     theme_btn = re.search(
-        r'<button type="button" data-theme-toggle(.*?)</button>', html, re.S)
+        r'<button type="button" data-theme-toggle(.*?)</button>', html, re.S
+    )
     mono_btn = re.search(
         r'<button type="button" onclick="toggleMonochrome\(\)"(.*?)</button>',
-        html, re.S)
+        html,
+        re.S,
+    )
     assert theme_btn and mono_btn, "navbar toggle buttons missing from header"
     for btn in (theme_btn, mono_btn):
         classes = btn.group(1)
@@ -226,8 +243,9 @@ def test_dark_mode_is_default_when_no_preference_stored(
     result = json.loads(proc.stdout.strip().splitlines()[-1])
 
     # Fresh visit with <html data-theme="dark"> (what index.html declares):
-    assert result["fresh_dark_declared"] == "dark", \
+    assert result["fresh_dark_declared"] == "dark", (
         "first load must stay dark to match the declared markup"
+    )
     # No stored preference and no declaration -> dark-first fallback:
     assert result["fresh_no_declaration"] == "dark"
     # An explicit light declaration is still honoured:

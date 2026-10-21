@@ -33,13 +33,31 @@ class _Agent:
 
 def _failed_trace(directory, task_id: str) -> None:
     writer = TraceWriter(task_id=task_id, directory=directory)
-    writer.emit({"kind": "task_begin", "layer": "context",
-                 "user_input": "fix the flaky gate",
-                 "model": "qwen3.8-27b", "profile": "deep-analysis"})
-    writer.emit({"kind": "tool_call", "layer": "tool_interface",
-                 "tool": "write", "args_hash": "w"})
-    writer.emit({"kind": "tool_error", "layer": "tool_interface",
-                 "exception": "PermissionError", "message": "denied"})
+    writer.emit(
+        {
+            "kind": "task_begin",
+            "layer": "context",
+            "user_input": "fix the flaky gate",
+            "model": "qwen3.8-27b",
+            "profile": "deep-analysis",
+        }
+    )
+    writer.emit(
+        {
+            "kind": "tool_call",
+            "layer": "tool_interface",
+            "tool": "write",
+            "args_hash": "w",
+        }
+    )
+    writer.emit(
+        {
+            "kind": "tool_error",
+            "layer": "tool_interface",
+            "exception": "PermissionError",
+            "message": "denied",
+        }
+    )
     writer.emit({"kind": "loop_end", "layer": "lifecycle", "outcome": "error"})
     writer.close()
 
@@ -60,6 +78,7 @@ def _run(cmd, args, agent):
 
 
 # ── 1. quotes must be stripped ──────────────────────────────────────────
+
 
 def test_refresh_trace_dir_with_spaces_needs_unquoted_token(ws, capsys):
     """The REPL hands us '"other traces"' — the command must strip the quotes
@@ -126,6 +145,7 @@ def test_label_note_equals_form_supported(ws, capsys):
 
 # ── 2. --note must survive the auto path ────────────────────────────────
 
+
 def test_auto_all_keeps_note(ws, capsys):
     """`review auto --note "..."` used to drop the note entirely."""
     _failed_trace(ws / "reports" / "traces", "tauto")
@@ -175,6 +195,7 @@ def test_auto_without_note_still_uses_verdict_note(ws, capsys):
 
 
 # ── 3. quoted task ids ──────────────────────────────────────────────────
+
 
 def test_show_and_export_accept_quoted_task_id(ws, capsys):
     _failed_trace(ws / "reports" / "traces", "tq")

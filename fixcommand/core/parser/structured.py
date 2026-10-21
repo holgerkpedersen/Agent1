@@ -56,15 +56,15 @@ def execute_tool_call(call: ToolCallResult) -> str:
                 line_number = int(args.get("line_number", 0))
             except (ValueError, TypeError):
                 line_number = 0
-            return _execute_apply_fix(
-                args["filename"], line_number, args["patch"]
-            )
+            return _execute_apply_fix(args["filename"], line_number, args["patch"])
         raise ValueError("Invalid arguments for apply_fix")
 
     raise ValueError(f"Unknown tool: {tool}")
 
 
-def _build_tool_call_result(tool_name: str, parsed_args: Dict[str, Any]) -> ToolCallResult:
+def _build_tool_call_result(
+    tool_name: str, parsed_args: Dict[str, Any]
+) -> ToolCallResult:
     """Construct a typed ToolCallResult from parsed arguments."""
     if tool_name == "read_file":
         filename = str(parsed_args.get("filename", ""))
@@ -78,7 +78,9 @@ def _build_tool_call_result(tool_name: str, parsed_args: Dict[str, Any]) -> Tool
         filename = str(parsed_args.get("filename", ""))
         # Handle potentially malformed line numbers by validating first
         raw_line_num = parsed_args.get("line_number")
-        if isinstance(raw_line_num, int) or (isinstance(raw_line_num, str) and raw_line_num.isdigit()):
+        if isinstance(raw_line_num, int) or (
+            isinstance(raw_line_num, str) and raw_line_num.isdigit()
+        ):
             line_number = int(raw_line_num)
         else:
             line_number = 0
@@ -86,7 +88,11 @@ def _build_tool_call_result(tool_name: str, parsed_args: Dict[str, Any]) -> Tool
         patch = str(parsed_args.get("patch", ""))
         return {
             "tool": "apply_fix",
-            "arguments": {"filename": filename, "line_number": line_number, "patch": patch},
+            "arguments": {
+                "filename": filename,
+                "line_number": line_number,
+                "patch": patch,
+            },
             "result": "",
         }
 

@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 from typing import Any, List
 
+
 @dataclass
 class ScoredCandidate:
     result: Any
     score: float
+
 
 class CandidateSelector:
     def select_best(self, candidates: List[ScoredCandidate]) -> ScoredCandidate:

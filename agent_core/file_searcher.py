@@ -12,10 +12,28 @@ from agent_core.path_utils import safe_path
 
 #: Directories never searched (mirrors .gitignore for session state/caches).
 _IGNORED_DIRS = {
-    ".git", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-    ".coverage", ".opencode", ".poolside", ".vscode", ".tox", ".nox",
-    "venv", ".venv", "env", ".env", "node_modules", "backups",
-    "htmlcov", ".eggs", "dist", "build", ".idea",
+    ".git",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".coverage",
+    ".opencode",
+    ".poolside",
+    ".vscode",
+    ".tox",
+    ".nox",
+    "venv",
+    ".venv",
+    "env",
+    ".env",
+    "node_modules",
+    "backups",
+    "htmlcov",
+    ".eggs",
+    "dist",
+    "build",
+    ".idea",
     # .docs holds timestamped workflow docs (spec/analysis/plan/tasks),
     # not source — must not surface as code matches.
     ".docs",
@@ -23,8 +41,13 @@ _IGNORED_DIRS = {
 
 #: Individual files never searched (runtime/session state).
 _IGNORED_FILES = {
-    "chat_history.json", "model.json", "project_memory.json",
-    ".env", ".env.example", ".coverage", "model",
+    "chat_history.json",
+    "model.json",
+    "project_memory.json",
+    ".env",
+    ".env.example",
+    ".coverage",
+    "model",
 }
 
 
@@ -37,12 +60,38 @@ def _is_ignored_file(name: str) -> bool:
     # not surface as code matches.
     return name.startswith("project_") and name.endswith(".md")
 
+
 #: Extensions never searched (binary/cache/asset files).
 _IGNORED_EXTENSIONS = {
-    ".db", ".pyc", ".pyo", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
-    ".pdf", ".zip", ".gz", ".tar", ".exe", ".dll", ".so", ".class", ".woff",
-    ".woff2", ".ttf", ".mp3", ".mp4", ".wav", ".pkl", ".pickle", ".h5",
-    ".npy", ".npz", ".jsonl",
+    ".db",
+    ".pyc",
+    ".pyo",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".svg",
+    ".pdf",
+    ".zip",
+    ".gz",
+    ".tar",
+    ".exe",
+    ".dll",
+    ".so",
+    ".class",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".mp3",
+    ".mp4",
+    ".wav",
+    ".pkl",
+    ".pickle",
+    ".h5",
+    ".npy",
+    ".npz",
+    ".jsonl",
 }
 
 _MAX_RESULTS = 50
@@ -86,7 +135,9 @@ class FileSearcher:
             return matches
         for root, dirs, files in os.walk(local_path):
             dirs[:] = sorted(
-                d for d in dirs if d not in _IGNORED_DIRS and not d.endswith(".egg-info")
+                d
+                for d in dirs
+                if d not in _IGNORED_DIRS and not d.endswith(".egg-info")
             )
             for file in sorted(files):
                 if _is_ignored_file(file) or file.endswith((".pyc", ".pyo")):

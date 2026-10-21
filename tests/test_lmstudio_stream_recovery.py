@@ -16,6 +16,7 @@ Contract under test:
 3. a 400 that is NOT a load hint does NOT trigger any load;
 4. non-streaming path unchanged: same recovery through _open_chat.
 """
+
 import asyncio
 import urllib.error
 from io import BytesIO
@@ -55,9 +56,12 @@ class TestStreamAutoReloadOnEvictedModel:
                 b'data: {"choices": [{"delta": {"content": "hej"}}]}\n\ndata: [DONE]\n\n'
             )
 
-        with patch("urllib.request.urlopen", side_effect=fake), patch(
-            "agent_core.llm.lmstudio.load_model", return_value=(True, "loaded")
-        ) as lm:
+        with (
+            patch("urllib.request.urlopen", side_effect=fake),
+            patch(
+                "agent_core.llm.lmstudio.load_model", return_value=(True, "loaded")
+            ) as lm,
+        ):
             result = asyncio.run(prov.chat_stream([{"role": "user", "content": "hi"}]))
 
         assert result == "hej"
@@ -71,9 +75,12 @@ class TestStreamAutoReloadOnEvictedModel:
         def boom(req, timeout=None):
             _http_error(req, _NOT_LOADED)
 
-        with patch("urllib.request.urlopen", side_effect=boom), patch(
-            "agent_core.llm.lmstudio.load_model",
-            return_value=(False, "not enough VRAM"),
+        with (
+            patch("urllib.request.urlopen", side_effect=boom),
+            patch(
+                "agent_core.llm.lmstudio.load_model",
+                return_value=(False, "not enough VRAM"),
+            ),
         ):
             result = asyncio.run(prov.chat_stream([{"role": "user", "content": "hi"}]))
 
@@ -86,9 +93,10 @@ class TestStreamAutoReloadOnEvictedModel:
         def boom(req, timeout=None):
             _http_error(req, b'{"error": "invalid parameter: foo"}')
 
-        with patch("urllib.request.urlopen", side_effect=boom), patch(
-            "agent_core.llm.lmstudio.load_model"
-        ) as lm:
+        with (
+            patch("urllib.request.urlopen", side_effect=boom),
+            patch("agent_core.llm.lmstudio.load_model") as lm,
+        ):
             result = asyncio.run(prov.chat_stream([{"role": "user", "content": "hi"}]))
 
         assert "invalid parameter" in result
@@ -108,9 +116,12 @@ class TestNonStreamingRecoveryUnchanged:
             calls["n"] += 1
             return _FakeHTTPResponse(b'{"choices": [{"message": {"content": "ok"}}]}')
 
-        with patch("urllib.request.urlopen", side_effect=fake), patch(
-            "agent_core.llm.lmstudio.load_model", return_value=(True, "loaded")
-        ) as lm:
+        with (
+            patch("urllib.request.urlopen", side_effect=fake),
+            patch(
+                "agent_core.llm.lmstudio.load_model", return_value=(True, "loaded")
+            ) as lm,
+        ):
             result = prov._make_request({"model": "x"})
 
         assert result["choices"][0]["message"]["content"] == "ok"
@@ -124,9 +135,10 @@ class TestNonStreamingRecoveryUnchanged:
             _http_error(req, b'{"error": "context length exceeded"}', code=500)
 
         req = urllib.request.Request("http://localhost:1234/v1/chat/completions")
-        with patch("urllib.request.urlopen", side_effect=boom), patch(
-            "agent_core.llm.lmstudio.load_model"
-        ) as lm:
+        with (
+            patch("urllib.request.urlopen", side_effect=boom),
+            patch("agent_core.llm.lmstudio.load_model") as lm,
+        ):
             try:
                 prov._open_chat(req, timeout=5)
                 assert False, "expected RuntimeError"

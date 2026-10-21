@@ -8,6 +8,7 @@ Upstream commit df6d0c3 (@LebToki) rewrote ``agent.main`` so that:
 
 These tests pin the corrected dispatch behavior.
 """
+
 from __future__ import annotations
 
 import asyncio

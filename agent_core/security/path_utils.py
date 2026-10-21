@@ -75,6 +75,7 @@ def normalize_path(workspace_root: Path, target_path: str) -> Path:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _ensure_under_root(
     root: Path,
     candidate: Path,
@@ -90,8 +91,7 @@ def _ensure_under_root(
     except ValueError as exc:
         # commonpath raises ValueError on different drives (Windows) or empty.
         raise SecurityViolationError(
-            f"Path '{original}' escapes workspace root {root}: "
-            f"{exc}"
+            f"Path '{original}' escapes workspace root {root}: {exc}"
         ) from exc
 
     if Path(common) != root:

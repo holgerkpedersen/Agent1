@@ -13,6 +13,7 @@ least one mutation: it names the files touched this run and tells the model to
 resume the task rather than restart.  Verified through the REAL ToolLoopRunner
 (fresh interpreter, repaired source) and the closed loop.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,15 +25,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-
-pytestmark = pytest.mark.harnessfix_self_test
-
-# The real source file, captured at import time (before the root conftest
-# fixture redirects the module's ``_TARGET`` to a temp copy).  These runtime
-# tests apply the repair to the REAL tree -- and restore it -- so the fresh
-# subprocess interpreter executes the repaired source.  The module is marked
-# ``harnessfix_self_test`` so the autonomous gate never runs it mid-loop.
-_REAL_TOOL_LOOP = Path("agent_core/llm/tool_loop.py").resolve()
 
 from harnessfix import gates
 from harnessfix.diagnose import diagnose_graph
@@ -56,6 +48,15 @@ from harnessfix.tracing import (
     LAYER_TOOL_INTERFACE,
     TraceWriter,
 )
+
+pytestmark = pytest.mark.harnessfix_self_test
+
+# The real source file, captured at import time (before the root conftest
+# fixture redirects the module's ``_TARGET`` to a temp copy).  These runtime
+# tests apply the repair to the REAL tree -- and restore it -- so the fresh
+# subprocess interpreter executes the repaired source.  The module is marked
+# ``harnessfix_self_test`` so the autonomous gate never runs it mid-loop.
+_REAL_TOOL_LOOP = Path("agent_core/llm/tool_loop.py").resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -397,8 +398,11 @@ def test_abandonment_diagnoses_to_lifecycle():
     g = _graph(
         [
             (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "write", "args_hash": "w"}),
-            (KIND_TOOL_RESULT, LAYER_TOOL_INTERFACE,
-             {"tool": "write", "affected_files": ["a.py"]}),
+            (
+                KIND_TOOL_RESULT,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "write", "affected_files": ["a.py"]},
+            ),
             (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "r"}),
         ]
     )
@@ -416,14 +420,32 @@ def test_abandonment_diagnoses_to_lifecycle():
 
 def _write_abandonment_trace(traces_dir: Path, task_id: str, files: list[str]) -> None:
     writer = TraceWriter(task_id=task_id, directory=traces_dir)
-    writer.emit({"kind": KIND_TOOL_CALL, "layer": LAYER_TOOL_INTERFACE,
-                 "tool": "write", "args_hash": "a"})
-    writer.emit({"kind": KIND_TOOL_RESULT, "layer": LAYER_TOOL_INTERFACE,
-                 "tool": "write", "affected_files": files})
+    writer.emit(
+        {
+            "kind": KIND_TOOL_CALL,
+            "layer": LAYER_TOOL_INTERFACE,
+            "tool": "write",
+            "args_hash": "a",
+        }
+    )
+    writer.emit(
+        {
+            "kind": KIND_TOOL_RESULT,
+            "layer": LAYER_TOOL_INTERFACE,
+            "tool": "write",
+            "affected_files": files,
+        }
+    )
     # A third event so the corpus counts it as failed (>= MIN_ACTIVITY_EVENTS);
     # no loop_end -> interrupted after mutation (decision #052).
-    writer.emit({"kind": KIND_TOOL_CALL, "layer": LAYER_TOOL_INTERFACE,
-                 "tool": "read", "args_hash": "r"})
+    writer.emit(
+        {
+            "kind": KIND_TOOL_CALL,
+            "layer": LAYER_TOOL_INTERFACE,
+            "tool": "read",
+            "args_hash": "r",
+        }
+    )
     writer.close()
 
 

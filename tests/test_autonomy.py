@@ -1,4 +1,5 @@
 """Tests for autonomous mode primitives and the tailored next command."""
+
 import json
 import re
 from pathlib import Path
@@ -59,13 +60,18 @@ class TestTailoredImplementParts:
         return p
 
     def test_command_shape_with_analysis(self, tmp_path):
-        tasks = self._taskplan(tmp_path, ["1. `agent_core/nlp/scheduler.py` — Schedule prompts"])
+        tasks = self._taskplan(
+            tmp_path, ["1. `agent_core/nlp/scheduler.py` — Schedule prompts"]
+        )
         analysis = tmp_path / "project_analysis.md"
         analysis.write_text("analysis", encoding="utf-8")
         parts, hint = _tailored_implement_parts(
-            str(tasks), str(tmp_path / "project_plan.md"),
-            str(tmp_path / "project_entities.md"), str(analysis),
-            str(tmp_path), tasks.read_text(encoding="utf-8"),
+            str(tasks),
+            str(tmp_path / "project_plan.md"),
+            str(tmp_path / "project_entities.md"),
+            str(analysis),
+            str(tmp_path),
+            tasks.read_text(encoding="utf-8"),
         )
         assert parts[0] == "implement"
         assert str(tasks) in parts
@@ -77,44 +83,63 @@ class TestTailoredImplementParts:
     def test_duplicate_warning_and_no_force(self, tmp_path):
         (tmp_path / "agent_core" / "security").mkdir(parents=True)
         (tmp_path / "agent_core" / "security" / "allowlist.py").write_text(
-            '"""Safe shell command allow-list."""\nX = 1\n', encoding="utf-8",
+            '"""Safe shell command allow-list."""\nX = 1\n',
+            encoding="utf-8",
         )
         tasks = self._taskplan(
             tmp_path,
-            ["1. `agent_core/security/shell_allowlist.py` — Shell command allow-list + hardened blocklist"],
+            [
+                "1. `agent_core/security/shell_allowlist.py` — Shell command allow-list + hardened blocklist"
+            ],
         )
         parts, hint = _tailored_implement_parts(
-            str(tasks), str(tmp_path / "project_plan.md"),
-            str(tmp_path / "project_entities.md"), None,
-            str(tmp_path), tasks.read_text(encoding="utf-8"),
+            str(tasks),
+            str(tmp_path / "project_plan.md"),
+            str(tmp_path / "project_entities.md"),
+            None,
+            str(tmp_path),
+            tasks.read_text(encoding="utf-8"),
         )
         assert "duplicate existing modules" in hint
         assert "--force" not in parts
 
     def test_keep_only_with_matching_cache(self, tmp_path):
-        tasks = self._taskplan(tmp_path, ["1. `agent_core/nlp/scheduler.py` — Schedule prompts"])
+        tasks = self._taskplan(
+            tmp_path, ["1. `agent_core/nlp/scheduler.py` — Schedule prompts"]
+        )
         content = tasks.read_text(encoding="utf-8")
         import hashlib
+
         cache = {
             "taskplan": str(tasks),
             "files": ["agent_core/nlp/scheduler.py"],
             "taskplan_hash": hashlib.md5(content.encode()).hexdigest()[:8],
         }
-        (tmp_path / ".implement_cache.json").write_text(json.dumps(cache), encoding="utf-8")
+        (tmp_path / ".implement_cache.json").write_text(
+            json.dumps(cache), encoding="utf-8"
+        )
 
         parts, _ = _tailored_implement_parts(
-            str(tasks), str(tmp_path / "project_plan.md"),
-            str(tmp_path / "project_entities.md"), None,
-            str(tmp_path), content,
+            str(tasks),
+            str(tmp_path / "project_plan.md"),
+            str(tmp_path / "project_entities.md"),
+            None,
+            str(tmp_path),
+            content,
         )
         assert "--keep" in parts
 
     def test_no_keep_without_cache(self, tmp_path):
-        tasks = self._taskplan(tmp_path, ["1. `agent_core/nlp/scheduler.py` — Schedule prompts"])
+        tasks = self._taskplan(
+            tmp_path, ["1. `agent_core/nlp/scheduler.py` — Schedule prompts"]
+        )
         parts, _ = _tailored_implement_parts(
-            str(tasks), str(tmp_path / "project_plan.md"),
-            str(tmp_path / "project_entities.md"), None,
-            str(tmp_path), tasks.read_text(encoding="utf-8"),
+            str(tasks),
+            str(tmp_path / "project_plan.md"),
+            str(tmp_path / "project_entities.md"),
+            None,
+            str(tmp_path),
+            tasks.read_text(encoding="utf-8"),
         )
         assert "--keep" not in parts
 
@@ -125,9 +150,12 @@ class TestTailoredImplementParts:
             ["1. [MODIFY] `agent.py` — Extend the agent loop"],
         )
         parts, hint = _tailored_implement_parts(
-            str(tasks), str(tmp_path / "project_plan.md"),
-            str(tmp_path / "project_entities.md"), None,
-            str(tmp_path), tasks.read_text(encoding="utf-8"),
+            str(tasks),
+            str(tmp_path / "project_plan.md"),
+            str(tmp_path / "project_entities.md"),
+            None,
+            str(tmp_path),
+            tasks.read_text(encoding="utf-8"),
         )
         assert "--modify" in parts
         assert "--force" not in parts
@@ -141,16 +169,22 @@ class TestTailoredImplementParts:
         )
         content = tasks.read_text(encoding="utf-8")
         import hashlib
+
         cache = {
             "taskplan": str(tasks),
             "files": ["agent.py"],
             "taskplan_hash": hashlib.md5(content.encode()).hexdigest()[:8],
         }
-        (tmp_path / ".implement_cache.json").write_text(json.dumps(cache), encoding="utf-8")
+        (tmp_path / ".implement_cache.json").write_text(
+            json.dumps(cache), encoding="utf-8"
+        )
         parts, hint = _tailored_implement_parts(
-            str(tasks), str(tmp_path / "project_plan.md"),
-            str(tmp_path / "project_entities.md"), None,
-            str(tmp_path), content,
+            str(tasks),
+            str(tmp_path / "project_plan.md"),
+            str(tmp_path / "project_entities.md"),
+            None,
+            str(tmp_path),
+            content,
         )
         assert "--modify" in parts
         assert "--keep" in parts
@@ -163,11 +197,16 @@ class TestTailoredImplementParts:
             "files": ["agent.py"],
             "taskplan_hash": "00000000",
         }
-        (tmp_path / ".implement_cache.json").write_text(json.dumps(stale), encoding="utf-8")
+        (tmp_path / ".implement_cache.json").write_text(
+            json.dumps(stale), encoding="utf-8"
+        )
         parts, hint = _tailored_implement_parts(
-            str(tasks), str(tmp_path / "project_plan.md"),
-            str(tmp_path / "project_entities.md"), None,
-            str(tmp_path), content,
+            str(tasks),
+            str(tmp_path / "project_plan.md"),
+            str(tmp_path / "project_entities.md"),
+            None,
+            str(tmp_path),
+            content,
         )
         assert "--keep" not in parts
         assert "--refresh" in hint
@@ -201,7 +240,7 @@ def _chat_call_sites(src: str) -> list[str]:
                     break
                 depth -= 1
             i += 1
-        sites.append(src[start:i + 1])
+        sites.append(src[start : i + 1])
         idx = i + 1
     return sites
 
@@ -239,12 +278,16 @@ class TestChatCallsDisableThinking:
             sites = _chat_call_sites(segment)
             assert sites, f"no chat calls in {fn}"
             missing = [s for s in sites if "disable_thinking=True" not in s]
-            assert not missing, f"{fn} chat call(s) without disable_thinking=True: {missing}"
+            assert not missing, (
+                f"{fn} chat call(s) without disable_thinking=True: {missing}"
+            )
 
     def test_tool_call_tokens_survive_in_implement_cmd(self):
         """The fix pipeline once stripped <tool_call> tokens from implement's
         prompt and detection logic — the angle-bracket tokens must exist."""
         src = Path("agent_core/commands/implement_cmd.py").read_text(encoding="utf-8")
         assert "NEVER use <tool_call>, <function_call>, or XML tags" in src
-        assert '("<tool_call" in impl_response or "<tool_call>" in impl_response)' in src
+        assert (
+            '("<tool_call" in impl_response or "<tool_call>" in impl_response)' in src
+        )
         assert "No <tool_call> tags." in src

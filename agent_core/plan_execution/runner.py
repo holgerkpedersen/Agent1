@@ -7,6 +7,7 @@ the rich :class:`DependencyGraph` validates acyclicity before scheduling, and
 role-gated tools).  A plan-mode parent still caps every child read-only, so
 ``plan exec`` must first switch to build mode (enforced by the command).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -55,9 +56,7 @@ def build_and_validate_graph(
     for t in tasks:
         for dep in t.depends_on:
             if not graph.has_node(dep):
-                raise ValueError(
-                    f"Task '{t.id}' depends on unknown task '{dep}'"
-                )
+                raise ValueError(f"Task '{t.id}' depends on unknown task '{dep}'")
             # add_dependency(dependent, dependency): dependency -> dependent.
             graph.add_dependency(t.id, dep)
     order = graph.topological_order()  # raises CycleError on a cycle
@@ -104,8 +103,11 @@ async def run_plan(
     captured_inputs: dict[str, dict[str, Any]] = {}
 
     def _factory(t: PlanTask) -> TaskExecutor:
-        base = executor_factory(t) if executor_factory is not None \
+        base = (
+            executor_factory(t)
+            if executor_factory is not None
             else lambda input_data: _default_executor(agent, t, input_data)
+        )
 
         async def wrapper(input_data: dict[str, Any]) -> dict[str, Any]:
             captured_inputs[t.id] = dict(input_data)
@@ -121,6 +123,7 @@ async def run_plan(
     # ── Persistence: write dep results + execution report per terminal task (#108) ──
     plan_dir_path = Path(plan_dir) if plan_dir else None
     if plan_dir_path is not None:
+
         def _persist_handler(msg: Any) -> None:
             """Subscribe to scheduler status updates; persist on completion/failure."""
             content = msg.content or {}
@@ -137,7 +140,8 @@ async def run_plan(
             dep_path = plan_dir_path / f"dep_{tid}_result.json"
             try:
                 dep_path.write_text(
-                    json.dumps(result, default=str), encoding="utf-8",
+                    json.dumps(result, default=str),
+                    encoding="utf-8",
                 )
             except Exception:
                 pass
@@ -146,7 +150,9 @@ async def run_plan(
             status_label = "completed" if node_status == "completed" else "failed"
             entry = f"- [{tid}] {status_label} (role: {role})\n"
             try:
-                with open(plan_dir_path / "plan_execution_report.md", "a", encoding="utf-8") as f:
+                with open(
+                    plan_dir_path / "plan_execution_report.md", "a", encoding="utf-8"
+                ) as f:
                     f.write(entry)
             except Exception:
                 pass

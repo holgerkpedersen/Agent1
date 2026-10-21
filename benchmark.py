@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # Custom Exceptions for Benchmarking
 # ---------------------------------------------------------------------------
 
+
 class BenchmarkError(Exception):
     """Base exception for benchmark-related failures."""
 
@@ -39,30 +40,84 @@ class ModelAPIError(BenchmarkError):
 # ---------------------------------------------------------------------------
 
 REASONING_QUESTIONS = [
-    ("If all Bloops are Razzies and all Razzies are Lazzies, are all Bloops definitely Lazzies? Answer yes or no.", "yes"),
-    ("A farmer has 17 sheep. All but 9 run away. How many sheep does the farmer have left?", "9"),
-    ("If it takes 5 machines 5 minutes to make 5 widgets, how long would it take 100 machines to make 100 widgets?", "5 minutes"),
+    (
+        "If all Bloops are Razzies and all Razzies are Lazzies, are all Bloops definitely Lazzies? Answer yes or no.",
+        "yes",
+    ),
+    (
+        "A farmer has 17 sheep. All but 9 run away. How many sheep does the farmer have left?",
+        "9",
+    ),
+    (
+        "If it takes 5 machines 5 minutes to make 5 widgets, how long would it take 100 machines to make 100 widgets?",
+        "5 minutes",
+    ),
     ("What comes next in the sequence: 2, 6, 18, 54, ?", "162"),
-    ("If A is taller than B, and B is taller than C, who is the shortest? Answer with one letter.", "C"),
-    ("A clock shows 3:15. What is the angle between the hour hand and the minute hand in degrees?", "7.5"),
-    ("Mary's father has five daughters: Nana, Nene, Nini, Nono. What is the fifth daughter's name?", "Mary"),
-    ("If you rearrange the letters 'CIFAIPC', you get the name of a(n): A) City B) Animal C) Ocean D) Country", "ocean"),
+    (
+        "If A is taller than B, and B is taller than C, who is the shortest? Answer with one letter.",
+        "C",
+    ),
+    (
+        "A clock shows 3:15. What is the angle between the hour hand and the minute hand in degrees?",
+        "7.5",
+    ),
+    (
+        "Mary's father has five daughters: Nana, Nene, Nini, Nono. What is the fifth daughter's name?",
+        "Mary",
+    ),
+    (
+        "If you rearrange the letters 'CIFAIPC', you get the name of a(n): A) City B) Animal C) Ocean D) Country",
+        "ocean",
+    ),
     ("What number should replace the question mark: 1, 1, 2, 3, 5, 8, ?", "13"),
-    ("A bat and a ball cost $1.10 in total. The bat costs $1 more than the ball. How much does the ball cost? Give your answer in dollars.", "0.10"),
+    (
+        "A bat and a ball cost $1.10 in total. The bat costs $1 more than the ball. How much does the ball cost? Give your answer in dollars.",
+        "0.10",
+    ),
     ("If yesterday was two days after Monday, what day is tomorrow?", "Thursday"),
-    ("In a race, you overtake the person in second place. What place are you now in?", "second"),
+    (
+        "In a race, you overtake the person in second place. What place are you now in?",
+        "second",
+    ),
     ("How many sides does a hexagon have?", "6"),
-    ("If 3 cats catch 3 mice in 3 minutes, how many cats are needed to catch 100 mice in 100 minutes?", "3"),
+    (
+        "If 3 cats catch 3 mice in 3 minutes, how many cats are needed to catch 100 mice in 100 minutes?",
+        "3",
+    ),
     ("What is the next prime number after 29?", "31"),
-    ("A snail is at the bottom of a 10-meter well. Each day it climbs 3 meters, but each night it slips back 2 meters. How many days to get out?", "8"),
-    ("If you have a 3x3x3 cube painted red on all outside faces and cut into 1x1x1 cubes, how many small cubes have exactly two red faces?", "12"),
-    ("Which does not belong: Apple, Banana, Carrot, Date, Elderberry? Answer with one word.", "Carrot"),
-    ("If you flip a fair coin twice, what is the probability of getting at least one head? Give answer as a fraction.", "3/4"),
+    (
+        "A snail is at the bottom of a 10-meter well. Each day it climbs 3 meters, but each night it slips back 2 meters. How many days to get out?",
+        "8",
+    ),
+    (
+        "If you have a 3x3x3 cube painted red on all outside faces and cut into 1x1x1 cubes, how many small cubes have exactly two red faces?",
+        "12",
+    ),
+    (
+        "Which does not belong: Apple, Banana, Carrot, Date, Elderberry? Answer with one word.",
+        "Carrot",
+    ),
+    (
+        "If you flip a fair coin twice, what is the probability of getting at least one head? Give answer as a fraction.",
+        "3/4",
+    ),
     ("What comes next: J, F, M, A, M, J, ?", "J"),
-    ("A train leaves station A at 60 mph. Another leaves station B (120 miles away) toward A at 40 mph. How many hours until they meet?", "1.2"),
-    ("If you write out the numbers from 1 to 100, how many times does the digit '7' appear?", "20"),
-    ("What is the only number that has the same number of letters as its value in English?", "four"),
-    ("In a group of 30 people, everyone shakes hands with everyone else once. How many handshakes occur?", "435"),
+    (
+        "A train leaves station A at 60 mph. Another leaves station B (120 miles away) toward A at 40 mph. How many hours until they meet?",
+        "1.2",
+    ),
+    (
+        "If you write out the numbers from 1 to 100, how many times does the digit '7' appear?",
+        "20",
+    ),
+    (
+        "What is the only number that has the same number of letters as its value in English?",
+        "four",
+    ),
+    (
+        "In a group of 30 people, everyone shakes hands with everyone else once. How many handshakes occur?",
+        "435",
+    ),
     ("If A=1, B=2, ..., Z=26, what is the sum of the letters in 'CAT'?", "24"),
 ]
 
@@ -73,17 +128,29 @@ MATH_QUESTIONS = [
     ("Calculate: 15% of 240", "36"),
     ("If x + 7 = 15, what is x?", "8"),
     ("What is 2^10?", "1024"),
-    ("A rectangle has length 12 and width 5. What is its diagonal? Give the number.", "13"),
+    (
+        "A rectangle has length 12 and width 5. What is its diagonal? Give the number.",
+        "13",
+    ),
     ("Convert 72 km/h to m/s", "20"),
     ("What is the sum of interior angles of a pentagon in degrees?", "540"),
     ("Solve: 3x - 9 = 12. What is x?", "7"),
     ("What is the greatest common divisor of 48 and 36?", "12"),
-    ("A circle has radius 7. What is its area? Use pi approx 3.14, round to nearest whole number.", "154"),
+    (
+        "A circle has radius 7. What is its area? Use pi approx 3.14, round to nearest whole number.",
+        "154",
+    ),
     ("What is 0.375 as a fraction in simplest form?", "3/8"),
-    ("If a triangle has sides 5, 12, and 13, what type of triangle is it? Answer with one word.", "right"),
+    (
+        "If a triangle has sides 5, 12, and 13, what type of triangle is it? Answer with one word.",
+        "right",
+    ),
     ("Calculate the factorial of 6 (6!)", "720"),
     ("What is the median of: 3, 7, 8, 5, 12, 15, 9?", "8"),
-    ("A store offers a 20% discount on an item priced at $85. What is the sale price? Give just the number.", "68"),
+    (
+        "A store offers a 20% discount on an item priced at $85. What is the sale price? Give just the number.",
+        "68",
+    ),
     ("What is log base 10 of 1000?", "3"),
     ("How many degrees are in a full circle?", "360"),
     ("If f(x) = 2x^2 + 3, what is f(4)?", "35"),
@@ -91,34 +158,85 @@ MATH_QUESTIONS = [
     ("A right triangle has legs 9 and 12. What is its area?", "54"),
     ("Convert 3/7 to a decimal, rounded to two decimal places.", "0.43"),
     ("What is the derivative of x^3 at x = 2? Give just the number.", "12"),
-    ("If you invest $1000 at 5% annual interest compounded yearly, how much after 2 years? Round to nearest dollar.", "1103"),
+    (
+        "If you invest $1000 at 5% annual interest compounded yearly, how much after 2 years? Round to nearest dollar.",
+        "1103",
+    ),
 ]
 
 CODING_QUESTIONS = [
-    ("Write a Python function called 'is_palindrome' that takes a string and returns True if it reads the same forwards and backwards. Return only the function code.", None),
+    (
+        "Write a Python function called 'is_palindrome' that takes a string and returns True if it reads the same forwards and backwards. Return only the function code.",
+        None,
+    ),
     ("Write a one-line Python expression to reverse a list called 'lst'.", "lst[::-1]"),
     ("What does this Python code output? print(len('hello world'))", "11"),
-    ("Write a Python function 'fibonacci(n)' that returns the nth Fibonacci number (0-indexed). Return only the function.", None),
-    ("In Python, what is the difference between a list and a tuple? Answer in one sentence.", None),
-    ("What does this code output?\nx = [1, 2, 3]\ny = x\ny.append(4)\nprint(x)", "[1, 2, 3, 4]"),
-    ("Write a Python function 'flatten(lst)' that takes a nested list and returns a flat list. Return only the function.", None),
-    ("What is the time complexity of binary search on a sorted array of n elements? Use Big-O notation.", "O(log n)"),
-    ("Write a Python one-liner to find all even numbers from 1 to 20.", "[x for x in range(1, 21) if x % 2 == 0]"),
+    (
+        "Write a Python function 'fibonacci(n)' that returns the nth Fibonacci number (0-indexed). Return only the function.",
+        None,
+    ),
+    (
+        "In Python, what is the difference between a list and a tuple? Answer in one sentence.",
+        None,
+    ),
+    (
+        "What does this code output?\nx = [1, 2, 3]\ny = x\ny.append(4)\nprint(x)",
+        "[1, 2, 3, 4]",
+    ),
+    (
+        "Write a Python function 'flatten(lst)' that takes a nested list and returns a flat list. Return only the function.",
+        None,
+    ),
+    (
+        "What is the time complexity of binary search on a sorted array of n elements? Use Big-O notation.",
+        "O(log n)",
+    ),
+    (
+        "Write a Python one-liner to find all even numbers from 1 to 20.",
+        "[x for x in range(1, 21) if x % 2 == 0]",
+    ),
     ("What does this output?\nprint(bool(''))", "False"),
-    ("Write a Python function 'count_vowels(s)' that returns the number of vowels in string s. Return only the function.", None),
-    ("In Python, what keyword is used to define a constant? (Hint: there isn't one - explain briefly.)", None),
-    ("What does this code output?\na = {1: 'one', 2: 'two'}\nprint(a.get(3, 'missing'))", "missing"),
-    ("Write a Python function 'binary_search(arr, target)' on a sorted list. Return only the function.", None),
+    (
+        "Write a Python function 'count_vowels(s)' that returns the number of vowels in string s. Return only the function.",
+        None,
+    ),
+    (
+        "In Python, what keyword is used to define a constant? (Hint: there isn't one - explain briefly.)",
+        None,
+    ),
+    (
+        "What does this code output?\na = {1: 'one', 2: 'two'}\nprint(a.get(3, 'missing'))",
+        "missing",
+    ),
+    (
+        "Write a Python function 'binary_search(arr, target)' on a sorted list. Return only the function.",
+        None,
+    ),
     ("What is the output of: print(0.1 + 0.2 == 0.3)", "False"),
-    ("Write a Python function 'merge_sort(lst)' that returns a new sorted list. Return only the function.", None),
+    (
+        "Write a Python function 'merge_sort(lst)' that returns a new sorted list. Return only the function.",
+        None,
+    ),
     ("In SQL, what clause filters groups created by GROUP BY?", "HAVING"),
     ("What does this output?\nprint(type([]) is type(list()))", "True"),
-    ("Write a Python function 'anagram(s1, s2)' that returns True if s1 and s2 are anagrams. Return only the function.", None),
+    (
+        "Write a Python function 'anagram(s1, s2)' that returns True if s1 and s2 are anagrams. Return only the function.",
+        None,
+    ),
     ("What HTTP status code means 'Not Found'?", "404"),
-    ("Write a Python function 'factorial(n)' using recursion. Return only the function.", None),
-    ("In Git, what command creates a new branch and switches to it in one step?", "git checkout -b"),
+    (
+        "Write a Python function 'factorial(n)' using recursion. Return only the function.",
+        None,
+    ),
+    (
+        "In Git, what command creates a new branch and switches to it in one step?",
+        "git checkout -b",
+    ),
     ("What does this output?\nprint([x**2 for x in range(5)])", "[0, 1, 4, 9, 16]"),
-    ("Write a Python function 'remove_duplicates(lst)' that preserves order. Return only the function.", None),
+    (
+        "Write a Python function 'remove_duplicates(lst)' that preserves order. Return only the function.",
+        None,
+    ),
     ("What is the output of: print('abc' * 3)", "abcabcabc"),
 ]
 
@@ -132,11 +250,17 @@ KNOWLEDGE_QUESTIONS = [
     ("Who wrote 'Romeo and Juliet'?", "Shakespeare"),
     ("What is the largest ocean on Earth?", "Pacific"),
     ("In what year did the first Moon landing occur?", "1969"),
-    ("What gas do plants absorb from the atmosphere during photosynthesis?", "Carbon dioxide"),
+    (
+        "What gas do plants absorb from the atmosphere during photosynthesis?",
+        "Carbon dioxide",
+    ),
     ("Who developed the theory of relativity? Give just the last name.", "Einstein"),
     ("What is the hardest natural substance on Earth?", "Diamond"),
     ("Which country has the most population in the world?", "India"),
-    ("What is the speed of light approximately in km/s? Give a round number.", "300000"),
+    (
+        "What is the speed of light approximately in km/s? Give a round number.",
+        "300000",
+    ),
     ("Who was the first President of the United States?", "Washington"),
     ("What is the smallest prime number?", "2"),
     ("Which organ in the human body produces insulin?", "Pancreas"),
@@ -155,27 +279,66 @@ INSTRUCTION_FOLLOWING_QUESTIONS = [
     ("List the numbers from 1 to 5, each on its own line, with nothing else.", None),
     ("Respond only with the word 'banana'. Do not add any other text.", "banana"),
     ("Give me a sentence that contains exactly 7 words. Count carefully.", None),
-    ("Write the alphabet backwards from Z to A as one continuous string with no spaces.", "zyxwvutsrqponmlkjihgfedcba"),
-    ("List three fruits, each starting with a different letter of the alphabet, comma-separated only.", None),
-    ("Do not use the letter 'e' in your response. Write a short sentence about cats.", None),
+    (
+        "Write the alphabet backwards from Z to A as one continuous string with no spaces.",
+        "zyxwvutsrqponmlkjihgfedcba",
+    ),
+    (
+        "List three fruits, each starting with a different letter of the alphabet, comma-separated only.",
+        None,
+    ),
+    (
+        "Do not use the letter 'e' in your response. Write a short sentence about cats.",
+        None,
+    ),
     ("Output exactly this text and nothing else: HELLO WORLD", "HELLO WORLD"),
-    ("Write a haiku (5-7-5 syllables) about programming. Output only the poem, no explanation.", None),
-    ("Give me 4 colors in alphabetical order, one per line, with no numbering or bullets.", None),
+    (
+        "Write a haiku (5-7-5 syllables) about programming. Output only the poem, no explanation.",
+        None,
+    ),
+    (
+        "Give me 4 colors in alphabetical order, one per line, with no numbering or bullets.",
+        None,
+    ),
     ("Respond with exactly one word that means 'happy'.", None),
     ("Write a sentence where every word starts with the letter 's'.", None),
-    ("List these numbers from smallest to largest: 42, 7, 103, 28. Output only the numbers separated by commas.", "7, 28, 42, 103"),
-    ("Write a title for an essay about climate change. The title must be exactly 5 words long.", None),
+    (
+        "List these numbers from smallest to largest: 42, 7, 103, 28. Output only the numbers separated by commas.",
+        "7, 28, 42, 103",
+    ),
+    (
+        "Write a title for an essay about climate change. The title must be exactly 5 words long.",
+        None,
+    ),
     ("Output the word 'success' in all capital letters and nothing else.", "SUCCESS"),
-    ("Give me two synonyms for 'big'. Output only the two words separated by a comma.", None),
+    (
+        "Give me two synonyms for 'big'. Output only the two words separated by a comma.",
+        None,
+    ),
     ("Write a question that ends with the word 'why?'.", None),
-    ("List 5 countries. Each must have fewer than 7 letters in its name. One per line, no numbering.", None),
-    ("Repeat this exact phrase: The quick brown fox jumps over the lazy dog", "The quick brown fox jumps over the lazy dog"),
-    ("Write a sentence that has exactly 10 words. Count carefully and output only the sentence.", None),
-    ("Name three planets in our solar system, ordered by distance from the Sun (closest first). Comma-separated only.", None),
+    (
+        "List 5 countries. Each must have fewer than 7 letters in its name. One per line, no numbering.",
+        None,
+    ),
+    (
+        "Repeat this exact phrase: The quick brown fox jumps over the lazy dog",
+        "The quick brown fox jumps over the lazy dog",
+    ),
+    (
+        "Write a sentence that has exactly 10 words. Count carefully and output only the sentence.",
+        None,
+    ),
+    (
+        "Name three planets in our solar system, ordered by distance from the Sun (closest first). Comma-separated only.",
+        None,
+    ),
     ("Output the number 42 in Roman numerals and nothing else.", "XLII"),
     ("Write a short greeting. Do not use any punctuation marks at all.", None),
     ("Give me exactly two sentences about water. No more, no less.", None),
-    ("List the four seasons in order starting from spring. Use only lowercase letters, comma-separated.", "spring, summer, fall, winter"),
+    (
+        "List the four seasons in order starting from spring. Use only lowercase letters, comma-separated.",
+        "spring, summer, fall, winter",
+    ),
 ]
 
 ALL_CATEGORIES = {
@@ -191,13 +354,14 @@ ALL_CATEGORIES = {
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class QuestionResult:
     question_idx: int
     prompt: str
     response: str
     correct: bool | None  # None = not auto-scoreable
-    score: float           # 0.0-1.0
+    score: float  # 0.0-1.0
     latency_ms: float
     tokens_used: int | None = None
 
@@ -279,6 +443,7 @@ class ModelResult:
 # Scorer
 # ---------------------------------------------------------------------------
 
+
 def normalize_answer(text: str | None) -> str:
     if not text:
         # None (a null "content" from the provider) means no answer —
@@ -304,9 +469,8 @@ def answers_match(response: str | None, expected: str) -> bool:
     # Word-bounded containment ONLY: raw substring matching produced false
     # positives ("42" inside "142", "true" inside "retry").  The WHOLE
     # expected answer must appear as a word-bounded phrase in the response.
-    if (
-        len(norm_exp) >= 2
-        and re.search(rf"(?<!\w){re.escape(norm_exp)}(?!\w)", norm_resp)
+    if len(norm_exp) >= 2 and re.search(
+        rf"(?<!\w){re.escape(norm_exp)}(?!\w)", norm_resp
     ):
         return True
 
@@ -317,7 +481,9 @@ def answers_match(response: str | None, expected: str) -> bool:
         if abs(r_val - e_val) < 0.5:
             return True
     except (ValueError, TypeError):
-        logger.debug("Numeric comparison failed for response=%r expected=%r", norm_resp, norm_exp)
+        logger.debug(
+            "Numeric comparison failed for response=%r expected=%r", norm_resp, norm_exp
+        )
 
     # Fraction equivalence
     for frac in [norm_resp, norm_exp]:
@@ -325,9 +491,7 @@ def answers_match(response: str | None, expected: str) -> bool:
             try:
                 num, den = frac.split("/")
                 fval = float(num) / float(den)
-                other = normalize_answer(
-                    norm_exp if frac == norm_resp else norm_resp
-                )
+                other = normalize_answer(norm_exp if frac == norm_resp else norm_resp)
                 oval = float(other.replace(",", "").replace(" ", ""))
                 if abs(fval - oval) < 0.01:
                     return True
@@ -363,10 +527,28 @@ def _count_syllables(word: str) -> int:
 
     # Common single-syllable words that would otherwise be miscounted
     exceptions_map: dict[str, int] = {
-        "the": 1, "a": 1, "i": 1, "is": 1, "it": 1, "to": 1,
-        "of": 1, "and": 1, "in": 1, "for": 1, "on": 1, "be": 1,
-        "as": 1, "with": 1, "that": 1, "this": 1, "are": 1,
-        "was": 1, "has": 1, "had": 1, "but": 1, "not": 1,
+        "the": 1,
+        "a": 1,
+        "i": 1,
+        "is": 1,
+        "it": 1,
+        "to": 1,
+        "of": 1,
+        "and": 1,
+        "in": 1,
+        "for": 1,
+        "on": 1,
+        "be": 1,
+        "as": 1,
+        "with": 1,
+        "that": 1,
+        "this": 1,
+        "are": 1,
+        "was": 1,
+        "has": 1,
+        "had": 1,
+        "but": 1,
+        "not": 1,
     }
     if word in exceptions_map:
         return exceptions_map[word]
@@ -486,9 +668,7 @@ def score_instruction_following(prompt: str, response: str) -> float:
     return max(0.0, min(1.0, round(score, 2)))
 
 
-async def judge_answer(
-    judge_fn: Any, response: str, expected: str
-) -> bool | None:
+async def judge_answer(judge_fn: Any, response: str, expected: str) -> bool | None:
     """LLM-judged verdict when heuristics cannot decide.
 
     *judge_fn* is an async callable ``(response, expected) -> str``.  Returns
@@ -510,9 +690,7 @@ async def judge_answer(
     return None
 
 
-async def _correct_with_judge(
-    response: str, expected: str, judge_fn: Any
-) -> bool:
+async def _correct_with_judge(response: str, expected: str, judge_fn: Any) -> bool:
     """answers_match with the optional LLM-judge fallback."""
     correct = answers_match(response, expected)
     if correct or judge_fn is None:
@@ -545,12 +723,8 @@ async def score_question(
     if category == "coding":
         # For code-generation questions (expected is None), check syntax
         if expected is None:
-            code_match = re.search(
-                r"```(?:python)?\s*(.*?)```", response, re.DOTALL
-            )
-            code = (
-                code_match.group(1).strip() if code_match else response.strip()
-            )
+            code_match = re.search(r"```(?:python)?\s*(.*?)```", response, re.DOTALL)
+            code = code_match.group(1).strip() if code_match else response.strip()
             try:
                 compile(code, "<benchmark>", "exec")
                 return None, 0.7  # Valid syntax -- partial credit
@@ -598,7 +772,9 @@ def resolve_base_url(provider: str, url: str | None = None) -> str:
     if url:
         base = url.rstrip("/")
     else:
-        base = PROVIDER_BASE_URLS.get(provider, PROVIDER_BASE_URLS[DEFAULT_PROVIDER]).rstrip("/")
+        base = PROVIDER_BASE_URLS.get(
+            provider, PROVIDER_BASE_URLS[DEFAULT_PROVIDER]
+        ).rstrip("/")
     if not base.lower().endswith("/chat/completions"):
         if not base.lower().endswith("/v1"):
             base = f"{base}/v1"
@@ -726,8 +902,11 @@ def _probe_endpoint(base_url: str, timeout: float = 5.0) -> None:
         except Exception:  # noqa: BLE001 - best-effort
             pass
         lowered = detail.lower()
-        if ("no models loaded" in lowered or "model not found" in lowered
-                or "does not exist" in lowered):
+        if (
+            "no models loaded" in lowered
+            or "model not found" in lowered
+            or "does not exist" in lowered
+        ):
             raise BenchmarkError(
                 f"Server has no model available at {base_url}: {detail[:200]}"
             ) from exc
@@ -737,9 +916,7 @@ def _probe_endpoint(base_url: str, timeout: float = 5.0) -> None:
             ) from exc
         return
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise BenchmarkError(
-            f"Endpoint unreachable at {base_url}: {exc}"
-        ) from exc
+        raise BenchmarkError(f"Endpoint unreachable at {base_url}: {exc}") from exc
     # A server that accepts the connection but never returns valid chat JSON
     # (e.g. a stub/health endpoint) would otherwise make every real query
     # block on urlopen(timeout=120).  Treat a non-conforming body as a probe
@@ -771,7 +948,9 @@ async def run_category(
         sys.stdout.flush()
 
         try:
-            response, latency_ms, tokens = await query_model(model, prompt, max_tokens=max_tokens)
+            response, latency_ms, tokens = await query_model(
+                model, prompt, max_tokens=max_tokens
+            )
             correct, score = await score_question(
                 prompt, response, expected, category, judge_fn=judge_fn
             )
@@ -828,8 +1007,12 @@ async def run_benchmark(
                 for rep in range(repetitions):
                     print(f"\n  --- Repetition {rep + 1}/{repetitions} ---")
                     cr = await run_category(
-                        model, cat_name, questions, repetition=rep, judge_fn=judge_fn,
-                        max_tokens=max_tokens
+                        model,
+                        cat_name,
+                        questions,
+                        repetition=rep,
+                        judge_fn=judge_fn,
+                        max_tokens=max_tokens,
                     )
                     all_cat_results.append(cr)
 
@@ -838,7 +1021,11 @@ async def run_benchmark(
                 # further iteration), then build results via comprehension.
                 n_questions = len(questions)
                 rep_data = [
-                    [cr.results[q_idx] for cr in all_cat_results if q_idx < len(cr.results)]
+                    [
+                        cr.results[q_idx]
+                        for cr in all_cat_results
+                        if q_idx < len(cr.results)
+                    ]
                     for q_idx in range(n_questions)
                 ]
 
@@ -849,12 +1036,22 @@ async def run_benchmark(
                         prompt=reps[0].prompt if reps else "",
                         response=(reps[0].response[:500] if reps else ""),
                         correct=(
-                            all(r.correct is True for r in reps if r.correct is not None)
+                            all(
+                                r.correct is True for r in reps if r.correct is not None
+                            )
                             if any(r.correct is True for r in reps)
-                            else (False if any(r.correct is not None for r in reps) else None)
+                            else (
+                                False
+                                if any(r.correct is not None for r in reps)
+                                else None
+                            )
                         ),
-                        score=round(statistics.mean(r.score for r in reps), 2) if reps else 0.0,
-                        latency_ms=statistics.mean(r.latency_ms for r in reps) if reps else 0.0,
+                        score=round(statistics.mean(r.score for r in reps), 2)
+                        if reps
+                        else 0.0,
+                        latency_ms=statistics.mean(r.latency_ms for r in reps)
+                        if reps
+                        else 0.0,
                     )
                     for q_idx, reps in enumerate(rep_data)
                 ]
@@ -875,13 +1072,12 @@ async def run_benchmark(
 # Reporter
 # ---------------------------------------------------------------------------
 
+
 def print_report(results: list[ModelResult]) -> None:
     """Print a formatted comparison table to the console."""
     # Build ordered, de-duplicated category names via dict.fromkeys (preserves
     # insertion order without repeated append + membership checks).
-    cat_names = list(dict.fromkeys(
-        c for r in results for c in r.categories
-    ))
+    cat_names = list(dict.fromkeys(c for r in results for c in r.categories))
 
     header = f"{'Model':<30}"
     for cat in cat_names:
@@ -969,7 +1165,9 @@ def save_models_json(results: list[ModelResult], path: str) -> None:
                 file_content = f.read()
             existing = json.loads(file_content)
         except (json.JSONDecodeError, OSError):
-            logger.debug("Could not parse existing models.json at %s; starting fresh.", out_path)
+            logger.debug(
+                "Could not parse existing models.json at %s; starting fresh.", out_path
+            )
             existing = {}
 
     for r in results:
@@ -1066,7 +1264,9 @@ def trend_summary(
 
     confidence = False
     if len(scored) >= 3:
-        diffs = [b - a for a, b in zip(scored, scored[1:]) if b is not None and a is not None]
+        diffs = [
+            b - a for a, b in zip(scored, scored[1:]) if b is not None and a is not None
+        ]
         if diffs:
             confidence = all(d > 0 for d in diffs) or all(d < 0 for d in diffs)
 
@@ -1093,7 +1293,9 @@ def print_trend(model: str, snapshots: list[tuple[str, dict[str, Any]]]) -> None
         if delta is not None
         else "  Delta: N/A (need >= 2 scored runs)"
     )
-    print(f"  Confidence: {'high' if summary['confidence'] else 'low (needs >= 3 consistent runs)'}")
+    print(
+        f"  Confidence: {'high' if summary['confidence'] else 'low (needs >= 3 consistent runs)'}"
+    )
 
 
 def save_json_report(results: list[ModelResult], path: str) -> None:
@@ -1114,63 +1316,84 @@ def save_json_report(results: list[ModelResult], path: str) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Benchmark local LLMs via LM Studio API",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            '  python benchmark.py --model qwen2.5-coder-7b\n'
-            '  python benchmark.py --model m1 m2 --repetitions 3\n'
-            '  python benchmark.py --provider llama --model qwen3-8b\n'
-            '  python benchmark.py --trend qwen2.5-coder-7b\n'
+            "  python benchmark.py --model qwen2.5-coder-7b\n"
+            "  python benchmark.py --model m1 m2 --repetitions 3\n"
+            "  python benchmark.py --provider llama --model qwen3-8b\n"
+            "  python benchmark.py --trend qwen2.5-coder-7b\n"
         ),
     )
     parser.add_argument(
-        "--provider", type=str, default=DEFAULT_PROVIDER,
+        "--provider",
+        type=str,
+        default=DEFAULT_PROVIDER,
         choices=sorted(PROVIDER_BASE_URLS),
         help=f"OpenAI-compatible server to benchmark against "
-             f"(default: {DEFAULT_PROVIDER}). 'llama' targets a local "
-             f"llama.cpp llama-server at AGENT_LLAMA_URL "
-             f"(default {DEFAULT_LLAMA_BASE_URL}).",
+        f"(default: {DEFAULT_PROVIDER}). 'llama' targets a local "
+        f"llama.cpp llama-server at AGENT_LLAMA_URL "
+        f"(default {DEFAULT_LLAMA_BASE_URL}).",
     )
     parser.add_argument(
-        "--model", nargs="+", required=False,
+        "--model",
+        nargs="+",
+        required=False,
         help="Model name(s) as registered in LM Studio",
     )
     parser.add_argument(
-        "--profile", type=str, default="",
+        "--profile",
+        type=str,
+        default="",
         help="Profile tag for the run (e.g. deep-analysis); results are keyed "
-             "model|profile so the same model under different profiles is "
-             "compared like with like (decision #055)",
+        "model|profile so the same model under different profiles is "
+        "compared like with like (decision #055)",
     )
     parser.add_argument(
-        "--max-tokens", type=int, default=2048,
+        "--max-tokens",
+        type=int,
+        default=2048,
         help="Token budget per question (default: 2048). Reasoning models "
-             "consume the budget in reasoning_content before emitting the "
-             "answer; 512 starves it into empty responses.",
+        "consume the budget in reasoning_content before emitting the "
+        "answer; 512 starves it into empty responses.",
     )
     parser.add_argument(
-        "--categories", nargs="+", default=list(ALL_CATEGORIES.keys()),
+        "--categories",
+        nargs="+",
+        default=list(ALL_CATEGORIES.keys()),
         choices=list(ALL_CATEGORIES.keys()),
         help="Categories to run (default: all)",
     )
     parser.add_argument(
-        "--repetitions", type=int, default=1,
+        "--repetitions",
+        type=int,
+        default=1,
         help="Number of times to repeat each test (default: 1)",
     )
     parser.add_argument(
-        "--output", "-o", type=str, default=None,
+        "--output",
+        "-o",
+        type=str,
+        default=None,
         help="Path to save JSON report",
     )
     parser.add_argument(
-        "--url", type=str, default=None,
+        "--url",
+        type=str,
+        default=None,
         help=f"Override the provider base URL (default per provider: "
-             f"lmstudio={PROVIDER_BASE_URLS['lmstudio']}, "
-             f"llama={PROVIDER_BASE_URLS['llama']})",
+        f"lmstudio={PROVIDER_BASE_URLS['lmstudio']}, "
+        f"llama={PROVIDER_BASE_URLS['llama']})",
     )
     parser.add_argument(
-        "--trend", type=str, default=None, metavar="MODEL",
+        "--trend",
+        type=str,
+        default=None,
+        metavar="MODEL",
         help="Print the accuracy trend for MODEL over reports/benchmark_*.json snapshots and exit",
     )
     return parser.parse_args()
@@ -1205,9 +1428,9 @@ async def main() -> None:
         return
 
     categories = {k: v for k, v in ALL_CATEGORIES.items() if k in args.categories}
-    total_q = sum(len(qs) for qs in categories.values()) * len(
-        args.model
-    ) * args.repetitions
+    total_q = (
+        sum(len(qs) for qs in categories.values()) * len(args.model) * args.repetitions
+    )
 
     print("\n  Benchmark Configuration")
     print(f"  {'-' * 40}")
@@ -1227,8 +1450,11 @@ async def main() -> None:
     print()
 
     results = await run_benchmark(
-        args.model, categories, args.repetitions,
-        profile=args.profile, max_tokens=args.max_tokens,
+        args.model,
+        categories,
+        args.repetitions,
+        profile=args.profile,
+        max_tokens=args.max_tokens,
     )
 
     print_report(results)

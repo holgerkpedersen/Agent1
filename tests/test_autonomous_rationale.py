@@ -7,6 +7,7 @@ These guard against a repair being committed with no stated justification
 reason).  The rationale builder is pure (no git/IO), so it is unit-tested in
 isolation.
 """
+
 from __future__ import annotations
 
 import importlib.util

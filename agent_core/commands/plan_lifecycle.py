@@ -7,6 +7,7 @@ It provides:
 * :class:`PlanLifecycleManager`: Handles state transitions and file renaming.
 * :func:`append_log`: Appends audit entries to a `.plans.jsonl` file.
 """
+
 from __future__ import annotations
 
 import json
@@ -15,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .plan_schema import PlanStatus, PlanTransition, PlanLogEntry
+
 
 class PlanLifecycleManager:
     """Manages the state transitions and physical file layout of a plan."""
@@ -79,15 +81,18 @@ class PlanLifecycleManager:
         self._log_transition(dst, PlanTransition.ERROR, PlanStatus.FAILED)
         return dst
 
-    def _log_transition(self, path: Path, transition: PlanTransition, status: PlanStatus):
+    def _log_transition(
+        self, path: Path, transition: PlanTransition, status: PlanStatus
+    ):
         entry = PlanLogEntry(
             plan_id=path.name,
             timestamp=datetime.now(timezone.utc).isoformat(),
             transition=transition,
             status=status,
-            details=f"File: {path}"
+            details=f"File: {path}",
         )
         append_log(self.log_file, entry)
+
 
 def append_log(log_path: Path, entry: PlanLogEntry):
     """Append a structured log entry to the JSONL file."""

@@ -7,6 +7,7 @@ from typing import Final
 @dataclass(frozen=True)
 class DatabaseConfig:
     """Database connection parameters."""
+
     host: str = "localhost"
     port: int = 5432
     username: str = "dashboard_user"
@@ -19,6 +20,7 @@ class DatabaseConfig:
 @dataclass(frozen=True)
 class PerformanceThresholds:
     """Warning and error limits for commands/tasks performance."""
+
     command_warning_ms: float = 500.0
     command_error_ms: float = 2000.0
     task_warning_seconds: float = 10.0
@@ -30,6 +32,7 @@ class PerformanceThresholds:
 @dataclass(frozen=True)
 class DashboardSettings:
     """Dashboard refresh intervals and display preferences."""
+
     refresh_interval_seconds: int = 30
     max_data_points_displayed: int = 100
     show_real_time_updates: bool = True
@@ -40,6 +43,7 @@ class DashboardSettings:
 @dataclass(frozen=True)
 class CollectorIntervals:
     """Data collection intervals for collectors."""
+
     command_collection_interval_seconds: int = 60
     task_collection_interval_seconds: int = 30
     metrics_retention_hours: int = 24
@@ -49,6 +53,7 @@ class CollectorIntervals:
 @dataclass(frozen=True)
 class ValidationRules:
     """Validation rules for collected data."""
+
     min_command_duration_ms: float = 0.0
     max_command_duration_ms: float = 3600000.0
     allowed_task_statuses: tuple[str, ...] = ("success", "failed", "running", "pending")

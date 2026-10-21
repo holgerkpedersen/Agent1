@@ -43,14 +43,18 @@ def set_pref(workspace: pathlib.Path, key: str, value: Any) -> None:
     try:
         workspace_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise WorkspacePrefsError(f"Failed to create .workspace directory: {exc}") from exc
+        raise WorkspacePrefsError(
+            f"Failed to create .workspace directory: {exc}"
+        ) from exc
 
     if pref_file.exists():
         try:
             with pref_file.open("r", encoding="utf-8") as f:
                 data: Dict[str, Any] = json.load(f)
         except (json.JSONDecodeError, OSError) as exc:
-            raise WorkspacePrefsError(f"Failed to read existing prefs file: {exc}") from exc
+            raise WorkspacePrefsError(
+                f"Failed to read existing prefs file: {exc}"
+            ) from exc
     else:
         data = {}
 

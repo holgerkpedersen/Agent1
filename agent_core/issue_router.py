@@ -10,6 +10,7 @@ Scoring: every rule contributes one point per distinct keyword hit
 (word-boundary matched, case-insensitive); the highest score wins, ties
 break by rule order (most specific first).  Zero hits ⇒ planner.
 """
+
 from __future__ import annotations
 
 import re
@@ -20,47 +21,158 @@ from agent_core.subagent_roles import get_role
 _ROUTE_RULES: tuple[tuple[str, frozenset[str]], ...] = (
     # Security first: a "bug" that is actually a leaked secret must not be
     # routed to the debugger who might paste it into a fix.
-    ("security", frozenset({
-        "secret", "secrets", "api key", "apikey", "password", "token leak",
-        "credential", "vulnerability", "vulnerable", "cve", "exploit",
-        "injection", "path traversal", "sanitize", "unsanitized",
-    })),
-    ("debugger", frozenset({
-        "traceback", "stack trace", "exception", "typeerror", "valueerror",
-        "attributeerror", "keyerror", "nameerror", "importerror",
-        "runtime error", "crash", "crashes", "failing", "fails", "failure",
-        "broken", "regressed", "wrong result", "incorrect output",
-        "does not work", "doesn't work", "bug",
-    })),
-    ("tester", frozenset({
-        "unit test", "unittest", "pytest", "test suite", "tests fail",
-        "coverage", "regression test", "red-to-green", "write tests",
-        "add tests", "untested",
-    })),
-    ("integrator", frozenset({
-        "git commit", "commit message", "merge conflict", "rebase",
-        "pull request", "push", "branch", "changelog entry", "tag release",
-        "conventional commit",
-    })),
-    ("documenter", frozenset({
-        "readme", "usage.md", "architecture.md", "changes.md", "docstring",
-        "documentation drift", "docs are stale", "update docs", "document the",
-    })),
-    ("researcher", frozenset({
-        "which version", "latest version", "upstream", "library docs",
-        "external api", "breaking change in", "is there a library",
-        "pypi", "npm equivalent",
-    })),
-    ("reviewer", frozenset({
-        "code review", "pre-commit", "before committing", "review my diff",
-        "review the diff", "sanity check", "second pair of eyes",
-        "naming collision", "lint issue",
-    })),
-    ("implementer", frozenset({
-        "implement", "add feature", "new feature", "create module",
-        "create class", "create function", "write module", "scaffold",
-        "extend the", "add support for", "refactor",
-    })),
+    (
+        "security",
+        frozenset(
+            {
+                "secret",
+                "secrets",
+                "api key",
+                "apikey",
+                "password",
+                "token leak",
+                "credential",
+                "vulnerability",
+                "vulnerable",
+                "cve",
+                "exploit",
+                "injection",
+                "path traversal",
+                "sanitize",
+                "unsanitized",
+            }
+        ),
+    ),
+    (
+        "debugger",
+        frozenset(
+            {
+                "traceback",
+                "stack trace",
+                "exception",
+                "typeerror",
+                "valueerror",
+                "attributeerror",
+                "keyerror",
+                "nameerror",
+                "importerror",
+                "runtime error",
+                "crash",
+                "crashes",
+                "failing",
+                "fails",
+                "failure",
+                "broken",
+                "regressed",
+                "wrong result",
+                "incorrect output",
+                "does not work",
+                "doesn't work",
+                "bug",
+            }
+        ),
+    ),
+    (
+        "tester",
+        frozenset(
+            {
+                "unit test",
+                "unittest",
+                "pytest",
+                "test suite",
+                "tests fail",
+                "coverage",
+                "regression test",
+                "red-to-green",
+                "write tests",
+                "add tests",
+                "untested",
+            }
+        ),
+    ),
+    (
+        "integrator",
+        frozenset(
+            {
+                "git commit",
+                "commit message",
+                "merge conflict",
+                "rebase",
+                "pull request",
+                "push",
+                "branch",
+                "changelog entry",
+                "tag release",
+                "conventional commit",
+            }
+        ),
+    ),
+    (
+        "documenter",
+        frozenset(
+            {
+                "readme",
+                "usage.md",
+                "architecture.md",
+                "changes.md",
+                "docstring",
+                "documentation drift",
+                "docs are stale",
+                "update docs",
+                "document the",
+            }
+        ),
+    ),
+    (
+        "researcher",
+        frozenset(
+            {
+                "which version",
+                "latest version",
+                "upstream",
+                "library docs",
+                "external api",
+                "breaking change in",
+                "is there a library",
+                "pypi",
+                "npm equivalent",
+            }
+        ),
+    ),
+    (
+        "reviewer",
+        frozenset(
+            {
+                "code review",
+                "pre-commit",
+                "before committing",
+                "review my diff",
+                "review the diff",
+                "sanity check",
+                "second pair of eyes",
+                "naming collision",
+                "lint issue",
+            }
+        ),
+    ),
+    (
+        "implementer",
+        frozenset(
+            {
+                "implement",
+                "add feature",
+                "new feature",
+                "create module",
+                "create class",
+                "create function",
+                "write module",
+                "scaffold",
+                "extend the",
+                "add support for",
+                "refactor",
+            }
+        ),
+    ),
 )
 _WORD_RE = re.compile(r"[a-z0-9'<>/]+")
 

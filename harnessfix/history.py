@@ -10,6 +10,7 @@ with ~6000 events existed.  The trace index is built lazily and cached per
 process; the ledger is small and re-read per query.  All query functions are
 read-only — they cannot affect implement's write/cascade invariants.
 """
+
 from __future__ import annotations
 
 import json
@@ -93,7 +94,9 @@ def _summarize(tool: str, text: str, is_error: bool, args: dict[str, Any]) -> st
     if tool in _MUTATING_TOOLS:
         return f"{tool} ok"
     if tool in _READ_TOOLS:
-        path = next((v for k, v in args.items() if k in _PATH_KEYS and isinstance(v, str)), "")
+        path = next(
+            (v for k, v in args.items() if k in _PATH_KEYS and isinstance(v, str)), ""
+        )
         return f"{tool} {Path(path).name if path else ''}".strip()
     return f"{tool} ok"
 
@@ -115,7 +118,11 @@ def _parse_trace_event(ev: dict[str, Any]) -> HistoryEvent | None:
         text = f"{ev.get('exception', '')}: {str(ev.get('message', ''))[:SUMMARY_CAP]}"
     else:
         text = str(ev.get("result", ""))
-    weight = 0 if is_error else (1 if tool in _MUTATING_TOOLS else (2 if tool == "run" else 3))
+    weight = (
+        0
+        if is_error
+        else (1 if tool in _MUTATING_TOOLS else (2 if tool == "run" else 3))
+    )
     files = tuple(dict.fromkeys(_norm(p) for p in _paths_from_args(args) + affected))
     return HistoryEvent(
         source="trace",
@@ -137,7 +144,10 @@ def _trace_events(workspace: str) -> list[HistoryEvent]:
     trace_dir = Path(workspace) / "reports" / "traces"
     if trace_dir.is_dir():
         sig = tuple(
-            sorted((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in trace_dir.glob("*.jsonl"))
+            sorted(
+                (p.name, p.stat().st_mtime_ns, p.stat().st_size)
+                for p in trace_dir.glob("*.jsonl")
+            )
         )
     else:
         sig = ()
@@ -288,29 +298,39 @@ def format_file_history(target: str, workspace: str, limit: int = 4) -> str:
     lines.append(f"\n## PAST EXECUTION NOTES — {len(events)} event(s) for {target}")
     for ev in events:
         when = datetime.fromtimestamp(ev.ts).strftime("%m-%d %H:%M") if ev.ts else "?"
-        lines.append(f"  - [{ev.source} {ev.ref[:8]}] {when} {ev.tool} {ev.kind}: {ev.summary}")
+        lines.append(
+            f"  - [{ev.source} {ev.ref[:8]}] {when} {ev.tool} {ev.kind}: {ev.summary}"
+        )
     return "\n".join(lines) + _append_wiki_notes(target, workspace)
 
 
-def format_batch_history(files: list[str], workspace: str, per_file: int = 2, line_cap: int = 10) -> str:
+def format_batch_history(
+    files: list[str], workspace: str, per_file: int = 2, line_cap: int = 10
+) -> str:
     """PAST EXECUTION NOTES block for a batch of files (empty string when none)."""
     lines: list[str] = []
     for target in files:
         events = file_history(target, workspace, per_file)
         if events:
             lines.append(f"- {target}: {len(events)} past event(s)")
-            lines += [f"    {ev.tool} {ev.kind} [{ev.ref[:8]}]: {ev.summary}" for ev in events]
+            lines += [
+                f"    {ev.tool} {ev.kind} [{ev.ref[:8]}]: {ev.summary}" for ev in events
+            ]
             if len(lines) >= line_cap:
                 lines.append("  ...")
                 break
     if not lines:
         return _append_wiki_notes("\n".join(files), workspace)
-    return "\n## PAST EXECUTION NOTES\n" + "\n".join(lines) + _append_wiki_notes(
-        "\n".join(files), workspace
+    return (
+        "\n## PAST EXECUTION NOTES\n"
+        + "\n".join(lines)
+        + _append_wiki_notes("\n".join(files), workspace)
     )
 
 
-def append_execution(workspace: str, command: str, files: list[Any], outcome: str = "ok", note: str = "") -> None:
+def append_execution(
+    workspace: str, command: str, files: list[Any], outcome: str = "ok", note: str = ""
+) -> None:
     """Append one structured execution record to the workspace ledger."""
     ledger = Path(workspace) / "reports" / HISTORY_SUBDIR / EXECUTIONS_FILE
     ledger.parent.mkdir(parents=True, exist_ok=True)

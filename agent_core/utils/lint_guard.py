@@ -115,9 +115,7 @@ class LintGuard:
                 seen[name] = node
         return issues
 
-    def find_bare_excepts(
-        self, source: str, path: str = "<string>"
-    ) -> list[LintIssue]:
+    def find_bare_excepts(self, source: str, path: str = "<string>") -> list[LintIssue]:
         """Flag every bare ``except:`` clause."""
         tree = self._parse(source)
         if tree is None:

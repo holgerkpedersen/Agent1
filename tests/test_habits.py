@@ -20,6 +20,7 @@ points:
 
 Every test writes only into ``tmp_path`` workspaces.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -70,6 +71,7 @@ def _make_agent(workspace: Path, tmp_path: Path, monkeypatch) -> "agent_mod.Agen
 # ---------------------------------------------------------------------------
 # 1. mine_habits: promotion / decay / corrections / caps
 # ---------------------------------------------------------------------------
+
 
 def test_miner_promotes_only_at_min_count() -> None:
     two = [_u("run the tests")] * 2
@@ -133,6 +135,7 @@ def test_miner_caps_habits_per_category() -> None:
 # 2. habits_block: empty stays empty, populated renders the marker once
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("empty", [None, "", []])
 def test_habits_block_empty_inputs_render_nothing(empty) -> None:
     assert habits_block(empty) == ""
@@ -156,14 +159,11 @@ def test_habits_block_renders_marker_once_and_caps_lines() -> None:
 # 3. Prompt integration: rebuilt every turn, strips back to the base prompt
 # ---------------------------------------------------------------------------
 
-def test_habits_marker_survives_double_refresh(
-    tmp_path: Path, monkeypatch
-) -> None:
+
+def test_habits_marker_survives_double_refresh(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "ws"
     ws.mkdir()
-    save_habits(
-        ws, [{"text": "keep answers short", "count": 5, "category": "style"}]
-    )
+    save_habits(ws, [{"text": "keep answers short", "count": 5, "category": "style"}])
 
     bot = _make_agent(ws, tmp_path, monkeypatch)
     bot._refresh_system_message()
@@ -174,9 +174,9 @@ def test_habits_marker_survives_double_refresh(
     assert HABITS_MARKER in first, "habits block missing from the system prompt"
     assert second == first, "dynamic blocks accumulated across refreshes"
     assert second.count("USER HABITS") == 1, "marker must appear exactly once"
-    assert (
-        agent_mod._strip_dynamic_system_blocks(second) == agent_mod._SYSTEM_PROMPT
-    ), "base prompt must survive stripping with no habits leakage"
+    assert agent_mod._strip_dynamic_system_blocks(second) == agent_mod._SYSTEM_PROMPT, (
+        "base prompt must survive stripping with no habits leakage"
+    )
 
 
 def test_empty_workspace_prompt_stays_byte_identical(
@@ -192,14 +192,14 @@ def test_empty_workspace_prompt_stays_byte_identical(
     assert HABITS_MARKER not in content
     assert "USER HABITS" not in content
     assert content == agent_mod._SYSTEM_PROMPT, (
-        "an empty-workspace prompt must stay byte-identical to the pre-habits"
-        " baseline"
+        "an empty-workspace prompt must stay byte-identical to the pre-habits baseline"
     )
 
 
 # ---------------------------------------------------------------------------
 # 5. Corrupt ledger quarantine
 # ---------------------------------------------------------------------------
+
 
 def test_corrupt_habits_ledger_is_quarantined(tmp_path: Path) -> None:
     ws = tmp_path / "ws_corrupt"
@@ -218,6 +218,7 @@ def test_corrupt_habits_ledger_is_quarantined(tmp_path: Path) -> None:
 # 6. The habits command: pin / forget / mine / off
 # ---------------------------------------------------------------------------
 
+
 def _run(args: list[str], bot) -> None:
     asyncio.run(HabitsCommand().execute(args, bot))
 
@@ -230,7 +231,10 @@ def test_habits_command_pin_and_forget(tmp_path: Path, monkeypatch) -> None:
     _run(["pin", "prefer short answers"], bot)
 
     habits = load_habits(ws)
-    assert [h["text"] for h in habits] == ["prefer short answers", "always use pytest -q"]
+    assert [h["text"] for h in habits] == [
+        "prefer short answers",
+        "always use pytest -q",
+    ]
     assert all(h["category"] == "pinned" for h in habits)
 
     _run(["forget", "0"], bot)
@@ -280,6 +284,7 @@ def test_habits_command_off_suppresses_ledger(
 # ---------------------------------------------------------------------------
 # 7. The A3 turn hook: turn_log.jsonl line + experiences row
 # ---------------------------------------------------------------------------
+
 
 def test_finish_turn_writes_turn_log_and_experience_row(
     tmp_path: Path, monkeypatch

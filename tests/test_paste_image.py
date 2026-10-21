@@ -9,6 +9,7 @@ Pillow is an optional dependency (``pip install -e .[vision]``); the tests that
 need it are skipped with a clear reason when it is absent, mirroring the
 library's own graceful degradation in ``paste_image_cmd.encode_clipboard_image``.
 """
+
 import base64
 from pathlib import Path
 from unittest.mock import patch
@@ -76,13 +77,25 @@ def test_encode_image_file_reports_missing_file():
 def test_strip_image_blocks_drops_pure_image_messages():
     messages = [
         {"role": "system", "content": "SYS"},
-        {"role": "user", "content": [
-            {"type": "text", "text": "look"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
-        ]},
-        {"role": "user", "content": [
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,BBBB"}},
-        ]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AAAA"},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,BBBB"},
+                },
+            ],
+        },
         {"role": "assistant", "content": "ok"},
     ]
     stripped = _strip_image_blocks(messages)
@@ -166,9 +179,12 @@ def test_paste_image_command_clipboard_fallback():
         sent["images"] = images
 
     fake_url = "data:image/png;base64,CLIP"
-    with patch.object(agent, "chat_nlp", side_effect=fake_chat_nlp), patch(
-        "agent_core.commands.paste_image_cmd.encode_clipboard_image",
-        return_value=(fake_url, "image/png"),
+    with (
+        patch.object(agent, "chat_nlp", side_effect=fake_chat_nlp),
+        patch(
+            "agent_core.commands.paste_image_cmd.encode_clipboard_image",
+            return_value=(fake_url, "image/png"),
+        ),
     ):
         import asyncio
 
@@ -185,9 +201,12 @@ def test_paste_image_command_reports_empty_clipboard():
     async def fake_chat_nlp(user_input, images=None):
         dispatched["called"] = True
 
-    with patch.object(agent, "chat_nlp", side_effect=fake_chat_nlp), patch(
-        "agent_core.commands.paste_image_cmd.encode_clipboard_image",
-        return_value=None,
+    with (
+        patch.object(agent, "chat_nlp", side_effect=fake_chat_nlp),
+        patch(
+            "agent_core.commands.paste_image_cmd.encode_clipboard_image",
+            return_value=None,
+        ),
     ):
         import asyncio
 
@@ -210,9 +229,12 @@ def test_paste_image_desc_flag_no_path_uses_clipboard():
         sent["images"] = images
 
     fake_url = "data:image/png;base64,CLIP"
-    with patch.object(agent, "chat_nlp", side_effect=fake_chat_nlp), patch(
-        "agent_core.commands.paste_image_cmd.encode_clipboard_image",
-        return_value=(fake_url, "image/png"),
+    with (
+        patch.object(agent, "chat_nlp", side_effect=fake_chat_nlp),
+        patch(
+            "agent_core.commands.paste_image_cmd.encode_clipboard_image",
+            return_value=(fake_url, "image/png"),
+        ),
     ):
         import asyncio
 
@@ -257,9 +279,12 @@ def test_paste_image_prompt_flag_still_works():
         sent["images"] = images
 
     fake_url = "data:image/png;base64,CLIP"
-    with patch.object(agent, "chat_nlp", side_effect=fake_chat_nlp), patch(
-        "agent_core.commands.paste_image_cmd.encode_clipboard_image",
-        return_value=(fake_url, "image/png"),
+    with (
+        patch.object(agent, "chat_nlp", side_effect=fake_chat_nlp),
+        patch(
+            "agent_core.commands.paste_image_cmd.encode_clipboard_image",
+            return_value=(fake_url, "image/png"),
+        ),
     ):
         import asyncio
 

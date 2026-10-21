@@ -94,9 +94,7 @@ class TestToolRouter:
             assert "parameters" in s
 
     def test_parse_explicit_command(self, router: ToolRouter) -> None:
-        tool_name, args = router.parse_explicit_command(
-            "/tool:read_file path=agent.py"
-        )
+        tool_name, args = router.parse_explicit_command("/tool:read_file path=agent.py")
         assert tool_name == "read_file"
         assert isinstance(args, ReadFileArgs)
         assert args.path == "agent.py"
@@ -106,12 +104,14 @@ class TestToolRouter:
             router.parse_explicit_command("read_file agent.py")
 
     def test_parse_openai_function_call(self, router: ToolRouter) -> None:
-        tool_name, args = router.parse_openai_function_call({
-            "function": {
-                "name": "read_file",
-                "arguments": '{"path": "agent.py"}',
+        tool_name, args = router.parse_openai_function_call(
+            {
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path": "agent.py"}',
+                }
             }
-        })
+        )
         assert tool_name == "read_file"
         assert isinstance(args, ReadFileArgs)
         assert args.path == "agent.py"
@@ -122,6 +122,7 @@ class TestToolRouter:
 
     def test_register_new_tool(self, router: ToolRouter) -> None:
         from tool_router import _VALIDATION_REGISTRY as vr
+
         vr["custom_tool"] = ReadFileArgs
 
         td = ToolDefinition(
@@ -138,9 +139,7 @@ class TestToolRouter:
             router.execute("run_command", ShellCommandArgs(command="echo"))
 
     def test_natural_language_read(self, router: ToolRouter) -> None:
-        tool_name, args = router.parse_natural_language(
-            "read the file agent.py"
-        )
+        tool_name, args = router.parse_natural_language("read the file agent.py")
         assert tool_name == "read_file"
         assert isinstance(args, ReadFileArgs)
         assert args.path == "agent.py"
@@ -169,9 +168,8 @@ class TestToolRouter:
     def test_parse_explicit_command_no_args(self, router: ToolRouter) -> None:
         """/tool:get_current_datetime without arguments should route cleanly."""
         from tool_router import GetCurrentDatetimeArgs
-        tool_name, args = router.parse_explicit_command(
-            "/tool:get_current_datetime"
-        )
+
+        tool_name, args = router.parse_explicit_command("/tool:get_current_datetime")
         assert tool_name == "get_current_datetime"
         assert isinstance(args, GetCurrentDatetimeArgs)
         assert args.timezone is None
@@ -179,6 +177,7 @@ class TestToolRouter:
     def test_natural_language_datetime_english(self, router: ToolRouter) -> None:
         """'what time is it?' should route to get_current_datetime via intents."""
         from tool_router import GetCurrentDatetimeArgs
+
         tool_name, args = router.parse_natural_language("what time is it?")
         assert tool_name == "get_current_datetime"
         assert isinstance(args, GetCurrentDatetimeArgs)
@@ -186,6 +185,7 @@ class TestToolRouter:
     def test_natural_language_datetime_current(self, router: ToolRouter) -> None:
         """'what is the current datetime' should route to get_current_datetime."""
         from tool_router import GetCurrentDatetimeArgs
+
         tool_name, args = router.parse_natural_language("what is the current datetime")
         assert tool_name == "get_current_datetime"
         assert isinstance(args, GetCurrentDatetimeArgs)
@@ -193,6 +193,7 @@ class TestToolRouter:
     def test_natural_language_non_english_fails(self, router: ToolRouter) -> None:
         """Non-English NL should fail — the LLM is expected to translate first."""
         from tool_router import RoutingError
+
         with pytest.raises(RoutingError):
             router.parse_natural_language("hvad dag er det idag?")
 
@@ -212,18 +213,14 @@ class TestToolRouter:
 
     def test_route_and_execute_datetime_no_args(self, router: ToolRouter) -> None:
         """route_and_execute with bare /tool: command end-to-end."""
-        tool_name, args, result = router.route_and_execute(
-            "/tool:get_current_datetime"
-        )
+        tool_name, args, result = router.route_and_execute("/tool:get_current_datetime")
         assert tool_name == "get_current_datetime"
         assert isinstance(result, dict)
         assert "datetime" in result
 
     def test_route_and_execute_datetime_natural(self, router: ToolRouter) -> None:
         """route_and_execute with natural language datetime query end-to-end."""
-        tool_name, args, result = router.route_and_execute(
-            "what time is it?"
-        )
+        tool_name, args, result = router.route_and_execute("what time is it?")
         assert tool_name == "get_current_datetime"
         assert isinstance(result, dict)
         assert "datetime" in result

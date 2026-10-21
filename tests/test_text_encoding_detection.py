@@ -1,4 +1,5 @@
 """Regression: a non-UTF-8 text file must be detected, never silently rewritten."""
+
 from __future__ import annotations
 
 import asyncio
@@ -70,7 +71,9 @@ def test_nlp_edit_keeps_legacy_cp1252_encoding(tmp_path):
     assert result.startswith("Edited")
     assert "kept cp1252" in result
     # Compare newline-normalized: text-mode writes use the platform newline.
-    assert target.read_bytes().replace(b"\r\n", b"\n") == "KEEP \xe9 this\n".encode("cp1252")
+    assert target.read_bytes().replace(b"\r\n", b"\n") == "KEEP \xe9 this\n".encode(
+        "cp1252"
+    )
 
 
 def test_nlp_edit_refuses_text_unrepresentable_in_legacy_encoding(tmp_path):

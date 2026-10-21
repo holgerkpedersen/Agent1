@@ -135,10 +135,7 @@ class TestDecideCommandWithManyDecisions:
         assert len(all_decisions) == 50
 
         # Test that find_overlaps filters correctly
-        new_decision = {
-            "tags": ["tag1"],
-            "affected_files": ["agent_core/file10.py"]
-        }
+        new_decision = {"tags": ["tag1"], "affected_files": ["agent_core/file10.py"]}
         overlaps = find_overlaps(new_decision, all_decisions, larger_workspace)
         # Should find decisions that share tag1 (every 5th) OR file10.py
         assert len(overlaps) > 0
@@ -154,7 +151,7 @@ class TestDecideCommandWithManyDecisions:
         # Create a new decision that overlaps with existing ones
         new_decision = {
             "tags": ["concurrency"],
-            "affected_files": ["agent_core/api_client.py"]
+            "affected_files": ["agent_core/api_client.py"],
         }
 
         # This should only check decision 001 (concurrency tag)
@@ -162,7 +159,7 @@ class TestDecideCommandWithManyDecisions:
             mock_agent,
             new_decision,
             "New concurrency approach",
-            workspace_with_decisions
+            workspace_with_decisions,
         )
 
         # Should not have early returned "No similar decisions"

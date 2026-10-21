@@ -29,6 +29,7 @@ actionable guidance rather than a wasted git call.
 The module is import-free of ``agent`` (the ``agent_core`` namespace rule);
 ``Agent._nlp_merge`` is a thin adapter over :func:`run_merge`.
 """
+
 from __future__ import annotations
 
 import os
@@ -50,7 +51,12 @@ PROBE_TIMEOUT = 15.0
 #: here so a typo is answered with the valid list instead of git's
 #: ``Could not find merge strategy 'nope'``.
 KNOWN_STRATEGIES: tuple[str, ...] = (
-    "ort", "recursive", "resolve", "octopus", "subtree", "ours",
+    "ort",
+    "recursive",
+    "resolve",
+    "octopus",
+    "subtree",
+    "ours",
 )
 
 #: Actions the tool understands, in the order they are advertised.
@@ -85,6 +91,7 @@ _TRUNCATION_MARK = "\n... [truncated] ...\n"
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
+
 
 def normalize_action(raw: object) -> str | None:
     """Map a model-supplied ``action`` to a canonical action name.
@@ -199,6 +206,7 @@ def build_merge_argv(
 # Git plumbing
 # ---------------------------------------------------------------------------
 
+
 def _bounded(text: str, limit: int = MAX_OUTPUT) -> str:
     """Cap *text* at *limit* characters, keeping the head and the tail."""
     if len(text) <= limit:
@@ -209,7 +217,9 @@ def _bounded(text: str, limit: int = MAX_OUTPUT) -> str:
 
 
 def _run_git(
-    repo: str | Path, argv: list[str], timeout: float,
+    repo: str | Path,
+    argv: list[str],
+    timeout: float,
 ) -> tuple[int, str, str]:
     """Run *argv* in *repo* non-interactively, never blocking.
 
@@ -239,7 +249,9 @@ def _run_git(
 def merge_in_progress(repo: str | Path) -> bool:
     """True when ``MERGE_HEAD`` exists, i.e. a merge is mid-flight."""
     rc, _out, _err = _run_git(
-        repo, ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], PROBE_TIMEOUT,
+        repo,
+        ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        PROBE_TIMEOUT,
     )
     return rc == 0
 
@@ -247,7 +259,9 @@ def merge_in_progress(repo: str | Path) -> bool:
 def conflicted_files(repo: str | Path) -> list[str]:
     """Paths still carrying unresolved conflict markers."""
     _rc, out, _err = _run_git(
-        repo, ["git", "diff", "--name-only", "--diff-filter=U"], PROBE_TIMEOUT,
+        repo,
+        ["git", "diff", "--name-only", "--diff-filter=U"],
+        PROBE_TIMEOUT,
     )
     return parse_conflicted_files(out)
 
@@ -255,6 +269,7 @@ def conflicted_files(repo: str | Path) -> list[str]:
 # ---------------------------------------------------------------------------
 # Report assembly
 # ---------------------------------------------------------------------------
+
 
 def _invocation_line(argv: list[str]) -> str:
     return "Invocation: " + " ".join(argv)
@@ -270,8 +285,9 @@ def _state_lines(repo: str | Path) -> list[str]:
         lines.append(f"Unresolved conflicts ({len(conflicts)}):")
         lines += [f"  {path}" for path in conflicts]
     else:
-        lines.append("All conflicts are resolved — commit them with "
-                     'merge(action="continue").')
+        lines.append(
+            'All conflicts are resolved — commit them with merge(action="continue").'
+        )
     return lines
 
 
@@ -281,12 +297,14 @@ def _git_body(rc: int, out: str, err: str) -> str:
 
 
 def _report(repo: str | Path, argv: list[str], rc: int, out: str, err: str) -> str:
-    text = "\n".join([
-        _invocation_line(argv),
-        f"Exit code: {rc}",
-        *_state_lines(repo),
-        _git_body(rc, out, err),
-    ])
+    text = "\n".join(
+        [
+            _invocation_line(argv),
+            f"Exit code: {rc}",
+            *_state_lines(repo),
+            _git_body(rc, out, err),
+        ]
+    )
     return _bounded(text)
 
 
@@ -297,6 +315,7 @@ def _guidance(argv: list[str], note: str, body: str = "(git not invoked)") -> st
 # ---------------------------------------------------------------------------
 # Actions
 # ---------------------------------------------------------------------------
+
 
 def _do_status(repo: str | Path) -> str:
     if not merge_in_progress(repo):
@@ -320,18 +339,22 @@ def _do_start(repo: str | Path, args: dict[str, Any], timeout: float) -> str:
         return _guidance(
             ["git", "merge"],
             "merge(action=\"start\") needs a 'branch' — the branch or commit to "
-            "merge into the current one. Use merge(action=\"status\") to inspect "
+            'merge into the current one. Use merge(action="status") to inspect '
             "the current state first.",
         )
     if merge_in_progress(repo):
         # A second merge would answer `fatal: Merging is not possible because
         # you have unmerged files` — a wasted call.  Answer the real question.
-        return _bounded("\n".join([
-            "A merge is already in progress — finish or cancel it first.",
-            *_state_lines(repo),
-            'Next: resolve the conflicts and call merge(action="continue"), or '
-            'back out with merge(action="abort").',
-        ]))
+        return _bounded(
+            "\n".join(
+                [
+                    "A merge is already in progress — finish or cancel it first.",
+                    *_state_lines(repo),
+                    'Next: resolve the conflicts and call merge(action="continue"), or '
+                    'back out with merge(action="abort").',
+                ]
+            )
+        )
 
     try:
         argv = build_merge_argv(
@@ -352,15 +375,21 @@ def _do_start(repo: str | Path, args: dict[str, Any], timeout: float) -> str:
     text = _report(repo, argv, rc, out, err)
 
     if bool(args.get("squash")):
-        text += ("\nSquash: changes are staged but not committed — commit them "
-                 "yourself (the squash leaves no MERGE_HEAD).")
+        text += (
+            "\nSquash: changes are staged but not committed — commit them "
+            "yourself (the squash leaves no MERGE_HEAD)."
+        )
     elif bool(args.get("no_commit")):
-        text += ("\n--no-commit: the merge result is staged but not committed — "
-                 "commit it yourself when ready.")
+        text += (
+            "\n--no-commit: the merge result is staged but not committed — "
+            "commit it yourself when ready."
+        )
     if conflicted_files(repo):
-        text += ("\nNext: resolve each conflict, stage with git(add, \"-A\"), "
-                 'then call merge(action="continue"). To back out: '
-                 'merge(action="abort").')
+        text += (
+            '\nNext: resolve each conflict, stage with git(add, "-A"), '
+            'then call merge(action="continue"). To back out: '
+            'merge(action="abort").'
+        )
     return _bounded(text)
 
 
@@ -375,13 +404,17 @@ def _do_continue(repo: str | Path, timeout: float) -> str:
         )
     conflicts = conflicted_files(repo)
     if conflicts:
-        return _bounded("\n".join([
-            _invocation_line(argv),
-            f"Cannot continue: {len(conflicts)} unresolved conflict(s).",
-            *[f"  {path}" for path in conflicts],
-            "Resolve each file, stage it with git(add, \"-A\"), then call "
-            "merge(action=\"continue\") again.",
-        ]))
+        return _bounded(
+            "\n".join(
+                [
+                    _invocation_line(argv),
+                    f"Cannot continue: {len(conflicts)} unresolved conflict(s).",
+                    *[f"  {path}" for path in conflicts],
+                    'Resolve each file, stage it with git(add, "-A"), then call '
+                    'merge(action="continue") again.',
+                ]
+            )
+        )
     rc, out, err = _run_git(repo, argv, timeout)
     return _report(repo, argv, rc, out, err)
 
@@ -390,7 +423,8 @@ def _do_abort(repo: str | Path, timeout: float) -> str:
     argv = ["git", "merge", "--abort"]
     if not merge_in_progress(repo):
         return _guidance(
-            argv, "No merge in progress — there is nothing to abort.",
+            argv,
+            "No merge in progress — there is nothing to abort.",
         )
     rc, out, err = _run_git(repo, argv, timeout)
     return _report(repo, argv, rc, out, err)
@@ -405,6 +439,7 @@ def _do_quit(repo: str | Path, timeout: float) -> str:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def run_merge(
     repo: str | Path,

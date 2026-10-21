@@ -1,4 +1,5 @@
 """Tests for the run tool's timeout handling (process-tree kill on Windows)."""
+
 import asyncio
 import subprocess
 
@@ -50,12 +51,15 @@ class TestRunTimeout:
             # Windows: the tree is killed via taskkill /T /F.  Assert the
             # flags as a set — the implementation's flag order is not API.
             assert captured["taskkill"][0] == "taskkill"
-            assert "/F" in captured["taskkill"]      # force
-            assert "/T" in captured["taskkill"]      # tree kill
+            assert "/F" in captured["taskkill"]  # force
+            assert "/T" in captured["taskkill"]  # tree kill
             assert "/PID" in captured["taskkill"]
             assert "4242" in captured["taskkill"]
             # The shell runs in its own process group on Windows.
-            assert captured["kwargs"]["creationflags"] == subprocess.CREATE_NEW_PROCESS_GROUP
+            assert (
+                captured["kwargs"]["creationflags"]
+                == subprocess.CREATE_NEW_PROCESS_GROUP
+            )
         else:
             # POSIX: a plain proc.kill() — taskkill must never be invoked.
             assert captured["proc"].killed is True

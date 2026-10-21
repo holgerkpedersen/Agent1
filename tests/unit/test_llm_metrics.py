@@ -1,5 +1,6 @@
 """LLM metrics contract tests (plan ARCH items 14, 16, 17): ResponseMetrics,
 MetricsTracker token/cost accounting, and provider-side capture."""
+
 import json
 
 import pytest
@@ -41,8 +42,12 @@ class TestResponseMetrics:
 class TestMetricsTrackerAccounting:
     def test_record_turn_accumulates(self):
         tracker = MetricsTracker()
-        tracker.record_turn(TaskType.IMPLEMENT, ProfileType.PRECISE, tokens=100, cost=0.01)
-        tracker.record_turn(TaskType.IMPLEMENT, ProfileType.PRECISE, tokens=200, cost=0.03)
+        tracker.record_turn(
+            TaskType.IMPLEMENT, ProfileType.PRECISE, tokens=100, cost=0.01
+        )
+        tracker.record_turn(
+            TaskType.IMPLEMENT, ProfileType.PRECISE, tokens=200, cost=0.03
+        )
         metrics = tracker.get_metrics(TaskType.IMPLEMENT, ProfileType.PRECISE)
         assert metrics["total_tokens"] == 300
         assert metrics["avg_tokens"] == 150
@@ -55,7 +60,9 @@ class TestMetricsTrackerAccounting:
         tracker.record_turn(
             TaskType.IMPLEMENT,
             ProfileType.PRECISE,
-            metrics=ResponseMetrics(prompt_tokens=10, completion_tokens=20, latency_ms=500),
+            metrics=ResponseMetrics(
+                prompt_tokens=10, completion_tokens=20, latency_ms=500
+            ),
         )
         metrics = tracker.get_metrics(TaskType.IMPLEMENT, ProfileType.PRECISE)
         assert metrics["total_tokens"] == 30
@@ -104,11 +111,14 @@ class TestProviderCapture:
         prov = LMStudioProvider(model_name="laguna-s-2.1", api_key="fake")
 
         def fake_urlopen(req, timeout=None):
-            return _FakeHttp({
-                "choices": [{"message": {"content": "hi"},
-                             "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 11, "completion_tokens": 7},
-            })
+            return _FakeHttp(
+                {
+                    "choices": [
+                        {"message": {"content": "hi"}, "finish_reason": "stop"}
+                    ],
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+                }
+            )
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             out = asyncio.run(prov.chat([{"role": "user", "content": "x"}]))
@@ -123,13 +133,19 @@ class TestProviderCapture:
         from agent_core.llm.opencode_provider import OpencodeProvider
         from agent_core.llm.provider import ResponseMetrics
 
-        prov = OpencodeProvider("opencode-go/glm-5.2", api_key="sk-test", read_store=False)
+        prov = OpencodeProvider(
+            "opencode-go/glm-5.2", api_key="sk-test", read_store=False
+        )
 
         def fake_urlopen(req, timeout=None):
-            return _FakeHttp({
-                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 4, "completion_tokens": 2},
-            })
+            return _FakeHttp(
+                {
+                    "choices": [
+                        {"message": {"content": "ok"}, "finish_reason": "stop"}
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                }
+            )
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             out = asyncio.run(prov.chat([{"role": "user", "content": "q"}]))

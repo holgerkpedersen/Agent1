@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 
 """Prompt generator for FixCommand LLM."""
 
+
 def generate_prompt_with_tools(issue_description: str) -> List[Dict[str, Any]]:
     """Generate prompt that explicitly requests native tool usage."""
     if not issue_description or not issue_description.strip():

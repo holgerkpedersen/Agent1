@@ -8,6 +8,7 @@ Covers:
   list_files missing-dir handling, edit file-not-found path-recovery prefix
 - shared ``_truncate_output`` helper used by run/git/diff/tests tools
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,6 +34,7 @@ def agent() -> Agent:
 # Dispatch table integrity
 # ---------------------------------------------------------------------------
 
+
 def test_dispatch_table_covers_every_advertised_tool(agent: Agent) -> None:
     handlers = agent._nlp_tool_handlers()
     assert set(handlers) == set(NLP_TOOL_NAMES)
@@ -48,9 +50,11 @@ def test_unknown_tool_names_available_set(agent: Agent) -> None:
 def test_tool_name_is_case_insensitive(agent: Agent, tmp_path: Path) -> None:
     target = tmp_path / "case_probe.txt"
     target.write_text("hello", encoding="utf-8")
-    result = asyncio.run(agent._execute_tool_call(
-        "READ", {"path": str(target), "offset": 1, "limit": 10}
-    ))
+    result = asyncio.run(
+        agent._execute_tool_call(
+            "READ", {"path": str(target), "offset": 1, "limit": 10}
+        )
+    )
     assert result == "hello"
 
 
@@ -67,6 +71,7 @@ def test_handler_exception_is_contained(agent: Agent) -> None:
 # _nlp_read
 # ---------------------------------------------------------------------------
 
+
 def test_nlp_read_reports_offset_beyond_eof(agent: Agent, tmp_path: Path) -> None:
     target = tmp_path / "short.txt"
     target.write_text("one\ntwo\n", encoding="utf-8")
@@ -78,7 +83,9 @@ def test_nlp_read_reports_offset_beyond_eof(agent: Agent, tmp_path: Path) -> Non
 def test_nlp_read_paging_hint_carries_next_offset(agent: Agent, tmp_path: Path) -> None:
     target = tmp_path / "long.txt"
     target.write_text("\n".join(f"line-{i}" for i in range(50)), encoding="utf-8")
-    result = asyncio.run(agent._nlp_read({"path": str(target), "offset": 1, "limit": 10}))
+    result = asyncio.run(
+        agent._nlp_read({"path": str(target), "offset": 1, "limit": 10})
+    )
     assert "[truncated — use read with offset=11 to continue]" in result
     assert "line-0" in result and "line-10" not in result
 
@@ -106,9 +113,11 @@ def test_read_multiple_files_in_one_call(agent: Agent, tmp_path: Path) -> None:
     b = tmp_path / "b.txt"
     a.write_text("alpha", encoding="utf-8")
     b.write_text("beta", encoding="utf-8")
-    out = asyncio.run(agent._execute_tool_call(
-        "read", {"paths": [str(a), str(b)], "offset": 1, "limit": 10}
-    ))
+    out = asyncio.run(
+        agent._execute_tool_call(
+            "read", {"paths": [str(a), str(b)], "offset": 1, "limit": 10}
+        )
+    )
     assert f"=== {a} ===" in out
     assert f"=== {b} ===" in out
     assert "alpha" in out and "beta" in out
@@ -129,7 +138,10 @@ def test_read_empty_paths_list_errors(agent: Agent) -> None:
 # _nlp_list_files
 # ---------------------------------------------------------------------------
 
-def test_nlp_list_files_marks_directories_and_sorts(agent: Agent, tmp_path: Path) -> None:
+
+def test_nlp_list_files_marks_directories_and_sorts(
+    agent: Agent, tmp_path: Path
+) -> None:
     (tmp_path / "z_dir").mkdir()
     (tmp_path / "a_file.txt").write_text("", encoding="utf-8")
     result = asyncio.run(agent._nlp_list_files({"path": str(tmp_path)}))
@@ -167,23 +179,37 @@ def test_nlp_list_files_caps_at_fifty_sorted_entries(
 # _nlp_edit
 # ---------------------------------------------------------------------------
 
-def test_nlp_edit_missing_file_uses_path_miss_prefix(agent: Agent, tmp_path: Path) -> None:
+
+def test_nlp_edit_missing_file_uses_path_miss_prefix(
+    agent: Agent, tmp_path: Path
+) -> None:
     """'File not found:' is the prefix ToolLoopRunner's path-recovery guard
     recognises for read/edit/write — edit must keep using it so a mistyped
     path triggers the parent-listing recovery instead of a dead end."""
-    result = asyncio.run(agent._nlp_edit({
-        "path": str(tmp_path / "ghost.py"),
-        "old_text": "a", "new_text": "b",
-    }))
+    result = asyncio.run(
+        agent._nlp_edit(
+            {
+                "path": str(tmp_path / "ghost.py"),
+                "old_text": "a",
+                "new_text": "b",
+            }
+        )
+    )
     assert result.startswith("File not found:")
 
 
 def test_nlp_edit_old_text_not_found_message(agent: Agent, tmp_path: Path) -> None:
     target = tmp_path / "code.py"
     target.write_text("value = 1\n", encoding="utf-8")
-    result = asyncio.run(agent._nlp_edit({
-        "path": str(target), "old_text": "NOPE", "new_text": "b",
-    }))
+    result = asyncio.run(
+        agent._nlp_edit(
+            {
+                "path": str(target),
+                "old_text": "NOPE",
+                "new_text": "b",
+            }
+        )
+    )
     assert "Text not found" in result
 
 
@@ -192,9 +218,15 @@ def test_nlp_edit_applies_first_occurrence_and_verifies_py(
 ) -> None:
     target = tmp_path / "code.py"
     target.write_text("value = 1\nvalue = 1\n", encoding="utf-8")
-    result = asyncio.run(agent._nlp_edit({
-        "path": str(target), "old_text": "value = 1", "new_text": "value = 2",
-    }))
+    result = asyncio.run(
+        agent._nlp_edit(
+            {
+                "path": str(target),
+                "old_text": "value = 1",
+                "new_text": "value = 2",
+            }
+        )
+    )
     assert result.startswith(f"Edited {target}")
     assert "[verify] py_compile" in result
     content = target.read_text(encoding="utf-8")
@@ -205,6 +237,7 @@ def test_nlp_edit_applies_first_occurrence_and_verifies_py(
 # _nlp_web_search (offline validation only — no network in unit tests)
 # ---------------------------------------------------------------------------
 
+
 def test_nlp_web_search_requires_query(agent: Agent) -> None:
     result = asyncio.run(agent._nlp_web_search({}))
     assert result == "Error: web_search requires a query."
@@ -213,6 +246,7 @@ def test_nlp_web_search_requires_query(agent: Agent) -> None:
 # ---------------------------------------------------------------------------
 # Shared output truncation
 # ---------------------------------------------------------------------------
+
 
 def test_truncate_output_short_pass_through() -> None:
     assert _truncate_output("ok") == "ok"
@@ -241,6 +275,7 @@ def test_truncate_output_bounds_long_output() -> None:
 # Effective workspace resolution
 # ---------------------------------------------------------------------------
 
+
 def test_effective_ws_dir_falls_back_when_override_is_invalid(
     agent: Agent, tmp_path: Path
 ) -> None:
@@ -260,6 +295,7 @@ def test_effective_ws_dir_prefers_existing_override(
 # Destructive-command scan stays wired into the run tool
 # ---------------------------------------------------------------------------
 
+
 def test_run_tool_still_blocks_destructive_commands(agent: Agent) -> None:
     assert _blocked_shell_command("rm -rf /") is not None
     result = asyncio.run(agent._nlp_run({"command": "format c:"}))
@@ -269,6 +305,7 @@ def test_run_tool_still_blocks_destructive_commands(agent: Agent) -> None:
 # ---------------------------------------------------------------------------
 # Chat-history projection keeps its bounded-window contract
 # ---------------------------------------------------------------------------
+
 
 def test_trim_chat_history_handles_non_system_head() -> None:
     from agent import _trim_chat_history
@@ -287,6 +324,7 @@ def test_trim_chat_history_handles_non_system_head() -> None:
 # Dispatch-table caching (decision 120: Cache Tool Handler Dictionary)
 # ---------------------------------------------------------------------------
 
+
 def test_dispatch_table_is_cached_across_calls(agent: Agent) -> None:
     """Decision 120: the handler map is built once per instance -- the hot
     dispatch path must not rebuild a 30-entry dict of bound methods."""
@@ -295,9 +333,7 @@ def test_dispatch_table_is_cached_across_calls(agent: Agent) -> None:
     assert first is second
 
 
-def test_cached_handlers_track_workspace_override(
-    agent: Agent, tmp_path: Path
-) -> None:
+def test_cached_handlers_track_workspace_override(agent: Agent, tmp_path: Path) -> None:
     """A cached map must not go stale: bound handlers read _nlp_workspace at
     call time, so a workspace override made after the cache exists is honored."""
     (tmp_path / "workspace_probe.txt").write_text("x", encoding="utf-8")

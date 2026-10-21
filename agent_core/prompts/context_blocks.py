@@ -7,6 +7,7 @@ tests monkeypatch on the ``agent`` module (``decisions_as_system_prompt``,
 are resolved lazily from it so patching keeps working; agent-instance
 methods are forwarded via ``getattr(agent, name)`` at call time.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,14 +20,22 @@ from agent_core.config import AgentDisplayMode
 from agent_core.file_history import file_notes_block
 from agent_core.habits import habits_block, load_habits
 from agent_core.history_compaction import (
-    _content_tokens, _is_compaction_note, _recover_original_goal, _strip_turn_wrappers
+    _content_tokens,
+    _is_compaction_note,
+    _recover_original_goal,
+    _strip_turn_wrappers,
 )
 from agent_core.memory import (
-    load_semantic_memory, semantic_memory_block, semantic_search_memories
+    load_semantic_memory,
+    semantic_memory_block,
+    semantic_search_memories,
 )
 from agent_core.memory.types import MAX_GOAL_CHARS, original_goal_block
 from agent_core.skills import (
-    discover_skills, load_skill_index, match_skills_for_input, skill_hint_block
+    discover_skills,
+    load_skill_index,
+    match_skills_for_input,
+    skill_hint_block,
 )
 from agent_core.types import _GOAL_RELATED_THRESHOLD
 
@@ -39,6 +48,7 @@ logger = logging.getLogger(__name__)
 def _agent_mod() -> Any:
     """The ``agent`` module, resolved lazily (agent.py imports this module)."""
     import agent as _agent_mod
+
     return _agent_mod
 
 
@@ -54,11 +64,15 @@ def _decision_constraints_block(agent: "Agent") -> str:
     """
     try:
         if not agent._files_read:
-            return ''
-        return str(_agent_mod().decisions_as_system_prompt(agent.workspace, sorted(agent._files_read)))
+            return ""
+        return str(
+            _agent_mod().decisions_as_system_prompt(
+                agent.workspace, sorted(agent._files_read)
+            )
+        )
     except Exception:
-        logger.exception('Decision constraints unavailable:\n')
-        return ''
+        logger.exception("Decision constraints unavailable:\n")
+        return ""
 
 
 def _skill_index_block(agent: "Agent") -> str:
@@ -73,10 +87,10 @@ def _skill_index_block(agent: "Agent") -> str:
     kill a chat turn (same rule as :meth:`_decision_constraints_block`).
     """
     try:
-        return load_skill_index(getattr(agent, '_effective_ws_dir')())
+        return load_skill_index(getattr(agent, "_effective_ws_dir")())
     except Exception:
-        logger.exception('Skill index unavailable:\n')
-        return ''
+        logger.exception("Skill index unavailable:\n")
+        return ""
 
 
 def _skill_hint_block(agent: "Agent", user_input: str) -> str:
@@ -94,24 +108,25 @@ def _skill_hint_block(agent: "Agent", user_input: str) -> str:
     ``[skill-hints]`` status line suppressed in QUIET mode.
     """
     try:
-        skills = discover_skills(getattr(agent, '_effective_ws_dir')())
-        matched = match_skills_for_input(skills, user_input or '')
+        skills = discover_skills(getattr(agent, "_effective_ws_dir")())
+        matched = match_skills_for_input(skills, user_input or "")
         if not matched:
-            return ''
+            return ""
         try:
             collector = agent.get_metrics_collector()
-            collector.increment_counter('skill.hint.matched')
+            collector.increment_counter("skill.hint.matched")
             from agent_core.monitoring.metrics_file import append_event as _ae
-            _ae('counter', 'skill.hint.matched', 1.0)
+
+            _ae("counter", "skill.hint.matched", 1.0)
         except Exception:
             pass
         if _agent_mod()._resolve_display_mode() != AgentDisplayMode.QUIET:
-            names = ', '.join((s.name for s in matched))
-            print(yellow(f'  [skill-hints] matched: {names}'))
+            names = ", ".join((s.name for s in matched))
+            print(yellow(f"  [skill-hints] matched: {names}"))
         return skill_hint_block(matched)
     except Exception:
-        logger.exception('Skill hint unavailable:\n')
-        return ''
+        logger.exception("Skill hint unavailable:\n")
+        return ""
 
 
 def _habits_block(agent: "Agent") -> str:
@@ -126,13 +141,13 @@ def _habits_block(agent: "Agent") -> str:
     turn (same rule as :meth:`_decision_constraints_block`).
     """
     try:
-        return habits_block(load_habits(getattr(agent, '_effective_ws_dir')()))
+        return habits_block(load_habits(getattr(agent, "_effective_ws_dir")()))
     except Exception:
-        logger.exception('Habits block unavailable:\n')
-        return ''
+        logger.exception("Habits block unavailable:\n")
+        return ""
 
 
-def _file_history_block(agent: "Agent", query: str | None=None) -> str:
+def _file_history_block(agent: "Agent", query: str | None = None) -> str:
     """Per-file execution-history block for the chat system prompt.
 
     The workspace already keeps a trace corpus and an execution ledger
@@ -149,13 +164,13 @@ def _file_history_block(agent: "Agent", query: str | None=None) -> str:
     ledger must not kill a chat turn.
     """
     try:
-        return file_notes_block(query, getattr(agent, '_effective_ws_dir')())
+        return file_notes_block(query, getattr(agent, "_effective_ws_dir")())
     except Exception:
-        logger.exception('File-history block unavailable:\n')
-        return ''
+        logger.exception("File-history block unavailable:\n")
+        return ""
 
 
-def _semantic_memory_block(agent: "Agent", query: str | None=None) -> str:
+def _semantic_memory_block(agent: "Agent", query: str | None = None) -> str:
     """Embedding/KG memory block for the chat system prompt.
 
     Builds a compact block from indexed memories (see
@@ -176,21 +191,30 @@ def _semantic_memory_block(agent: "Agent", query: str | None=None) -> str:
     old behaviour).
     """
     try:
-        indexed_memories = load_semantic_memory(getattr(agent, '_effective_ws_dir')())
+        indexed_memories = load_semantic_memory(getattr(agent, "_effective_ws_dir")())
         if query and indexed_memories:
             try:
-                ranked = semantic_search_memories(indexed_memories, query, k=5, embedding_service=getattr(agent, '_semantic_embedding_service', None))
+                ranked = semantic_search_memories(
+                    indexed_memories,
+                    query,
+                    k=5,
+                    embedding_service=getattr(
+                        agent, "_semantic_embedding_service", None
+                    ),
+                )
             except Exception:
                 ranked = []
             if ranked:
                 return semantic_memory_block(ranked, query=query, k=5)
         return semantic_memory_block(indexed_memories, k=5)
     except Exception:
-        logger.exception('Semantic memory block unavailable:\n')
-        return ''
+        logger.exception("Semantic memory block unavailable:\n")
+        return ""
 
 
-def _ensure_original_goal(agent: "Agent", pending_user_input: str | None=None) -> None:
+def _ensure_original_goal(
+    agent: "Agent", pending_user_input: str | None = None
+) -> None:
     """Record the session's original request once, and only once.
 
     The goal is whatever the user asked FIRST: the first user message
@@ -215,9 +239,12 @@ def _ensure_original_goal(agent: "Agent", pending_user_input: str | None=None) -
     if agent._original_goal:
         if agent._goal_from_restore and pending_user_input:
             agent._goal_from_restore = False
-            if not getattr(agent, '_prompts_related')(pending_user_input, [agent._original_goal, *getattr(agent, '_recent_user_texts')()]):
+            if not getattr(agent, "_prompts_related")(
+                pending_user_input,
+                [agent._original_goal, *getattr(agent, "_recent_user_texts")()],
+            ):
                 agent._original_goal = pending_user_input[:MAX_GOAL_CHARS]
-                getattr(agent, '_suspend_history_for_new_task')()
+                getattr(agent, "_suspend_history_for_new_task")()
         return
     recovered = _recover_original_goal(agent._chat_history)
     if recovered is not None:
@@ -227,12 +254,12 @@ def _ensure_original_goal(agent: "Agent", pending_user_input: str | None=None) -
     elif pending_user_input:
         source = pending_user_input
     else:
-        source = ''
+        source = ""
     if source:
         agent._original_goal = source[:MAX_GOAL_CHARS]
 
 
-def _recent_user_texts(agent: "Agent", limit: int=10) -> list[str]:
+def _recent_user_texts(agent: "Agent", limit: int = 10) -> list[str]:
     """The newest *limit* raw user texts from the current chat history.
 
     Steering wrappers (plan-mode note, skill hints) are stripped and
@@ -241,15 +268,21 @@ def _recent_user_texts(agent: "Agent", limit: int=10) -> list[str]:
     """
     texts: list[str] = []
     for m in reversed(agent._chat_history):
-        if m.get('role') != 'user':
+        if m.get("role") != "user":
             continue
-        content = m.get('content')
+        content = m.get("content")
         if isinstance(content, str):
             text = content.strip()
         elif isinstance(content, list):
-            text = ' '.join((str(b.get('text') or '') for b in content if isinstance(b, dict) and b.get('type') == 'text')).strip()
+            text = " ".join(
+                (
+                    str(b.get("text") or "")
+                    for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            ).strip()
         else:
-            text = ''
+            text = ""
         if text and (not _is_compaction_note(text)):
             texts.append(_strip_turn_wrappers(text))
         if len(texts) >= limit:
@@ -258,7 +291,12 @@ def _recent_user_texts(agent: "Agent", limit: int=10) -> list[str]:
     return texts
 
 
-def _prompts_related(agent: "Agent", new_prompt: str, prior_texts: list[str], threshold: float=_GOAL_RELATED_THRESHOLD) -> bool:
+def _prompts_related(
+    agent: "Agent",
+    new_prompt: str,
+    prior_texts: list[str],
+    threshold: float = _GOAL_RELATED_THRESHOLD,
+) -> bool:
     """Whether *new_prompt* looks topically related to any prior text.
 
     Token-overlap heuristic over content words (:func:`_content_tokens`):
@@ -270,7 +308,7 @@ def _prompts_related(agent: "Agent", new_prompt: str, prior_texts: list[str], th
         return True
     prior: set[str] = set()
     for text in prior_texts:
-        prior |= _content_tokens(text or '')
+        prior |= _content_tokens(text or "")
     if not prior:
         return False
     overlap = new_tokens & prior
@@ -289,19 +327,24 @@ def _suspend_history_for_new_task(agent: "Agent") -> None:
     by ``_refresh_system_message`` on the next turn).  Task-agnostic
     memory stores (files_read, semantic index, knowledge graph) are kept.
     """
-    body = [dict(m) for m in agent._chat_history if m.get('role') != 'system']
+    body = [dict(m) for m in agent._chat_history if m.get("role") != "system"]
     if not body:
         return
-    system = [dict(m) for m in agent._chat_history if m.get('role') == 'system'][:1]
+    system = [dict(m) for m in agent._chat_history if m.get("role") == "system"][:1]
     agent._prior_chat_history = body
     agent._chat_history = system
     agent._turn_start_index = len(agent._chat_history)
-    prior_path = os.path.join(os.path.dirname(_agent_mod().CHAT_HISTORY_JSON_PATH) or '.', 'chat_history_prior.json')
+    prior_path = os.path.join(
+        os.path.dirname(_agent_mod().CHAT_HISTORY_JSON_PATH) or ".",
+        "chat_history_prior.json",
+    )
     try:
-        with open(prior_path, 'w', encoding='utf-8') as f:
+        with open(prior_path, "w", encoding="utf-8") as f:
             json.dump(body, f, ensure_ascii=False, indent=2)
     except OSError:
-        logger.debug('Could not archive prior chat history to %s', prior_path, exc_info=True)
+        logger.debug(
+            "Could not archive prior chat history to %s", prior_path, exc_info=True
+        )
 
 
 def _original_goal_block(agent: "Agent") -> str:
@@ -315,5 +358,5 @@ def _original_goal_block(agent: "Agent") -> str:
     try:
         return original_goal_block(agent._original_goal)
     except Exception:
-        logger.exception('Original goal block unavailable:\n')
-        return ''
+        logger.exception("Original goal block unavailable:\n")
+        return ""

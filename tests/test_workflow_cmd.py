@@ -49,9 +49,12 @@ class TestAnalysisFlagGate:
             "- fake.py:12: not found\n- missing symbol"
         )
         with patch("builtins.input", side_effect=AssertionError("must not prompt")):
-            assert _analysis_flag_gate(
-                checked=2, flagged=2, force=False, report_text=report
-            ) is False
+            assert (
+                _analysis_flag_gate(
+                    checked=2, flagged=2, force=False, report_text=report
+                )
+                is False
+            )
         out = capsys.readouterr().out
         assert "fake.py" in out
         assert "missing symbol" in out
@@ -76,7 +79,9 @@ class TestScanWorkspaceContext:
             ws = Path(tmp)
             self._write(ws, "main.py", ["x = 1", "print(x)"])
             self._write(ws, "util.py", ["y = 2"])
-            used, combined = _scan_workspace_context(ws, "optimize the agent orchestration")
+            used, combined = _scan_workspace_context(
+                ws, "optimize the agent orchestration"
+            )
             assert used is True
             assert "# ---- main.py ----" in combined
             assert "# ---- util.py ----" in combined
@@ -148,32 +153,41 @@ class TestRepairAnalysis:
 class TestExtractDecisionsGate:
     """Warned candidates are skipped unless the user explicitly confirms."""
 
-    _WARNED = [{
-        "title": "Refactor missing_module",
-        "context": "Improve it.",
-        "decision": "Refactor.",
-        "affected_files": ["missing_module.py"],
-        "warnings": ["Affected file does not exist in workspace: missing_module.py"],
-    }]
-    _CLEAN = [{
-        "title": "Clean decision",
-        "context": "Do it.",
-        "decision": "Do it.",
-        "affected_files": [],
-    }]
+    _WARNED = [
+        {
+            "title": "Refactor missing_module",
+            "context": "Improve it.",
+            "decision": "Refactor.",
+            "affected_files": ["missing_module.py"],
+            "warnings": [
+                "Affected file does not exist in workspace: missing_module.py"
+            ],
+        }
+    ]
+    _CLEAN = [
+        {
+            "title": "Clean decision",
+            "context": "Do it.",
+            "decision": "Do it.",
+            "affected_files": [],
+        }
+    ]
 
     def _run(self, tmp_path: Path, candidates: list, inputs: list[str]) -> None:
         analysis_md = tmp_path / "project_analysis.md"
         analysis_md.write_text("Some analysis.\n", encoding="utf-8")
         agent = AsyncMock()
-        with patch(
-            "agent_core.commands.workflow_cmd.extract_from_analysis",
-            new=AsyncMock(return_value=candidates),
-        ), patch(
-            "agent_core.commands.workflow_cmd.annotate_candidates",
-            side_effect=lambda c, ws, verification_report="": c,
-        ), patch.object(sys.stdin, "isatty", return_value=True), patch(
-            "builtins.input", side_effect=list(inputs)
+        with (
+            patch(
+                "agent_core.commands.workflow_cmd.extract_from_analysis",
+                new=AsyncMock(return_value=candidates),
+            ),
+            patch(
+                "agent_core.commands.workflow_cmd.annotate_candidates",
+                side_effect=lambda c, ws, verification_report="": c,
+            ),
+            patch.object(sys.stdin, "isatty", return_value=True),
+            patch("builtins.input", side_effect=list(inputs)),
         ):
             asyncio.run(_extract_decisions_if_any(agent, str(analysis_md), tmp_path))
 
@@ -223,10 +237,18 @@ class TestVerifyOrRepairGate:
         agent = AsyncMock()
         agent.llm.chat = AsyncMock(side_effect=[round1, round2])
         with patch("builtins.input", side_effect=AssertionError("must not prompt")):
-            ok = asyncio.run(_verify_or_repair_gate(
-                agent, self._BODY, str(md), ws,
-                base.checked, base.flagged, base.text, force=False,
-            ))
+            ok = asyncio.run(
+                _verify_or_repair_gate(
+                    agent,
+                    self._BODY,
+                    str(md),
+                    ws,
+                    base.checked,
+                    base.flagged,
+                    base.text,
+                    force=False,
+                )
+            )
         assert ok is True
         assert agent.llm.chat.call_count == 2
         # Round 2 was fed round 1's partially repaired text: progress is kept,
@@ -249,10 +271,18 @@ class TestVerifyOrRepairGate:
         agent = AsyncMock()
         agent.llm.chat = AsyncMock(return_value=self._BODY)  # no progress
         with patch("builtins.input", side_effect=AssertionError("must not prompt")):
-            ok = asyncio.run(_verify_or_repair_gate(
-                agent, self._BODY, str(md), ws,
-                base.checked, base.flagged, base.text, force=False,
-            ))
+            ok = asyncio.run(
+                _verify_or_repair_gate(
+                    agent,
+                    self._BODY,
+                    str(md),
+                    ws,
+                    base.checked,
+                    base.flagged,
+                    base.text,
+                    force=False,
+                )
+            )
         assert ok is True
         assert agent.llm.chat.call_count == 1  # one stalled attempt, then prune
         out = capsys.readouterr().out
@@ -277,10 +307,18 @@ class TestVerifyOrRepairGate:
         agent = AsyncMock()
         agent.llm.chat = AsyncMock(return_value=body)
         with patch("builtins.input", side_effect=AssertionError("must not prompt")):
-            ok = asyncio.run(_verify_or_repair_gate(
-                agent, body, str(md), ws,
-                base.checked, base.flagged, base.text, force=False,
-            ))
+            ok = asyncio.run(
+                _verify_or_repair_gate(
+                    agent,
+                    body,
+                    str(md),
+                    ws,
+                    base.checked,
+                    base.flagged,
+                    base.text,
+                    force=False,
+                )
+            )
         assert ok is False
         out = capsys.readouterr().out
         assert "could not be verified" in out
@@ -291,10 +329,18 @@ class TestVerifyOrRepairGate:
         base = asyncio.run(verify_analysis_claims(self._BODY, ws))
         agent = AsyncMock()
         with patch("builtins.input", side_effect=AssertionError("must not prompt")):
-            ok = asyncio.run(_verify_or_repair_gate(
-                agent, self._BODY, str(md), ws,
-                base.checked, base.flagged, base.text, force=True,
-            ))
+            ok = asyncio.run(
+                _verify_or_repair_gate(
+                    agent,
+                    self._BODY,
+                    str(md),
+                    ws,
+                    base.checked,
+                    base.flagged,
+                    base.text,
+                    force=True,
+                )
+            )
         assert ok is True
         assert agent.llm.chat.call_count == 0
 

@@ -1,10 +1,10 @@
 """Tests for [PATCH:] patch application — covers fix_cmd and implement_cmd paths."""
+
 from __future__ import annotations
 
 import os
 import re
 from unittest.mock import patch
-
 
 
 class TestImplementPatchApply:
@@ -17,19 +17,14 @@ class TestImplementPatchApply:
 
     def _load_impl(self):
         from agent_core.commands.implement_cmd import _apply_patch
+
         return _apply_patch
 
     def test_simple_replacement(self, tmp_path):
         """A single hunk replacing one line works correctly."""
         apply = self._load_impl()
         original = ["x = 1\n", "y = 2\n", "z = 3\n"]
-        patch_text = (
-            "@@ -1,3 +1,3 @@\n"
-            "- x = 1\n"
-            "+ x = 10\n"
-            " y = 2\n"
-            " z = 3\n"
-        )
+        patch_text = "@@ -1,3 +1,3 @@\n- x = 1\n+ x = 10\n y = 2\n z = 3\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is True
         assert result == "x = 10\ny = 2\nz = 3\n"
@@ -61,12 +56,7 @@ class TestImplementPatchApply:
         for optimiser findings like unused-import and dead-assignment."""
         apply = self._load_impl()
         original = ["a = 1\n", "b = 2\n", "c = 3\n"]
-        patch_text = (
-            "@@ -1,3 +1,2 @@\n"
-            "-a = 1\n"
-            " b = 2\n"
-            " c = 3\n"
-        )
+        patch_text = "@@ -1,3 +1,2 @@\n-a = 1\n b = 2\n c = 3\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is True
         assert "a = 1" not in result
@@ -135,11 +125,7 @@ class TestImplementPatchApply:
         """Hunk starting beyond file length is rejected."""
         apply = self._load_impl()
         original = ["a = 1\n", "b = 2\n"]
-        patch_text = (
-            "@@ -10,2 +10,2 @@\n"
-            "- a = 1\n"
-            "+ A = 10\n"
-        )
+        patch_text = "@@ -10,2 +10,2 @@\n- a = 1\n+ A = 10\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is False
 
@@ -147,11 +133,7 @@ class TestImplementPatchApply:
         """Old line content that doesn't match the file is rejected."""
         apply = self._load_impl()
         original = ["hello = 1\n", "foo = 2\n"]
-        patch_text = (
-            "@@ -1,2 +1,2 @@\n"
-            "- totally different text\n"
-            "+ new content\n"
-        )
+        patch_text = "@@ -1,2 +1,2 @@\n- totally different text\n+ new content\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is False
 
@@ -159,11 +141,7 @@ class TestImplementPatchApply:
         """Leading/trailing whitespace in old lines is stripped before comparison."""
         apply = self._load_impl()
         original = ["    hello = 1  \n", "foo = 2\n"]
-        patch_text = (
-            "@@ -1,2 +1,2 @@\n"
-            "-   hello = 1\n"
-            "+ NEW_VAR=99\n"
-        )
+        patch_text = "@@ -1,2 +1,2 @@\n-   hello = 1\n+ NEW_VAR=99\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is True
         assert "NEW_VAR=99" in result
@@ -172,11 +150,7 @@ class TestImplementPatchApply:
         """Hunks with empty '+' lines are filtered out."""
         apply = self._load_impl()
         original = ["a = 1\n", "b = 2\n"]
-        patch_text = (
-            "@@ -1,2 +1,2 @@\n"
-            "- a = 1\n"
-            "+\n"
-        )
+        patch_text = "@@ -1,2 +1,2 @@\n- a = 1\n+\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is False
 
@@ -184,11 +158,7 @@ class TestImplementPatchApply:
         """Hunks with trailing incomplete operators on '+' lines are rejected."""
         apply = self._load_impl()
         original = ["a = 1\n"]
-        patch_text = (
-            "@@ -1 +1 @@\n"
-            "- a = 1\n"
-            "+ incomplete[\n"
-        )
+        patch_text = "@@ -1 +1 @@\n- a = 1\n+ incomplete[\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is False
 
@@ -204,10 +174,7 @@ class TestImplementPatchApply:
         apply = self._load_impl()
         original = ["def foo():\n", "    pass\n"]
         # Remove 'pass' — leaves empty function body → SyntaxError
-        patch_text = (
-            "@@ -1,2 +1,1 @@\n"
-            "-     pass\n"
-        )
+        patch_text = "@@ -1,2 +1,1 @@\n-     pass\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is False
 
@@ -215,11 +182,7 @@ class TestImplementPatchApply:
         """A patch producing valid Python passes the syntax check."""
         apply = self._load_impl()
         original = ["x = 1\n"]
-        patch_text = (
-            "@@ -1 +1 @@\n"
-            "- x = 1\n"
-            "+ x = 2\n"
-        )
+        patch_text = "@@ -1 +1 @@\n- x = 1\n+ x = 2\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is True
 
@@ -227,13 +190,7 @@ class TestImplementPatchApply:
         """A '-' line with mismatched content causes rejection."""
         apply = self._load_impl()
         original = ["a = 1\n", "b = 2\n", "c = 3\n"]
-        patch_text = (
-            "@@ -1,3 +1,3 @@\n"
-            "- x = 0\n"
-            "+ X = 0\n"
-            " b = 2\n"
-            " c = 3\n"
-        )
+        patch_text = "@@ -1,3 +1,3 @@\n- x = 0\n+ X = 0\n b = 2\n c = 3\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is False
 
@@ -242,13 +199,7 @@ class TestImplementPatchApply:
         apply = self._load_impl()
         original = ["a = 1\n", "b = 2\n"]
         # Replace last line and add one after — paired -/+ so space is stripped.
-        patch_text = (
-            "@@ -1,2 +1,3 @@\n"
-            " a = 1\n"
-            "- b = 2\n"
-            "+ b = 2\n"
-            "+ c = 3\n"
-        )
+        patch_text = "@@ -1,2 +1,3 @@\n a = 1\n- b = 2\n+ b = 2\n+ c = 3\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is True
         assert "c = 3" in result
@@ -257,11 +208,7 @@ class TestImplementPatchApply:
         """Lenient parsing of @@ -start @@ without +start part."""
         apply = self._load_impl()
         original = ["a = 1\n", "b = 2\n"]
-        patch_text = (
-            "@@ -1 @@\n"
-            "- a = 1\n"
-            "+ A = 10\n"
-        )
+        patch_text = "@@ -1 @@\n- a = 1\n+ A = 10\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is True
         assert "A = 10" in result
@@ -279,6 +226,7 @@ class TestImplementPatchApply:
         grow an extra blank line at EOF — callers drop the artifact via
         ``split_source_lines`` before applying."""
         from agent_core.patch_utils import split_source_lines
+
         apply = self._load_impl()
         original = split_source_lines("a = 1\nb = 2\n")  # ['a = 1', 'b = 2']
         patch_text = "@@ -1 +1 @@\n- a = 1\n+ A = 10\n"
@@ -290,13 +238,7 @@ class TestImplementPatchApply:
         """A patch replacing a line with a comment is valid."""
         apply = self._load_impl()
         original = ["# start\n", "x = 1\n", "# end\n"]
-        patch_text = (
-            "@@ -1,3 +1,3 @@\n"
-            " # start\n"
-            "- x = 1\n"
-            "+ # disabled\n"
-            " # end\n"
-        )
+        patch_text = "@@ -1,3 +1,3 @@\n # start\n- x = 1\n+ # disabled\n # end\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is True
         assert "# disabled" in result
@@ -305,11 +247,7 @@ class TestImplementPatchApply:
         """A patch that only changes one line leaves other lines intact."""
         apply = self._load_impl()
         original = ["x = 1\n", "y = 2\n"]
-        patch_text = (
-            "@@ -1 +1 @@\n"
-            "- x = 1\n"
-            "+ x = 99\n"
-        )
+        patch_text = "@@ -1 +1 @@\n- x = 1\n+ x = 99\n"
         ok, result = apply(patch_text, "dummy.py", original)
         assert ok is True
         assert "x = 99" in result
@@ -322,15 +260,11 @@ class TestFixCmdPatchApply:
     def test_simple_patch_accepted(self, tmp_path):
         """Accepted patch writes changes to disk."""
         from agent_core.commands.fix_cmd import FixCommand
+
         fc = FixCommand()
         target = tmp_path / "test.py"
         target.write_text("old_val = 1\nkeep_this = 2\n", encoding="utf-8")
-        patch_text = (
-            "@@ -1,2 +1,2 @@\n"
-            "- old_val = 1\n"
-            "+ new_val = 1\n"
-            " keep_this = 2\n"
-        )
+        patch_text = "@@ -1,2 +1,2 @@\n- old_val = 1\n+ new_val = 1\n keep_this = 2\n"
         with patch("builtins.input", return_value="y"):
             ok = fc._apply_patch(patch_text, str(target), str(tmp_path))
         assert ok is True
@@ -339,15 +273,11 @@ class TestFixCmdPatchApply:
     def test_simple_patch_rejected(self, tmp_path):
         """User declines patch — file unchanged."""
         from agent_core.commands.fix_cmd import FixCommand
+
         fc = FixCommand()
         target = tmp_path / "test.py"
         target.write_text("old_val = 1\nkeep_this = 2\n", encoding="utf-8")
-        patch_text = (
-            "@@ -1,2 +1,2 @@\n"
-            "- old_val = 1\n"
-            "+ new_val = 1\n"
-            " keep_this = 2\n"
-        )
+        patch_text = "@@ -1,2 +1,2 @@\n- old_val = 1\n+ new_val = 1\n keep_this = 2\n"
         with patch("builtins.input", return_value="n"):
             ok = fc._apply_patch(patch_text, str(target), str(tmp_path))
         assert ok is False
@@ -356,8 +286,10 @@ class TestFixCmdPatchApply:
     def test_stdlib_file_skipped(self, tmp_path):
         """Patches targeting stdlib paths are skipped."""
         from agent_core.commands.fix_cmd import FixCommand
+
         fc = FixCommand()
         import sys as _sys
+
         target = os.path.join(_sys.prefix, "Lib", "os.py")
         with patch("builtins.input", return_value="y"):
             ok = fc._apply_patch("@@ -1 +1 @@\n- x\n+ y\n", target, str(tmp_path))
@@ -366,6 +298,7 @@ class TestFixCmdPatchApply:
     def test_nonexistent_file_skipped(self, tmp_path):
         """Patch for a file that doesn't exist returns False."""
         from agent_core.commands.fix_cmd import FixCommand
+
         fc = FixCommand()
         with patch("builtins.input", return_value="y"):
             ok = fc._apply_patch(
@@ -378,6 +311,7 @@ class TestFixCmdPatchApply:
     def test_unparseable_patch_rejected(self, tmp_path):
         """Patch with no valid hunks returns False."""
         from agent_core.commands.fix_cmd import FixCommand
+
         fc = FixCommand()
         target = tmp_path / "test.py"
         target.write_text("hello = 1\n", encoding="utf-8")
@@ -388,11 +322,14 @@ class TestFixCmdPatchApply:
     def test_eof_in_input_skips_patch(self, tmp_path):
         """EOFError in input() skips the patch."""
         from agent_core.commands.fix_cmd import FixCommand
+
         fc = FixCommand()
         target = tmp_path / "test.py"
         target.write_text("old = 1\n", encoding="utf-8")
         with patch("builtins.input", side_effect=EOFError):
-            ok = fc._apply_patch("@@ -1 +1 @@\n- old = 1\n+ new = 1\n", str(target), str(tmp_path))
+            ok = fc._apply_patch(
+                "@@ -1 +1 @@\n- old = 1\n+ new = 1\n", str(target), str(tmp_path)
+            )
         assert ok is False
 
     def test_keyboard_interrupt_skips_patch_and_stops_flow(self, tmp_path):
@@ -400,12 +337,15 @@ class TestFixCmdPatchApply:
         stop, so the surrounding run winds down instead of continuing."""
         from agent_core.commands.base import stop_requested, clear_stop
         from agent_core.commands.fix_cmd import FixCommand
+
         clear_stop()
         fc = FixCommand()
         target = tmp_path / "test.py"
         target.write_text("old = 1\n", encoding="utf-8")
         with patch("builtins.input", side_effect=KeyboardInterrupt):
-            ok = fc._apply_patch("@@ -1 +1 @@\n- old = 1\n+ new = 1\n", str(target), str(tmp_path))
+            ok = fc._apply_patch(
+                "@@ -1 +1 @@\n- old = 1\n+ new = 1\n", str(target), str(tmp_path)
+            )
         assert ok is False
         assert stop_requested() is True
         clear_stop()
@@ -413,6 +353,7 @@ class TestFixCmdPatchApply:
     def test_syntax_rejection_prevents_write(self, tmp_path):
         """A patch that breaks syntax is not written to disk."""
         from agent_core.commands.fix_cmd import FixCommand
+
         fc = FixCommand()
         target = tmp_path / "test.py"
         target.write_text("def foo():\n    pass\n", encoding="utf-8")
@@ -430,7 +371,9 @@ class TestPatchParsingRegex:
 
     def test_parse_single_block(self):
         text = "[PATCH: foo.py]\n@@ -1 +1 @@\n- a\n+ b\n"
-        m = re.search(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', text, re.DOTALL)
+        m = re.search(
+            r"\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)", text, re.DOTALL
+        )
         assert m is not None
         assert m.group(1).strip() == "foo.py"
         assert "+ b" in m.group(2).strip()
@@ -441,7 +384,7 @@ class TestPatchParsingRegex:
             "\n[PATCH: b.py]\n@@ -1 +1 @@\n- y\n+ Y\n"
         )
         patches = re.findall(
-            r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', text, re.DOTALL
+            r"\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)", text, re.DOTALL
         )
         assert len(patches) == 2
         assert patches[0][0].strip() == "a.py"
@@ -453,36 +396,50 @@ class TestPatchParsingRegex:
             "\n[FILE: b.py]\n```python\nprint('hi')\n```"
         )
         patches = re.findall(
-            r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', text, re.DOTALL
+            r"\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)", text, re.DOTALL
         )
         assert len(patches) == 1
         assert patches[0][0].strip() == "a.py"
 
     def test_parse_empty_response(self):
-        assert re.findall(
-            r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', "", re.DOTALL
-        ) == []
-        assert re.findall(
-            r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', "no patches here", re.DOTALL
-        ) == []
+        assert (
+            re.findall(
+                r"\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)", "", re.DOTALL
+            )
+            == []
+        )
+        assert (
+            re.findall(
+                r"\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)",
+                "no patches here",
+                re.DOTALL,
+            )
+            == []
+        )
 
     def test_parse_trailing_whitespace_in_path(self):
         text = "[PATCH:  my_module.py   ]\n@@ -1 +1 @@\n- x\n+ X\n"
-        m = re.search(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', text, re.DOTALL)
+        m = re.search(
+            r"\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)", text, re.DOTALL
+        )
         assert m is not None
         assert m.group(1).strip() == "my_module.py"
 
     def test_parse_no_space_after_bracket(self):
         """Edge case: [PATCH:path] with no space after ]."""
         text = "[PATCH:path.py]\n@@ -1 +1 @@\n- a\n+ A\n"
-        m = re.search(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', text, re.DOTALL)
+        m = re.search(
+            r"\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)", text, re.DOTALL
+        )
         assert m is not None
         assert m.group(1).strip() == "path.py"
 
     def test_parse_newline_before_hunk(self):
         """Edge case: [PATCH:path]\n@@ -1... with explicit newline."""
         text = "[PATCH: path.py]\n\n@@ -1 +1 @@\n- a\n+ A\n"
-        m = re.search(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', text, re.DOTALL)
+        m = re.search(
+            r"\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)", text, re.DOTALL
+        )
         assert m is not None
         assert "@@" in m.group(2)
 
@@ -496,20 +453,16 @@ class TestPatchIntegrationViaAgent:
 
         target = tmp_path / "code.py"
         target.write_text(
-            "def add(a, b):\n"
-            "    return a - b\n",
+            "def add(a, b):\n    return a - b\n",
             encoding="utf-8",
         )
 
         llm_response = (
-            "[PATCH: code.py]\n"
-            "@@ -2,1 +2,1 @@\n"
-            "-    return a - b\n"
-            "+    return a + b\n"
+            "[PATCH: code.py]\n@@ -2,1 +2,1 @@\n-    return a - b\n+    return a + b\n"
         )
         # Replicate the exact parsing regex from implement_cmd.py line 1771
         patch_match = re.search(
-            r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', llm_response, re.DOTALL
+            r"\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)", llm_response, re.DOTALL
         )
         assert patch_match is not None
         fpath = patch_match.group(1).strip()
@@ -531,10 +484,7 @@ class TestPatchIntegrationViaAgent:
 
         target = tmp_path / "buggy.py"
         target.write_text(
-            "def check(x):\n"
-            "    if x is None:\n"
-            "        return False\n"
-            "    return True\n",
+            "def check(x):\n    if x is None:\n        return False\n    return True\n",
             encoding="utf-8",
         )
         fc = FixCommand()
@@ -559,11 +509,7 @@ class TestPatchIntegrationViaAgent:
 
         target = tmp_path / "multi.py"
         target.write_text(
-            "a = 1\n"
-            "b = 2\n"
-            "c = a + b\n"
-            "d = 3\n"
-            "e = d * 2\n",
+            "a = 1\nb = 2\nc = a + b\nd = 3\ne = d * 2\n",
             encoding="utf-8",
         )
         patch_text = (
@@ -611,6 +557,7 @@ class TestAnchoredPatchApplication:
 
     def test_anchored_fixes_wrong_line_numbers(self) -> None:
         from agent_core.patch_utils import apply_anchored_patch
+
         patch = (
             "@@ -1,3 +1,3 @@\n"
             "     for key in options:\n"
@@ -625,6 +572,7 @@ class TestAnchoredPatchApplication:
     def test_anchored_handles_fenced_fused_headers(self) -> None:
         """run8 shape: markdown fence + multiple fused @@ headers."""
         from agent_core.patch_utils import apply_anchored_patch
+
         patch = (
             "```python\n"
             "@@ -4,2 +4,2 @@ for key in options:\n"
@@ -639,6 +587,7 @@ class TestAnchoredPatchApplication:
 
     def test_anchored_applies_multiple_hunks(self) -> None:
         from agent_core.patch_utils import apply_anchored_patch
+
         patch = (
             "@@ -900,2 +900,2 @@\n"
             "-        data = fetch(key)\n"
@@ -655,6 +604,7 @@ class TestAnchoredPatchApplication:
 
     def test_anchored_rejects_unknown_content(self) -> None:
         from agent_core.patch_utils import apply_anchored_patch
+
         patch = "@@ -260,2 +260,2 @@\n-     invented_line\n+     x\n"
         ok, err = apply_anchored_patch(patch, self._source_lines())
         assert ok is False
@@ -662,6 +612,7 @@ class TestAnchoredPatchApplication:
 
     def test_anchored_rejects_syntax_breakage(self) -> None:
         from agent_core.patch_utils import apply_anchored_patch
+
         patch = (
             "@@ -900,2 +900,2 @@\n"
             "-        cache[key] = data\n"
@@ -677,6 +628,7 @@ class TestAnchoredPatchApplication:
         ambiguous — the patcher must refuse rather than guess (guessing
         caused the 45x-TODO corruption)."""
         from agent_core.patch_utils import apply_anchored_patch
+
         src_lines = (
             "def engine(options):\n"
             "    cache = {}\n"
@@ -701,15 +653,16 @@ class TestAnchoredPatchApplication:
         line (e.g. ``str`` vs ``str | None``) — otherwise near-duplicate
         declarations like split_patch_hunks/apply_patch veto valid patches."""
         from agent_core.patch_utils import apply_anchored_patch
+
         src_lines = (
             "def splitter():\n"
-            "    chunks: list[tuple[str, str]] = []\n"          # similar, not the target
+            "    chunks: list[tuple[str, str]] = []\n"  # similar, not the target
             "    for line in body.split('\\n'):\n"
             "        chunks.append(('-', line[1:]))\n"
             "    return chunks\n"
             "\n"
             "def applier():\n"
-            "    chunks: list[tuple[str, str | None]] = []\n"    # exact target
+            "    chunks: list[tuple[str, str | None]] = []\n"  # exact target
             "    for line in body.split('\\n'):\n"
             "        chunks.append(('-', line[1:]))\n"
             "    return chunks\n"
@@ -733,6 +686,7 @@ class TestAnchoredPatchApplication:
         optimize command's retry feedback). The syntax gate is the safety
         net for single-line edits."""
         from agent_core.patch_utils import apply_anchored_patch
+
         src_lines = (
             "def func_0(value):\n"
             "    return open(fname).read()\n"
@@ -759,6 +713,7 @@ class TestAnchoredPatchApplication:
         The first-line-only ambiguity check rejected these and caused
         'Cannot anchor ... around line 176' for every try:-headed hunk."""
         from agent_core.patch_utils import apply_anchored_patch
+
         src_lines = (
             "def a():\n"
             "    try:\n"
@@ -791,6 +746,7 @@ class TestAnchoredPatchApplication:
 
     def test_split_hunks_handles_fused_headers(self) -> None:
         from agent_core.patch_utils import split_patch_hunks
+
         patch = (
             "@@ -4,2 +4,2 @@ for key in options:\n"
             "-        data = fetch(key)\n"
@@ -805,6 +761,7 @@ class TestAnchoredPatchApplication:
 
     def test_normalize_strips_fence_and_preamble(self) -> None:
         from agent_core.patch_utils import normalize_patch_block
+
         raw = (
             "Here is the fix:\n"
             "```diff\n"
@@ -826,6 +783,7 @@ class TestCommaEndingPatchApply:
 
     def test_apply_patch_comma_ending_plus_line(self) -> None:
         from agent_core.patch_utils import apply_patch
+
         lines = [
             "content=f'No response from LLM',",
         ]
@@ -840,6 +798,7 @@ class TestCommaEndingPatchApply:
 
     def test_apply_anchored_patch_comma_ending_plus_line(self) -> None:
         from agent_core.patch_utils import apply_anchored_patch
+
         lines = [
             "content=f'No response from LLM',",
         ]
@@ -854,6 +813,7 @@ class TestCommaEndingPatchApply:
 
     def test_truncated_assignment_still_rejected(self) -> None:
         from agent_core.patch_utils import apply_patch
+
         lines = ["x = 1"]
         hunk = "@@ -1,1 +1,1 @@\n- x = 1\n+ x ="
         ok, err = apply_patch(hunk, lines)
@@ -866,15 +826,9 @@ class TestMypyFixHardening:
 
     def test_enclosing_function_extent_finds_function(self) -> None:
         from agent_core.commands.fix_cmd import _enclosing_function_extent
-        source = (
-            "def foo():\n"
-            "    return 1\n"
-            "\n"
-            "def bar():\n"
-            "    x = 2\n"
-            "    return x\n"
-        )
-        lines = source.split('\n')
+
+        source = "def foo():\n    return 1\n\ndef bar():\n    x = 2\n    return x\n"
+        lines = source.split("\n")
         # AST uses 1-indexed line numbers; def bar() is at line 4, body ends at line 6
         assert _enclosing_function_extent(lines, 1) == (1, 2)
         assert _enclosing_function_extent(lines, 4) == (4, 6)
@@ -882,17 +836,19 @@ class TestMypyFixHardening:
 
     def test_enclosing_function_extent_async(self) -> None:
         from agent_core.commands.fix_cmd import _enclosing_function_extent
+
         source = (
             "class C:\n"
             "    async def method(self):\n"
             "        if True:\n"
             "            return 1\n"
         )
-        lines = source.split('\n')
+        lines = source.split("\n")
         assert _enclosing_function_extent(lines, 2) == (2, 4)
 
     def test_function_can_fall_off_end_with_if_only(self) -> None:
         from agent_core.commands.fix_cmd import _function_can_fall_off_end
+
         source = (
             "def foo(cmd):\n"
             "    if cmd == 'a':\n"
@@ -904,6 +860,7 @@ class TestMypyFixHardening:
 
     def test_function_can_fall_off_end_with_if_else(self) -> None:
         from agent_core.commands.fix_cmd import _function_can_fall_off_end
+
         source = (
             "def foo(cmd):\n"
             "    if cmd == 'a':\n"
@@ -915,38 +872,27 @@ class TestMypyFixHardening:
 
     def test_function_can_fall_off_end_with_fallback(self) -> None:
         from agent_core.commands.fix_cmd import _function_can_fall_off_end
-        source = (
-            "def foo(cmd):\n"
-            "    if cmd == 'a':\n"
-            "        return 1\n"
-            "    return 0\n"
-        )
+
+        source = "def foo(cmd):\n    if cmd == 'a':\n        return 1\n    return 0\n"
         assert _function_can_fall_off_end(source, 1) is False
 
     def test_function_can_fall_off_end_try_except(self) -> None:
         from agent_core.commands.fix_cmd import _function_can_fall_off_end
+
         source = (
-            "def foo():\n"
-            "    try:\n"
-            "        return 1\n"
-            "    except:\n"
-            "        return 2\n"
+            "def foo():\n    try:\n        return 1\n    except:\n        return 2\n"
         )
         assert _function_can_fall_off_end(source, 1) is False
 
     def test_function_can_fall_off_end_try_no_except(self) -> None:
         from agent_core.commands.fix_cmd import _function_can_fall_off_end
-        source = (
-            "def foo():\n"
-            "    try:\n"
-            "        return 1\n"
-            "    except:\n"
-            "        pass\n"
-        )
+
+        source = "def foo():\n    try:\n        return 1\n    except:\n        pass\n"
         assert _function_can_fall_off_end(source, 1) is True
 
     def test_classify_error_return_marker(self) -> None:
         from agent_core.commands.implement_cmd import _classify_error
+
         before, after, instruction = _classify_error(
             "agent.py:162: error: Missing return statement  [return]"
         )
@@ -956,6 +902,7 @@ class TestMypyFixHardening:
 
     def test_apply_fix_blocks_returns_failures(self, tmp_path) -> None:
         from agent_core.commands.fix_cmd import FixCommand
+
         target = tmp_path / "test.py"
         target.write_text("def foo():\n    pass\n", encoding="utf-8")
         cmd = FixCommand()
@@ -969,7 +916,9 @@ class TestMypyFixHardening:
             "+     return 1\n"
         )
         applied, failures = cmd._apply_fix_blocks(
-            response, str(tmp_path), "test.py",
+            response,
+            str(tmp_path),
+            "test.py",
             auto_yes=True,
             context_errors=["test.py:1: error: Missing return statement  [return]"],
         )
@@ -978,18 +927,18 @@ class TestMypyFixHardening:
 
     def test_apply_fix_blocks_success_no_failures(self, tmp_path) -> None:
         from agent_core.commands.fix_cmd import FixCommand
+
         target = tmp_path / "test.py"
         target.write_text("def foo():\n    pass\n", encoding="utf-8")
         cmd = FixCommand()
         response = (
-            "[PATCH: test.py]\n"
-            "@@ -1,2 +1,2 @@\n"
-            "def foo():\n"
-            "-    pass\n"
-            "+    return 1\n"
+            "[PATCH: test.py]\n@@ -1,2 +1,2 @@\ndef foo():\n-    pass\n+    return 1\n"
         )
         applied, failures = cmd._apply_fix_blocks(
-            response, str(tmp_path), "test.py", auto_yes=True,
+            response,
+            str(tmp_path),
+            "test.py",
+            auto_yes=True,
         )
         assert applied == 1
         assert failures == []

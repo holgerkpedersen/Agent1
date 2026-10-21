@@ -18,6 +18,7 @@ The fix path reuses the existing ``fix`` command (so AGENTS.md invariants on
 file writes hold) and the existing ``harnessfix.gates`` — it does NOT invent a
 new gate or a new editor.
 """
+
 from __future__ import annotations
 
 import ast
@@ -34,11 +35,24 @@ REPO_ROOT = issue_store.REPO_ROOT
 # Directories never scanned (runtime state, generated artifacts, vendored,
 # caches). The pytest-collection crash on reports/harnessfix/generated/*.py is
 # why generated dirs are excluded — we parse source, never import it.
-_SKIP_DIRS = frozenset({
-    ".git", "reports", "backups", ".docs", "node_modules", "__pycache__",
-    "generated", ".venv", "venv", "build", "dist", ".pytest_cache",
-    ".mypy_cache", "site-packages",
-})
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        "reports",
+        "backups",
+        ".docs",
+        "node_modules",
+        "__pycache__",
+        "generated",
+        ".venv",
+        "venv",
+        "build",
+        "dist",
+        ".pytest_cache",
+        ".mypy_cache",
+        "site-packages",
+    }
+)
 
 
 def _iter_py_files(root: Path) -> list[Path]:
@@ -88,15 +102,23 @@ def find_duplicate_handlers(files: list[Path]) -> list[dict[str, Any]]:
                 for name in _except_type_names(h):
                     broad = name in ("", "Exception", "BaseException")
                     if broad and idx != len(handlers) - 1:
-                        findings.append(_finding(
-                            f, h.lineno, "duplication",
-                            "broad except shadows later handlers (dead code)",
-                        ))
+                        findings.append(
+                            _finding(
+                                f,
+                                h.lineno,
+                                "duplication",
+                                "broad except shadows later handlers (dead code)",
+                            )
+                        )
                     if name in seen:
-                        findings.append(_finding(
-                            f, h.lineno, "duplication",
-                            f"exception class {name!r} caught by more than one handler",
-                        ))
+                        findings.append(
+                            _finding(
+                                f,
+                                h.lineno,
+                                "duplication",
+                                f"exception class {name!r} caught by more than one handler",
+                            )
+                        )
                     seen.add(name)
     return findings
 
@@ -123,11 +145,15 @@ def find_log_swallow_excepts(files: list[Path]) -> list[dict[str, Any]]:
                     if names & {"Exception", "BaseException", ""} and (
                         _handler_body_uses_traceback(h)
                     ):
-                        findings.append(_finding(
-                            f, h.lineno, "best-effort-except",
-                            "inline log-and-swallow except should use the shared "
-                            "_suppress_and_log context manager",
-                        ))
+                        findings.append(
+                            _finding(
+                                f,
+                                h.lineno,
+                                "best-effort-except",
+                                "inline log-and-swallow except should use the shared "
+                                "_suppress_and_log context manager",
+                            )
+                        )
             for child in ast.iter_child_nodes(node):
                 visit(child, fname)
 
@@ -258,7 +284,8 @@ def _tree_changed(files: list[Any]) -> bool:
                 ["git", "status", "--porcelain", "--", str(f)],
                 capture_output=True,
                 text=True,
-                encoding="utf-8", errors="replace",
+                encoding="utf-8",
+                errors="replace",
             )
         except Exception:
             return False
@@ -296,7 +323,8 @@ def _handler_log_call(handler: ast.ExceptHandler) -> tuple[str, str] | None:
         return None
     # Must actually log the traceback via format_exc().
     if not any(
-        isinstance(a, ast.Call) and isinstance(a.func, ast.Attribute)
+        isinstance(a, ast.Call)
+        and isinstance(a.func, ast.Attribute)
         and a.func.attr == "format_exc"
         for a in ast.walk(call)
     ):
@@ -329,7 +357,11 @@ def _extract_suppress_label(handler: ast.ExceptHandler) -> str | None:
 
 
 def _try_qualifies(try_node: "ast.Try | ast.TryStar") -> bool:
-    if len(try_node.handlers) != 1 or getattr(try_node, "orelse", None) or getattr(try_node, "finalbody", None):
+    if (
+        len(try_node.handlers) != 1
+        or getattr(try_node, "orelse", None)
+        or getattr(try_node, "finalbody", None)
+    ):
         return False
     h = try_node.handlers[0]
     names = _except_type_names(h)
@@ -416,7 +448,9 @@ def _rewrite_log_swallow(src: str) -> tuple[str, int]:
             stmt0 = h.body[0]
             s0 = stmt0.lineno - 1
             e0 = stmt0.end_lineno  # exclusive
-            repl = base_indent + "    " + f"{logger_expr}.exception({repr(label)})" + sep
+            repl = (
+                base_indent + "    " + f"{logger_expr}.exception({repr(label)})" + sep
+            )
             lines[s0:e0] = [repl]
         replaced.append((start, end))
 
@@ -430,7 +464,10 @@ def _rewrite_log_swallow(src: str) -> tuple[str, int]:
 
 def _ensure_suppress_import(src: str) -> str:
     """Add `from agent_core.suppress_log import _suppress_and_log` if not present."""
-    if re.search(r"\bdef _suppress_and_log\b|\bfrom agent_core\.suppress_log import _suppress_and_log\b", src):
+    if re.search(
+        r"\bdef _suppress_and_log\b|\bfrom agent_core\.suppress_log import _suppress_and_log\b",
+        src,
+    ):
         return src
     lines = src.splitlines(keepends=True)
     sep = "\r\n" if "\r\n" in src else "\n"
@@ -507,7 +544,9 @@ def resolve_issue(
         }
 
     gen = generate_fn or (
-        _resolve_log_swallow if issue.get("category") == "best-effort-except" else _default_generate
+        _resolve_log_swallow
+        if issue.get("category") == "best-effort-except"
+        else _default_generate
     )
     try:
         applied = bool(gen(issue, agent))

@@ -3,6 +3,7 @@
 Covers: config parsing/validation of the llm_providers chain, the
 connection-failure detector, and the FailoverProvider failover loop.
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,8 @@ def _no_model_persist(monkeypatch):
     """A real failover persists the working model to model.json/.env — tests
     must never clobber the developer's actual state."""
     monkeypatch.setattr(
-        "agent_core.constants.persist_model_choice", lambda *a, **k: None,
+        "agent_core.constants.persist_model_choice",
+        lambda *a, **k: None,
     )
 
 
@@ -166,7 +168,9 @@ async def test_apply_profile_fans_out() -> None:
 
 
 def test_is_connection_failure_detects_transport_errors() -> None:
-    assert is_connection_failure("[Error: LM Studio unreachable at http://localhost:1234]")
+    assert is_connection_failure(
+        "[Error: LM Studio unreachable at http://localhost:1234]"
+    )
     assert is_connection_failure("[Error: Connection refused]")
     assert is_connection_failure("[Error: HTTP Error 503: gateway]")
     assert is_connection_failure("[Error: timed out after 30s]")
@@ -220,23 +224,29 @@ def _tool_call_with_error_words() -> str:
     (e.g. a model writing error-handling code)."""
     import json
 
-    return json.dumps({
-        "role": "assistant",
-        "content": "",
-        "tool_calls": [{
-            "id": "c1",
-            "type": "function",
-            "function": {
-                "name": "write",
-                "arguments": json.dumps({
-                    "path": "x.py",
-                    "content": (
-                        'if s.startswith("[Error:"):  # unreachable / timeout\n'
-                    ),
-                }),
-            },
-        }],
-    })
+    return json.dumps(
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {
+                        "name": "write",
+                        "arguments": json.dumps(
+                            {
+                                "path": "x.py",
+                                "content": (
+                                    'if s.startswith("[Error:"):  # unreachable / timeout\n'
+                                ),
+                            }
+                        ),
+                    },
+                }
+            ],
+        }
+    )
 
 
 def test_is_connection_failure_ignores_error_text_inside_a_tool_call() -> None:
@@ -328,6 +338,7 @@ def test_build_provider_single_chain_no_failover() -> None:
 # ---------------------------------------------------------------------------
 # Failover notice — what actually answered, for the agent to surface in chat
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_failover_records_which_provider_answered() -> None:

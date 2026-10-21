@@ -23,12 +23,11 @@ import sys
 from .base import Command, read_choice, stop_requested
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent import Agent
 
-_PATCH_RE = re.compile(
-    r"\[PATCH:\s*([^\]]+)\]\s*\n*(?:```|)(.*?)(?:```|$)", re.DOTALL
-)
+_PATCH_RE = re.compile(r"\[PATCH:\s*([^\]]+)\]\s*\n*(?:```|)(.*?)(?:```|$)", re.DOTALL)
 _FAILED_RE = re.compile(r"FAILED\s+([\w./\\-]+)::")
 
 
@@ -72,7 +71,7 @@ class SelfHealCommand(Command):
                 files.append(node)
         return files
 
-    async def _fix_file(self, agent: 'Agent', path: str, failure_info: str) -> bool:
+    async def _fix_file(self, agent: "Agent", path: str, failure_info: str) -> bool:
         """Ask the LLM for a [PATCH:] fixing *path* and apply it (with backup)."""
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -121,6 +120,7 @@ class SelfHealCommand(Command):
 
         original_lines = source.splitlines()
         from agent_core.patch_utils import apply_patch, apply_anchored_patch
+
         ok, patched = apply_patch(patch_text, original_lines)
         if not ok:
             ok, patched = apply_anchored_patch(patch_text, original_lines)
@@ -155,7 +155,7 @@ class SelfHealCommand(Command):
                 print(f"    reverted {path}")
         self.backups = {}
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         rounds = 3
         yes_mode = False
         target = "."
@@ -182,7 +182,9 @@ class SelfHealCommand(Command):
             return True
 
         baseline_failures = self._failing_files(output)
-        print(f"[self_heal] {len(baseline_failures)} failing file(s): {', '.join(baseline_failures)}")
+        print(
+            f"[self_heal] {len(baseline_failures)} failing file(s): {', '.join(baseline_failures)}"
+        )
 
         for round_no in range(1, rounds + 1):
             if stop_requested():
@@ -197,7 +199,9 @@ class SelfHealCommand(Command):
             for line in output.splitlines():
                 m = _FAILED_RE.search(line)
                 if m:
-                    by_file.setdefault(m.group(1).replace("\\", "/"), []).append(line[200:])
+                    by_file.setdefault(m.group(1).replace("\\", "/"), []).append(
+                        line[200:]
+                    )
             for path in failures:
                 file_failures = by_file.get(path, [])
                 failure_info = "\n".join(file_failures[:5]) or output[-2000:]
@@ -216,6 +220,8 @@ class SelfHealCommand(Command):
                 self._revert_all()
                 break
 
-        print(f"\n[self_heal] Not fully green after {rounds} round(s). "
-              f"Remaining failing files: {', '.join(self._failing_files(output))}")
+        print(
+            f"\n[self_heal] Not fully green after {rounds} round(s). "
+            f"Remaining failing files: {', '.join(self._failing_files(output))}"
+        )
         return True

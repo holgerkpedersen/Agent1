@@ -6,6 +6,7 @@ every default provider chain — the catalog ``_defaults.llm_chain`` (source of
 ``.env.example`` — must list only keyed ``opencode-go`` slots plus local /
 openrouter fallbacks.  This test pins that configuration.
 """
+
 from __future__ import annotations
 
 import json

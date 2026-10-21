@@ -153,7 +153,9 @@ class TestAuditScriptWiring:
         script = Path(__file__).resolve().parents[1] / "scripts" / "audit_invariants.py"
         proc = subprocess.run(
             ["python", "-X", "utf8", str(script)],
-            capture_output=True, text=True, encoding="utf-8",
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
             cwd=str(script.parent.parent),
         )
         out = proc.stdout + proc.stderr
@@ -163,7 +165,9 @@ class TestAuditScriptWiring:
     def test_planted_emoji_fails_the_audit(self, tmp_path, monkeypatch, capsys):
         mod = self._load_audit_module()
         monkeypatch.setattr(mod, "ROOT", tmp_path)
-        monkeypatch.setattr(mod, "scan_tree", lambda _r, **kw: {"bad.md": [(1, "\u2705")]})
+        monkeypatch.setattr(
+            mod, "scan_tree", lambda _r, **kw: {"bad.md": [(1, "\u2705")]}
+        )
         monkeypatch.setattr("sys.argv", ["audit_invariants.py"])
 
         rc = mod.main()

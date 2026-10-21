@@ -12,6 +12,7 @@ Root causes fixed:
    "Execution Log (last 100)" card (id ``tbl-log``) stayed on "Loading...".
    (JS fix in static/index.html.)
 """
+
 from __future__ import annotations
 
 import json

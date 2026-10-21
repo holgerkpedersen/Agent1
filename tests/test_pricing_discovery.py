@@ -9,6 +9,7 @@ edit) is caught.
 Decision #006 (no arbitrary URL fetching) is also asserted: the allowlisted
 fetcher refuses any host other than ``opencode.ai``.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,6 +29,7 @@ def _load_fixture() -> str:
 # ---------------------------------------------------------------------------
 # Parsing the authoritative docs price table
 # ---------------------------------------------------------------------------
+
 
 def test_parse_docs_prices_fixture_count() -> None:
     """The committed fixture yields every keyed opencode-go model (27)."""
@@ -88,6 +90,7 @@ def test_parse_docs_prices_malformed_html_safe() -> None:
 # SSRF guard (decision #006): only opencode.ai may be fetched
 # ---------------------------------------------------------------------------
 
+
 def test_fetch_fetcher_refuses_non_allowlisted_host(monkeypatch) -> None:
     """The allowlisted fetcher returns None for any non-opencode.ai host."""
     captured: dict[str, object] = {}
@@ -105,13 +108,17 @@ def test_fetch_fetcher_refuses_non_allowlisted_host(monkeypatch) -> None:
 
 def test_fetch_fetcher_allows_opencode_host(monkeypatch) -> None:
     """opencode.ai is the single allowlisted host and is fetched."""
+
     class _Resp:
         def __enter__(self):
             return self
+
         def __exit__(self, *a):
             return False
+
         def read(self):
             return b"<html>docs</html>"
+
     monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Resp())
     result = pricing._fetch_opencode_docs(pricing._DOCS_URL)
     assert result == "<html>docs</html>"
@@ -120,6 +127,7 @@ def test_fetch_fetcher_allows_opencode_host(monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 # fetch_cloud_prices: offline by default, web refresh on demand
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def isolated_cache(tmp_path, monkeypatch):
@@ -144,9 +152,7 @@ def test_fetch_refresh_stores_docs_prices(isolated_cache) -> None:
     def _fake_docs_get(url):
         return html
 
-    table = pricing.fetch_cloud_prices(
-        fetch=True, force=True, _http_get=_fake_docs_get
-    )
+    table = pricing.fetch_cloud_prices(fetch=True, force=True, _http_get=_fake_docs_get)
     # Cache now reflects the docs parse.
     assert isolated_cache.exists()
     cached = json.loads(isolated_cache.read_text(encoding="utf-8"))
@@ -163,8 +169,10 @@ def test_docs_overrides_stale_baseline(isolated_cache, monkeypatch) -> None:
         "BASELINE_PRICES",
         {
             "opencode-go/grok-4.6": {
-                "prompt_per_1m": 99.0, "completion_per_1m": 99.0,
-                "verified": False, "source": "stale-baseline",
+                "prompt_per_1m": 99.0,
+                "completion_per_1m": 99.0,
+                "verified": False,
+                "source": "stale-baseline",
             }
         },
     )
@@ -173,9 +181,7 @@ def test_docs_overrides_stale_baseline(isolated_cache, monkeypatch) -> None:
     def _fake_docs_get(url):
         return html
 
-    table = pricing.fetch_cloud_prices(
-        fetch=True, force=True, _http_get=_fake_docs_get
-    )
+    table = pricing.fetch_cloud_prices(fetch=True, force=True, _http_get=_fake_docs_get)
     # Docs value (2.00) overrides the stale 99.0 baseline.
     assert table["opencode-go/grok-4.6"]["prompt_per_1m"] == 2.00
     assert table["opencode-go/grok-4.6"]["source"] == "opencode-docs"
@@ -183,8 +189,14 @@ def test_docs_overrides_stale_baseline(isolated_cache, monkeypatch) -> None:
 
 def test_load_prices_merges_cache_over_baseline(isolated_cache) -> None:
     """load_prices merges the cache on top of BASELINE_PRICES."""
-    cache = {"opencode-go/hy3": {"prompt_per_1m": 0.5, "completion_per_1m": 0.5,
-                                 "verified": True, "source": "opencode-docs"}}
+    cache = {
+        "opencode-go/hy3": {
+            "prompt_per_1m": 0.5,
+            "completion_per_1m": 0.5,
+            "verified": True,
+            "source": "opencode-docs",
+        }
+    }
     isolated_cache.write_text(json.dumps(cache), encoding="utf-8")
     table = pricing.load_prices()
     assert table["opencode-go/hy3"]["prompt_per_1m"] == 0.5
@@ -195,6 +207,7 @@ def test_load_prices_merges_cache_over_baseline(isolated_cache) -> None:
 # ---------------------------------------------------------------------------
 # Free-tier / cost semantics
 # ---------------------------------------------------------------------------
+
 
 def test_is_free_tier_matches() -> None:
     """Free-tier detection covers -free, :free and zen prefixes."""
@@ -214,5 +227,7 @@ def test_cost_per_token_free_is_zero() -> None:
 def test_estimate_cost_paid_uses_docs_price() -> None:
     """A paid model's cost uses the authoritative docs price."""
     # grok-4.6: $2 in / $6 out per 1M.  1M in + 1M out = 8.0 USD.
-    cost = pricing.estimate_cost(1_000_000, 1_000_000, "opencode-go/grok-4.6", "opencode")
+    cost = pricing.estimate_cost(
+        1_000_000, 1_000_000, "opencode-go/grok-4.6", "opencode"
+    )
     assert cost == pytest.approx(8.0)

@@ -16,6 +16,7 @@ so they exercise the REAL decode path of each fixed function.  The
 source-level guard at the end is deterministic on every machine (including
 UTF-8-locale ones where the behavioural tests would pass even unfixed).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -51,7 +52,9 @@ def _locale_invalid_byte() -> int | None:
 #: "中" as UTF-8 (what git emits), plus a byte the local codepage rejects
 #: so an un-pinned decode RAISES instead of silently mojibake-ing.
 _BAD_BYTE = _locale_invalid_byte()
-BAD_BYTES = "中".encode("utf-8") + (bytes([_BAD_BYTE]) if _BAD_BYTE is not None else b"")
+BAD_BYTES = "中".encode("utf-8") + (
+    bytes([_BAD_BYTE]) if _BAD_BYTE is not None else b""
+)
 
 #: cp1252 decoding of the first UTF-8 byte of "中" — the mojibake marker.
 MOJIBAKE_MARK = "Ã¤"
@@ -92,9 +95,7 @@ def fake_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A fake ``git`` on PATH (use with a work dir that gets a subcommand script)."""
     bin_dir = tmp_path / "fakebin"
     bin_dir.mkdir()
-    monkeypatch.setenv(
-        "PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
-    )
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
     return bin_dir
 
 
@@ -213,8 +214,18 @@ class TestAllTextTrueCallsPinUtf8:
     """
 
     SKIP_DIRS = {
-        ".git", ".venv", "venv", "node_modules", "backups", "reports",
-        "tests", "benchmark", "dashboard", ".docs", "skills", "harnessfix_selftest",
+        ".git",
+        ".venv",
+        "venv",
+        "node_modules",
+        "backups",
+        "reports",
+        "tests",
+        "benchmark",
+        "dashboard",
+        ".docs",
+        "skills",
+        "harnessfix_selftest",
     }
 
     #: Every subprocess entry point that accepts ``text=True`` and would
@@ -228,9 +239,11 @@ class TestAllTextTrueCallsPinUtf8:
     def _subprocess_call_bodies(src: str) -> list[str]:
         """Text of every subprocess entry-point argument list (paren-matched)."""
         bodies: list[str] = []
-        pattern = r"subprocess\.(?:" + "|".join(
-            TestAllTextTrueCallsPinUtf8.ENTRY_POINTS
-        ) + r")\("
+        pattern = (
+            r"subprocess\.(?:"
+            + "|".join(TestAllTextTrueCallsPinUtf8.ENTRY_POINTS)
+            + r")\("
+        )
         for m in re.finditer(pattern, src):
             depth = 1
             i = m.end()
@@ -252,9 +265,7 @@ class TestAllTextTrueCallsPinUtf8:
             for body in self._subprocess_call_bodies(src):
                 if "text=True" in body and "encoding=" not in body:
                     snippet = " ".join(body.split())[:80]
-                    offenders.append(
-                        f"{p.relative_to(REPO_ROOT)}: {snippet!r}"
-                    )
+                    offenders.append(f"{p.relative_to(REPO_ROOT)}: {snippet!r}")
         assert not offenders, (
             "subprocess.run(text=True) without an explicit encoding — on "
             "Windows this decodes child output with the locale codepage and "

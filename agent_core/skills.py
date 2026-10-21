@@ -31,6 +31,7 @@ Design notes
 * **Context budget**: the index is char-capped, a page is line-capped and the
   body itself is byte-capped — a 5 MB ``SKILL.md`` cannot blow up a turn.
 """
+
 from __future__ import annotations
 
 import difflib
@@ -172,6 +173,7 @@ class SkillPage:
 # Name + path helpers
 # ---------------------------------------------------------------------------
 
+
 def _require_slug(value: str) -> str:
     """Return *value* as a lowercase skill slug, or raise ``ValueError``."""
     clean = str(value).strip().strip('"').strip("'").lower()
@@ -268,15 +270,16 @@ def _unresolved_name_message(requested: str, skills: Sequence[Skill]) -> str:
     when a near miss exists, the closest candidate first.
     """
     names = [skill.name for skill in skills]
-    available = f"available skills: {', '.join(sorted(names))}" if names else (
-        "no skills found in this workspace"
+    available = (
+        f"available skills: {', '.join(sorted(names))}"
+        if names
+        else ("no skills found in this workspace")
     )
     if requested:
         close = difflib.get_close_matches(requested[:40], names, n=1, cutoff=0.5)
         if close:
             return (
-                f"unknown skill {requested!r} — did you mean {close[0]!r}? "
-                f"{available}"
+                f"unknown skill {requested!r} — did you mean {close[0]!r}? {available}"
             )
     return f"unknown skill {requested!r} — {available}"
 
@@ -290,6 +293,7 @@ def skills_root(workspace: str | Path) -> Path:
 # Frontmatter parsing (dependency-free subset)
 # ---------------------------------------------------------------------------
 
+
 def _split_frontmatter(text: str) -> tuple[str, str]:
     """Return ``(frontmatter, body)``; raise ``ValueError`` when malformed."""
     lines = text.lstrip("\ufeff").splitlines()
@@ -297,7 +301,7 @@ def _split_frontmatter(text: str) -> tuple[str, str]:
         raise ValueError("missing leading '---' frontmatter block")
     for index in range(1, len(lines)):
         if lines[index].strip() == "---":
-            return "\n".join(lines[1:index]), "\n".join(lines[index + 1:])
+            return "\n".join(lines[1:index]), "\n".join(lines[index + 1 :])
     raise ValueError("unterminated frontmatter block (no closing '---')")
 
 
@@ -342,7 +346,9 @@ def _first_problem(exc: ValidationError) -> str:
 
 
 def parse_skill_document(
-    text: str, *, source: str = SKILL_FILENAME,
+    text: str,
+    *,
+    source: str = SKILL_FILENAME,
 ) -> tuple[SkillFrontmatter, str]:
     """Parse + validate one ``SKILL.md`` document → ``(frontmatter, body)``."""
     block, body = _split_frontmatter(text)
@@ -364,6 +370,7 @@ def _load(path: Path) -> tuple[SkillFrontmatter, str]:
 # ---------------------------------------------------------------------------
 # Discovery + index
 # ---------------------------------------------------------------------------
+
 
 def _skill_dirs(root: Path) -> list[Path]:
     """Skill directories under *root*, sorted by folder name (never raises)."""
@@ -400,24 +407,29 @@ def discover_skills(workspace: str | Path) -> list[Skill]:
             logger.warning(
                 "Skill skipped (%s): frontmatter name %r does not match its "
                 "folder %r — the folder IS the skill id",
-                path, meta.name, directory.name,
+                path,
+                meta.name,
+                directory.name,
             )
             continue
         if meta.name in seen:
             logger.warning("Skill skipped (%s): duplicate name %r", path, meta.name)
             continue
         seen.add(meta.name)
-        found.append(Skill(
-            name=meta.name,
-            description=meta.description,
-            when_to_use=meta.when_to_use,
-            tags=tuple(meta.tags),
-            path=path,
-        ))
+        found.append(
+            Skill(
+                name=meta.name,
+                description=meta.description,
+                when_to_use=meta.when_to_use,
+                tags=tuple(meta.tags),
+                path=path,
+            )
+        )
         if len(found) >= MAX_SKILLS:
             logger.warning(
                 "Skill index capped at %d entries; later skills stay on disk "
-                "and are still readable by name", MAX_SKILLS,
+                "and are still readable by name",
+                MAX_SKILLS,
             )
             break
     return sorted(found, key=lambda skill: skill.name)
@@ -427,7 +439,7 @@ def _skill_hint_text(skill: Skill) -> str:
     """One-line hint for a matched skill (description, capped)."""
     text = skill.when_to_use or skill.description
     if len(text) > MAX_HINT_CHARS:
-        text = text[:MAX_HINT_CHARS - 1].rstrip() + "…"
+        text = text[: MAX_HINT_CHARS - 1].rstrip() + "…"
     return f"{skill.name} — {text}"
 
 
@@ -437,9 +449,7 @@ MIN_WHEN_TO_USE_PHRASE_CHARS = 8
 
 #: Words that carry no trigger value in a clause like "use when X or Y" —
 #: they glue phrases together and must not count as phrase content.
-_STOPWORDS = frozenset(
-    {"or", "and", "the", "a", "an", "any", "to", "of", "in", "on"}
-)
+_STOPWORDS = frozenset({"or", "and", "the", "a", "an", "any", "to", "of", "in", "on"})
 
 
 def _when_to_use_phrases(phrase: str | None) -> list[str]:
@@ -480,7 +490,9 @@ def _when_to_use_phrases(phrase: str | None) -> list[str]:
 
 
 def _phrase_hit(
-    phrases: list[str], text_words: set[str], lowered_text: str = "",
+    phrases: list[str],
+    text_words: set[str],
+    lowered_text: str = "",
 ) -> bool:
     """True when *text_words* contains enough of some phrase's words.
 
@@ -508,7 +520,8 @@ def _phrase_hit(
             continue
         unique_words = list(dict.fromkeys(words))
         hits = sum(
-            1 for w in unique_words
+            1
+            for w in unique_words
             if w in text_words or any(w == tw for tw in text_words)
         )
         # Single-word phrases need that one word; two-word phrases need BOTH;
@@ -538,7 +551,10 @@ def _phrase_hit(
 
 
 def match_skills_for_input(
-    skills: Sequence[Skill], user_text: str, *, max_matches: int = MAX_SKILL_MATCHES,
+    skills: Sequence[Skill],
+    user_text: str,
+    *,
+    max_matches: int = MAX_SKILL_MATCHES,
 ) -> list[Skill]:
     """Return up to *max_matches* skills whose metadata matches *user_text*.
 
@@ -647,6 +663,7 @@ def load_skill_index(workspace: str | Path) -> str:
 # On-demand body access (the ``read_skill`` tool)
 # ---------------------------------------------------------------------------
 
+
 def _cap_body(body: str) -> tuple[str, bool]:
     """Cut *body* at :data:`MAX_BODY_BYTES` on a line boundary if needed."""
     encoded = body.encode("utf-8")
@@ -706,10 +723,9 @@ def read_skill(
     lines = capped.splitlines()
     if lines and offset > len(lines):
         raise SkillError(
-            f"offset {offset} is beyond the end of skill {clean!r} "
-            f"({len(lines)} lines)"
+            f"offset {offset} is beyond the end of skill {clean!r} ({len(lines)} lines)"
         )
-    chunk = lines[offset - 1: offset - 1 + page_limit]
+    chunk = lines[offset - 1 : offset - 1 + page_limit]
     end = offset - 1 + len(chunk)
     next_offset = end + 1 if end < len(lines) else None
     skill = Skill(
@@ -756,7 +772,9 @@ def format_skill_page(page: SkillPage) -> str:
         header.append("--- body is empty ---")
     else:
         last = page.offset + len(page.text.splitlines()) - 1
-        header.append(f"--- body (lines {page.offset}-{last} of {page.total_lines}) ---")
+        header.append(
+            f"--- body (lines {page.offset}-{last} of {page.total_lines}) ---"
+        )
     parts = ["\n".join(header), page.text]
     if page.next_offset is not None:
         parts.append(

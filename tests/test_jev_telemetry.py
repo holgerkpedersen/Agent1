@@ -35,9 +35,15 @@ def _question(text="is it true?"):
 
 def _result(p_yes=0.9, decision="TRUE"):
     return JevResult(
-        kind="yesno", model="qwen2.5-coder-1.5b-instruct", mechanism="vote",
-        probabilities={"yes": p_yes, "no": 1.0 - p_yes}, decision=decision,
-        confidence=max(p_yes, 1.0 - p_yes), threshold=0.7, n=5, abstentions=0,
+        kind="yesno",
+        model="qwen2.5-coder-1.5b-instruct",
+        mechanism="vote",
+        probabilities={"yes": p_yes, "no": 1.0 - p_yes},
+        decision=decision,
+        confidence=max(p_yes, 1.0 - p_yes),
+        threshold=0.7,
+        n=5,
+        abstentions=0,
     )
 
 
@@ -61,7 +67,10 @@ class TestLedger:
 
     def test_record_decision_appends(self, tmp_path):
         decision_id = record_decision(
-            _result(), _question(), workspace=str(tmp_path), source="tool",
+            _result(),
+            _question(),
+            workspace=str(tmp_path),
+            source="tool",
         )
         assert decision_id
         records = load_decisions(workspace=str(tmp_path))
@@ -88,16 +97,20 @@ class TestLedger:
         )
         ids = [r["id"] for r in load_decisions(workspace=str(tmp_path))]
         assert ids == ["a", "b", "c"]
-        last_two = [
-            r["id"] for r in load_decisions(workspace=str(tmp_path), last=2)
-        ]
+        last_two = [r["id"] for r in load_decisions(workspace=str(tmp_path), last=2)]
         assert last_two == ["b", "c"]
 
     def test_record_outcome_labels_atomically(self, tmp_path):
         decision_id = record_decision(_result(), _question(), workspace=str(tmp_path))
-        assert record_outcome(
-            decision_id, CORRECT, workspace=str(tmp_path), note="review",
-        ) is True
+        assert (
+            record_outcome(
+                decision_id,
+                CORRECT,
+                workspace=str(tmp_path),
+                note="review",
+            )
+            is True
+        )
         record = load_decisions(workspace=str(tmp_path))[0]
         assert record["outcome"] == CORRECT
         assert record["outcome_note"] == "review"
@@ -116,7 +129,9 @@ class TestCalibration:
         pairs = [(0.9, CORRECT), (0.8, CORRECT), (0.2, INCORRECT), (0.6, INCORRECT)]
         for p_yes, outcome in pairs:
             decision_id = record_decision(
-                _result(p_yes=p_yes), _question(), workspace=str(tmp_path),
+                _result(p_yes=p_yes),
+                _question(),
+                workspace=str(tmp_path),
             )
             record_outcome(decision_id, outcome, workspace=str(tmp_path))
         return load_decisions(workspace=str(tmp_path))
@@ -159,8 +174,12 @@ class TestEngineRecordsAutomatically:
     def test_decide_appends_a_record(self, tmp_path, monkeypatch):
         monkeypatch.delenv("AGENT_NO_JEV_LOG", raising=False)
         engine = JevEngine(
-            _VoteProvider("yes"), model_name="fake-small", samples=3,
-            mechanism="vote", log_workspace=str(tmp_path), source="tool",
+            _VoteProvider("yes"),
+            model_name="fake-small",
+            samples=3,
+            mechanism="vote",
+            log_workspace=str(tmp_path),
+            source="tool",
         )
         result = asyncio.run(engine.decide(_question()))
         assert result.decision == "TRUE"
@@ -179,7 +198,9 @@ class TestEngineRecordsAutomatically:
         monkeypatch.setattr(telemetry, "record_decision", boom)
         monkeypatch.delenv("AGENT_NO_JEV_LOG", raising=False)
         engine = JevEngine(
-            _VoteProvider("no"), model_name="fake-small", samples=2,
+            _VoteProvider("no"),
+            model_name="fake-small",
+            samples=2,
             mechanism="vote",
         )
         result = asyncio.run(engine.decide(_question()))
@@ -193,7 +214,9 @@ def _label_count(workspace, count, monkeypatch):
     for i in range(count):
         p_yes, outcome = pairs[i % len(pairs)]
         decision_id = record_decision(
-            _result(p_yes=p_yes), _question(), workspace=str(workspace),
+            _result(p_yes=p_yes),
+            _question(),
+            workspace=str(workspace),
         )
         record_outcome(decision_id, outcome, workspace=str(workspace))
 
@@ -220,9 +243,7 @@ class TestThresholdSuggestionGating:
     def test_min_samples_argument_is_respected(self, tmp_path, monkeypatch):
         _label_count(tmp_path, 10, monkeypatch)
         assert load_suggested_threshold(workspace=str(tmp_path)) is not None
-        assert load_suggested_threshold(
-            workspace=str(tmp_path), min_samples=20
-        ) is None
+        assert load_suggested_threshold(workspace=str(tmp_path), min_samples=20) is None
 
 
 class TestJevDecideThresholdFallback:
@@ -258,9 +279,7 @@ class TestJevDecideThresholdFallback:
 
         monkeypatch.setattr(jev_engine, "build_jev_engine", _fake_build)
 
-    def test_falls_back_to_point_seven_below_min_samples(
-        self, tmp_path, monkeypatch
-    ):
+    def test_falls_back_to_point_seven_below_min_samples(self, tmp_path, monkeypatch):
         ws = tmp_path / "ws"
         ws.mkdir()
         _label_count(ws, 9, monkeypatch)
@@ -275,9 +294,7 @@ class TestJevDecideThresholdFallback:
             "with < 10 labeled samples the tool must fall back to 0.7"
         )
 
-    def test_applies_calibrated_threshold_at_ten_samples(
-        self, tmp_path, monkeypatch
-    ):
+    def test_applies_calibrated_threshold_at_ten_samples(self, tmp_path, monkeypatch):
         ws = tmp_path / "ws"
         ws.mkdir()
         _label_count(ws, 10, monkeypatch)

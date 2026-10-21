@@ -10,6 +10,7 @@ Covers:
   read-only calls
 - ModeCommand: show/switch wiring through the registry-facing interface
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -41,6 +42,7 @@ def agent() -> Agent:
 # Schema filtering (what the LLM is offered)
 # ---------------------------------------------------------------------------
 
+
 def test_build_mode_offers_every_schema(agent: Agent) -> None:
     filtered = filter_tool_schemas(
         [{"function": {"name": n}} for n in NLP_TOOL_NAMES], MODE_BUILD
@@ -65,7 +67,10 @@ def test_unknown_mode_fails_safe_to_full_toolset() -> None:
 # Executor-level rejection (the choke point)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("tool", ["write", "edit", "run", "git", "tests", "fix", "analyze", "merge"])
+
+@pytest.mark.parametrize(
+    "tool", ["write", "edit", "run", "git", "tests", "fix", "analyze", "merge"]
+)
 def test_plan_mode_blocks_mutating_tools(tool: str) -> None:
     rejection = check_tool_allowed(tool, MODE_PLAN)
     assert rejection is not None
@@ -91,6 +96,7 @@ def test_build_mode_never_rejects() -> None:
 # Agent session state + end-to-end executor behaviour
 # ---------------------------------------------------------------------------
 
+
 def test_agent_defaults_to_build_mode(agent: Agent) -> None:
     assert agent.mode == MODE_BUILD
     assert not agent.is_plan_mode()
@@ -110,9 +116,9 @@ def test_plan_mode_executor_rejects_write_end_to_end(
 ) -> None:
     target = tmp_path / "must_not_exist.txt"
     agent.set_mode(MODE_PLAN)
-    result = asyncio.run(agent._execute_tool_call(
-        "write", {"path": str(target), "content": "nope"}
-    ))
+    result = asyncio.run(
+        agent._execute_tool_call("write", {"path": str(target), "content": "nope"})
+    )
     assert result.startswith("[plan mode]")
     assert not target.exists()
 
@@ -126,32 +132,26 @@ def test_plan_mode_executor_rejects_merge_end_to_end(
     plan-mode read-only guarantee would silently regress.
     """
     agent.set_mode(MODE_PLAN)
-    result = asyncio.run(agent._execute_tool_call(
-        "merge", {"action": "abort"}
-    ))
+    result = asyncio.run(agent._execute_tool_call("merge", {"action": "abort"}))
     assert result.startswith("[plan mode]")
     assert "merge" in result
 
 
-def test_plan_mode_executor_still_executes_reads(
-    agent: Agent, tmp_path: Path
-) -> None:
+def test_plan_mode_executor_still_executes_reads(agent: Agent, tmp_path: Path) -> None:
     probe = tmp_path / "probe.txt"
     probe.write_text("readable", encoding="utf-8")
     agent.set_mode(MODE_PLAN)
-    result = asyncio.run(agent._execute_tool_call(
-        "read", {"path": str(probe), "offset": 1, "limit": 10}
-    ))
+    result = asyncio.run(
+        agent._execute_tool_call("read", {"path": str(probe), "offset": 1, "limit": 10})
+    )
     assert result == "readable"
 
 
-def test_build_mode_executor_writes_normally(
-    agent: Agent, tmp_path: Path
-) -> None:
+def test_build_mode_executor_writes_normally(agent: Agent, tmp_path: Path) -> None:
     target = tmp_path / "allowed.txt"
-    result = asyncio.run(agent._execute_tool_call(
-        "write", {"path": str(target), "content": "ok"}
-    ))
+    result = asyncio.run(
+        agent._execute_tool_call("write", {"path": str(target), "content": "ok"})
+    )
     assert result.startswith("Written")
     assert target.read_text(encoding="utf-8") == "ok"
 
@@ -159,6 +159,7 @@ def test_build_mode_executor_writes_normally(
 # ---------------------------------------------------------------------------
 # Steering text + command surface
 # ---------------------------------------------------------------------------
+
 
 def test_plan_mode_texts_mention_read_only_and_escape_hatch() -> None:
     suffix = plan_mode_system_suffix()

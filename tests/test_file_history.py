@@ -17,6 +17,7 @@ three tool runs errored".  The contract mirrors the habits feature:
 
 Every test writes only into ``tmp_path`` workspaces.
 """
+
 from __future__ import annotations
 
 import time
@@ -34,7 +35,13 @@ from agent_core.file_history import (
 )
 
 
-def _seed_execution(workspace: Path, command: str, files: list[str], outcome: str = "ok", ts: float | None = None) -> None:
+def _seed_execution(
+    workspace: Path,
+    command: str,
+    files: list[str],
+    outcome: str = "ok",
+    ts: float | None = None,
+) -> None:
     """Append one structured execution record through the real ledger writer."""
 
     ledger_dir = workspace / "reports" / "history"
@@ -58,8 +65,11 @@ def _seed_execution(workspace: Path, command: str, files: list[str], outcome: st
 # 1. extract_file_paths
 # ---------------------------------------------------------------------------
 
+
 def test_extract_finds_slashed_and_extension_paths_in_mention_order() -> None:
-    text = "check agent_core/cli/commands/clear.py then docs/AGENT_ARCHITECTURE.md please"
+    text = (
+        "check agent_core/cli/commands/clear.py then docs/AGENT_ARCHITECTURE.md please"
+    )
     assert extract_file_paths(text) == [
         "agent_core/cli/commands/clear.py",
         "docs/AGENT_ARCHITECTURE.md",
@@ -99,6 +109,7 @@ def test_extract_empty_inputs_yield_nothing(empty) -> None:
 # 2. file_notes_block
 # ---------------------------------------------------------------------------
 
+
 def test_block_is_empty_without_a_query(tmp_path: Path) -> None:
     _seed_execution(tmp_path, "run", ["agent_core/cli/commands/clear.py"])
     assert file_notes_block("", tmp_path) == ""
@@ -132,9 +143,7 @@ def test_block_uses_the_history_matchers_not_just_exact_paths(tmp_path: Path) ->
     from harnessfix.history import clear_history_cache
 
     clear_history_cache()
-    _seed_execution(
-        tmp_path, "run", ["agent_core/cli/commands"], outcome="tests green"
-    )
+    _seed_execution(tmp_path, "run", ["agent_core/cli/commands"], outcome="tests green")
 
     block = file_notes_block("read agent_core/cli/commands/clear.py", str(tmp_path))
     assert FILE_HISTORY_MARKER in block
@@ -143,7 +152,9 @@ def test_block_uses_the_history_matchers_not_just_exact_paths(tmp_path: Path) ->
 
 def test_block_caps_events_per_file(tmp_path: Path) -> None:
     for i in range(6):
-        _seed_execution(tmp_path, f"cmd{i}", ["agent_core/cli/commands/clear.py"], ts=100.0 + i)
+        _seed_execution(
+            tmp_path, f"cmd{i}", ["agent_core/cli/commands/clear.py"], ts=100.0 + i
+        )
 
     block = file_notes_block("read agent_core/cli/commands/clear.py", tmp_path)
     event_lines = [ln for ln in block.splitlines() if "cmd" in ln]
@@ -168,6 +179,7 @@ def test_block_never_raises_on_garbage_inputs() -> None:
 # 3. Agent wiring
 # ---------------------------------------------------------------------------
 
+
 def _bare_agent(workspace: Path):
     """A real Agent instance without the heavy __init__ (same trick as habits tests)."""
     from agent import Agent
@@ -178,16 +190,25 @@ def _bare_agent(workspace: Path):
 
 
 def test_agent_method_renders_the_block_from_the_real_ledger(tmp_path: Path) -> None:
-    _seed_execution(tmp_path, "run", ["agent_core/cli/commands/clear.py"], outcome="3 passed")
+    _seed_execution(
+        tmp_path, "run", ["agent_core/cli/commands/clear.py"], outcome="3 passed"
+    )
 
-    block = _bare_agent(tmp_path)._file_history_block("fix agent_core/cli/commands/clear.py")
+    block = _bare_agent(tmp_path)._file_history_block(
+        "fix agent_core/cli/commands/clear.py"
+    )
 
     assert block.startswith(FILE_HISTORY_MARKER)
     assert "3 passed" in block
 
 
 def test_agent_method_is_empty_without_history(tmp_path: Path) -> None:
-    assert _bare_agent(tmp_path)._file_history_block("read agent_core/cli/commands/clear.py") == ""
+    assert (
+        _bare_agent(tmp_path)._file_history_block(
+            "read agent_core/cli/commands/clear.py"
+        )
+        == ""
+    )
 
 
 def test_agent_method_never_raises() -> None:
@@ -202,15 +223,21 @@ def test_strip_dynamic_system_blocks_removes_the_file_history_block() -> None:
     assert _strip_dynamic_system_blocks(text) == "BASE PROMPT"
 
 
-def test_prompt_rebuild_keeps_the_block_exactly_once(tmp_path: Path, monkeypatch) -> None:
+def test_prompt_rebuild_keeps_the_block_exactly_once(
+    tmp_path: Path, monkeypatch
+) -> None:
     import agent as agent_mod
 
     ws = tmp_path / "ws"
     ws.mkdir()
     _seed_execution(ws, "run", ["agent_core/cli/commands/clear.py"], outcome="green")
 
-    monkeypatch.setattr(agent_mod, "CHAT_HISTORY_JSON_PATH", str(tmp_path / "chat_history.json"))
-    monkeypatch.setattr(agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json"))
+    monkeypatch.setattr(
+        agent_mod, "CHAT_HISTORY_JSON_PATH", str(tmp_path / "chat_history.json")
+    )
+    monkeypatch.setattr(
+        agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
+    )
     bot = agent_mod.Agent(workspace=str(ws))
 
     bot._refresh_system_message(query="read agent_core/cli/commands/clear.py")
@@ -223,14 +250,20 @@ def test_prompt_rebuild_keeps_the_block_exactly_once(tmp_path: Path, monkeypatch
     assert second.count("RECENT FILE NOTES") == 1
 
 
-def test_empty_workspace_keeps_the_prompt_byte_identical(tmp_path: Path, monkeypatch) -> None:
+def test_empty_workspace_keeps_the_prompt_byte_identical(
+    tmp_path: Path, monkeypatch
+) -> None:
     import agent as agent_mod
 
     ws = tmp_path / "ws"
     ws.mkdir()
 
-    monkeypatch.setattr(agent_mod, "CHAT_HISTORY_JSON_PATH", str(tmp_path / "chat_history.json"))
-    monkeypatch.setattr(agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json"))
+    monkeypatch.setattr(
+        agent_mod, "CHAT_HISTORY_JSON_PATH", str(tmp_path / "chat_history.json")
+    )
+    monkeypatch.setattr(
+        agent_mod, "AGENT_MEMORY_JSON_PATH", str(tmp_path / "agent_memory.json")
+    )
     bot = agent_mod.Agent(workspace=str(ws))
 
     bot._refresh_system_message(query="read agent_core/cli/commands/clear.py")

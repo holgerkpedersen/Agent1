@@ -6,6 +6,7 @@ chat contract (plain text / tool_calls JSON / metrics / error strings), and
 that transport failures are recognized as failover-worthy while auth/key
 failures are not.
 """
+
 from __future__ import annotations
 
 import json
@@ -32,6 +33,7 @@ def anyio_backend() -> str:
 # ---------------------------------------------------------------------------
 #  Model-id prefix handling
 # ---------------------------------------------------------------------------
+
 
 class TestHttpModelId:
     def test_strips_openrouter_prefix(self):
@@ -69,6 +71,7 @@ class TestProviderNameNormalization:
 #  Routing + construction
 # ---------------------------------------------------------------------------
 
+
 class TestProviderFor:
     def test_openrouter_prefix_wins_over_setting(self):
         assert (
@@ -105,7 +108,8 @@ class TestBuildProvider:
     def test_override_builds_openrouter(self):
         settings = AgentSettings(llm_provider="lmstudio")
         prov = build_provider(
-            settings, "openrouter/anthropic/claude-3.5-haiku",
+            settings,
+            "openrouter/anthropic/claude-3.5-haiku",
             provider_override="openrouter",
         )
         assert isinstance(prov, OpenRouterProvider)
@@ -114,6 +118,7 @@ class TestBuildProvider:
 # ---------------------------------------------------------------------------
 #  Config validation
 # ---------------------------------------------------------------------------
+
 
 def test_config_accepts_openrouter_as_active_provider():
     settings = AgentSettings(llm_provider="openrouter", llm_providers=("openrouter",))
@@ -137,6 +142,7 @@ def test_config_still_rejects_unknown_provider():
 # ---------------------------------------------------------------------------
 #  Chat contract (fake HTTP)
 # ---------------------------------------------------------------------------
+
 
 class _FakeHttp:
     """Stub urllib.request.urlopen response returning a canned JSON payload."""
@@ -208,7 +214,7 @@ async def test_chat_tool_calls_returned_as_json():
                         {
                             "id": "call_1",
                             "type": "function",
-                            "function": {"name": "run", "arguments": "{\"cmd\": \"ls\"}"},
+                            "function": {"name": "run", "arguments": '{"cmd": "ls"}'},
                         }
                     ],
                 },
@@ -235,10 +241,12 @@ async def test_chat_sends_bare_model_id_and_key_header():
     def fake_urlopen(req, timeout=None):
         captured["model"] = json.loads(req.data.decode())["model"]
         captured["auth"] = req.get_header("Authorization")
-        return _FakeHttp({
-            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-            "usage": {},
-        })
+        return _FakeHttp(
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {},
+            }
+        )
 
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
         await prov.chat([{"role": "user", "content": "hi"}])
@@ -255,10 +263,12 @@ async def test_disable_thinking_sends_reasoning_dict():
     def fake_urlopen(req, timeout=None):
         body = json.loads(req.data.decode())
         captured["reasoning"] = body.get("reasoning")
-        return _FakeHttp({
-            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-            "usage": {},
-        })
+        return _FakeHttp(
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {},
+            }
+        )
 
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
         await prov.chat([{"role": "user", "content": "hi"}])
@@ -292,10 +302,12 @@ async def test_disable_thinking_recovers_from_reasoning_mandatory_400():
                 'and cannot be disabled.","code":400,"metadata":{}}}',
             )
         # Second attempt (reasoning explicitly enabled) succeeds.
-        return _FakeHttp({
-            "choices": [{"message": {"content": "fixed"}, "finish_reason": "stop"}],
-            "usage": {},
-        })
+        return _FakeHttp(
+            {
+                "choices": [{"message": {"content": "fixed"}, "finish_reason": "stop"}],
+                "usage": {},
+            }
+        )
 
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
         out = await prov.chat(
@@ -326,13 +338,15 @@ async def test_disable_thinking_recovers_from_credits_402():
             raise _http_error(
                 402,
                 '{"error":{"message":"This request requires more credits, or '
-                'fewer max_tokens. You requested up to 50000 tokens, but can '
+                "fewer max_tokens. You requested up to 50000 tokens, but can "
                 'only afford 34782.","code":402,"metadata":{}}}',
             )
-        return _FakeHttp({
-            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-            "usage": {},
-        })
+        return _FakeHttp(
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {},
+            }
+        )
 
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
         out = await prov.chat(
@@ -355,16 +369,20 @@ async def test_pure_reasoning_model_returns_reasoning_as_content():
     prov = _provider(max_retries=0)
 
     def fake_urlopen(req, timeout=None):
-        return _FakeHttp({
-            "choices": [{
-                "message": {
-                    "content": None,
-                    "reasoning_content": "Here is my analysis and fix.",
-                },
-                "finish_reason": "stop",
-            }],
-            "usage": {},
-        })
+        return _FakeHttp(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "reasoning_content": "Here is my analysis and fix.",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {},
+            }
+        )
 
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
         out = await prov.chat(
@@ -414,7 +432,10 @@ async def test_chat_http_4xx_is_permanent_not_failover():
     def boom(req, timeout=None):
         raise urllib.error.HTTPError(
             url="https://openrouter.ai/api/v1/chat/completions",
-            code=401, msg="Unauthorized", hdrs=None, fp=None,
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,
+            fp=None,
         )
 
     with patch("urllib.request.urlopen", side_effect=boom):
@@ -482,7 +503,7 @@ async def test_chat_429_rate_limited_is_actionable():
     assert "[Error:" in out
     assert "rate-limited" in out.lower() or "429" in out
     # The raw upstream JSON must not leak into the user-facing error.
-    assert 'is_byok' not in out
+    assert "is_byok" not in out
 
 
 @pytest.mark.anyio
@@ -508,14 +529,21 @@ async def test_chat_no_choices_is_error():
 #  Model listing (model command support)
 # ---------------------------------------------------------------------------
 
+
 def test_list_models_free_only_by_default():
     prov = _provider()
     payload = {
         "data": [
             # Paid model — must be excluded from the default free-only listing.
-            {"id": "anthropic/claude-3.5-haiku", "pricing": {"prompt": "1", "completion": "3"}},
+            {
+                "id": "anthropic/claude-3.5-haiku",
+                "pricing": {"prompt": "1", "completion": "3"},
+            },
             # Free model (zero pricing) — must be included.
-            {"id": "deepseek/deepseek-chat-v3-0324:free", "pricing": {"prompt": "0", "completion": "0"}},
+            {
+                "id": "deepseek/deepseek-chat-v3-0324:free",
+                "pricing": {"prompt": "0", "completion": "0"},
+            },
             # No pricing info but :free suffix — included as a fallback.
             {"id": "meta-llama/llama-3.1-8b-instruct:free"},
         ]
@@ -532,8 +560,14 @@ def test_list_models_full_catalog_with_free_only_false():
     prov = _provider()
     payload = {
         "data": [
-            {"id": "anthropic/claude-3.5-haiku", "pricing": {"prompt": "1", "completion": "3"}},
-            {"id": "deepseek/deepseek-chat-v3-0324:free", "pricing": {"prompt": "0", "completion": "0"}},
+            {
+                "id": "anthropic/claude-3.5-haiku",
+                "pricing": {"prompt": "1", "completion": "3"},
+            },
+            {
+                "id": "deepseek/deepseek-chat-v3-0324:free",
+                "pricing": {"prompt": "0", "completion": "0"},
+            },
         ]
     }
     with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):

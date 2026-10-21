@@ -75,9 +75,7 @@ class TestPytestFlagConflict:
     def test_direct_token_helper(self) -> None:
         assert _testmon_cacheprovider_conflict(["--testmon"]) is None
         assert _testmon_cacheprovider_conflict(["-p", "no:cacheprovider"]) is None
-        assert _testmon_cacheprovider_conflict(
-            ["--testmon", "-p", "no:cacheprovider"]
-        )
+        assert _testmon_cacheprovider_conflict(["--testmon", "-p", "no:cacheprovider"])
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +96,9 @@ class TestRunToolRefusesBadCombo:
         return Agent(workspace=".")
 
     def test_run_refuses_and_never_spawns(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(agent.subprocess, "Popen", _ExplodingPopen)
 
@@ -119,7 +119,9 @@ class TestRunToolRefusesBadCombo:
         assert "no:cacheprovider" in out
 
     def test_run_still_executes_safe_pytest(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Legitimate --testmon (or -p no:cacheprovider) runs still execute."""
         calls: list[float] = []
@@ -133,9 +135,7 @@ class TestRunToolRefusesBadCombo:
                 return ("ok", "")
 
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)
-        monkeypatch.setattr(
-            agent, "_pytest_full_suite_timeout", lambda: 900.0
-        )
+        monkeypatch.setattr(agent, "_pytest_full_suite_timeout", lambda: 900.0)
         monkeypatch.setenv("AGENT_PYTEST_FULL_RUN_GATE", "off")
 
         async def go() -> str:

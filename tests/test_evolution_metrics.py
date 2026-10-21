@@ -11,13 +11,17 @@ from agent_core.evolution_metrics import ExecutionMetric, EvolutionMetrics
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _metric(score: float = 0.5, success: bool = True, latency: float = 0.1) -> ExecutionMetric:
+
+def _metric(
+    score: float = 0.5, success: bool = True, latency: float = 0.1
+) -> ExecutionMetric:
     return ExecutionMetric(score=score, success=success, latency=latency)
 
 
 # ---------------------------------------------------------------------------
 # Construction & defaults
 # ---------------------------------------------------------------------------
+
 
 class TestConstruction:
     def test_default_window_size(self) -> None:
@@ -42,6 +46,7 @@ class TestConstruction:
 # ExecutionMetric
 # ---------------------------------------------------------------------------
 
+
 class TestExecutionMetric:
     def test_attributes_stored(self) -> None:
         metric = _metric(score=0.8, success=False, latency=1.2)
@@ -59,6 +64,7 @@ class TestExecutionMetric:
 # ---------------------------------------------------------------------------
 # record — sliding window behaviour
 # ---------------------------------------------------------------------------
+
 
 class TestRecord:
     def test_appends_metric(self) -> None:
@@ -105,6 +111,7 @@ class TestRecord:
 # average_score / score
 # ---------------------------------------------------------------------------
 
+
 class TestScores:
     def test_average_of_single_metric(self) -> None:
         m = EvolutionMetrics()
@@ -136,6 +143,7 @@ class TestScores:
 # ---------------------------------------------------------------------------
 # should_evolve — threshold logic
 # ---------------------------------------------------------------------------
+
 
 class TestShouldEvolve:
     def test_below_threshold_triggers(self) -> None:
@@ -177,12 +185,18 @@ class TestShouldEvolve:
 # summary — snapshot structure & values
 # ---------------------------------------------------------------------------
 
+
 class TestSummary:
     def test_summary_keys_present(self) -> None:
         m = EvolutionMetrics()
         s = m.summary()
-        for key in ("window_size", "threshold", "average_score",
-                    "history_count", "should_evolve"):
+        for key in (
+            "window_size",
+            "threshold",
+            "average_score",
+            "history_count",
+            "should_evolve",
+        ):
             assert key in s
 
     def test_summary_empty_state(self) -> None:
@@ -226,6 +240,7 @@ class TestSummary:
 # recent_metrics — returns window contents
 # ---------------------------------------------------------------------------
 
+
 class TestRecentMetrics:
     def test_returns_history_list(self) -> None:
         m = EvolutionMetrics()
@@ -249,6 +264,7 @@ class TestRecentMetrics:
 # ---------------------------------------------------------------------------
 # integration — record + should_evolve interplay across window
 # ---------------------------------------------------------------------------
+
 
 class TestIntegration:
     def test_recovery_after_low_scores(self) -> None:
@@ -285,6 +301,7 @@ class TestIntegration:
 # ---------------------------------------------------------------------------
 # tiny helper used by TestRecord.test_empty_after_no_records above
 # ---------------------------------------------------------------------------
+
 
 def history_count_in_summary_is_zero(metrics: EvolutionMetrics) -> bool:  # noqa: D401
     """Assert summary reports zero history count when nothing recorded."""

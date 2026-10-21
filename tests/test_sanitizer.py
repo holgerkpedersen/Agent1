@@ -27,7 +27,9 @@ class TestInjectionBlocking:
             "os.system('rm *')",
         ],
     )
-    def test_injection_payload_stripped(self, sanitizer: Sanitizer, payload: str) -> None:
+    def test_injection_payload_stripped(
+        self, sanitizer: Sanitizer, payload: str
+    ) -> None:
         result = sanitizer.sanitize_string(payload)
         # The dangerous separator/command must not survive sanitization.
         assert "ls -la" not in result
@@ -53,7 +55,10 @@ class TestInjectionBlocking:
         assert "hello" in result
 
     def test_benign_content_preserved(self, sanitizer: Sanitizer) -> None:
-        assert sanitizer.sanitize_string("agent_core/file_ops.py") == "agent_core/file_ops.py"
+        assert (
+            sanitizer.sanitize_string("agent_core/file_ops.py")
+            == "agent_core/file_ops.py"
+        )
         assert sanitizer.sanitize_string("echo hello") == "echo hello"
 
 
@@ -141,7 +146,9 @@ class TestEdgeCases:
 class TestPatternCorrectness:
     """Guard against the specific malformed regex regression."""
 
-    def test_pipe_pattern_matches_whitespace_not_backslash(self, sanitizer: Sanitizer) -> None:
+    def test_pipe_pattern_matches_whitespace_not_backslash(
+        self, sanitizer: Sanitizer
+    ) -> None:
         r"""Regression guard for the ``r"\|\\s*"`` malformed regex bug.
 
         The old pattern (raw-string ``\\``) matched a literal backslash rather

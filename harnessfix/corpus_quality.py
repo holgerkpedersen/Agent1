@@ -13,6 +13,7 @@ rate.  It deliberately does NOT claim to measure new improvement versus a
 live model run — the LLM benchmark remains the only genuine e2e signal and
 stays an optional cross-check.
 """
+
 from __future__ import annotations
 
 import tempfile

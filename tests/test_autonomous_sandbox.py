@@ -14,6 +14,7 @@ These pin the two root causes behind a silent, unproductive autonomous run:
    commit: previously it printed "already clean" and kept iterating, silently
    re-applying a repair that could never persist.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -55,13 +56,19 @@ def _write_tool_error_trace(traces_dir: Path, task_id: str) -> None:
         }
     )
     writer.emit(
-        {"kind": KIND_LOOP_END, "layer": "lifecycle", "outcome": "completed",
-         "termination_reason": "answer"}
+        {
+            "kind": KIND_LOOP_END,
+            "layer": "lifecycle",
+            "outcome": "completed",
+            "termination_reason": "answer",
+        }
     )
     writer.close()
 
 
-def test_repair_apply_revert_never_touches_tracked_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_repair_apply_revert_never_touches_tracked_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """With the isolation fixture active, exercising every catalog repair's
     apply()/revert() leaves the real ``tool_loop.py`` byte-identical and points
     each module's ``_TARGET`` at a temp copy."""
@@ -82,7 +89,9 @@ def test_repair_apply_revert_never_touches_tracked_source(tmp_path: Path, monkey
     assert _sha(real) == before, "a repair edit leaked into the real source tree"
 
 
-def test_run_loop_does_not_pollute_real_beacons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_run_loop_does_not_pollute_real_beacons(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """A real ``run_loop`` (which applies + reverts the tool_interface repair
     and writes progress) must not touch the live reports/harnessfix files; the
     isolation fixture routes those to temp.  We snapshot the REAL beacon files
@@ -93,8 +102,12 @@ def test_run_loop_does_not_pollute_real_beacons(tmp_path: Path, monkeypatch: pyt
     real_root = Path("reports") / "harnessfix"
     real_status = real_root / "run_status.json"
     real_history = real_root / "run_history.jsonl"
-    status_before = real_status.read_text(encoding="utf-8") if real_status.exists() else None
-    history_before = real_history.read_text(encoding="utf-8") if real_history.exists() else None
+    status_before = (
+        real_status.read_text(encoding="utf-8") if real_status.exists() else None
+    )
+    history_before = (
+        real_history.read_text(encoding="utf-8") if real_history.exists() else None
+    )
 
     traces_dir = tmp_path / "traces"
     traces_dir.mkdir()
@@ -121,13 +134,19 @@ def test_run_loop_does_not_pollute_real_beacons(tmp_path: Path, monkeypatch: pyt
     # this test is that the live beacons are untouched, not the verdict.
     assert summary["verdict"] == "accepted"
 
-    status_after = real_status.read_text(encoding="utf-8") if real_status.exists() else None
-    history_after = real_history.read_text(encoding="utf-8") if real_history.exists() else None
+    status_after = (
+        real_status.read_text(encoding="utf-8") if real_status.exists() else None
+    )
+    history_after = (
+        real_history.read_text(encoding="utf-8") if real_history.exists() else None
+    )
     assert status_before == status_after, "run_loop polluted the live beacon"
     assert history_before == history_after, "run_loop polluted run history"
 
 
-def test_accepted_but_uncommitted_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_accepted_but_uncommitted_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """If a verdict is accepted yet the repair leaves nothing to commit, the
     driver stops (return 1) instead of silently re-applying a phantom repair
     for every remaining iteration."""

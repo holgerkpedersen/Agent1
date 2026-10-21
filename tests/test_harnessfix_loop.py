@@ -3,6 +3,7 @@
 Covers the spec's loop test: "the loop rejects a repair that fails tests",
 plus the human-review gate (fail-closed headless) and the acceptance path.
 """
+
 from __future__ import annotations
 
 import json
@@ -33,6 +34,7 @@ def _reset_repairs() -> None:
         except Exception:
             pass
 
+
 @pytest.fixture(autouse=True)
 def _clean_repair_tree():
     """Make every harnessfix_self_test order-independent.
@@ -46,6 +48,7 @@ def _clean_repair_tree():
     _reset_repairs()
     yield
     _reset_repairs()
+
 
 _OLD = 'result_str = f"Tool error: {exc}"'
 _NEW = 'result_str = f"Tool error ({type(exc).__name__}): {exc}"'
@@ -62,7 +65,12 @@ def _write_tool_error_trace(traces_dir: Path, task_id: str) -> None:
         }
     )
     writer.emit(
-        {"kind": KIND_LOOP_END, "layer": "lifecycle", "outcome": "completed", "termination_reason": "answer"}
+        {
+            "kind": KIND_LOOP_END,
+            "layer": "lifecycle",
+            "outcome": "completed",
+            "termination_reason": "answer",
+        }
     )
     writer.close()
 
@@ -107,8 +115,12 @@ def test_benchmark_gate_reads_list_form_report(tmp_path, monkeypatch):
 
     payload = {
         "models": [
-            {"model": "m", "profile": "deep-analysis",
-             "display_name": "m|deep-analysis", "overall_accuracy": 87.5},
+            {
+                "model": "m",
+                "profile": "deep-analysis",
+                "display_name": "m|deep-analysis",
+                "overall_accuracy": 87.5,
+            },
         ]
     }
 
@@ -151,7 +163,10 @@ def test_loop_rejects_repair_that_fails_tests(tmp_path, monkeypatch):
     assert _OLD in _loop_source()
     assert _NEW not in _loop_source()
     # summary.json + per-task diagnoses are persisted.
-    assert json.loads((out / "summary.json").read_text(encoding="utf-8"))["verdict"] == "rejected_and_reverted"
+    assert (
+        json.loads((out / "summary.json").read_text(encoding="utf-8"))["verdict"]
+        == "rejected_and_reverted"
+    )
     assert list((out / "diagnoses").glob("*.json"))
 
 
@@ -215,8 +230,9 @@ def test_auto_approve_accepts_when_all_gates_pass(tmp_path, monkeypatch):
 
     out = tmp_path / "out_auto_ok"
     try:
-        summary = run_loop(traces_dir, approve=False, auto_approve=True,
-                           model=None, output_dir=out)
+        summary = run_loop(
+            traces_dir, approve=False, auto_approve=True, model=None, output_dir=out
+        )
         assert summary["accepted"] is True
         assert summary["verdict"] == "accepted"
         assert _NEW in _loop_source()
@@ -242,8 +258,9 @@ def test_auto_approve_reverts_on_failing_test(tmp_path, monkeypatch):
     )
 
     out = tmp_path / "out_auto_fail"
-    summary = run_loop(traces_dir, approve=False, auto_approve=True,
-                       model=None, output_dir=out)
+    summary = run_loop(
+        traces_dir, approve=False, auto_approve=True, model=None, output_dir=out
+    )
     assert summary["accepted"] is False
     assert summary["verdict"] == "rejected_and_reverted"
     # The tree is byte-identical to before: the repair never stuck.
@@ -270,14 +287,18 @@ class TestMainExitCode:
         monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
         monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (True, "passed"))
         monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
-        monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+        monkeypatch.setattr(
+            gates, "run_benchmark_gate", lambda model, profile=None: None
+        )
         (tmp_path / "no_tests_ec").mkdir()
         monkeypatch.setattr(
             "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_ec"
         )
         out = tmp_path / "out_ec"
         try:
-            code = main(["--traces", str(traces_dir), "--approve", "--output", str(out)])
+            code = main(
+                ["--traces", str(traces_dir), "--approve", "--output", str(out)]
+            )
             assert code == 0
         finally:
             revert()
@@ -292,14 +313,18 @@ class TestMainExitCode:
         monkeypatch.setattr(gates, "get_baseline_failures", lambda *a, **k: frozenset())
         monkeypatch.setattr(gates, "run_test_gate", lambda *a, **k: (False, "failed"))
         monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
-        monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+        monkeypatch.setattr(
+            gates, "run_benchmark_gate", lambda model, profile=None: None
+        )
         (tmp_path / "no_tests_rej").mkdir()
         monkeypatch.setattr(
             "harnessfix.repairs.collisions.DEFAULT_TESTS_DIR", tmp_path / "no_tests_rej"
         )
         out = tmp_path / "out_rej"
         try:
-            code = main(["--traces", str(traces_dir), "--approve", "--output", str(out)])
+            code = main(
+                ["--traces", str(traces_dir), "--approve", "--output", str(out)]
+            )
             assert code == 1
         finally:
             revert()
@@ -328,14 +353,32 @@ def _write_abandonment_trace(traces_dir: Path, task_id: str) -> None:
     )
 
     writer = TraceWriter(task_id=task_id, directory=traces_dir)
-    writer.emit({"kind": KIND_TOOL_CALL, "layer": LAYER_TOOL_INTERFACE,
-                 "tool": "write", "args_hash": "a"})
-    writer.emit({"kind": KIND_TOOL_RESULT, "layer": LAYER_TOOL_INTERFACE,
-                 "tool": "write", "affected_files": ["a.py"]})
+    writer.emit(
+        {
+            "kind": KIND_TOOL_CALL,
+            "layer": LAYER_TOOL_INTERFACE,
+            "tool": "write",
+            "args_hash": "a",
+        }
+    )
+    writer.emit(
+        {
+            "kind": KIND_TOOL_RESULT,
+            "layer": LAYER_TOOL_INTERFACE,
+            "tool": "write",
+            "affected_files": ["a.py"],
+        }
+    )
     # A third event so the corpus counts it as failed (>= MIN_ACTIVITY_EVENTS);
     # no loop_end -> interrupted after mutation (decision #052).
-    writer.emit({"kind": KIND_TOOL_CALL, "layer": LAYER_TOOL_INTERFACE,
-                 "tool": "read", "args_hash": "r"})
+    writer.emit(
+        {
+            "kind": KIND_TOOL_CALL,
+            "layer": LAYER_TOOL_INTERFACE,
+            "tool": "read",
+            "args_hash": "r",
+        }
+    )
     writer.close()
 
 
@@ -411,7 +454,9 @@ def test_loop_falls_through_to_next_repair_on_rejection(tmp_path, monkeypatch):
 
         monkeypatch.setattr(gates, "run_test_gate", _test_gate)
         monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
-        monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
+        monkeypatch.setattr(
+            gates, "run_benchmark_gate", lambda model, profile=None: None
+        )
 
         out = tmp_path / "out_fb"
         summary = run_loop(traces_dir, approve=True, model=None, output_dir=out)
@@ -435,7 +480,8 @@ def test_loop_accepts_repair_that_adds_no_new_failures(tmp_path, monkeypatch):
     blocked by a non-100%-green suite.  This is the exact scenario that made
     the loop reject everything and stop at iteration 1."""
     from harnessfix.repairs.stuck_repeat import (
-        STUCK_REPEAT_REPAIR_ID, revert as revert_stuck
+        STUCK_REPEAT_REPAIR_ID,
+        revert as revert_stuck,
     )
 
     traces_dir = tmp_path / "traces"
@@ -753,8 +799,12 @@ def test_run_issue_loop_continues_past_failure(monkeypatch):
     monkeypatch.setattr("scripts.autonomous_self_improve._git", fake_git)
 
     run_issue_loop(
-        max_iterations=3, level_cap=1, agent=_FakeAgent(),
-        no_benchmark=True, model=None, profile=None,
+        max_iterations=3,
+        level_cap=1,
+        agent=_FakeAgent(),
+        no_benchmark=True,
+        model=None,
+        profile=None,
     )
     # Before the fix the loop returned after a single failed issue (calls == 1).
     assert len(calls) >= 2, (
@@ -781,8 +831,9 @@ def test_accepted_repair_survives_gate_revert(tmp_path, monkeypatch):
     # test gate clobbers it (as HarnessFix self-tests once did), then reports
     # the run as passing.
     monkeypatch.setattr(
-        gates, "run_test_gate",
-        lambda *a, **k: (revert() or (True, "passed")),
+        gates,
+        "run_test_gate",
+        lambda *a, **k: revert() or (True, "passed"),
     )
     monkeypatch.setattr(gates, "run_security_gate", lambda: (True, "ok"))
     monkeypatch.setattr(gates, "run_benchmark_gate", lambda model, profile=None: None)
@@ -801,4 +852,3 @@ def test_accepted_repair_survives_gate_revert(tmp_path, monkeypatch):
         assert _NEW in _loop_source()
     finally:
         _reset_repairs()
-

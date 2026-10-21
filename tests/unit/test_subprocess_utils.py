@@ -1,4 +1,8 @@
 """Unit tests for agent_core.subprocess_utils timeout handling verification."""
+
+import sys
+from agent_core.subprocess_utils import shell_info
+
 import asyncio
 import os
 from pathlib import Path
@@ -62,9 +66,7 @@ def test_empty_output() -> None:
 
 def test_return_type_tuple() -> None:
     """Test that return value is a tuple of (int, bytes, bytes)."""
-    result = asyncio.run(
-        run_subprocess_with_timeout(["echo", "test"], timeout_sec=5.0)
-    )
+    result = asyncio.run(run_subprocess_with_timeout(["echo", "test"], timeout_sec=5.0))
     assert isinstance(result, tuple)
     assert len(result) == 3
 
@@ -147,8 +149,6 @@ def test_tool_execution_error_inherits_agent_base_error() -> None:
 # ---------------------------------------------------------------------------
 # shell_info() tests
 # ---------------------------------------------------------------------------
-import sys
-from agent_core.subprocess_utils import shell_info
 
 
 def test_shell_info_returns_dict() -> None:
@@ -165,7 +165,9 @@ def test_shell_info_current_platform() -> None:
 
     info = shell_info()
     shell_env = os.environ.get("SHELL", "")
-    shell_name = os.path.splitext(os.path.basename(shell_env))[0].lower() if shell_env else ""
+    shell_name = (
+        os.path.splitext(os.path.basename(shell_env))[0].lower() if shell_env else ""
+    )
     if shell_name in ("bash", "sh", "zsh", "fish", "dash", "ash", "ksh"):
         # SHELL env var set to a known POSIX shell (e.g. Git Bash on Windows)
         assert info["name"] == shell_name
@@ -190,7 +192,9 @@ def test_shell_info_values_are_strings() -> None:
         assert len(v) > 0
 
 
-def test_shell_info_posix_guidance_is_symmetric(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shell_info_posix_guidance_is_symmetric(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A POSIX shell's run guidance must warn against cmd.exe builtins AND
     PowerShell cmdlets — the mirror of the Windows 'no Unix tools' guidance."""
     import agent_core.subprocess_utils as _mod

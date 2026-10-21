@@ -1,4 +1,5 @@
 """Tests for the opencode LLM provider integration (decisions #007-#012)."""
+
 import json
 from unittest.mock import patch
 
@@ -27,7 +28,9 @@ class TestProviderFor:
         assert provider_for("reactagent-1.5b", "opencode", "lmstudio") == "lmstudio"
         assert provider_for("model-x", "lmstudio", "opencode") == "opencode"
         assert provider_for("model-x", "opencode", "bogus") == "opencode"
-        assert provider_for("reactagent-1.5b", "opencode") == "opencode"  # unchanged without persisted
+        assert (
+            provider_for("reactagent-1.5b", "opencode") == "opencode"
+        )  # unchanged without persisted
 
 
 class TestBuildProvider:
@@ -37,11 +40,15 @@ class TestBuildProvider:
         assert type(prov).__name__ == "LMStudioProvider"
 
     def test_opencode_provider_built(self):
-        settings = type("S", (), {
-            "llm_provider": "opencode",
-            "opencode_server_url": "http://127.0.0.1:4096",
-            "opencode_password": "pw",
-        })()
+        settings = type(
+            "S",
+            (),
+            {
+                "llm_provider": "opencode",
+                "opencode_server_url": "http://127.0.0.1:4096",
+                "opencode_password": "pw",
+            },
+        )()
         prov = build_provider(settings, _default_llm())
         assert isinstance(prov, OpencodeProvider)
         assert prov.model_name == _default_llm()
@@ -94,6 +101,7 @@ class TestOpencodeChat:
             return resp
 
         import asyncio
+
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert out == "Hello from opencode"
@@ -102,18 +110,32 @@ class TestOpencodeChat:
         prov = self._provider()
         session = {"id": "s1"}
         message = {
-            "parts": [{
-                "id": "p1", "sessionID": "s1", "messageID": "m1", "type": "tool",
-                "callID": "c1", "tool": "grep",
-                "state": {"status": "pending", "input": {"path": ".", "pattern": "def x"},
-                          "raw": "{}"},
-            }],
+            "parts": [
+                {
+                    "id": "p1",
+                    "sessionID": "s1",
+                    "messageID": "m1",
+                    "type": "tool",
+                    "callID": "c1",
+                    "tool": "grep",
+                    "state": {
+                        "status": "pending",
+                        "input": {"path": ".", "pattern": "def x"},
+                        "raw": "{}",
+                    },
+                }
+            ],
         }
 
         def fake_urlopen(req, timeout=None):
-            return _FakeHttp([session, message].pop(0)) if not hasattr(fake_urlopen, "done") else _FakeHttp(session)
+            return (
+                _FakeHttp([session, message].pop(0))
+                if not hasattr(fake_urlopen, "done")
+                else _FakeHttp(session)
+            )
 
         import asyncio
+
         calls = iter([session, message])
 
         def fake_urlopen2(req, timeout=None):
@@ -129,13 +151,19 @@ class TestOpencodeChat:
         prov = self._provider()
         session = {"id": "s1"}
         message = {
-            "parts": [{
-                "id": "p1", "type": "tool", "callID": "c1", "tool": "unknown_tool",
-                "state": {"status": "pending", "input": {}},
-            }],
+            "parts": [
+                {
+                    "id": "p1",
+                    "type": "tool",
+                    "callID": "c1",
+                    "tool": "unknown_tool",
+                    "state": {"status": "pending", "input": {}},
+                }
+            ],
         }
 
         import asyncio
+
         calls = iter([session, message])
 
         def fake_urlopen(req, timeout=None):
@@ -150,6 +178,7 @@ class TestOpencodeChat:
         prov = self._provider()
 
         import asyncio
+
         with patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
             out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert out.startswith("[Error")
@@ -169,16 +198,19 @@ class TestOpencodeRetry:
     @staticmethod
     def _http_error(code: int):
         import urllib.error
+
         return urllib.error.HTTPError("http://x", code, "boom", {}, None)
 
     @staticmethod
     def _http_error_with_body(code: int, body: bytes):
         import urllib.error
         from io import BytesIO
+
         return urllib.error.HTTPError("http://x", code, "boom", {}, BytesIO(body))
 
     def test_http_500_retried_then_succeeds(self):
         import asyncio
+
         calls = {"n": 0}
 
         def fake_urlopen(req, timeout=None):
@@ -207,6 +239,7 @@ class TestOpencodeRetry:
 
     def test_http_400_not_retried(self):
         import asyncio
+
         calls = {"n": 0}
 
         def fake_urlopen(req, timeout=None):
@@ -221,6 +254,7 @@ class TestOpencodeRetry:
 
     def test_timeout_retried_then_succeeds(self):
         import asyncio
+
         calls = {"n": 0}
 
         def fake_urlopen(req, timeout=None):
@@ -235,13 +269,13 @@ class TestOpencodeRetry:
         assert out == "recovered"
         assert calls["n"] == 2
 
-
     def test_http_403_server_error_body_retried_then_succeeds(self):
         """Regression (2026-09-21): the gateway wraps an upstream outage in a
         4xx status carrying a ``server_error`` body ("Upstream response was not
         valid JSON").  A 403 must still be retried when its BODY says
         server_error, even though 403 is not in the status set."""
         import asyncio
+
         calls = {"n": 0}
         body = (
             b'{"error":{"type":"server_error","code":"server_error",'
@@ -264,6 +298,7 @@ class TestOpencodeRetry:
         """The retried server_error body must survive to the error string (the
         classifier caches it; the formatter reads the same bytes)."""
         import asyncio
+
         calls = {"n": 0}
         body = (
             b'{"error":{"type":"server_error","code":"server_error",'
@@ -286,6 +321,7 @@ class TestOpencodeRetry:
         """A genuine client error must fail fast even though its message also
         contains "Upstream request failed" — only ``server_error`` retries."""
         import asyncio
+
         calls = {"n": 0}
         body = (
             b'{"error":{"type":"invalid_request_error",'
@@ -302,7 +338,6 @@ class TestOpencodeRetry:
         assert calls["n"] == 1  # no retry
         assert "invalid_request_error" in out
 
-
     def test_tool_map_covers_expected_names(self):
         for oc_name in ("bash", "read", "write", "edit", "list", "grep", "webfetch"):
             assert oc_name in _TOOL_MAP
@@ -310,7 +345,9 @@ class TestOpencodeRetry:
 
 class TestListModels:
     def test_lists_models_from_server(self):
-        prov = OpencodeProvider("opencode-go/x", server_url="http://x:4096", read_store=False)
+        prov = OpencodeProvider(
+            "opencode-go/x", server_url="http://x:4096", read_store=False
+        )
         payload = {
             "providers": [
                 {"id": "opencode-go", "models": {"glm-5.2": {}, "kimi-k2.7-code": {}}},
@@ -324,7 +361,9 @@ class TestListModels:
         assert "opencode/deepseek-v4-flash" in models
 
     def test_offline_returns_empty(self):
-        prov = OpencodeProvider("opencode-go/x", server_url="http://x:4096", read_store=False)
+        prov = OpencodeProvider(
+            "opencode-go/x", server_url="http://x:4096", read_store=False
+        )
         with patch("urllib.request.urlopen", side_effect=OSError("offline")):
             assert prov.list_models() == []
 
@@ -332,6 +371,7 @@ class TestListModels:
 class TestPersistProvider:
     def test_persist_model_choice_infers_provider(self, tmp_path, monkeypatch):
         from agent_core import constants as const
+
         monkeypatch.setattr(const, "MODEL_JSON_PATH", str(tmp_path / "model.json"))
         monkeypatch.chdir(tmp_path)  # .env writes go to tmp, not the repo
         persist_model_choice(_default_llm())
@@ -344,11 +384,16 @@ class TestPersistProvider:
 
     def test_resolve_model_opencode_provider(self, monkeypatch, tmp_path):
         from agent_core import constants as const
+
         monkeypatch.setattr(const, "MODEL_JSON_PATH", str(tmp_path / "model.json"))
-        settings = type("S", (), {
-            "llm_provider": "opencode",
-            "opencode_model": _default_llm(),
-        })()
+        settings = type(
+            "S",
+            (),
+            {
+                "llm_provider": "opencode",
+                "opencode_model": _default_llm(),
+            },
+        )()
         with patch("agent_core.config.load_agent_settings", return_value=settings):
             assert const.resolve_model(None) == _default_llm()
         assert const.resolve_model(_default_llm()) == _default_llm()
@@ -371,27 +416,41 @@ class TestDirectApiMode:
 
     def test_chat_api_returns_plain_text(self):
         import asyncio
+
         prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
-        payload = {"choices": [{"message": {"role": "assistant", "content": "Direkte svar"}}]}
+        payload = {
+            "choices": [{"message": {"role": "assistant", "content": "Direkte svar"}}]
+        }
         with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
             out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert out == "Direkte svar"
 
     def test_chat_api_returns_tool_calls(self):
         import asyncio
+
         prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
-        tc = {"id": "c1", "type": "function",
-              "function": {"name": "search", "arguments": "{\"query\": \"x\"}"}}
-        payload = {"choices": [{"message": {"role": "assistant", "content": "",
-                                            "tool_calls": [tc]}}]}
+        tc = {
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "search", "arguments": '{"query": "x"}'},
+        }
+        payload = {
+            "choices": [
+                {"message": {"role": "assistant", "content": "", "tool_calls": [tc]}}
+            ]
+        }
         with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
-            out = asyncio.run(prov.chat([{"role": "user", "content": "søg"}],
-                                        tools=[{"type": "function"}]))
+            out = asyncio.run(
+                prov.chat(
+                    [{"role": "user", "content": "søg"}], tools=[{"type": "function"}]
+                )
+            )
         parsed = json.loads(out)
         assert parsed["tool_calls"][0]["function"]["name"] == "search"
 
     def test_chat_api_error(self):
         import asyncio
+
         prov = OpencodeProvider("opencode-go/x", api_key="sk-test", read_store=False)
         with patch("urllib.request.urlopen", side_effect=OSError("http 401")):
             out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
@@ -403,11 +462,14 @@ class TestDirectApiMode:
         import asyncio
         import urllib.error
         from io import BytesIO
+
         prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
 
         def boom(req, timeout=None):
             body = b'{"error": {"message": "Messages with role \'tool\' must be a response to a preceding message with \'tool_calls\'"}}'
-            raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, BytesIO(body))
+            raise urllib.error.HTTPError(
+                req.full_url, 400, "Bad Request", {}, BytesIO(body)
+            )
 
         with patch("urllib.request.urlopen", side_effect=boom):
             out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
@@ -416,6 +478,7 @@ class TestDirectApiMode:
 
     def test_chat_api_sends_bearer_and_tools(self):
         import asyncio
+
         prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
         payload = {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
         seen = {}
@@ -427,14 +490,20 @@ class TestDirectApiMode:
             return _FakeHttp(payload)
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            asyncio.run(prov.chat([{"role": "user", "content": "hi"}],
-                                  tools=[{"type": "function", "function": {"name": "x"}}],
-                                  max_tokens=123))
+            asyncio.run(
+                prov.chat(
+                    [{"role": "user", "content": "hi"}],
+                    tools=[{"type": "function", "function": {"name": "x"}}],
+                    max_tokens=123,
+                )
+            )
         assert seen["url"].endswith("/chat/completions")
         assert seen["auth"] == "Bearer sk-test"
         assert seen["body"]["tools"][0]["function"]["name"] == "x"
         assert seen["body"]["max_tokens"] == 123
-        assert seen["body"]["model"] == _default_llm_short()  # hosted ids are unprefixed
+        assert (
+            seen["body"]["model"] == _default_llm_short()
+        )  # hosted ids are unprefixed
 
     def test_list_models_via_api(self):
         prov = OpencodeProvider("opencode-go/x", api_key="sk-test", read_store=False)
@@ -452,6 +521,7 @@ class TestDirectApiMode:
 
     def test_analyze_code_uses_api(self):
         import asyncio
+
         prov = OpencodeProvider("opencode-go/x", api_key="sk-test", read_store=False)
         payload = {"choices": [{"message": {"role": "assistant", "content": "lgtm"}}]}
         with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
@@ -466,72 +536,111 @@ class TestNemotronThinkingKnob:
 
     def _nemotron(self):
         return OpencodeProvider(
-            "opencode-go/nvidia-nemotron-3-super", api_key="sk-test", read_store=False,
+            "opencode-go/nvidia-nemotron-3-super",
+            api_key="sk-test",
+            read_store=False,
         )
 
     def test_disable_thinking_injects_no_think(self):
         import asyncio
+
         prov = self._nemotron()
         seen = {}
 
         def fake_urlopen(req, timeout=None):
             seen["body"] = json.loads(req.data)
-            return _FakeHttp({
-                "choices": [{"message": {"role": "assistant", "content": "answer"},
-                             "finish_reason": "stop"}],
-            })
+            return _FakeHttp(
+                {
+                    "choices": [
+                        {
+                            "message": {"role": "assistant", "content": "answer"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            out = asyncio.run(prov.chat(
-                [{"role": "system", "content": "You are a coder."},
-                 {"role": "user", "content": "fix it"}],
-                disable_thinking=True,
-            ))
+            out = asyncio.run(
+                prov.chat(
+                    [
+                        {"role": "system", "content": "You are a coder."},
+                        {"role": "user", "content": "fix it"},
+                    ],
+                    disable_thinking=True,
+                )
+            )
         assert out == "answer"
         system_text = seen["body"]["messages"][0]["content"]
         assert system_text.startswith("/no_think")
 
     def test_thinking_on_for_other_models_untouched(self):
         import asyncio
+
         prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
         seen = {}
 
         def fake_urlopen(req, timeout=None):
             seen["body"] = json.loads(req.data)
-            return _FakeHttp({
-                "choices": [{"message": {"role": "assistant", "content": "ok"},
-                             "finish_reason": "stop"}],
-            })
+            return _FakeHttp(
+                {
+                    "choices": [
+                        {
+                            "message": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            asyncio.run(prov.chat(
-                [{"role": "system", "content": "You are a coder."},
-                 {"role": "user", "content": "hi"}],
-                disable_thinking=True,
-            ))
+            asyncio.run(
+                prov.chat(
+                    [
+                        {"role": "system", "content": "You are a coder."},
+                        {"role": "user", "content": "hi"},
+                    ],
+                    disable_thinking=True,
+                )
+            )
         assert seen["body"]["messages"][0]["content"] == "You are a coder."
 
     def test_thinking_mode_rows_through(self):
         import asyncio
+
         prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
-        payload = {"choices": [{"message": {"role": "assistant", "content": "ok"},
-                                "finish_reason": "stop"}]}
+        payload = {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
         with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
             out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert out == "ok"
 
     def test_reasoning_exhaustion_empty_content_returns_error(self):
         import asyncio
+
         prov = self._nemotron()
 
         def fake_urlopen(req, timeout=None):
-            return _FakeHttp({
-                "choices": [{"message": {
-                    "role": "assistant",
-                    "content": "",
-                    "reasoning_content": "x" * 4000,
-                }, "finish_reason": "length"}],
-            })
+            return _FakeHttp(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
+                                "reasoning_content": "x" * 4000,
+                            },
+                            "finish_reason": "length",
+                        }
+                    ],
+                }
+            )
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             out = asyncio.run(prov.chat([{"role": "user", "content": "fix"}]))
@@ -540,16 +649,24 @@ class TestNemotronThinkingKnob:
 
     def test_reasoning_with_answer_passes_through(self):
         import asyncio
+
         prov = self._nemotron()
 
         def fake_urlopen(req, timeout=None):
-            return _FakeHttp({
-                "choices": [{"message": {
-                    "role": "assistant",
-                    "content": "the answer",
-                    "reasoning_content": "y" * 2000,
-                }, "finish_reason": "stop"}],
-            })
+            return _FakeHttp(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "the answer",
+                                "reasoning_content": "y" * 2000,
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             out = asyncio.run(prov.chat([{"role": "user", "content": "q"}]))
@@ -567,6 +684,7 @@ class TestZenFreeTier:
         assert prov.api_mode is True
         assert prov.api_key == ""
         from agent_core.llm.opencode_provider import ZEN_API_BASE
+
         assert prov.api_url == ZEN_API_BASE
 
     def test_zen_mode_set_for_zen_slash_prefix(self):
@@ -579,6 +697,7 @@ class TestZenFreeTier:
 
     def test_hosted_model_id_strips_zen_prefix(self):
         from agent_core.llm.opencode_provider import _hosted_model_id
+
         assert _hosted_model_id("opencode-zen/hy3-free") == "hy3-free"
         assert _hosted_model_id("zen/hy3-free") == "hy3-free"
 
@@ -587,7 +706,10 @@ class TestZenFreeTier:
         payload = {"data": [{"id": "hy3-free"}, {"id": "nemotron-3.5-lightning-free"}]}
         with patch("urllib.request.urlopen", return_value=_FakeHttp(payload)):
             models = prov.list_models()
-        assert models == ["opencode-zen/hy3-free", "opencode-zen/nemotron-3.5-lightning-free"]
+        assert models == [
+            "opencode-zen/hy3-free",
+            "opencode-zen/nemotron-3.5-lightning-free",
+        ]
 
     def test_list_models_go_namespace(self):
         prov = OpencodeProvider(_default_llm(), api_key="sk", read_store=False)
@@ -598,6 +720,7 @@ class TestZenFreeTier:
 
     def test_chat_uses_zen_base_without_key(self):
         import asyncio
+
         prov = OpencodeProvider("opencode-zen/hy3-free", read_store=False)
         seen = {}
 
@@ -607,12 +730,15 @@ class TestZenFreeTier:
             seen["body"] = json.loads(req.data)
             seen["ua"] = req.get_header("User-agent")
             seen["x_client"] = req.get_header("X-opencode-client")
-            return _FakeHttp({"choices": [{"message": {"role": "assistant", "content": "pong"}}]})
+            return _FakeHttp(
+                {"choices": [{"message": {"role": "assistant", "content": "pong"}}]}
+            )
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
         assert out == "pong"
         from agent_core.llm.opencode_provider import ZEN_API_BASE
+
         assert seen["url"].startswith(ZEN_API_BASE)
         assert seen["url"].endswith("/chat/completions")
         assert seen["body"]["model"] == "hy3-free"
@@ -639,14 +765,26 @@ class TestZenFreeFallback:
     or the live catalog — never from hardcoded model names in code."""
 
     def test_is_backend_down_detects_markers(self):
-        assert OpencodeProvider._is_backend_down(
-            "[Error: opencode API request failed: HTTP Error 400: "
-            '{"error":{"message":"Model is unavailable."}}]') is True
-        assert OpencodeProvider._is_backend_down(
-            "[Error: opencode API request failed: The read operation timed out]") is True
-        assert OpencodeProvider._is_backend_down(
-            "[Error: opencode API request failed: HTTP Error 500: "
-            '{"error":{"message":"Internal server error"}}]') is True
+        assert (
+            OpencodeProvider._is_backend_down(
+                "[Error: opencode API request failed: HTTP Error 400: "
+                '{"error":{"message":"Model is unavailable."}}]'
+            )
+            is True
+        )
+        assert (
+            OpencodeProvider._is_backend_down(
+                "[Error: opencode API request failed: The read operation timed out]"
+            )
+            is True
+        )
+        assert (
+            OpencodeProvider._is_backend_down(
+                "[Error: opencode API request failed: HTTP Error 500: "
+                '{"error":{"message":"Internal server error"}}]'
+            )
+            is True
+        )
         assert OpencodeProvider._is_backend_down("pong") is False
         assert OpencodeProvider._is_backend_down("hi there") is False
 
@@ -664,8 +802,10 @@ class TestZenFreeFallback:
 
         async def fake_chat_api(self, messages, tools, max_tokens, disable_thinking):
             if self.model_name == primary:
-                return ("[Error: opencode API request failed: HTTP Error 400: "
-                        '{"error":{"message":"Model is unavailable."}}]')
+                return (
+                    "[Error: opencode API request failed: HTTP Error 400: "
+                    '{"error":{"message":"Model is unavailable."}}]'
+                )
             if self.model_name == alternate:
                 return "pong"
             return "[Error: down]"
@@ -701,8 +841,10 @@ class TestZenFreeFallback:
         )
 
         async def fake_chat_api(self, messages, tools, max_tokens, disable_thinking):
-            return ("[Error: opencode API request failed: HTTP Error 400: "
-                    '{"error":{"message":"Model is unavailable."}}]')
+            return (
+                "[Error: opencode API request failed: HTTP Error 400: "
+                '{"error":{"message":"Model is unavailable."}}]'
+            )
 
         monkeypatch.setattr(OpencodeProvider, "_chat_api", fake_chat_api)
         monkeypatch.setattr(
@@ -730,7 +872,10 @@ class TestAnthropicMessagesProtocol:
     def _http_error_with_body(code: int, body: bytes):
         import urllib.error
         from io import BytesIO
-        return urllib.error.HTTPError("http://x", code, "Bad Request", {}, BytesIO(body))
+
+        return urllib.error.HTTPError(
+            "http://x", code, "Bad Request", {}, BytesIO(body)
+        )
 
     @staticmethod
     def _protocol_error():
@@ -764,6 +909,7 @@ class TestAnthropicMessagesProtocol:
 
     def test_protocol_unsupported_retries_on_messages_endpoint(self):
         import asyncio
+
         seen = {}
 
         def fake_urlopen(req, timeout=None):
@@ -792,10 +938,15 @@ class TestAnthropicMessagesProtocol:
 
     def test_messages_tool_use_becomes_tool_calls(self):
         import asyncio
+
         blocks = [
             {"type": "text", "text": "let me look"},
-            {"type": "tool_use", "id": "toolu_9", "name": "run",
-             "input": {"command": "ls"}},
+            {
+                "type": "tool_use",
+                "id": "toolu_9",
+                "name": "run",
+                "input": {"command": "ls"},
+            },
         ]
 
         def fake_urlopen(req, timeout=None):
@@ -817,20 +968,37 @@ class TestAnthropicMessagesProtocol:
 
     def test_openai_shape_converted_to_messages_payload(self):
         import asyncio
+
         captured = {}
         messages = [
             {"role": "system", "content": "be terse"},
             {"role": "user", "content": "list files"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "call_1", "type": "function",
-                 "function": {"name": "run", "arguments": '{"path": "."}'}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "run", "arguments": '{"path": "."}'},
+                    },
+                ],
+            },
             {"role": "tool", "tool_call_id": "call_1", "content": "a.py"},
         ]
-        tools = [{"type": "function", "function": {
-            "name": "run", "description": "run a command",
-            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
-        }}]
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "run",
+                    "description": "run a command",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                    },
+                },
+            }
+        ]
 
         def fake_urlopen(req, timeout=None):
             if req.full_url.endswith("/chat/completions"):
@@ -898,15 +1066,25 @@ class TestAnthropicMessagesProtocol:
         ``messages.N: `tool_use` ids were found without `tool_result`
         blocks immediately after: toolu_...``."""
         import asyncio
+
         captured = {}
         call_id = "toolu_01NTRv86LLhzqqshi28B7xjF"
         messages = [
             {"role": "user", "content": "list files"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": call_id, "type": "function",
-                 "function": {"name": "list_files",
-                              "arguments": '{"path": "cur"}'}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "list_files",
+                            "arguments": '{"path": "cur"}',
+                        },
+                    },
+                ],
+            },
             {"role": "tool", "tool_call_id": call_id, "content": ""},
             {"role": "user", "content": "I restarted pop3 service"},
         ]
@@ -927,7 +1105,8 @@ class TestAnthropicMessagesProtocol:
         # The result leads the message (it must immediately follow the
         # tool_use); the user's later note rides along behind it.
         assert user_blocks[0] == {
-            "type": "tool_result", "tool_use_id": call_id,
+            "type": "tool_result",
+            "tool_use_id": call_id,
             "content": "(no output)",
         }
         assert user_blocks[1] == {"type": "text", "text": "I restarted pop3 service"}
@@ -935,14 +1114,23 @@ class TestAnthropicMessagesProtocol:
     def test_unanswered_tool_use_dropped_from_payload(self):
         """A tool_use whose result never arrived must be stripped instead of
         being sent (strict gateways reject the payload outright)."""
-        payload = self._payload([
-            {"role": "user", "content": "list files"},
-            {"role": "assistant", "content": "let me look", "tool_calls": [
-                {"id": "call_lost", "type": "function",
-                 "function": {"name": "list_files", "arguments": "{}"}},
-            ]},
-            {"role": "user", "content": "still there?"},
-        ])
+        payload = self._payload(
+            [
+                {"role": "user", "content": "list files"},
+                {
+                    "role": "assistant",
+                    "content": "let me look",
+                    "tool_calls": [
+                        {
+                            "id": "call_lost",
+                            "type": "function",
+                            "function": {"name": "list_files", "arguments": "{}"},
+                        },
+                    ],
+                },
+                {"role": "user", "content": "still there?"},
+            ]
+        )
         self._assert_pairs_ok(payload["messages"])
         assert [m["role"] for m in payload["messages"]] == ["user", "assistant", "user"]
         assert payload["messages"][1]["content"] == [
@@ -952,59 +1140,91 @@ class TestAnthropicMessagesProtocol:
     def test_fully_unanswered_tool_call_leaves_text_only(self):
         """No text + no answer -> the assistant message disappears entirely,
         and the two user turns it stood between merge back into one turn."""
-        payload = self._payload([
-            {"role": "user", "content": "list files"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "call_lost", "type": "function",
-                 "function": {"name": "list_files", "arguments": "{}"}},
-            ]},
-            {"role": "user", "content": "still there?"},
-        ])
+        payload = self._payload(
+            [
+                {"role": "user", "content": "list files"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_lost",
+                            "type": "function",
+                            "function": {"name": "list_files", "arguments": "{}"},
+                        },
+                    ],
+                },
+                {"role": "user", "content": "still there?"},
+            ]
+        )
         self._assert_pairs_ok(payload["messages"])
         assert [m["role"] for m in payload["messages"]] == ["user"]
         assert [b["text"] for b in payload["messages"][0]["content"]] == [
-            "list files", "still there?",
+            "list files",
+            "still there?",
         ]
 
     def test_partially_answered_batch_keeps_only_answered_call(self):
-        payload = self._payload([
-            {"role": "user", "content": "compare"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "call_ok", "type": "function",
-                 "function": {"name": "list_files", "arguments": "{}"}},
-                {"id": "call_lost", "type": "function",
-                 "function": {"name": "list_files", "arguments": "{}"}},
-            ]},
-            {"role": "tool", "tool_call_id": "call_ok", "content": "a.py"},
-        ])
+        payload = self._payload(
+            [
+                {"role": "user", "content": "compare"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_ok",
+                            "type": "function",
+                            "function": {"name": "list_files", "arguments": "{}"},
+                        },
+                        {
+                            "id": "call_lost",
+                            "type": "function",
+                            "function": {"name": "list_files", "arguments": "{}"},
+                        },
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_ok", "content": "a.py"},
+            ]
+        )
         self._assert_pairs_ok(payload["messages"])
-        tool_uses = [b for b in payload["messages"][1]["content"]
-                     if b["type"] == "tool_use"]
+        tool_uses = [
+            b for b in payload["messages"][1]["content"] if b["type"] == "tool_use"
+        ]
         assert [b["id"] for b in tool_uses] == ["call_ok"]
         assert payload["messages"][2]["content"][0]["tool_use_id"] == "call_ok"
 
     def test_orphan_tool_result_dropped_from_payload(self):
         """A result with no matching call (restored/truncated history) is
         dropped instead of being sent as a bare tool_result."""
-        payload = self._payload([
-            {"role": "user", "content": "hi"},
-            {"role": "tool", "tool_call_id": "call_gone", "content": "stale"},
-            {"role": "assistant", "content": "hello"},
-        ])
+        payload = self._payload(
+            [
+                {"role": "user", "content": "hi"},
+                {"role": "tool", "tool_call_id": "call_gone", "content": "stale"},
+                {"role": "assistant", "content": "hello"},
+            ]
+        )
         self._assert_pairs_ok(payload["messages"])
         blocks = payload["messages"][0]["content"]
         assert blocks == [{"type": "text", "text": "hi"}]
 
     def test_plain_400_does_not_use_messages_endpoint(self):
         import asyncio
+
         urls = []
 
         def fake_urlopen(req, timeout=None):
             urls.append(req.full_url)
             raise self._http_error_with_body(
                 400,
-                json.dumps({"error": {"type": "invalid_request_error",
-                                      "message": "bad request"}}).encode(),
+                json.dumps(
+                    {
+                        "error": {
+                            "type": "invalid_request_error",
+                            "message": "bad request",
+                        }
+                    }
+                ).encode(),
             )
 
         prov = self._provider()

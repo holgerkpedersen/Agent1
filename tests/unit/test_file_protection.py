@@ -4,6 +4,7 @@ Hermetic: builds a tiny throwaway workspace under tmp_path; no real
 workspace files are touched.  Covers the two protected categories — .env and
 reports/* — plus the safe_remove / safe_rmtree choke points and reporting.
 """
+
 import os
 
 import pytest
@@ -90,7 +91,9 @@ class TestSafeRmtree:
     def test_safe_rmtree_removes_normal_dir(self, ws):
         d = ws / "agent_core"
         d.mkdir()
-        (d / ".env").write_text("x", encoding="utf-8")  # nested .env inside a non-reports dir
+        (d / ".env").write_text(
+            "x", encoding="utf-8"
+        )  # nested .env inside a non-reports dir
         safe_rmtree(d, ws)
         assert not d.exists()
 
@@ -138,7 +141,7 @@ class TestCleanupDeleteRespectsProtection:
             os.remove(ws / f)
             deleted += 1
         assert not (ws / "scratch.py").exists()
-        assert (ws / ".env").exists()      # protected — untouched
+        assert (ws / ".env").exists()  # protected — untouched
         assert (ws / "reports" / "traces" / "t.jsonl").exists()  # protected — untouched
         assert skipped == 2 and deleted == 1
 

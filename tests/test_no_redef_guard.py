@@ -32,6 +32,7 @@ Scope of the guard
 it is absent from the two historically-shadowed modules catches any name
 that starts being bound twice in one scope again -- not just these two.
 """
+
 from __future__ import annotations
 
 import re
@@ -65,7 +66,13 @@ def _mypy_bin() -> str | None:
 def test_no_same_scope_name_redefinition():
     """Neither guarded module may bind one name twice within a scope."""
     proc = subprocess.run(
-        [_mypy_bin(), *GUARDED, "--no-error-summary", "--cache-dir", str(REPO_ROOT / ".mypy_cache")],
+        [
+            _mypy_bin(),
+            *GUARDED,
+            "--no-error-summary",
+            "--cache-dir",
+            str(REPO_ROOT / ".mypy_cache"),
+        ],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -94,7 +101,13 @@ def test_no_same_scope_name_redefinition():
 def test_guard_actually_ran_mypy():
     """A silent mypy failure must not be read as a clean result."""
     proc = subprocess.run(
-        [_mypy_bin(), *GUARDED, "--no-error-summary", "--cache-dir", str(REPO_ROOT / ".mypy_cache")],
+        [
+            _mypy_bin(),
+            *GUARDED,
+            "--no-error-summary",
+            "--cache-dir",
+            str(REPO_ROOT / ".mypy_cache"),
+        ],
         capture_output=True,
         text=True,
         encoding="utf-8",

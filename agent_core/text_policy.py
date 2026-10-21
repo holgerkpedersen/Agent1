@@ -27,40 +27,54 @@ from pathlib import Path
 # Extended-A cover the colored-emoji planes. (Glyphs are named, not shown,
 # per decision #079.)
 _EMOJI_RANGES: tuple[tuple[int, int], ...] = (
-    (0x2600, 0x27BF),    # Misc Symbols + Dingbats
-    (0x2B00, 0x2BFF),    # Misc Symbols and Arrows
+    (0x2600, 0x27BF),  # Misc Symbols + Dingbats
+    (0x2B00, 0x2BFF),  # Misc Symbols and Arrows
     (0x1F000, 0x1FAFF),  # Mahjong tiles .. Symbols and Pictographs Ext-A
-    (0xFE0F, 0xFE0F),    # Variation Selector-16 (forces emoji presentation)
+    (0xFE0F, 0xFE0F),  # Variation Selector-16 (forces emoji presentation)
 )
 
 _EMOJI_RE = re.compile(
-    "[" + "".join(fr"\U0000{lo:04X}-\U0000{hi:04X}" for lo, hi in _EMOJI_RANGES) + "]"
+    "[" + "".join(rf"\U0000{lo:04X}-\U0000{hi:04X}" for lo, hi in _EMOJI_RANGES) + "]"
 )
 
 # Monochrome glyphs this repo deliberately keeps: terminal status marks and
 # box-drawing diagram lines (colors.py constants, verifiers, README trees).
 # (Characters listed literally below; named here per decision #079.)
 ALLOWED_MONO_CHARS: frozenset[str] = frozenset(
-    "\u2713\u2717\u26a0\u00d7"                 # check, cross, warning, times
-    "\u2500\u2502\u250c\u2510\u2514\u2518"     # box drawing: single line parts
-    "\u251c\u2524\u252c\u2534\u253c"           # box drawing: tees and crosses
-    "\u2550\u2551\u2554\u2557\u255a\u255d"     # box drawing: double line parts
-    "\u2560\u2563\u2566\u2569\u256c"           # box drawing: double tees/cross
-    "\u2190\u2192\u2191\u2193\u25ba\u25c4"     # arrows left/right/up/down
-    "\u25b2\u25bc"                             # filled triangles up/down
-    "\u2022\u00b7"                             # bullets
+    "\u2713\u2717\u26a0\u00d7"  # check, cross, warning, times
+    "\u2500\u2502\u250c\u2510\u2514\u2518"  # box drawing: single line parts
+    "\u251c\u2524\u252c\u2534\u253c"  # box drawing: tees and crosses
+    "\u2550\u2551\u2554\u2557\u255a\u255d"  # box drawing: double line parts
+    "\u2560\u2563\u2566\u2569\u256c"  # box drawing: double tees/cross
+    "\u2190\u2192\u2191\u2193\u25ba\u25c4"  # arrows left/right/up/down
+    "\u25b2\u25bc"  # filled triangles up/down
+    "\u2022\u00b7"  # bullets
 )
 # NOTE: U+FFFD (replacement char) is deliberately NOT allowed — it marks
 # encoding corruption and must be reported (decision #079 rationale).
 
 
 DEFAULT_TEXT_EXTS: tuple[str, ...] = (
-    ".py", ".md", ".json", ".txt", ".toml", ".cfg", ".ini", ".yml", ".yaml",
+    ".py",
+    ".md",
+    ".json",
+    ".txt",
+    ".toml",
+    ".cfg",
+    ".ini",
+    ".yml",
+    ".yaml",
 )
 
 SKIP_DIRS: set[str] = {
-    ".git", "__pycache__", ".docs", "backups", "reports",
-    "node_modules", ".venv", "venv",
+    ".git",
+    "__pycache__",
+    ".docs",
+    "backups",
+    "reports",
+    "node_modules",
+    ".venv",
+    "venv",
 }
 
 # Runtime state (gitignored): REPL transcripts and memory stores accumulate
@@ -138,18 +152,21 @@ def scan_tree(
     tracked = _git_tracked_files(root_path)
     if tracked is not None:
         candidates = [
-            root_path / rel for rel in sorted(tracked)
+            root_path / rel
+            for rel in sorted(tracked)
             if Path(rel).suffix.lower() in extensions
         ]
     else:
         candidates = [
-            path for path in sorted(root_path.rglob("*"))
+            path
+            for path in sorted(root_path.rglob("*"))
             if path.is_file() and path.suffix.lower() in extensions
         ]
         # keep the legacy dir-skip behaviour only for the fallback walk;
         # the tracked-file list already excludes ignored paths.
         candidates = [
-            path for path in candidates
+            path
+            for path in candidates
             if not any(part in skip_dirs for part in path.parts[:-1])
         ]
     for path in candidates:
@@ -173,7 +190,9 @@ def _git_tracked_files(root: Path) -> set[str] | None:
     try:
         proc = subprocess.run(
             ["git", "ls-files", "-z"],
-            cwd=str(root), capture_output=True, timeout=30,
+            cwd=str(root),
+            capture_output=True,
+            timeout=30,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

@@ -14,17 +14,22 @@ from _helpers import _default_llm, _default_llm_short
 
 
 def _settings(provider: str = "lmstudio"):
-    return type("S", (), {
-        "llm_provider": provider,
-        "opencode_server_url": "http://127.0.0.1:4096",
-        "opencode_password": "",
-        "opencode_api_url": "https://opencode.ai/zen/go/v1",
-        "opencode_api_key": "",
-    })
+    return type(
+        "S",
+        (),
+        {
+            "llm_provider": provider,
+            "opencode_server_url": "http://127.0.0.1:4096",
+            "opencode_password": "",
+            "opencode_api_url": "https://opencode.ai/zen/go/v1",
+            "opencode_api_key": "",
+        },
+    )
 
 
 def _lmstudio_agent(model_name: str = "laguna-s-2.1"):
     from agent_core.llm.lmstudio import LMStudioProvider
+
     provider = LMStudioProvider(model_name=model_name)
     llm = type("L", (), {"model_name": model_name, "_provider": provider})()
     return type("A", (), {"llm": llm})
@@ -32,6 +37,7 @@ def _lmstudio_agent(model_name: str = "laguna-s-2.1"):
 
 def _opencode_agent(model_name: str = _default_llm()):
     from agent_core.llm.opencode_provider import OpencodeProvider
+
     provider = OpencodeProvider(model_name, read_store=False)
     llm = type("L", (), {"model_name": model_name, "_provider": provider})()
     return type("A", (), {"llm": llm})
@@ -41,22 +47,29 @@ def _opencode_agent(model_name: str = _default_llm()):
 #  Flag parsing
 # ---------------------------------------------------------------------------
 
+
 class TestParseProviderFlag:
     def setup_method(self):
         self.cmd = ModelCommand()
 
     def test_long_flag_stripped(self):
-        args, override = self.cmd._parse_provider_flag(["laguna-s-2.1", "--provider", "opencode"])
+        args, override = self.cmd._parse_provider_flag(
+            ["laguna-s-2.1", "--provider", "opencode"]
+        )
         assert args == ["laguna-s-2.1"]
         assert override == "opencode"
 
     def test_short_flag_stripped(self):
-        args, override = self.cmd._parse_provider_flag(["laguna-s-2.1", "-p", "lmstudio"])
+        args, override = self.cmd._parse_provider_flag(
+            ["laguna-s-2.1", "-p", "lmstudio"]
+        )
         assert args == ["laguna-s-2.1"]
         assert override == "lmstudio"
 
     def test_equals_form(self):
-        args, override = self.cmd._parse_provider_flag(["laguna-s-2.1", "--provider=opencode"])
+        args, override = self.cmd._parse_provider_flag(
+            ["laguna-s-2.1", "--provider=opencode"]
+        )
         assert args == ["laguna-s-2.1"]
         assert override == "opencode"
 
@@ -66,11 +79,15 @@ class TestParseProviderFlag:
         assert override is None
 
     def test_flag_lowercased(self):
-        args, override = self.cmd._parse_provider_flag(["laguna-s-2.1", "--provider", "OpenCode"])
+        args, override = self.cmd._parse_provider_flag(
+            ["laguna-s-2.1", "--provider", "OpenCode"]
+        )
         assert override == "opencode"
 
     def test_flag_at_start(self):
-        args, override = self.cmd._parse_provider_flag(["-p", "opencode", "laguna-s-2.1"])
+        args, override = self.cmd._parse_provider_flag(
+            ["-p", "opencode", "laguna-s-2.1"]
+        )
         assert args == ["laguna-s-2.1"]
         assert override == "opencode"
 
@@ -85,19 +102,24 @@ class TestParseProviderFlag:
 #  build_provider override
 # ---------------------------------------------------------------------------
 
+
 class TestBuildProviderOverride:
     def test_override_routes_lmstudio_name_to_opencode(self, monkeypatch):
         """A `laguna-*` model name, when given provider_override='opencode',
         must build an OpencodeProvider instead of LMStudioProvider."""
         from agent_core.llm.opencode_provider import OpencodeProvider
 
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: _settings("lmstudio")
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": "laguna-s-2.1", "provider": "lmstudio"},
         )
 
-        prov = build_provider(_settings("lmstudio"), "laguna-s-2.1", provider_override="opencode")
+        prov = build_provider(
+            _settings("lmstudio"), "laguna-s-2.1", provider_override="opencode"
+        )
         assert isinstance(prov, OpencodeProvider)
         assert prov.model_name == "laguna-s-2.1"
         assert prov.zen_mode is False  # not a zen prefix → opencode-go mode
@@ -107,13 +129,17 @@ class TestBuildProviderOverride:
         must build an LMStudioProvider instead of OpencodeProvider."""
         from agent_core.llm.lmstudio import LMStudioProvider
 
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: _settings("lmstudio")
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": _default_llm(), "provider": "opencode"},
         )
 
-        prov = build_provider(_settings("lmstudio"), _default_llm(), provider_override="lmstudio")
+        prov = build_provider(
+            _settings("lmstudio"), _default_llm(), provider_override="lmstudio"
+        )
         assert isinstance(prov, LMStudioProvider)
         assert prov.model_name == _default_llm()
 
@@ -122,7 +148,9 @@ class TestBuildProviderOverride:
         from agent_core.llm.opencode_provider import OpencodeProvider
         from agent_core.llm.lmstudio import LMStudioProvider
 
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: _settings("lmstudio")
+        )
         monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {})
 
         # laguna-* → lmstudio (prefix rule)
@@ -136,20 +164,28 @@ class TestBuildProviderOverride:
     def test_override_none_falls_back_to_normal_routing(self, monkeypatch):
         from agent_core.llm.lmstudio import LMStudioProvider
 
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: _settings("lmstudio")
+        )
         monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {})
 
-        prov = build_provider(_settings("lmstudio"), "laguna-s-2.1", provider_override=None)
+        prov = build_provider(
+            _settings("lmstudio"), "laguna-s-2.1", provider_override=None
+        )
         assert isinstance(prov, LMStudioProvider)
 
     def test_invalid_override_ignored(self, monkeypatch):
         """An unrecognized override value must fall back to normal routing."""
         from agent_core.llm.lmstudio import LMStudioProvider
 
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: _settings("lmstudio")
+        )
         monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {})
 
-        prov = build_provider(_settings("lmstudio"), "laguna-s-2.1", provider_override="bogus")
+        prov = build_provider(
+            _settings("lmstudio"), "laguna-s-2.1", provider_override="bogus"
+        )
         assert isinstance(prov, LMStudioProvider)
 
 
@@ -157,17 +193,20 @@ class TestBuildProviderOverride:
 #  _switch_model with --provider
 # ---------------------------------------------------------------------------
 
+
 class TestSwitchModelWithProvider:
     def setup_method(self):
         self.cmd = ModelCommand()
-        self.fake_models = [{
-            "key": "laguna-s-2.1-ud",
-            "display_name": "Laguna S 2.1 UD",
-            "params_string": "8B-MoE",
-            "size_bytes": 100,
-            "loaded": True,
-            "instance_id": "i1",
-        }]
+        self.fake_models = [
+            {
+                "key": "laguna-s-2.1-ud",
+                "display_name": "Laguna S 2.1 UD",
+                "params_string": "8B-MoE",
+                "size_bytes": 100,
+                "loaded": True,
+                "instance_id": "i1",
+            }
+        ]
         # Controlled opencode catalogs — no network access.  Built from the
         # _default_llm() helper so no specific model name is hardcoded; the
         # catalog-match test queries with _default_llm_short() and asserts
@@ -180,11 +219,13 @@ class TestSwitchModelWithProvider:
     def _patch_opencode_catalog(self, monkeypatch):
         """Mock _opencode_catalog and _zen_free_catalog to avoid network."""
         monkeypatch.setattr(
-            self.cmd, "_opencode_catalog",
+            self.cmd,
+            "_opencode_catalog",
             lambda agent: (self.go_catalog, self.zen_catalog, True),
         )
         monkeypatch.setattr(
-            self.cmd, "_zen_free_catalog",
+            self.cmd,
+            "_zen_free_catalog",
             lambda: self.zen_catalog,
         )
 
@@ -194,13 +235,24 @@ class TestSwitchModelWithProvider:
         from agent_core.llm.opencode_provider import OpencodeProvider
 
         agent = _lmstudio_agent("qwen3.5-9b")
-        monkeypatch.setattr("agent_core.commands.model_cmd._lms.get_models_status", lambda: self.fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
-        monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {"model": "qwen3.5-9b", "provider": "lmstudio"})
-        monkeypatch.setattr("agent_core.constants.persist_model_choice", lambda *a, **k: None)
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd._lms.get_models_status",
+            lambda: self.fake_models,
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: _settings("lmstudio")
+        )
+        monkeypatch.setattr(
+            "agent_core.constants.load_model_json",
+            lambda: {"model": "qwen3.5-9b", "provider": "lmstudio"},
+        )
+        monkeypatch.setattr(
+            "agent_core.constants.persist_model_choice", lambda *a, **k: None
+        )
         self._patch_opencode_catalog(monkeypatch)
 
         import asyncio
+
         asyncio.run(
             self.cmd._switch_model(["laguna-s-2.1-ud", "--provider", "opencode"], agent)
         )
@@ -217,13 +269,24 @@ class TestSwitchModelWithProvider:
         from agent_core.llm.lmstudio import LMStudioProvider
 
         agent = _opencode_agent(_default_llm())
-        monkeypatch.setattr("agent_core.commands.model_cmd._lms.get_models_status", lambda: self.fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
-        monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {"model": _default_llm(), "provider": "opencode"})
-        monkeypatch.setattr("agent_core.constants.persist_model_choice", lambda *a, **k: None)
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd._lms.get_models_status",
+            lambda: self.fake_models,
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: _settings("lmstudio")
+        )
+        monkeypatch.setattr(
+            "agent_core.constants.load_model_json",
+            lambda: {"model": _default_llm(), "provider": "opencode"},
+        )
+        monkeypatch.setattr(
+            "agent_core.constants.persist_model_choice", lambda *a, **k: None
+        )
         self._patch_opencode_catalog(monkeypatch)
 
         import asyncio
+
         asyncio.run(
             self.cmd._switch_model(["laguna-s-2.1-ud", "--provider", "lmstudio"], agent)
         )
@@ -235,13 +298,21 @@ class TestSwitchModelWithProvider:
 
     def test_invalid_provider_rejected(self, monkeypatch, capsys):
         agent = _lmstudio_agent("qwen3.5-9b")
-        monkeypatch.setattr("agent_core.commands.model_cmd._lms.get_models_status", lambda: self.fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd._lms.get_models_status",
+            lambda: self.fake_models,
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: _settings("lmstudio")
+        )
         monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {})
-        monkeypatch.setattr("agent_core.constants.persist_model_choice", lambda *a, **k: None)
+        monkeypatch.setattr(
+            "agent_core.constants.persist_model_choice", lambda *a, **k: None
+        )
         self._patch_opencode_catalog(monkeypatch)
 
         import asyncio
+
         asyncio.run(
             self.cmd._switch_model(["laguna-s-2.1-ud", "--provider", "bogus"], agent)
         )
@@ -255,16 +326,25 @@ class TestSwitchModelWithProvider:
         from agent_core.llm.lmstudio import LMStudioProvider
 
         agent = _lmstudio_agent("qwen3.5-9b")
-        monkeypatch.setattr("agent_core.commands.model_cmd._lms.get_models_status", lambda: self.fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
-        monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {"model": "qwen3.5-9b", "provider": "lmstudio"})
-        monkeypatch.setattr("agent_core.constants.persist_model_choice", lambda *a, **k: None)
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd._lms.get_models_status",
+            lambda: self.fake_models,
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: _settings("lmstudio")
+        )
+        monkeypatch.setattr(
+            "agent_core.constants.load_model_json",
+            lambda: {"model": "qwen3.5-9b", "provider": "lmstudio"},
+        )
+        monkeypatch.setattr(
+            "agent_core.constants.persist_model_choice", lambda *a, **k: None
+        )
         self._patch_opencode_catalog(monkeypatch)
 
         import asyncio
-        asyncio.run(
-            self.cmd._switch_model(["laguna-s-2.1-ud"], agent)
-        )
+
+        asyncio.run(self.cmd._switch_model(["laguna-s-2.1-ud"], agent))
 
         assert isinstance(agent.llm._provider, LMStudioProvider)
         assert agent.llm.model_name == "laguna-s-2.1-ud"
@@ -273,13 +353,24 @@ class TestSwitchModelWithProvider:
         from agent_core.llm.opencode_provider import OpencodeProvider
 
         agent = _lmstudio_agent("qwen3.5-9b")
-        monkeypatch.setattr("agent_core.commands.model_cmd._lms.get_models_status", lambda: self.fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
-        monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {"model": "qwen3.5-9b", "provider": "lmstudio"})
-        monkeypatch.setattr("agent_core.constants.persist_model_choice", lambda *a, **k: None)
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd._lms.get_models_status",
+            lambda: self.fake_models,
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: _settings("lmstudio")
+        )
+        monkeypatch.setattr(
+            "agent_core.constants.load_model_json",
+            lambda: {"model": "qwen3.5-9b", "provider": "lmstudio"},
+        )
+        monkeypatch.setattr(
+            "agent_core.constants.persist_model_choice", lambda *a, **k: None
+        )
         self._patch_opencode_catalog(monkeypatch)
 
         import asyncio
+
         asyncio.run(
             self.cmd._switch_model(["laguna-s-2.1-ud", "-p", "opencode"], agent)
         )
@@ -293,15 +384,28 @@ class TestSwitchModelWithProvider:
         from agent_core.llm.opencode_provider import OpencodeProvider
 
         agent = _lmstudio_agent("qwen3.5-9b")
-        monkeypatch.setattr("agent_core.commands.model_cmd._lms.get_models_status", lambda: self.fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: _settings("lmstudio"))
-        monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {"model": "qwen3.5-9b", "provider": "lmstudio"})
-        monkeypatch.setattr("agent_core.constants.persist_model_choice", lambda *a, **k: None)
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd._lms.get_models_status",
+            lambda: self.fake_models,
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: _settings("lmstudio")
+        )
+        monkeypatch.setattr(
+            "agent_core.constants.load_model_json",
+            lambda: {"model": "qwen3.5-9b", "provider": "lmstudio"},
+        )
+        monkeypatch.setattr(
+            "agent_core.constants.persist_model_choice", lambda *a, **k: None
+        )
         self._patch_opencode_catalog(monkeypatch)
 
         import asyncio
+
         asyncio.run(
-            self.cmd._switch_model([_default_llm_short(), "--provider", "opencode"], agent)
+            self.cmd._switch_model(
+                [_default_llm_short(), "--provider", "opencode"], agent
+            )
         )
 
         assert isinstance(agent.llm._provider, OpencodeProvider)

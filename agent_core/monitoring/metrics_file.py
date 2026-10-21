@@ -12,6 +12,7 @@ Design notes:
 - Lines carry ``pid`` so combined REPL+dashboard processes don't double-count
   their own writes (they already went into the in-process collector).
 """
+
 from __future__ import annotations
 
 import json
@@ -40,9 +41,10 @@ def append_event(kind: str, name: str, value: float) -> None:
         value: Delta/sample associated with the write.
     """
     try:
-        line = json.dumps(
-            {"kind": kind, "name": name, "value": value, "pid": os.getpid()}
-        ) + "\n"
+        line = (
+            json.dumps({"kind": kind, "name": name, "value": value, "pid": os.getpid()})
+            + "\n"
+        )
         with open(default_events_path(), "a", encoding="utf-8") as f:
             f.write(line)
     except Exception:

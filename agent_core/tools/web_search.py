@@ -6,6 +6,7 @@ arbitrary URL fetching (decision #006 — protects local services from SSRF).
 Results are treated as UNTRUSTED input (decision #004) and formatted with an
 explicit marker before they are fed back into the conversation.
 """
+
 from __future__ import annotations
 
 import html
@@ -22,11 +23,20 @@ _UA = (
 )
 
 #: Search/ad infrastructure domains — skipped in results.
-_SKIP_DOMAINS = frozenset({
-    "duckduckgo.com", "google.com", "bing.com", "yahoo.com",
-    "facebook.com", "twitter.com", "instagram.com",
-    "amazon.com", "amazon.co.uk", "amazon.de",
-})
+_SKIP_DOMAINS = frozenset(
+    {
+        "duckduckgo.com",
+        "google.com",
+        "bing.com",
+        "yahoo.com",
+        "facebook.com",
+        "twitter.com",
+        "instagram.com",
+        "amazon.com",
+        "amazon.co.uk",
+        "amazon.de",
+    }
+)
 
 DEFAULT_MAX_RESULTS = 5
 MAX_RESULTS_LIMIT = 10
@@ -57,7 +67,9 @@ def _domain(url: str) -> str:
     return m.group(1).lstrip("www.") if m else ""
 
 
-def search_ddg(query: str, max_results: int = DEFAULT_MAX_RESULTS) -> list[dict[str, Any]]:
+def search_ddg(
+    query: str, max_results: int = DEFAULT_MAX_RESULTS
+) -> list[dict[str, Any]]:
     """Query DuckDuckGo HTML and return ``{title, url, snippet}`` dicts.
 
     Returns an empty list on network errors; callers surface the failure.
@@ -75,7 +87,8 @@ def search_ddg(query: str, max_results: int = DEFAULT_MAX_RESULTS) -> list[dict[
     blocks = re.findall(
         r'<a[^>]+class=["\']result__a["\'][^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>'
         r'.*?<a[^>]+class=["\']result__snippet["\'][^>]*>(.*?)</a>',
-        page, re.DOTALL,
+        page,
+        re.DOTALL,
     )
     _UDDG_ASSIGN_RE = re.compile(r"uddg=([^&]+)")
     for raw_url, raw_title, raw_snippet in blocks:
@@ -88,11 +101,13 @@ def search_ddg(query: str, max_results: int = DEFAULT_MAX_RESULTS) -> list[dict[
             continue
         if _domain(raw_url) in _SKIP_DOMAINS:
             continue
-        results.append({
-            "title": _strip_tags(raw_title),
-            "url": raw_url,
-            "snippet": _strip_tags(raw_snippet),
-        })
+        results.append(
+            {
+                "title": _strip_tags(raw_title),
+                "url": raw_url,
+                "snippet": _strip_tags(raw_snippet),
+            }
+        )
         if len(results) >= max(1, min(max_results, MAX_RESULTS_LIMIT)):
             break
     return results

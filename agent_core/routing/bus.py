@@ -13,9 +13,12 @@ class MessageType(Enum):
     TASK_SUCCESS = "task_success"
     TASK_FAILURE = "task_failure"
 
+
 class RoutingError(Exception):
     """Base exception for routing operations."""
+
     pass
+
 
 class Message:
     def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
@@ -28,12 +31,11 @@ class TaskNode:
         self.name = name
         self.dependencies = dependencies or []
 
+
 class RoutingBus:
     def __init__(self) -> None:
         self._handlers: Dict[str, Callable[[Message], Any]] = {}
-        self._subscriptions: Dict[MessageType, List[str]] = {
-            t: [] for t in MessageType
-        }
+        self._subscriptions: Dict[MessageType, List[str]] = {t: [] for t in MessageType}
         self._tasks: Dict[str, TaskNode] = {}
 
     def register_handler(self, name: str, handler: Callable[[Message], Any]) -> None:
@@ -59,7 +61,9 @@ class RoutingBus:
             return True
         return False
 
-    def send(self, destination: str, payload: Dict[str, Any], **kwargs: Any) -> Optional[Any]:
+    def send(
+        self, destination: str, payload: Dict[str, Any], **kwargs: Any
+    ) -> Optional[Any]:
         handler = self._handlers.get(destination)
         if not handler:
             logger.warning("No handler registered for destination '%s'", destination)
@@ -67,7 +71,11 @@ class RoutingBus:
         msg = Message(str(payload))
         try:
             result = handler(msg)
-            logger.debug("Sent message to '%s', result type=%s", destination, type(result).__name__)
+            logger.debug(
+                "Sent message to '%s', result type=%s",
+                destination,
+                type(result).__name__,
+            )
             return result
         except RoutingError as exc:
             logger.error("Routing error in handler '%s': %s", destination, exc)
@@ -80,7 +88,12 @@ class RoutingBus:
             )
             return None
 
-    def broadcast(self, payload: Dict[str, Any], msg_type: MessageType = MessageType.EVENT, **kwargs: Any) -> List[Any]:
+    def broadcast(
+        self,
+        payload: Dict[str, Any],
+        msg_type: MessageType = MessageType.EVENT,
+        **kwargs: Any,
+    ) -> List[Any]:
         results: List[Any] = []
         for dest in self._subscriptions.get(msg_type, []):
             try:
@@ -88,7 +101,9 @@ class RoutingBus:
                 if res is not None:
                     results.append(res)
             except Exception:  # noqa: BLE001
-                logger.exception("Broadcast failed for subscriber '%s' on %s", dest, msg_type.value)
+                logger.exception(
+                    "Broadcast failed for subscriber '%s' on %s", dest, msg_type.value
+                )
         return results
 
     def add_task(self, task_node: TaskNode) -> None:
@@ -119,7 +134,9 @@ class RoutingBus:
             )
             raise RoutingError(f"Task {name} failed: {exc}") from exc
 
-    def execute_graph(self, start_node: str, message: Optional[Message] = None) -> Dict[str, Any]:
+    def execute_graph(
+        self, start_node: str, message: Optional[Message] = None
+    ) -> Dict[str, Any]:
         if start_node not in self._tasks:
             err_msg = f"Start node {start_node} not found"
             logger.error(err_msg)
@@ -152,9 +169,15 @@ class RoutingBus:
         except Exception as exc:  # noqa: BLE001
             logger.exception("Graph execution failed starting at '%s'", start_node)
             self.broadcast(
-                {"error": str(exc), "start_node": start_node, "partial_results": results},
+                {
+                    "error": str(exc),
+                    "start_node": start_node,
+                    "partial_results": results,
+                },
                 msg_type=MessageType.TASK_FAILURE,
             )
-            raise RoutingError(f"Graph execution from {start_node} failed: {exc}") from exc
+            raise RoutingError(
+                f"Graph execution from {start_node} failed: {exc}"
+            ) from exc
 
         return results

@@ -18,6 +18,7 @@ file covers the CALLER side, where the dangerous part lives:
    loop reports it was already streamed, and still printed for a loop-like
    object that lacks the flag.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -48,6 +49,7 @@ def _bare(cls):
 # 1. provider_supports_streaming — only the providers that really print
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "provider, expected",
     [
@@ -66,9 +68,9 @@ def test_provider_supports_streaming(provider, expected: bool) -> None:
 def test_non_streaming_providers_really_print_nothing() -> None:
     """Guard the assumption behind the gate: those three chat_stream impls are
     a bare delegation to chat, so nothing reaches the console."""
-    source = (
-        Path(provider_mod.__file__).parent / "opencode_provider.py"
-    ).read_text(encoding="utf-8")
+    source = (Path(provider_mod.__file__).parent / "opencode_provider.py").read_text(
+        encoding="utf-8"
+    )
     assert "No streaming support" in source
 
 
@@ -92,8 +94,10 @@ def test_unknown_provider_object_is_not_streaming() -> None:
 # 2. _resolve_stream_fn — opt-in AND capability, never raises
 # ---------------------------------------------------------------------------
 
+
 def _llm_with(provider):
     """A minimal llm stand-in exposing the two attributes the resolver reads."""
+
     class _LLM:
         _provider = provider
 
@@ -117,7 +121,8 @@ def _settings(**overrides) -> AgentSettings:
 def test_resolver_returns_none_when_setting_is_off(monkeypatch) -> None:
     """Default: OFF -> no streaming, so behaviour is byte-identical."""
     monkeypatch.setattr(
-        _config_mod, "load_agent_settings",
+        _config_mod,
+        "load_agent_settings",
         lambda: _settings(stream_final_answer=False),
     )
     llm = _llm_with(_bare(LMStudioProvider))
@@ -126,7 +131,8 @@ def test_resolver_returns_none_when_setting_is_off(monkeypatch) -> None:
 
 def test_resolver_returns_callable_when_opted_in_and_capable(monkeypatch) -> None:
     monkeypatch.setattr(
-        _config_mod, "load_agent_settings",
+        _config_mod,
+        "load_agent_settings",
         lambda: _settings(stream_final_answer=True),
     )
     llm = _llm_with(_bare(LMStudioProvider))
@@ -140,13 +146,12 @@ def test_resolver_returns_callable_when_opted_in_and_capable(monkeypatch) -> Non
     [_bare(OpencodeProvider), _bare(OpenRouterProvider), _bare(LemonadeProvider)],
     ids=lambda p: type(p).__name__,
 )
-def test_resolver_returns_none_on_non_streaming_provider(
-    monkeypatch, provider
-) -> None:
+def test_resolver_returns_none_on_non_streaming_provider(monkeypatch, provider) -> None:
     """THE regression guard: opted in, but the provider prints nothing — so the
     caller must keep printing the answer itself (otherwise: no answer at all)."""
     monkeypatch.setattr(
-        _config_mod, "load_agent_settings",
+        _config_mod,
+        "load_agent_settings",
         lambda: _settings(stream_final_answer=True),
     )
     assert agent_mod._resolve_stream_fn(_llm_with(provider)) is None
@@ -154,6 +159,7 @@ def test_resolver_returns_none_on_non_streaming_provider(
 
 def test_resolver_survives_settings_failure(monkeypatch) -> None:
     """A broken settings load means 'no streaming', never a crashed turn."""
+
     def _boom():
         raise RuntimeError("settings exploded")
 
@@ -163,7 +169,8 @@ def test_resolver_survives_settings_failure(monkeypatch) -> None:
 
 def test_resolver_handles_llm_without_provider_attribute(monkeypatch) -> None:
     monkeypatch.setattr(
-        _config_mod, "load_agent_settings",
+        _config_mod,
+        "load_agent_settings",
         lambda: _settings(stream_final_answer=True),
     )
 
@@ -177,6 +184,7 @@ def test_resolver_handles_llm_without_provider_attribute(monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 # 3. _finish_turn prints the answer exactly once
 # ---------------------------------------------------------------------------
+
 
 class _Loop:
     """Minimal loop stand-in carrying only the streaming flag."""
@@ -205,8 +213,7 @@ def test_finish_turn_prints_answer_when_not_streamed(
 ) -> None:
     bot = _make_agent(tmp_path, monkeypatch)
     bot._last_user_input = "hi"
-    bot._finish_turn("The answer.", None, _Loop(streamed=False),
-                     AgentDisplayMode.QUIET)
+    bot._finish_turn("The answer.", None, _Loop(streamed=False), AgentDisplayMode.QUIET)
     assert "The answer." in capsys.readouterr().out
 
 
@@ -216,8 +223,7 @@ def test_finish_turn_skips_print_when_already_streamed(
     """Already on screen token-by-token -> printing again would duplicate it."""
     bot = _make_agent(tmp_path, monkeypatch)
     bot._last_user_input = "hi"
-    bot._finish_turn("The answer.", None, _Loop(streamed=True),
-                     AgentDisplayMode.QUIET)
+    bot._finish_turn("The answer.", None, _Loop(streamed=True), AgentDisplayMode.QUIET)
     assert "The answer." not in capsys.readouterr().out
 
 
@@ -238,8 +244,9 @@ def test_finish_turn_llm_error_takes_precedence_over_streamed_flag(
     """An error is reported as an error even if a flag claims it streamed."""
     bot = _make_agent(tmp_path, monkeypatch)
     bot._last_user_input = "hi"
-    bot._finish_turn("Should not appear.", "boom", _Loop(streamed=True),
-                     AgentDisplayMode.QUIET)
+    bot._finish_turn(
+        "Should not appear.", "boom", _Loop(streamed=True), AgentDisplayMode.QUIET
+    )
     out = capsys.readouterr().out
     assert "boom" in out
     assert "Should not appear." not in out
@@ -248,6 +255,7 @@ def test_finish_turn_llm_error_takes_precedence_over_streamed_flag(
 # ---------------------------------------------------------------------------
 # 4. end-to-end: chat_nlp really streams, and the answer is shown ONCE
 # ---------------------------------------------------------------------------
+
 
 def test_chat_nlp_streams_final_answer_and_prints_it_once(
     tmp_path: Path, monkeypatch, capsys
@@ -274,7 +282,8 @@ def test_chat_nlp_streams_final_answer_and_prints_it_once(
         _constants_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl")
     )
     monkeypatch.setattr(
-        _config_mod, "load_agent_settings",
+        _config_mod,
+        "load_agent_settings",
         lambda: _settings(stream_final_answer=True),
     )
     monkeypatch.setattr(
@@ -282,7 +291,8 @@ def test_chat_nlp_streams_final_answer_and_prints_it_once(
     )
     monkeypatch.setattr(agent_mod, "_MAX_CHAINED_RUNS", 0)
     monkeypatch.setattr(
-        agent_mod, "ToolLoopRunner",
+        agent_mod,
+        "ToolLoopRunner",
         lambda *a, **k: ToolLoopRunner(max_iterations=3),
     )
 
@@ -301,17 +311,24 @@ def test_chat_nlp_streams_final_answer_and_prints_it_once(
             # Tool-less call = forced synthesis; must be served by chat_stream.
             if not tools:
                 return answer
-            return json.dumps({
-                "content": "",
-                "tool_calls": [{
-                    "id": f"c{self.chat_calls}", "type": "function",
-                    "function": {
-                        "name": "read",
-                        # distinct paths: never a duplicate/stuck verdict
-                        "arguments": json.dumps({"path": f"f{self.chat_calls}.py"}),
-                    },
-                }],
-            })
+            return json.dumps(
+                {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": f"c{self.chat_calls}",
+                            "type": "function",
+                            "function": {
+                                "name": "read",
+                                # distinct paths: never a duplicate/stuck verdict
+                                "arguments": json.dumps(
+                                    {"path": f"f{self.chat_calls}.py"}
+                                ),
+                            },
+                        }
+                    ],
+                }
+            )
 
         async def chat_stream(self, messages):
             self.stream_calls += 1
@@ -355,7 +372,8 @@ def test_chat_nlp_does_not_stream_when_not_opted_in(
         _constants_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl")
     )
     monkeypatch.setattr(
-        _config_mod, "load_agent_settings",
+        _config_mod,
+        "load_agent_settings",
         lambda: _settings(stream_final_answer=False),
     )
     monkeypatch.setattr(
@@ -363,7 +381,8 @@ def test_chat_nlp_does_not_stream_when_not_opted_in(
     )
     monkeypatch.setattr(agent_mod, "_MAX_CHAINED_RUNS", 0)
     monkeypatch.setattr(
-        agent_mod, "ToolLoopRunner",
+        agent_mod,
+        "ToolLoopRunner",
         lambda *a, **k: ToolLoopRunner(max_iterations=3),
     )
 
@@ -379,16 +398,23 @@ def test_chat_nlp_does_not_stream_when_not_opted_in(
             self.chat_calls += 1
             if not tools:
                 return answer
-            return json.dumps({
-                "content": "",
-                "tool_calls": [{
-                    "id": f"c{self.chat_calls}", "type": "function",
-                    "function": {
-                        "name": "read",
-                        "arguments": json.dumps({"path": f"f{self.chat_calls}.py"}),
-                    },
-                }],
-            })
+            return json.dumps(
+                {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": f"c{self.chat_calls}",
+                            "type": "function",
+                            "function": {
+                                "name": "read",
+                                "arguments": json.dumps(
+                                    {"path": f"f{self.chat_calls}.py"}
+                                ),
+                            },
+                        }
+                    ],
+                }
+            )
 
         async def chat_stream(self, messages):
             self.stream_calls += 1
@@ -438,7 +464,8 @@ def test_chained_runs_each_stream_their_own_answer_without_a_double_print(
         _constants_mod, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl")
     )
     monkeypatch.setattr(
-        _config_mod, "load_agent_settings",
+        _config_mod,
+        "load_agent_settings",
         lambda: _settings(stream_final_answer=True),
     )
     monkeypatch.setattr(
@@ -446,7 +473,8 @@ def test_chained_runs_each_stream_their_own_answer_without_a_double_print(
     )
     # Small cap keeps the run fast; chaining is deliberately LEFT ON.
     monkeypatch.setattr(
-        agent_mod, "ToolLoopRunner",
+        agent_mod,
+        "ToolLoopRunner",
         lambda *a, **k: ToolLoopRunner(max_iterations=2),
     )
 
@@ -462,17 +490,24 @@ def test_chained_runs_each_stream_their_own_answer_without_a_double_print(
             self.chat_calls += 1
             if not tools:
                 return answer
-            return json.dumps({
-                "content": "",
-                "tool_calls": [{
-                    "id": f"c{self.chat_calls}", "type": "function",
-                    "function": {
-                        "name": "read",
-                        # distinct paths: never a duplicate/stuck tool verdict
-                        "arguments": json.dumps({"path": f"f{self.chat_calls}.py"}),
-                    },
-                }],
-            })
+            return json.dumps(
+                {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": f"c{self.chat_calls}",
+                            "type": "function",
+                            "function": {
+                                "name": "read",
+                                # distinct paths: never a duplicate/stuck tool verdict
+                                "arguments": json.dumps(
+                                    {"path": f"f{self.chat_calls}.py"}
+                                ),
+                            },
+                        }
+                    ],
+                }
+            )
 
         async def chat_stream(self, messages):
             self.stream_calls += 1
@@ -497,4 +532,3 @@ def test_chained_runs_each_stream_their_own_answer_without_a_double_print(
         "every occurrence of the answer must come from a chat_stream print — "
         f"_finish_turn added {out.count(answer) - llm.stream_calls} extra"
     )
-

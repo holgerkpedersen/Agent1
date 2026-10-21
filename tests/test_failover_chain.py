@@ -6,6 +6,7 @@ LM Studio / llama.cpp are the primary / secondary local fallbacks.  Each
 chain entry may carry a per-entry "provider:model" override so the same
 provider appears twice in different modes (zen vs go).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -31,7 +32,8 @@ def _no_model_persist(monkeypatch):
     must never clobber the developer's actual state (regression: a failover to
     a stub named 'go' rewrote AGENT_MODEL=go)."""
     monkeypatch.setattr(
-        "agent_core.constants.persist_model_choice", lambda *a, **k: None,
+        "agent_core.constants.persist_model_choice",
+        lambda *a, **k: None,
     )
 
 
@@ -81,7 +83,8 @@ def test_model_mode_distinguishes_zen_from_go() -> None:
 
 
 def test_config_default_load_chain_is_cloud_first(
-    tmp_path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """load_agent_settings with no provider env vars uses the catalog chain.
 
@@ -140,12 +143,14 @@ def test_active_go_model_drives_go_slot_only() -> None:
     # Explicit zen-inclusive chain: the default chain carries only the go
     # entry (the free-tier zen entry was removed), so the zen slot is pinned
     # by an explicit "opencode:<free model>" entry here.
-    settings = _settings((
-        f"opencode:{_default_zen_free_model()}",
-        f"opencode:{_GO_MODEL}",
-        "lmstudio",
-        "llama",
-    ))
+    settings = _settings(
+        (
+            f"opencode:{_default_zen_free_model()}",
+            f"opencode:{_GO_MODEL}",
+            "lmstudio",
+            "llama",
+        )
+    )
     provider = build_provider(settings, "opencode-go/gpt-oss")
     # The selected model's slot is promoted to the front (tried first), so the
     # go slot carries the active selection; the zen slot keeps its default.

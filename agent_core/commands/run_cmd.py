@@ -10,6 +10,7 @@ Long-running jobs (repair loops, benchmarks) routinely exceed the tool's
 120s default, so the command defaults to 600s and accepts an explicit
 ``--timeout <sec>`` flag in front of the command.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

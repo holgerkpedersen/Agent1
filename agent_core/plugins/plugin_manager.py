@@ -31,7 +31,9 @@ class PluginManager:
             return True
         return False
 
-    def execute_plugin(self, name: str, input_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def execute_plugin(
+        self, name: str, input_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         plugin_instance: Optional[BasePlugin] = self._loaded_plugins.get(name)
         if plugin_instance is None:
             return None

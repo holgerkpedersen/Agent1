@@ -93,7 +93,9 @@ def workspace_path(path: str) -> str:
     return path.replace("\\", "/")
 
 
-def normalize_path(raw: str, workspace_root: Path, follow_symlinks: bool = True) -> Path:
+def normalize_path(
+    raw: str, workspace_root: Path, follow_symlinks: bool = True
+) -> Path:
     """Validate and resolve a path strictly within the given workspace boundary.
 
     Args:
@@ -127,7 +129,9 @@ def normalize_path(raw: str, workspace_root: Path, follow_symlinks: bool = True)
 
     # Apply symlink policy enforcement
     if not follow_symlinks and target.is_symlink():
-        raise SecurityViolationError(f"Symlinks are prohibited in this workspace: {raw}")
+        raise SecurityViolationError(
+            f"Symlinks are prohibited in this workspace: {raw}"
+        )
 
     return target
 
@@ -141,7 +145,9 @@ class WorkspaceSandbox:
             # ... perform operations on safe_path
     """
 
-    def __init__(self, workspace_root: Path | str, follow_symlinks: bool = True) -> None:
+    def __init__(
+        self, workspace_root: Path | str, follow_symlinks: bool = True
+    ) -> None:
         self.workspace_root = Path(workspace_root).resolve()
         self.follow_symlinks = follow_symlinks
 
@@ -152,9 +158,12 @@ class WorkspaceSandbox:
     def __enter__(self) -> "WorkspaceSandbox":
         return self
 
-    def __exit__(self, exc_type: type[BaseException] | None,
-                 exc_val: BaseException | None,
-                 exc_tb: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
         # Declarative scoping complete; pure validation sandbox requires no cleanup
         pass
 

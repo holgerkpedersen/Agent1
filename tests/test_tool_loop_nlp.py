@@ -5,6 +5,7 @@ describe them.  These tests drive ``ToolLoopRunner`` with a scripted fake
 LLM that emits native ``tool_calls`` and verify that the dispatcher runs
 the tools, feeds results back, and terminates on a plain-text answer.
 """
+
 import json
 import os
 
@@ -37,14 +38,16 @@ class _ScriptedLLM:
                     tool_name, args = item
                 else:
                     tool_name, args = item, {}
-                tool_calls.append({
-                    "id": f"call_{i}",
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(args),
-                    },
-                })
+                tool_calls.append(
+                    {
+                        "id": f"call_{i}",
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(args),
+                        },
+                    }
+                )
             message = {
                 "role": "assistant",
                 "content": "",
@@ -60,14 +63,16 @@ class _ScriptedLLM:
             message = {
                 "role": "assistant",
                 "content": narration,
-                "tool_calls": [{
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(args),
-                    },
-                }],
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(args),
+                        },
+                    }
+                ],
             }
             return json.dumps(message)
         return step
@@ -75,6 +80,7 @@ class _ScriptedLLM:
 
 def _make_llm_chat_fn(fake_llm):
     """Wrap a _ScriptedLLM the same way chat_nlp wraps the real provider."""
+
     async def llm_chat_fn(messages, tools):
         raw = await fake_llm.chat(messages, tools)
         try:
@@ -84,7 +90,9 @@ def _make_llm_chat_fn(fake_llm):
         if isinstance(parsed, dict) and parsed.get("tool_calls"):
             parsed.pop("role", None)
             updated = list(messages)
-            updated.append({"role": "assistant", "content": parsed.get("content") or "", **parsed})
+            updated.append(
+                {"role": "assistant", "content": parsed.get("content") or "", **parsed}
+            )
             return str(parsed.get("content") or ""), updated
         updated = list(messages)
         updated.append({"role": "assistant", "content": raw})
@@ -95,11 +103,13 @@ def _make_llm_chat_fn(fake_llm):
 
 class TestToolLoopExecution:
     def test_executes_tools_and_terminates_on_text(self):
-        fake = _ScriptedLLM([
-            ("read", {"path": "agent.py"}),
-            ("search", {"query": "def chat_nlp"}),
-            "Summary of what I found.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "agent.py"}),
+                ("search", {"query": "def chat_nlp"}),
+                "Summary of what I found.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -129,10 +139,12 @@ class TestToolLoopExecution:
         assert executed == []
 
     def test_tool_error_is_fed_back_not_crashing(self):
-        fake = _ScriptedLLM([
-            ("read", {"path": "missing.py"}),
-            "I got an error.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "missing.py"}),
+                "I got an error.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -151,12 +163,14 @@ class TestToolLoopExecution:
     def test_cap_hit_while_tool_calls_pending_forces_final_synthesis(self):
         """If the model burns all iterations on tool calls, the loop must still
         produce a final text answer via a forced tool-less synthesis call."""
-        fake = _ScriptedLLM([
-            ("list_files", {"path": "."}),
-            ("list_files", {"path": "."}),
-            ("list_files", {"path": "."}),
-            "Final synthesis: the project has these files.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("list_files", {"path": "."}),
+                ("list_files", {"path": "."}),
+                ("list_files", {"path": "."}),
+                "Final synthesis: the project has these files.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -182,11 +196,13 @@ class TestToolLoopExecution:
     def test_consecutive_identical_calls_get_note_not_repeat_execution(self):
         """A repeated identical call must not silently re-execute; the model
         must be told it already got that result."""
-        fake = _ScriptedLLM([
-            ("search", {"query": "_execute_nlp_tool", "path": "."}),
-            ("search", {"query": "_execute_nlp_tool", "path": "."}),
-            "The symbol does not exist in current code.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("search", {"query": "_execute_nlp_tool", "path": "."}),
+                ("search", {"query": "_execute_nlp_tool", "path": "."}),
+                "The symbol does not exist in current code.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -206,12 +222,14 @@ class TestToolLoopExecution:
         """Idempotent/read-only tools (get_current_datetime, git, etc.) should
         re-execute freely on duplicate calls without triggering the stuck-repeat
         NOTE — the result is identical by design and there is no better action."""
-        fake = _ScriptedLLM([
-            ("get_current_datetime", {}),
-            ("get_current_datetime", {}),
-            ("get_current_datetime", {}),
-            "The time is noted.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("get_current_datetime", {}),
+                ("get_current_datetime", {}),
+                ("get_current_datetime", {}),
+                "The time is noted.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -222,7 +240,11 @@ class TestToolLoopExecution:
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
 
         # All three calls were executed (not blocked).
-        assert executed == ["get_current_datetime", "get_current_datetime", "get_current_datetime"]
+        assert executed == [
+            "get_current_datetime",
+            "get_current_datetime",
+            "get_current_datetime",
+        ]
         assert final_text == "The time is noted."
         # No stuck-repeat NOTE was injected into the tool messages.
         tool_msgs = [m["content"] for m in messages if m["role"] == "tool"]
@@ -231,12 +253,14 @@ class TestToolLoopExecution:
 
     def test_non_consecutive_identical_call_still_executes(self):
         """A legit re-read (read -> edit -> read) must still work."""
-        fake = _ScriptedLLM([
-            ("read", {"path": "f.py"}),
-            ("edit", {"path": "f.py", "old_text": "a", "new_text": "b"}),
-            ("read", {"path": "f.py"}),
-            "Verified.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "f.py"}),
+                ("edit", {"path": "f.py", "old_text": "a", "new_text": "b"}),
+                ("read", {"path": "f.py"}),
+                "Verified.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -254,12 +278,14 @@ class TestToolLoopExecution:
         repeat and forced to answer — not left to burn the iteration budget.
         The scripted LLM raises IndexError if the loop asks for one more
         response after the forced call, proving early termination."""
-        fake = _ScriptedLLM([
-            ("read", {"path": "agent.py"}),
-            ("read", {"path": "agent.py"}),
-            ("read", {"path": "agent.py"}),
-            "I found the implementation in agent.py.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "agent.py"}),
+                ("read", {"path": "agent.py"}),
+                ("read", {"path": "agent.py"}),
+                "I found the implementation in agent.py.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -279,12 +305,14 @@ class TestToolLoopExecution:
         assert any("three times" in m for m in tool_msgs)
 
     def test_stuck_synthesis_note_does_not_leak_into_history(self):
-        fake = _ScriptedLLM([
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "a.py"}),
-            "Answer.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "a.py"}),
+                "Answer.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -296,17 +324,20 @@ class TestToolLoopExecution:
 
         assert final_text == "Answer."
         assert not any(
-            m.get("role") == "system" and "repeated the same tool call" in str(m.get("content"))
+            m.get("role") == "system"
+            and "repeated the same tool call" in str(m.get("content"))
             for m in messages
         )
 
     def test_deadline_note_is_injected_before_cap(self):
         """A budget warning must reach the LLM before the cap hits — but must
         NOT leak into the persisted history (a fresh turn has a fresh budget)."""
-        fake = _ScriptedLLM([
-            ("list_files", {"path": "."}),
-            "Answer before the cap.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("list_files", {"path": "."}),
+                "Answer before the cap.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -317,16 +348,15 @@ class TestToolLoopExecution:
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
 
         sent_notes = [
-            m["content"] for call in fake.calls for m in call[0]
+            m["content"]
+            for call in fake.calls
+            for m in call[0]
             if "BUDGET WARNING" in str(m.get("content"))
         ]
         assert len(sent_notes) == 1
         assert "1 tool call" in sent_notes[0] or "tool call" in sent_notes[0]
         # The steering note must not persist into the returned history.
-        assert not any(
-            "BUDGET WARNING" in str(m.get("content"))
-            for m in messages
-        )
+        assert not any("BUDGET WARNING" in str(m.get("content")) for m in messages)
 
     def test_no_deadline_note_when_model_answers_early(self):
         fake = _ScriptedLLM(["Just an answer, no tools."])
@@ -341,7 +371,8 @@ class TestToolLoopExecution:
 
         assert final_text == "Just an answer, no tools."
         notes = [
-            m["content"] for m in messages
+            m["content"]
+            for m in messages
             if m["role"] == "system" and "BUDGET WARNING" in m["content"]
         ]
         assert notes == []
@@ -355,13 +386,15 @@ class TestToolLoopExecution:
         caught because ``prev_call_key`` only tracks the immediately previous
         call, so read_A in batch 2 is not equal to read_B from batch 1.
         """
-        fake = _ScriptedLLM([
-            # Iteration 1: two different reads in parallel.
-            ([("read", {"path": "a.py"}), ("read", {"path": "b.py"})], []),
-            # Iteration 2: same two reads repeated — both should be blocked.
-            ([("read", {"path": "a.py"}), ("read", {"path": "b.py"})], []),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                # Iteration 1: two different reads in parallel.
+                ([("read", {"path": "a.py"}), ("read", {"path": "b.py"})], []),
+                # Iteration 2: same two reads repeated — both should be blocked.
+                ([("read", {"path": "a.py"}), ("read", {"path": "b.py"})], []),
+                "Done.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -388,16 +421,21 @@ class TestToolLoopExecution:
         'tool_call_id'").  Previously the batch [repeat, write] executed only
         the repeat and silently dropped the write's result.
         """
-        fake = _ScriptedLLM([
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "a.py"}),
-            # Third repeat triggers `stuck`; the write follows it in the batch.
-            (
-                [("read", {"path": "a.py"}), ("write", {"path": "b.py", "content": "x"})],
-                [],
-            ),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "a.py"}),
+                # Third repeat triggers `stuck`; the write follows it in the batch.
+                (
+                    [
+                        ("read", {"path": "a.py"}),
+                        ("write", {"path": "b.py", "content": "x"}),
+                    ],
+                    [],
+                ),
+                "Done.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -432,16 +470,18 @@ class TestToolLoopExecution:
 
         monkeypatch.setattr(tl, "_TOOL_CONSECUTIVE_FAILURE_LIMIT", 2)
 
-        fake = _ScriptedLLM([
-            # Batch 1: two failing calls (different args -> not duplicates).
-            ([("run", {"command": "a"}), ("run", {"command": "b"})], []),
-            # Batch 2: same two again -> become duplicates.
-            ([("run", {"command": "a"}), ("run", {"command": "b"})], []),
-            # Batch 3: first call is a 3rd consecutive repeat -> stuck break
-            # before the second call runs, so the second needs a backfill.
-            ([("run", {"command": "a"}), ("run", {"command": "c"})], []),
-            "done",
-        ])
+        fake = _ScriptedLLM(
+            [
+                # Batch 1: two failing calls (different args -> not duplicates).
+                ([("run", {"command": "a"}), ("run", {"command": "b"})], []),
+                # Batch 2: same two again -> become duplicates.
+                ([("run", {"command": "a"}), ("run", {"command": "b"})], []),
+                # Batch 3: first call is a 3rd consecutive repeat -> stuck break
+                # before the second call runs, so the second needs a backfill.
+                ([("run", {"command": "a"}), ("run", {"command": "c"})], []),
+                "done",
+            ]
+        )
 
         async def execute_tool(name, args):
             return "Tool error: boom"
@@ -483,12 +523,14 @@ class TestToolLoopExecution:
 
         monkeypatch.setattr(tl, "_TOOL_CONSECUTIVE_FAILURE_LIMIT", 2)
 
-        fake = _ScriptedLLM([
-            ("run", {"command": "cmd1"}),
-            ("run", {"command": "cmd2"}),   # 2nd failure -> note queued
-            ("run", {"command": "cmd3"}),   # next call must see a clean pair
-            "done",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("run", {"command": "cmd1"}),
+                ("run", {"command": "cmd2"}),  # 2nd failure -> note queued
+                ("run", {"command": "cmd3"}),  # next call must see a clean pair
+                "done",
+            ]
+        )
         sent_batches = []
 
         async def execute_tool(name, args):
@@ -501,12 +543,14 @@ class TestToolLoopExecution:
             return await inner(messages, tools)
 
         runner = ToolLoopRunner(max_iterations=10)
-        final_text, _ = asyncio.run(runner.run(
-            messages=[{"role": "user", "content": "go"}],
-            llm_chat_fn=capturing_fn,
-            execute_tool_fn=execute_tool,
-            tools=list(NLP_TOOL_SCHEMAS),
-        ))
+        final_text, _ = asyncio.run(
+            runner.run(
+                messages=[{"role": "user", "content": "go"}],
+                llm_chat_fn=capturing_fn,
+                execute_tool_fn=execute_tool,
+                tools=list(NLP_TOOL_SCHEMAS),
+            )
+        )
 
         assert final_text == "done"
         assert sent_batches, "the loop never called the LLM"
@@ -521,8 +565,7 @@ class TestToolLoopExecution:
                         else:
                             break
                     assert all(x in following for x in ids), (
-                        f"tool pair split for the LLM: ids={ids} "
-                        f"following={following}"
+                        f"tool pair split for the LLM: ids={ids} following={following}"
                     )
 
     def test_raised_tool_exception_counts_as_consecutive_failure(self, monkeypatch):
@@ -540,11 +583,13 @@ class TestToolLoopExecution:
 
         monkeypatch.setattr(tl, "_TOOL_CONSECUTIVE_FAILURE_LIMIT", 2)
 
-        fake = _ScriptedLLM([
-            ("run", {"command": "cmd1"}),
-            ("run", {"command": "cmd2"}),   # 2nd raise -> note must be queued
-            "done",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("run", {"command": "cmd1"}),
+                ("run", {"command": "cmd2"}),  # 2nd raise -> note must be queued
+                "done",
+            ]
+        )
         sent_batches = []
 
         async def execute_tool(name, args):
@@ -557,12 +602,14 @@ class TestToolLoopExecution:
             return await inner(messages, tools)
 
         runner = ToolLoopRunner(max_iterations=10)
-        final_text, _ = asyncio.run(runner.run(
-            messages=[{"role": "user", "content": "go"}],
-            llm_chat_fn=capturing_fn,
-            execute_tool_fn=execute_tool,
-            tools=list(NLP_TOOL_SCHEMAS),
-        ))
+        final_text, _ = asyncio.run(
+            runner.run(
+                messages=[{"role": "user", "content": "go"}],
+                llm_chat_fn=capturing_fn,
+                execute_tool_fn=execute_tool,
+                tools=list(NLP_TOOL_SCHEMAS),
+            )
+        )
 
         assert final_text == "done"
         notes = [
@@ -579,13 +626,16 @@ class TestToolLoopExecution:
 
 def _loop_runner_sync(runner, fake_llm, execute_tool, **kwargs):
     import asyncio
-    return asyncio.run(runner.run(
-        messages=[{"role": "user", "content": "do the thing"}],
-        llm_chat_fn=_make_llm_chat_fn(fake_llm),
-        execute_tool_fn=execute_tool,
-        tools=list(NLP_TOOL_SCHEMAS),
-        **kwargs,
-    ))
+
+    return asyncio.run(
+        runner.run(
+            messages=[{"role": "user", "content": "do the thing"}],
+            llm_chat_fn=_make_llm_chat_fn(fake_llm),
+            execute_tool_fn=execute_tool,
+            tools=list(NLP_TOOL_SCHEMAS),
+            **kwargs,
+        )
+    )
 
 
 class TestTraceFileEffects:
@@ -602,18 +652,24 @@ class TestTraceFileEffects:
             self.events.append(record)
 
     def test_tool_result_event_carries_affected_files(self):
-        fake = _ScriptedLLM([
-            ("write", {"path": "a.py", "content": "x = 1\n"}),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("write", {"path": "a.py", "content": "x = 1\n"}),
+                "Done.",
+            ]
+        )
         sink = self._Sink()
 
         async def execute_tool(name, args):
             return "written"
 
         runner = ToolLoopRunner(max_iterations=5, trace=sink)
-        _loop_runner_sync(runner, fake, execute_tool,
-                          effects_fn=lambda name, args: ["a.py"] if name == "write" else [])
+        _loop_runner_sync(
+            runner,
+            fake,
+            execute_tool,
+            effects_fn=lambda name, args: ["a.py"] if name == "write" else [],
+        )
 
         results = [e for e in sink.events if e["kind"] == "tool_result"]
         assert len(results) == 1
@@ -621,28 +677,33 @@ class TestTraceFileEffects:
         assert results[0]["affected_files"] == ["a.py"]
 
     def test_tool_error_event_carries_affected_files(self):
-        fake = _ScriptedLLM([
-            ("edit", {"path": "b.py", "old_text": "x", "new_text": "y"}),
-            "It failed.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("edit", {"path": "b.py", "old_text": "x", "new_text": "y"}),
+                "It failed.",
+            ]
+        )
         sink = self._Sink()
 
         async def execute_tool(name, args):
             raise RuntimeError("boom")
 
         runner = ToolLoopRunner(max_iterations=5, trace=sink)
-        _loop_runner_sync(runner, fake, execute_tool,
-                          effects_fn=lambda name, args: ["b.py"])
+        _loop_runner_sync(
+            runner, fake, execute_tool, effects_fn=lambda name, args: ["b.py"]
+        )
 
         errors = [e for e in sink.events if e["kind"] == "tool_error"]
         assert len(errors) == 1
         assert errors[0]["affected_files"] == ["b.py"]
 
     def test_effects_fn_never_invoked_without_trace(self):
-        fake = _ScriptedLLM([
-            ("read", {"path": "agent.py"}),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "agent.py"}),
+                "Done.",
+            ]
+        )
         invoked = []
 
         async def execute_tool(name, args):
@@ -653,18 +714,21 @@ class TestTraceFileEffects:
             return ["agent.py"]
 
         runner = ToolLoopRunner(max_iterations=5)
-        final_text, _ = _loop_runner_sync(runner, fake, execute_tool,
-                                          effects_fn=effects_fn)
+        final_text, _ = _loop_runner_sync(
+            runner, fake, execute_tool, effects_fn=effects_fn
+        )
 
         assert final_text == "Done."
         # Untraced runs behave byte-identically: the callback is never called.
         assert invoked == []
 
     def test_effects_fn_raising_never_breaks_loop(self):
-        fake = _ScriptedLLM([
-            ("read", {"path": "agent.py"}),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "agent.py"}),
+                "Done.",
+            ]
+        )
         sink = self._Sink()
 
         async def execute_tool(name, args):
@@ -674,8 +738,9 @@ class TestTraceFileEffects:
             raise RuntimeError("effects bug")
 
         runner = ToolLoopRunner(max_iterations=5, trace=sink)
-        final_text, _ = _loop_runner_sync(runner, fake, execute_tool,
-                                          effects_fn=effects_fn)
+        final_text, _ = _loop_runner_sync(
+            runner, fake, execute_tool, effects_fn=effects_fn
+        )
 
         assert final_text == "Done."
         result = [e for e in sink.events if e["kind"] == "tool_result"][0]
@@ -699,14 +764,18 @@ class TestAgentExecuteToolCall:
     def test_write_verifies_python_file(self, tmp_path):
         import asyncio
         from agent import Agent
+
         agent = Agent(workspace=str(tmp_path))
         target = tmp_path / "hello.py"
 
         async def run():
-            return await agent._execute_tool_call("write", {
-                "path": str(target),
-                "content": "def hello() -> str:\n    return 'hi'\n",
-            })
+            return await agent._execute_tool_call(
+                "write",
+                {
+                    "path": str(target),
+                    "content": "def hello() -> str:\n    return 'hi'\n",
+                },
+            )
 
         result = asyncio.run(run())
         assert "Written" in result
@@ -719,6 +788,7 @@ class TestAgentExecuteToolCall:
         short region, causing repeated read loops."""
         import asyncio
         from agent import Agent
+
         agent = Agent(workspace=str(tmp_path))
         target = tmp_path / "big.py"
         target.write_text("".join(f"line{i}\n" for i in range(250)), encoding="utf-8")
@@ -728,7 +798,8 @@ class TestAgentExecuteToolCall:
 
         async def second_page():
             return await agent._execute_tool_call(
-                "read", {"path": str(target), "offset": 101},
+                "read",
+                {"path": str(target), "offset": 101},
             )
 
         page1 = asyncio.run(first_page())
@@ -741,13 +812,15 @@ class TestAgentExecuteToolCall:
     def test_read_offset_beyond_end(self, tmp_path):
         import asyncio
         from agent import Agent
+
         agent = Agent(workspace=str(tmp_path))
         target = tmp_path / "small.py"
         target.write_text("abc", encoding="utf-8")
 
         async def run():
             return await agent._execute_tool_call(
-                "read", {"path": str(target), "offset": 99},
+                "read",
+                {"path": str(target), "offset": 99},
             )
 
         assert "beyond the end" in asyncio.run(run())
@@ -755,16 +828,20 @@ class TestAgentExecuteToolCall:
     def test_edit_verifies_and_replaces_first_occurrence(self, tmp_path):
         import asyncio
         from agent import Agent
+
         agent = Agent(workspace=str(tmp_path))
         target = tmp_path / "t.py"
         target.write_text("x = 1\nx = 2\n", encoding="utf-8")
 
         async def run():
-            return await agent._execute_tool_call("edit", {
-                "path": str(target),
-                "old_text": "x = 1",
-                "new_text": "x = 10",
-            })
+            return await agent._execute_tool_call(
+                "edit",
+                {
+                    "path": str(target),
+                    "old_text": "x = 1",
+                    "new_text": "x = 10",
+                },
+            )
 
         result = asyncio.run(run())
         assert "Edited" in result
@@ -774,6 +851,7 @@ class TestAgentExecuteToolCall:
     def test_unknown_tool_returns_error(self):
         import asyncio
         from agent import Agent
+
         agent = Agent(workspace=".")
 
         async def run():
@@ -793,6 +871,7 @@ class TestAgentExecuteToolCall:
         import asyncio
         from pathlib import Path
         from agent import Agent
+
         repo = Path(tmp_path)
         (repo / ".git").mkdir()
         (repo / "file.txt").write_text("hello\n", encoding="utf-8")
@@ -813,6 +892,7 @@ class TestAgentExecuteToolCall:
         valid cwd instead of failing subprocess tools."""
         import asyncio
         from agent import Agent
+
         agent = Agent(workspace=".")
         agent._nlp_workspace = "/c/definitely/not/a/dir"
 
@@ -831,6 +911,7 @@ class TestEffectsRecordingInAgent:
     def test_read_is_recorded_as_effect_when_armed(self, tmp_path):
         import asyncio
         from agent import Agent
+
         target = tmp_path / "a.py"
         target.write_text("x = 1\n", encoding="utf-8")
         agent = Agent(workspace=str(tmp_path))
@@ -847,23 +928,34 @@ class TestEffectsRecordingInAgent:
     def test_write_and_edit_are_recorded_as_effects(self, tmp_path):
         import asyncio
         from agent import Agent
+
         target = tmp_path / "b.py"
         agent = Agent(workspace=str(tmp_path))
         agent._pending_effects = []
 
         async def write_run():
-            await agent._execute_tool_call("write", {
-                "path": str(target), "content": "y = 2\n",
-            })
+            await agent._execute_tool_call(
+                "write",
+                {
+                    "path": str(target),
+                    "content": "y = 2\n",
+                },
+            )
             return agent._take_trace_effects("write", {})
 
         assert asyncio.run(write_run()) == [str(target)]
 
         agent._pending_effects = []
+
         async def edit_run():
-            await agent._execute_tool_call("edit", {
-                "path": str(target), "old_text": "y = 2", "new_text": "y = 3",
-            })
+            await agent._execute_tool_call(
+                "edit",
+                {
+                    "path": str(target),
+                    "old_text": "y = 2",
+                    "new_text": "y = 3",
+                },
+            )
             return agent._take_trace_effects("edit", {})
 
         assert asyncio.run(edit_run()) == [str(target)]
@@ -871,6 +963,7 @@ class TestEffectsRecordingInAgent:
     def test_effects_list_deduplicates_paths(self, tmp_path):
         import asyncio
         from agent import Agent
+
         target = tmp_path / "c.py"
         target.write_text("z = 1\n", encoding="utf-8")
         agent = Agent(workspace=str(tmp_path))
@@ -888,13 +981,18 @@ class TestEffectsRecordingInAgent:
         keep old behaviour, including not accumulating state."""
         import asyncio
         from agent import Agent
+
         agent = Agent(workspace=str(tmp_path))
         assert agent._pending_effects is None
 
         async def run():
-            await agent._execute_tool_call("write", {
-                "path": str(tmp_path / "d.py"), "content": "w = 1\n",
-            })
+            await agent._execute_tool_call(
+                "write",
+                {
+                    "path": str(tmp_path / "d.py"),
+                    "content": "w = 1\n",
+                },
+            )
             return agent._take_trace_effects("write", {})
 
         assert asyncio.run(run()) == []
@@ -909,6 +1007,7 @@ class TestTraceFileEffectsChatNlp:
         import asyncio
         from unittest.mock import patch
         from agent import Agent
+
         target = tmp_path / "hello.py"
         target.write_text("def hi():\n    pass\n", encoding="utf-8")
 
@@ -919,18 +1018,22 @@ class TestTraceFileEffectsChatNlp:
             async def chat(self, messages, tools=None, **kwargs):
                 self.steps += 1
                 if self.steps == 1:
-                    return json.dumps({
-                        "role": "assistant",
-                        "content": "",
-                        "tool_calls": [{
-                            "id": "call_1",
-                            "type": "function",
-                            "function": {
-                                "name": "read",
-                                "arguments": json.dumps({"path": str(target)}),
-                            },
-                        }],
-                    })
+                    return json.dumps(
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "read",
+                                        "arguments": json.dumps({"path": str(target)}),
+                                    },
+                                }
+                            ],
+                        }
+                    )
                 return "Found it."
 
         class FakeTraceWriter:
@@ -941,14 +1044,18 @@ class TestTraceFileEffectsChatNlp:
                 self.events.append(dict(record))
 
             def emit_task_begin(self, user_input):
-                self.emit({"kind": "task_begin", "layer": "context", "user_input": user_input})
+                self.emit(
+                    {"kind": "task_begin", "layer": "context", "user_input": user_input}
+                )
 
             def close(self):
                 pass
 
         writer = FakeTraceWriter()
-        with patch("agent.TraceWriter", lambda **kw: writer), \
-             patch("agent.trace_enabled", lambda: True):
+        with (
+            patch("agent.TraceWriter", lambda **kw: writer),
+            patch("agent.trace_enabled", lambda: True),
+        ):
             agent = Agent(workspace=str(tmp_path))
             agent.llm = FakeLLM()
 
@@ -958,7 +1065,8 @@ class TestTraceFileEffectsChatNlp:
             asyncio.run(run())
 
         read_results = [
-            e for e in writer.events
+            e
+            for e in writer.events
             if e["kind"] == "tool_result" and e.get("tool") == "read"
         ]
         assert read_results, "expected at least one read tool_result event"
@@ -981,18 +1089,21 @@ class TestNoShellInjection:
         import asyncio
         import subprocess
         from agent import Agent
+
         repo = tmp_path
         subprocess.run(["git", "init", "-q", str(repo)], check=False)
         (repo / "f.txt").write_text("x\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(repo), "add", "f.txt"], check=False)
         subprocess.run(
-            ["git", "-C", str(repo), "commit", "-qm", "init"], check=False,
+            ["git", "-C", str(repo), "commit", "-qm", "init"],
+            check=False,
         )
         agent = Agent(workspace=str(repo))
 
         async def run():
             return await agent._execute_tool_call(
-                "git", {"subcommand": "log", "args": "--oneline && echo PWNED"},
+                "git",
+                {"subcommand": "log", "args": "--oneline && echo PWNED"},
             )
 
         result = asyncio.run(run())
@@ -1001,11 +1112,13 @@ class TestNoShellInjection:
     def test_tests_path_cannot_chain_shell_commands(self, tmp_path):
         import asyncio
         from agent import Agent
+
         agent = Agent(workspace=str(tmp_path))
 
         async def run():
             return await agent._execute_tool_call(
-                "tests", {"path": "x; echo PWNED", "framework": "pytest"},
+                "tests",
+                {"path": "x; echo PWNED", "framework": "pytest"},
             )
 
         result = asyncio.run(run())
@@ -1014,6 +1127,7 @@ class TestNoShellInjection:
     def test_diff_path_cannot_chain_shell_commands(self, tmp_path):
         import asyncio
         from agent import Agent
+
         repo = tmp_path
         (repo / "a.txt").write_text("a\n", encoding="utf-8")
         (repo / "b.txt").write_text("b\n", encoding="utf-8")
@@ -1021,7 +1135,8 @@ class TestNoShellInjection:
 
         async def run():
             return await agent._execute_tool_call(
-                "diff", {"file1": 'a.txt" && echo PWNED && "'},
+                "diff",
+                {"file1": 'a.txt" && echo PWNED && "'},
             )
 
         result = asyncio.run(run())
@@ -1030,6 +1145,7 @@ class TestNoShellInjection:
     def test_run_tool_blocks_destructive_patterns(self):
         import asyncio
         from agent import Agent
+
         agent = Agent(workspace=".")
 
         async def run(cmd):
@@ -1050,6 +1166,7 @@ class TestNoShellInjection:
     def test_run_tool_still_executes_harmless_commands(self):
         import asyncio
         from agent import Agent
+
         agent = Agent(workspace=".")
 
         async def run():
@@ -1064,6 +1181,7 @@ class TestRunToolShellAwareness:
 
     def test_detect_shell_returns_something_sensible(self):
         from agent import _detect_shell
+
         shell = _detect_shell()
         assert isinstance(shell, str) and shell
         lower = shell.lower()
@@ -1072,6 +1190,7 @@ class TestRunToolShellAwareness:
     def test_shell_name_consistency(self):
         """_SHELL_NAME must match _shell_name_token() (process-tree detection)."""
         from agent import _shell_name_token, _SHELL_NAME
+
         token = _shell_name_token()
         assert _SHELL_NAME == token
         assert token in ("cmd", "powershell", "bash")
@@ -1080,11 +1199,13 @@ class TestRunToolShellAwareness:
         """The system prompt must explicitly state SHELL_NAME so the LLM knows
         its execution environment and avoids mixing Unix/Windows commands."""
         from agent import _SYSTEM_PROMPT, _SHELL_NAME
+
         assert f"SHELL_NAME={_SHELL_NAME}" in _SYSTEM_PROMPT
 
     def test_unknown_command_gets_shell_hint(self):
         import asyncio
         from agent import Agent
+
         agent = Agent(workspace=".")
 
         async def run():
@@ -1092,7 +1213,8 @@ class TestRunToolShellAwareness:
                 # A name guaranteed to be absent on every platform/PATH: the
                 # subject is the "command not found" -> Hint path, which must
                 # not depend on whether real Unix tools like tail exist.
-                "run", {"command": "definitely_not_a_real_command_9k2f"},
+                "run",
+                {"command": "definitely_not_a_real_command_9k2f"},
             )
 
         result = asyncio.run(run())
@@ -1109,14 +1231,18 @@ class TestRunToolShellAwareness:
         import os
         import asyncio
         from agent import Agent
+
         agent = Agent(workspace=".")
 
         async def run():
             return await agent._execute_tool_call(
-                "run", {"command": (
-                    "definitely_not_a_real_cmd_9k2f x "
-                    "2>&1 | definitely_not_a_real_cmd2_9k2f -40"
-                )},
+                "run",
+                {
+                    "command": (
+                        "definitely_not_a_real_cmd_9k2f x "
+                        "2>&1 | definitely_not_a_real_cmd2_9k2f -40"
+                    )
+                },
             )
 
         result = asyncio.run(run())
@@ -1133,12 +1259,15 @@ class TestPersistentChatHistory:
     def test_loads_history_from_previous_session(self, tmp_path):
         from unittest.mock import patch
         from agent import Agent
+
         history_file = tmp_path / "chat_history.json"
         history_file.write_text(
-            json.dumps([
-                {"role": "user", "content": "Analyze the project"},
-                {"role": "assistant", "content": "Jeg fandt 5 ting."},
-            ]),
+            json.dumps(
+                [
+                    {"role": "user", "content": "Analyze the project"},
+                    {"role": "assistant", "content": "Jeg fandt 5 ting."},
+                ]
+            ),
             encoding="utf-8",
         )
         with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
@@ -1149,6 +1278,7 @@ class TestPersistentChatHistory:
     def test_corrupt_history_file_falls_back_to_empty(self, tmp_path):
         from unittest.mock import patch
         from agent import Agent
+
         history_file = tmp_path / "chat_history.json"
         history_file.write_text("{not valid json", encoding="utf-8")
         with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
@@ -1159,6 +1289,7 @@ class TestPersistentChatHistory:
         import asyncio
         from unittest.mock import patch
         from agent import Agent
+
         history_file = tmp_path / "chat_history.json"
 
         class FakeLLM:
@@ -1185,6 +1316,7 @@ class TestPersistentChatHistory:
         import asyncio
         from unittest.mock import patch
         from agent import Agent, _trim_chat_history
+
         history_file = tmp_path / "chat_history.json"
         messages = [{"role": "system", "content": "SYS"}]
         messages += [{"role": "user", "content": f"msg-{i}"} for i in range(80)]
@@ -1219,8 +1351,10 @@ class TestPersistentChatHistory:
         # about dynamic blocks.  An empty workspace keeps them exact; the
         # skills-in-prompt contract is covered by test_vendored_skills.py.
         memory_file = tmp_path / "agent_memory.json"
-        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)), \
-             patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)):
+        with (
+            patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)),
+            patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)),
+        ):
             agent = Agent(workspace=str(tmp_path))
             agent._chat_history = list(messages)
             agent.llm = FakeLLM()
@@ -1245,6 +1379,7 @@ class TestPersistentChatHistory:
 
     def test_projection_keeps_bounded_multi_exchange(self):
         from agent import _project_chat_history
+
         messages = [
             {"role": "system", "content": "SYS"},
             {"role": "user", "content": "old task"},
@@ -1256,23 +1391,35 @@ class TestPersistentChatHistory:
         # Multi-exchange history survives the projection (bounded only by
         # _trim_chat_history), so a fresh session continues the dialogue.
         assert [m["content"] for m in projected] == [
-            "SYS", "old task", "old answer", "new task", "new answer",
+            "SYS",
+            "old task",
+            "old answer",
+            "new task",
+            "new answer",
         ]
 
     def test_projection_drops_steering_notes_and_empty_placeholders(self):
         from agent import _project_chat_history
+
         messages = [
             {"role": "system", "content": "SYS"},
             {"role": "user", "content": "task"},
             {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
             {"role": "tool", "tool_call_id": "t1", "content": "resultat"},
-            {"role": "tool", "tool_call_id": "t2", "content": "NOTE: This exact call was just executed ..."},
+            {
+                "role": "tool",
+                "tool_call_id": "t2",
+                "content": "NOTE: This exact call was just executed ...",
+            },
             {"role": "assistant", "content": ""},
             {"role": "assistant", "content": "final answer"},
         ]
         projected = _project_chat_history(messages)
         assert [m["content"] for m in projected if m["content"]] == [
-            "SYS", "task", "resultat", "final answer",
+            "SYS",
+            "task",
+            "resultat",
+            "final answer",
         ]
         # The empty assistant WITH tool_calls stays (it pairs with the result)…
         tool_calls = [m for m in projected if m.get("tool_calls")]
@@ -1283,19 +1430,40 @@ class TestPersistentChatHistory:
         an orphan — strict gateways (opencode Console Go) reject those with
         HTTP 400, so they must never reach the payload."""
         from agent import _drop_orphan_tool_messages
+
         messages = [
             {"role": "system", "content": "SYS"},
             {"role": "user", "content": "a"},
-            {"role": "assistant", "content": "",
-             "tool_calls": [{"id": "c1", "type": "function",
-                             "function": {"name": "read", "arguments": "{}"}}]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "read", "arguments": "{}"},
+                    }
+                ],
+            },
             {"role": "tool", "tool_call_id": "c1", "content": "res"},
             {"role": "user", "content": "b"},
-            {"role": "tool", "tool_call_id": "ghost-1", "content": "no matching assistant"},
+            {
+                "role": "tool",
+                "tool_call_id": "ghost-1",
+                "content": "no matching assistant",
+            },
         ]
         cleaned = _drop_orphan_tool_messages(messages)
-        assert [m["role"] for m in cleaned] == ["system", "user", "assistant", "tool", "user"]
-        assert [m.get("tool_call_id") for m in cleaned if m.get("role") == "tool"] == ["c1"]
+        assert [m["role"] for m in cleaned] == [
+            "system",
+            "user",
+            "assistant",
+            "tool",
+            "user",
+        ]
+        assert [m.get("tool_call_id") for m in cleaned if m.get("role") == "tool"] == [
+            "c1"
+        ]
 
     def test_projection_repairs_unanswered_tool_calls(self):
         """Regression (2026-09-21): the projection drops loop-steering results
@@ -1307,30 +1475,62 @@ class TestPersistentChatHistory:
         message)").  The unanswered calls must be stripped; the assistant text
         stays."""
         from agent import _project_chat_history
+
         messages = [
             {"role": "system", "content": "SYS"},
             {"role": "user", "content": "task"},
-            {"role": "assistant", "content": "searching",
-             "tool_calls": [{"id": "c1", "type": "function",
-                             "function": {"name": "web_search", "arguments": "{}"}}]},
+            {
+                "role": "assistant",
+                "content": "searching",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "web_search", "arguments": "{}"},
+                    }
+                ],
+            },
             {"role": "tool", "tool_call_id": "c1", "content": "real result"},
             # duplicate web_search whose result was a steering NOTE -> projected away
-            {"role": "assistant", "content": "that search was unnecessary",
-             "tool_calls": [{"id": "c2", "type": "function",
-                             "function": {"name": "web_search", "arguments": "{}"}}]},
-            {"role": "tool", "tool_call_id": "c2",
-             "content": "NOTE: This exact call has now been executed 2 time(s)"},
-            {"role": "assistant", "content": "done",
-             "tool_calls": [{"id": "c3", "type": "function",
-                             "function": {"name": "web_search", "arguments": "{}"}}]},
-            {"role": "tool", "tool_call_id": "c3",
-             "content": "NOTE: This exact call has now been executed 3 time(s)"},
+            {
+                "role": "assistant",
+                "content": "that search was unnecessary",
+                "tool_calls": [
+                    {
+                        "id": "c2",
+                        "type": "function",
+                        "function": {"name": "web_search", "arguments": "{}"},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "c2",
+                "content": "NOTE: This exact call has now been executed 2 time(s)",
+            },
+            {
+                "role": "assistant",
+                "content": "done",
+                "tool_calls": [
+                    {
+                        "id": "c3",
+                        "type": "function",
+                        "function": {"name": "web_search", "arguments": "{}"},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "c3",
+                "content": "NOTE: This exact call has now been executed 3 time(s)",
+            },
         ]
         projected = _project_chat_history(messages)
         # Every surviving assistant tool_call is answered by a tool message.
         announced = {
             str(tc["id"])
-            for m in projected if m.get("role") == "assistant"
+            for m in projected
+            if m.get("role") == "assistant"
             for tc in (m.get("tool_calls") or [])
         }
         answered = {
@@ -1339,21 +1539,22 @@ class TestPersistentChatHistory:
         assert announced <= answered
         assert announced == {"c1"}
         # The assistant narration survives as plain text (no orphaned call).
-        assert "that search was unnecessary" in [
-            m.get("content") for m in projected
-        ]
+        assert "that search was unnecessary" in [m.get("content") for m in projected]
 
     def test_repair_keeps_answered_calls_and_drops_empty_orphan(self):
         """A partially answered batch keeps its answered calls; an orphan with
         neither content nor calls is dropped entirely."""
         from agent import _repair_unanswered_tool_calls
+
         messages = [
             {"role": "system", "content": "SYS"},
-            {"role": "assistant", "content": "mixed",
-             "tool_calls": [{"id": "a"}, {"id": "b"}]},
+            {
+                "role": "assistant",
+                "content": "mixed",
+                "tool_calls": [{"id": "a"}, {"id": "b"}],
+            },
             {"role": "tool", "tool_call_id": "a", "content": "ok"},
-            {"role": "assistant", "content": "",
-             "tool_calls": [{"id": "gone"}]},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "gone"}]},
             {"role": "assistant", "content": "tail"},
         ]
         out = _repair_unanswered_tool_calls(messages)
@@ -1364,12 +1565,17 @@ class TestPersistentChatHistory:
         """The repair also runs inside _trim_chat_history (the live-session
         bound path), not just the projection."""
         from agent import _trim_chat_history
+
         messages = [
             {"role": "system", "content": "SYS"},
             {"role": "user", "content": "q"},
-            {"role": "assistant", "content": "orphan",
-             "tool_calls": [{"id": "nope",
-                             "function": {"name": "read", "arguments": "{}"}}]},
+            {
+                "role": "assistant",
+                "content": "orphan",
+                "tool_calls": [
+                    {"id": "nope", "function": {"name": "read", "arguments": "{}"}}
+                ],
+            },
             {"role": "user", "content": "next"},
         ]
         trimmed = _trim_chat_history(messages)
@@ -1385,19 +1591,36 @@ class TestPersistentChatHistory:
         with 'tool_calls'").  A later turn may reuse the id legitimately, so
         the dedupe must be run-scoped, not global."""
         from agent import _drop_orphan_tool_messages
+
         messages = [
             {"role": "system", "content": "SYS"},
-            {"role": "assistant", "content": "",
-             "tool_calls": [{"id": "c1", "type": "function",
-                             "function": {"name": "read", "arguments": "{}"}}]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "read", "arguments": "{}"},
+                    }
+                ],
+            },
             {"role": "tool", "tool_call_id": "c1", "content": "real result"},
             # duplicate response for the same run -> must be dropped
             {"role": "tool", "tool_call_id": "c1", "content": "NOTE: Not executed"},
             # a LATER turn reusing the same id -> must be kept
             {"role": "user", "content": "again"},
-            {"role": "assistant", "content": "",
-             "tool_calls": [{"id": "c1", "type": "function",
-                             "function": {"name": "read", "arguments": "{}"}}]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "read", "arguments": "{}"},
+                    }
+                ],
+            },
             {"role": "tool", "tool_call_id": "c1", "content": "second turn result"},
         ]
         cleaned = _drop_orphan_tool_messages(messages)
@@ -1408,13 +1631,27 @@ class TestPersistentChatHistory:
         """When trimming cuts between an assistant tool_calls message and its
         tool result, the surviving orphan tool message is dropped."""
         from agent import _MAX_CHAT_MESSAGES, _trim_chat_history
+
         messages = [{"role": "system", "content": "SYS"}]
         # Assistant with tool_calls early (dropped by the trim window)…
-        messages.append({"role": "assistant", "content": "",
-                         "tool_calls": [{"id": "cut", "type": "function",
-                                         "function": {"name": "read", "arguments": "{}"}}]})
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "cut",
+                        "type": "function",
+                        "function": {"name": "read", "arguments": "{}"},
+                    }
+                ],
+            }
+        )
         # …its tool result late (inside the kept window) → orphan.
-        messages += [{"role": "user", "content": f"filler-{i}"} for i in range(_MAX_CHAT_MESSAGES - 3)]
+        messages += [
+            {"role": "user", "content": f"filler-{i}"}
+            for i in range(_MAX_CHAT_MESSAGES - 3)
+        ]
         messages.append({"role": "tool", "tool_call_id": "cut", "content": "res"})
         messages.append({"role": "user", "content": "end"})
 
@@ -1425,6 +1662,7 @@ class TestPersistentChatHistory:
     def test_clear_history_deletes_file(self, tmp_path):
         from unittest.mock import patch
         from agent import Agent
+
         history_file = tmp_path / "chat_history.json"
         history_file.write_text(
             json.dumps([{"role": "user", "content": "hi"}]),
@@ -1449,16 +1687,24 @@ class TestPersistentMemory:
     def test_loads_memory_from_previous_session(self, tmp_path):
         from unittest.mock import patch
         from agent import Agent
+
         memory_file = tmp_path / "agent_memory.json"
-        memory_file.write_text(json.dumps({
-            "files_read": ["a.py", "b.py"],
-            "semantic_index": {"word": [1, 2, 3]},
-            "knowledge_graph": {"nodes": ["n1"]},
-            "working_memory": ["note"],
-            "history": [{"role": "user", "content": "old"}],
-        }), encoding="utf-8")
-        with patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)), \
-             patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)):
+        memory_file.write_text(
+            json.dumps(
+                {
+                    "files_read": ["a.py", "b.py"],
+                    "semantic_index": {"word": [1, 2, 3]},
+                    "knowledge_graph": {"nodes": ["n1"]},
+                    "working_memory": ["note"],
+                    "history": [{"role": "user", "content": "old"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with (
+            patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)),
+            patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)),
+        ):
             agent = Agent(workspace=".")
             assert agent._files_read == {"a.py", "b.py"}
             assert agent._semantic_index == {"word": {1, 2, 3}}
@@ -1469,8 +1715,11 @@ class TestPersistentMemory:
     def test_missing_memory_file_defaults(self, tmp_path):
         from unittest.mock import patch
         from agent import Agent
-        with patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)), \
-             patch("agent.AGENT_MEMORY_JSON_PATH", str(tmp_path / "none.json")):
+
+        with (
+            patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)),
+            patch("agent.AGENT_MEMORY_JSON_PATH", str(tmp_path / "none.json")),
+        ):
             agent = Agent(workspace=".")
             assert agent._files_read == set()
             assert agent._semantic_index == {}
@@ -1481,10 +1730,13 @@ class TestPersistentMemory:
     def test_corrupt_memory_file_defaults(self, tmp_path):
         from unittest.mock import patch
         from agent import Agent
+
         memory_file = tmp_path / "agent_memory.json"
         memory_file.write_text("{not valid json", encoding="utf-8")
-        with patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)), \
-             patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)):
+        with (
+            patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)),
+            patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)),
+        ):
             agent = Agent(workspace=".")
             assert agent._files_read == set()
             assert agent._semantic_index == {}
@@ -1493,16 +1745,24 @@ class TestPersistentMemory:
     def test_clear_history_removes_memory_file(self, tmp_path):
         from unittest.mock import patch
         from agent import Agent
+
         memory_file = tmp_path / "agent_memory.json"
-        memory_file.write_text(json.dumps({
-            "files_read": ["a.py"],
-            "semantic_index": {},
-            "knowledge_graph": {},
-            "working_memory": [],
-            "history": [],
-        }), encoding="utf-8")
-        with patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)), \
-             patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)):
+        memory_file.write_text(
+            json.dumps(
+                {
+                    "files_read": ["a.py"],
+                    "semantic_index": {},
+                    "knowledge_graph": {},
+                    "working_memory": [],
+                    "history": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with (
+            patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)),
+            patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)),
+        ):
             agent = Agent(workspace=".")
             assert agent._files_read == {"a.py"}
             agent.clear_history()
@@ -1514,14 +1774,17 @@ class TestPersistentMemory:
         import asyncio
         from unittest.mock import patch
         from agent import Agent
+
         memory_file = tmp_path / "agent_memory.json"
 
         class FakeLLM:
             async def chat(self, messages, tools=None, **kwargs):
                 return "done"
 
-        with patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)), \
-             patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)):
+        with (
+            patch("agent.CHAT_HISTORY_JSON_PATH", self._write_history(tmp_path)),
+            patch("agent.AGENT_MEMORY_JSON_PATH", str(memory_file)),
+        ):
             agent = Agent(workspace=".")
             agent.llm = FakeLLM()
             agent._files_read = {"a.py", "b.py"}
@@ -1551,16 +1814,18 @@ class TestNoProgressGuard:
     def test_many_repeated_calls_without_new_discovery_forces_synthesis(self):
         """Repeating known calls (no new files/searches) is the genuine stuck
         signal — distinct reads count as progress (audits run to completion)."""
-        fake = _ScriptedLLM([
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "b.py"}),
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "b.py"}),
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "b.py"}),
-            ("read", {"path": "a.py"}),
-            "I only explored — here is my answer.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "b.py"}),
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "b.py"}),
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "b.py"}),
+                ("read", {"path": "a.py"}),
+                "I only explored — here is my answer.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -1568,7 +1833,9 @@ class TestNoProgressGuard:
             return "x"
 
         runner = ToolLoopRunner(
-            max_iterations=50, no_mutation_limit=3, force_after_no_mutation=5,
+            max_iterations=50,
+            no_mutation_limit=3,
+            force_after_no_mutation=5,
         )
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
 
@@ -1582,7 +1849,8 @@ class TestNoProgressGuard:
             for m in fake.calls[0][0]
         )
         nudge_in_last = sum(
-            1 for m in fake.calls[-1][0]
+            1
+            for m in fake.calls[-1][0]
             if str(m.get("content")).startswith("NOTE: You have now made")
         )
         assert not nudge_in_first
@@ -1596,9 +1864,10 @@ class TestNoProgressGuard:
     def test_read_only_audit_runs_to_completion(self):
         """A read-only task that keeps discovering NEW files must never be
         stopped by the progress guard — it runs until the model answers."""
-        fake = _ScriptedLLM([
-            ("read", {"path": f"file{i}.py"}) for i in range(8)
-        ] + ["Audit complete — no vulnerabilities found."])
+        fake = _ScriptedLLM(
+            [("read", {"path": f"file{i}.py"}) for i in range(8)]
+            + ["Audit complete — no vulnerabilities found."]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -1606,7 +1875,9 @@ class TestNoProgressGuard:
             return "x"
 
         runner = ToolLoopRunner(
-            max_iterations=50, no_mutation_limit=3, force_after_no_mutation=5,
+            max_iterations=50,
+            no_mutation_limit=3,
+            force_after_no_mutation=5,
         )
         final_text, _ = _loop_runner_sync(runner, fake, execute_tool)
 
@@ -1615,15 +1886,17 @@ class TestNoProgressGuard:
         assert final_text == "Audit complete — no vulnerabilities found."
 
     def test_edit_resets_progress_counter(self):
-        fake = _ScriptedLLM([
-            ("read", {"path": "a.py"}),
-            ("read", {"path": "b.py"}),
-            ("write", {"path": "b.py", "content": "x"}),
-            ("read", {"path": "c.py"}),
-            ("read", {"path": "d.py"}),
-            ("read", {"path": "e.py"}),
-            "Edited and done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                ("read", {"path": "b.py"}),
+                ("write", {"path": "b.py", "content": "x"}),
+                ("read", {"path": "c.py"}),
+                ("read", {"path": "d.py"}),
+                ("read", {"path": "e.py"}),
+                "Edited and done.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -1631,7 +1904,9 @@ class TestNoProgressGuard:
             return "x"
 
         runner = ToolLoopRunner(
-            max_iterations=50, no_mutation_limit=2, force_after_no_mutation=4,
+            max_iterations=50,
+            no_mutation_limit=2,
+            force_after_no_mutation=4,
         )
         final_text, _ = _loop_runner_sync(runner, fake, execute_tool)
 
@@ -1647,7 +1922,9 @@ class TestNoProgressGuard:
         script: list = []
         for i in range(12):
             script.append(("read", {"path": f"f{i}.py"}))
-            script.append(("edit", {"path": f"f{i}.py", "old_text": "a", "new_text": "b"}))
+            script.append(
+                ("edit", {"path": f"f{i}.py", "old_text": "a", "new_text": "b"})
+            )
         script.append("All twelve files updated.")
         fake = _ScriptedLLM(script)
         executed = []
@@ -1682,16 +1959,21 @@ class TestAutoContinue:
                 self.calls += 1
                 step = self.responses.pop(0)
                 if isinstance(step, dict):
-                    return json.dumps({
-                        "content": "",
-                        "tool_calls": [{
-                            "id": "c1", "type": "function",
-                            "function": {
-                                "name": "search",
-                                "arguments": json.dumps(step["args"]),
-                            },
-                        }],
-                    })
+                    return json.dumps(
+                        {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "c1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "search",
+                                        "arguments": json.dumps(step["args"]),
+                                    },
+                                }
+                            ],
+                        }
+                    )
                 return step
 
         return SeqLLM()
@@ -1700,6 +1982,7 @@ class TestAutoContinue:
         import asyncio
         from unittest.mock import patch
         from agent import Agent
+
         history_file = tmp_path / "chat_history.json"
         with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
             agent = Agent(workspace=".")
@@ -1712,11 +1995,13 @@ class TestAutoContinue:
             return agent, seq_llm
 
     def test_continues_after_incomplete_answer(self, tmp_path):
-        llm = self._seq_llm([
-            {"args": {"query": "x"}},
-            "The budget was exhausted — I would need one more call to finish.",
-            "All done.",
-        ])
+        llm = self._seq_llm(
+            [
+                {"args": {"query": "x"}},
+                "The budget was exhausted — I would need one more call to finish.",
+                "All done.",
+            ]
+        )
         agent, llm = self._run(tmp_path, llm)
         # Run 1 (tool call + incomplete answer) + run 2 (final answer).
         assert llm.calls == 3
@@ -1730,11 +2015,15 @@ class TestAutoContinue:
 
     def test_continuation_is_capped(self, tmp_path):
         from agent import _MAX_CHAINED_RUNS
+
         # Distinct answers per run: only the cap bounds the chaining (an
         # identical repeat would trip the repeat-guard instead, which has its
         # own dedicated test).
         llm = self._seq_llm(
-            [f"The tool budget is exhausted, I still need more calls — attempt {i}." for i in range(20)]
+            [
+                f"The tool budget is exhausted, I still need more calls — attempt {i}."
+                for i in range(20)
+            ]
         )
         agent, llm = self._run(tmp_path, llm)
         # Initial run + _MAX_CHAINED_RUNS continuations, no infinite loop.
@@ -1755,6 +2044,7 @@ class TestAutoContinue:
         from unittest.mock import patch
         from agent import Agent
         from agent_core.llm.tool_loop import ToolLoopRunner
+
         history_file = tmp_path / "chat_history.json"
 
         class CapLLM:
@@ -1764,21 +2054,27 @@ class TestAutoContinue:
             async def chat(self, messages, tools=None, **kwargs):
                 self.calls += 1
                 continued = any(
-                    "CONTINUE THE TASK" in str(m.get("content", ""))
-                    for m in messages
+                    "CONTINUE THE TASK" in str(m.get("content", "")) for m in messages
                 )
                 if continued:
                     return "All done now."
-                return json.dumps({
-                    "content": "",
-                    "tool_calls": [{
-                        "id": "c1", "type": "function",
-                        "function": {
-                            "name": "search",
-                            "arguments": json.dumps({"query": f"x{self.calls}"}),
-                        },
-                    }],
-                })
+                return json.dumps(
+                    {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "c1",
+                                "type": "function",
+                                "function": {
+                                    "name": "search",
+                                    "arguments": json.dumps(
+                                        {"query": f"x{self.calls}"}
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                )
 
         with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
             with patch(
@@ -1807,6 +2103,7 @@ class TestAutoContinue:
         import asyncio
         from unittest.mock import patch
         from agent import Agent
+
         history_file = tmp_path / "chat_history.json"
 
         class StuckLLM:
@@ -1816,16 +2113,21 @@ class TestAutoContinue:
             async def chat(self, messages, tools=None, **kwargs):
                 self.calls += 1
                 if self.calls <= 3:
-                    return json.dumps({
-                        "content": "",
-                        "tool_calls": [{
-                            "id": "c1", "type": "function",
-                            "function": {
-                                "name": "search",
-                                "arguments": json.dumps({"query": "same"}),
-                            },
-                        }],
-                    })
+                    return json.dumps(
+                        {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "c1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "search",
+                                        "arguments": json.dumps({"query": "same"}),
+                                    },
+                                }
+                            ],
+                        }
+                    )
                 return "I cannot make progress — here is my answer."
 
         with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
@@ -1840,7 +2142,10 @@ class TestAutoContinue:
 
         # 3 loop calls + 1 forced synthesis — and NOTHING more: no chain.
         assert llm.calls == 4
-        assert agent._chat_history[-1]["content"] == "I cannot make progress — here is my answer."
+        assert (
+            agent._chat_history[-1]["content"]
+            == "I cannot make progress — here is my answer."
+        )
 
     def test_no_continuation_after_no_progress(self, tmp_path):
         """A no_progress run must not auto-continue either."""
@@ -1848,6 +2153,7 @@ class TestAutoContinue:
         from unittest.mock import patch
         from agent import Agent
         from agent_core.llm.tool_loop import ToolLoopRunner
+
         history_file = tmp_path / "chat_history.json"
 
         class ExploreLLM:
@@ -1859,23 +2165,30 @@ class TestAutoContinue:
                 if self.calls <= 6:
                     # Alternating known reads: no new discovery → stuck counter.
                     path = f"f{1 if self.calls % 2 == 1 else 2}.py"
-                    return json.dumps({
-                        "content": "",
-                        "tool_calls": [{
-                            "id": "c1", "type": "function",
-                            "function": {
-                                "name": "read",
-                                "arguments": json.dumps({"path": path}),
-                            },
-                        }],
-                    })
+                    return json.dumps(
+                        {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "c1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "read",
+                                        "arguments": json.dumps({"path": path}),
+                                    },
+                                }
+                            ],
+                        }
+                    )
                 return "Exploration only — here is my answer."
 
         with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
             with patch(
                 "agent.ToolLoopRunner",
                 lambda *a, **k: ToolLoopRunner(
-                    max_iterations=50, no_mutation_limit=2, force_after_no_mutation=4,
+                    max_iterations=50,
+                    no_mutation_limit=2,
+                    force_after_no_mutation=4,
                 ),
             ):
                 agent = Agent(workspace=".")
@@ -1890,7 +2203,10 @@ class TestAutoContinue:
         # 6 alternating repeated reads (no new discovery) + 1 forced synthesis.
         # The answer carries no unfinished-work markers → no chain.
         assert llm.calls == 7
-        assert agent._chat_history[-1]["content"] == "Exploration only — here is my answer."
+        assert (
+            agent._chat_history[-1]["content"]
+            == "Exploration only — here is my answer."
+        )
 
 
 class TestDisplayModes:
@@ -1899,6 +2215,7 @@ class TestDisplayModes:
 
     def test_default_runner_is_verbose(self):
         from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
+
         runner = ToolLoopRunner(max_iterations=5)
         assert runner.display_mode == DisplayMode.VERBOSE
 
@@ -1908,10 +2225,12 @@ class TestDisplayModes:
         full payload in the role:tool message."""
         from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
 
-        fake = _ScriptedLLM([
-            ("read", {"path": "big.py"}),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "big.py"}),
+                "Done.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -1933,10 +2252,12 @@ class TestDisplayModes:
         fed to the model as a role:tool message and final text/history unchanged."""
         from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
 
-        fake = _ScriptedLLM([
-            ("read", {"path": "a.py"}),
-            "Answer.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                "Answer.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -1960,10 +2281,12 @@ class TestDisplayModes:
 
         assert _parse_display_mode("intent") == AgentDisplayMode.INTENT
 
-        fake = _ScriptedLLM([
-            ("read", {"path": "a.py"}),
-            "Answer.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                "Answer.",
+            ]
+        )
         order: list[str] = []
 
         async def execute_tool(name, args):
@@ -1988,10 +2311,12 @@ class TestDisplayModes:
         explains every planned call with a short ``why:`` line."""
         from agent_core.llm.tool_loop import ToolLoopRunner
 
-        fake = _ScriptedLLM([
-            ("read", {"path": "a.py"}),
-            "Answer.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                "Answer.",
+            ]
+        )
 
         async def execute_tool(name, args):
             return "ok"
@@ -2015,10 +2340,12 @@ class TestDisplayModes:
             + "padding " * 400
         )
         assert len(long_note) > 1200  # the old display cut narration at 1200
-        fake = _ScriptedLLM([
-            ("read", {"path": "a.py"}, long_note),
-            "Answer.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}, long_note),
+                "Answer.",
+            ]
+        )
 
         async def execute_tool(name, args):
             return "ok"
@@ -2036,11 +2363,13 @@ class TestDisplayModes:
         """INTENT mode writes one block per LLM round, not just the first."""
         from agent_core.llm.tool_loop import ToolLoopRunner
 
-        fake = _ScriptedLLM([
-            ("read", {"path": "a.py"}),
-            ("search", {"query": "symbol"}),
-            "Answer.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                ("search", {"query": "symbol"}),
+                "Answer.",
+            ]
+        )
 
         async def execute_tool(name, args):
             return "ok"
@@ -2073,19 +2402,25 @@ class TestDisplayModes:
                 if self.calls == 1:
                     # Narration that ALSO carries a tool call — exercises both the
                     # [reason] line (CLEAN) and the preamble folding on a real call.
-                    return json.dumps({
-                        "content": "I will read the file and then answer.",
-                        "tool_calls": [{
-                            "id": "c1", "type": "function",
-                            "function": {
-                                "name": "read",
-                                "arguments": json.dumps({"path": "a.py"}),
-                            },
-                        }],
-                    })
+                    return json.dumps(
+                        {
+                            "content": "I will read the file and then answer.",
+                            "tool_calls": [
+                                {
+                                    "id": "c1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "read",
+                                        "arguments": json.dumps({"path": "a.py"}),
+                                    },
+                                }
+                            ],
+                        }
+                    )
                 return "I will read the file and then answer."
 
         from agent import Agent
+
         with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
             agent = Agent(workspace=".")
             agent.llm = NarrationLLM()
@@ -2096,7 +2431,10 @@ class TestDisplayModes:
                 captured.append(text)
 
             with patch("builtins.print", side_effect=_spy):
-                with patch("agent._resolve_display_mode", return_value=AgentDisplayMode.CLEAN):
+                with patch(
+                    "agent._resolve_display_mode", return_value=AgentDisplayMode.CLEAN
+                ):
+
                     async def go():
                         await agent.chat_nlp("read a.py")
 
@@ -2125,23 +2463,32 @@ class TestDisplayModes:
             async def chat(self, messages, tools=None, **kwargs):
                 self.calls += 1
                 if self.calls == 1:
-                    return json.dumps({
-                        "content": "",
-                        "tool_calls": [{
-                            "id": "c1", "type": "function",
-                            "function": {
-                                "name": "read",
-                                "arguments": json.dumps({"path": "a.py"}),
-                            },
-                        }],
-                    })
+                    return json.dumps(
+                        {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "c1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "read",
+                                        "arguments": json.dumps({"path": "a.py"}),
+                                    },
+                                }
+                            ],
+                        }
+                    )
                 return "Final quiet answer."
 
         from agent import Agent
+
         with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
             agent = Agent(workspace=".")
             agent.llm = QuietLLM()
-            with patch("agent._resolve_display_mode", return_value=AgentDisplayMode.QUIET):
+            with patch(
+                "agent._resolve_display_mode", return_value=AgentDisplayMode.QUIET
+            ):
+
                 async def go():
                     await agent.chat_nlp("read a.py")
 
@@ -2160,14 +2507,16 @@ class TestDisplayModes:
         from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
 
         command = (
-            'cd /d D:\\Dev\\Agent1 && git stash && '
+            "cd /d D:\\Dev\\Agent1 && git stash && "
             'python -m pytest "tests/test_flow_control.py" -q'
         )
         assert len(command) > 60
-        fake = _ScriptedLLM([
-            ("run", {"command": command}),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("run", {"command": command}),
+                "Done.",
+            ]
+        )
         executed = []
 
         async def execute_tool(name, args):
@@ -2182,7 +2531,7 @@ class TestDisplayModes:
         assert executed == [("run", {"command": command})]
         out = capsys.readouterr().out
         assert "[tool]" in out
-        assert command in out          # full command rendered
+        assert command in out  # full command rendered
         assert "command=" in out
         # No mid-command ellipsis after the command= prefix.
         assert "command=" + command[:57] + "..." not in out
@@ -2194,10 +2543,12 @@ class TestDisplayModes:
         from agent_core.llm.tool_loop import ToolLoopRunner
 
         long_path = "x" * 120
-        fake = _ScriptedLLM([
-            ("read", {"path": long_path}),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": long_path}),
+                "Done.",
+            ]
+        )
 
         async def execute_tool(name, args):
             return "content"
@@ -2207,8 +2558,8 @@ class TestDisplayModes:
 
         out = capsys.readouterr().out
         assert "[tool]" in out
-        assert long_path not in out          # long path still truncated
-        assert "..." in out                  # ellipsis still used for non-commands
+        assert long_path not in out  # long path still truncated
+        assert "..." in out  # ellipsis still used for non-commands
         assert long_path[:57] + "..." in out
 
     def test_clean_reason_line_shows_full_run_command(self, capsys):
@@ -2216,13 +2567,15 @@ class TestDisplayModes:
         from agent_core.llm.tool_loop import ToolLoopRunner
 
         command = (
-            'cd /d D:\\Dev\\Agent1 && git stash && '
+            "cd /d D:\\Dev\\Agent1 && git stash && "
             'python -m pytest "tests/test_flow_control.py" -q'
         )
-        fake = _ScriptedLLM([
-            ("run", {"command": command}),
-            "Done.",
-        ])
+        fake = _ScriptedLLM(
+            [
+                ("run", {"command": command}),
+                "Done.",
+            ]
+        )
 
         async def execute_tool(name, args):
             return "ok"
@@ -2232,7 +2585,7 @@ class TestDisplayModes:
 
         out = capsys.readouterr().out
         assert "[reason]" in out
-        assert command in out          # full command on the reason line too
+        assert command in out  # full command on the reason line too
 
 
 class TestLLMBadBehaviorDetection:
@@ -2245,6 +2598,7 @@ class TestLLMBadBehaviorDetection:
         import asyncio
         from unittest.mock import patch
         from agent import Agent
+
         history_file = tmp_path / "chat_history.json"
 
         class ErrorLLM:
@@ -2253,9 +2607,11 @@ class TestLLMBadBehaviorDetection:
 
             async def chat(self, messages, tools=None, **kwargs):
                 self.calls += 1
-                return ("[Error: model consumed 4000 reasoning bytes with no output — "
-                        "reasoning models burn their budget thinking. Retry with "
-                        "disable_thinking=True (injects /no_think for Nemotron-3).]")
+                return (
+                    "[Error: model consumed 4000 reasoning bytes with no output — "
+                    "reasoning models burn their budget thinking. Retry with "
+                    "disable_thinking=True (injects /no_think for Nemotron-3).]"
+                )
 
         with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
             agent = Agent(workspace=".")
@@ -2274,12 +2630,17 @@ class TestLLMBadBehaviorDetection:
         assert "reasoning" in out
         # The raw error must not be printed as the green final answer.
         assert "model consumed 4000 reasoning" in out  # shown inside the error block
-        assert agent._chat_history[-1]["role"] == "user"  # no fake assistant answer saved
+        assert (
+            agent._chat_history[-1]["role"] == "user"
+        )  # no fake assistant answer saved
 
-    def test_repeated_identical_incomplete_answer_stops_chaining(self, tmp_path, capsys):
+    def test_repeated_identical_incomplete_answer_stops_chaining(
+        self, tmp_path, capsys
+    ):
         import asyncio
         from unittest.mock import patch
         from agent import Agent
+
         history_file = tmp_path / "chat_history.json"
 
         class RepeatingLLM:

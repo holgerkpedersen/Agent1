@@ -5,6 +5,7 @@ change backed by trace evidence.  Repairs are applied via exact source
 transforms and verified with py_compile; the loop reverts any repair that
 fails the test/security gates.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

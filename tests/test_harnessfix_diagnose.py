@@ -1,4 +1,5 @@
 """Phase 2 tests: heuristic signature classification (spec section 3.3)."""
+
 from __future__ import annotations
 
 from harnessfix.diagnose import Diagnosis, diagnose_graph
@@ -30,13 +31,24 @@ def _graph(steps: list[tuple[str, str, dict]]) -> TraceGraph:
 
 
 def _loop_end(outcome: str) -> tuple[str, str, dict]:
-    return KIND_LOOP_END, LAYER_LIFECYCLE, {"outcome": outcome, "termination_reason": outcome}
+    return (
+        KIND_LOOP_END,
+        LAYER_LIFECYCLE,
+        {"outcome": outcome, "termination_reason": outcome},
+    )
 
 
 def test_validation_error_maps_to_tool_interface():
     g = _graph(
         [
-            (KIND_TOOL_ERROR, LAYER_TOOL_INTERFACE, {"exception": "ValidationError", "message": "schema validation failed for path"}),
+            (
+                KIND_TOOL_ERROR,
+                LAYER_TOOL_INTERFACE,
+                {
+                    "exception": "ValidationError",
+                    "message": "schema validation failed for path",
+                },
+            ),
             _loop_end("completed"),
         ]
     )
@@ -48,7 +60,11 @@ def test_validation_error_maps_to_tool_interface():
 def test_shell_error_maps_to_execution_environment():
     g = _graph(
         [
-            (KIND_TOOL_ERROR, LAYER_TOOL_INTERFACE, {"exception": "TimeoutExpired", "message": "command timed out"}),
+            (
+                KIND_TOOL_ERROR,
+                LAYER_TOOL_INTERFACE,
+                {"exception": "TimeoutExpired", "message": "command timed out"},
+            ),
             _loop_end("completed"),
         ]
     )
@@ -59,7 +75,14 @@ def test_shell_error_maps_to_execution_environment():
 def test_security_rejection_maps_to_governance():
     g = _graph(
         [
-            (KIND_TOOL_ERROR, LAYER_TOOL_INTERFACE, {"exception": "SecurityViolationError", "message": "command 'rm' is not allowed"}),
+            (
+                KIND_TOOL_ERROR,
+                LAYER_TOOL_INTERFACE,
+                {
+                    "exception": "SecurityViolationError",
+                    "message": "command 'rm' is not allowed",
+                },
+            ),
             _loop_end("completed"),
         ]
     )
@@ -75,7 +98,11 @@ def test_truncation_warning_in_model_output_is_not_context_pressure():
     output.  Free-text model output is never a system diagnostic."""
     g = _graph(
         [
-            (KIND_LLM_RESPONSE, LAYER_CONTEXT, {"text": "WARNING: conversation truncated at 8192 tokens"}),
+            (
+                KIND_LLM_RESPONSE,
+                LAYER_CONTEXT,
+                {"text": "WARNING: conversation truncated at 8192 tokens"},
+            ),
             _loop_end("completed"),
         ]
     )
@@ -91,7 +118,10 @@ def test_truncation_marker_in_system_note_maps_to_context():
             (
                 KIND_GUARD_TRIGGERED,
                 LAYER_LIFECYCLE,
-                {"guard": GUARD_BUDGET, "note": "history truncated to fit the token budget"},
+                {
+                    "guard": GUARD_BUDGET,
+                    "note": "history truncated to fit the token budget",
+                },
             ),
             _loop_end("completed"),
         ]
@@ -104,7 +134,11 @@ def test_truncation_marker_in_system_note_maps_to_context():
 def test_verification_failure_maps_to_verification():
     g = _graph(
         [
-            (KIND_TOOL_RESULT, LAYER_VERIFICATION, {"tool": "tests", "result": "verification failed: expected 3, got 2"}),
+            (
+                KIND_TOOL_RESULT,
+                LAYER_VERIFICATION,
+                {"tool": "tests", "result": "verification failed: expected 3, got 2"},
+            ),
             _loop_end("completed"),
         ]
     )
@@ -115,9 +149,21 @@ def test_verification_failure_maps_to_verification():
 def test_repeated_identical_call_maps_to_lifecycle_stuck():
     g = _graph(
         [
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h"}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h"}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h"}),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "search", "args_hash": "h"},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "search", "args_hash": "h"},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "search", "args_hash": "h"},
+            ),
             _loop_end("stuck"),
         ]
     )
@@ -133,16 +179,56 @@ def test_non_consecutive_repeats_are_not_a_stuck_cycle():
     diagnosis must fall through to the guard that actually ended the loop."""
     g = _graph(
         [
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "a", "duplicate": False}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "b", "duplicate": False}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "a", "duplicate": False}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "c", "duplicate": False}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "a", "duplicate": False}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "b", "duplicate": False}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "a", "duplicate": False}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "a", "duplicate": False}),
-            ("guard_triggered", LAYER_LIFECYCLE, {"guard": "no_mutation", "note": "nudge"}),
-            ("guard_triggered", LAYER_LIFECYCLE, {"guard": "no_mutation", "note": "force"}),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "read", "args_hash": "a", "duplicate": False},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "read", "args_hash": "b", "duplicate": False},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "read", "args_hash": "a", "duplicate": False},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "read", "args_hash": "c", "duplicate": False},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "read", "args_hash": "a", "duplicate": False},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "read", "args_hash": "b", "duplicate": False},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "read", "args_hash": "a", "duplicate": False},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "read", "args_hash": "a", "duplicate": False},
+            ),
+            (
+                "guard_triggered",
+                LAYER_LIFECYCLE,
+                {"guard": "no_mutation", "note": "nudge"},
+            ),
+            (
+                "guard_triggered",
+                LAYER_LIFECYCLE,
+                {"guard": "no_mutation", "note": "force"},
+            ),
             _loop_end("no_progress"),
         ]
     )
@@ -155,9 +241,21 @@ def test_non_consecutive_repeats_are_not_a_stuck_cycle():
 def test_stuck_guard_event_maps_to_lifecycle_stuck():
     g = _graph(
         [
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h", "duplicate": False}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h", "duplicate": True}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h", "duplicate": True}),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "search", "args_hash": "h", "duplicate": False},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "search", "args_hash": "h", "duplicate": True},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "search", "args_hash": "h", "duplicate": True},
+            ),
             ("guard_triggered", LAYER_LIFECYCLE, {"guard": "stuck", "note": "stop"}),
             _loop_end("stuck"),
         ]
@@ -171,7 +269,11 @@ def test_stuck_guard_event_maps_to_lifecycle_stuck():
 def test_budget_guard_maps_to_lifecycle():
     g = _graph(
         [
-            ("guard_triggered", LAYER_LIFECYCLE, {"guard": "budget_exhausted", "note": "no more tools"}),
+            (
+                "guard_triggered",
+                LAYER_LIFECYCLE,
+                {"guard": "budget_exhausted", "note": "no more tools"},
+            ),
             _loop_end("budget_exhausted"),
         ]
     )
@@ -183,7 +285,11 @@ def test_budget_guard_maps_to_lifecycle():
 def test_diagnosis_has_evidence_and_confidence():
     g = _graph(
         [
-            (KIND_TOOL_ERROR, LAYER_TOOL_INTERFACE, {"exception": "ValidationError", "message": "validation failed"}),
+            (
+                KIND_TOOL_ERROR,
+                LAYER_TOOL_INTERFACE,
+                {"exception": "ValidationError", "message": "validation failed"},
+            ),
             _loop_end("completed"),
         ]
     )
@@ -192,7 +298,14 @@ def test_diagnosis_has_evidence_and_confidence():
     assert d.confidence > 0.0
     assert d.evidence  # at least one step/link reference
     assert d.repair_proposal
-    assert d.root_layer in {"tool_interface", "execution_environment", "governance", "verification", "context", "lifecycle"}
+    assert d.root_layer in {
+        "tool_interface",
+        "execution_environment",
+        "governance",
+        "verification",
+        "context",
+        "lifecycle",
+    }
 
 
 def test_abandonment_detected_via_affected_files():
@@ -201,9 +314,17 @@ def test_abandonment_detected_via_affected_files():
     g = _graph(
         [
             (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "write", "args_hash": "w"}),
-            (KIND_TOOL_RESULT, LAYER_TOOL_INTERFACE, {"tool": "write", "affected_files": ["a.py"]}),
+            (
+                KIND_TOOL_RESULT,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "write", "affected_files": ["a.py"]},
+            ),
             (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "r"}),
-            (KIND_TOOL_RESULT, LAYER_TOOL_INTERFACE, {"tool": "read", "affected_files": ["b.py"]}),
+            (
+                KIND_TOOL_RESULT,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "read", "affected_files": ["b.py"]},
+            ),
             _loop_end("cap"),
         ]
     )
@@ -221,7 +342,11 @@ def test_interrupted_run_without_loop_end_is_failed():
         [
             (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "r"}),
             (KIND_TOOL_RESULT, LAYER_TOOL_INTERFACE, {"tool": "read"}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "s"}),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "search", "args_hash": "s"},
+            ),
         ]
     )
     assert not g.has_loop_end()
@@ -233,9 +358,21 @@ def test_interrupted_run_without_loop_end_is_failed():
 def test_stuck_mechanism_names_the_repeating_tool():
     g = _graph(
         [
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h", "duplicate": False}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h", "duplicate": True}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "search", "args_hash": "h", "duplicate": True}),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "search", "args_hash": "h", "duplicate": False},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "search", "args_hash": "h", "duplicate": True},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "search", "args_hash": "h", "duplicate": True},
+            ),
             ("guard_triggered", LAYER_LIFECYCLE, {"guard": "stuck", "note": "stop"}),
             _loop_end("stuck"),
         ]
@@ -280,10 +417,21 @@ def test_tool_result_file_content_does_not_trigger_signatures():
     a669a26e...).  Signatures must only match system-diagnostic kinds."""
     g = _graph(
         [
-            (KIND_TOOL_RESULT, LAYER_TOOL_INTERFACE,
-             {"tool": "read", "text": "the file mentions truncation handling here"}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "x", "duplicate": True}),
-            (KIND_TOOL_CALL, LAYER_TOOL_INTERFACE, {"tool": "read", "args_hash": "x", "duplicate": True}),
+            (
+                KIND_TOOL_RESULT,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "read", "text": "the file mentions truncation handling here"},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "read", "args_hash": "x", "duplicate": True},
+            ),
+            (
+                KIND_TOOL_CALL,
+                LAYER_TOOL_INTERFACE,
+                {"tool": "read", "args_hash": "x", "duplicate": True},
+            ),
             ("guard_triggered", LAYER_LIFECYCLE, {"guard": "stuck", "note": "stop"}),
             _loop_end("stuck"),
         ]
@@ -303,21 +451,52 @@ def test_guard_terminated_run_with_final_answer_is_delivered(tmp_path):
     real.mkdir()
 
     delivered = TraceWriter(task_id="delivered", directory=real)
-    delivered.emit({"kind": "tool_call", "layer": "tool_interface",
-                    "tool": "run", "args_hash": "h", "duplicate": True})
-    delivered.emit({"kind": "guard_triggered", "layer": "lifecycle",
-                    "guard": "stuck", "note": "stop now"})
-    delivered.emit({"kind": "llm_response", "layer": "observability",
-                    "text": "## Final Answer\n\nHere is the complete analysis of why the two "
-                            "workflow runs differ, with all findings and a recommendation."})
+    delivered.emit(
+        {
+            "kind": "tool_call",
+            "layer": "tool_interface",
+            "tool": "run",
+            "args_hash": "h",
+            "duplicate": True,
+        }
+    )
+    delivered.emit(
+        {
+            "kind": "guard_triggered",
+            "layer": "lifecycle",
+            "guard": "stuck",
+            "note": "stop now",
+        }
+    )
+    delivered.emit(
+        {
+            "kind": "llm_response",
+            "layer": "observability",
+            "text": "## Final Answer\n\nHere is the complete analysis of why the two "
+            "workflow runs differ, with all findings and a recommendation.",
+        }
+    )
     delivered.emit({"kind": "loop_end", "layer": "lifecycle", "outcome": "stuck"})
     delivered.close()
 
     empty = TraceWriter(task_id="empty", directory=real)
-    empty.emit({"kind": "tool_call", "layer": "tool_interface",
-                "tool": "run", "args_hash": "h", "duplicate": True})
-    empty.emit({"kind": "guard_triggered", "layer": "lifecycle",
-                "guard": "stuck", "note": "stop now"})
+    empty.emit(
+        {
+            "kind": "tool_call",
+            "layer": "tool_interface",
+            "tool": "run",
+            "args_hash": "h",
+            "duplicate": True,
+        }
+    )
+    empty.emit(
+        {
+            "kind": "guard_triggered",
+            "layer": "lifecycle",
+            "guard": "stuck",
+            "note": "stop now",
+        }
+    )
     empty.emit({"kind": "loop_end", "layer": "lifecycle", "outcome": "stuck"})
     empty.close()
 

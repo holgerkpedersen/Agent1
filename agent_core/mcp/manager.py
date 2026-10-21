@@ -5,6 +5,7 @@ transitions are lock-guarded; the web UI and the NLP bridge share this
 instance, so a server connected in the REPL is instantly usable from the
 dashboard page (and vice versa).
 """
+
 from __future__ import annotations
 
 import threading
@@ -41,6 +42,7 @@ class McpManager:
 
     def save_config(self, configs: dict[str, McpServerConfig]) -> None:
         from .config import save_mcp_servers
+
         if self._config_path is None:
             save_mcp_servers(configs)
         else:
@@ -116,8 +118,7 @@ class McpManager:
                 entry["detail"] = self._errors[name]
             elif client is not None:
                 entry["state"] = (
-                    STATE_CONNECTED if client._transport.is_alive()
-                    else STATE_STOPPED
+                    STATE_CONNECTED if client._transport.is_alive() else STATE_STOPPED
                 )
                 entry["tool_count"] = len(client.tool_names())
                 info = client.server_info.get("serverInfo")
@@ -143,9 +144,13 @@ class McpManager:
 
     # -- operations --------------------------------------------------------
 
-    def call_tool(self, server: str, tool: str,
-                  arguments: dict[str, Any] | None,
-                  require_exposed: bool = False) -> str:
+    def call_tool(
+        self,
+        server: str,
+        tool: str,
+        arguments: dict[str, Any] | None,
+        require_exposed: bool = False,
+    ) -> str:
         """Invoke a tool on a connected server.
 
         ``require_exposed=True`` (the LLM bridge path) re-reads the config

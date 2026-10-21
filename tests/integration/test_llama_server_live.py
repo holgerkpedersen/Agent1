@@ -19,6 +19,7 @@ Safety guarantees:
 
 Run with: ``pytest -m integration`` (or the whole suite -- they skip elsewhere).
 """
+
 from __future__ import annotations
 
 import os
@@ -94,13 +95,12 @@ def live_router():
 
     # Defense-in-depth: never let teardown nuke other hosts' servers.
     import agent_core.llm.llama_server as ls
+
     original_taskkill = ls._taskkill_by_image
     ls._taskkill_by_image = lambda: False  # type: ignore[assignment]
 
     before = _current_llama_pids()
-    ok, msg = mod._launch_server(
-        LIVE_API, None, extra_args=["--ctx-size", "65536"]
-    )
+    ok, msg = mod._launch_server(LIVE_API, None, extra_args=["--ctx-size", "65536"])
     if not ok:
         ls._taskkill_by_image = original_taskkill
         pytest.skip(f"could not launch live llama-server (router): {msg}")
@@ -148,7 +148,7 @@ def test_reconcile_loads_real_model_when_available(live_router):
 
     api_url, _ = live_router
     model_id = available[0]  # e.g. "llama/unsloth/Qwen3-..."
-    bare = model_id[len("llama/"):] if model_id.startswith("llama/") else model_id
+    bare = model_id[len("llama/") :] if model_id.startswith("llama/") else model_id
 
     ok, msg = mod.ensure_model_served(api_url, model_id)
     assert ok is True, f"ensure_model_served failed: {msg}"

@@ -1,6 +1,7 @@
 import pytest
 from agent_core.scoring import ScoredCandidate, CandidateSelector
 
+
 def test_candidate_selector_picks_highest_score():
     candidates = [
         ScoredCandidate(result={"path": "A"}, score=0.5),
@@ -12,10 +13,12 @@ def test_candidate_selector_picks_highest_score():
     assert best.result == {"path": "B"}
     assert best.score == 0.9
 
+
 def test_candidate_selector_empty_list():
     selector = CandidateSelector()
     with pytest.raises(ValueError, match="No candidates provided"):
         selector.select_best([])
+
 
 def test_candidate_selector_tie_breaks_first():
     candidates = [

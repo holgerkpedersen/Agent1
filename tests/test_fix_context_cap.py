@@ -47,7 +47,9 @@ def _write_huge_file(path: Path, lines: int, keyword: str) -> None:
 def test_ondemand_context_capped_for_large_files(tmp_path: Path) -> None:
     big = tmp_path / "bigmod.py"
     _write_huge_file(big, 4000, "exception")  # far larger than the per-file cap
-    (tmp_path / "helper.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "helper.py").write_text(
+        "def helper():\n    return 1\n", encoding="utf-8"
+    )
 
     agent = _FakeAgent()
     cmd = FixCommand()
@@ -98,7 +100,9 @@ def test_ondemand_read_upgrades_windowed_file(tmp_path: Path) -> None:
     lines = [f"def f{i}(): return {i}  # except" for i in range(4000)]
     lines[3000] = "# UNIQUE_DEEP_MARKER_LINE"
     big.write_text("\n".join(lines), encoding="utf-8")
-    (tmp_path / "helper.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "helper.py").write_text(
+        "def helper():\n    return 1\n", encoding="utf-8"
+    )
 
     class _ReadThenFixLLM:
         def __init__(self) -> None:
@@ -112,9 +116,11 @@ def test_ondemand_read_upgrades_windowed_file(tmp_path: Path) -> None:
             self.round += 1
             if self.round == 1:
                 return "[READ: bigmod.py]"
-            return ("[FILE: bigmod.py]\n```python\n"
-                    "def f0(): return 0\n# UNIQUE_DEEP_MARKER_LINE\n"
-                    "```")
+            return (
+                "[FILE: bigmod.py]\n```python\n"
+                "def f0(): return 0\n# UNIQUE_DEEP_MARKER_LINE\n"
+                "```"
+            )
 
     agent = _FakeAgent()
     agent.llm = _ReadThenFixLLM()
@@ -143,7 +149,9 @@ def test_ondemand_read_bounded_by_ceiling(tmp_path: Path, monkeypatch) -> None:
     lines = [f"def f{i}(): return {i}  # except" for i in range(4000)]
     lines[3000] = "# UNIQUE_DEEP_MARKER_LINE"
     big.write_text("\n".join(lines), encoding="utf-8")
-    (tmp_path / "helper.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "helper.py").write_text(
+        "def helper():\n    return 1\n", encoding="utf-8"
+    )
 
     class _ReadThenFixLLM:
         def __init__(self) -> None:
@@ -193,10 +201,12 @@ def test_ondemand_strips_shell_tool_calls(tmp_path: Path) -> None:
             user = next((m for m in messages if m.get("role") == "user"), None)
             if user is not None:
                 self.captured.append(user["content"])
-            return ("<tool_call>shell<arg_key>cmd</arg_key>"
-                    "<arg_value>grep -rn x .</arg_value></tool_call>\n"
-                    "[FILE: smallmod.py]\n```python\nimport os\n\n\n"
-                    "def do_work() -> None:\n    print('y')\n    return None\n```")
+            return (
+                "<tool_call>shell<arg_key>cmd</arg_key>"
+                "<arg_value>grep -rn x .</arg_value></tool_call>\n"
+                "[FILE: smallmod.py]\n```python\nimport os\n\n\n"
+                "def do_work() -> None:\n    print('y')\n    return None\n```"
+            )
 
     agent = _FakeAgent()
     agent.llm = _ToolCallLLM()

@@ -20,6 +20,7 @@ available, selected via ``AGENT_RAG_EMBEDDER=st``.
 All embedders implement ``from_string(text) -> np.ndarray`` of shape
 ``(dim,)`` and are L2-normalised so ``VectorDatabase`` cosine search works.
 """
+
 from __future__ import annotations
 
 import re
@@ -88,7 +89,9 @@ class HashEmbedder:
 class SentenceTransformerEmbedder:
     """Optional real semantic embedder (lazy import, opt-in only)."""
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", dim: int = DEFAULT_DIM) -> None:
+    def __init__(
+        self, model_name: str = "all-MiniLM-L6-v2", dim: int = DEFAULT_DIM
+    ) -> None:
         self._model_name = model_name
         self.dim = dim
         try:

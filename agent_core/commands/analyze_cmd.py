@@ -8,6 +8,7 @@ from .base import Command, read_stdin
 from agent_core import workspace_path
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -56,14 +57,42 @@ def _parse_file_refs(text: str) -> list[str]:
 #: one ``analyze agent_core/`` call cannot pull the whole tree into context.
 _ANALYZE_MAX_FILES = 40
 _ANALYZE_MAX_CHARS = 200_000
-_ANALYZE_SKIP_DIRS = frozenset({
-    ".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    ".venv", "venv", "node_modules", ".docs", "backups", "reports",
-    "generated", "dist", "build",
-})
+_ANALYZE_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".venv",
+        "venv",
+        "node_modules",
+        ".docs",
+        "backups",
+        "reports",
+        "generated",
+        "dist",
+        "build",
+    }
+)
 _ANALYZE_SKIP_SUFFIXES = (
-    ".pyc", ".pyo", ".so", ".dll", ".exe", ".bin", ".png", ".jpg", ".jpeg",
-    ".gif", ".ico", ".zip", ".whl", ".tar", ".gz", ".gguf", ".pdf",
+    ".pyc",
+    ".pyo",
+    ".so",
+    ".dll",
+    ".exe",
+    ".bin",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".zip",
+    ".whl",
+    ".tar",
+    ".gz",
+    ".gguf",
+    ".pdf",
 )
 
 
@@ -72,8 +101,7 @@ def _collect_directory_files(root: str) -> list[str]:
     files: list[str] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(
-            d for d in dirnames
-            if d not in _ANALYZE_SKIP_DIRS and not d.startswith(".")
+            d for d in dirnames if d not in _ANALYZE_SKIP_DIRS and not d.startswith(".")
         )
         for name in sorted(filenames):
             if name.lower().endswith(_ANALYZE_SKIP_SUFFIXES):
@@ -111,7 +139,11 @@ class AnalyzeCommand(Command):
             if di + 1 < len(parts):
                 desc_text = parts[di + 1].strip('"')
                 deep_mode = True
-            parts = [p for p in parts if p not in (parts[di], args[di + 1] if di + 1 < len(args) else "")]
+            parts = [
+                p
+                for p in parts
+                if p not in (parts[di], args[di + 1] if di + 1 < len(args) else "")
+            ]
 
         if "--deep" in parts:
             deep_mode = True
@@ -119,15 +151,25 @@ class AnalyzeCommand(Command):
 
         if stdin_mode:
             parts = [p for p in parts if p != "--stdin"]
-            content = read_stdin("Paste text to analyze. Type --- on its own line when done, or Ctrl+Z to finish:")
+            content = read_stdin(
+                "Paste text to analyze. Type --- on its own line when done, or Ctrl+Z to finish:"
+            )
             if not content.strip():
                 self.error("No text provided.")
                 return True
             question = desc_text or "Analyze the text above thoroughly."
-            result = await agent.llm.chat([
-                {"role": "system", "content": "You are an expert analyst. Answer the question concisely based on the provided text."},
-                {"role": "user", "content": f"## Text:\n\n{content}\n\n## Question:\n{question}"},
-            ])
+            result = await agent.llm.chat(
+                [
+                    {
+                        "role": "system",
+                        "content": "You are an expert analyst. Answer the question concisely based on the provided text.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"## Text:\n\n{content}\n\n## Question:\n{question}",
+                    },
+                ]
+            )
             print(result)
             return True
 
@@ -174,7 +216,10 @@ class AnalyzeCommand(Command):
         return True
 
     async def _analyze_directory(
-        self, path: str, question: str | None, agent: "Agent",
+        self,
+        path: str,
+        question: str | None,
+        agent: "Agent",
     ) -> str:
         """Analyze a DIRECTORY from a bounded sample of its files.
 
@@ -219,12 +264,16 @@ class AnalyzeCommand(Command):
             + "".join(parts)
             + (f"\n\n## Question:\n{question}" if question else "")
         )
-        return await agent.llm.chat([
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ])
+        return await agent.llm.chat(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ]
+        )
 
-    async def _deep_analyze(self, path: str, question: str | None, agent: "Agent") -> str:
+    async def _deep_analyze(
+        self, path: str, question: str | None, agent: "Agent"
+    ) -> str:
         """Iteratively read files and deepen analysis, following import chains
         and file references in LLM responses."""
         ws = workspace_path(agent.workspace)
@@ -235,7 +284,11 @@ class AnalyzeCommand(Command):
         # Round 0: collect the target file + its imports
         combined = content
         read_paths: set[str] = set()
-        read_paths.add(os.path.normpath(os.path.join(ws, path.replace("/", os.sep))) if not os.path.isabs(path) else os.path.normpath(path))
+        read_paths.add(
+            os.path.normpath(os.path.join(ws, path.replace("/", os.sep)))
+            if not os.path.isabs(path)
+            else os.path.normpath(path)
+        )
 
         read_cache: dict[str, str] = {}
 
@@ -256,7 +309,9 @@ class AnalyzeCommand(Command):
                 else:
                     imp_content = await agent.read_file(full, track_read=False)
                     read_cache[full] = imp_content
-                if not imp_content.startswith("File not found:") and not imp_content.startswith("Error"):
+                if not imp_content.startswith(
+                    "File not found:"
+                ) and not imp_content.startswith("Error"):
                     import_parts.append((imp_path, imp_content))
                     read_paths.add(full)
             except Exception as e:
@@ -270,11 +325,17 @@ class AnalyzeCommand(Command):
 
         # Round 1: first answer
         system = "You are an expert code reviewer. Answer the question concisely using the provided code as reference."
-        user = f"## Code:\n\n{combined}\n\n## Question:\n{question}" if question else f"## Code:\n\n{combined}\n\nAnalyze thoroughly."
-        answer = await agent.llm.chat([
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ])
+        user = (
+            f"## Code:\n\n{combined}\n\n## Question:\n{question}"
+            if question
+            else f"## Code:\n\n{combined}\n\nAnalyze thoroughly."
+        )
+        answer = await agent.llm.chat(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ]
+        )
 
         # Iterate: follow file references mentioned in each answer
         for round_num in range(2, 5):  # rounds 2, 3, 4
@@ -295,23 +356,33 @@ class AnalyzeCommand(Command):
                     else:
                         ref_content = await agent.read_file(full, track_read=False)
                         read_cache[full] = ref_content
-                    if not ref_content.startswith("File not found:") and not ref_content.startswith("Error"):
+                    if not ref_content.startswith(
+                        "File not found:"
+                    ) and not ref_content.startswith("Error"):
                         ref_parts.append((ref, ref_content))
                         read_paths.add(full)
                 except Exception as e:
                     print(f"  Warning: failed to read {ref}: {e}")
 
             new_files = [ref for ref, _ in ref_parts]
-            combined += "".join(f"\n\n# === {p} (referenced in previous answer) ===\n{c}" for p, c in ref_parts)
+            combined += "".join(
+                f"\n\n# === {p} (referenced in previous answer) ===\n{c}"
+                for p, c in ref_parts
+            )
 
             if not new_files:
                 break  # Nothing new to follow
 
             print(f"  Round {round_num}: followed references — {', '.join(new_files)}")
 
-            answer = await agent.llm.chat([
-                {"role": "system", "content": system},
-                {"role": "user", "content": f"## All code seen so far:\n\n{combined}\n\n## Question:\n{question}\n\nYour previous answer mentioned files listed above as 'referenced in previous answer'. Now that you have their full content, deepen your analysis with more detail about these referenced files."},
-            ])
+            answer = await agent.llm.chat(
+                [
+                    {"role": "system", "content": system},
+                    {
+                        "role": "user",
+                        "content": f"## All code seen so far:\n\n{combined}\n\n## Question:\n{question}\n\nYour previous answer mentioned files listed above as 'referenced in previous answer'. Now that you have their full content, deepen your analysis with more detail about these referenced files.",
+                    },
+                ]
+            )
 
         return answer

@@ -16,9 +16,7 @@ class SessionManager:
         self._last_activity = datetime.now(timezone.utc)
 
     def get_session_stats(self) -> Dict[str, Any]:
-        token_usage = sum(
-            len(str(m.get("content", ""))) // 4 for m in self._messages
-        )
+        token_usage = sum(len(str(m.get("content", ""))) // 4 for m in self._messages)
         return {
             "message_count": len(self._messages),
             "token_usage": token_usage,

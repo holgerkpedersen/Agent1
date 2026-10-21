@@ -23,7 +23,10 @@ from agent_core.constants import (
 )
 from agent_core.config import lmstudio_base_url
 from agent_core.timeout import (
-    DEFAULT_CHAT_TIMEOUT, HEALTH_CHECK_TIMEOUT, HTTP_READ_TIMEOUT, MODEL_LOAD_TIMEOUT
+    DEFAULT_CHAT_TIMEOUT,
+    HEALTH_CHECK_TIMEOUT,
+    HTTP_READ_TIMEOUT,
+    MODEL_LOAD_TIMEOUT,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,7 +74,8 @@ def sanitize_message_roles(messages: list[dict[str, Any]]) -> list[dict[str, Any
                 if isinstance(tc, dict) and tc.get("id"):
                     valid_ids.add(str(tc["id"]))
     out = [
-        m for m in out
+        m
+        for m in out
         if not (m.get("role") == "tool" and m.get("tool_call_id") not in valid_ids)
     ]
     # The reverse orphan: an assistant ``tool_calls`` batch whose results are
@@ -81,16 +85,15 @@ def sanitize_message_roles(messages: list[dict[str, Any]]) -> list[dict[str, Any
     # tool messages responding to each 'tool_call_id'").  Keep the assistant's
     # text, drop only the unanswered calls.
     answered = {
-        str(m.get("tool_call_id") or "")
-        for m in out
-        if m.get("role") == "tool"
+        str(m.get("tool_call_id") or "") for m in out if m.get("role") == "tool"
     }
     repaired: list[dict[str, Any]] = []
     for message in out:
         calls = message.get("tool_calls")
         if message.get("role") == "assistant" and calls:
             kept = [
-                tc for tc in calls
+                tc
+                for tc in calls
                 if isinstance(tc, dict) and str(tc.get("id") or "") in answered
             ]
             if len(kept) != len(calls):
@@ -180,8 +183,13 @@ def _is_engine_oom_error(detail: str) -> bool:
     return any(
         marker in low
         for marker in (
-            "bad allocation", "bad_alloc", "out of memory", "outofmemory",
-            "failed to allocate", "insufficient memory", "not enough memory",
+            "bad allocation",
+            "bad_alloc",
+            "out of memory",
+            "outofmemory",
+            "failed to allocate",
+            "insufficient memory",
+            "not enough memory",
         )
     )
 
@@ -278,7 +286,9 @@ def chat_timeout() -> int:
         return int(DEFAULT_CHAT_TIMEOUT)
 
 
-def _http_get_json(url: str, timeout: float = HEALTH_CHECK_TIMEOUT) -> dict[str, Any] | None:
+def _http_get_json(
+    url: str, timeout: float = HEALTH_CHECK_TIMEOUT
+) -> dict[str, Any] | None:
     """Synchronous HTTP GET that returns parsed JSON, or None on failure."""
     try:
         resp = httpx.get(url, timeout=timeout)
@@ -294,7 +304,9 @@ def _http_get_json(url: str, timeout: float = HEALTH_CHECK_TIMEOUT) -> dict[str,
         return None
 
 
-def _http_post_json(url: str, body: dict[str, Any], timeout: int = HTTP_READ_TIMEOUT) -> dict[str, Any] | None:
+def _http_post_json(
+    url: str, body: dict[str, Any], timeout: int = HTTP_READ_TIMEOUT
+) -> dict[str, Any] | None:
     """Synchronous HTTP POST that returns parsed JSON, or None on connection failure.
 
     HTTP error responses (4xx, 5xx) are returned as-is so callers can inspect
@@ -333,8 +345,11 @@ def get_models_status() -> list[dict[str, Any]]:
             "params_string": m.get("params_string", "?"),
             "loaded": len(inst) > 0,
             "instance_id": inst[0]["id"] if inst else None,
-            "context_length": (inst[0].get("config", {}).get("context_length", 0)
-                               if inst else m.get("max_context_length", 0)),
+            "context_length": (
+                inst[0].get("config", {}).get("context_length", 0)
+                if inst
+                else m.get("max_context_length", 0)
+            ),
             "architecture": m.get("architecture"),
         }
         for m in data["models"]
@@ -363,12 +378,19 @@ def load_model(model_key: str, eval_batch_size: int = 4096) -> tuple[bool, str]:
     Returns (success, message).
     """
     base = _management_url()
-    resp = _http_post_json(f"{base}/models/load", {
-        "model": model_key,
-        "eval_batch_size": eval_batch_size,
-    }, timeout=MODEL_LOAD_TIMEOUT)  # Load can take a while (5 min)
+    resp = _http_post_json(
+        f"{base}/models/load",
+        {
+            "model": model_key,
+            "eval_batch_size": eval_batch_size,
+        },
+        timeout=MODEL_LOAD_TIMEOUT,
+    )  # Load can take a while (5 min)
     if resp and resp.get("status") == "loaded":
-        return True, f"loaded ({resp.get('load_time_seconds', '?')}s) — {resp.get('instance_id', model_key)}"
+        return (
+            True,
+            f"loaded ({resp.get('load_time_seconds', '?')}s) — {resp.get('instance_id', model_key)}",
+        )
     if resp:
         err = resp.get("error", "unknown")
         if isinstance(err, dict):
@@ -378,13 +400,17 @@ def load_model(model_key: str, eval_batch_size: int = 4096) -> tuple[bool, str]:
     # REST API failed — try lms CLI as fallback
     import subprocess
     import shutil as _shutil
+
     lms = _shutil.which("lms") or _shutil.which("lms.exe")
     if lms:
         try:
             r = subprocess.run(
                 [str(lms), "load", model_key, "--yes"],
-                capture_output=True, text=True, timeout=MODEL_LOAD_TIMEOUT,
-                encoding="utf-8", errors="replace",
+                capture_output=True,
+                text=True,
+                timeout=MODEL_LOAD_TIMEOUT,
+                encoding="utf-8",
+                errors="replace",
             )
             if r.returncode == 0:
                 return True, f"loaded via lms — {model_key}"
@@ -412,7 +438,9 @@ def unload_model(instance_id: str | None = None) -> tuple[bool, str]:
     resp = _http_post_json(f"{base}/models/unload", {"instance_id": target})
     if resp and resp.get("instance_id"):
         return True, f"unloaded {resp['instance_id']}"
-    return False, (resp.get("error", "unknown") if resp else "could not reach LM Studio")
+    return False, (
+        resp.get("error", "unknown") if resp else "could not reach LM Studio"
+    )
 
 
 def resolve_model_name(query: str) -> str | None:
@@ -421,6 +449,7 @@ def resolve_model_name(query: str) -> str | None:
     Returns the matched model key, or None.
     """
     import difflib
+
     models = get_models_status()
     if not models:
         return None
@@ -433,8 +462,12 @@ def resolve_model_name(query: str) -> str | None:
         return query
 
     # Search display names and params as well, but return the key
-    by_display = {m["display_name"].lower(): m["key"] for m in models if m["display_name"]}
-    by_params: dict[str, str] = {m["params_string"].lower(): str(m["key"]) for m in models if m["params_string"]}
+    by_display = {
+        m["display_name"].lower(): m["key"] for m in models if m["display_name"]
+    }
+    by_params: dict[str, str] = {
+        m["params_string"].lower(): str(m["key"]) for m in models if m["params_string"]
+    }
 
     # Exact display name match
     if qlo in by_display:
@@ -483,7 +516,7 @@ class LMStudioProvider:
         self,
         model_name: str | None = None,
         api_key: str | None = None,
-        retry_policy: RetryPolicy | None = None
+        retry_policy: RetryPolicy | None = None,
     ):
         self.model_name = resolve_model(model_name)
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
@@ -508,7 +541,10 @@ class LMStudioProvider:
         self._context_probed = False
 
     def apply_profile(
-        self, name: str, temperature: float, max_tokens: int,
+        self,
+        name: str,
+        temperature: float,
+        max_tokens: int,
     ) -> None:
         """Activate *name* with its sampling parameters in one step.
 
@@ -620,7 +656,7 @@ class LMStudioProvider:
         try:
             return urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode('utf-8', 'replace').strip()
+            body = exc.read().decode("utf-8", "replace").strip()
             detail = body or str(exc.reason)
             if exc.code == 400 and _model_load_hint(detail):
                 ok, msg = load_model(self.model_name)
@@ -645,7 +681,9 @@ class LMStudioProvider:
                 raise TransientHTTPError(exc.code, detail) from exc
             raise RuntimeError(f"HTTP Error {exc.code}: {detail}") from exc
 
-    def _make_request(self, payload: dict[str, Any], timeout: int | None = None) -> dict[str, Any]:
+    def _make_request(
+        self, payload: dict[str, Any], timeout: int | None = None
+    ) -> dict[str, Any]:
         """Make synchronous HTTP request to LM Studio.
 
         HTTP errors surface their response body (LM Studio explains the
@@ -653,15 +691,15 @@ class LMStudioProvider:
         model is not in VRAM triggers an automatic load + single retry.
         """
         t = timeout if timeout is not None else chat_timeout()
-        data = json.dumps(payload).encode('utf-8')
+        data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             f"{self.lmstudio_url}/chat/completions",
             data=data,
             headers={
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {self.api_key}'
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
             },
-            method='POST'
+            method="POST",
         )
         try:
             with self._open_chat(req, t) as response:
@@ -669,7 +707,9 @@ class LMStudioProvider:
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"LM Studio returned non-JSON response: {exc}") from exc
 
-    def _check_thinking_error(self, content: str, reasoning: str, finish_reason: str | None = None) -> str | None:
+    def _check_thinking_error(
+        self, content: str, reasoning: str, finish_reason: str | None = None
+    ) -> str | None:
         """Check if model used all tokens thinking with no output.
 
         Returns a hard error instead of silently doubling ``max_tokens``:
@@ -717,7 +757,9 @@ class LMStudioProvider:
             if not isinstance(message, dict):
                 continue
             content = message.get("content")
-            chars += len(content) if isinstance(content, str) else len(str(content or ""))
+            chars += (
+                len(content) if isinstance(content, str) else len(str(content or ""))
+            )
             for call in message.get("tool_calls") or []:
                 if not isinstance(call, dict):
                     continue
@@ -740,8 +782,14 @@ class LMStudioProvider:
         """
         base = chat_timeout()
         try:
-            rate = max(1.0, float(os.environ.get(
-                "LMSTUDIO_PREFILL_TOKENS_PER_SEC", str(_PREFILL_TOKENS_PER_SEC))))
+            rate = max(
+                1.0,
+                float(
+                    os.environ.get(
+                        "LMSTUDIO_PREFILL_TOKENS_PER_SEC", str(_PREFILL_TOKENS_PER_SEC)
+                    )
+                ),
+            )
         except ValueError:
             rate = _PREFILL_TOKENS_PER_SEC
         tokens = self._estimate_prompt_tokens(payload)
@@ -820,7 +868,9 @@ class LMStudioProvider:
         # entirely — sending them would just fail again.
         use_tools = None if self.model_name in self._tools_unsupported else tools
         first_payload = self._build_payload(
-            messages, use_tools, override_max_tokens=max_tokens,
+            messages,
+            use_tools,
+            override_max_tokens=max_tokens,
             disable_thinking=disable_thinking,
         )
         pbytes = self._payload_bytes(first_payload)
@@ -844,30 +894,43 @@ class LMStudioProvider:
                 result = await asyncio.to_thread(self._make_request, payload, timeout)
                 elapsed_ms = (_time.monotonic() - start_time) * 1000.0
 
-                if 'choices' in result and len(result['choices']) > 0:
-                    choice = result['choices'][0]
-                    message = choice.get('message', {})
-                    content = message.get('content') or ""
-                    reasoning = message.get('reasoning_content') or ""
+                if "choices" in result and len(result["choices"]) > 0:
+                    choice = result["choices"][0]
+                    message = choice.get("message", {})
+                    content = message.get("content") or ""
+                    reasoning = message.get("reasoning_content") or ""
 
                     # Per-turn token/latency/cost accounting (plan ARCH item 17).
                     usage = result.get("usage") if isinstance(result, dict) else None
-                    prompt_tokens = int(usage.get("prompt_tokens") or 0) if isinstance(usage, dict) else 0
-                    completion_tokens = int(usage.get("completion_tokens") or 0) if isinstance(usage, dict) else 0
+                    prompt_tokens = (
+                        int(usage.get("prompt_tokens") or 0)
+                        if isinstance(usage, dict)
+                        else 0
+                    )
+                    completion_tokens = (
+                        int(usage.get("completion_tokens") or 0)
+                        if isinstance(usage, dict)
+                        else 0
+                    )
                     self.last_response_metrics = ResponseMetrics(
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         latency_ms=elapsed_ms,
-                        cost=estimate_cost(prompt_tokens, completion_tokens, self.model_name, "lmstudio"),
+                        cost=estimate_cost(
+                            prompt_tokens,
+                            completion_tokens,
+                            self.model_name,
+                            "lmstudio",
+                        ),
                     )
 
                     # If tools present and model returned tool_calls, return full message
-                    if use_tools and message.get('tool_calls'):
+                    if use_tools and message.get("tool_calls"):
                         return json.dumps(message)
 
                     # Check for thinking error
                     thinking_err = self._check_thinking_error(
-                        content, reasoning, finish_reason=choice.get('finish_reason')
+                        content, reasoning, finish_reason=choice.get("finish_reason")
                     )
                     if thinking_err:
                         return thinking_err
@@ -877,7 +940,9 @@ class LMStudioProvider:
                 return ""
 
             def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
-                print(f"  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s...")
+                print(
+                    f"  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s..."
+                )
 
             try:
                 return await policy.execute_with_retry(_do_request, on_retry=_on_retry)
@@ -899,7 +964,9 @@ class LMStudioProvider:
                 flush=True,
             )
             no_tools_payload = self._build_payload(
-                messages, None, override_max_tokens=max_tokens,
+                messages,
+                None,
+                override_max_tokens=max_tokens,
                 disable_thinking=disable_thinking,
             )
             result_text = await _run(
@@ -915,12 +982,12 @@ class LMStudioProvider:
                 flush=True,
             )
             retry_payload = self._build_payload(
-                messages, use_tools, override_max_tokens=retry_max,
+                messages,
+                use_tools,
+                override_max_tokens=retry_max,
                 disable_thinking=True,
             )
-            result_text = await _run(
-                retry_payload, self._scaled_timeout(retry_payload)
-            )
+            result_text = await _run(retry_payload, self._scaled_timeout(retry_payload))
         return result_text
 
     async def chat_logprobs(
@@ -942,7 +1009,8 @@ class LMStudioProvider:
         with ``None`` logprobs, mirroring ``chat``'s ``[Error: ...]`` contract.
         """
         payload = self._build_payload(
-            messages, override_max_tokens=max_tokens,
+            messages,
+            override_max_tokens=max_tokens,
             disable_thinking=disable_thinking,
         )
         payload["logprobs"] = True
@@ -980,15 +1048,15 @@ class LMStudioProvider:
         payload = self._build_payload(messages, stream=True)
 
         async def _do_stream() -> Any:
-            data = json.dumps(payload).encode('utf-8')
+            data = json.dumps(payload).encode("utf-8")
             req = urllib.request.Request(
                 f"{self.lmstudio_url}/chat/completions",
                 data=data,
                 headers={
-                    'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {self.api_key}'
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}",
                 },
-                method='POST'
+                method="POST",
             )
 
             full_content = ""
@@ -998,26 +1066,28 @@ class LMStudioProvider:
             # _open_chat (not raw urlopen): a 400 "model is not loaded" here
             # means another shell evicted our pinned model — reload + retry
             # once, same recovery as the non-streaming path.
-            with self._open_chat(req, timeout=self._scaled_timeout(payload)) as response:
+            with self._open_chat(
+                req, timeout=self._scaled_timeout(payload)
+            ) as response:
                 for line_bytes in response:
-                    line = line_bytes.decode('utf-8').strip()
-                    if not line.startswith('data: '):
+                    line = line_bytes.decode("utf-8").strip()
+                    if not line.startswith("data: "):
                         continue
                     data_str = line[6:]
-                    if data_str == '[DONE]':
+                    if data_str == "[DONE]":
                         break
                     try:
                         chunk = json.loads(data_str)
-                        choice = chunk.get('choices', [{}])[0]
-                        delta = choice.get('delta', {})
-                        token = delta.get('content', '')
-                        reasoning = delta.get('reasoning_content', '')
-                        if choice.get('finish_reason'):
-                            finish_reason = choice['finish_reason']
+                        choice = chunk.get("choices", [{}])[0]
+                        delta = choice.get("delta", {})
+                        token = delta.get("content", "")
+                        reasoning = delta.get("reasoning_content", "")
+                        if choice.get("finish_reason"):
+                            finish_reason = choice["finish_reason"]
                         if reasoning:
                             reasoning_content += reasoning
                         if token:
-                            print(token, end='', flush=True)
+                            print(token, end="", flush=True)
                             full_content += token
                     except json.JSONDecodeError as e:
                         logger.warning("LM Studio stream JSON decode error: %s", e)
@@ -1034,12 +1104,13 @@ class LMStudioProvider:
             return full_content
 
         def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
-            print(f"\n  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s...")
+            print(
+                f"\n  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s..."
+            )
 
         try:
             return await self.retry_policy.execute_with_retry(
-                _do_stream,
-                on_retry=_on_retry
+                _do_stream, on_retry=_on_retry
             )
         except Exception as e:
             return f"[LM Studio stream error: {e}]"
@@ -1057,8 +1128,11 @@ Code:
 {code}"""
 
         messages = [
-            {"role": "system", "content": "You are an expert code reviewer. Analyze the provided code and give detailed feedback."},
-            {"role": "user", "content": prompt}
+            {
+                "role": "system",
+                "content": "You are an expert code reviewer. Analyze the provided code and give detailed feedback.",
+            },
+            {"role": "user", "content": prompt},
         ]
 
         return await self.chat(messages)

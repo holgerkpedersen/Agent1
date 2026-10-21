@@ -3,6 +3,7 @@
 These cover the *machine* parts (ledger atomicity/idempotency, detector
 accuracy, level gating) without invoking the LLM fix path.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -16,8 +17,16 @@ def test_issues_ledger_is_valid_json_and_schema() -> None:
     issues = issue_store.load_issues()
     assert isinstance(issues, list)
     required = {
-        "id", "title", "category", "severity", "locations", "status",
-        "autonomy_level", "evidence", "suggested_approach", "created_at",
+        "id",
+        "title",
+        "category",
+        "severity",
+        "locations",
+        "status",
+        "autonomy_level",
+        "evidence",
+        "suggested_approach",
+        "created_at",
         "resolved_at",
     }
     for it in issues:
@@ -38,15 +47,23 @@ def test_upsert_is_idempotent(tmp_path: Path) -> None:
     one = issue_store.make_issue("dup", "x", ["agent.py:10"])
     assert issue_store.upsert(issues, one) is True
     # Same id again must NOT add a second entry.
-    assert issue_store.upsert(issues, issue_store.make_issue("dup", "x", ["agent.py:10"])) is False
+    assert (
+        issue_store.upsert(issues, issue_store.make_issue("dup", "x", ["agent.py:10"]))
+        is False
+    )
     # Different locations -> different id -> added.
-    assert issue_store.upsert(issues, issue_store.make_issue("dup", "y", ["agent.py:20"])) is True
+    assert (
+        issue_store.upsert(issues, issue_store.make_issue("dup", "y", ["agent.py:20"]))
+        is True
+    )
     issue_store.save_issues(issues, ledger)
     reloaded = issue_store.load_issues(ledger)
     assert len(reloaded) == 2
 
 
-def test_collect_issues_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_collect_issues_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Inject a synthetic finding so collection has something to seed; the real
     # repo is currently clean of these patterns, so we can't rely on it here.
     sample = tmp_path / "sample.py"
@@ -81,7 +98,9 @@ def test_open_issues_respects_level_cap(tmp_path: Path) -> None:
     assert levels == {0, 1}
     # Resolved issues are excluded entirely.
     issue_store.resolve(issues, issues[0]["id"], "resolved")
-    assert not any(i["id"] == issues[0]["id"] for i in issue_store.open_issues(issues, max_level=1))
+    assert not any(
+        i["id"] == issues[0]["id"] for i in issue_store.open_issues(issues, max_level=1)
+    )
 
 
 def test_promote_validates_level(tmp_path: Path) -> None:
@@ -185,7 +204,8 @@ def test_resolve_log_swallow_skips_shared_sink() -> None:
 
 
 def test_resolve_issue_accepts_when_generator_fixes_and_gates_pass(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Lock the autonomous plumbing: generator fixes the file, verifier then
     passes, gates pass -> accepted. No LLM required."""
@@ -202,7 +222,9 @@ def test_resolve_issue_accepts_when_generator_fixes_and_gates_pass(
         encoding="utf-8",
     )
     issue = issue_store.make_issue(
-        "best-effort-except", "x", [f"{mod.as_posix()}:5"],
+        "best-effort-except",
+        "x",
+        [f"{mod.as_posix()}:5"],
     )
 
     def fake_gen(iss: dict, agent: object) -> bool:  # simulate the fix command
@@ -230,7 +252,8 @@ def test_resolve_issue_accepts_when_generator_fixes_and_gates_pass(
 
 
 def test_resolve_issue_fails_closed_when_gates_fail(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """If the generator 'fixes' the file but gates fail, the issue is NOT
     resolved (fail-closed, no merge on ambiguity)."""
@@ -247,18 +270,21 @@ def test_resolve_issue_fails_closed_when_gates_fail(
         encoding="utf-8",
     )
     issue = issue_store.make_issue(
-        "best-effort-except", "x", [f"{mod.as_posix()}:5"],
+        "best-effort-except",
+        "x",
+        [f"{mod.as_posix()}:5"],
     )
 
     def fake_gen(iss: dict, agent: object) -> bool:
         mod.write_text(
-            "import logging\nlogger = logging.getLogger(__name__)\n"
-            "print(1)\n",
+            "import logging\nlogger = logging.getLogger(__name__)\nprint(1)\n",
             encoding="utf-8",
         )
         return True
 
-    monkeypatch.setattr(gates_mod, "run_test_gate", lambda *a, **k: (False, "tests red"))
+    monkeypatch.setattr(
+        gates_mod, "run_test_gate", lambda *a, **k: (False, "tests red")
+    )
     monkeypatch.setattr(gates_mod, "run_security_gate", lambda *a, **k: (True, ""))
 
     summary = il.resolve_issue(issue, agent=None, level_cap=1, generate_fn=fake_gen)
@@ -266,4 +292,3 @@ def test_resolve_issue_fails_closed_when_gates_fail(
     assert summary["accepted"] is False
     # The flagged pattern is gone from the file, but the ledger must stay open.
     assert il.find_log_swallow_excepts([mod]) == []
-

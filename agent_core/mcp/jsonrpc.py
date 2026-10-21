@@ -4,6 +4,7 @@ Only what the Model Context Protocol actually needs over its two wire
 transports: build requests, parse responses, surface protocol errors as
 typed exceptions.  Deliberately dependency-free.
 """
+
 from __future__ import annotations
 
 import itertools
@@ -35,10 +36,14 @@ def next_id() -> int:
     return next(_ids)
 
 
-def make_request(method: str, params: dict[str, Any] | None = None,
-                 req_id: int | None = None) -> dict[str, Any]:
+def make_request(
+    method: str, params: dict[str, Any] | None = None, req_id: int | None = None
+) -> dict[str, Any]:
     """Build a JSON-RPC request object (serialization is the transport's job)."""
-    req: dict[str, Any] = {"jsonrpc": "2.0", "id": next_id() if req_id is None else req_id}
+    req: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": next_id() if req_id is None else req_id,
+    }
     if method.startswith("notifications/"):
         # JSON-RPC notification: no id, no response expected.
         del req["id"]
@@ -62,9 +67,11 @@ def parse_message(raw: str | bytes) -> dict[str, Any]:
     if not isinstance(msg, dict):
         raise JsonRpcError(INVALID_REQUEST, "payload is not a JSON object")
     if msg.get("jsonrpc") != "2.0":
-        raise JsonRpcError(INVALID_REQUEST, "missing jsonrpc: \"2.0\" envelope")
+        raise JsonRpcError(INVALID_REQUEST, 'missing jsonrpc: "2.0" envelope')
     if "method" not in msg and "result" not in msg and "error" not in msg:
-        raise JsonRpcError(INVALID_REQUEST, "message has neither method nor result/error")
+        raise JsonRpcError(
+            INVALID_REQUEST, "message has neither method nor result/error"
+        )
     return msg
 
 

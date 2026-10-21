@@ -5,6 +5,7 @@ provenance and control-flow links (spec section 3.2).  A TraceGraph is fully
 reproducible from a trace file alone: steps mirror the event stream and links
 are inferred deterministically.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -127,7 +128,11 @@ def compile_trace(path: Path | str) -> TraceGraph:
             index=idx,
             kind=str(ev["kind"]),
             layer_facet=str(ev["layer"]),
-            payload={k: v for k, v in ev.items() if k not in ("kind", "layer", "task_id", "ts", "correlation_id")},
+            payload={
+                k: v
+                for k, v in ev.items()
+                if k not in ("kind", "layer", "task_id", "ts", "correlation_id")
+            },
         )
         for idx, ev in enumerate(events)
     ]

@@ -48,8 +48,13 @@ from agent_core.patch_utils import apply_anchored_patch, apply_patch, split_sour
 def _git(args: list[str], cwd: str) -> tuple[int, str]:
     try:
         r = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=30,
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
         )
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     except Exception as exc:  # pragma: no cover - defensive
@@ -81,7 +86,9 @@ def in_memory_apply_patch(
         return False, "file does not exist on disk"
     ok, patched = apply_patch(patch_text, split_source_lines(existing_text))
     if not ok:
-        ok, patched = apply_anchored_patch(patch_text, split_source_lines(existing_text))
+        ok, patched = apply_anchored_patch(
+            patch_text, split_source_lines(existing_text)
+        )
     if not ok:
         return False, str(patched)
     patched_text = str(patched)
@@ -227,7 +234,14 @@ def run_proposal_tests(
     try:
         tmp = tempfile.mkdtemp(prefix="propose_")
         # Copy the workspace, excluding heavy / VCS / cache dirs.
-        exclude = {".git", "__pycache__", ".venv", "venv", "node_modules", ".mypy_cache"}
+        exclude = {
+            ".git",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "node_modules",
+            ".mypy_cache",
+        }
         for root, dirs, files in os.walk(ws_path):
             dirs[:] = [d for d in dirs if d not in exclude]
             rel = os.path.relpath(root, ws_path)
@@ -247,10 +261,20 @@ def run_proposal_tests(
             with open(target, "w", encoding="utf-8") as f:
                 f.write(content)
         r = subprocess.run(
-            ["python", "-m", "pytest", tmp, "-q", "--no-header", "-p", "no:cacheprovider"],
+            [
+                "python",
+                "-m",
+                "pytest",
+                tmp,
+                "-q",
+                "--no-header",
+                "-p",
+                "no:cacheprovider",
+            ],
             capture_output=True,
             text=True,
-            encoding="utf-8", errors="replace",
+            encoding="utf-8",
+            errors="replace",
             timeout=300,
         )
         tail = (r.stdout or "") + (r.stderr or "")
@@ -338,13 +362,17 @@ def build_bundle(
     rejected = [f for f, o in file_outcomes.items() if o.startswith("rejected")]
     skipped = [f for f, o in file_outcomes.items() if o.startswith("skipped")]
 
-    lines.append(f"**Summary**: {len(accepted)} accepted, "
-                 f"{len(rejected)} rejected, {len(skipped)} skipped.")
+    lines.append(
+        f"**Summary**: {len(accepted)} accepted, "
+        f"{len(rejected)} rejected, {len(skipped)} skipped."
+    )
     lines.append("")
     lines.append("## Merge")
     lines.append("")
     lines.append("```bash")
-    lines.append(f"git apply reports/proposals/{meta.get('ts', 'latest')}/proposal.patch")
+    lines.append(
+        f"git apply reports/proposals/{meta.get('ts', 'latest')}/proposal.patch"
+    )
     lines.append("```")
     lines.append("")
 
@@ -414,7 +442,7 @@ def emit_proposal(
     (base / "proposal.md").write_text(bundle_md, encoding="utf-8")
     (base / "proposal.patch").write_text(patch_txt, encoding="utf-8")
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"PROPOSAL emitted (tree NOT modified): {base}")
     print(f"  proposal.md  ({len(bundle_md)} bytes)")
     print(f"  proposal.patch ({len(patch_txt)} bytes)")
@@ -429,5 +457,5 @@ def emit_proposal(
         for f in rejected:
             print(f"    - {f}: {file_outcomes[f]}")
     print(f"\n  Merge with: git apply {base / 'proposal.patch'}")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
     return str(base)

@@ -8,6 +8,7 @@ no network, no external packages.  Safety behaviours pinned here:
 - fail-closed secret references in config
 - argv-list-only stdio spawning (no shell anywhere)
 """
+
 from __future__ import annotations
 
 import json
@@ -51,6 +52,7 @@ def make_client(timeout_s: float = 30) -> McpClient:
 # jsonrpc framing
 # ---------------------------------------------------------------------------
 
+
 class TestJsonRpc:
     def test_request_envelope_and_unique_ids(self) -> None:
         a = jsonrpc.make_request("tools/list")
@@ -72,8 +74,7 @@ class TestJsonRpc:
             jsonrpc.parse_message("[1,2,3]")
 
     def test_result_of_raises_typed_error(self) -> None:
-        msg = {"jsonrpc": "2.0", "id": 1,
-               "error": {"code": -32601, "message": "nope"}}
+        msg = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "nope"}}
         with pytest.raises(jsonrpc.JsonRpcError) as ei:
             jsonrpc.result_of(msg)
         assert ei.value.code == -32601 and "nope" in ei.value.message
@@ -83,14 +84,19 @@ class TestJsonRpc:
 # config validation + secret resolution
 # ---------------------------------------------------------------------------
 
+
 class TestMcpConfig:
     def test_stdio_entry_roundtrip(self, tmp_path: Path) -> None:
         path = tmp_path / "mcp.json"
         cfgs = {
-            "fs": validate_entry("fs", {
-                "transport": "stdio", "command": ["python", "-m", "x"],
-                "expose_to_llm": True,
-            }),
+            "fs": validate_entry(
+                "fs",
+                {
+                    "transport": "stdio",
+                    "command": ["python", "-m", "x"],
+                    "expose_to_llm": True,
+                },
+            ),
         }
         save_mcp_servers(cfgs, path)
         loaded = load_mcp_servers(path)
@@ -116,15 +122,17 @@ class TestMcpConfig:
             validate_entry("bad", {"transport": "carrier-pigeon"})
 
     def test_timeout_clamped(self) -> None:
-        huge = validate_entry("t", {"transport": "http",
-                                    "url": "http://x", "timeout_s": 10_000})
+        huge = validate_entry(
+            "t", {"transport": "http", "url": "http://x", "timeout_s": 10_000}
+        )
         assert huge.timeout_s == 600
 
     def test_missing_file_loads_empty(self, tmp_path: Path) -> None:
         assert load_mcp_servers(tmp_path / "absent.json") == {}
 
     def test_secret_ref_resolved_from_keyring(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(
             "agent_core.security.secrets.get_secret",
@@ -133,10 +141,12 @@ class TestMcpConfig:
         assert resolve_value("secret:gh", "h") == "tok-123"
 
     def test_dangling_secret_ref_fails_closed(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(
-            "agent_core.security.secrets.get_secret", lambda name, default="": "",
+            "agent_core.security.secrets.get_secret",
+            lambda name, default="": "",
         )
         with pytest.raises(McpConfigError):
             resolve_value("secret:missing", "h")
@@ -151,6 +161,7 @@ class TestMcpConfig:
 # ---------------------------------------------------------------------------
 # end-to-end over real stdio pipes
 # ---------------------------------------------------------------------------
+
 
 class TestStdioEndToEnd:
     def test_initialize_tools_call(self) -> None:
@@ -219,6 +230,7 @@ class TestStdioEndToEnd:
 # result capping
 # ---------------------------------------------------------------------------
 
+
 class TestResultCap:
     def test_truncate_result_marks_overflow(self) -> None:
         big = "x" * (MAX_RESULT_CHARS + 500)
@@ -236,12 +248,13 @@ class TestSchemaValidation:
             "type": "object",
             "properties": {
                 "tags": {"type": "array", "items": {"type": "string"}},
-                "meta": {"type": "object",
-                         "properties": {"n": {"type": "integer"}}},
+                "meta": {"type": "object", "properties": {"n": {"type": "integer"}}},
             },
             "required": ["tags"],
         }
-        assert validate_against_schema(schema, {"tags": ["a"], "meta": {"n": 1}}) is None
+        assert (
+            validate_against_schema(schema, {"tags": ["a"], "meta": {"n": 1}}) is None
+        )
         err = validate_against_schema(schema, {"tags": [1]})
         assert err and "tags[0]" in err
         err = validate_against_schema(schema, {"meta": {}})
@@ -259,13 +272,17 @@ class TestSchemaValidation:
 # manager lifecycle (uses a temp mcp.json so the repo root is never touched)
 # ---------------------------------------------------------------------------
 
+
 class TestManagerLifecycle:
     @pytest.fixture()
     def manager(self, tmp_path: Path) -> McpManager:
         path = tmp_path / "mcp.json"
-        cfgs = {"fake": validate_entry(
-            "fake", {"transport": "stdio", "command": FAKE_SERVER_CMD},
-        )}
+        cfgs = {
+            "fake": validate_entry(
+                "fake",
+                {"transport": "stdio", "command": FAKE_SERVER_CMD},
+            )
+        }
         save_mcp_servers(cfgs, path)
         return McpManager(config_path=path)
 
@@ -289,10 +306,15 @@ class TestManagerLifecycle:
 
     def test_error_state_recorded_on_failure(self, tmp_path: Path) -> None:
         path = tmp_path / "mcp.json"
-        cfgs = {"broken": validate_entry(
-            "broken", {"transport": "stdio",
-                       "command": [sys.executable, "-c", "import sys; sys.exit(3)"]},
-        )}
+        cfgs = {
+            "broken": validate_entry(
+                "broken",
+                {
+                    "transport": "stdio",
+                    "command": [sys.executable, "-c", "import sys; sys.exit(3)"],
+                },
+            )
+        }
         save_mcp_servers(cfgs, path)
         mgr = McpManager(config_path=path)
         with pytest.raises(Exception):
@@ -303,13 +325,21 @@ class TestManagerLifecycle:
     def test_llm_catalog_only_exposed_servers(self, tmp_path: Path) -> None:
         path = tmp_path / "mcp.json"
         cfgs = {
-            "open": validate_entry("open", {
-                "transport": "stdio", "command": FAKE_SERVER_CMD,
-                "expose_to_llm": True,
-            }),
-            "shut": validate_entry("shut", {
-                "transport": "stdio", "command": FAKE_SERVER_CMD,
-            }),
+            "open": validate_entry(
+                "open",
+                {
+                    "transport": "stdio",
+                    "command": FAKE_SERVER_CMD,
+                    "expose_to_llm": True,
+                },
+            ),
+            "shut": validate_entry(
+                "shut",
+                {
+                    "transport": "stdio",
+                    "command": FAKE_SERVER_CMD,
+                },
+            ),
         }
         save_mcp_servers(cfgs, path)
         mgr = McpManager(config_path=path)
@@ -329,6 +359,7 @@ class TestManagerLifecycle:
 # HTTP transport against a threaded local server (JSON + SSE bodies)
 # ---------------------------------------------------------------------------
 
+
 class _Handler(BaseHTTPRequestHandler):
     """Canned JSON-RPC-over-HTTP endpoint: JSON on /, SSE on /sse."""
 
@@ -336,12 +367,15 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length", 0))
         req = jsonrpc.parse_message(self.rfile.read(length))
         if self.path == "/sse":
-            body = ('data: {"jsonrpc":"2.0","id":%s,"result":{"ok":true}}\n\n'
-                    % json.dumps(req["id"]))
+            body = (
+                'data: {"jsonrpc":"2.0","id":%s,"result":{"ok":true}}\n\n'
+                % json.dumps(req["id"])
+            )
             ctype = "text/event-stream"
         else:
-            body = json.dumps({"jsonrpc": "2.0", "id": req["id"],
-                               "result": {"ok": True}})
+            body = json.dumps(
+                {"jsonrpc": "2.0", "id": req["id"], "result": {"ok": True}}
+            )
             ctype = "application/json"
         payload = body.encode("utf-8")
         self.send_response(200)
@@ -368,15 +402,18 @@ class TestHttpTransport:
 
     def test_plain_json_roundtrip(self, server_url: str) -> None:
         from agent_core.mcp.transports import HttpTransport
+
         t = HttpTransport(server_url)
         assert t.request("ping", {}, 10) == {"ok": True}
 
     def test_sse_body_parsed(self, server_url: str) -> None:
         from agent_core.mcp.transports import HttpTransport
+
         t = HttpTransport(server_url + "/sse")
         assert t.request("ping", {}, 10) == {"ok": True}
 
     def test_bad_scheme_rejected_upfront(self) -> None:
         from agent_core.mcp.transports import HttpTransport
+
         with pytest.raises(TransportError, match="scheme"):
             HttpTransport("gopher://x")

@@ -6,6 +6,7 @@
   the post-loop ``patched_text = str(patched)`` then overwrote the recovered
   content with the old patch error string.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -47,10 +48,7 @@ def test_recover_unterminated_compute_diff_block() -> None:
 
 
 def test_recover_stops_at_next_header() -> None:
-    resp = (
-        "[FILE: a.py]\n```python\nx = 1\n"
-        "[FILE: b.py]\n```python\ny = 2\n"
-    )
+    resp = "[FILE: a.py]\n```python\nx = 1\n[FILE: b.py]\n```python\ny = 2\n"
     files, _ = _recover_unterminated_blocks(resp)
     assert files == [("a.py", "x = 1"), ("b.py", "y = 2")]
 
@@ -82,7 +80,9 @@ def test_describe_unparsed_handles_none_and_no_tags() -> None:
 def test_save_unparsed_response_writes_beside_taskplan(tmp_path: Path) -> None:
     taskplan = tmp_path / "project_tasks.md"
     taskplan.write_text("# tasks\n", encoding="utf-8")
-    saved = Path(_save_unparsed_response(str(taskplan), ["agent_core/config.py"], "raw text"))
+    saved = Path(
+        _save_unparsed_response(str(taskplan), ["agent_core/config.py"], "raw text")
+    )
     assert saved.parent == tmp_path / ".implement_unparsed"
     assert saved.name.startswith("agent_core_config.py_")
     assert saved.read_text(encoding="utf-8") == "raw text"
@@ -127,12 +127,8 @@ class TestComputeDiffBatchParse:
         (tmp_path / "tasks.md").write_text(
             "1. `pkg/mod_me.py` - extend foo\n", encoding="utf-8"
         )
-        agent = SimpleNamespace(
-            workspace=str(tmp_path), llm=SimpleNamespace(chat=chat)
-        )
-        with patch(
-            "agent_core.commands.implement_cmd.auto_choice", return_value="y"
-        ):
+        agent = SimpleNamespace(workspace=str(tmp_path), llm=SimpleNamespace(chat=chat))
+        with patch("agent_core.commands.implement_cmd.auto_choice", return_value="y"):
             return asyncio.run(
                 ImplementCommand().execute(
                     [str(tmp_path / "tasks.md"), "--modify"], agent
@@ -183,10 +179,13 @@ def test_discard_gate_checks_all_three_block_kinds() -> None:
     import re as _re
 
     src = inspect.getsource(implement_cmd)
-    assert _re.search(
-        r'if not matches and not patch_matches:\s*\n\s*print\(\s*"  Warning: Could not parse files',
-        src,
-    ) is None
+    assert (
+        _re.search(
+            r'if not matches and not patch_matches:\s*\n\s*print\(\s*"  Warning: Could not parse files',
+            src,
+        )
+        is None
+    )
     assert (
         src.count("not matches and not patch_matches and not compute_diff_matches") >= 2
     )
@@ -258,12 +257,8 @@ class TestMultiBlockParse:
             "2. `pkg/json_serializer.py` - json serializer\n",
             encoding="utf-8",
         )
-        agent = SimpleNamespace(
-            workspace=str(tmp_path), llm=SimpleNamespace(chat=chat)
-        )
-        with patch(
-            "agent_core.commands.implement_cmd.auto_choice", return_value="y"
-        ):
+        agent = SimpleNamespace(workspace=str(tmp_path), llm=SimpleNamespace(chat=chat))
+        with patch("agent_core.commands.implement_cmd.auto_choice", return_value="y"):
             return asyncio.run(
                 ImplementCommand().execute([str(tmp_path / "tasks.md")], agent)
             )
@@ -296,10 +291,7 @@ class TestMultiBlockParse:
 def test_parse_response_blocks_returns_every_file_block() -> None:
     from agent_core.commands.implement_cmd import _parse_response_blocks
 
-    resp = (
-        "[FILE: a.py]\n```python\nx = 1\n```\n"
-        "[FILE: b.py]\n```python\ny = 2\n```\n"
-    )
+    resp = "[FILE: a.py]\n```python\nx = 1\n```\n[FILE: b.py]\n```python\ny = 2\n```\n"
     files, patches, diffs = _parse_response_blocks(resp, modify_mode=False)
     assert files == [("a.py", "x = 1"), ("b.py", "y = 2")]
     assert patches == [] and diffs == []

@@ -58,41 +58,103 @@ from .doc_paths import latest_run_dir, new_run_dir
 from .reasoning_strip import dedupe_repeated_sections, extract_section, strip_reasoning
 from agent_core import to_windows_path
 from agent_core.decisions import (
-    add_decision, annotate_candidates, extract_from_analysis
+    add_decision,
+    annotate_candidates,
+    extract_from_analysis,
 )
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent import Agent
 
-_AGENT_SPEC_KEYWORDS = frozenset([
-    "agent", "self-improvement", "self improvement", "vulnerability",
-    "safe", "safety", "security", "hardening", "remediation",
-    "llm", "prompt injection", "reward hacking", "capability escalation",
-    # Internal identifiers: specs about the agent's own loop internals must also
-    # trigger the workspace context scan, otherwise the model has no path
-    # knowledge and (per the PATH VERIFICATION rule) BLOCKs asking where things
-    # are instead of answering (observed: "chat_nlp ... stuck detection" spec
-    # with no context → BLOCKED).
-    "chat_nlp", "auto-continue", "auto continue", "stuck detection",
-    "_looks_incomplete", "heuristics", "untested", "test coverage",
-    "semantic index", "tool loop", "orchestrator", "decisions", "trace",
-])
+_AGENT_SPEC_KEYWORDS = frozenset(
+    [
+        "agent",
+        "self-improvement",
+        "self improvement",
+        "vulnerability",
+        "safe",
+        "safety",
+        "security",
+        "hardening",
+        "remediation",
+        "llm",
+        "prompt injection",
+        "reward hacking",
+        "capability escalation",
+        # Internal identifiers: specs about the agent's own loop internals must also
+        # trigger the workspace context scan, otherwise the model has no path
+        # knowledge and (per the PATH VERIFICATION rule) BLOCKs asking where things
+        # are instead of answering (observed: "chat_nlp ... stuck detection" spec
+        # with no context → BLOCKED).
+        "chat_nlp",
+        "auto-continue",
+        "auto continue",
+        "stuck detection",
+        "_looks_incomplete",
+        "heuristics",
+        "untested",
+        "test coverage",
+        "semantic index",
+        "tool loop",
+        "orchestrator",
+        "decisions",
+        "trace",
+    ]
+)
 
 _PRIORITIZED_LLM_FILES = [
-    "agent.py", "lmstudio.py", "meta_policy.py", "metrics_tracker.py",
-    "prompt_cache.py", "orchestrator.py", "refinement_voter.py",
-    "sanitizer.py", "retry.py", "provider.py", "tool_loop.py",
-    "llm_client.py", "config.py", "constants.py",
+    "agent.py",
+    "lmstudio.py",
+    "meta_policy.py",
+    "metrics_tracker.py",
+    "prompt_cache.py",
+    "orchestrator.py",
+    "refinement_voter.py",
+    "sanitizer.py",
+    "retry.py",
+    "provider.py",
+    "tool_loop.py",
+    "llm_client.py",
+    "config.py",
+    "constants.py",
 ]
 
-_HIGH_RISK_STDLIB_NAMES = frozenset({
-    "logging", "json", "types", "os", "sys", "io", "re", "http",
-    "email", "xml", "html", "csv", "sqlite3", "pickle", "socket",
-    "unittest", "argparse", "configparser", "pathlib", "subprocess",
-    "asyncio", "collections", "functools", "itertools", "typing",
-    "importlib", "inspect", "threading", "multiprocessing", "signal",
-})
+_HIGH_RISK_STDLIB_NAMES = frozenset(
+    {
+        "logging",
+        "json",
+        "types",
+        "os",
+        "sys",
+        "io",
+        "re",
+        "http",
+        "email",
+        "xml",
+        "html",
+        "csv",
+        "sqlite3",
+        "pickle",
+        "socket",
+        "unittest",
+        "argparse",
+        "configparser",
+        "pathlib",
+        "subprocess",
+        "asyncio",
+        "collections",
+        "functools",
+        "itertools",
+        "typing",
+        "importlib",
+        "inspect",
+        "threading",
+        "multiprocessing",
+        "signal",
+    }
+)
 
 #: Prompt rule injected into every analysis-adjacent system prompt (decision #035).
 #: Models like laguna-s-2.1 fabricate file paths and symbol locations instead of
@@ -118,10 +180,14 @@ def _detect_subpackages(workspace: str) -> list[str]:
         return []
     pkgs = set()
     for root, dirs, files in os.walk(workspace):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('__pycache__', '.pytest_cache')]
-        if '__init__.py' in files:
-            rel = os.path.relpath(root, workspace).replace('\\', '/')
-            if rel == '.':
+        dirs[:] = [
+            d
+            for d in dirs
+            if not d.startswith(".") and d not in ("__pycache__", ".pytest_cache")
+        ]
+        if "__init__.py" in files:
+            rel = os.path.relpath(root, workspace).replace("\\", "/")
+            if rel == ".":
                 pkgs.add(root.rsplit(os.sep, 1)[-1])  # root package name
             else:
                 pkgs.add(rel)
@@ -138,7 +204,11 @@ def _collect_existing_names(workspace: str) -> tuple[dict[str, list[str]], list[
     if not os.path.isdir(workspace):
         return taken, filenames
     for root, dirs, files in os.walk(workspace):
-        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
+        dirs[:] = [
+            d
+            for d in dirs
+            if d not in (".git", "__pycache__", ".pytest_cache", "backups")
+        ]
         for f in files:
             if not f.endswith(".py"):
                 continue
@@ -150,10 +220,15 @@ def _collect_existing_names(workspace: str) -> tuple[dict[str, list[str]], list[
                     src = fh.read()
             except Exception:
                 continue
-            names = {m.group(1) for m in re.finditer(r'^(?:class|def)\s+(\w+)', src, re.MULTILINE)
-                     if not m.group(1).startswith("__")}
+            names = {
+                m.group(1)
+                for m in re.finditer(r"^(?:class|def)\s+(\w+)", src, re.MULTILINE)
+                if not m.group(1).startswith("__")
+            }
             if names:
-                rel_dir = os.path.relpath(root, workspace).replace("\\", "/").rstrip(".")
+                rel_dir = (
+                    os.path.relpath(root, workspace).replace("\\", "/").rstrip(".")
+                )
                 taken.setdefault(rel_dir, []).extend(sorted(names)[:20])
     return taken, filenames
 
@@ -162,18 +237,30 @@ def _collision_warning(taken: dict[str, list[str]], filenames: list[str]) -> str
     """Build a collision warning string for LLM prompts."""
     parts = []
     if taken:
-        parts.append("CRITICAL: DO NOT create new files defining these class/function names.\n"
-                      "They already exist — modify the existing file instead:")
-        parts += [f"  {d or 'root'}: {', '.join(names[:30])}" for d, names in sorted(taken.items())[:12]]
+        parts.append(
+            "CRITICAL: DO NOT create new files defining these class/function names.\n"
+            "They already exist — modify the existing file instead:"
+        )
+        parts += [
+            f"  {d or 'root'}: {', '.join(names[:30])}"
+            for d, names in sorted(taken.items())[:12]
+        ]
     if filenames:
         # Flag similar filenames per directory
         by_dir: dict[str, list[str]] = {}
         for f in filenames:
             d = os.path.dirname(f).replace("\\", "/")
             by_dir.setdefault(d or "root", []).append(os.path.basename(f))
-        parts.append("CRITICAL: Do NOT create filenames that overlap with existing ones in the same directory.")
-        parts.append("Use distinct names. Example: use llm_config.py not config.py, retry_adapter.py not retry_policy.py.")
-        parts += [f"  {d}: {', '.join(sorted(names)[:12])}" for d, names in sorted(by_dir.items())[:12]]
+        parts.append(
+            "CRITICAL: Do NOT create filenames that overlap with existing ones in the same directory."
+        )
+        parts.append(
+            "Use distinct names. Example: use llm_config.py not config.py, retry_adapter.py not retry_policy.py."
+        )
+        parts += [
+            f"  {d}: {', '.join(sorted(names)[:12])}"
+            for d, names in sorted(by_dir.items())[:12]
+        ]
     return "\n\n".join(parts) if parts else ""
 
 
@@ -198,9 +285,9 @@ def _specs_match(prev_spec_path: "str | Path", current_spec_text: str) -> bool:
 
 def _planned_files_from_taskplan(taskplan_content: str) -> list[str]:
     """Backticked file paths from the taskplan (same extraction as implement)."""
-    files = re.findall(r'`([^`]+\.py)`', taskplan_content)
+    files = re.findall(r"`([^`]+\.py)`", taskplan_content)
     if not files:
-        files = re.findall(r'`([^`\s]+\.[a-z]{2,4})`', taskplan_content)
+        files = re.findall(r"`([^`\s]+\.[a-z]{2,4})`", taskplan_content)
     return list(dict.fromkeys(files))
 
 
@@ -246,9 +333,7 @@ def _tailored_implement_parts(
         # Brownfield: planned files that already exist would be skipped by
         # default ("Already exists and compiles OK") — --modify turns them
         # into reviewed diff-applications instead.
-        existing_planned = [
-            f for f in planned if (Path(ws) / f).is_file()
-        ]
+        existing_planned = [f for f in planned if (Path(ws) / f).is_file()]
         if existing_planned:
             parts += ["--modify"]
             hints.append(
@@ -299,7 +384,11 @@ def _module_inventory(workspace: str, limit: int = 150) -> str:
     """
     entries: list[str] = []
     for root, dirs, files in os.walk(workspace):
-        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
+        dirs[:] = [
+            d
+            for d in dirs
+            if d not in (".git", "__pycache__", ".pytest_cache", "backups")
+        ]
         for f in files:
             if not f.endswith(".py"):
                 continue
@@ -312,7 +401,7 @@ def _module_inventory(workspace: str, limit: int = 150) -> str:
                 for line in src.splitlines()[:8]:
                     stripped = line.strip()
                     if stripped.startswith('"""') or stripped.startswith("'''"):
-                        purpose = stripped.strip('"\'').strip()[:70]
+                        purpose = stripped.strip("\"'").strip()[:70]
                         break
             except Exception:
                 continue
@@ -377,7 +466,9 @@ def _scan_workspace_context(ws_path: Path, spec_content: str) -> tuple[bool, str
     return bool(combined), combined
 
 
-async def _write_verified_analysis(text: str, analysis_md: str, ws_path: Path) -> tuple[str, int, int]:
+async def _write_verified_analysis(
+    text: str, analysis_md: str, ws_path: Path
+) -> tuple[str, int, int]:
     """Verify code claims in *text* against *ws_path*, then write to *analysis_md*.
 
     Unverifiable file paths, symbol names, line numbers, and code snippets are
@@ -418,7 +509,9 @@ def _strip_analysis_report(text: str) -> str:
     return text[:idx].rstrip() + "\n"
 
 
-def _analysis_flag_gate(checked: int, flagged: int, force: bool, report_text: str = "") -> bool:
+def _analysis_flag_gate(
+    checked: int, flagged: int, force: bool, report_text: str = ""
+) -> bool:
     """Final analysis gate — deterministic, never prompts.
 
     The autonomous pipeline in :func:`_verify_or_repair_gate` already ran the
@@ -479,16 +572,26 @@ async def _repair_analysis(
         f"## Analysis to repair:\n{analysis_text}"
     )
     try:
-        repaired = await agent.llm.chat([
-            {"role": "system", "content": repair_system},
-            {"role": "user", "content": repair_user},
-        ], max_tokens=8000, disable_thinking=True)
+        repaired = await agent.llm.chat(
+            [
+                {"role": "system", "content": repair_system},
+                {"role": "user", "content": repair_user},
+            ],
+            max_tokens=8000,
+            disable_thinking=True,
+        )
     except Exception as exc:  # pragma: no cover - defensive, never raises
         print(f"  [analyze] Repair round failed (non-blocking): {exc}")
         return None, 0, 0
-    if not repaired or repaired.startswith("[Error") or repaired.startswith("File not found"):
+    if (
+        not repaired
+        or repaired.startswith("[Error")
+        or repaired.startswith("File not found")
+    ):
         return None, 0, 0
-    result = await verify_analysis_claims(_strip_analysis_report(repaired), Path(ws_path_str))
+    result = await verify_analysis_claims(
+        _strip_analysis_report(repaired), Path(ws_path_str)
+    )
     print(
         f"  [analyze] Repair round re-verified {result.checked} claims "
         f"({result.flagged if result.flagged else 'clean'})"
@@ -526,7 +629,10 @@ def _prune_flagged_lines(annotated_text: str) -> tuple[str, int] | None:
 
 
 def _plan_doc_gate(
-    doc_kind: str, content: str, ws_path: Path | str, force: bool,
+    doc_kind: str,
+    content: str,
+    ws_path: Path | str,
+    force: bool,
 ) -> "str | None":
     """Regression-check a generated plan/entities/taskplan doc (decision #037).
 
@@ -543,19 +649,26 @@ def _plan_doc_gate(
     if not force:
         prompts = {
             "plan": "Plan references unverifiable paths — write anyway? (y/N): ",
-            "entities": ("Entities have unparsable/duplicated definitions — "
-                         "write anyway? (y/N): "),
-            "taskplan": ("Taskplan has unverifiable/colliding claims — "
-                         "write anyway? (y/N): "),
+            "entities": (
+                "Entities have unparsable/duplicated definitions — "
+                "write anyway? (y/N): "
+            ),
+            "taskplan": (
+                "Taskplan has unverifiable/colliding claims — write anyway? (y/N): "
+            ),
         }
         answer = auto_choice(f"  {prompts[doc_kind]}", default="n", auto_default="n")
         if answer.strip().lower() not in ("y", "yes"):
-            print(f"[{doc_kind}] Halted at the regression gate — regenerate "
-                  "(or re-run with --force).")
+            print(
+                f"[{doc_kind}] Halted at the regression gate — regenerate "
+                "(or re-run with --force)."
+            )
             return None
     else:
-        print(f"  [{doc_kind}] WARNING: {result.flagged} unverified claim(s) — "
-              "continuing (--force).")
+        print(
+            f"  [{doc_kind}] WARNING: {result.flagged} unverified claim(s) — "
+            "continuing (--force)."
+        )
     return apply_report(content, result)
 
 
@@ -574,7 +687,10 @@ _KIND_FORMAT_HINTS = {
 
 
 async def _repair_doc_until_clean(
-    agent: "Agent", doc_kind: str, content: str, ws_path: Path | str,
+    agent: "Agent",
+    doc_kind: str,
+    content: str,
+    ws_path: Path | str,
     rounds: int = _MAX_DOC_REPAIR_ROUNDS,
 ) -> str | None:
     """Repair a flagged workflow doc before it can reach the interactive gate.
@@ -612,14 +728,22 @@ async def _repair_doc_until_clean(
             + f"\n\n## Document:\n{best}"
         )
         try:
-            candidate = await agent.llm.chat([
-                {"role": "system", "content": repair_system},
-                {"role": "user", "content": repair_user},
-            ], max_tokens=8000, disable_thinking=True)
+            candidate = await agent.llm.chat(
+                [
+                    {"role": "system", "content": repair_system},
+                    {"role": "user", "content": repair_user},
+                ],
+                max_tokens=8000,
+                disable_thinking=True,
+            )
         except Exception as exc:  # pragma: no cover - defensive, never raises
             print(f"  [{doc_kind}] Repair round failed (non-blocking): {exc}")
             break
-        if not candidate or candidate.startswith("[Error") or candidate.startswith("File not found"):
+        if (
+            not candidate
+            or candidate.startswith("[Error")
+            or candidate.startswith("File not found")
+        ):
             break
         best = strip_reasoning(candidate, mode="light")
     if check_doc(doc_kind, best, ws_path).clean:
@@ -628,8 +752,14 @@ async def _repair_doc_until_clean(
 
 
 async def _verify_or_repair_gate(
-    agent: "Agent", analysis_text: str, analysis_md: str, ws_path: Path | str, checked: int,
-    flagged: int, report_text: str, force: bool,
+    agent: "Agent",
+    analysis_text: str,
+    analysis_md: str,
+    ws_path: Path | str,
+    checked: int,
+    flagged: int,
+    report_text: str,
+    force: bool,
 ) -> bool:
     """Autonomous verification gate (decision #036, extended to never prompt).
 
@@ -679,7 +809,9 @@ async def _verify_or_repair_gate(
                     f"({result.flagged if result.flagged else 'clean'})"
                 )
                 best_text, best_checked, best_flagged = (
-                    result.text, result.checked, result.flagged
+                    result.text,
+                    result.checked,
+                    result.flagged,
                 )
             else:
                 print(
@@ -693,7 +825,9 @@ async def _verify_or_repair_gate(
     return _analysis_flag_gate(best_checked, best_flagged, force, report_text=best_text)
 
 
-async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: str | Path) -> None:
+async def _extract_decisions_if_any(
+    agent: "Agent", analysis_md: str, ws_path: str | Path
+) -> None:
     """Read analysis, extract decision candidates, prompt to record. Non-blocking.
 
     Candidates are fact-checked against the workspace before the record prompt
@@ -718,11 +852,13 @@ async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: s
         )
         if not candidates:
             return
-        candidates = annotate_candidates(candidates, ws_path, verification_report=report)
+        candidates = annotate_candidates(
+            candidates, ws_path, verification_report=report
+        )
         print(f"\n[decide] Extracted {len(candidates)} decision candidates:")
         for i, c in enumerate(candidates, 1):
             print(f"  {i}. {c.get('title', 'Untitled')}")
-            ctx = c.get('context', '')
+            ctx = c.get("context", "")
             if ctx:
                 print(f"     {ctx}")
             for w in c.get("warnings", []):
@@ -744,16 +880,20 @@ async def _extract_decisions_if_any(agent: "Agent", analysis_md: str, ws_path: s
                     except ValueError:
                         print("Silenced exception in workflow_cmd.py:573")
             warned = [
-                i for i in selected
+                i
+                for i in selected
                 if 0 <= i < len(candidates) and candidates[i].get("warnings")
             ]
             if warned and not auto_choice(
                 f"  {len(warned)} candidate(s) carry unverified claims — "
                 "record them anyway? (y/N): ",
-                default="n", auto_default="n",
+                default="n",
+                auto_default="n",
             ).strip().lower().startswith("y"):
                 for i in warned:
-                    print(f"  Skipped: {candidates[i].get('title', 'Untitled')} (unverified claims)")
+                    print(
+                        f"  Skipped: {candidates[i].get('title', 'Untitled')} (unverified claims)"
+                    )
                 selected = [i for i in selected if i not in warned]
             for idx in selected:
                 if 0 <= idx < len(candidates):
@@ -798,12 +938,16 @@ class WorkflowCommand(Command):
             "  (git-ignored) — one folder per run; the newest run is found by readers."
         )
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         parts = args
 
         if len(parts) < 1:
-            self.error("Usage: workflow <target> [--from <spec.md>] [--stdin] [--force] [--brainstorm] [--workspace <path>]")
-            self.error("  target: .  |  --desc/-from spec | --features spec (file or inline)")
+            self.error(
+                "Usage: workflow <target> [--from <spec.md>] [--stdin] [--force] [--brainstorm] [--workspace <path>]"
+            )
+            self.error(
+                "  target: .  |  --desc/-from spec | --features spec (file or inline)"
+            )
             return True
 
         force = "--force" in parts
@@ -822,8 +966,8 @@ class WorkflowCommand(Command):
             idx = parts.index("--workspace") if "--workspace" in parts else -1
             if idx >= 0 and idx + 1 < len(parts):
                 tw = parts[idx + 1]
-            if tw.startswith('/c/') or tw.startswith('/C/'):
-                tw = 'C:' + tw[2:]
+            if tw.startswith("/c/") or tw.startswith("/C/"):
+                tw = "C:" + tw[2:]
             return Path(tw)
 
         _ws_dir().mkdir(parents=True, exist_ok=True)
@@ -845,7 +989,9 @@ class WorkflowCommand(Command):
                     f.write(f"# Project Specification\n\n{desc_text}")
                 print(f"\n[desc] {desc_text[:120]}...")
         elif "--stdin" in parts:
-            text = read_stdin("Paste spec or description. Type --- on its own line when done:")
+            text = read_stdin(
+                "Paste spec or description. Type --- on its own line when done:"
+            )
             parts = [p for p in parts if p != "--stdin"]
             if text.strip():
                 spec_file = str(run_dir / "project_spec.md")
@@ -857,7 +1003,7 @@ class WorkflowCommand(Command):
             end = fi + 1
             while end < len(parts) and not parts[end].startswith("--"):
                 end += 1
-            spec_file = " ".join(parts[fi + 1:end])
+            spec_file = " ".join(parts[fi + 1 : end])
 
         if "--features" in parts:
             fi = parts.index("--features")
@@ -871,7 +1017,6 @@ class WorkflowCommand(Command):
                 with open(features_file, "w", encoding="utf-8") as f:
                     f.write(f"# Feature Requirements\n\n{feat_val}")
                 print(f"\n[features] {feat_val}")
-
 
         target_workspace = agent.workspace
         if "--workspace" in parts:
@@ -895,10 +1040,14 @@ class WorkflowCommand(Command):
         # (disable_thinking: a reasoning model spends the 8-token probe budget
         # on reasoning_content and returns empty content — the probe must get
         # a real answer, not a truncated reasoning fragment)
-        probe = await agent.llm.chat([
-            {"role": "system", "content": "Respond with exactly one word: ready"},
-            {"role": "user", "content": "ready"}
-        ], max_tokens=8, disable_thinking=True)
+        probe = await agent.llm.chat(
+            [
+                {"role": "system", "content": "Respond with exactly one word: ready"},
+                {"role": "user", "content": "ready"},
+            ],
+            max_tokens=8,
+            disable_thinking=True,
+        )
         if probe.startswith("[Error") or probe.startswith("[LM Studio"):
             self.error(f"LM Studio is not reachable: {probe[:200]}")
             self.error("Start LM Studio and ensure a model is loaded, then retry.")
@@ -906,7 +1055,11 @@ class WorkflowCommand(Command):
 
         # Pre-scan existing names to warn about collisions
         taken_names, existing_filenames = _collect_existing_names(str(ws_path))
-        collision_warning = _collision_warning(taken_names, existing_filenames) if taken_names or existing_filenames else ""
+        collision_warning = (
+            _collision_warning(taken_names, existing_filenames)
+            if taken_names or existing_filenames
+            else ""
+        )
 
         # Dynamic path rules based on workspace structure
         pkgs = _detect_subpackages(str(ws_path))
@@ -921,7 +1074,12 @@ class WorkflowCommand(Command):
             + ", etc. A package named `logging` will BREAK `import logging`."
             "  Use distinct names (e.g. `log_utils/` not `logging/`)."
         )
-        prompt_context = collision_warning + path_rule + "\n\nSIZE RULES: New files max 150 lines (SRP). Split large concepts. Modifying: minimal changes only." + stdlib_shadow
+        prompt_context = (
+            collision_warning
+            + path_rule
+            + "\n\nSIZE RULES: New files max 150 lines (SRP). Split large concepts. Modifying: minimal changes only."
+            + stdlib_shadow
+        )
         prompt_context += (
             "\n\nMODULE POLICY (CRITICAL): This is an established repository. "
             "Prefer [MODIFY] over [NEW]: if an existing module already covers the "
@@ -969,7 +1127,9 @@ class WorkflowCommand(Command):
                 if cand.is_file():
                     if _specs_match(prev_run / "project_spec.md", spec_content):
                         shutil.copy2(cand, cur)
-                        print(f"\n[Skipping {label}] exists — carried over from {prev_run.name}")
+                        print(
+                            f"\n[Skipping {label}] exists — carried over from {prev_run.name}"
+                        )
                         return True
                     print(
                         f"\n[analyze] Previous run {prev_run.name} has a DIFFERENT spec — "
@@ -987,7 +1147,9 @@ class WorkflowCommand(Command):
             """
             from .implement_cmd import ImplementCommand
 
-            print(f"\n[workflow] Running next step: implement {parts_next[1] if len(parts_next) > 1 else ''} ...")
+            print(
+                f"\n[workflow] Running next step: implement {parts_next[1] if len(parts_next) > 1 else ''} ..."
+            )
             clear_stop()
             _llm = getattr(agent, "llm", None)
             _chat = getattr(_llm, "chat", None)
@@ -1002,7 +1164,13 @@ class WorkflowCommand(Command):
                 if _llm is not None and _chat is not None:
                     _llm.chat = _chat
 
-        async def _offer_next(tasks_md: str, plan_md: str, entities_md: str, analysis_md: str | None, target_ws: str) -> None:
+        async def _offer_next(
+            tasks_md: str,
+            plan_md: str,
+            entities_md: str,
+            analysis_md: str | None,
+            target_ws: str,
+        ) -> None:
             """Print the tailored next command and (interactively or
             autonomously) run it inline."""
             try:
@@ -1010,12 +1178,18 @@ class WorkflowCommand(Command):
             except OSError:
                 taskplan_content = ""
             parts_next, hint = _tailored_implement_parts(
-                tasks_md, plan_md, entities_md, analysis_md,
-                target_ws, taskplan_content,
+                tasks_md,
+                plan_md,
+                entities_md,
+                analysis_md,
+                target_ws,
+                taskplan_content,
             )
             print(f"\nNext: {' '.join(parts_next)}")
             print(hint)
-            choice = auto_choice("  Run this command now? (y/N): ", default="n", auto_default="y")
+            choice = auto_choice(
+                "  Run this command now? (y/N): ", default="n", auto_default="y"
+            )
             if stop_requested():
                 return
             if choice in ("y", "yes"):
@@ -1035,13 +1209,19 @@ class WorkflowCommand(Command):
                     print("\n[analyze] Analyzing spec...")
 
                     # Scan target workspace for code context when spec references agent/self-improvement
-                    ws_ctx_found, ws_code_context = _scan_workspace_context(ws_path, spec_content)
+                    ws_ctx_found, ws_code_context = _scan_workspace_context(
+                        ws_path, spec_content
+                    )
                     if ws_ctx_found:
-                        print("  [analyze] Included workspace code context (self-improvement detected)")
+                        print(
+                            "  [analyze] Included workspace code context (self-improvement detected)"
+                        )
                     module_inventory = _module_inventory(str(ws_path))
                     trace_header = f"# Analysis for workspace {ws_path}\n"
                     if spec_file:
-                        trace_header += f"| Spec file: {os.path.basename(spec_file)}\n\n"
+                        trace_header += (
+                            f"| Spec file: {os.path.basename(spec_file)}\n\n"
+                        )
                     else:
                         trace_header += "\n"
 
@@ -1100,10 +1280,12 @@ class WorkflowCommand(Command):
                         )
                     user_prompt += f"\n\nSpec file reference: {os.path.basename(spec_file) if spec_file else 'inline'}"
 
-                    r = await agent.llm.chat([
-                        {"role": "system", "content": analyze_system},
-                        {"role": "user", "content": user_prompt},
-                    ])
+                    r = await agent.llm.chat(
+                        [
+                            {"role": "system", "content": analyze_system},
+                            {"role": "user", "content": user_prompt},
+                        ]
+                    )
                     if not step_ok(r):
                         print(f"[analyze] FAILED: {r[:200]}")
                         return True
@@ -1115,9 +1297,17 @@ class WorkflowCommand(Command):
                     print("  [analyze] First pass generated")
 
                     # Ambiguity gate — halt before plan if blockers exist and --force not given
-                    blocked_match = re.search(r"\*\*BLOCKED:\*\*\s*(yes|no)", r, re.IGNORECASE)
-                    if blocked_match and blocked_match.group(1).lower() == "yes" and not force:
-                        print("\n[analyze] BLOCKED — spec requires clarification before proceeding.")
+                    blocked_match = re.search(
+                        r"\*\*BLOCKED:\*\*\s*(yes|no)", r, re.IGNORECASE
+                    )
+                    if (
+                        blocked_match
+                        and blocked_match.group(1).lower() == "yes"
+                        and not force
+                    ):
+                        print(
+                            "\n[analyze] BLOCKED — spec requires clarification before proceeding."
+                        )
                         # Extract and print the blocker / questions sections.
                         # Dedupe first: models repeat a section header and its
                         # body (seen with "## 6."/"## 7." since 2026-08-15), and
@@ -1125,16 +1315,23 @@ class WorkflowCommand(Command):
                         # section-6 slice (it extended to "## 8." and swallowed
                         # everything in between).
                         deduped = dedupe_repeated_sections(r)
-                        for section_marker in ["## 6. MISSING INFORMATION", "## 7. CLARIFYING QUESTIONS"]:
+                        for section_marker in [
+                            "## 6. MISSING INFORMATION",
+                            "## 7. CLARIFYING QUESTIONS",
+                        ]:
                             section_text = extract_section(deduped, section_marker)
                             if not section_text:
                                 continue
                             print(section_text)
                             print("")
                         print("\nNext steps:")
-                        print("  1. Answer the questions above, then run again with --desc \"<answers>\"")
+                        print(
+                            '  1. Answer the questions above, then run again with --desc "<answers>"'
+                        )
                         print("     or create a file and pass it via --from <file>")
-                        print("  2. Or use --force to skip this gate and proceed anyway.")
+                        print(
+                            "  2. Or use --force to skip this gate and proceed anyway."
+                        )
                         return True
 
                     # Self-critique refinement pass — only if analysis was not blocked
@@ -1147,32 +1344,51 @@ class WorkflowCommand(Command):
                         )
                     else:
                         critique_user = (
-                            f"## Spec:\n{spec_content}\n\n"
-                            f"## Analysis to critique:\n{r}"
+                            f"## Spec:\n{spec_content}\n\n## Analysis to critique:\n{r}"
                         )
-                    critique_r = await agent.llm.chat([
-                        {"role": "system", "content": (
-                            _PATH_VERIFICATION_RULE + "\n"
-                            "You are a senior security engineer. Critique the following analysis.\n"
-                            "List concrete gaps, missed attack vectors, missing metrics, or overlooked\n"
-                            "code references. Be specific — cite file paths and line-level concerns.\n"
-                            "If the analysis is already thorough, say so concisely."
-                        )},
-                        {"role": "user", "content": critique_user},
-                    ])
+                    critique_r = await agent.llm.chat(
+                        [
+                            {
+                                "role": "system",
+                                "content": (
+                                    _PATH_VERIFICATION_RULE + "\n"
+                                    "You are a senior security engineer. Critique the following analysis.\n"
+                                    "List concrete gaps, missed attack vectors, missing metrics, or overlooked\n"
+                                    "code references. Be specific — cite file paths and line-level concerns.\n"
+                                    "If the analysis is already thorough, say so concisely."
+                                ),
+                            },
+                            {"role": "user", "content": critique_user},
+                        ]
+                    )
                     if step_ok(critique_r):
                         with open(analysis_md, "a", encoding="utf-8") as f:
                             f.write("\n\n---\n\n## Refinement (self-critique)\n")
                             f.write(strip_reasoning(critique_r, mode="analysis"))
                         print("  [analyze] Appended refinement pass")
                     else:
-                        print(f"  [analyze] Critique failed (non-blocking): {critique_r[:100]}")
+                        print(
+                            f"  [analyze] Critique failed (non-blocking): {critique_r[:100]}"
+                        )
 
                     with open(analysis_md, "r", encoding="utf-8") as f:
                         final_analysis = f.read()
-                    v_text, v_checked, v_flagged = await _write_verified_analysis(final_analysis, analysis_md, ws_path)
-                    if not await _verify_or_repair_gate(agent, final_analysis, analysis_md, ws_path, v_checked, v_flagged, v_text, force):
-                        print("\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force.")
+                    v_text, v_checked, v_flagged = await _write_verified_analysis(
+                        final_analysis, analysis_md, ws_path
+                    )
+                    if not await _verify_or_repair_gate(
+                        agent,
+                        final_analysis,
+                        analysis_md,
+                        ws_path,
+                        v_checked,
+                        v_flagged,
+                        v_text,
+                        force,
+                    ):
+                        print(
+                            "\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force."
+                        )
                         return True
 
                 with open(analysis_md, "r", encoding="utf-8") as f:
@@ -1182,16 +1398,29 @@ class WorkflowCommand(Command):
                 expected = ["## 1. SCOPE", "## 2. ASSUMPTIONS", "## 3. RISKS"]
                 missing = [h for h in expected if h not in analysis]
                 if missing:
-                    print(f"  [analyze] WARNING: missing expected sections: {', '.join(missing)}")
-                    print("  The analysis format may be non-standard. Plan/task quality may be reduced.")
+                    print(
+                        f"  [analyze] WARNING: missing expected sections: {', '.join(missing)}"
+                    )
+                    print(
+                        "  The analysis format may be non-standard. Plan/task quality may be reduced."
+                    )
 
                 await _extract_decisions_if_any(agent, analysis_md, ws_path)
 
                 print("\n[plan] Creating plan...")
-                r = await agent.llm.chat([
-                    {"role": "system", "content": "You are an expert software architect. Create a detailed coding plan with ALL files needed. Follow SOLID principles — each file has a single responsibility. New files should be small and focused (max 150 lines). If a concept needs more code, split across multiple files. Ensure all Python code passes mypy strict type checking. No unbound TypeVars, no type mismatches. Never use <tool_call> or XML tags." + prompt_context},
-                    {"role": "user", "content": f"Create coding plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}"}
-                ])
+                r = await agent.llm.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": "You are an expert software architect. Create a detailed coding plan with ALL files needed. Follow SOLID principles — each file has a single responsibility. New files should be small and focused (max 150 lines). If a concept needs more code, split across multiple files. Ensure all Python code passes mypy strict type checking. No unbound TypeVars, no type mismatches. Never use <tool_call> or XML tags."
+                            + prompt_context,
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Create coding plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}",
+                        },
+                    ]
+                )
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
@@ -1222,10 +1451,18 @@ class WorkflowCommand(Command):
                     analysis = f.read() if os.path.exists(analysis_md) else ""
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
-                r = await agent.llm.chat([
-                    {"role": "system", "content": "Extract shared classes/types. Output ONLY Python code — no intro text. Start with ```python. All types must be valid — no unbound TypeVars, no forward-ref errors. Must pass mypy strict. Avoid circular imports. Never use <tool_call> or XML tags."},
-                    {"role": "user", "content": f"Extract entities:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
-                ])
+                r = await agent.llm.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": "Extract shared classes/types. Output ONLY Python code — no intro text. Start with ```python. All types must be valid — no unbound TypeVars, no forward-ref errors. Must pass mypy strict. Avoid circular imports. Never use <tool_call> or XML tags.",
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Extract entities:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}",
+                        },
+                    ]
+                )
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
@@ -1258,22 +1495,30 @@ class WorkflowCommand(Command):
                     plan = f.read()
                 with open(entities_md, "r", encoding="utf-8") as f:
                     entities = f.read()
-                r = await agent.llm.chat([
-                    {"role": "system", "content": (
-                        _PATH_VERIFICATION_RULE + "\n\n"
-                        "Create a numbered task plan. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
-                        "FORMAT — exactly one task per line:\n"
-                        "  N. `path/to/file.py` — short description\n\n"
-                        "RULES:\n"
-                        "- Every file path MUST be backtick-wrapped\n"
-                        "- One file per line, numbered sequentially (1. 2. 3.)\n"
-                        "- No bullet markers (-, *), no [TAGS], no brackets around filenames\n"
-                        "- If modifying an existing file, use its EXACT current path\n"
-                        "- List in dependency order (configs first, then utilities, then consumers)\n"
-                        + prompt_context
-                    )},
-                    {"role": "user", "content": f"## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}"}
-                ])
+                r = await agent.llm.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                _PATH_VERIFICATION_RULE + "\n\n"
+                                "Create a numbered task plan. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
+                                "FORMAT — exactly one task per line:\n"
+                                "  N. `path/to/file.py` — short description\n\n"
+                                "RULES:\n"
+                                "- Every file path MUST be backtick-wrapped\n"
+                                "- One file per line, numbered sequentially (1. 2. 3.)\n"
+                                "- No bullet markers (-, *), no [TAGS], no brackets around filenames\n"
+                                "- If modifying an existing file, use its EXACT current path\n"
+                                "- List in dependency order (configs first, then utilities, then consumers)\n"
+                                + prompt_context
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": f"## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}",
+                        },
+                    ]
+                )
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
@@ -1297,7 +1542,9 @@ class WorkflowCommand(Command):
                     f.write(gated)
                 print("[taskplan] Written")
 
-            await _offer_next(tasks_md, plan_md, entities_md, analysis_md, str(target_workspace))
+            await _offer_next(
+                tasks_md, plan_md, entities_md, analysis_md, str(target_workspace)
+            )
 
         elif features_file:
             with open(features_file, "r", encoding="utf-8") as f:
@@ -1325,16 +1572,30 @@ class WorkflowCommand(Command):
                             combined += f"\n\n# ---- {pf} ----\n{f.read()}"
                     except Exception:
                         print("Warning: silenced exception in workflow_cmd.py")
-                r = await agent.llm.chat([
-                    {"role": "system", "content": "You are an expert code reviewer. Analyze the existing code AND these new features. Find bugs, gaps, and what needs to change."},
-                    {"role": "user", "content": f"## Existing Code:\n{combined}\n\n## New Features:\n{features}\n\nAnalyze both existing issues and what must change for the new features."}
-                ])
+                r = await agent.llm.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": "You are an expert code reviewer. Analyze the existing code AND these new features. Find bugs, gaps, and what needs to change.",
+                        },
+                        {
+                            "role": "user",
+                            "content": f"## Existing Code:\n{combined}\n\n## New Features:\n{features}\n\nAnalyze both existing issues and what must change for the new features.",
+                        },
+                    ]
+                )
                 if not step_ok(r):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
-                v_text, v_checked, v_flagged = await _write_verified_analysis(r, analysis_md, ws_path)
-                if not await _verify_or_repair_gate(agent, r, analysis_md, ws_path, v_checked, v_flagged, v_text, force):
-                    print("\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force.")
+                v_text, v_checked, v_flagged = await _write_verified_analysis(
+                    r, analysis_md, ws_path
+                )
+                if not await _verify_or_repair_gate(
+                    agent, r, analysis_md, ws_path, v_checked, v_flagged, v_text, force
+                ):
+                    print(
+                        "\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force."
+                    )
                     return True
                 await _extract_decisions_if_any(agent, analysis_md, ws_path)
 
@@ -1350,10 +1611,18 @@ class WorkflowCommand(Command):
                         existing_plan = f.read()[:3000]
 
                 print("\n[plan] Creating plan...")
-                r = await agent.llm.chat([
-                    {"role": "system", "content": "You are an expert software architect. Create a plan that extends the EXISTING codebase with these new features.\n\nIMPORTANT:\n- Start with '## Feature Addition: <summary>'\n- List NEW files to create\n- List EXISTING files to modify and what minimal changes are needed\n- Explain WHY each change is needed\n- Preserve existing architecture"},
-                    {"role": "user", "content": f"## Existing code analysis:\n{analysis}\n\n## Existing plan:\n{existing_plan if existing_plan else 'No existing plan'}\n\n## New features to add:\n{features}\n\nCreate a plan that integrates these features into the existing codebase."}
-                ])
+                r = await agent.llm.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": "You are an expert software architect. Create a plan that extends the EXISTING codebase with these new features.\n\nIMPORTANT:\n- Start with '## Feature Addition: <summary>'\n- List NEW files to create\n- List EXISTING files to modify and what minimal changes are needed\n- Explain WHY each change is needed\n- Preserve existing architecture",
+                        },
+                        {
+                            "role": "user",
+                            "content": f"## Existing code analysis:\n{analysis}\n\n## Existing plan:\n{existing_plan if existing_plan else 'No existing plan'}\n\n## New features to add:\n{features}\n\nCreate a plan that integrates these features into the existing codebase.",
+                        },
+                    ]
+                )
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
@@ -1386,10 +1655,18 @@ class WorkflowCommand(Command):
                 if os.path.exists(entities_md):
                     with open(entities_md, "r", encoding="utf-8") as f:
                         entities_existing = f.read()[:3000]
-                r = await agent.llm.chat([
-                    {"role": "system", "content": "Extract ONLY NEW shared entities. Output ONLY Python code — no intro text. Start with ```python. All types must pass mypy strict."},
-                    {"role": "user", "content": f"## Plan:\n{plan}\n\n## Existing entities:\n{entities_existing}\n\nExtract only new entities needed."}
-                ])
+                r = await agent.llm.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": "Extract ONLY NEW shared entities. Output ONLY Python code — no intro text. Start with ```python. All types must pass mypy strict.",
+                        },
+                        {
+                            "role": "user",
+                            "content": f"## Plan:\n{plan}\n\n## Existing entities:\n{entities_existing}\n\nExtract only new entities needed.",
+                        },
+                    ]
+                )
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
@@ -1420,23 +1697,31 @@ class WorkflowCommand(Command):
                     analysis = f.read()
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
-                r = await agent.llm.chat([
-                    {"role": "system", "content": (
-                        _PATH_VERIFICATION_RULE + "\n\n"
-                        "Create a numbered task plan for adding these features. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
-                        "FORMAT — exactly one task per line:\n"
-                        "  N. [NEW] `path/to/new.py` — short description\n"
-                        "  N. [MODIFY] `existing/file.py` — short description\n\n"
-                        "RULES:\n"
-                        "- Every file path MUST be backtick-wrapped\n"
-                        "- Prefix each task with [NEW] or [MODIFY]\n"
-                        "- One file per line, numbered sequentially\n"
-                        "- No bullet markers, no extra [TAGS], no brackets around filenames\n"
-                        "- If modifying an existing file, use its EXACT current path\n"
-                        + prompt_context
-                    )},
-                    {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
-                ])
+                r = await agent.llm.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                _PATH_VERIFICATION_RULE + "\n\n"
+                                "Create a numbered task plan for adding these features. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
+                                "FORMAT — exactly one task per line:\n"
+                                "  N. [NEW] `path/to/new.py` — short description\n"
+                                "  N. [MODIFY] `existing/file.py` — short description\n\n"
+                                "RULES:\n"
+                                "- Every file path MUST be backtick-wrapped\n"
+                                "- Prefix each task with [NEW] or [MODIFY]\n"
+                                "- One file per line, numbered sequentially\n"
+                                "- No bullet markers, no extra [TAGS], no brackets around filenames\n"
+                                "- If modifying an existing file, use its EXACT current path\n"
+                                + prompt_context
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}",
+                        },
+                    ]
+                )
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
@@ -1460,7 +1745,9 @@ class WorkflowCommand(Command):
                     f.write(f"\n\n---\n\n{gated}")
                 print("[taskplan] Appended")
 
-            await _offer_next(tasks_md, plan_md, entities_md, analysis_md, str(target_workspace))
+            await _offer_next(
+                tasks_md, plan_md, entities_md, analysis_md, str(target_workspace)
+            )
 
         else:
             if not force and _reuse("project_analysis.md", "analyze"):
@@ -1475,7 +1762,9 @@ class WorkflowCommand(Command):
                         if fn.endswith(".py"):
                             py_files.append(os.path.join(dp, fn))
                 if not py_files:
-                    self.error("[analyze] No py files. Use --from spec.md for greenfield.")
+                    self.error(
+                        "[analyze] No py files. Use --from spec.md for greenfield."
+                    )
                     return True
                 combined = ""
                 lines_used = 0
@@ -1490,7 +1779,9 @@ class WorkflowCommand(Command):
                     if lines_used + entry_lines > max_lines:
                         remaining = max_lines - lines_used
                         if remaining > 0:
-                            combined = "".join([combined, "\n".join(entry.splitlines()[:remaining])])
+                            combined = "".join(
+                                [combined, "\n".join(entry.splitlines()[:remaining])]
+                            )
                         break
                     combined += entry
                     lines_used += entry_lines
@@ -1502,7 +1793,11 @@ class WorkflowCommand(Command):
                     "## 3. ARCHITECTURE — DRY violations, coupling, SRP breaks\n"
                     "## 4. INNOVATION — new capabilities that would make this system more useful\n"
                     "## 5. PRODUCTION — logging, monitoring, config, security gaps\n"
-                    + ("## 6. BRAINSTORMING — bold creative features\n" if brainstorm else "")
+                    + (
+                        "## 6. BRAINSTORMING — bold creative features\n"
+                        if brainstorm
+                        else ""
+                    )
                     + "RULES:\n"
                     "- Max 3 bullet points per section, max 50 words per bullet\n"
                     "- Cite file paths from the code when identifying issues\n"
@@ -1513,16 +1808,24 @@ class WorkflowCommand(Command):
                     "system prompt exactly.\n\n"
                     f"## Codebase:\n{combined}"
                 )
-                r = await agent.llm.chat([
-                    {"role": "system", "content": analyze_system},
-                    {"role": "user", "content": analyze_user},
-                ])
+                r = await agent.llm.chat(
+                    [
+                        {"role": "system", "content": analyze_system},
+                        {"role": "user", "content": analyze_user},
+                    ]
+                )
                 if not step_ok(r):
                     print(f"[analyze] FAILED: {r[:200]}")
                     return True
-                v_text, v_checked, v_flagged = await _write_verified_analysis(r, analysis_md, ws_path)
-                if not await _verify_or_repair_gate(agent, r, analysis_md, ws_path, v_checked, v_flagged, v_text, force):
-                    print("\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force.")
+                v_text, v_checked, v_flagged = await _write_verified_analysis(
+                    r, analysis_md, ws_path
+                )
+                if not await _verify_or_repair_gate(
+                    agent, r, analysis_md, ws_path, v_checked, v_flagged, v_text, force
+                ):
+                    print(
+                        "\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force."
+                    )
                     return True
                 await _extract_decisions_if_any(agent, analysis_md, ws_path)
 
@@ -1532,16 +1835,21 @@ class WorkflowCommand(Command):
                 with open(analysis_md, "r", encoding="utf-8") as f:
                     analysis = f.read()
                 print("\n[plan] Creating plan...")
-                r = await agent.llm.chat([
-                    {"role": "system", "content": (
-                        _PATH_VERIFICATION_RULE + "\n"
-                        "Create a prioritized implementation plan. "
-                        "Categorize: [FIX], [FEATURE], [ARCH], [OPS]. "
-                        "Priorities: MUST, SHOULD, COULD. Max 3 items per category. "
-                        "Be concise — one line per item."
-                    )},
-                    {"role": "user", "content": f"Create plan:\n\n{analysis}"}
-                ])
+                r = await agent.llm.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                _PATH_VERIFICATION_RULE + "\n"
+                                "Create a prioritized implementation plan. "
+                                "Categorize: [FIX], [FEATURE], [ARCH], [OPS]. "
+                                "Priorities: MUST, SHOULD, COULD. Max 3 items per category. "
+                                "Be concise — one line per item."
+                            ),
+                        },
+                        {"role": "user", "content": f"Create plan:\n\n{analysis}"},
+                    ]
+                )
                 if not step_ok(r):
                     print(f"[plan] FAILED: {r[:200]}")
                     return True
@@ -1572,10 +1880,18 @@ class WorkflowCommand(Command):
                     analysis = f.read()
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
-                r = await agent.llm.chat([
-                    {"role": "system", "content": "Extract shared entities. Output ONLY Python code. Start with ```python. No intro text. Include only new/modified types — skip types that already exist unchanged. Avoid circular imports. Never use <tool_call> or XML tags."},
-                    {"role": "user", "content": f"Extract entities:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
-                ])
+                r = await agent.llm.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": "Extract shared entities. Output ONLY Python code. Start with ```python. No intro text. Include only new/modified types — skip types that already exist unchanged. Avoid circular imports. Never use <tool_call> or XML tags.",
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Extract entities:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}",
+                        },
+                    ]
+                )
                 if not step_ok(r):
                     print(f"[entities] FAILED: {r[:200]}")
                     return True
@@ -1606,22 +1922,30 @@ class WorkflowCommand(Command):
                     analysis = f.read()
                 with open(plan_md, "r", encoding="utf-8") as f:
                     plan = f.read()
-                r = await agent.llm.chat([
-                    {"role": "system", "content": (
-                        _PATH_VERIFICATION_RULE + "\n\n"
-                        "Create a numbered task plan. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
-                        "FORMAT — exactly one task per line:\n"
-                        "  N. `path/to/file.py` — short description\n\n"
-                        "RULES:\n"
-                        "- Every file path MUST be backtick-wrapped\n"
-                        "- One file per line, numbered sequentially (1. 2. 3.)\n"
-                        "- No bullet markers (-, *), no [TAGS], no brackets around filenames\n"
-                        "- If modifying an existing file, use its EXACT current path\n"
-                        "- List in dependency order (configs first, then utilities, then consumers)\n"
-                        + prompt_context
-                    )},
-                    {"role": "user", "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}"}
-                ])
+                r = await agent.llm.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                _PATH_VERIFICATION_RULE + "\n\n"
+                                "Create a numbered task plan. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
+                                "FORMAT — exactly one task per line:\n"
+                                "  N. `path/to/file.py` — short description\n\n"
+                                "RULES:\n"
+                                "- Every file path MUST be backtick-wrapped\n"
+                                "- One file per line, numbered sequentially (1. 2. 3.)\n"
+                                "- No bullet markers (-, *), no [TAGS], no brackets around filenames\n"
+                                "- If modifying an existing file, use its EXACT current path\n"
+                                "- List in dependency order (configs first, then utilities, then consumers)\n"
+                                + prompt_context
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": f"## Analysis:\n{analysis}\n\n## Plan:\n{plan}",
+                        },
+                    ]
+                )
                 if not step_ok(r):
                     print(f"[taskplan] FAILED: {r[:200]}")
                     return True
@@ -1645,7 +1969,9 @@ class WorkflowCommand(Command):
                     f.write(gated)
                 print("[taskplan] Written")
 
-            await _offer_next(tasks_md, plan_md, entities_md, analysis_md, str(target_workspace))
+            await _offer_next(
+                tasks_md, plan_md, entities_md, analysis_md, str(target_workspace)
+            )
 
         if auto_flag:
             set_autonomous(False)

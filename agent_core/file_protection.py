@@ -18,6 +18,7 @@ This module is the single choke point: any agent-driven file removal should go
 through :func:`safe_remove` / :func:`safe_rmtree`, which raise
 ``SecurityViolationError`` on protected targets instead of deleting them.
 """
+
 from __future__ import annotations
 
 import os
@@ -27,7 +28,9 @@ from .entities import SecurityViolationError
 
 
 #: Filenames (no path) treated as protected wherever they appear in the workspace.
-PROTECTED_FILENAMES: frozenset[str] = frozenset({".env", ".plans.json", "plan_proposed.md", "plan_executing.md"})
+PROTECTED_FILENAMES: frozenset[str] = frozenset(
+    {".env", ".plans.json", "plan_proposed.md", "plan_executing.md"}
+)
 
 #: Path prefixes, matched case-insensitively against forward-slash rel paths,
 #: that are recursively protected under the workspace root.
@@ -37,7 +40,9 @@ PROTECTED_PREFIXES: tuple[str, ...] = ("reports/",)
 _PLAN_FILE_PREFIXES = ("plan_executed_", "plan_executing_")
 
 
-def _rel_posix(path: os.PathLike[str] | str, workspace_root: os.PathLike[str] | str) -> str:
+def _rel_posix(
+    path: os.PathLike[str] | str, workspace_root: os.PathLike[str] | str
+) -> str:
     """Return ``path`` as a forward-slash relative string against workspace_root.
 
     Raises ``SecurityViolationError`` if the path cannot be expressed as a
@@ -69,7 +74,9 @@ def _rel_posix(path: os.PathLike[str] | str, workspace_root: os.PathLike[str] | 
     return rel
 
 
-def is_protected(path: os.PathLike[str] | str, workspace_root: os.PathLike[str] | str) -> bool:
+def is_protected(
+    path: os.PathLike[str] | str, workspace_root: os.PathLike[str] | str
+) -> bool:
     """True if ``path`` (relative to ``workspace_root``) must never be deleted.
 
     Matches protected categories:
@@ -98,7 +105,9 @@ def is_protected(path: os.PathLike[str] | str, workspace_root: os.PathLike[str] 
     return False
 
 
-def safe_remove(path: os.PathLike[str] | str, workspace_root: os.PathLike[str] | str) -> None:
+def safe_remove(
+    path: os.PathLike[str] | str, workspace_root: os.PathLike[str] | str
+) -> None:
     """Delete a single file unless it is protected.
 
     Raises ``SecurityViolationError`` for ``.env`` / ``reports/*`` targets so
@@ -109,7 +118,9 @@ def safe_remove(path: os.PathLike[str] | str, workspace_root: os.PathLike[str] |
     os.remove(os.fspath(path))
 
 
-def safe_rmtree(path: os.PathLike[str] | str, workspace_root: os.PathLike[str] | str) -> None:
+def safe_rmtree(
+    path: os.PathLike[str] | str, workspace_root: os.PathLike[str] | str
+) -> None:
     """Recursively remove a directory tree unless it is protected.
 
     ``reports/`` itself and any sub-directory of it are refused; everything else
@@ -117,13 +128,17 @@ def safe_rmtree(path: os.PathLike[str] | str, workspace_root: os.PathLike[str] |
     ``SecurityViolationError``.
     """
     if is_protected(path, workspace_root):
-        raise SecurityViolationError(f"Protected directory — refusing to delete: {path}")
+        raise SecurityViolationError(
+            f"Protected directory — refusing to delete: {path}"
+        )
     import shutil
 
     shutil.rmtree(os.fspath(path))
 
 
-def protected_targets(paths: list[os.PathLike[str] | str], workspace_root: os.PathLike[str] | str) -> list[str]:
+def protected_targets(
+    paths: list[os.PathLike[str] | str], workspace_root: os.PathLike[str] | str
+) -> list[str]:
     """Filter ``paths`` down to only those that are protected (for reporting)."""
     out: list[str] = []
     for p in paths:

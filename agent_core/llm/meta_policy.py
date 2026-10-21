@@ -25,7 +25,9 @@ class MetaPolicyEvolver:
             if failure_count > 0:
                 adjustment *= DECAY_FACTOR ** min(failure_count, 10)
             if adjustment != 0:
-                new_weight = max(0.1, min(self._weights[profile_type] + adjustment, 2.0))
+                new_weight = max(
+                    0.1, min(self._weights[profile_type] + adjustment, 2.0)
+                )
                 self._weights[profile_type] = new_weight * DECAY_FACTOR
         return dict(self._weights)
 

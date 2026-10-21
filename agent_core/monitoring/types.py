@@ -4,6 +4,7 @@ Self-contained on purpose: the dashboard stack (collector, alerts, HTTP API)
 depends only on this module plus the standard library, so it can be imported
 cheaply from anywhere (REPL loop, ``--serve`` process, tests).
 """
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List

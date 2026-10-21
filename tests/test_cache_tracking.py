@@ -1,4 +1,5 @@
 """Regression tests for prompt-cache hit/miss tracking in MetricsTracker and PromptCache."""
+
 from __future__ import annotations
 
 import pytest
@@ -19,7 +20,9 @@ class TestMetricsTrackerCache:
 
         metrics = m.get_cache_metrics(
             __import__("agent_core.llm.llm_types", fromlist=["TaskType"]).TaskType.FIX,
-            __import__("agent_core.llm.llm_types", fromlist=["ProfileType"]).ProfileType.FAST_CODEGEN,
+            __import__(
+                "agent_core.llm.llm_types", fromlist=["ProfileType"]
+            ).ProfileType.FAST_CODEGEN,
         )
         assert metrics["hits"] == 2
         assert metrics["misses"] == 1
@@ -43,7 +46,9 @@ class TestMetricsTrackerCache:
         m = MetricsTracker()
         metrics = m.get_cache_metrics(
             __import__("agent_core.llm.llm_types", fromlist=["TaskType"]).TaskType.FIX,
-            __import__("agent_core.llm.llm_types", fromlist=["ProfileType"]).ProfileType.FAST_CODEGEN,
+            __import__(
+                "agent_core.llm.llm_types", fromlist=["ProfileType"]
+            ).ProfileType.FAST_CODEGEN,
         )
         assert metrics == {}
 
@@ -70,9 +75,9 @@ class TestPromptCacheStats:
 
     def test_stats_after_hits_and_misses(self):
         pc = PromptCache()
-        pc.get_template("fix", "a")   # miss
-        pc.get_template("fix", "b")   # miss
-        pc.get_template("fix", "a")   # hit
+        pc.get_template("fix", "a")  # miss
+        pc.get_template("fix", "b")  # miss
+        pc.get_template("fix", "a")  # hit
         stats = pc.get_stats()
         assert stats["hits"] == 1
         assert stats["misses"] == 2

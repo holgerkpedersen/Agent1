@@ -4,6 +4,7 @@ Exercises ``PlanCommand`` end-to-end with a mocked agent: plan-mode refusal,
 build-mode execution that spawns one isolated subagent per task, and cycle
 abort (no subagents spawned).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -152,12 +153,17 @@ async def test_run_plan_drives_real_subagent(tmp_path, monkeypatch):
 
         def spawn_subagent(self, name, workspace=None, role=None):
             from agent_core.subagent import SubAgent
+
             return SubAgent(parent=self, name=name, workspace=workspace, role=role)
 
     tasks = [
         PlanTask(id="T0", description="explore module", role="planner"),
-        PlanTask(id="T1", description="implement feature", role="implementer",
-                 depends_on=["T0"]),
+        PlanTask(
+            id="T1",
+            description="implement feature",
+            role="implementer",
+            depends_on=["T0"],
+        ),
     ]
     snapshot = await run_plan(agent=_RealAgent(), tasks=tasks)
 
@@ -166,4 +172,3 @@ async def test_run_plan_drives_real_subagent(tmp_path, monkeypatch):
     t1 = next(t for t in snapshot["tasks"] if t["task_id"] == "T1")
     assert "T0" in t1["input_data"]
     assert "result" in t1["input_data"]["T0"]
-

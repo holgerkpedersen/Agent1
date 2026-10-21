@@ -80,8 +80,12 @@ def __getattr__(name: str) -> Any:  # PEP 562 module-level getattr
 
         return RollingWindowAggregator
     if name in (
-        "AggregationEngine", "HierarchicalAggregator", "SummaryBuilder",
-        "StatisticalSummaryGenerator", "TrendDetector", "CorrelationMapper",
+        "AggregationEngine",
+        "HierarchicalAggregator",
+        "SummaryBuilder",
+        "StatisticalSummaryGenerator",
+        "TrendDetector",
+        "CorrelationMapper",
     ):
         from . import analytics
 
@@ -89,15 +93,15 @@ def __getattr__(name: str) -> Any:  # PEP 562 module-level getattr
     if name in ("PerformanceDatabase", "TimeSeriesAdapter"):
         from .storage.database import PerformanceDatabase, TimeSeriesAdapter
 
-        return {"PerformanceDatabase": PerformanceDatabase,
-                "TimeSeriesAdapter": TimeSeriesAdapter}[name]
+        return {
+            "PerformanceDatabase": PerformanceDatabase,
+            "TimeSeriesAdapter": TimeSeriesAdapter,
+        }[name]
     if name in ("MetricsStore",):
         from .storage.metrics_store import MetricsStore
 
         return MetricsStore
-    raise AttributeError(
-        f"module {__name__!r} has no attribute {name!r}"
-    )
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _lazy(name: str, importer: Callable[[], Any]) -> None:

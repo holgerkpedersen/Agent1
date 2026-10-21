@@ -9,6 +9,7 @@ whatever the pre-started server serves instead of the requested model":
   --models-dir then load
 * no server at all -> launch a router and load the model
 """
+
 from types import SimpleNamespace
 
 import pytest
@@ -33,10 +34,10 @@ class _FakeHTTP:
 
     def __init__(self, props, models, load_ok=True, load_status=200):
         self.props = props
-        self.models = list(models)          # currently served ids
+        self.models = list(models)  # currently served ids
         self.load_ok = load_ok
         self.load_status = load_status
-        self.calls = []                     # (method, path, payload)
+        self.calls = []  # (method, path, payload)
         self.launched = False
 
     def __call__(self, method, url, payload=None, timeout=10.0):
@@ -52,7 +53,13 @@ class _FakeHTTP:
                 if payload and payload.get("model") not in self.models:
                     self.models.append(payload["model"])
                 return self.load_status, {"success": True}
-            return 404, {"error": {"message": "File Not Found", "type": "not_found_error", "code": 404}}
+            return 404, {
+                "error": {
+                    "message": "File Not Found",
+                    "type": "not_found_error",
+                    "code": 404,
+                }
+            }
         if url.endswith("/models/unload"):
             if payload and payload.get("model") in self.models:
                 self.models.remove(payload["model"])
@@ -67,6 +74,7 @@ def patch_http(monkeypatch):
     def _install(fake):
         monkeypatch.setattr(mod, "_http_json", fake)
         return fake
+
     return _install
 
 
@@ -99,6 +107,7 @@ class TestEnsureModelServed:
         monkeypatch.setattr(mod, "running_server_pids", lambda api_url: [])
         monkeypatch.setattr(mod, "is_server_up", lambda api_url: False)
         launched = {}
+
         def _fake_launch(api_url, bare, extra_args=None):
             launched["api_url"] = api_url
             launched["bare"] = bare
@@ -108,8 +117,11 @@ class TestEnsureModelServed:
             fake.models = [bare]
             fake.load_ok = True
             return True, f"launched and serving '{bare}'"
+
         monkeypatch.setattr(mod, "_launch_server", _fake_launch)
-        monkeypatch.setattr(mod, "server_binary_path", lambda api_url: "llama-server.exe")
+        monkeypatch.setattr(
+            mod, "server_binary_path", lambda api_url: "llama-server.exe"
+        )
         monkeypatch.setattr(mod, "_wait_until_up", lambda api_url, timeout=0: True)
         ok, msg = mod.ensure_model_served("http://x/v1", "llama/Bonsai-27B-Q1_0")
         assert ok is True
@@ -125,13 +137,17 @@ class TestEnsureModelServed:
         monkeypatch.setattr(mod, "is_server_up", lambda api_url: False)
         monkeypatch.setattr(mod, "_wait_until_up", lambda api_url, timeout=0: True)
         launched = {}
+
         def _fake_launch(api_url, bare, extra_args=None):
             launched["bare"] = bare
             fake.props = _single_props()
             fake.models = [bare]
             return True, "launched"
+
         monkeypatch.setattr(mod, "_launch_server", _fake_launch)
-        monkeypatch.setattr(mod, "server_binary_path", lambda api_url: "llama-server.exe")
+        monkeypatch.setattr(
+            mod, "server_binary_path", lambda api_url: "llama-server.exe"
+        )
         ok, msg = mod.ensure_model_served("http://x/v1", "llama/Bonsai-27B-Q1_0")
         assert ok is True
         assert launched.get("bare") == "Bonsai-27B-Q1_0"
@@ -148,19 +164,18 @@ class TestToolCallParserRestart:
         patch_http(fake)
 
         # Patch _server_has_tool_call_parser to return False (missing parser).
-        monkeypatch.setattr(mod, "_server_has_tool_call_parser",
-                            lambda api_url: False)
+        monkeypatch.setattr(mod, "_server_has_tool_call_parser", lambda api_url: False)
         # Prevent real shutdown/launch.
-        monkeypatch.setattr(mod, "shutdown_server",
-                            lambda api_url: (True, "stopped"))
+        monkeypatch.setattr(mod, "shutdown_server", lambda api_url: (True, "stopped"))
         launched = {}
+
         def _fake_launch(api_url, bare, extra_args=None):
             launched["bare"] = bare
             return True, f"relaunched with parser for '{bare}'"
+
         monkeypatch.setattr(mod, "_launch_server", _fake_launch)
 
-        ok, msg = mod.ensure_model_served(
-            "http://x/v1", "llama/Qwen3.8-Flash-Next")
+        ok, msg = mod.ensure_model_served("http://x/v1", "llama/Qwen3.8-Flash-Next")
         assert ok is True
         assert launched.get("bare") == "Qwen3.8-Flash-Next"
         assert "relaunched" in msg.lower() or "parser" in msg.lower()
@@ -169,10 +184,8 @@ class TestToolCallParserRestart:
         """Server serves Qwen3 and already has --tool-call-parser."""
         fake = _FakeHTTP(_router_props(), ["Qwen3.8-Flash-Next"])
         patch_http(fake)
-        monkeypatch.setattr(mod, "_server_has_tool_call_parser",
-                            lambda api_url: True)
-        ok, msg = mod.ensure_model_served(
-            "http://x/v1", "llama/Qwen3.8-Flash-Next")
+        monkeypatch.setattr(mod, "_server_has_tool_call_parser", lambda api_url: True)
+        ok, msg = mod.ensure_model_served("http://x/v1", "llama/Qwen3.8-Flash-Next")
         assert ok is True
         assert "already serves" in msg
 
@@ -180,10 +193,8 @@ class TestToolCallParserRestart:
         """Unknown model family — no parser needed, no restart."""
         fake = _FakeHTTP(_router_props(), ["some-random-model"])
         patch_http(fake)
-        monkeypatch.setattr(mod, "_server_has_tool_call_parser",
-                            lambda api_url: False)
-        ok, msg = mod.ensure_model_served(
-            "http://x/v1", "llama/some-random-model")
+        monkeypatch.setattr(mod, "_server_has_tool_call_parser", lambda api_url: False)
+        ok, msg = mod.ensure_model_served("http://x/v1", "llama/some-random-model")
         assert ok is True
         assert "already serves" in msg
 
@@ -200,14 +211,20 @@ class TestToolCallParserRestart:
         patch_http(fake)
         state = {"shutdown": 0, "launch": 0}
         monkeypatch.setattr(
-            mod, "shutdown_server",
-            lambda api_url: (state.update(shutdown=state["shutdown"] + 1),
-                             (True, "stopped"))[1],
+            mod,
+            "shutdown_server",
+            lambda api_url: (
+                state.update(shutdown=state["shutdown"] + 1),
+                (True, "stopped"),
+            )[1],
         )
         monkeypatch.setattr(
-            mod, "_launch_server",
-            lambda *a, **k: (state.update(launch=state["launch"] + 1),
-                             (True, "launched"))[1],
+            mod,
+            "_launch_server",
+            lambda *a, **k: (
+                state.update(launch=state["launch"] + 1),
+                (True, "launched"),
+            )[1],
         )
         ok, msg = mod.ensure_model_served(
             "http://x/v1",
@@ -230,18 +247,33 @@ class TestServerHasToolCallParser:
     def test_exposed_argv_without_flag_is_false(self, patch_http):
         class _Fake:
             def __call__(self, method, url, payload=None, timeout=10.0):
-                return 200, {"data": [
-                    {"id": "M", "status": {"args": ["llama-server", "-m", "M"]}}
-                ]}
+                return 200, {
+                    "data": [
+                        {"id": "M", "status": {"args": ["llama-server", "-m", "M"]}}
+                    ]
+                }
+
         patch_http(_Fake())
         assert mod._server_has_tool_call_parser("http://x/v1") is False
 
     def test_exposed_argv_with_flag_is_true(self, patch_http):
         class _Fake:
             def __call__(self, method, url, payload=None, timeout=10.0):
-                return 200, {"data": [{"id": "M", "status": {"args": [
-                    "llama-server", "--tool-call-parser", "qwen3_coder"
-                ]}}]}
+                return 200, {
+                    "data": [
+                        {
+                            "id": "M",
+                            "status": {
+                                "args": [
+                                    "llama-server",
+                                    "--tool-call-parser",
+                                    "qwen3_coder",
+                                ]
+                            },
+                        }
+                    ]
+                }
+
         patch_http(_Fake())
         assert mod._server_has_tool_call_parser("http://x/v1") is True
 
@@ -253,14 +285,20 @@ class TestExternalServerGuard:
     def _no_lifecycle(self, monkeypatch):
         state = {"shutdown": 0, "launch": 0}
         monkeypatch.setattr(
-            mod, "shutdown_server",
-            lambda api_url: (state.update(shutdown=state["shutdown"] + 1),
-                             (True, "stopped"))[1],
+            mod,
+            "shutdown_server",
+            lambda api_url: (
+                state.update(shutdown=state["shutdown"] + 1),
+                (True, "stopped"),
+            )[1],
         )
         monkeypatch.setattr(
-            mod, "_launch_server",
-            lambda *a, **k: (state.update(launch=state["launch"] + 1),
-                             (True, "launched"))[1],
+            mod,
+            "_launch_server",
+            lambda *a, **k: (
+                state.update(launch=state["launch"] + 1),
+                (True, "launched"),
+            )[1],
         )
         return state
 
@@ -270,7 +308,8 @@ class TestExternalServerGuard:
         patch_http(fake)
         state = self._no_lifecycle(monkeypatch)
         ok, msg = mod.ensure_model_served(
-            "http://x/v1", "llama//home/holger/m/Qwen3.8-27B.gguf")
+            "http://x/v1", "llama//home/holger/m/Qwen3.8-27B.gguf"
+        )
         assert ok is True
         assert "already serves" in msg
         assert state == {"shutdown": 0, "launch": 0}
@@ -281,7 +320,8 @@ class TestExternalServerGuard:
         patch_http(fake)
         state = self._no_lifecycle(monkeypatch)
         ok, msg = mod.ensure_model_served(
-            "http://x/v1", "llama//home/holger/m/Qwen3.8-27B.gguf")
+            "http://x/v1", "llama//home/holger/m/Qwen3.8-27B.gguf"
+        )
         assert ok is False
         assert "does not manage an external one" in msg
         assert state == {"shutdown": 0, "launch": 0}
@@ -299,9 +339,7 @@ class TestExternalServerGuard:
         monkeypatch.delenv("AGENT_LLAMA_EXTERNAL", raising=False)
         monkeypatch.delenv("LLAMA_NO_MANAGE", raising=False)
         env_file = tmp_path / ".env"
-        env_file.write_text(
-            "# comment\nAGENT_LLAMA_EXTERNAL=1\n", encoding="utf-8"
-        )
+        env_file.write_text("# comment\nAGENT_LLAMA_EXTERNAL=1\n", encoding="utf-8")
         monkeypatch.setattr(mod, "_ENV_PATH", str(env_file))
         assert mod._external_server() is True
 
@@ -312,6 +350,7 @@ class TestResolveLocalGguf:
         import os
         import tempfile
         from agent_core.llm import llama_provider
+
         d = tempfile.mkdtemp()
         rel = os.path.join(d, "lmstudio-community", "Bonsai-27B-GGUF")
         os.makedirs(rel)
@@ -320,12 +359,16 @@ class TestResolveLocalGguf:
             f.write("x")
         monkeypatch.setattr(llama_provider, "_llama_models_dir", lambda: d)
         monkeypatch.setattr(llama_provider, "_lmstudio_models_dir", lambda: None)
-        got = mod._resolve_local_gguf("lmstudio-community/Bonsai-27B-GGUF/Bonsai-27B-Q1_0")
+        got = mod._resolve_local_gguf(
+            "lmstudio-community/Bonsai-27B-GGUF/Bonsai-27B-Q1_0"
+        )
         assert got is not None and got.replace(os.sep, "/").endswith(
-            "lmstudio-community/Bonsai-27B-GGUF/Bonsai-27B-Q1_0.gguf")
+            "lmstudio-community/Bonsai-27B-GGUF/Bonsai-27B-Q1_0.gguf"
+        )
 
     def test_returns_none_when_missing(self, monkeypatch):
         from agent_core.llm import llama_provider
+
         monkeypatch.setattr(llama_provider, "_llama_models_dir", lambda: None)
         assert mod._resolve_local_gguf("nope/Bonsai") is None
 
@@ -334,6 +377,7 @@ class TestResolveLocalGguf:
         import os
         import tempfile
         from agent_core.llm import llama_provider
+
         d = tempfile.mkdtemp()
         rel = os.path.join(d, "lmstudio-community", "Bonsai-27B-GGUF")
         os.makedirs(rel)
@@ -341,21 +385,30 @@ class TestResolveLocalGguf:
             f.write("x")
         monkeypatch.setattr(llama_provider, "_lmstudio_models_dir", lambda: d)
         monkeypatch.setattr(llama_provider, "_llama_models_dir", lambda: None)
-        assert mod._resolve_local_gguf(
-            "lmstudio-community/Bonsai-27B-GGUF/Bonsai-27B-Q1_0") is None
+        assert (
+            mod._resolve_local_gguf(
+                "lmstudio-community/Bonsai-27B-GGUF/Bonsai-27B-Q1_0"
+            )
+            is None
+        )
 
 
 class TestLaunchServer:
     def test_single_model_when_local_gguf_resolves(self, monkeypatch):
         """A local GGUF -> single-model launch with --model + --alias (robust)."""
         launched = {}
-        monkeypatch.setattr(mod, "server_binary_path", lambda api_url: "llama-server.exe")
+        monkeypatch.setattr(
+            mod, "server_binary_path", lambda api_url: "llama-server.exe"
+        )
         monkeypatch.setattr(mod, "_wait_until_up", lambda api_url, timeout=0: True)
-        monkeypatch.setattr(mod, "_resolve_local_gguf",
-                            lambda bare: r"C:\models\Bonsai-27B-Q1_0.gguf")
+        monkeypatch.setattr(
+            mod, "_resolve_local_gguf", lambda bare: r"C:\models\Bonsai-27B-Q1_0.gguf"
+        )
+
         def _fake_popen(cmd, **kw):
             launched["cmd"] = list(cmd)
             return None
+
         monkeypatch.setattr(mod.subprocess, "Popen", _fake_popen)
         ok, msg = mod._launch_server("http://127.0.0.1:8080/v1", "Bonsai-27B-Q1_0")
         assert ok is True
@@ -368,14 +421,20 @@ class TestLaunchServer:
     def test_router_when_no_local_gguf(self, monkeypatch):
         """No local GGUF -> router launch with --models-dir + dynamic load."""
         launched = {}
-        monkeypatch.setattr(mod, "server_binary_path", lambda api_url: "llama-server.exe")
+        monkeypatch.setattr(
+            mod, "server_binary_path", lambda api_url: "llama-server.exe"
+        )
         monkeypatch.setattr(mod, "_wait_until_up", lambda api_url, timeout=0: True)
         monkeypatch.setattr(mod, "_resolve_local_gguf", lambda bare: None)
         monkeypatch.setattr(mod, "_models_dir_for_launch", lambda: r"C:\models")
-        monkeypatch.setattr(mod, "_dynamic_load", lambda api_url, bare, served: (True, "ok"))
+        monkeypatch.setattr(
+            mod, "_dynamic_load", lambda api_url, bare, served: (True, "ok")
+        )
+
         def _fake_popen(cmd, **kw):
             launched["cmd"] = list(cmd)
             return None
+
         monkeypatch.setattr(mod.subprocess, "Popen", _fake_popen)
         ok, msg = mod._launch_server("http://127.0.0.1:8080/v1", "ggml-org/gemma-4b")
         assert ok is True
@@ -391,31 +450,43 @@ class TestAgentReconcileHook:
 
         called = {}
         monkeypatch.setattr(
-            mod, "ensure_model_served",
-            lambda api_url, model_name: called.update(api_url=api_url, model=model_name) or (True, "ok"),
+            mod,
+            "ensure_model_served",
+            lambda api_url, model_name: (
+                called.update(api_url=api_url, model=model_name) or (True, "ok")
+            ),
         )
         # Server is serving a DIFFERENT model so the reconcile hook calls
         # ensure_model_served to switch it.  After the switch, the re-check
         # returns the correct model.
         call_count = {"n": 0}
+
         def _list_served(api_url):
             call_count["n"] += 1
             if call_count["n"] == 1:
                 return ["OldModel"]
             return ["Bonsai-27B-Q1_0"]
+
         monkeypatch.setattr(mod, "list_served_models", _list_served)
 
         # Build a real LLMClient but stub out the heavy init pieces so we only
         # exercise the reconcile hook against the in-memory server manager.
         from agent import LLMClient
-        monkeypatch.setattr("agent_core.constants.resolve_model", lambda e=None: "llama/Bonsai-27B-Q1_0")
-        monkeypatch.setattr("agent_core.config.load_agent_settings",
-                            lambda: SimpleNamespace(llm_provider="llama"))
+
+        monkeypatch.setattr(
+            "agent_core.constants.resolve_model", lambda e=None: "llama/Bonsai-27B-Q1_0"
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: SimpleNamespace(llm_provider="llama"),
+        )
         monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {})
-        provider = LlamaProvider(model_name="llama/Bonsai-27B-Q1_0",
-                                 api_url="http://127.0.0.1:8080/v1")
-        monkeypatch.setattr("agent_core.llm.provider.build_provider",
-                            lambda settings, name: provider)
+        provider = LlamaProvider(
+            model_name="llama/Bonsai-27B-Q1_0", api_url="http://127.0.0.1:8080/v1"
+        )
+        monkeypatch.setattr(
+            "agent_core.llm.provider.build_provider", lambda settings, name: provider
+        )
 
         LLMClient("llama/Bonsai-27B-Q1_0")
         assert called.get("model") == "llama/Bonsai-27B-Q1_0"
@@ -425,16 +496,27 @@ class TestAgentReconcileHook:
 
     def test_reconcile_is_noop_for_non_llama(self, monkeypatch):
         from agent import LLMClient
-        monkeypatch.setattr("agent_core.constants.resolve_model", lambda e=None: "laguna-s-2.1")
-        monkeypatch.setattr("agent_core.config.load_agent_settings",
-                            lambda: SimpleNamespace(llm_provider="lmstudio"))
+
+        monkeypatch.setattr(
+            "agent_core.constants.resolve_model", lambda e=None: "laguna-s-2.1"
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: SimpleNamespace(llm_provider="lmstudio"),
+        )
         monkeypatch.setattr("agent_core.constants.load_model_json", lambda: {})
         from agent_core.llm.lmstudio import LMStudioProvider
-        monkeypatch.setattr("agent_core.llm.provider.build_provider",
-                            lambda settings, name: LMStudioProvider(model_name=name))
+
+        monkeypatch.setattr(
+            "agent_core.llm.provider.build_provider",
+            lambda settings, name: LMStudioProvider(model_name=name),
+        )
         called = {}
-        monkeypatch.setattr(mod, "ensure_model_served",
-                            lambda api_url, model_name: called.update(x=1) or (True, "ok"))
+        monkeypatch.setattr(
+            mod,
+            "ensure_model_served",
+            lambda api_url, model_name: called.update(x=1) or (True, "ok"),
+        )
         LLMClient("laguna-s-2.1")
         assert "x" not in called  # llama manager must NOT be invoked
 
@@ -443,41 +525,56 @@ class TestToolCallParserDetection:
     """_tool_call_parser_for_model returns the right --tool-call-parser value."""
 
     def test_qwen3_flash_next(self):
-        assert mod._tool_call_parser_for_model(
-            "Qwen/Qwen3.8-Flash-Next") == "qwen3_coder"
+        assert (
+            mod._tool_call_parser_for_model("Qwen/Qwen3.8-Flash-Next") == "qwen3_coder"
+        )
 
     def test_qwen3_variant_paths(self):
-        assert mod._tool_call_parser_for_model(
-            "llama//home/holger/.huggingface/Qwen3.8-Flash-Next-UD-IQ3_XXS.gguf"
-        ) == "qwen3_coder"
+        assert (
+            mod._tool_call_parser_for_model(
+                "llama//home/holger/.huggingface/Qwen3.8-Flash-Next-UD-IQ3_XXS.gguf"
+            )
+            == "qwen3_coder"
+        )
 
     def test_qwen4_experimental(self):
-        assert mod._tool_call_parser_for_model(
-            "Qwen/Qwen4-Experimental-Next") == "qwen3_coder"
+        assert (
+            mod._tool_call_parser_for_model("Qwen/Qwen4-Experimental-Next")
+            == "qwen3_coder"
+        )
 
     def test_qwen2(self):
-        assert mod._tool_call_parser_for_model(
-            "Qwen/Qwen2.5-7B-Instruct") == "qwen2"
+        assert mod._tool_call_parser_for_model("Qwen/Qwen2.5-7B-Instruct") == "qwen2"
 
     def test_llama3(self):
-        assert mod._tool_call_parser_for_model(
-            "meta-llama/Meta-Llama-3-8B-Instruct") == "llama3"
+        assert (
+            mod._tool_call_parser_for_model("meta-llama/Meta-Llama-3-8B-Instruct")
+            == "llama3"
+        )
 
     def test_llama4(self):
-        assert mod._tool_call_parser_for_model(
-            "meta-llama/Llama-4-Scout-17B-16E-Instruct") == "llama3"
+        assert (
+            mod._tool_call_parser_for_model("meta-llama/Llama-4-Scout-17B-16E-Instruct")
+            == "llama3"
+        )
 
     def test_mistral(self):
-        assert mod._tool_call_parser_for_model(
-            "mistralai/Mistral-7B-Instruct-v0.3") == "mistral"
+        assert (
+            mod._tool_call_parser_for_model("mistralai/Mistral-7B-Instruct-v0.3")
+            == "mistral"
+        )
 
     def test_mixtral(self):
-        assert mod._tool_call_parser_for_model(
-            "mistralai/Mixtral-8x7B-Instruct-v0.1") == "mistral"
+        assert (
+            mod._tool_call_parser_for_model("mistralai/Mixtral-8x7B-Instruct-v0.1")
+            == "mistral"
+        )
 
     def test_command_r(self):
-        assert mod._tool_call_parser_for_model(
-            "CohereForAI/c4ai-command-r-v01") == "command-r"
+        assert (
+            mod._tool_call_parser_for_model("CohereForAI/c4ai-command-r-v01")
+            == "command-r"
+        )
 
     def test_unknown_model_returns_none(self):
         assert mod._tool_call_parser_for_model("gpt-4o") is None
@@ -489,18 +586,24 @@ class TestLaunchServerAutoParser:
 
     def test_qwen3_gets_parser(self, monkeypatch):
         launched = {}
-        monkeypatch.setattr(mod, "server_binary_path", lambda api_url: "llama-server.exe")
+        monkeypatch.setattr(
+            mod, "server_binary_path", lambda api_url: "llama-server.exe"
+        )
         monkeypatch.setattr(mod, "_wait_until_up", lambda api_url, timeout=0: True)
         monkeypatch.setattr(mod, "_resolve_local_gguf", lambda bare: None)
         monkeypatch.setattr(mod, "_models_dir_for_launch", lambda: r"C:\models")
-        monkeypatch.setattr(mod, "_dynamic_load", lambda api_url, bare, served: (True, "ok"))
+        monkeypatch.setattr(
+            mod, "_dynamic_load", lambda api_url, bare, served: (True, "ok")
+        )
+
         def _fake_popen(cmd, **kw):
             launched["cmd"] = list(cmd)
             return None
+
         monkeypatch.setattr(mod.subprocess, "Popen", _fake_popen)
         ok, msg = mod._launch_server(
-            "http://127.0.0.1:8080/v1",
-            "Qwen/Qwen3.8-Flash-Next")
+            "http://127.0.0.1:8080/v1", "Qwen/Qwen3.8-Flash-Next"
+        )
         assert ok is True
         assert "--tool-call-parser" in launched["cmd"]
         idx = launched["cmd"].index("--tool-call-parser")
@@ -510,36 +613,47 @@ class TestLaunchServerAutoParser:
         """If the user already supplies --tool-call-parser in llama_extra_args,
         we must NOT add a second one."""
         launched = {}
-        monkeypatch.setattr(mod, "server_binary_path", lambda api_url: "llama-server.exe")
+        monkeypatch.setattr(
+            mod, "server_binary_path", lambda api_url: "llama-server.exe"
+        )
         monkeypatch.setattr(mod, "_wait_until_up", lambda api_url, timeout=0: True)
         monkeypatch.setattr(mod, "_resolve_local_gguf", lambda bare: None)
         monkeypatch.setattr(mod, "_models_dir_for_launch", lambda: r"C:\models")
-        monkeypatch.setattr(mod, "_dynamic_load", lambda api_url, bare, served: (True, "ok"))
-        monkeypatch.setattr(mod, "_llama_extra_args",
-                            lambda: ["--tool-call-parser", "llama3"])
+        monkeypatch.setattr(
+            mod, "_dynamic_load", lambda api_url, bare, served: (True, "ok")
+        )
+        monkeypatch.setattr(
+            mod, "_llama_extra_args", lambda: ["--tool-call-parser", "llama3"]
+        )
+
         def _fake_popen(cmd, **kw):
             launched["cmd"] = list(cmd)
             return None
+
         monkeypatch.setattr(mod.subprocess, "Popen", _fake_popen)
         ok, msg = mod._launch_server(
-            "http://127.0.0.1:8080/v1",
-            "Qwen/Qwen3.8-Flash-Next")
+            "http://127.0.0.1:8080/v1", "Qwen/Qwen3.8-Flash-Next"
+        )
         assert ok is True
         assert launched["cmd"].count("--tool-call-parser") == 1
 
     def test_unknown_model_no_parser(self, monkeypatch):
         launched = {}
-        monkeypatch.setattr(mod, "server_binary_path", lambda api_url: "llama-server.exe")
+        monkeypatch.setattr(
+            mod, "server_binary_path", lambda api_url: "llama-server.exe"
+        )
         monkeypatch.setattr(mod, "_wait_until_up", lambda api_url, timeout=0: True)
         monkeypatch.setattr(mod, "_resolve_local_gguf", lambda bare: None)
         monkeypatch.setattr(mod, "_models_dir_for_launch", lambda: r"C:\models")
-        monkeypatch.setattr(mod, "_dynamic_load", lambda api_url, bare, served: (True, "ok"))
+        monkeypatch.setattr(
+            mod, "_dynamic_load", lambda api_url, bare, served: (True, "ok")
+        )
+
         def _fake_popen(cmd, **kw):
             launched["cmd"] = list(cmd)
             return None
+
         monkeypatch.setattr(mod.subprocess, "Popen", _fake_popen)
-        ok, msg = mod._launch_server(
-            "http://127.0.0.1:8080/v1",
-            "some-unknown-model")
+        ok, msg = mod._launch_server("http://127.0.0.1:8080/v1", "some-unknown-model")
         assert ok is True
         assert "--tool-call-parser" not in launched["cmd"]

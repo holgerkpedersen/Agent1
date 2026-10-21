@@ -1,9 +1,14 @@
 """RoutingBus tests (plan task 34): message routing, MessageType handling,
 subscriptions, tasks, and error propagation."""
+
 import pytest
 
 from agent_core.routing.bus import (
-    Message, MessageType, RoutingBus, RoutingError, TaskNode
+    Message,
+    MessageType,
+    RoutingBus,
+    RoutingError,
+    TaskNode,
 )
 
 

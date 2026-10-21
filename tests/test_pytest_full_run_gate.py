@@ -298,6 +298,7 @@ class TestRunToolGate:
             "agent_core.pytest_gate.changed_real_files",
             lambda root: {"agent_core/llm/tool_loop.py"},
         )
+
     @pytest.mark.asyncio
     async def test_full_run_refused_after_scratch_file_only(self, bot: Agent) -> None:
         # Baseline: the session starts on an already-modified tracked file.
@@ -306,9 +307,7 @@ class TestRunToolGate:
         assert "REFUSED" in out
 
     @pytest.mark.asyncio
-    async def test_full_run_allowed_and_counted(
-        self, bot: Agent, monkeypatch
-    ) -> None:
+    async def test_full_run_allowed_and_counted(self, bot: Agent, monkeypatch) -> None:
         bot._full_run_gate = FullRunGate(".", baseline=set())
 
         started: list[float | None] = []
@@ -333,9 +332,7 @@ class TestRunToolGate:
         assert "REFUSED" in again
 
     @pytest.mark.asyncio
-    async def test_targeted_runs_never_gated(
-        self, bot: Agent, monkeypatch
-    ) -> None:
+    async def test_targeted_runs_never_gated(self, bot: Agent, monkeypatch) -> None:
         bot._full_run_gate = FullRunGate(".", baseline={"agent_core/llm/tool_loop.py"})
 
         class _Ok:
@@ -350,9 +347,7 @@ class TestRunToolGate:
             def communicate(self, timeout=None):  # noqa: ANN001
                 return ("2 passed", "")
 
-        monkeypatch.setattr(
-            agent.subprocess, "Popen", lambda cmd, **kw: _Ok()
-        )
+        monkeypatch.setattr(agent.subprocess, "Popen", lambda cmd, **kw: _Ok())
         for cmd in (
             "python -m pytest --lf -q --no-cov",
             "python -m pytest --testmon -q --no-cov",
@@ -419,7 +414,6 @@ class TestRunToolGate:
         out = await bot._nlp_tests({"path": "."})
         assert "error:" in out
         assert bot._full_run_gate.runs == 0
-
 
 
 # ---------------------------------------------------------------------------

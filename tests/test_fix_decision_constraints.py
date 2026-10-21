@@ -7,10 +7,12 @@ returned ``[]`` and the LLM never saw its design constraints.  Matching on
 a bare basename also never hit records whose affected_files are stored in
 canonical workspace-relative form.
 """
+
 from pathlib import Path
 
 from agent_core.commands.fix_cmd import (
-    _decision_constraints_for, _decision_workspace_for
+    _decision_constraints_for,
+    _decision_workspace_for,
 )
 from agent_core.decisions import add_decision, load_decisions
 
@@ -47,8 +49,9 @@ class TestDecisionConstraintsFor:
         """Absolute caller path matches records stored workspace-relative."""
         ws = _make_ws(tmp_path)
         target = ws / "agent_core" / "commands" / "fix_cmd.py"
-        assert str(target.resolve()) in _decision_constraints_for(str(target)) or \
-            "No _v1/_v2 variants" in _decision_constraints_for(str(target))
+        assert str(target.resolve()) in _decision_constraints_for(
+            str(target)
+        ) or "No _v1/_v2 variants" in _decision_constraints_for(str(target))
         # The record's canonical relative form must appear in matching.
         block = _decision_constraints_for(str(target))
         assert "Never create duplicate function variants." in block

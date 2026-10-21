@@ -9,6 +9,7 @@ Resources:
 - fake://note           -> a tiny text document
 Exits on stdin EOF or the notifications/shutdown message.
 """
+
 import json
 import sys
 import time
@@ -61,11 +62,16 @@ def handle(msg):
         return []  # no response to notifications
     rid = msg.get("id")
     if method == "initialize":
-        return [reply(rid, {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {}, "resources": {}},
-            "serverInfo": {"name": "fake-mcp", "version": "0.1"},
-        })]
+        return [
+            reply(
+                rid,
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}, "resources": {}},
+                    "serverInfo": {"name": "fake-mcp", "version": "0.1"},
+                },
+            )
+        ]
     if method == "tools/list":
         return [reply(rid, {"tools": TOOLS})]
     if method == "tools/call":
@@ -79,18 +85,41 @@ def handle(msg):
             time.sleep(float(args.get("seconds", 0)))
             out = [{"type": "text", "text": "finally awake"}]
         else:
-            return [reply(rid, {"content": [], "isError": True,
-                                "structuredContent": {"error": f"unknown tool {name}"}})]
+            return [
+                reply(
+                    rid,
+                    {
+                        "content": [],
+                        "isError": True,
+                        "structuredContent": {"error": f"unknown tool {name}"},
+                    },
+                )
+            ]
         return [reply(rid, {"content": out, "isError": False})]
     if method == "resources/list":
         return [reply(rid, {"resources": RESOURCES})]
     if method == "resources/read":
-        return [reply(rid, {"contents": [
-            {"uri": params.get("uri", ""), "mimeType": "text/plain",
-             "text": "hello from fake resource"},
-        ]})]
-    return [{"jsonrpc": "2.0", "id": rid,
-             "error": {"code": -32601, "message": f"unknown method {method}"}}]
+        return [
+            reply(
+                rid,
+                {
+                    "contents": [
+                        {
+                            "uri": params.get("uri", ""),
+                            "mimeType": "text/plain",
+                            "text": "hello from fake resource",
+                        },
+                    ]
+                },
+            )
+        ]
+    return [
+        {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "error": {"code": -32601, "message": f"unknown method {method}"},
+        }
+    ]
 
 
 def main() -> None:

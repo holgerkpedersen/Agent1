@@ -17,7 +17,9 @@ from agent import Agent
 class _FakeLLMClient:
     """Stands in for agent.LLMClient so tests never reach the LM Studio API."""
 
-    def __init__(self, model_name: str | None = None, api_key: str | None = None) -> None:
+    def __init__(
+        self, model_name: str | None = None, api_key: str | None = None
+    ) -> None:
         self.model_name: str = model_name or "test-model"
         self.seen_messages: list[dict[str, str]] | None = None
 
@@ -36,21 +38,27 @@ def _make_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Agent:
     return Agent(workspace=str(tmp_path), model_name="test-model")
 
 
-def test_agent_entrypoint_returns_llm_answer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_agent_entrypoint_returns_llm_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     a = _make_agent(tmp_path, monkeypatch)
     answer = asyncio.run(a.llm.chat([{"role": "user", "content": "hello"}]))
     assert answer == "fake-answer"
     assert a.llm.model_name == "test-model"
 
 
-def test_agent_complete_accepts_messages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_agent_complete_accepts_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     a = _make_agent(tmp_path, monkeypatch)
     messages = [{"role": "user", "content": "user"}]
     asyncio.run(a.llm.chat(messages))
     assert cast(_FakeLLMClient, a.llm).seen_messages == messages
 
 
-def test_agent_configuration_error_is_exception(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_agent_configuration_error_is_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def _boom(settings: Any, model_name: str) -> NoReturn:
         raise RuntimeError("provider configuration failed")
 
@@ -60,14 +68,18 @@ def test_agent_configuration_error_is_exception(tmp_path: Path, monkeypatch: pyt
     assert isinstance(exc_info.value, Exception)
 
 
-def test_agent_workspace_is_path_like(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_agent_workspace_is_path_like(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     a = _make_agent(tmp_path, monkeypatch)
     assert isinstance(a.workspace, str)
     assert os.path.isabs(a.workspace)
     assert a.workspace == os.path.abspath(str(tmp_path))
 
 
-def test_tool_timeout_validation_accepts_positive_int(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tool_timeout_validation_accepts_positive_int(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     a = _make_agent(tmp_path, monkeypatch)
     output = asyncio.run(
         a._execute_tool_call("run", {"command": "echo timeout-ok", "timeout": 60})
@@ -75,7 +87,9 @@ def test_tool_timeout_validation_accepts_positive_int(tmp_path: Path, monkeypatc
     assert "timeout-ok" in output
 
 
-def test_tool_timeout_validation_rejects_non_positive_int(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tool_timeout_validation_rejects_non_positive_int(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     a = _make_agent(tmp_path, monkeypatch)
     output = asyncio.run(
         a._execute_tool_call("run", {"command": "echo timeout-default", "timeout": 0})

@@ -18,6 +18,7 @@ from agent_core.commands.reconstruct_cmd import (
 
 # ── Helper to build a minimal JSONL trace ──────────────────────────────────
 
+
 def _write_trace(path: str, records: list[dict]) -> None:
     with open(path, "w", encoding="utf-8") as f:
         for rec in records:
@@ -51,6 +52,7 @@ def _make_tool_result(
 
 # ── Unit tests: _apply_edit ────────────────────────────────────────────────
 
+
 class TestApplyEdit:
     def test_basic_replacement(self):
         result, ok = _apply_edit("hello world", "world", "earth")
@@ -74,6 +76,7 @@ class TestApplyEdit:
 
 
 # ── Unit tests: _parse_trace ───────────────────────────────────────────────
+
 
 class TestParseTrace:
     def test_extracts_write_ops(self, tmp_path):
@@ -145,6 +148,7 @@ class TestParseTrace:
 
 # ── Unit tests: _resolve_range ─────────────────────────────────────────────
 
+
 class TestResolveRange:
     def _make_files(self, tmp_path, names):
         files = []
@@ -181,13 +185,16 @@ class TestResolveRange:
         assert os.path.basename(result[1]) == "c.jsonl"
 
     def test_prefix_match(self, tmp_path):
-        files = self._make_files(tmp_path, ["abc123.jsonl", "def456.jsonl", "ghi789.jsonl"])
+        files = self._make_files(
+            tmp_path, ["abc123.jsonl", "def456.jsonl", "ghi789.jsonl"]
+        )
         result = _resolve_range(files, "def", None)
         assert len(result) == 2
         assert os.path.basename(result[0]) == "def456.jsonl"
 
 
 # ── Unit tests: _collect_files ─────────────────────────────────────────────
+
 
 class TestCollectFiles:
     def test_returns_jsonl_files_sorted_by_mtime(self, tmp_path):
@@ -210,6 +217,7 @@ class TestCollectFiles:
 
 # ── Integration test: full reconstruct pipeline ────────────────────────────
 
+
 class TestReconstructPipeline:
     def test_write_then_edit_produces_final_content(self, tmp_path):
         """write creates file, edit modifies it — final state is correct."""
@@ -217,26 +225,32 @@ class TestReconstructPipeline:
         trace2 = tmp_path / "t2.jsonl"
         target = str(tmp_path / "workspace" / "foo.py").replace("\\", "/")
 
-        _write_trace(str(trace1), [
-            _make_tool_result(
-                "write",
-                {"path": target, "content": "line1\nline2\n"},
-                ts=100.0,
-                affected=[target],
-            ),
-        ])
-        _write_trace(str(trace2), [
-            _make_tool_result(
-                "edit",
-                {
-                    "path": target,
-                    "old_text": "line2",
-                    "new_text": "LINE2",
-                },
-                ts=200.0,
-                affected=[target],
-            ),
-        ])
+        _write_trace(
+            str(trace1),
+            [
+                _make_tool_result(
+                    "write",
+                    {"path": target, "content": "line1\nline2\n"},
+                    ts=100.0,
+                    affected=[target],
+                ),
+            ],
+        )
+        _write_trace(
+            str(trace2),
+            [
+                _make_tool_result(
+                    "edit",
+                    {
+                        "path": target,
+                        "old_text": "line2",
+                        "new_text": "LINE2",
+                    },
+                    ts=200.0,
+                    affected=[target],
+                ),
+            ],
+        )
 
         # Parse and merge
         ops = _parse_trace(str(trace1)) + _parse_trace(str(trace2))
@@ -269,11 +283,13 @@ class TestReconstructPipeline:
         content = "hello world"
         ops = [
             _FileOp(ts=100, kind="write", path="x.py", content="hello world"),
-            _FileOp(ts=200, kind="edit", path="x.py", old_text="world", new_text="earth"),
+            _FileOp(
+                ts=200, kind="edit", path="x.py", old_text="world", new_text="earth"
+            ),
         ]
         last_write_idx = 0
         content = ops[last_write_idx].content
-        for op in ops[last_write_idx + 1:]:
+        for op in ops[last_write_idx + 1 :]:
             if op.kind == "edit":
                 content, _ = _apply_edit(content, op.old_text, op.new_text)
         assert content == "hello earth"
@@ -287,13 +303,14 @@ class TestReconstructPipeline:
         ]
         last_write_idx = 1
         content = ops[last_write_idx].content
-        for op in ops[last_write_idx + 1:]:
+        for op in ops[last_write_idx + 1 :]:
             if op.kind == "edit":
                 content, _ = _apply_edit(content, op.old_text, op.new_text)
         assert content == "final"
 
 
 # ── CLI integration test ───────────────────────────────────────────────────
+
 
 class TestReconstructCommand:
     def test_dry_run_writes_nothing(self, tmp_path, capsys):
@@ -304,13 +321,16 @@ class TestReconstructCommand:
         traces.mkdir(parents=True)
 
         target = str((ws / "out.py")).replace("\\", "/")
-        _write_trace(str(traces / "t1.jsonl"), [
-            _make_tool_result(
-                "write",
-                {"path": target, "content": "print(1)"},
-                affected=[target],
-            ),
-        ])
+        _write_trace(
+            str(traces / "t1.jsonl"),
+            [
+                _make_tool_result(
+                    "write",
+                    {"path": target, "content": "print(1)"},
+                    affected=[target],
+                ),
+            ],
+        )
 
         cmd = ReconstructCommand()
 
@@ -318,27 +338,27 @@ class TestReconstructCommand:
             workspace = str(ws)
 
         import asyncio
-        result = asyncio.run(
-            cmd.execute(["--dry-run"], FakeAgent())
-        )
+
+        result = asyncio.run(cmd.execute(["--dry-run"], FakeAgent()))
         assert result is True
         assert not os.path.exists(str(ws / "out.py"))  # nothing written
 
     def test_missing_traces_dir(self, tmp_path, capsys):
         """Reports error when traces dir doesn't exist."""
         cmd = ReconstructCommand()
+
         class FakeAgent:
             workspace = str(tmp_path / "nonexistent")
 
         import asyncio
-        asyncio.run(
-            cmd.execute([], FakeAgent())
-        )
+
+        asyncio.run(cmd.execute([], FakeAgent()))
         captured = capsys.readouterr()
         assert "not found" in captured.out
 
 
 # ── Helpers for replay tests ───────────────────────────────────────────────
+
 
 def _make_trace_record(kind: str, **kw) -> dict:
     """Build a trace event with sensible defaults for replay tests."""
@@ -367,40 +387,87 @@ def _write_replay_trace(path, records):
 
 # ── Unit tests: ReplaySession (pure, no I/O/REPL) ──────────────────────────
 
+
 class TestReplaySession:
     def _make_session(self, tmp_path):
         target = str(tmp_path / "foo.py").replace("\\", "/")
         trace = tmp_path / "task_replay.jsonl"
-        _write_replay_trace(trace, [
-            {
-                "task_id": "task_replay", "ts": 1.0, "model": "m",
-                "profile": "p", "kind": "task_begin", "layer": "context",
-                "user_input": "make foo",
-            },
-            {"task_id": "task_replay", "ts": 2.0, "kind": "step_start",
-             "layer": "lifecycle", "iteration": 0},
-            {"task_id": "task_replay", "ts": 3.0, "kind": "llm_response",
-             "layer": "observability", "text": "writing foo"},
-            # write is a tool_call (no applied mutation) + tool_result (applied)
-            {"task_id": "task_replay", "ts": 4.0, "kind": "tool_call",
-             "layer": "tool_interface", "tool": "write",
-             "args_hash": json.dumps({"path": target, "content": "a\nb\n"})},
-            {"task_id": "task_replay", "ts": 5.0, "kind": "tool_result",
-             "layer": "tool_interface", "tool": "write",
-             "result": "Written", "affected_files": [target],
-             "args_hash": json.dumps({"path": target, "content": "a\nb\n"})},
-            {"task_id": "task_replay", "ts": 6.0, "kind": "tool_call",
-             "layer": "tool_interface", "tool": "edit",
-             "args_hash": json.dumps({"path": target, "old_text": "b",
-                                       "new_text": "B"})},
-            {"task_id": "task_replay", "ts": 7.0, "kind": "tool_result",
-             "layer": "tool_interface", "tool": "edit",
-             "result": "Edited", "affected_files": [target],
-             "args_hash": json.dumps({"path": target, "old_text": "b",
-                                       "new_text": "B"})},
-            {"task_id": "task_replay", "ts": 8.0, "kind": "loop_end",
-             "layer": "lifecycle", "outcome": "completed"},
-        ])
+        _write_replay_trace(
+            trace,
+            [
+                {
+                    "task_id": "task_replay",
+                    "ts": 1.0,
+                    "model": "m",
+                    "profile": "p",
+                    "kind": "task_begin",
+                    "layer": "context",
+                    "user_input": "make foo",
+                },
+                {
+                    "task_id": "task_replay",
+                    "ts": 2.0,
+                    "kind": "step_start",
+                    "layer": "lifecycle",
+                    "iteration": 0,
+                },
+                {
+                    "task_id": "task_replay",
+                    "ts": 3.0,
+                    "kind": "llm_response",
+                    "layer": "observability",
+                    "text": "writing foo",
+                },
+                # write is a tool_call (no applied mutation) + tool_result (applied)
+                {
+                    "task_id": "task_replay",
+                    "ts": 4.0,
+                    "kind": "tool_call",
+                    "layer": "tool_interface",
+                    "tool": "write",
+                    "args_hash": json.dumps({"path": target, "content": "a\nb\n"}),
+                },
+                {
+                    "task_id": "task_replay",
+                    "ts": 5.0,
+                    "kind": "tool_result",
+                    "layer": "tool_interface",
+                    "tool": "write",
+                    "result": "Written",
+                    "affected_files": [target],
+                    "args_hash": json.dumps({"path": target, "content": "a\nb\n"}),
+                },
+                {
+                    "task_id": "task_replay",
+                    "ts": 6.0,
+                    "kind": "tool_call",
+                    "layer": "tool_interface",
+                    "tool": "edit",
+                    "args_hash": json.dumps(
+                        {"path": target, "old_text": "b", "new_text": "B"}
+                    ),
+                },
+                {
+                    "task_id": "task_replay",
+                    "ts": 7.0,
+                    "kind": "tool_result",
+                    "layer": "tool_interface",
+                    "tool": "edit",
+                    "result": "Edited",
+                    "affected_files": [target],
+                    "args_hash": json.dumps(
+                        {"path": target, "old_text": "b", "new_text": "B"}
+                    ),
+                },
+                {
+                    "task_id": "task_replay",
+                    "ts": 8.0,
+                    "kind": "loop_end",
+                    "layer": "lifecycle",
+                    "outcome": "completed",
+                },
+            ],
+        )
         return ReplaySession(str(trace)), target
 
     def test_meta_extracted(self, tmp_path):
@@ -496,6 +563,7 @@ class TestReplaySession:
 
 # ── Integration tests: reconstruct replay (non-interactive / CLI) ──────────
 
+
 class TestReplayCommand:
     def _make_ws(self, tmp_path):
         ws = tmp_path / "workspace"
@@ -503,20 +571,45 @@ class TestReplayCommand:
         traces = ws / "reports" / "traces"
         traces.mkdir(parents=True)
         target = str((ws / "foo.py")).replace("\\", "/")
-        _write_replay_trace(traces / "task_replay.jsonl", [
-            {"task_id": "task_replay", "ts": 1.0, "model": "m",
-             "profile": "p", "kind": "task_begin", "layer": "context",
-             "user_input": "make foo"},
-            {"task_id": "task_replay", "ts": 2.0, "kind": "tool_call",
-             "layer": "tool_interface", "tool": "write",
-             "args_hash": json.dumps({"path": target, "content": "a\nb\n"})},
-            {"task_id": "task_replay", "ts": 3.0, "kind": "tool_result",
-             "layer": "tool_interface", "tool": "write",
-             "result": "Written", "affected_files": [target],
-             "args_hash": json.dumps({"path": target, "content": "a\nb\n"})},
-            {"task_id": "task_replay", "ts": 4.0, "kind": "loop_end",
-             "layer": "lifecycle", "outcome": "completed"},
-        ])
+        _write_replay_trace(
+            traces / "task_replay.jsonl",
+            [
+                {
+                    "task_id": "task_replay",
+                    "ts": 1.0,
+                    "model": "m",
+                    "profile": "p",
+                    "kind": "task_begin",
+                    "layer": "context",
+                    "user_input": "make foo",
+                },
+                {
+                    "task_id": "task_replay",
+                    "ts": 2.0,
+                    "kind": "tool_call",
+                    "layer": "tool_interface",
+                    "tool": "write",
+                    "args_hash": json.dumps({"path": target, "content": "a\nb\n"}),
+                },
+                {
+                    "task_id": "task_replay",
+                    "ts": 3.0,
+                    "kind": "tool_result",
+                    "layer": "tool_interface",
+                    "tool": "write",
+                    "result": "Written",
+                    "affected_files": [target],
+                    "args_hash": json.dumps({"path": target, "content": "a\nb\n"}),
+                },
+                {
+                    "task_id": "task_replay",
+                    "ts": 4.0,
+                    "kind": "loop_end",
+                    "layer": "lifecycle",
+                    "outcome": "completed",
+                },
+            ],
+        )
         return ws, target
 
     def test_non_interactive_dump_writes_nothing(self, tmp_path, monkeypatch, capsys):
@@ -529,6 +622,7 @@ class TestReplayCommand:
             workspace = str(ws)
 
         import asyncio
+
         asyncio.run(
             ReconstructCommand().execute(["replay", "task_replay"], FakeAgent())
         )
@@ -547,9 +641,8 @@ class TestReplayCommand:
             workspace = str(ws)
 
         import asyncio
-        asyncio.run(
-            ReconstructCommand().execute(["replay", "nope"], FakeAgent())
-        )
+
+        asyncio.run(ReconstructCommand().execute(["replay", "nope"], FakeAgent()))
         captured = capsys.readouterr()
         assert "not found" in captured.out
 
@@ -559,24 +652,29 @@ class TestReplayCommand:
         monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
         written = {}
+
         class FakeAgent:
             workspace = str(ws)
 
         import asyncio
+
         # --apply with auto_yes=False in save_file_py: without a y/N answer it
         # must NOT write. We stub save_file_py to record calls instead.
         import agent_core.commands.reconstruct_cmd as rc
+
         orig = rc.save_file_py
+
         def spy(fpath, content, auto_yes=True):
             written[fpath] = content
             return False  # simulate decline
+
         monkeypatch.setattr(rc, "save_file_py", spy)
         asyncio.run(
             ReconstructCommand().execute(
-                ["replay", "task_replay", "--apply"], FakeAgent())
+                ["replay", "task_replay", "--apply"], FakeAgent()
+            )
         )
         # save_file_py was called (apply path reached) but declined -> no real write.
         assert written  # at least one file offered
         assert not os.path.exists(str(ws / "foo.py"))
         rc.save_file_py = orig
-

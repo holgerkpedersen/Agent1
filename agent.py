@@ -6,6 +6,7 @@ module re-exports the frozen public/private surface so ``import agent``,
 ``python -m agent``, the REPL banner and every test monkeypatch on the
 ``agent`` module keep working unchanged.
 """
+
 from agent_core.agent import *  # noqa: F401,F403 — frozen surface via __all__
 
 from agent_dashboard import (  # noqa: F401

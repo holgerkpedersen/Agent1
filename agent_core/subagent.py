@@ -36,8 +36,11 @@ class SubAgent:
     """
 
     def __init__(
-        self, parent: "Agent", name: str,
-        workspace: str | None = None, role: str | None = None,
+        self,
+        parent: "Agent",
+        name: str,
+        workspace: str | None = None,
+        role: str | None = None,
     ) -> None:
         self.parent = parent
         self.name = name
@@ -56,6 +59,7 @@ class SubAgent:
             spec = get_role(role)
             if spec is None:
                 from agent_core.subagent_roles import role_names
+
                 raise ValueError(
                     f"Unknown subagent role {role!r}. "
                     f"Available: {', '.join(role_names())}"
@@ -65,9 +69,7 @@ class SubAgent:
             self._tools_allowed = spec.tools_allowed
             # Parent mode caps child mode: delegation must never become a
             # plan-mode escape hatch.
-            self.mode: str = (
-                MODE_PLAN if is_plan_mode(parent.mode) else spec.mode
-            )
+            self.mode: str = MODE_PLAN if is_plan_mode(parent.mode) else spec.mode
         else:
             self.mode = parent.mode
 
@@ -75,6 +77,7 @@ class SubAgent:
         self._conversation: list[dict[str, str]] = []
         #: LLM client instance — shares the same model as the parent.
         from agent import LLMClient  # local import to avoid circular deps
+
         self.llm = LLMClient(model_name=self.model_name)
 
     # ------------------------------------------------------------------
@@ -111,12 +114,12 @@ class SubAgent:
         from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
 
         schemas = [
-            s for s in NLP_TOOL_SCHEMAS
-            if s["function"]["name"] in self._tools_allowed
+            s for s in NLP_TOOL_SCHEMAS if s["function"]["name"] in self._tools_allowed
         ]
 
         async def llm_chat_fn(
-            m: list[dict[str, Any]], tools: list[dict[str, Any]],
+            m: list[dict[str, Any]],
+            tools: list[dict[str, Any]],
         ) -> tuple[str, list[dict[str, Any]]]:
             raw = await self.llm.chat(m, tools=tools, disable_thinking=True)
             if raw.strip() == "(no output)":
@@ -129,7 +132,11 @@ class SubAgent:
                 parsed.pop("role", None)
                 updated = list(m)
                 updated.append(
-                    {"role": "assistant", "content": parsed.get("content") or "", **parsed}
+                    {
+                        "role": "assistant",
+                        "content": parsed.get("content") or "",
+                        **parsed,
+                    }
                 )
                 return str(parsed.get("content") or ""), updated
             updated = list(m)
@@ -144,7 +151,10 @@ class SubAgent:
             display_mode=resolve_display_mode(),
         )
         final_text, _final_messages = await runner.run(
-            msgs, llm_chat_fn, self._execute_tool_call, tools=schemas,
+            msgs,
+            llm_chat_fn,
+            self._execute_tool_call,
+            tools=schemas,
         )
         #: Propagated to the parent's ``delegate`` report (phase 4): an
         #: ``answer`` means the child finished cleanly; ``cap``/``stuck``/
@@ -172,9 +182,7 @@ class SubAgent:
         # Turn cap: refuse once the role's budget is spent (the parent sees
         # the note and can collect/reset instead of silently burning tokens).
         if self.role_spec is not None:
-            turns = sum(
-                1 for m in self._conversation if m.get("role") == "assistant"
-            )
+            turns = sum(1 for m in self._conversation if m.get("role") == "assistant")
             if turns >= self.role_spec.max_turns:
                 return (
                     f"[subagent:{self.name}] turn cap reached "
@@ -206,7 +214,7 @@ class SubAgent:
             return f"<SubAgent:{self.name}> has no conversation yet."
 
         # Show last N messages (pairs of user/assistant).
-        recent = self._conversation[-(max_messages * 2):]
+        recent = self._conversation[-(max_messages * 2) :]
         lines: list[str] = []
         for msg in recent:
             role = msg["role"]
@@ -230,10 +238,7 @@ class SubAgent:
 
     def __repr__(self) -> str:
         role_part = f", role={self.role_name!r}" if self.role_name else ""
-        return (
-            f"SubAgent(name={self.name!r}, workspace={self.workspace!r}"
-            f"{role_part})"
-        )
+        return f"SubAgent(name={self.name!r}, workspace={self.workspace!r}{role_part})"
 
 
 __all__ = ["SubAgent"]

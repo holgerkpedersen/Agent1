@@ -20,15 +20,40 @@ from pathlib import Path
 
 _STDLIB_NAMES = frozenset(sys.stdlib_module_names) | frozenset(dir(builtins))
 
-_EXTRA_MODULES = frozenset({
-    "pydantic", "httpx", "numpy", "networkx", "openai", "pytest", "mypy",
-    "ruff", "setuptools", "coverage", "tqdm", "yaml", "dotenv", "requests",
-})
+_EXTRA_MODULES = frozenset(
+    {
+        "pydantic",
+        "httpx",
+        "numpy",
+        "networkx",
+        "openai",
+        "pytest",
+        "mypy",
+        "ruff",
+        "setuptools",
+        "coverage",
+        "tqdm",
+        "yaml",
+        "dotenv",
+        "requests",
+    }
+)
 
-_SKIP_DIRS = frozenset({
-    ".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    ".coverage", "backups", "venv", ".venv", "node_modules", ".tox",
-})
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".coverage",
+        "backups",
+        "venv",
+        ".venv",
+        "node_modules",
+        ".tox",
+    }
+)
 
 _BACKTICK_RE = re.compile(r"`([^`]+)`")
 _FILE_RE = re.compile(r"(?<![\w/])((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.py)(?![\w/])")
@@ -37,12 +62,25 @@ _LINE_RE = re.compile(r"\bline\s*(?:no\.?|#)?\s*(~|≈)?\s*(\d+)", re.IGNORECASE
 _BACKTICK_FILE_LINE_RE = re.compile(r"((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.py):(\d+)")
 
 _ABSENCE_PHRASES = (
-    "does not exist", "doesn't exist",
-    "is not defined", "isn't defined", "not defined",
-    "is not found", "isn't found", "not found anywhere",
-    "is not called", "isn't called", "not called anywhere", "never called",
-    "not called", "never used", "is not used", "isn't used",
-    "unused", "unreferenced", "never referenced",
+    "does not exist",
+    "doesn't exist",
+    "is not defined",
+    "isn't defined",
+    "not defined",
+    "is not found",
+    "isn't found",
+    "not found anywhere",
+    "is not called",
+    "isn't called",
+    "not called anywhere",
+    "never called",
+    "not called",
+    "never used",
+    "is not used",
+    "isn't used",
+    "unused",
+    "unreferenced",
+    "never referenced",
 )
 
 _ATTR_RE = re.compile(r"self\.([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[^=]+)?\s*=")
@@ -114,7 +152,9 @@ async def _read_files_async(ws_path: Path, rel_files: list[str]) -> dict[str, st
             return rel, None
         return rel, content
 
-    results = await asyncio.gather(*(asyncio.to_thread(_read, rel) for rel in rel_files))
+    results = await asyncio.gather(
+        *(asyncio.to_thread(_read, rel) for rel in rel_files)
+    )
     return {rel: content for rel, content in results if content is not None}
 
 
@@ -159,7 +199,9 @@ def _mask_backticks(text: str) -> str:
 
 
 def _classify_backtick(content: str) -> str:
-    if content.endswith((".py", ".md", ".toml", ".json", ".txt")) or content.startswith("."):
+    if content.endswith((".py", ".md", ".toml", ".json", ".txt")) or content.startswith(
+        "."
+    ):
         return "file"
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", content):
         return "symbol"
@@ -189,17 +231,23 @@ def _extract_claims(segment: str, seg_start: int) -> list[_Claim]:
     for m in _FILE_RE.finditer(masked):
         rel = m.group(1).replace("\\", "/")
         offset = seg_start + m.start()
-        claims.append(_Claim(kind="file", text=rel, offset=offset, file=rel, segment_start=seg_start))
-        line_m = _RE_1.match(segment[m.end():])
+        claims.append(
+            _Claim(
+                kind="file", text=rel, offset=offset, file=rel, segment_start=seg_start
+            )
+        )
+        line_m = _RE_1.match(segment[m.end() :])
         if line_m:
-            claims.append(_Claim(
-                kind="line",
-                text=f"{rel}:{line_m.group(1)}",
-                offset=offset + m.end() - m.start(),
-                file=rel,
-                line=int(line_m.group(1)),
-                segment_start=seg_start,
-            ))
+            claims.append(
+                _Claim(
+                    kind="line",
+                    text=f"{rel}:{line_m.group(1)}",
+                    offset=offset + m.end() - m.start(),
+                    file=rel,
+                    line=int(line_m.group(1)),
+                    segment_start=seg_start,
+                )
+            )
 
     for m in _BACKTICK_RE.finditer(segment):
         content = m.group(1)
@@ -209,35 +257,63 @@ def _extract_claims(segment: str, seg_start: int) -> list[_Claim]:
         file_line = _BACKTICK_FILE_LINE_RE.fullmatch(content.strip())
         if file_line:
             rel = file_line.group(1).replace("\\", "/")
-            claims.append(_Claim(kind="file", text=rel, offset=offset, file=rel, segment_start=seg_start))
-            claims.append(_Claim(
-                kind="line",
-                text=f"{rel}:{file_line.group(2)}",
-                offset=offset,
-                file=rel,
-                line=int(file_line.group(2)),
-                segment_start=seg_start,
-            ))
+            claims.append(
+                _Claim(
+                    kind="file",
+                    text=rel,
+                    offset=offset,
+                    file=rel,
+                    segment_start=seg_start,
+                )
+            )
+            claims.append(
+                _Claim(
+                    kind="line",
+                    text=f"{rel}:{file_line.group(2)}",
+                    offset=offset,
+                    file=rel,
+                    line=int(file_line.group(2)),
+                    segment_start=seg_start,
+                )
+            )
             continue
         kind = _classify_backtick(content)
         if kind == "file":
             rel = content.replace("\\", "/")
-            claims.append(_Claim(kind="file", text=rel, offset=offset, file=rel, segment_start=seg_start))
+            claims.append(
+                _Claim(
+                    kind="file",
+                    text=rel,
+                    offset=offset,
+                    file=rel,
+                    segment_start=seg_start,
+                )
+            )
         elif kind == "symbol":
-            claims.append(_Claim(kind="symbol", text=content, offset=offset, segment_start=seg_start))
+            claims.append(
+                _Claim(
+                    kind="symbol", text=content, offset=offset, segment_start=seg_start
+                )
+            )
         else:
-            claims.append(_Claim(kind="snippet", text=content, offset=offset, segment_start=seg_start))
+            claims.append(
+                _Claim(
+                    kind="snippet", text=content, offset=offset, segment_start=seg_start
+                )
+            )
 
     for m in _LINE_RE.finditer(segment):
         if not _is_inside_backticks(segment, m.start()):
-            claims.append(_Claim(
-                kind="line",
-                text=f"line {'~' if m.group(1) else ''}{m.group(2)}",
-                offset=seg_start + m.start(),
-                line=int(m.group(2)),
-                approx=bool(m.group(1)),
-                segment_start=seg_start,
-            ))
+            claims.append(
+                _Claim(
+                    kind="line",
+                    text=f"line {'~' if m.group(1) else ''}{m.group(2)}",
+                    offset=seg_start + m.start(),
+                    line=int(m.group(2)),
+                    approx=bool(m.group(1)),
+                    segment_start=seg_start,
+                )
+            )
 
     for c in claims:
         if c.kind == "symbol":
@@ -282,7 +358,9 @@ def _verify_existence(file: str | None, rel_files: list[str]) -> tuple[str, str]
     if file.endswith("/"):
         dir_path = file.rstrip("/")
         for rel in rel_files:
-            if os.path.dirname(rel).replace("\\", "/") == dir_path or rel.startswith(dir_path + "/"):
+            if os.path.dirname(rel).replace("\\", "/") == dir_path or rel.startswith(
+                dir_path + "/"
+            ):
                 return _STATUS_OK, "directory exists in workspace"
         # Also check the raw filesystem — .docs/ etc. may not have files listed
         # but still exist as directories.
@@ -306,11 +384,14 @@ def _verify_existence(file: str | None, rel_files: list[str]) -> tuple[str, str]
     # Match by basename + directory suffix so near-duplicate paths resolve correctly.
     base = os.path.basename(file)
     for rel in rel_files:
-        if os.path.basename(rel) == base and (rel.endswith(file) or file.endswith(os.path.dirname(rel).replace("\\", "/"))):
+        if os.path.basename(rel) == base and (
+            rel.endswith(file) or file.endswith(os.path.dirname(rel).replace("\\", "/"))
+        ):
             return _STATUS_OK, f"file exists at {rel} (path prefix differs)"
     # Wildcard patterns (e.g. benchmark_*.json) — match against any existing file.
     if "*" in file or "?" in file:
         import fnmatch
+
         for rel in rel_files:
             if fnmatch.fnmatch(os.path.basename(rel), os.path.basename(file)):
                 return _STATUS_OK, "file matching pattern exists in workspace"
@@ -360,9 +441,15 @@ def _verify_symbol(
             if sf == file:
                 continue
             if name in defs_by_file.get(sf, {}):
-                return _STATUS_OK, f"defined at {sf}:{defs_by_file[sf][name]} (mentioned in claim segment)"
+                return (
+                    _STATUS_OK,
+                    f"defined at {sf}:{defs_by_file[sf][name]} (mentioned in claim segment)",
+                )
             if name in attrs_by_file.get(sf, set()):
-                return _STATUS_OK, f"attribute on self in {sf} (mentioned in claim segment)"
+                return (
+                    _STATUS_OK,
+                    f"attribute on self in {sf} (mentioned in claim segment)",
+                )
         # Scoped-file miss: the LLM often cites the wrong file for a symbol that
         # exists elsewhere (e.g. "conftest.py defines Agent" when Agent is in agent.py).
         # A global hit means the claim is real — just mis-scoped, not fabricated.
@@ -377,7 +464,10 @@ def _verify_symbol(
             return _STATUS_OK, f"defined at {f}:{ln} (claimed in {file})"
         attr_files = sorted(f for f, attrs in attrs_by_file.items() if name in attrs)
         if attr_files:
-            return _STATUS_OK, f"attribute on self in {attr_files[0]} (claimed in {file})"
+            return (
+                _STATUS_OK,
+                f"attribute on self in {attr_files[0]} (claimed in {file})",
+            )
         if re.fullmatch(r"[a-z][a-z0-9_]*", name):
             return _STATUS_SKIP, "prose-like identifier (not found anywhere)"
         return _STATUS_FLAGGED, f"symbol not found in {file} or anywhere"
@@ -428,6 +518,7 @@ def _verify_snippet(
     # path references with wildcards (commands.*, agent_core.logging_config).
     if "*" in snippet or "?" in snippet:
         import fnmatch
+
         base = os.path.basename(snippet)
         # Filename glob: match against existing file basenames.
         for rel, content in contents.items():
@@ -437,9 +528,13 @@ def _verify_snippet(
         # references the module prefix — this is a valid code pattern even though
         # no single file literally contains the dotted wildcard string.
         prefix = snippet.rstrip(".*").rstrip(".")  # e.g. "commands" from "commands.*"
-        _FROM_ID_IMPORT_RE = re.compile(r'from\s+[\w.]+\s+import\s+')
+        _FROM_ID_IMPORT_RE = re.compile(r"from\s+[\w.]+\s+import\s+")
         for rel, content in contents.items():
-            if _FROM_ID_IMPORT_RE.search(content) and (prefix + ".") in content or prefix in content:
+            if (
+                _FROM_ID_IMPORT_RE.search(content)
+                and (prefix + ".") in content
+                or prefix in content
+            ):
                 return _STATUS_OK, f"module path reference found in {rel}"
         # Check raw filesystem for filename globs too.
         ws_dir = Path(".")  # verifier runs from workspace root
@@ -467,7 +562,11 @@ def _verify_snippet(
         # like _verify_existence's partial matching before giving up.
         if file is not None:
             for rel in contents:
-                if rel == file or rel.endswith("/" + file) or os.path.basename(rel) == os.path.basename(file):
+                if (
+                    rel == file
+                    or rel.endswith("/" + file)
+                    or os.path.basename(rel) == os.path.basename(file)
+                ):
                     content = contents[rel]
                     break
     if not content:
@@ -478,8 +577,11 @@ def _verify_snippet(
         return _STATUS_FLAGGED, "file not found in workspace"
     if snippet in content:
         return _STATUS_OK, "code pattern found in file"
-    tokens = [t for t in re.findall(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|\w+=\w+", snippet)
-              if "." in t or "=" in t]
+    tokens = [
+        t
+        for t in re.findall(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|\w+=\w+", snippet)
+        if "." in t or "=" in t
+    ]
     if any(t in content for t in tokens):
         return _STATUS_OK, "code pattern found in file"
     # Fallback: check all files globally (snippet may be scoped to wrong file).
@@ -511,15 +613,14 @@ def _verify_snippet(
             # directory/file names rather than definitions — a package directory
             # (part appears as a path component of some file) or a module file
             # (basename 'part.py') both count as the component existing.
-            if not found_in and any(
-                part in rel.split("/") for rel in rel_files
-            ):
+            if not found_in and any(part in rel.split("/") for rel in rel_files):
                 found_in = f"{part}/"
             if not found_in and any(
                 os.path.basename(rel).rsplit(".", 1)[0] == part for rel in rel_files
             ):
                 found_in = next(
-                    rel for rel in rel_files
+                    rel
+                    for rel in rel_files
                     if os.path.basename(rel).rsplit(".", 1)[0] == part
                 )
             resolved.append(found_in or "")
@@ -535,7 +636,9 @@ def _pair_symbol_with_line(claims: list[_Claim]) -> None:
     so a ``line N`` mention in one bullet point cannot bleed into a symbol verified in an
     adjacent bullet — matching _iter_lines' "avoiding bleed between bullet points" design.
     """
-    lines = [c for c in claims if c.kind == "line" and c.status == _STATUS_OK and c.file]
+    lines = [
+        c for c in claims if c.kind == "line" and c.status == _STATUS_OK and c.file
+    ]
     _DEFINED_AT_RE = re.compile(r"defined at (\S+):(\d+)")
     _RE_2 = re.compile(r":(\d+)")
     for c in claims:
@@ -566,7 +669,9 @@ def _pair_symbol_with_line(claims: list[_Claim]) -> None:
         tol = _LINE_TOLERANCE_APPROX if best.approx else _LINE_TOLERANCE_EXACT
         if abs((best.line or 0) - def_line) > tol:
             best.status = _STATUS_FLAGGED
-            best.reason = f"{c.text} is defined at {file}:{def_line} (claimed line {best.line})"
+            best.reason = (
+                f"{c.text} is defined at {file}:{def_line} (claimed line {best.line})"
+            )
 
 
 def _iter_lines(analysis: str) -> list[tuple[str, int]]:
@@ -613,12 +718,15 @@ async def verify_analysis_claims(analysis: str, ws_path: Path) -> VerificationRe
                 if status == _STATUS_OK and c.file:
                     shadow = _shadows_stdlib(c.file)
                     if shadow:
-                        status, reason = _STATUS_FLAGGED, (
-                            f"shadows stdlib module '{shadow}' — rename directory"
+                        status, reason = (
+                            _STATUS_FLAGGED,
+                            (f"shadows stdlib module '{shadow}' — rename directory"),
                         )
             elif c.kind == "line":
                 _attach_context(c, claims)
-                status, reason = _verify_line(c.line or 0, c.file, line_counts, rel_files)
+                status, reason = _verify_line(
+                    c.line or 0, c.file, line_counts, rel_files
+                )
             elif c.kind == "snippet":
                 _attach_context(c, claims)
                 status, reason = _verify_snippet(
@@ -627,7 +735,8 @@ async def verify_analysis_claims(analysis: str, ws_path: Path) -> VerificationRe
             else:
                 _attach_context(c, claims)
                 scope_files = [
-                    fc.file for fc in claims
+                    fc.file
+                    for fc in claims
                     if fc.kind == "file" and fc.file and fc.file.endswith(".py")
                 ]
                 status, reason = _verify_symbol(
@@ -635,9 +744,17 @@ async def verify_analysis_claims(analysis: str, ws_path: Path) -> VerificationRe
                 )
                 if c.check_absence:
                     if status == _STATUS_FLAGGED:
-                        status, reason = _STATUS_OK, "confirmed absent (no definition found)"
-                    elif status == _STATUS_OK and reason.startswith(("defined at", "attribute on self")):
-                        status, reason = _STATUS_FLAGGED, f"claim says it is absent, but it is {reason}"
+                        status, reason = (
+                            _STATUS_OK,
+                            "confirmed absent (no definition found)",
+                        )
+                    elif status == _STATUS_OK and reason.startswith(
+                        ("defined at", "attribute on self")
+                    ):
+                        status, reason = (
+                            _STATUS_FLAGGED,
+                            f"claim says it is absent, but it is {reason}",
+                        )
             c.status, c.reason = status, reason
         claim_list.extend(claims)
 

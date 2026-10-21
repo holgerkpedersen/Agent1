@@ -1,7 +1,9 @@
 """Display-mode command for agent interactive mode."""
+
 from .base import Command
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -17,8 +19,9 @@ class DisplayCommand(Command):
     def help_text(self) -> str:
         return "display [verbose|clean|quiet|intent] - Show/set NLP output verbosity"
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         from agent_core.config import AgentDisplayMode, load_agent_settings
+
         env_path = ".env"
 
         modes = {m.value: m for m in AgentDisplayMode}
@@ -28,6 +31,7 @@ class DisplayCommand(Command):
             current = settings.display_mode
         except Exception:
             import os as _os
+
             raw = _os.environ.get("AGENT_DISPLAY_MODE", "").strip().lower() or "verbose"
             try:
                 current = AgentDisplayMode(raw)
@@ -36,7 +40,9 @@ class DisplayCommand(Command):
 
         if not args:
             print(f"Display mode is '{current.value}'.")
-            print("Options: verbose (every call + result), clean (reason per call, summarized results), quiet (only final answer), intent (model's intent + planned calls before each LLM round's tools run).")
+            print(
+                "Options: verbose (every call + result), clean (reason per call, summarized results), quiet (only final answer), intent (model's intent + planned calls before each LLM round's tools run)."
+            )
             return True
 
         requested = str(args[0]).strip().lower()
@@ -48,6 +54,7 @@ class DisplayCommand(Command):
         lines = []
         found = False
         import os as _os
+
         if _os.path.exists(env_path):
             with open(env_path, "r", encoding="utf-8") as ef:
                 lines = ef.readlines()
@@ -59,7 +66,9 @@ class DisplayCommand(Command):
                 else:
                     ef.write(line)
             if not found:
-                ef.write(f"\n# NLP output verbosity (verbose|clean|quiet)\nAGENT_DISPLAY_MODE={requested}\n")
+                ef.write(
+                    f"\n# NLP output verbosity (verbose|clean|quiet)\nAGENT_DISPLAY_MODE={requested}\n"
+                )
 
         print(f"Display mode set to '{requested}' (persisted to .env).")
         return True

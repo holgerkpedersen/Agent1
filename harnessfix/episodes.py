@@ -18,6 +18,7 @@ stems and error classes touched, an action summary (tool + target, never full
 file contents), the outcome and the final answer excerpt.  Embedding the full
 episode would be token-bloated and dominated by boilerplate.
 """
+
 from __future__ import annotations
 
 import json
@@ -144,7 +145,9 @@ def extract_episode(graph: TraceGraph) -> Episode | None:
         if s.kind == "loop_end":
             outcome = str(s.payload.get("outcome", "completed"))
     if not outcome:
-        outcome = "completed" if len(graph.steps) < MIN_ACTIVITY_EVENTS else "interrupted"
+        outcome = (
+            "completed" if len(graph.steps) < MIN_ACTIVITY_EVENTS else "interrupted"
+        )
 
     # file stems + error classes + action summary
     paths: list[str] = []
@@ -217,7 +220,10 @@ def successful_episodes(workspace: str) -> list[Episode]:
     trace_dir = Path(workspace) / "reports" / "traces"
     if trace_dir.is_dir():
         sig = tuple(
-            sorted((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in trace_dir.glob("*.jsonl"))
+            sorted(
+                (p.name, p.stat().st_mtime_ns, p.stat().st_size)
+                for p in trace_dir.glob("*.jsonl")
+            )
         )
     else:
         sig = ()

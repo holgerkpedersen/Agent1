@@ -11,6 +11,7 @@ a log warning — the runbook would vanish from every session.
 These tests assert against the REAL discovery path (``discover_skills`` on
 the actual workspace), not a copy of it.
 """
+
 from __future__ import annotations
 
 import logging
@@ -118,6 +119,7 @@ def test_skill_body_pages_cleanly(skill_name: str) -> None:
 # message while running ``Agent(workspace=".")``).  The prompt change is
 # CORRECT and the intent of the feature; these tests pin it through the real
 # path so it can neither silently regress nor break unnoticed again.
+
 
 def _system_prompt_for(workspace: Path, tmp_path: Path, monkeypatch) -> str:
     """Build an agent on *workspace* and return its refreshed system message.

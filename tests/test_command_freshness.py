@@ -9,6 +9,7 @@ Staleness is content-based (SHA-1), NOT mtime-based: a repair apply/revert
 cycle (harnessfix rewrites ``tool_loop.py`` with identical bytes) or any
 no-op save bumps the mtime and must NOT be reported as stale.
 """
+
 import os
 import sys
 
@@ -36,9 +37,11 @@ class TestLoadedModuleFingerprints:
         monkeypatch.setattr(
             sys,
             "modules",
-            {**sys.modules,
-             "agent_core.commands.demo_cmd": _M(str(watched)),
-             "other.mod": _M(str(outside))},
+            {
+                **sys.modules,
+                "agent_core.commands.demo_cmd": _M(str(watched)),
+                "other.mod": _M(str(outside)),
+            },
         )
         m = loaded_module_fingerprints()
         assert any(p.endswith("demo_cmd.py") for p in m)
@@ -52,7 +55,9 @@ class TestLoadedModuleFingerprints:
         class _M:
             __file__ = str(src) + "c"  # "compiled.pyc" -> source "compiled.py"
 
-        monkeypatch.setattr(sys, "modules", {**sys.modules, "agent_core.compiled": _M()})
+        monkeypatch.setattr(
+            sys, "modules", {**sys.modules, "agent_core.compiled": _M()}
+        )
         m = loaded_module_fingerprints()
         assert any(p.endswith("compiled.py") and not p.endswith(".pyc") for p in m)
 

@@ -26,6 +26,7 @@ renamed step fails here instead of at execution time.
 
 Pure parsing + graph building: no LLM, no live agent, no workspace mutation.
 """
+
 from __future__ import annotations
 
 import pathlib

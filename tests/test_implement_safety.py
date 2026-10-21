@@ -1,4 +1,5 @@
 """Tests for implement_cmd safety helpers: filename guards and auto-repair."""
+
 import os
 import tempfile
 from pathlib import Path
@@ -21,7 +22,10 @@ class TestFilterDuplicatePlanned:
     def test_duplicates_dropped_rest_kept(self) -> None:
         remaining, blocked = _filter_duplicate_planned(
             ["a.py", "b.py", "c.py"],
-            ["b.py — duplicates existing module(s): allowlist.py", "c.py — duplicates existing module(s): sanitizer.py"],
+            [
+                "b.py — duplicates existing module(s): allowlist.py",
+                "c.py — duplicates existing module(s): sanitizer.py",
+            ],
         )
         assert remaining == ["a.py"]
         assert blocked == ["b.py", "c.py"]
@@ -36,13 +40,17 @@ class TestSuggestConsumers:
     def test_token_based_and_concept_map(self, tmp_path) -> None:
         (tmp_path / "agent.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "agent_core").mkdir()
-        (tmp_path / "agent_core" / "tool_schemas.py").write_text("X = 1\n", encoding="utf-8")
+        (tmp_path / "agent_core" / "tool_schemas.py").write_text(
+            "X = 1\n", encoding="utf-8"
+        )
 
         suggestions = _suggest_consumers(
             ["agent_core/nlp/tool_schema.py", "agent_core/nlp/chain_limiter.py"],
             str(tmp_path),
         )
-        assert any("tool_schemas.py" in s for s in suggestions["agent_core/nlp/tool_schema.py"])
+        assert any(
+            "tool_schemas.py" in s for s in suggestions["agent_core/nlp/tool_schema.py"]
+        )
         assert "agent.py" in suggestions["agent_core/nlp/chain_limiter.py"]
 
     def test_fallback_is_agent_py(self, tmp_path) -> None:
@@ -59,10 +67,12 @@ class TestPlannedDuplicates:
         (tmp_path / "agent_core").mkdir(parents=True)
         (tmp_path / "agent_core" / "security").mkdir()
         (tmp_path / "agent_core" / "security" / "allowlist.py").write_text(
-            '"""Command allow-list."""\nSAFE = set()\n', encoding="utf-8",
+            '"""Command allow-list."""\nSAFE = set()\n',
+            encoding="utf-8",
         )
         (tmp_path / "agent_core" / "security" / "sanitizer.py").write_text(
-            '"""Input sanitizer."""\nX = 1\n', encoding="utf-8",
+            '"""Input sanitizer."""\nX = 1\n',
+            encoding="utf-8",
         )
 
         reasons = _check_planned_duplicates(
@@ -84,10 +94,12 @@ class TestPlannedDuplicates:
     def test_distinct_planned_modules_pass(self, tmp_path):
         (tmp_path / "agent_core" / "security").mkdir(parents=True)
         (tmp_path / "agent_core" / "security" / "allowlist.py").write_text(
-            '"""Command allow-list."""\nSAFE = set()\n', encoding="utf-8",
+            '"""Command allow-list."""\nSAFE = set()\n',
+            encoding="utf-8",
         )
         reasons = _check_planned_duplicates(
-            ["agent_core/commands/reporting_cmd.py"], str(tmp_path),
+            ["agent_core/commands/reporting_cmd.py"],
+            str(tmp_path),
         )
         assert reasons == []
 
@@ -129,7 +141,8 @@ class TestPlannedDuplicates:
     def test_mixed_planned_only_production_flagged(self, tmp_path):
         (tmp_path / "agent_core" / "security").mkdir(parents=True)
         (tmp_path / "agent_core" / "security" / "allowlist.py").write_text(
-            '"""Command allow-list."""\nSAFE = set()\n', encoding="utf-8",
+            '"""Command allow-list."""\nSAFE = set()\n',
+            encoding="utf-8",
         )
         reasons = _check_planned_duplicates(
             [
@@ -278,8 +291,16 @@ class TestIsDangerousFilename:
 
     def test_all_common_bare_names_are_dangerous(self):
         ws = Path(os.getcwd())
-        for name in ["config.py", "logger.py", "utils.py", "memory.py",
-                     "agent.py", "model.py", "cache.py", "tools.py"]:
+        for name in [
+            "config.py",
+            "logger.py",
+            "utils.py",
+            "memory.py",
+            "agent.py",
+            "model.py",
+            "cache.py",
+            "tools.py",
+        ]:
             dangerous, reason = _is_dangerous_filename(name, ws)
             assert dangerous, f"{name} should be dangerous but wasn't: {reason}"
 
@@ -298,7 +319,10 @@ class TestShadowingStdlibDir:
     def test_existing_dir_is_not_a_shadow(self, tmp_path):
         (tmp_path / "agent_core" / "utils").mkdir(parents=True)
         assert _shadowing_stdlib_dir("agent_core/utils/lint_guard.py", tmp_path) == ""
-        assert _shadowing_stdlib_dir("agent_core/utils/module_similarity.py", tmp_path) == ""
+        assert (
+            _shadowing_stdlib_dir("agent_core/utils/module_similarity.py", tmp_path)
+            == ""
+        )
 
     def test_new_dir_is_a_shadow(self, tmp_path):
         assert _shadowing_stdlib_dir("logging/log.py", tmp_path) == "logging"
@@ -308,7 +332,9 @@ class TestShadowingStdlibDir:
 
     def test_dangerous_filename_ignores_existing_project_package(self, tmp_path):
         (tmp_path / "agent_core" / "utils").mkdir(parents=True)
-        dangerous, _ = _is_dangerous_filename("agent_core/utils/lint_guard.py", tmp_path)
+        dangerous, _ = _is_dangerous_filename(
+            "agent_core/utils/lint_guard.py", tmp_path
+        )
         assert not dangerous
 
     def test_dangerous_filename_flags_new_stdlib_dir(self, tmp_path):
@@ -346,9 +372,7 @@ class TestModifyMode:
             args = [str(tmp_path / "tasks.md"), *extra_args]
             if modify:
                 args.insert(1, "--modify")
-            ok = asyncio.run(
-                ImplementCommand().execute(args, agent)
-            )
+            ok = asyncio.run(ImplementCommand().execute(args, agent))
         return ok, target
 
     def test_applies_diff_after_approval(self, tmp_path):
@@ -381,19 +405,26 @@ class TestModifyMode:
             extra_args=["--allow-rewrite"],
         )
         assert ok is True
-        assert target.read_text(encoding="utf-8").startswith("def totally_different_interface")
+        assert target.read_text(encoding="utf-8").startswith(
+            "def totally_different_interface"
+        )
 
     def test_keep_mode_still_applies_modify_diff(self, tmp_path):
         """--keep + --modify must NOT short-circuit: existing compile-OK
         modules are modify targets, not skips (observed: keep-mode run
         reported "already exists, compile OK" and did nothing)."""
-        ok, target = self._run(tmp_path, "def foo():\n    return 2\n", extra_args=["--keep"])
+        ok, target = self._run(
+            tmp_path, "def foo():\n    return 2\n", extra_args=["--keep"]
+        )
         assert ok is True
         assert target.read_text(encoding="utf-8") == "def foo():\n    return 2\n"
 
     def test_keep_without_modify_still_skips(self, tmp_path):
         ok, target = self._run(
-            tmp_path, "def foo():\n    return 2\n", extra_args=["--keep"], modify=False,
+            tmp_path,
+            "def foo():\n    return 2\n",
+            extra_args=["--keep"],
+            modify=False,
         )
         assert ok is True
         assert target.read_text(encoding="utf-8") == "def foo():\n    return 1\n"
@@ -463,7 +494,9 @@ class TestEnsurePackageInits:
         (tmp_path / "pkg").mkdir()
         (tmp_path / "pkg" / "__init__.py").write_text("X = 1\n", encoding="utf-8")
         _ensure_package_inits(tmp_path / "pkg", tmp_path)
-        assert (tmp_path / "pkg" / "__init__.py").read_text(encoding="utf-8") == "X = 1\n"
+        assert (tmp_path / "pkg" / "__init__.py").read_text(
+            encoding="utf-8"
+        ) == "X = 1\n"
 
 
 class TestDependencyCascadeSafety:
@@ -507,7 +540,9 @@ class TestDependencyCascadeSafety:
             last_user = messages[-1]["content"] if messages else ""
             if "pkg/sibling.py" in last_user:
                 return "[FILE: pkg/sibling.py]\n```python\ndef sibling_v2():\n    return 2\n```\n"
-            return "[FILE: pkg/mod_me.py]\n```python\ndef mod_v2():\n    return 3\n```\n"
+            return (
+                "[FILE: pkg/mod_me.py]\n```python\ndef mod_v2():\n    return 3\n```\n"
+            )
 
         agent = SimpleNamespace(workspace=str(tmp_path), llm=SimpleNamespace(chat=chat))
         with patch("agent_core.commands.implement_cmd.auto_choice", return_value="n"):
@@ -519,8 +554,12 @@ class TestDependencyCascadeSafety:
 
         assert ok is True
         # The two untouched originals must survive the dependency cascade.
-        assert (tmp_path / "pkg" / "mod_me.py").read_text(encoding="utf-8") == original_mod
-        assert (tmp_path / "pkg" / "sibling.py").read_text(encoding="utf-8") == original_sib
+        assert (tmp_path / "pkg" / "mod_me.py").read_text(
+            encoding="utf-8"
+        ) == original_mod
+        assert (tmp_path / "pkg" / "sibling.py").read_text(
+            encoding="utf-8"
+        ) == original_sib
         # Pre-run backups of the existing targets exist.
         backups = list((tmp_path / "backups").glob("*.py"))
         assert len(backups) >= 2
@@ -539,8 +578,7 @@ class TestDependencyCascadeSafety:
         pkg.mkdir()
         (pkg / "__init__.py").write_text("", encoding="utf-8")
         (pkg / "existing.py").write_text(
-            "from pkg.new_helper import helper\n\n"
-            "def foo():\n    return helper()\n",
+            "from pkg.new_helper import helper\n\ndef foo():\n    return helper()\n",
             encoding="utf-8",
         )
         (tmp_path / "tasks.md").write_text(
@@ -567,7 +605,10 @@ class TestDependencyCascadeSafety:
         # dependency cascade because it was never written this run.
         assert (tmp_path / "pkg" / "existing.py").exists()
         assert not (tmp_path / "pkg" / "new_helper.py").exists()
-        assert "KEPT: pkg/existing.py imports rejected module pkg/new_helper.py" in capsys.readouterr().out
+        assert (
+            "KEPT: pkg/existing.py imports rejected module pkg/new_helper.py"
+            in capsys.readouterr().out
+        )
 
     def test_batch_filename_mismatch_ignored(self, tmp_path, capsys):
         """A [FILE:] name outside the planned batch must be ignored, not
@@ -635,7 +676,8 @@ class TestFixBlockParsing:
 
     def test_short_response_without_blocks_returns_none(self) -> None:
         from agent_core.commands.implement_cmd import (
-            _find_patch_block, _find_file_block
+            _find_patch_block,
+            _find_file_block,
         )
 
         assert _find_patch_block("no code here") is None
@@ -661,7 +703,9 @@ class TestBlockTargetMatches:
     def test_backslash_normalization(self) -> None:
         from agent_core.commands.implement_cmd import _block_target_matches
 
-        assert _block_target_matches("agent_core\\llm\\provider.py", "agent_core/llm/provider.py")
+        assert _block_target_matches(
+            "agent_core\\llm\\provider.py", "agent_core/llm/provider.py"
+        )
 
     def test_basename_fallback(self) -> None:
         from agent_core.commands.implement_cmd import _block_target_matches
@@ -705,7 +749,9 @@ class TestHoistedRegexes:
         from agent_core.commands.implement_cmd import _trace_variable_source
 
         lines = ["def f(x):", "    return x"]
-        out = _trace_variable_source('y.py:1: Argument 1 to "f" has type "int"', lines, 1)
+        out = _trace_variable_source(
+            'y.py:1: Argument 1 to "f" has type "int"', lines, 1
+        )
         assert isinstance(out, str)
 
 
@@ -731,7 +777,9 @@ class TestConsumeFixBlocks:
 
         fpath = self._write(tmp_path)
         resp = "[FILE: mod.py]\n```python\nimport os\n\na = 5\n```\n"
-        ok, note = _consume_fix_blocks(resp, "mod.py", fpath, "a = 1\nb = 2\n", file_first=True)
+        ok, note = _consume_fix_blocks(
+            resp, "mod.py", fpath, "a = 1\nb = 2\n", file_first=True
+        )
         assert ok, note
         assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "import os\n\na = 5"
 
@@ -754,7 +802,9 @@ class TestConsumeFixBlocks:
             "[FILE: mod.py]\n```python\ndef broken(:\n```\n"
             "\n[PATCH: mod.py]\n@@ -2,1 +2,1 @@\n-b = 2\n+b = 20\n"
         )
-        ok, note = _consume_fix_blocks(resp, "mod.py", fpath, "a = 1\nb = 2\n", file_first=False)
+        ok, note = _consume_fix_blocks(
+            resp, "mod.py", fpath, "a = 1\nb = 2\n", file_first=False
+        )
         assert ok, note
         body = (tmp_path / "mod.py").read_text(encoding="utf-8")
         assert "b = 20" in body
@@ -763,7 +813,9 @@ class TestConsumeFixBlocks:
         from agent_core.commands.implement_cmd import _consume_fix_blocks
 
         fpath = self._write(tmp_path)
-        ok, note = _consume_fix_blocks("I cannot fix this.", "mod.py", fpath, "", file_first=True)
+        ok, note = _consume_fix_blocks(
+            "I cannot fix this.", "mod.py", fpath, "", file_first=True
+        )
         assert not ok
         assert "no [PATCH:] or [FILE:]" in note
 
@@ -773,7 +825,9 @@ class TestConsumeFixBlocks:
         fpath = self._write(tmp_path)
         (tmp_path / "other.py").write_text("x = 0\n", encoding="utf-8")
         resp = "[FILE: other.py]\n```python\nimport os\nx = 1\n```\n"
-        ok, note = _consume_fix_blocks(resp, "mod.py", fpath, "a = 1\n", file_first=True)
+        ok, note = _consume_fix_blocks(
+            resp, "mod.py", fpath, "a = 1\n", file_first=True
+        )
         assert not ok
         assert (tmp_path / "other.py").read_text(encoding="utf-8") == "x = 0\n"
 
@@ -800,11 +854,15 @@ class TestChatFixTextRetries:
 
         from agent_core.commands.implement_cmd import _chat_fix_text
 
-        agent = self._agent([
-            "<tool_call>\n{\"name\": \"edit\"}\n</tool_call>",
-            "[PATCH: mod.py]\n@@ -1,1 +1,1 @@\n-a\n+b",
-        ])
-        out = asyncio.run(_chat_fix_text(agent, [{"role": "user", "content": "fix"}], "mod.py", "err"))
+        agent = self._agent(
+            [
+                '<tool_call>\n{"name": "edit"}\n</tool_call>',
+                "[PATCH: mod.py]\n@@ -1,1 +1,1 @@\n-a\n+b",
+            ]
+        )
+        out = asyncio.run(
+            _chat_fix_text(agent, [{"role": "user", "content": "fix"}], "mod.py", "err")
+        )
         assert "[PATCH:" in out
         assert len(agent.llm.prompts) == 2
 
@@ -813,11 +871,15 @@ class TestChatFixTextRetries:
 
         from agent_core.commands.implement_cmd import _chat_fix_text
 
-        agent = self._agent([
-            "Let me explain the issue in prose.",
-            "[FILE: mod.py]\n```python\nimport os\nx = 1\n```",
-        ])
-        out = asyncio.run(_chat_fix_text(agent, [{"role": "user", "content": "fix"}], "mod.py", "err"))
+        agent = self._agent(
+            [
+                "Let me explain the issue in prose.",
+                "[FILE: mod.py]\n```python\nimport os\nx = 1\n```",
+            ]
+        )
+        out = asyncio.run(
+            _chat_fix_text(agent, [{"role": "user", "content": "fix"}], "mod.py", "err")
+        )
         assert "[FILE:" in out
         assert len(agent.llm.prompts) == 2
 
@@ -827,7 +889,9 @@ class TestChatFixTextRetries:
         from agent_core.commands.implement_cmd import _chat_fix_text
 
         agent = self._agent(["[Error: gateway down]"])
-        out = asyncio.run(_chat_fix_text(agent, [{"role": "user", "content": "fix"}], "mod.py", "err"))
+        out = asyncio.run(
+            _chat_fix_text(agent, [{"role": "user", "content": "fix"}], "mod.py", "err")
+        )
         assert out.startswith("[Error")
         assert len(agent.llm.prompts) == 1
 
@@ -851,9 +915,7 @@ class TestNaturalLanguageMisuseGuard:
 
         agent = SimpleNamespace(workspace=str(tmp_path))
         ok = asyncio.run(
-            ImplementCommand().execute(
-                ["a", "Openrouter", "LLM", "Provider"], agent
-            )
+            ImplementCommand().execute(["a", "Openrouter", "LLM", "Provider"], agent)
         )
         assert ok is True
         assert "workflow" in captured["msg"]
@@ -877,7 +939,9 @@ class TestConftestRedirectOutsideTestWorkspace:
     that the walkers never see; this test pins that contract.
     """
 
-    def test_redirect_target_lives_outside_per_test_workspace(self, tmp_path: Path) -> None:
+    def test_redirect_target_lives_outside_per_test_workspace(
+        self, tmp_path: Path
+    ) -> None:
         # The autouse fixture has already redirected the modules' _TARGET
         # by the time this test body runs (this test IS subject to the
         # autouse fixture).  We inspect the live _TARGET values to pin
@@ -947,7 +1011,8 @@ class TestProposeMode:
 
     def test_propose_emits_bundle(self, tmp_path):
         ok, target = self._run(
-            tmp_path, "def foo():\n    return 2\n",
+            tmp_path,
+            "def foo():\n    return 2\n",
             extra_args=["--out", str(tmp_path / "bundle")],
         )
         assert ok is True
@@ -964,7 +1029,8 @@ class TestProposeMode:
         """A generated file that does not compile is recorded as rejected,
         not written or silently dropped."""
         ok, target = self._run(
-            tmp_path, "def foo(:\n    return 2\n",
+            tmp_path,
+            "def foo(:\n    return 2\n",
             extra_args=["--out", str(tmp_path / "bundle2")],
         )
         assert ok is True
@@ -972,4 +1038,3 @@ class TestProposeMode:
         assert "## REJECTED" in md
         # Still never touched the tree.
         assert target.read_text(encoding="utf-8") == "def foo():\n    return 1\n"
-

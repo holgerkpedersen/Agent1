@@ -11,6 +11,7 @@ Writes are atomic (temp file + rename) because three writers touch it: the
 collector (seeds new findings), the ``issue`` REPL command (triage/status), and
 the autonomous driver (outcome).
 """
+
 from __future__ import annotations
 
 import json
@@ -39,6 +40,7 @@ def _get_kanban_bridge():
     if _kanban_bridge is None:
         try:
             from . import kanban_bridge  # type: ignore[import-not-found,unused-import]
+
             _kanban_bridge = kanban_bridge
         except ImportError:
             pass
@@ -212,7 +214,9 @@ def resolve(
 
 
 def promote(
-    issues: list[dict[str, Any]], issue_id: str, level: int,
+    issues: list[dict[str, Any]],
+    issue_id: str,
+    level: int,
 ) -> tuple[bool, str]:
     if level not in VALID_AUTONOMY_LEVELS:
         return (
@@ -233,7 +237,9 @@ def promote(
 
 
 def open_issues(
-    issues: list[dict[str, Any]], *, max_level: int | None = None,
+    issues: list[dict[str, Any]],
+    *,
+    max_level: int | None = None,
 ) -> list[dict[str, Any]]:
     """Open issues eligible for the autonomous driver.
 

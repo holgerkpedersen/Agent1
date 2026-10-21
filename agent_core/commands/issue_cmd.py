@@ -13,6 +13,7 @@ Usage:
     issue promote <id> <0|1|2>
     issue autonomy
 """
+
 from __future__ import annotations
 
 import os
@@ -94,8 +95,10 @@ class IssueCommand(Command):
             self.error("issue add is blocked in plan mode (read-only session).")
             return True
         if len(args) < 2:
-            self.error("Usage: issue add <category> <location> [--title \"...\"] "
-                       "[--approach \"...\"] [--level N] [--severity S]")
+            self.error(
+                'Usage: issue add <category> <location> [--title "..."] '
+                '[--approach "..."] [--level N] [--severity S]'
+            )
             return True
         category, location = args[0], args[1]
         title = category
@@ -120,8 +123,12 @@ class IssueCommand(Command):
                 level = int(args[i + 1])
         issues = issue_store.load_issues()
         issue = issue_store.make_issue(
-            category, title, [location], severity=severity,
-            suggested_approach=approach, autonomy_level=level,
+            category,
+            title,
+            [location],
+            severity=severity,
+            suggested_approach=approach,
+            autonomy_level=level,
         )
         if issue_store.upsert(issues, issue):
             issue_store.save_issues(issues)
@@ -140,11 +147,15 @@ class IssueCommand(Command):
         print(f"{'id':42} {'category':18} {'status':10} {'lvl':>3}  locations")
         for it in issues:
             loc = ";".join(it.get("locations", []))
-            print(f"{it['id']:42} {it['category']:18} {it['status']:10} "
-                  f"{it['autonomy_level']:>3}  {loc}")
+            print(
+                f"{it['id']:42} {it['category']:18} {it['status']:10} "
+                f"{it['autonomy_level']:>3}  {loc}"
+            )
         open_cnt = len(issue_store.open_issues(issues, max_level=_autonomy_level()))
-        print(f"\n{len(issues)} total; {open_cnt} open at or below "
-              f"AGENT_AUTONOMY_LEVEL={_autonomy_level()}")
+        print(
+            f"\n{len(issues)} total; {open_cnt} open at or below "
+            f"AGENT_AUTONOMY_LEVEL={_autonomy_level()}"
+        )
         return True
 
     # ── show ────────────────────────────────────────────────────────────
@@ -158,9 +169,21 @@ class IssueCommand(Command):
         if it is None:
             print(f"No issue {args[0]}")
             return True
-        for key in ("id", "title", "category", "severity", "locations",
-                    "status", "autonomy_level", "evidence", "suggested_approach",
-                    "decision_ref", "repair_ref", "created_at", "resolved_at"):
+        for key in (
+            "id",
+            "title",
+            "category",
+            "severity",
+            "locations",
+            "status",
+            "autonomy_level",
+            "evidence",
+            "suggested_approach",
+            "decision_ref",
+            "repair_ref",
+            "created_at",
+            "resolved_at",
+        ):
             print(f"  {key}: {it.get(key)}")
         return True
 
@@ -172,7 +195,7 @@ class IssueCommand(Command):
             return True
         if not args:
             self.error(
-                "Usage: issue resolve <id> [resolved|deferred|wontfix] [--note \"...\"]"
+                'Usage: issue resolve <id> [resolved|deferred|wontfix] [--note "..."]'
             )
             return True
         issue_id = args[0]

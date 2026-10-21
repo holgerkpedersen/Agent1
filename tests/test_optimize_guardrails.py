@@ -7,6 +7,7 @@ constant, produced a self-referencing comprehension NameError, emitted
 ``logger.warning`` before ``logger`` was defined, and deleted live stores
 (``nonlocal patched``, class-body stub attributes).
 """
+
 from __future__ import annotations
 
 import textwrap
@@ -70,26 +71,34 @@ class TestMechanicalFixersRefuseStringLiterals:
 
     def test_none_eq_refused_inside_fixture(self):
         # line 5 ("    if a != None:") is inside the triple-quoted fixture.
-        assert _tri_mech_fix(self._lines(), 5, "none_eq", "t.py", {"suggestion": ""}) is None
+        assert (
+            _tri_mech_fix(self._lines(), 5, "none_eq", "t.py", {"suggestion": ""})
+            is None
+        )
 
     def test_iter_dict_keys_refused_inside_fixture(self):
         src = (
             'SAMPLE = textwrap.dedent("""\\\n'
             "    for k in d.keys():\n"
-            '        print(k)\n'
+            "        print(k)\n"
             '""")\n'
         )
-        assert _tri_mech_fix(src.split("\n"), 2, "iter_dict_keys", "t.py", {"suggestion": ""}) is None
+        assert (
+            _tri_mech_fix(
+                src.split("\n"), 2, "iter_dict_keys", "t.py", {"suggestion": ""}
+            )
+            is None
+        )
 
     def test_dead_assignment_removal_refused_inside_fixture(self):
-        src = (
-            'CODE = """\n'
-            "    ws_path = tmp\n"
-            '"""\n'
-            "use(CODE)\n"
+        src = 'CODE = """\n    ws_path = tmp\n"""\nuse(CODE)\n'
+        finding = {
+            "suggestion": "Variable 'ws_path' assigned at line 2 but never used after. Remove the dead assignment."
+        }
+        assert (
+            _tri_mech_fix(src.split("\n"), 2, "dead_assignment", "t.py", finding)
+            is None
         )
-        finding = {"suggestion": "Variable 'ws_path' assigned at line 2 but never used after. Remove the dead assignment."}
-        assert _tri_mech_fix(src.split("\n"), 2, "dead_assignment", "t.py", finding) is None
 
     def test_regex_hoist_refused_inside_fixture(self):
         src = (
@@ -98,7 +107,12 @@ class TestMechanicalFixersRefuseStringLiterals:
             '        m = re.search(r"^class", f)\n'
             '""")\n'
         )
-        assert _tri_mech_fix(src.split("\n"), 3, "regex_in_loop", "t.py", {"suggestion": ""}) is None
+        assert (
+            _tri_mech_fix(
+                src.split("\n"), 3, "regex_in_loop", "t.py", {"suggestion": ""}
+            )
+            is None
+        )
 
 
 class TestRegexHoistPreservesFlags:
@@ -123,7 +137,7 @@ class TestRegexHoistPreservesFlags:
         assert ok, hunk
         joined = patched
         # flags carried into the compile constant...
-        assert "re.compile(r\"abc\", re.IGNORECASE)" in joined
+        assert 're.compile(r"abc", re.IGNORECASE)' in joined
         # ...and removed from the call site (no positional-flags-as-pos bug).
         assert ".match(f)" in joined
         assert ".match(f, re.IGNORECASE)" not in joined
@@ -146,7 +160,7 @@ class TestRegexHoistPreservesFlags:
         wl = code.split("\n")
         hunk = _fix_regex_in_loop(wl, 4, 5, "t.py", {"suggestion": ""})
         assert hunk is not None
-        assert "re.compile(r\"abc\", re.IGNORECASE)" in hunk
+        assert 're.compile(r"abc", re.IGNORECASE)' in hunk
         assert "flags=" not in hunk.split("\n")[-2] or ".match(" in hunk
 
     def test_never_reuses_other_functions_local_constant(self):
@@ -181,7 +195,9 @@ class TestRegexHoistPreservesFlags:
         assert hunk is not None
         # A NEW local definition must be added for the second function —
         # never a bare reference to the first function's local.
-        assert any(ln.startswith("+") and "= re.compile(" in ln for ln in hunk.split("\n"))
+        assert any(
+            ln.startswith("+") and "= re.compile(" in ln for ln in hunk.split("\n")
+        )
         # ...and applying + executing both functions works (no NameError).
         ok, patched = apply_patch(hunk, wl)
         assert ok

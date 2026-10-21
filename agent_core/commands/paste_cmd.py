@@ -1,4 +1,5 @@
 """Paste command — read multiline text from stdin and feed into the NLP ReAct loop."""
+
 import os as _os
 import sys as _sys
 from typing import TYPE_CHECKING
@@ -25,7 +26,7 @@ class PasteCommand(Command):
         return (f"paste [--workspace <path>] - Paste multiline text for AI analysis "
                 f"({self.end_key_hint()} to finish)")
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         workspace = None
         parsed_args = list(args)
         if "--workspace" in parsed_args:

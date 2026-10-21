@@ -28,6 +28,7 @@ user-model history visible:
 * **Fail-open** — every public function returns an empty result on any
   internal failure; a broken ledger must never kill a chat turn.
 """
+
 from __future__ import annotations
 
 import logging
@@ -113,18 +114,24 @@ def file_notes_block(
             return ""
 
         from harnessfix.history import (
-            file_history  # local import: stdlib-only at import time
-        )
+            file_history,
+        )  # local import: stdlib-only at import time
 
         body: list[str] = []
-        for target in paths[:max(1, int(max_files))]:
+        for target in paths[: max(1, int(max_files))]:
             events = file_history(target, str(workspace), limit=max(1, int(per_file)))
             if not events:
                 continue
             body.append(f"- {target}: {len(events)} past event(s)")
             for ev in events:
-                when = datetime.fromtimestamp(ev.ts).strftime("%m-%d %H:%M") if ev.ts else "?"
-                body.append(f"  {ev.tool} {ev.kind} [{str(ev.ref)[:8]}] {when}: {ev.summary}")
+                when = (
+                    datetime.fromtimestamp(ev.ts).strftime("%m-%d %H:%M")
+                    if ev.ts
+                    else "?"
+                )
+                body.append(
+                    f"  {ev.tool} {ev.kind} [{str(ev.ref)[:8]}] {when}: {ev.summary}"
+                )
             if len(body) >= line_cap:
                 break
 

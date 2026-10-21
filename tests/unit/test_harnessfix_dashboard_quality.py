@@ -1,4 +1,5 @@
 """Unit tests for harnessfix.dashboard --quality wiring (read-only)."""
+
 import json
 import os
 
@@ -13,9 +14,24 @@ from harnessfix.tracing import (
 def _write_trace(tmp_path, task_id, outcome, duration=0.0):
     p = tmp_path / f"{task_id}.jsonl"
     events = [
-        {"kind": "task_begin", "task_id": task_id, "layer": LAYER_VERIFICATION, "user_input": "x"},
-        {"kind": "tool_result", "task_id": task_id, "layer": LAYER_EXECUTION, "duration_s": duration},
-        {"kind": "loop_end", "task_id": task_id, "layer": LAYER_OBSERVABILITY, "outcome": outcome},
+        {
+            "kind": "task_begin",
+            "task_id": task_id,
+            "layer": LAYER_VERIFICATION,
+            "user_input": "x",
+        },
+        {
+            "kind": "tool_result",
+            "task_id": task_id,
+            "layer": LAYER_EXECUTION,
+            "duration_s": duration,
+        },
+        {
+            "kind": "loop_end",
+            "task_id": task_id,
+            "layer": LAYER_OBSERVABILITY,
+            "outcome": outcome,
+        },
     ]
     p.write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8")
     return p
@@ -37,8 +53,8 @@ class TestQualityReport:
         assert rep["should_evolve"] is False
 
     def test_failed_runs_trigger_evolution(self, tmp_path):
-        _write_trace(tmp_path, "a", "error")   # score 0.0
-        _write_trace(tmp_path, "b", "error")   # score 0.0
+        _write_trace(tmp_path, "a", "error")  # score 0.0
+        _write_trace(tmp_path, "b", "error")  # score 0.0
         rep = dashboard._quality_report(tmp_path, threshold=0.7)
         assert rep["windowed_average"] == 0.0
         assert rep["should_evolve"] is True
@@ -59,9 +75,9 @@ class TestQualityReport:
         # The sliding window must summarise the MOST RECENT runs.  Files are
         # sorted newest-first for the report, so the scorer has to be fed
         # oldest-first; otherwise a size-N window keeps the OLDEST N runs.
-        old = _write_trace(tmp_path, "old", "completed", duration=0.0)   # 1.0
-        mid = _write_trace(tmp_path, "mid", "completed", duration=0.0)   # 1.0
-        new = _write_trace(tmp_path, "new", "error")                     # 0.0
+        old = _write_trace(tmp_path, "old", "completed", duration=0.0)  # 1.0
+        mid = _write_trace(tmp_path, "mid", "completed", duration=0.0)  # 1.0
+        new = _write_trace(tmp_path, "new", "error")  # 0.0
         base = 1_700_000_000.0
         os.utime(old, (base, base))
         os.utime(mid, (base + 100, base + 100))
@@ -74,8 +90,8 @@ class TestQualityReport:
         assert rep["runs"][0]["task_id"] == "new"
 
     def test_window_recent_successes_do_not_trigger(self, tmp_path):
-        old = _write_trace(tmp_path, "old", "error")                     # 0.0
-        new = _write_trace(tmp_path, "new", "completed", duration=0.0)   # 1.0
+        old = _write_trace(tmp_path, "old", "error")  # 0.0
+        new = _write_trace(tmp_path, "new", "completed", duration=0.0)  # 1.0
         base = 1_700_000_000.0
         os.utime(old, (base, base))
         os.utime(new, (base + 100, base + 100))
@@ -87,9 +103,15 @@ class TestQualityReport:
 class TestMainQualityFlag:
     def test_quality_table_mode(self, tmp_path, capsys):
         _write_trace(tmp_path, "a", "completed", duration=0.0)
-        rc = dashboard.main([
-            "--traces", str(tmp_path), "--quality", "--limit", "1",
-        ])
+        rc = dashboard.main(
+            [
+                "--traces",
+                str(tmp_path),
+                "--quality",
+                "--limit",
+                "1",
+            ]
+        )
         assert rc == 0
         out = capsys.readouterr().out
         assert "windowed average" in out
@@ -97,9 +119,16 @@ class TestMainQualityFlag:
 
     def test_quality_json_mode(self, tmp_path, capsys):
         _write_trace(tmp_path, "a", "completed", duration=0.0)
-        rc = dashboard.main([
-            "--traces", str(tmp_path), "--quality", "--json", "--limit", "1",
-        ])
+        rc = dashboard.main(
+            [
+                "--traces",
+                str(tmp_path),
+                "--quality",
+                "--json",
+                "--limit",
+                "1",
+            ]
+        )
         assert rc == 0
         data = json.loads(capsys.readouterr().out)
         assert data["windowed_average"] == 1.0

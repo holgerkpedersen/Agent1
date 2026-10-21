@@ -15,56 +15,245 @@ from .base import Command, auto_choice, show_file_diff, read_input, stop_request
 from .doc_paths import find_input
 from agent_core import to_windows_path, workspace_path
 from agent_core.decisions import (
-    decisions_as_system_prompt, extract_from_changes, add_decision
+    decisions_as_system_prompt,
+    extract_from_changes,
+    add_decision,
 )
 from agent_core.subprocess_utils import shell_info as _shell_info
 
 from typing import TYPE_CHECKING, Any
+
 if TYPE_CHECKING:
     from agent import Agent
 
 
-_STDLIB_COMMON = frozenset({
-    "abc", "aifc", "argparse", "array", "ast", "asynchat", "asyncio",
-    "asyncore", "atexit", "audioop", "base64", "bdb", "binascii", "binhex",
-    "bisect", "builtins", "bz2", "calendar", "cgi", "cgitb", "chunk", "cmath",
-    "cmd", "code", "codecs", "codeop", "collections", "colorsys", "compileall",
-    "concurrent", "config", "configparser", "contextlib", "contextvars",
-    "copy", "copyreg", "cProfile", "crypt", "csv", "ctypes", "curses",
-    "dataclasses", "datetime", "dbm", "decimal", "difflib", "dis",
-    "distutils", "doctest", "email", "encodings", "enum", "errno", "faulthandler",
-    "fcntl", "filecmp", "fileinput", "fnmatch", "formatter", "fractions",
-    "ftplib", "functools", "gc", "getopt", "getpass", "gettext", "glob",
-    "graphlib", "grp", "gzip", "hashlib", "heapq", "hmac", "html", "http",
-    "idlelib", "imaplib", "imghdr", "imp", "importlib", "inspect", "io",
-    "ipaddress", "itertools", "json", "keyword", "lib2to3", "linecache",
-    "locale", "logging", "lzma", "mailbox", "mailcap", "marshal",
-    "math", "mimetypes", "mmap", "modulefinder", "multiprocessing", "netrc",
-    "nis", "nntplib", "numbers", "operator", "optparse", "os", "ossaudiodev",
-    "parser", "pathlib", "pdb", "pickle", "pickletools", "pipes", "pkgutil",
-    "platform", "plistlib", "poplib", "posix", "posixpath", "pprint",
-    "profile", "pstats", "pty", "pwd", "py_compile", "pyclbr", "pydoc",
-    "queue", "quopri", "random", "re", "readline", "reprlib", "resource",
-    "rlcompleter", "runpy", "sched", "secrets", "select", "selectors",
-    "shelve", "shlex", "shutil", "signal", "site", "smtpd", "smtplib",
-    "sndhdr", "socket", "socketserver", "sqlite3", "ssl", "stat",
-    "statistics", "string", "stringprep", "struct", "subprocess",
-    "sunau", "symtable", "sys", "sysconfig", "syslog", "tabnanny",
-    "tarfile", "telnetlib", "tempfile", "termios", "test", "textwrap",
-    "threading", "time", "timeit", "tkinter", "token", "tokenize",
-    "trace", "traceback", "tracemalloc", "tty", "turtle", "turtledemo",
-    "types", "typing", "unicodedata", "unittest", "urllib", "uu",
-    "uuid", "venv", "warnings", "wave", "weakref", "webbrowser",
-    "winreg", "winsound", "wsgiref", "xdrlib", "xml", "xmlrpc",
-    "zipapp", "zipfile", "zipimport", "zlib",
-    # Non-stdlib but very common collision targets
-    "logger", "utils", "helpers", "common", "base", "core",
-    "memory", "cache", "settings", "constants",
-})
+_STDLIB_COMMON = frozenset(
+    {
+        "abc",
+        "aifc",
+        "argparse",
+        "array",
+        "ast",
+        "asynchat",
+        "asyncio",
+        "asyncore",
+        "atexit",
+        "audioop",
+        "base64",
+        "bdb",
+        "binascii",
+        "binhex",
+        "bisect",
+        "builtins",
+        "bz2",
+        "calendar",
+        "cgi",
+        "cgitb",
+        "chunk",
+        "cmath",
+        "cmd",
+        "code",
+        "codecs",
+        "codeop",
+        "collections",
+        "colorsys",
+        "compileall",
+        "concurrent",
+        "config",
+        "configparser",
+        "contextlib",
+        "contextvars",
+        "copy",
+        "copyreg",
+        "cProfile",
+        "crypt",
+        "csv",
+        "ctypes",
+        "curses",
+        "dataclasses",
+        "datetime",
+        "dbm",
+        "decimal",
+        "difflib",
+        "dis",
+        "distutils",
+        "doctest",
+        "email",
+        "encodings",
+        "enum",
+        "errno",
+        "faulthandler",
+        "fcntl",
+        "filecmp",
+        "fileinput",
+        "fnmatch",
+        "formatter",
+        "fractions",
+        "ftplib",
+        "functools",
+        "gc",
+        "getopt",
+        "getpass",
+        "gettext",
+        "glob",
+        "graphlib",
+        "grp",
+        "gzip",
+        "hashlib",
+        "heapq",
+        "hmac",
+        "html",
+        "http",
+        "idlelib",
+        "imaplib",
+        "imghdr",
+        "imp",
+        "importlib",
+        "inspect",
+        "io",
+        "ipaddress",
+        "itertools",
+        "json",
+        "keyword",
+        "lib2to3",
+        "linecache",
+        "locale",
+        "logging",
+        "lzma",
+        "mailbox",
+        "mailcap",
+        "marshal",
+        "math",
+        "mimetypes",
+        "mmap",
+        "modulefinder",
+        "multiprocessing",
+        "netrc",
+        "nis",
+        "nntplib",
+        "numbers",
+        "operator",
+        "optparse",
+        "os",
+        "ossaudiodev",
+        "parser",
+        "pathlib",
+        "pdb",
+        "pickle",
+        "pickletools",
+        "pipes",
+        "pkgutil",
+        "platform",
+        "plistlib",
+        "poplib",
+        "posix",
+        "posixpath",
+        "pprint",
+        "profile",
+        "pstats",
+        "pty",
+        "pwd",
+        "py_compile",
+        "pyclbr",
+        "pydoc",
+        "queue",
+        "quopri",
+        "random",
+        "re",
+        "readline",
+        "reprlib",
+        "resource",
+        "rlcompleter",
+        "runpy",
+        "sched",
+        "secrets",
+        "select",
+        "selectors",
+        "shelve",
+        "shlex",
+        "shutil",
+        "signal",
+        "site",
+        "smtpd",
+        "smtplib",
+        "sndhdr",
+        "socket",
+        "socketserver",
+        "sqlite3",
+        "ssl",
+        "stat",
+        "statistics",
+        "string",
+        "stringprep",
+        "struct",
+        "subprocess",
+        "sunau",
+        "symtable",
+        "sys",
+        "sysconfig",
+        "syslog",
+        "tabnanny",
+        "tarfile",
+        "telnetlib",
+        "tempfile",
+        "termios",
+        "test",
+        "textwrap",
+        "threading",
+        "time",
+        "timeit",
+        "tkinter",
+        "token",
+        "tokenize",
+        "trace",
+        "traceback",
+        "tracemalloc",
+        "tty",
+        "turtle",
+        "turtledemo",
+        "types",
+        "typing",
+        "unicodedata",
+        "unittest",
+        "urllib",
+        "uu",
+        "uuid",
+        "venv",
+        "warnings",
+        "wave",
+        "weakref",
+        "webbrowser",
+        "winreg",
+        "winsound",
+        "wsgiref",
+        "xdrlib",
+        "xml",
+        "xmlrpc",
+        "zipapp",
+        "zipfile",
+        "zipimport",
+        "zlib",
+        # Non-stdlib but very common collision targets
+        "logger",
+        "utils",
+        "helpers",
+        "common",
+        "base",
+        "core",
+        "memory",
+        "cache",
+        "settings",
+        "constants",
+    }
+)
 
-_EXISTING_ROOT_PACKAGES = frozenset({
-    "agent_core", "agent1", "agent",
-})
+_EXISTING_ROOT_PACKAGES = frozenset(
+    {
+        "agent_core",
+        "agent1",
+        "agent",
+    }
+)
 
 _SAFE_SUBPACKAGE_CANDIDATES = ("agent1", "src/agent1")
 
@@ -96,7 +285,10 @@ def _is_dangerous_filename(filename: str, workspace: Path) -> tuple[bool, str]:
     # and breaks relative imports for all top-level modules.
     dest = (workspace / filename).resolve()
     if name == "__init__" and dest.parent.resolve() == workspace.resolve():
-        return True, "__init__.py at workspace root would turn the entire repo into a package"
+        return (
+            True,
+            "__init__.py at workspace root would turn the entire repo into a package",
+        )
 
     # Shallow names (no directory prefix) at workspace root are always
     # dangerous — they shadow stdlib, collide with packages, or pollute the
@@ -123,7 +315,10 @@ def _shadowing_stdlib_dir(filename: str, workspace: Path) -> str:
     """
     parts = filename.replace("\\", "/").split("/")
     for idx, part in enumerate(parts[:-1]):
-        if part in _STDLIB_COMMON and not (workspace / "/".join(parts[: idx + 1])).exists():
+        if (
+            part in _STDLIB_COMMON
+            and not (workspace / "/".join(parts[: idx + 1])).exists()
+        ):
             return part
     return ""
 
@@ -152,23 +347,23 @@ def _extract_task_line(taskplan: str, filename: str) -> str:
     positives from substring matches (e.g. ``agent.py`` in ``agent_core/agent.py``).
     """
     name = os.path.basename(filename)
-    _RE_1 = re.compile(r'^\d+\.?\s+`')
-    for line in taskplan.split('\n'):
+    _RE_1 = re.compile(r"^\d+\.?\s+`")
+    for line in taskplan.split("\n"):
         if f"`{filename}`" in line:
             return line.strip()
-    for line in taskplan.split('\n'):
+    for line in taskplan.split("\n"):
         if f"`{name}`" in line:
             return line.strip()
-    for line in taskplan.split('\n'):
+    for line in taskplan.split("\n"):
         stripped = line.strip()
         if name in stripped and _RE_1.match(stripped):
             return stripped
     return ""
 
 
-_PATH_LINE_RE = re.compile(r'(?:[A-Za-z]:)?[\\/]?[\w./\\+-]*\.py:(\d+):')
+_PATH_LINE_RE = re.compile(r"(?:[A-Za-z]:)?[\\/]?[\w./\\+-]*\.py:(\d+):")
 _FILE_LINE_RE = re.compile(r'File "([^"]+)", line (\d+)')
-_WORD_LINE_RE = re.compile(r'\bline (\d+)\b', re.IGNORECASE)
+_WORD_LINE_RE = re.compile(r"\bline (\d+)\b", re.IGNORECASE)
 
 
 def _parse_line_number(err: str) -> int:
@@ -203,55 +398,90 @@ def _parse_line_number(err: str) -> int:
 def _classify_error(err: str) -> tuple[int, int, str]:
     """Return (window_before, window_after, instruction) for an error pattern."""
     if "union-attr" in err or ("has no attribute" in err and "CROSS:" not in err):
-        return (30, 15,
+        return (
+            30,
+            15,
             "A variable might be None. Check for an 'is not None' guard ABOVE the error line. "
             "REUSE the guarded local variable — do NOT re-read from a list/dict after the guard. "
-            "Minimal change: move assignment before the guard, or add a local variable binding.")
+            "Minimal change: move assignment before the guard, or add a local variable binding.",
+        )
     if "arg-type" in err or ("incompatible type" in err and "expected" in err):
-        return (120, 10,
+        return (
+            120,
+            10,
             "A variable has the wrong type. Search the ENTIRE file for where it's DEFINED/INITIALIZED. "
             "The error says a value has the wrong type — find the line that initializes the collection/variable. "
             "Fix the initialization to use the correct type. Do NOT change function signatures. "
-            "If the fix is far from the error, use [FILE:] to show the full corrected file.")
-    if "No overload variant" in err or ("incompatible type" in err and "expected" not in err):
-        return (20, 10,
+            "If the fix is far from the error, use [FILE:] to show the full corrected file.",
+        )
+    if "No overload variant" in err or (
+        "incompatible type" in err and "expected" not in err
+    ):
+        return (
+            20,
+            10,
             "The type hint is too broad. Add explicit type parameters: List[T], dict[K,V], Optional[T]. "
-            "Declare the list/dict with its full generic type at the variable definition site.")
+            "Declare the list/dict with its full generic type at the variable definition site.",
+        )
     if "ROOT_CAUSE:" in err:
-        return (50, 20,
+        return (
+            50,
+            20,
             "This class is missing attributes needed by downstream files. "
             "Add the missing fields to the class definition (as @dataclass fields or class attributes). "
-            "Show the complete corrected class definition with all fields.")
+            "Show the complete corrected class definition with all fields.",
+        )
     if "COMPILE:" in err:
-        return (10, 10,
+        return (
+            10,
+            10,
             "Fix the syntax error at the indicated line. Show ONLY the corrected line(s). "
-            "Keep surrounding code unchanged.")
+            "Keep surrounding code unchanged.",
+        )
     if "IMPORT:" in err:
-        return (5, 5,
+        return (
+            5,
+            5,
             "Fix the import path. Use bare imports for same-directory modules. "
-            "Replace absolute 'from src.agent1.' prefixes with bare 'from ' imports.")
+            "Replace absolute 'from src.agent1.' prefixes with bare 'from ' imports.",
+        )
     if "CROSS:" in err:
-        return (40, 30,
+        return (
+            40,
+            30,
             "Add the missing attribute as a @property or class attribute in the referenced class. "
-            "Show the complete class definition with the new attribute.")
+            "Show the complete class definition with the new attribute.",
+        )
     if "SMOKE:" in err:
-        return (30, 20,
+        return (
+            30,
+            20,
             "The class failed to instantiate. Check __init__ parameters and types. "
-            "The test attempted to create an instance — ensure __init__ accepts the right arguments.")
+            "The test attempted to create an instance — ensure __init__ accepts the right arguments.",
+        )
     if "is not defined" in err or "Name" in err or "name-defined" in err:
-        return (1, 40,
+        return (
+            1,
+            40,
             "Missing import. Add 'from module import Name' at the top of the file. "
             "Look at the available exports in other project files — do NOT define the class yourself. "
-            "IMPORT it from the file that already defines it.")
+            "IMPORT it from the file that already defines it.",
+        )
     if "Missing return statement" in err or "[return]" in err:
-        return (-1, -1,
+        return (
+            -1,
+            -1,
             "The function does not return on all code paths. The window below shows "
             "the ENTIRE enclosing function. Find where control can fall off the end "
             "without returning (e.g. an unmatched if/elif chain, or a try/except "
-            "missing an else). Add a return for that unhandled path.")
-    return (40, 20,
+            "missing an else). Add a return for that unhandled path.",
+        )
+    return (
+        40,
+        20,
         "Fix this error in the code. Keep changes minimal — do NOT rewrite the entire file. "
-        "Output ONLY the corrected file.")
+        "Output ONLY the corrected file.",
+    )
 
 
 def _extract_window(lines: list[str], error_line: int, before: int, after: int) -> str:
@@ -272,7 +502,9 @@ def _trace_variable_source(err: str, lines: list[str], error_line: int) -> str:
     Returns a code block showing the root cause (where the variable is initialized)
     with line numbers, or empty string if tracing fails.
     """
-    if "arg-type" not in err and ("incompatible type" not in err or "expected" not in err):
+    if "arg-type" not in err and (
+        "incompatible type" not in err or "expected" not in err
+    ):
         return ""
 
     # Extract function name and argument position from error
@@ -289,8 +521,10 @@ def _trace_variable_source(err: str, lines: list[str], error_line: int) -> str:
         if f"def {func_name}(" in line:
             params_match = _DEF_PARAMS_RE.search(line)
             if params_match:
-                params = [p.strip().split(':')[0].strip().split('=')[0].strip()
-                          for p in params_match.group(1).split(',')]
+                params = [
+                    p.strip().split(":")[0].strip().split("=")[0].strip()
+                    for p in params_match.group(1).split(",")
+                ]
                 if arg_num <= len(params):
                     param_name = params[arg_num - 1]
             break
@@ -300,7 +534,7 @@ def _trace_variable_source(err: str, lines: list[str], error_line: int) -> str:
 
     # Find where the parameter is assigned at the error site
     assigned_from = ""
-    _ASSIGN_RE = re.compile(rf'{param_name}\s*=\s*(.+)')
+    _ASSIGN_RE = re.compile(rf"{param_name}\s*=\s*(.+)")
     for i in range(error_line - 1, max(0, error_line - 20), -1):
         line = lines[i].strip()
         if f"{param_name} = " in line or f"{param_name}=" in line:
@@ -316,7 +550,9 @@ def _trace_variable_source(err: str, lines: list[str], error_line: int) -> str:
     init_lines = []
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if re.match(r'self\.\w+\s*=\s*\[', stripped) or re.match(r'self\.\w+\s*=\s*\{', stripped):
+        if re.match(r"self\.\w+\s*=\s*\[", stripped) or re.match(
+            r"self\.\w+\s*=\s*\{", stripped
+        ):
             init_lines.append((i + 1, line.rstrip()))
 
     if not init_lines:
@@ -324,7 +560,9 @@ def _trace_variable_source(err: str, lines: list[str], error_line: int) -> str:
 
     # Build the root cause section
     result_parts = []
-    result_parts.append(f"Variable `{param_name}` is assigned from `{assigned_from}` (see error site):")
+    result_parts.append(
+        f"Variable `{param_name}` is assigned from `{assigned_from}` (see error site):"
+    )
     result_parts.append("")
     for i in range(error_line - 1, max(0, error_line - 10), -1):
         if param_name in lines[i]:
@@ -334,22 +572,28 @@ def _trace_variable_source(err: str, lines: list[str], error_line: int) -> str:
     result_parts.append("")
     result_parts.append("The source collection is initialized here:")
     result_parts.append("")
-    result_parts += [f"  {line_num}: {line_text}" for line_num, line_text in init_lines[-3:]]
+    result_parts += [
+        f"  {line_num}: {line_text}" for line_num, line_text in init_lines[-3:]
+    ]
 
     result_parts.append("")
-    result_parts.append("Fix: Change the initialization to use the correct type (e.g. 0 instead of None).")
+    result_parts.append(
+        "Fix: Change the initialization to use the correct type (e.g. 0 instead of None)."
+    )
 
     return "\n".join(result_parts)
 
 
-def _find_class_definition_file(class_name: str, ws_dir: str, exclude_file: str = "") -> tuple[str, str] | None:
+def _find_class_definition_file(
+    class_name: str, ws_dir: str, exclude_file: str = ""
+) -> tuple[str, str] | None:
     """Find the file that defines a class. Returns (file_path, source_content) or None.
 
     When multiple files define the same class, returns the one with the most
     attributes (most-derived / most complete definition).
     """
     matches: list[tuple[str, str, int]] = []
-    _RE_5 = re.compile(r'^\s+\w+\s*[:=]', re.MULTILINE)
+    _RE_5 = re.compile(r"^\s+\w+\s*[:=]", re.MULTILINE)
     for root, dirs, files in os.walk(ws_dir):
         if ".git" in root or "__pycache__" in root:
             continue
@@ -362,12 +606,14 @@ def _find_class_definition_file(class_name: str, ws_dir: str, exclude_file: str 
             try:
                 with open(fp, "r", encoding="utf-8", errors="replace") as sf:
                     src = sf.read()
-                if re.search(rf'^class\s+{re.escape(class_name)}\b', src, re.MULTILINE):
+                if re.search(rf"^class\s+{re.escape(class_name)}\b", src, re.MULTILINE):
                     # Count attributes to prefer the most-complete definition
                     attr_count = len(_RE_5.findall(src))
                     matches.append((fp, src, attr_count))
             except Exception:
-                print("WARNING: failed to read file during signature extraction:", f)  # silent_except fix
+                print(
+                    "WARNING: failed to read file during signature extraction:", f
+                )  # silent_except fix
 
     if not matches:
         return None
@@ -379,11 +625,15 @@ def _find_class_definition_file(class_name: str, ws_dir: str, exclude_file: str 
 _ATTR_NO_ATTR_RE = re.compile(r'"(\w+)" has no attribute "(\w+)"')
 _FOR_NAME_RE = re.compile(r'for "(\w+)"')
 _IMPORT_FROM_RE = re.compile(r"cannot import name '(\w+)' from '(\w+)'")
-_ASSIGN_TYPE_RE = re.compile(r'Incompatible types in assignment.*variable has type "([^"]+)"')
+_ASSIGN_TYPE_RE = re.compile(
+    r'Incompatible types in assignment.*variable has type "([^"]+)"'
+)
 _NAME_NOT_DEF_RE = re.compile(r'Name "(\w+)" is not defined')
 
 
-def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> list[tuple[str, list[tuple[str, str, str]]]]:
+def _group_related_errors(
+    errors: list[tuple[str, str, str]], ws_dir: str
+) -> list[tuple[str, list[tuple[str, str, str]]]]:
     """Group errors by root cause. Returns [(root_cause_file, [errors])].
 
     Phase 1: Categorize errors into class/import/assignment/name/other buckets.
@@ -396,7 +646,9 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
     name_errors: dict[str, list[tuple[str, str, str]]] = {}
     other_errors: list[tuple[str, str, str]] = []
 
-    _INCOMPATIBLE_TYPES_IN_ASSIGNMENT_RE = re.compile(r'Incompatible types in assignment.*"(\w+)"')
+    _INCOMPATIBLE_TYPES_IN_ASSIGNMENT_RE = re.compile(
+        r'Incompatible types in assignment.*"(\w+)"'
+    )
     for fname, fpath, err in errors:
         # Pattern: "MouseEventData" has no attribute "button"
         cls_match = _ATTR_NO_ATTR_RE.search(err)
@@ -411,7 +663,10 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
         # Pattern: cannot import name 'X' from 'Y'
         import_match = _IMPORT_FROM_RE.search(err)
         if import_match:
-            key = (import_match.group(2), import_match.group(1))  # (source_module, missing_name)
+            key = (
+                import_match.group(2),
+                import_match.group(1),
+            )  # (source_module, missing_name)
             import_errors.setdefault(key, []).append((fname, fpath, err))
             continue
         # Pattern: Incompatible types in assignment
@@ -420,7 +675,9 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
             # Extract the variable name from the error (e.g. "agent.py:683: error: Incompatible types ...")
             var_match = _INCOMPATIBLE_TYPES_IN_ASSIGNMENT_RE.search(err)
             if var_match:
-                assign_errors.setdefault(var_match.group(1), []).append((fname, fpath, err))
+                assign_errors.setdefault(var_match.group(1), []).append(
+                    (fname, fpath, err)
+                )
                 continue
         # Pattern: Name "X" is not defined
         name_match = _NAME_NOT_DEF_RE.search(err)
@@ -436,8 +693,11 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
         defn = _find_class_definition_file(cls_name, ws_dir)
         if defn:
             defn_path, _ = defn
-            root_err = (os.path.basename(defn_path), defn_path,
-                        f"ROOT_CAUSE: {cls_name} is defined here but missing attributes needed by downstream files")
+            root_err = (
+                os.path.basename(defn_path),
+                defn_path,
+                f"ROOT_CAUSE: {cls_name} is defined here but missing attributes needed by downstream files",
+            )
             result.append((defn_path, [root_err] + cls_errs))
         else:
             result.append(("", cls_errs))
@@ -447,8 +707,11 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
         defn = _find_class_definition_file(missing_name, ws_dir)
         if defn:
             defn_path, _ = defn
-            root_err = (os.path.basename(defn_path), defn_path,
-                        f"ROOT_CAUSE: {missing_name} should be exported from this module")
+            root_err = (
+                os.path.basename(defn_path),
+                defn_path,
+                f"ROOT_CAUSE: {missing_name} should be exported from this module",
+            )
             result.append((defn_path, [root_err] + imp_errs))
         else:
             result.append(("", imp_errs))
@@ -457,8 +720,11 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
     for var_name, var_errs in assign_errors.items():
         # Try to find where the variable is defined/initialized
         if defn_path:
-            root_err = (os.path.basename(defn_path), defn_path,
-                        f"ROOT_CAUSE: {var_name} has wrong type at definition site")
+            root_err = (
+                os.path.basename(defn_path),
+                defn_path,
+                f"ROOT_CAUSE: {var_name} has wrong type at definition site",
+            )
             result.append((defn_path, [root_err] + var_errs))
         else:
             result.append(("", var_errs))
@@ -477,7 +743,9 @@ def _group_related_errors(errors: list[tuple[str, str, str]], ws_dir: str) -> li
     return result
 
 
-def _find_variable_definition(var_name: str, errors: list[tuple[str, str, str]], ws_dir: str) -> str | None:
+def _find_variable_definition(
+    var_name: str, errors: list[tuple[str, str, str]], ws_dir: str
+) -> str | None:
     """Find where a variable is defined/initialized based on error context.
 
     Searches the files containing errors for assignment patterns like
@@ -495,8 +763,8 @@ def _find_variable_definition(var_name: str, errors: list[tuple[str, str, str]],
             continue
         # Look for initialization patterns
         patterns = [
-            rf'^\s*{re.escape(var_name)}\s*=\s*\w+',
-            rf'^\s*{re.escape(var_name)}\s*:\s*\w+.*=',
+            rf"^\s*{re.escape(var_name)}\s*=\s*\w+",
+            rf"^\s*{re.escape(var_name)}\s*:\s*\w+.*=",
         ]
         for pat in patterns:
             if re.search(pat, src, re.MULTILINE):
@@ -504,7 +772,9 @@ def _find_variable_definition(var_name: str, errors: list[tuple[str, str, str]],
     return None
 
 
-def _topological_sort_groups(groups: list[tuple[str, list[tuple[str, str, str]]]], ws_dir: str) -> list[tuple[str, list[tuple[str, str, str]]]]:
+def _topological_sort_groups(
+    groups: list[tuple[str, list[tuple[str, str, str]]]], ws_dir: str
+) -> list[tuple[str, list[tuple[str, str, str]]]]:
     """Sort error groups by file dependency order.
 
     If root-cause file A imports from root-cause file B, then B is fixed
@@ -534,9 +804,11 @@ def _topological_sort_groups(groups: list[tuple[str, list[tuple[str, str, str]]]
         except Exception:
             continue
         # Find imports from project modules
-        for m in re.finditer(r'from\s+([\w.]+)\s+import', src):
+        for m in re.finditer(r"from\s+([\w.]+)\s+import", src):
             mod = m.group(1)
-            imported_file = os.path.normpath(os.path.join(ws_dir, mod.replace('.', '/') + '.py'))
+            imported_file = os.path.normpath(
+                os.path.join(ws_dir, mod.replace(".", "/") + ".py")
+            )
             if imported_file in root_files and imported_file != group_path:
                 deps[idx].add(root_files[imported_file])
 
@@ -563,7 +835,9 @@ def _topological_sort_groups(groups: list[tuple[str, list[tuple[str, str, str]]]
     return [g for _, g in has_path + no_path]
 
 
-def _build_fix_prompt(err: str, current_code: str, fname: str, prefer_file: bool = False) -> list[dict[str, str]]:
+def _build_fix_prompt(
+    err: str, current_code: str, fname: str, prefer_file: bool = False
+) -> list[dict[str, str]]:
     """Build a strategy-specific fix prompt with relevant code window only.
 
     If prefer_file is True (e.g. after a patch failure), tell the LLM to use [FILE:] format.
@@ -581,16 +855,29 @@ def _build_fix_prompt(err: str, current_code: str, fname: str, prefer_file: bool
 
     # For import-related errors, also show the file header (first 40 lines)
     header = ""
-    if "import" in instruction.lower() or "is not defined" in instruction or "Name" in instruction:
+    if (
+        "import" in instruction.lower()
+        or "is not defined" in instruction
+        or "Name" in instruction
+    ):
         header_end = min(40, len(lines))
-        header_lines = [f"{i:>4}    {line.rstrip()}" for i, line in enumerate(lines[:header_end], start=1)]
-        header = "File header (imports):\n```python\n" + "\n".join(header_lines) + "\n```\n\n"
+        header_lines = [
+            f"{i:>4}    {line.rstrip()}"
+            for i, line in enumerate(lines[:header_end], start=1)
+        ]
+        header = (
+            "File header (imports):\n```python\n"
+            + "\n".join(header_lines)
+            + "\n```\n\n"
+        )
 
     sys_msg = f"Fix this specific issue. {instruction}"
     if prefer_file:
         sys_msg += " Patches failed before. Use [FILE:] format — output the complete corrected file."
         # Include the FULL file so the LLM can generate a valid [FILE:] block
-        full_code_lines = [f"{i:>4}    {line.rstrip()}" for i, line in enumerate(lines[:300], start=1)]
+        full_code_lines = [
+            f"{i:>4}    {line.rstrip()}" for i, line in enumerate(lines[:300], start=1)
+        ]
         if len(lines) > 300:
             full_code_lines.append(f"  ... ({len(lines) - 300} more lines)")
         full_code = "\n".join(full_code_lines)
@@ -627,7 +914,12 @@ def _build_fix_prompt(err: str, current_code: str, fname: str, prefer_file: bool
     ]
 
 
-def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors: list[tuple[str, str, str]], prefer_file: bool = False) -> list[dict[str, str]]:
+def _build_root_cause_prompt(
+    class_name: str,
+    class_src: str,
+    downstream_errors: list[tuple[str, str, str]],
+    prefer_file: bool = False,
+) -> list[dict[str, str]]:
     """Build a prompt for fixing a root cause class with downstream error context.
 
     Shows the LLM:
@@ -640,26 +932,35 @@ def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors:
     class_start = -1
     class_end = len(lines)
     for i, line in enumerate(lines):
-        if re.match(rf'^class\s+{re.escape(class_name)}\b', line):
+        if re.match(rf"^class\s+{re.escape(class_name)}\b", line):
             class_start = i
             break
     if class_start == -1:
         class_start = 0
 
     # Find class end (next class or end of file)
-    _RE_2 = re.compile(r'^class\s+\w+')
+    _RE_2 = re.compile(r"^class\s+\w+")
     for i in range(class_start + 1, len(lines)):
         if _RE_2.match(lines[i]):
             class_end = i
             break
 
-    class_window = "\n".join(f"{i+1:>4}    {line.rstrip()}" for i, line in enumerate(lines[class_start:class_end], start=class_start))
+    class_window = "\n".join(
+        f"{i + 1:>4}    {line.rstrip()}"
+        for i, line in enumerate(lines[class_start:class_end], start=class_start)
+    )
 
     # Build downstream error summary
-    error_summary = [f"- {fname}: {err[:200]}" for fname, fpath, err in downstream_errors]
+    error_summary = [
+        f"- {fname}: {err[:200]}" for fname, fpath, err in downstream_errors
+    ]
     downstream_section = ""
     if error_summary:
-        downstream_section = "## Downstream errors that this fix will resolve\n" + "\n".join(error_summary) + "\n\n"
+        downstream_section = (
+            "## Downstream errors that this fix will resolve\n"
+            + "\n".join(error_summary)
+            + "\n\n"
+        )
 
     sys_msg = f"Fix the {class_name} definition. Add all missing fields/attributes."
     if prefer_file:
@@ -699,10 +1000,14 @@ def _build_root_cause_prompt(class_name: str, class_src: str, downstream_errors:
     ]
 
 
-_FIX_PATCH_RE = re.compile(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)', re.DOTALL)
-_FIX_FILE_RE = re.compile(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?:\n```|$)', re.DOTALL)
-_CLASS_DEF_RE = re.compile(r'^class\s+(\w+)', re.MULTILINE)
-_DEF_PARAMS_RE = re.compile(r'def\s+\w+\s*\((.*?)\)', re.DOTALL)
+_FIX_PATCH_RE = re.compile(
+    r"\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\Z)", re.DOTALL
+)
+_FIX_FILE_RE = re.compile(
+    r"\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?:\n```|$)", re.DOTALL
+)
+_CLASS_DEF_RE = re.compile(r"^class\s+(\w+)", re.MULTILINE)
+_DEF_PARAMS_RE = re.compile(r"def\s+\w+\s*\((.*?)\)", re.DOTALL)
 
 
 def _find_patch_block(response: str) -> re.Match[str] | None:
@@ -731,8 +1036,8 @@ def _block_target_matches(captured_name: str, fname: str) -> bool:
     return os.path.basename(cap) == os.path.basename(tgt)
 
 
-_FENCE_TAIL_RE = re.compile(r'```\s*$')
-_CODE_HINT_RE = re.compile(r'\b(import|def |class )\b')
+_FENCE_TAIL_RE = re.compile(r"```\s*$")
+_CODE_HINT_RE = re.compile(r"\b(import|def |class )\b")
 
 
 def _announce(text: str) -> None:
@@ -742,20 +1047,34 @@ def _announce(text: str) -> None:
 def _tool_call_retry_msgs(fname: str, err: str) -> list[dict[str, str]]:
     """Strict retry prompt when the model answered with tool-call XML."""
     return [
-        {"role": "system", "content": "You are fixing a Python type error. Output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No tool calls, no prose."},
-        {"role": "user", "content": f"Fix: {err[:300]}\n\nOutput:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added"},
+        {
+            "role": "system",
+            "content": "You are fixing a Python type error. Output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No tool calls, no prose.",
+        },
+        {
+            "role": "user",
+            "content": f"Fix: {err[:300]}\n\nOutput:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added",
+        },
     ]
 
 
 def _format_reminder_msgs(fname: str, err: str) -> list[dict[str, str]]:
     """Strict retry prompt when the answer contained no code block."""
     return [
-        {"role": "system", "content": "You must output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No prose, no explanations."},
-        {"role": "user", "content": f"Fix the error in {fname}.\n\nError: {err[:300]}\n\nOutput format:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added\n\nOR:\n[FILE: {fname}]\n```python\n# complete corrected file\n```"},
+        {
+            "role": "system",
+            "content": "You must output ONLY a [PATCH: filename.py] or [FILE: filename.py] block. No prose, no explanations.",
+        },
+        {
+            "role": "user",
+            "content": f"Fix the error in {fname}.\n\nError: {err[:300]}\n\nOutput format:\n[PATCH: {fname}]\n@@ -line,count +line,count @@\n-removed\n+added\n\nOR:\n[FILE: {fname}]\n```python\n# complete corrected file\n```",
+        },
     ]
 
 
-async def _chat_fix_text(agent: Any, msgs: list[dict[str, str]], fname: str, err: str) -> str:
+async def _chat_fix_text(
+    agent: Any, msgs: list[dict[str, str]], fname: str, err: str
+) -> str:
     """One fix request incl. retries: tool-call rejection and one format
     reminder when no code block is present. ``[Error ...]`` strings pass through.
     """
@@ -764,13 +1083,23 @@ async def _chat_fix_text(agent: Any, msgs: list[dict[str, str]], fname: str, err
         return fixed
     if "<tool_call" in fixed:
         _announce("retrying (tool-call response rejected)")
-        fixed = str(await agent.llm.chat(_tool_call_retry_msgs(fname, err), disable_thinking=True))
+        fixed = str(
+            await agent.llm.chat(
+                _tool_call_retry_msgs(fname, err), disable_thinking=True
+            )
+        )
         if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
             return fixed
     if "[PATCH:" not in fixed and "[FILE:" not in fixed:
-        print(f"  [debug] no code block in LLM response (first 500 chars):\n{fixed[:500]}\n  ---")
+        print(
+            f"  [debug] no code block in LLM response (first 500 chars):\n{fixed[:500]}\n  ---"
+        )
         _announce("retrying with format reminder")
-        fixed = str(await agent.llm.chat(_format_reminder_msgs(fname, err), disable_thinking=True))
+        fixed = str(
+            await agent.llm.chat(
+                _format_reminder_msgs(fname, err), disable_thinking=True
+            )
+        )
     return fixed
 
 
@@ -790,14 +1119,16 @@ def _strip_block_fences(body: str) -> tuple[str, bool]:
     text = body.strip()
     m = _OPEN_FENCE_RE.match(text)
     if m:
-        text = text[m.end():]
+        text = text[m.end() :]
     closed = text.rstrip().endswith("```")
     if closed:
         text = text.rstrip()[:-3]
     return text.rstrip(), closed
 
 
-def _recover_unterminated_blocks(response: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+def _recover_unterminated_blocks(
+    response: str,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """Recover ``[FILE:]``/``[COMPUTE_DIFF:]`` blocks whose closing fence is missing.
 
     The terminated-fence patterns in ``implement`` silently drop these blocks.
@@ -826,19 +1157,20 @@ def _recover_unterminated_blocks(response: str) -> tuple[list[tuple[str, str]], 
 #: batch then failed the compile gate.  The plain fence pattern stops at each
 #: block's own first closing fence, so ``findall`` returns every block.
 _FILE_BLOCK_PATTERNS = [
-    r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```',
-    r'\[FILE:\s*([^\]]+)\]\s*\n+(.*?)(?=\[FILE:|\[PATCH:|\[COMPUTE_DIFF:|$)',
+    r"\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```",
+    r"\[FILE:\s*([^\]]+)\]\s*\n+(.*?)(?=\[FILE:|\[PATCH:|\[COMPUTE_DIFF:|$)",
 ]
 _COMPUTE_DIFF_BLOCK_PATTERNS = [
-    r'\[COMPUTE_DIFF:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```',
+    r"\[COMPUTE_DIFF:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```",
 ]
 _PATCH_BLOCK_PATTERNS = [
-    r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\[COMPUTE_DIFF:|$)',
+    r"\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\[COMPUTE_DIFF:|$)",
 ]
 
 
 def _parse_response_blocks(
-    response: str | None, modify_mode: bool,
+    response: str | None,
+    modify_mode: bool,
 ) -> tuple[list[tuple[str, str]], list[tuple[str, str]], list[tuple[str, str]]]:
     """Parse ``(file, patch, compute_diff)`` blocks out of one batch response.
 
@@ -880,9 +1212,13 @@ def _describe_unparsed_response(response: str | None) -> str:
     )
 
 
-def _save_unparsed_response(taskplan_file: str, batch: list[str], response: str | None) -> str:
+def _save_unparsed_response(
+    taskplan_file: str, batch: list[str], response: str | None
+) -> str:
     """Write the full unparsed response to ``.implement_unparsed/`` beside the taskplan."""
-    out_dir = Path(os.path.dirname(os.path.realpath(taskplan_file))) / ".implement_unparsed"
+    out_dir = (
+        Path(os.path.dirname(os.path.realpath(taskplan_file))) / ".implement_unparsed"
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     name = re.sub(r"[^\w.-]+", "_", batch[0]) if batch else "batch"
@@ -893,12 +1229,18 @@ def _save_unparsed_response(taskplan_file: str, batch: list[str], response: str 
 
 def _apply_file_block(raw_code: str, fpath: str, backup: str) -> tuple[bool, str]:
     """Write an [FILE:] body to *fpath*, py_compile it; roll back on failure."""
-    new_code = _FENCE_TAIL_RE.sub('', raw_code.strip()).strip()
+    new_code = _FENCE_TAIL_RE.sub("", raw_code.strip()).strip()
     if not _CODE_HINT_RE.search(new_code):
         return False, "content is not valid Python code"
     with open(fpath, "w", encoding="utf-8") as f:
         f.write(new_code)
-    r = subprocess.run(["python", "-m", "py_compile", fpath], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    r = subprocess.run(
+        ["python", "-m", "py_compile", fpath],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     if r.returncode == 0:
         return True, f"{len(new_code)} bytes"
     tail = r.stderr.strip().splitlines()[-1][:150] if r.stderr.strip() else ""
@@ -940,7 +1282,9 @@ def _consume_fix_blocks(
             continue
         saw_block = True
         if not _block_target_matches(m.group(1), fname):
-            print(f"  WARNING: ignoring [{kind}: {m.group(1)}] — targets another file (invariant #3)")
+            print(
+                f"  WARNING: ignoring [{kind}: {m.group(1)}] — targets another file (invariant #3)"
+            )
             continue
         if kind == "FILE":
             ok, note = _apply_file_block(m.group(2), fpath, current_code)
@@ -954,13 +1298,16 @@ def _consume_fix_blocks(
     return False, note or "all code blocks failed to apply"
 
 
-def _apply_patch(patch_text: str, fpath: str, original_lines: list[str]) -> tuple[bool, str]:
+def _apply_patch(
+    patch_text: str, fpath: str, original_lines: list[str]
+) -> tuple[bool, str]:
     """Apply a unified-diff patch. Returns (success, result or error message).
 
     Delegates to the shared ``agent_core.patch_utils.apply_patch`` used by the
     optimize command's patch mode; *fpath* is kept for call-site compatibility.
     """
     from agent_core.patch_utils import apply_patch
+
     return apply_patch(patch_text, original_lines)
 
 
@@ -982,7 +1329,9 @@ def _unwired_closure(py_new: list[str], ws: str, initial: set[str]) -> set[str]:
     def _referencers(mod_name: str, self_file: str) -> set[str]:
         refs: set[str] = set()
         for root, dirs, files in _os.walk(ws):
-            dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache")]
+            dirs[:] = [
+                d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache")
+            ]
             for f in files:
                 if not f.endswith(".py"):
                     continue
@@ -1015,7 +1364,9 @@ def _unwired_closure(py_new: list[str], ws: str, initial: set[str]) -> set[str]:
     return delete_set
 
 
-def _filter_duplicate_planned(all_files: list[str], dup_reasons: list[str]) -> tuple[list[str], list[str]]:
+def _filter_duplicate_planned(
+    all_files: list[str], dup_reasons: list[str]
+) -> tuple[list[str], list[str]]:
     """Split *all_files* into (remaining, blocked_duplicates).
 
     Files named in *dup_reasons* are dropped; everything else is kept so the
@@ -1048,10 +1399,16 @@ def _suggest_consumers(unwired_files: list[str], ws: str) -> dict[str, list[str]
 
     existing: list[str] = []
     for root, dirs, files in os.walk(ws):
-        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
+        dirs[:] = [
+            d
+            for d in dirs
+            if d not in (".git", "__pycache__", ".pytest_cache", "backups")
+        ]
         for f in files:
             if f.endswith(".py") and not f.endswith("__init__.py"):
-                existing.append(os.path.relpath(os.path.join(root, f), ws).replace("\\", "/"))
+                existing.append(
+                    os.path.relpath(os.path.join(root, f), ws).replace("\\", "/")
+                )
 
     suggestions: dict[str, list[str]] = {}
     for fname in unwired_files:
@@ -1074,7 +1431,9 @@ def _suggest_consumers(unwired_files: list[str], ws: str) -> dict[str, list[str]
     return suggestions
 
 
-async def _wire_in_modules(agent: "Agent", files: list[str], suggestions: dict[str, list[str]], ws: str) -> None:
+async def _wire_in_modules(
+    agent: "Agent", files: list[str], suggestions: dict[str, list[str]], ws: str
+) -> None:
     """One LLM pass that imports + wires each module into its suggested
     consumer; every patch is applied and py_compile-verified.  Unwirable
     modules are reported honestly instead of being marked wired."""
@@ -1100,42 +1459,62 @@ async def _wire_in_modules(agent: "Agent", files: list[str], suggestions: dict[s
             f"## Module to wire: {fname}\n{content[:4000]}\n\n"
             f"## Consumer: {consumers[0]}\n{consumer_src[:6000]}"
         )
-        r = await agent.llm.chat([
-            {"role": "system", "content": (
-                "You are a Python integrator. Output ONLY [PATCH: file] blocks in unified-diff "
-                "format. No prose, no [FILE:], no XML tags."
-            )},
-            {"role": "user", "content": prompt},
-        ], disable_thinking=True)
+        r = await agent.llm.chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a Python integrator. Output ONLY [PATCH: file] blocks in unified-diff "
+                        "format. No prose, no [FILE:], no XML tags."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            disable_thinking=True,
+        )
         if r.startswith("[Error") or r.startswith("[LM Studio"):
             print(f"    Wire-in failed for {fname}: {r[:120]}")
             continue
         ok_count = 0
-        for m in re.finditer(r"\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\Z)", r, re.DOTALL):
+        for m in re.finditer(
+            r"\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\Z)", r, re.DOTALL
+        ):
             patch_file = m.group(1).strip().strip("`")
             patch_text = m.group(2)
             target = Path(ws) / patch_file
             if not target.exists():
-                print(f"    Wire-in: patch target {patch_file} does not exist — skipped")
+                print(
+                    f"    Wire-in: patch target {patch_file} does not exist — skipped"
+                )
                 continue
             original = target.read_text(encoding="utf-8").splitlines()
             ok, result = _apply_patch(patch_text, str(target), original)
             if ok:
                 verify = subprocess.run(
                     ["python", "-m", "py_compile", str(target)],
-                    capture_output=True, text=True,
-                    encoding="utf-8", errors="replace",
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                 )
                 if verify.returncode == 0:
                     print(f"    Wired: {patch_file} (imports {fname})")
                     ok_count += 1
                 else:
-                    detail = verify.stderr.strip().splitlines()[-1][:120] if verify.stderr else ""
-                    print(f"    Patch applied but py_compile failed for {patch_file} — manual check needed: {detail}")
+                    detail = (
+                        verify.stderr.strip().splitlines()[-1][:120]
+                        if verify.stderr
+                        else ""
+                    )
+                    print(
+                        f"    Patch applied but py_compile failed for {patch_file} — manual check needed: {detail}"
+                    )
             else:
                 print(f"    Wire-in patch failed for {patch_file}: {result[:120]}")
         if ok_count == 0:
-            print(f"    Could not wire {fname} automatically — left for manual integration.")
+            print(
+                f"    Could not wire {fname} automatically — left for manual integration."
+            )
 
 
 def _is_planned_test_file(fname: str) -> bool:
@@ -1182,7 +1561,9 @@ def _ensure_package_inits(start: Path, ws_root: Path) -> None:
         curr = curr.parent
 
 
-def _check_planned_duplicates(planned_new: list[str], ws: str, taskplan_content: str = "") -> list[str]:
+def _check_planned_duplicates(
+    planned_new: list[str], ws: str, taskplan_content: str = ""
+) -> list[str]:
     """Return human-readable reasons why *planned_new* modules duplicate
     existing project modules.
 
@@ -1199,17 +1580,25 @@ def _check_planned_duplicates(planned_new: list[str], ws: str, taskplan_content:
 
     existing: list[str] = []
     for root, dirs, files in os.walk(ws):
-        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache", "backups")]
+        dirs[:] = [
+            d
+            for d in dirs
+            if d not in (".git", "__pycache__", ".pytest_cache", "backups")
+        ]
         for f in files:
             if f.endswith(".py"):
-                existing.append(os.path.relpath(os.path.join(root, f), ws).replace("\\", "/"))
+                existing.append(
+                    os.path.relpath(os.path.join(root, f), ws).replace("\\", "/")
+                )
 
     reasons: list[str] = []
     for finding in detect_module_collisions(planned_new, existing_files=existing):
         fname = finding["file"]
         suggestion = finding["suggestion"]
         hits = [e for e in existing if e.rsplit("/", 1)[-1] in suggestion]
-        reasons.append(f"{fname} — duplicates existing module(s): {', '.join(hits[:3])}")
+        reasons.append(
+            f"{fname} — duplicates existing module(s): {', '.join(hits[:3])}"
+        )
 
     # Semantic (geometric) layer — task descriptions sharpen the features.
     descriptions = {}
@@ -1221,12 +1610,10 @@ def _check_planned_duplicates(planned_new: list[str], ws: str, taskplan_content:
     ]
     if planned:
         from agent_core.utils.module_similarity import SimilarityFinding
+
         sim = ModuleSimilarity(ws)
         findings: list[SimilarityFinding] = sim.find_duplicates(planned)
-        reasons += [
-            f"{f.file} — {f.evidence} -> {f.existing}"
-            for f in findings
-        ]
+        reasons += [f"{f.file} — {f.evidence} -> {f.existing}" for f in findings]
     return reasons
 
 
@@ -1255,20 +1642,32 @@ def _prune_empty_dirs(ws: str, deleted_files: set[str]) -> None:
             print("Silenced exception in implement_cmd.py:1133")
 
 
-def _run_python_snippet(ws: str, extra_paths: list[str], code_lines: list[str]) -> subprocess.CompletedProcess[str]:
+def _run_python_snippet(
+    ws: str, extra_paths: list[str], code_lines: list[str]
+) -> subprocess.CompletedProcess[str]:
     """Run a Python snippet in a temp file with workspace and extra paths in sys.path.
 
     Returns the CompletedProcess from subprocess.run.
     """
     import tempfile
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".py", delete=False, encoding="utf-8"
+    ) as tf:
         tf.write(f"import sys; sys.path.insert(0, {repr(ws)})\n")
         for p in extra_paths:
             tf.write(f"sys.path.insert(0, {repr(p)})\n")
         for line in code_lines:
             tf.write(line + "\n")
         tfpath = tf.name
-    r = subprocess.run(["python", tfpath], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(Path(ws)))
+    r = subprocess.run(
+        ["python", tfpath],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(Path(ws)),
+    )
     os.unlink(tfpath)
     return r
 
@@ -1287,7 +1686,7 @@ class ImplementCommand(Command):
             "- Implement files from a task plan\n"
             "  Flags:\n"
             "    --modify         BROWNFIELD MODE: existing .py files get a reviewed diff-apply\n"
-            "                     instead of being skipped as \"already exists\".\n"
+            '                     instead of being skipped as "already exists".\n'
             "    --force          Overwrite existing files wholesale (DANGEROUS on brownfield).\n"
             "    --allow-rewrite  With --modify: permit a diff that is a wholesale rewrite\n"
             "                     (similarity < 0.5) instead of rejecting it.\n"
@@ -1304,7 +1703,9 @@ class ImplementCommand(Command):
             "  auto-fix loop, and --allow-rewrite only when a rewrite is truly wanted."
         )
 
-    def _apply_modify_diff(self, filename: str, filepath: Path, content: str, allow_rewrite: bool) -> tuple[bool, str]:
+    def _apply_modify_diff(
+        self, filename: str, filepath: Path, content: str, allow_rewrite: bool
+    ) -> tuple[bool, str]:
         """--modify: merge *content* into the existing *filepath* as a reviewed
         unified diff instead of skipping it (default) or overwriting it
         wholesale (--force).
@@ -1337,11 +1738,15 @@ class ImplementCommand(Command):
             return False, "unchanged — no diff"
 
         from agent_core.patch_utils import apply_patch, apply_anchored_patch
+
         ok, patched = apply_patch(diff_text, prev.splitlines())
         if not ok:
             ok, patched = apply_anchored_patch(diff_text, prev.splitlines())
         if not ok:
-            return False, f"rejected — could not apply generated diff: {str(patched)[:200]}"
+            return (
+                False,
+                f"rejected — could not apply generated diff: {str(patched)[:200]}",
+            )
         patched_text = str(patched)
         if patched_text == prev:
             return False, "unchanged — diff produced no change"
@@ -1352,7 +1757,11 @@ class ImplementCommand(Command):
             return False, f"rejected — patched file does not compile: {exc}"
 
         show_file_diff(filename, prev, patched_text)
-        choice = auto_choice(f"  Apply {filename}? (y/N): ", default="n", auto_default="n").strip().lower()
+        choice = (
+            auto_choice(f"  Apply {filename}? (y/N): ", default="n", auto_default="n")
+            .strip()
+            .lower()
+        )
         if choice not in ("y", "yes"):
             if stop_requested():
                 print("  Stopping the flow — no further changes will be applied.")
@@ -1397,17 +1806,25 @@ class ImplementCommand(Command):
             if fname.endswith(".py"):
                 result = subprocess.run(
                     ["python", "-m", "py_compile", os.path.realpath(fpath)],
-                    capture_output=True, text=True,
-                    encoding="utf-8", errors="replace",
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                 )
                 if result.returncode != 0:
-                    tail = result.stderr.strip().splitlines()[-1][:120] if result.stderr.strip() else ""
+                    tail = (
+                        result.stderr.strip().splitlines()[-1][:120]
+                        if result.stderr.strip()
+                        else ""
+                    )
                     needs_gen.append((fname, f"compile failed: {tail}"))
                     continue
             ready.append(fname)
 
-        print(f"\n  [status] {len(ready)} ready / {len(needs_gen)} need work / "
-              f"{len(shadowed)} stdlib-shadowing  —  {len(all_files)} planned")
+        print(
+            f"\n  [status] {len(ready)} ready / {len(needs_gen)} need work / "
+            f"{len(shadowed)} stdlib-shadowing  —  {len(all_files)} planned"
+        )
         print("  Plan state is read from disk only; no LLM calls are made.\n")
         if ready:
             print(f"  Ready ({len(ready)}):")
@@ -1426,10 +1843,12 @@ class ImplementCommand(Command):
     @staticmethod
     def _auto_review(py_new: list[str], ws: str) -> None:
         """Run fast static checks on new files (no LLM). Safe to call always."""
-        print(f"\n{'─'*40}")
+        print(f"\n{'─' * 40}")
         found = 0
         from agent_core.patterns import (
-            detect_module_collisions, detect_class_conflicts, detect_unwired_modules
+            detect_module_collisions,
+            detect_class_conflicts,
+            detect_unwired_modules,
         )
 
         collisions = detect_module_collisions(py_new)
@@ -1455,14 +1874,17 @@ class ImplementCommand(Command):
 
         if not found:
             print("  ✓ Quick review: no conflicts or wiring issues.")
-        print(f"{'─'*40}")
+        print(f"{'─' * 40}")
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         from agent_core.patch_utils import split_source_lines
+
         parts = args
 
         if len(parts) < 1:
-            self.error("Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--modify] [--fix] [--retry] [--review] [--allow-rewrite] [--no-history] [--status] [--propose] [--validate] [--out <dir>] [--workspace <path>]")
+            self.error(
+                "Usage: implement <taskplan.md> [analysis.md] [plan.md] [entities.md] [--keep] [--refresh] [--force] [--modify] [--fix] [--retry] [--review] [--allow-rewrite] [--no-history] [--status] [--propose] [--validate] [--out <dir>] [--workspace <path>]"
+            )
             return True
 
         keep_mode = "--keep" in parts
@@ -1493,7 +1915,24 @@ class ImplementCommand(Command):
             if ws_idx + 1 < len(parts):
                 target_workspace = parts[ws_idx + 1].strip('"')
 
-        skip_tokens = ["--keep", "--refresh", "--force", "--modify", "--fix", "--retry", "--review", "--workspace", "--allow-rewrite", "--no-history", "--status", "--propose", "--validate", "--out", out_dir, target_workspace]
+        skip_tokens = [
+            "--keep",
+            "--refresh",
+            "--force",
+            "--modify",
+            "--fix",
+            "--retry",
+            "--review",
+            "--workspace",
+            "--allow-rewrite",
+            "--no-history",
+            "--status",
+            "--propose",
+            "--validate",
+            "--out",
+            out_dir,
+            target_workspace,
+        ]
         filtered_parts = [p for p in parts if p not in skip_tokens]
 
         taskplan_file = filtered_parts[0] if filtered_parts else ""
@@ -1534,7 +1973,9 @@ class ImplementCommand(Command):
             )
             return True
 
-        cache_file = os.path.join(os.path.dirname(os.path.realpath(taskplan_file)), ".implement_cache.json")
+        cache_file = os.path.join(
+            os.path.dirname(os.path.realpath(taskplan_file)), ".implement_cache.json"
+        )
 
         analysis_content = ""
         plan_content = ""
@@ -1574,10 +2015,19 @@ class ImplementCommand(Command):
                     cache_data = json.load(f)
                 # Check taskplan content hasn't changed (stale cache = wrong filenames)
                 cached_hash = cache_data.get("taskplan_hash", "")
-                current_hash = hashlib.md5(taskplan_content.encode()).hexdigest()[:8] if taskplan_content else ""
-                if cache_data.get("taskplan") == taskplan_file and cached_hash == current_hash:
+                current_hash = (
+                    hashlib.md5(taskplan_content.encode()).hexdigest()[:8]
+                    if taskplan_content
+                    else ""
+                )
+                if (
+                    cache_data.get("taskplan") == taskplan_file
+                    and cached_hash == current_hash
+                ):
                     all_files = cache_data.get("files", [])
-                    print(f"Using cached file list ({len(all_files)} files): {', '.join(all_files)}")
+                    print(
+                        f"Using cached file list ({len(all_files)} files): {', '.join(all_files)}"
+                    )
                 else:
                     print("Taskplan changed — refreshing file list")
             except Exception:
@@ -1586,31 +2036,75 @@ class ImplementCommand(Command):
         if all_files is None:
             # Parse filenames directly from taskplan — the source of truth.
             # LLM is only a fallback when the taskplan format is non-standard.
-            all_files = re.findall(r'`([^`]+\.py)`', taskplan_content)
+            all_files = re.findall(r"`([^`]+\.py)`", taskplan_content)
             if not all_files:
-                all_files = re.findall(r'`([^`\s]+\.[a-z]{2,4})`', taskplan_content)
+                all_files = re.findall(r"`([^`\s]+\.[a-z]{2,4})`", taskplan_content)
 
             if not all_files:
                 print("Analyzing task plan to identify all files...")
                 list_messages = [
-                    {"role": "system", "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations.\n\nUse EXACTLY the filenames from the task plan. Do not rename or invent new filenames. Every file MUST use a sub-package prefix — never bare root-level names."},
-                    {"role": "user", "content": f"List every file that needs to be created or modified from this task plan:\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}"}
+                    {
+                        "role": "system",
+                        "content": "List ALL files that need to be implemented from the task plan. Reply with ONLY filenames, one per line. No explanations.\n\nUse EXACTLY the filenames from the task plan. Do not rename or invent new filenames. Every file MUST use a sub-package prefix — never bare root-level names.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"List every file that needs to be created or modified from this task plan:\n\n## Task Plan:\n{taskplan_content}\n\n## Analysis:\n{analysis_content if analysis_content else 'N/A'}\n\n## Plan:\n{plan_content if plan_content else 'N/A'}\n\n## Entities:\n{entities_content if entities_content else 'N/A'}",
+                    },
                 ]
-                file_list_response = await agent.llm.chat(list_messages, disable_thinking=True)
-                if not file_list_response or file_list_response.startswith("[Error") or file_list_response.startswith("[LM Studio"):
-                    self.error(f"LM Studio API not responding or returned an error: {file_list_response}")
+                file_list_response = await agent.llm.chat(
+                    list_messages, disable_thinking=True
+                )
+                if (
+                    not file_list_response
+                    or file_list_response.startswith("[Error")
+                    or file_list_response.startswith("[LM Studio")
+                ):
+                    self.error(
+                        f"LM Studio API not responding or returned an error: {file_list_response}"
+                    )
                     return True
-                file_lines = [line.strip() for line in file_list_response.strip().split('\n') if line.strip() and not line.startswith('#')]
-                all_files = [f for f in file_lines if f.endswith(('.py', '.json', '.yaml', '.yml', '.env', '.md', '.txt', '.cfg', '.ini', '.toml'))]
+                file_lines = [
+                    line.strip()
+                    for line in file_list_response.strip().split("\n")
+                    if line.strip() and not line.startswith("#")
+                ]
+                all_files = [
+                    f
+                    for f in file_lines
+                    if f.endswith(
+                        (
+                            ".py",
+                            ".json",
+                            ".yaml",
+                            ".yml",
+                            ".env",
+                            ".md",
+                            ".txt",
+                            ".cfg",
+                            ".ini",
+                            ".toml",
+                        )
+                    )
+                ]
                 if not all_files:
-                    all_files = re.findall(r'`([^`]+\.(?:py|json|yaml|yml|env|txt|cfg|ini|toml))`', file_list_response)
+                    all_files = re.findall(
+                        r"`([^`]+\.(?:py|json|yaml|yml|env|txt|cfg|ini|toml))`",
+                        file_list_response,
+                    )
                 if not all_files:
-                    all_files = re.findall(r'`([^`]+\.py)`', taskplan_content)
+                    all_files = re.findall(r"`([^`]+\.py)`", taskplan_content)
 
             # Deduplicate while preserving order
             all_files = list(dict.fromkeys(all_files))
 
-            cache_data = {"taskplan": taskplan_file, "files": all_files, "taskplan_hash": hashlib.md5(taskplan_content.encode()).hexdigest()[:8] if taskplan_content else ""}
+            cache_data = {
+                "taskplan": taskplan_file,
+                "files": all_files,
+                "taskplan_hash": hashlib.md5(taskplan_content.encode()).hexdigest()[:8]
+                if taskplan_content
+                else "",
+            }
             try:
                 with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump(cache_data, f)
@@ -1632,29 +2126,37 @@ class ImplementCommand(Command):
         # generation anyway, or abort.
         if not force_mode:
             planned_new = [
-                f for f in all_files
+                f
+                for f in all_files
                 if f.endswith(".py")
                 and not (Path(workspace_path(target_workspace)) / f).exists()
             ]
             if planned_new:
                 dup_reasons = _check_planned_duplicates(
-                    planned_new, str(target_workspace),
+                    planned_new,
+                    str(target_workspace),
                     taskplan_content if taskplan_content else "",
                 )
                 if dup_reasons:
                     print("\n  [implement] Planned files duplicate existing modules:")
                     for reason in dup_reasons:
                         print(f"    {reason}")
-                    choice = auto_choice(
-                        "  Options: [m]odify-existing (drop duplicates, continue with the rest) "
-                        "[f]orce-generate anyway [a]bort (default m): ",
-                        default="m",
-                        auto_default="m",
-                    ).strip().lower()
+                    choice = (
+                        auto_choice(
+                            "  Options: [m]odify-existing (drop duplicates, continue with the rest) "
+                            "[f]orce-generate anyway [a]bort (default m): ",
+                            default="m",
+                            auto_default="m",
+                        )
+                        .strip()
+                        .lower()
+                    )
                     if stop_requested():
                         return True
                     if choice in ("", "m", "modify", "modify-existing"):
-                        remaining, blocked = _filter_duplicate_planned(all_files, dup_reasons)
+                        remaining, blocked = _filter_duplicate_planned(
+                            all_files, dup_reasons
+                        )
                         dropped = set(all_files) - set(remaining)
                         if dropped:
                             print(
@@ -1672,7 +2174,9 @@ class ImplementCommand(Command):
                                 print("Warning: failed to update cache after filtering")
                     elif choice in ("f", "force"):
                         force_mode = True
-                        print("  --force semantics: generating the duplicate modules anyway.")
+                        print(
+                            "  --force semantics: generating the duplicate modules anyway."
+                        )
                     else:
                         print("  Aborted.")
                         return True
@@ -1689,7 +2193,8 @@ class ImplementCommand(Command):
                     ["python", "-m", "py_compile", os.path.realpath(fpath)],
                     capture_output=True,
                     text=True,
-                    encoding="utf-8", errors="replace",
+                    encoding="utf-8",
+                    errors="replace",
                 )
                 if result.returncode != 0:
                     return True, f"compile failed: {result.stderr.strip()}"
@@ -1699,7 +2204,9 @@ class ImplementCommand(Command):
         if retry_mode:
             retry_targets = []
             for fname in all_files:
-                shadow_name = _shadowing_stdlib_dir(fname, Path(workspace_path(target_workspace)))
+                shadow_name = _shadowing_stdlib_dir(
+                    fname, Path(workspace_path(target_workspace))
+                )
                 if shadow_name:
                     retry_targets.append(fname)
                     print(f"  SHADOW: {fname} shadows stdlib '{shadow_name}'")
@@ -1710,7 +2217,9 @@ class ImplementCommand(Command):
             if not retry_targets:
                 print("  All files present and compile OK — nothing to retry.")
                 return True
-            print(f"\n  Retrying {len(retry_targets)} missing file(s): {', '.join(retry_targets)}\n")
+            print(
+                f"\n  Retrying {len(retry_targets)} missing file(s): {', '.join(retry_targets)}\n"
+            )
             all_files = retry_targets
             force_mode = True  # Overwrite anything that exists but doesn't compile
 
@@ -1724,7 +2233,7 @@ class ImplementCommand(Command):
         print(f"Protected files: {protected_files}")
 
         analyzed_file = ""
-        match = re.search(r'# Analysis of (\S+)', analysis_content)
+        match = re.search(r"# Analysis of (\S+)", analysis_content)
         if match:
             analyzed_file = match.group(1)
             print(f"Analyzed file from analysis.md: {analyzed_file}")
@@ -1743,7 +2252,9 @@ class ImplementCommand(Command):
                     files_to_skip.append(f"{fname}: {reason}")
                     file_outcomes[fname] = f"needs generation — {reason}"
                 else:
-                    shadow_name = _shadowing_stdlib_dir(fname, Path(workspace_path(target_workspace)))
+                    shadow_name = _shadowing_stdlib_dir(
+                        fname, Path(workspace_path(target_workspace))
+                    )
                     if shadow_name:
                         files_to_skip.append(
                             f"{fname}: COMPILED BUT SHADOWS stdlib '{shadow_name}' — must be renamed"
@@ -1766,8 +2277,12 @@ class ImplementCommand(Command):
             for fs in files_to_skip:
                 print(f"  - {fs}")
 
-            files_to_generate = [fname for fname in all_files if fname not in implemented]
-            print(f"\nFiles to generate: {len(files_to_generate)}: {', '.join(files_to_generate)}")
+            files_to_generate = [
+                fname for fname in all_files if fname not in implemented
+            ]
+            print(
+                f"\nFiles to generate: {len(files_to_generate)}: {', '.join(files_to_generate)}"
+            )
 
             if not files_to_generate:
                 print("All files already exist and compile. Nothing to do.")
@@ -1791,12 +2306,20 @@ class ImplementCommand(Command):
 
         def extract_signatures(source: str) -> dict[str, str]:
             sigs = {}
-            for m in re.finditer(r'^class\s+(\w+)\s*(?:\((.*?)\))?\s*:', source, re.MULTILINE):
+            for m in re.finditer(
+                r"^class\s+(\w+)\s*(?:\((.*?)\))?\s*:", source, re.MULTILINE
+            ):
                 cls_name = m.group(1)
                 bases = m.group(2).strip() if m.group(2) else ""
-                sigs[cls_name] = f"class {cls_name}({bases})" if bases else f"class {cls_name}"
+                sigs[cls_name] = (
+                    f"class {cls_name}({bases})" if bases else f"class {cls_name}"
+                )
 
-            for m in re.finditer(r'^\s+def\s+(\w+)\s*\((.*?)\)\s*(?:->\s*(.+?))?\s*:', source, re.MULTILINE):
+            for m in re.finditer(
+                r"^\s+def\s+(\w+)\s*\((.*?)\)\s*(?:->\s*(.+?))?\s*:",
+                source,
+                re.MULTILINE,
+            ):
                 func_name = m.group(1)
                 params = m.group(2).strip() if m.group(2) else ""
                 returns = m.group(3).strip() if m.group(3) else ""
@@ -1805,29 +2328,39 @@ class ImplementCommand(Command):
                     sig += f" -> {returns}"
                 sigs[func_name] = sig
 
-            for td_match in re.finditer(r'class\s+(\w+)\s*\(\s*(?:TypedDict|Protocol)\b', source):
+            for td_match in re.finditer(
+                r"class\s+(\w+)\s*\(\s*(?:TypedDict|Protocol)\b", source
+            ):
                 td_name = td_match.group(1)
                 pos = td_match.end()
                 paren_depth = 0
-                while pos < len(source) and source[pos] != ':':
-                    if source[pos] == '(':
+                while pos < len(source) and source[pos] != ":":
+                    if source[pos] == "(":
                         paren_depth += 1
-                    elif source[pos] == ')':
+                    elif source[pos] == ")":
                         paren_depth -= 1
                     pos += 1
-                if pos < len(source) and source[pos] == ':':
+                if pos < len(source) and source[pos] == ":":
                     body_start = pos + 1
                     fields = []
-                    lines = source[body_start:].split('\n')
+                    lines = source[body_start:].split("\n")
                     for line in lines:
                         stripped = line.strip()
-                        if not stripped or stripped.startswith('#') or stripped.startswith('"""'):
+                        if (
+                            not stripped
+                            or stripped.startswith("#")
+                            or stripped.startswith('"""')
+                        ):
                             continue
-                        if not line.startswith('    ') and stripped:
+                        if not line.startswith("    ") and stripped:
                             break
-                        if ':' in stripped and not stripped.startswith('def ') and not stripped.startswith('class '):
-                            field_name = stripped.split(':')[0].strip()
-                            field_type = ':'.join(stripped.split(':')[1:]).strip()
+                        if (
+                            ":" in stripped
+                            and not stripped.startswith("def ")
+                            and not stripped.startswith("class ")
+                        ):
+                            field_name = stripped.split(":")[0].strip()
+                            field_type = ":".join(stripped.split(":")[1:]).strip()
                             fields.append(f"{field_name}: {field_type}")
                     if fields:
                         sigs[td_name] = f"{td_name} fields: {{{', '.join(fields[:8])}}}"
@@ -1844,11 +2377,16 @@ class ImplementCommand(Command):
                     if sigs:
                         export_map[fname] = sigs
                 except Exception:
-                    print("WARNING: failed to read file during signature extraction:", fname)  # silent_except fix
+                    print(
+                        "WARNING: failed to read file during signature extraction:",
+                        fname,
+                    )  # silent_except fix
 
         if export_map:
             total_exports = sum(len(v) for v in export_map.values())
-            print(f"Initial export map: {total_exports} signatures from {len(export_map)} existing files")
+            print(
+                f"Initial export map: {total_exports} signatures from {len(export_map)} existing files"
+            )
 
             broken_existing = []
             for fname in export_map:
@@ -1856,24 +2394,37 @@ class ImplementCommand(Command):
                 if not fp.exists() or not fname.endswith(".py"):
                     continue
                 r = subprocess.run(
-                    ["python", "-c", f"import py_compile; py_compile.compile(r'{os.path.realpath(fp)}', doraise=True)"],
-                    capture_output=True, text=True, cwd=str(Path(ws)),
-                    encoding="utf-8", errors="replace",
+                    [
+                        "python",
+                        "-c",
+                        f"import py_compile; py_compile.compile(r'{os.path.realpath(fp)}', doraise=True)",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(Path(ws)),
+                    encoding="utf-8",
+                    errors="replace",
                 )
                 if r.returncode != 0:
                     broken_existing.append((fname, r.stderr.strip()[-150:]))
 
             if broken_existing:
-                print(f"\n  WARNING: {len(broken_existing)} existing files fail py_compile:")
+                print(
+                    f"\n  WARNING: {len(broken_existing)} existing files fail py_compile:"
+                )
                 for fname, err in broken_existing:
                     print(f"    {fname}: {err[:100]}")
-                print("  These exports may be incomplete. Consider running --fix first.")
+                print(
+                    "  These exports may be incomplete. Consider running --fix first."
+                )
 
         generated_content = {}
 
         for i in range(0, len(all_files), batch_size):
-            batch = all_files[i:i+batch_size]
-            print(f"\nGenerating batch {i//batch_size + 1}/{(len(all_files) + batch_size - 1)//batch_size}: {batch}")
+            batch = all_files[i : i + batch_size]
+            print(
+                f"\nGenerating batch {i // batch_size + 1}/{(len(all_files) + batch_size - 1) // batch_size}: {batch}"
+            )
 
             # In --modify mode, classify each batch file as existing (needs
             # [PATCH:]) or new (needs [FILE:]) so the LLM generates the
@@ -1897,10 +2448,15 @@ class ImplementCommand(Command):
                 export_lines = []
                 for mod, sigs in sorted(export_map.items()):
                     if sigs:
-                        sig_list = ", ".join(f"{name}: {sig}" for name, sig in sorted(sigs.items()))
+                        sig_list = ", ".join(
+                            f"{name}: {sig}" for name, sig in sorted(sigs.items())
+                        )
                         export_lines.append(f"  {mod} -> {sig_list}")
                 if export_lines:
-                    export_context = "\n\nAvailable project modules (use only these names with these exact signatures):\n" + "\n".join(export_lines)
+                    export_context = (
+                        "\n\nAvailable project modules (use only these names with these exact signatures):\n"
+                        + "\n".join(export_lines)
+                    )
 
             task_context = _extract_task_line(taskplan_content, target_file)
             analysis_context = _extract_file_context(analysis_content, target_file)
@@ -1913,7 +2469,9 @@ class ImplementCommand(Command):
             stdlib_shadow_warning = ""
             redirected_batch = []
             for planned_f in batch:
-                shadow_part = _shadowing_stdlib_dir(planned_f, Path(workspace_path(target_workspace)))
+                shadow_part = _shadowing_stdlib_dir(
+                    planned_f, Path(workspace_path(target_workspace))
+                )
                 if shadow_part:
                     safe_name = shadow_part + "_utils"
                     new_f = planned_f.replace(shadow_part + "/", safe_name + "/", 1)
@@ -1932,17 +2490,27 @@ class ImplementCommand(Command):
 
             # Build a collision warning: class/function names already in the target directory
             collision_warning = ""
-            target_dir = os.path.dirname(target_file) if "/" in target_file or "\\" in target_file else ""
+            target_dir = (
+                os.path.dirname(target_file)
+                if "/" in target_file or "\\" in target_file
+                else ""
+            )
             if target_dir:
                 taken: dict[str, list[str]] = {}
                 for mod, sigs in export_map.items():
                     mod_dir = mod.split("/", 1)[0] if "/" in mod else ""
-                    if mod_dir and (mod.startswith(target_dir + "/") or mod_dir == target_dir.split("/")[-1]):
+                    if mod_dir and (
+                        mod.startswith(target_dir + "/")
+                        or mod_dir == target_dir.split("/")[-1]
+                    ):
                         for name in sigs:
                             if not name.startswith("__"):
                                 taken.setdefault(name, []).append(mod)
                 if taken:
-                    taken_list = ", ".join(f"{n} (in {', '.join(fs[:2])})" for n, fs in sorted(taken.items())[:15])
+                    taken_list = ", ".join(
+                        f"{n} (in {', '.join(fs[:2])})"
+                        for n, fs in sorted(taken.items())[:15]
+                    )
                     collision_warning = f"\n\nCRITICAL — DO NOT create these names in the new file: {taken_list}. They already exist in the target directory. Modify the existing file instead if you need to extend them."
 
             user_context = f"Implement ONLY this file — no other files:\n{batch_files_md}\n{export_context}{collision_warning}{stdlib_shadow_warning}"
@@ -1970,7 +2538,9 @@ class ImplementCommand(Command):
                 try:
                     from harnessfix.history import format_batch_history
 
-                    history_block = format_batch_history(batch, workspace_path(target_workspace))
+                    history_block = format_batch_history(
+                        batch, workspace_path(target_workspace)
+                    )
                     if history_block:
                         user_context += history_block
                 except Exception:
@@ -1984,7 +2554,8 @@ class ImplementCommand(Command):
                     from harnessfix.retrieval import format_episodic_notes
 
                     episodic = format_episodic_notes(
-                        task_context or batch_files_md, mode="implement",
+                        task_context or batch_files_md,
+                        mode="implement",
                         workspace=workspace_path(target_workspace),
                     )
                     if episodic:
@@ -1997,9 +2568,14 @@ class ImplementCommand(Command):
             if history_mode:
                 try:
                     from harnessfix.wiki import format_wiki_notes
+
                     wiki = format_wiki_notes(
-                        task_context or batch_files_md, k=3,
-                        path=Path(workspace_path(target_workspace)) / "reports" / "wiki" / "wiki.jsonl",
+                        task_context or batch_files_md,
+                        k=3,
+                        path=Path(workspace_path(target_workspace))
+                        / "reports"
+                        / "wiki"
+                        / "wiki.jsonl",
                     )
                     if wiki:
                         user_context += wiki
@@ -2062,55 +2638,74 @@ class ImplementCommand(Command):
                     "```"
                 )
             _si = _shell_info()
-            system_prompt += (
-                f"\n\nSHELL: {_si['name']}. {_si['guidance']}"
-            )
+            system_prompt += f"\n\nSHELL: {_si['name']}. {_si['guidance']}"
             impl_messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_context}
+                {"role": "user", "content": user_context},
             ]
 
             impl_response = None
             for attempt in range(3):
                 try:
-                    impl_response = await agent.llm.chat(impl_messages, max_tokens=12000, disable_thinking=True)
+                    impl_response = await agent.llm.chat(
+                        impl_messages, max_tokens=12000, disable_thinking=True
+                    )
                     # "[Error: ...]" and "[LM Studio ...]" are transport/model
                     # failure sentinels, not content — retrying them is the
                     # whole point of this loop (observed: an "[LM Studio
                     # stream error]" broke out as if valid and the batch was
                     # silently dropped by the block parser).
-                    if impl_response and not impl_response.startswith(("[Error:", "[LM Studio")):
+                    if impl_response and not impl_response.startswith(
+                        ("[Error:", "[LM Studio")
+                    ):
                         break
                     print(f"  Attempt {attempt + 1} failed, retrying...")
                     if "reasoning" in str(impl_response).lower():
-                        impl_messages.append({"role": "user", "content": "Answer immediately — no reasoning, output only [FILE:] blocks."})
+                        impl_messages.append(
+                            {
+                                "role": "user",
+                                "content": "Answer immediately — no reasoning, output only [FILE:] blocks.",
+                            }
+                        )
                 except Exception as e:
                     print(f"  Attempt {attempt + 1} error: {e}, retrying...")
                     if "reasoning" in str(e).lower():
-                        impl_messages.append({"role": "user", "content": "Answer immediately — no reasoning, output only [FILE:] blocks."})
+                        impl_messages.append(
+                            {
+                                "role": "user",
+                                "content": "Answer immediately — no reasoning, output only [FILE:] blocks.",
+                            }
+                        )
                     if attempt == 2:
                         impl_response = None
 
             if not impl_response or impl_response.startswith(("[Error:", "[LM Studio")):
                 print("  Failed after 3 attempts, skipping batch")
                 for bf in batch:
-                    file_outcomes[bf] = f"generation failed — {str(impl_response)[:120] or 'no response'}"
+                    file_outcomes[bf] = (
+                        f"generation failed — {str(impl_response)[:120] or 'no response'}"
+                    )
                 continue
 
             # FILE first, then PATCH (modify mode), then COMPUTE_DIFF -- one
             # shared parser so the initial parse and every retry accept all
             # three documented formats.
             matches, patch_matches, compute_diff_matches = _parse_response_blocks(
-                impl_response, modify_mode,
+                impl_response,
+                modify_mode,
             )
 
             # Blocks without a closing fence were silently dropped by the
             # patterns above; recover them so the compile and similarity gates
             # can judge the content instead of retrying the whole batch.
             if not matches and not patch_matches and not compute_diff_matches:
-                recovered_files, recovered_diffs = _recover_unterminated_blocks(impl_response)
+                recovered_files, recovered_diffs = _recover_unterminated_blocks(
+                    impl_response
+                )
                 if recovered_files or recovered_diffs:
-                    print(f"  Recovered {len(recovered_files) + len(recovered_diffs)} block(s) without a closing fence")
+                    print(
+                        f"  Recovered {len(recovered_files) + len(recovered_diffs)} block(s) without a closing fence"
+                    )
                 matches = recovered_files
                 compute_diff_matches = recovered_diffs
 
@@ -2121,27 +2716,48 @@ class ImplementCommand(Command):
                 and ("<tool_call" in impl_response or "<tool_call>" in impl_response)
             ):
                 print("  Detected tool calls, retrying with plain text instruction...")
-                impl_messages.append({"role": "user", "content": "Respond ONLY in [FILE: filename.py], [PATCH: filename.py], or [COMPUTE_DIFF: filename.py] format. No <tool_call> tags."})
-                impl_response = await agent.llm.chat(impl_messages, disable_thinking=True)
+                impl_messages.append(
+                    {
+                        "role": "user",
+                        "content": "Respond ONLY in [FILE: filename.py], [PATCH: filename.py], or [COMPUTE_DIFF: filename.py] format. No <tool_call> tags.",
+                    }
+                )
+                impl_response = await agent.llm.chat(
+                    impl_messages, disable_thinking=True
+                )
                 matches, patch_matches, compute_diff_matches = _parse_response_blocks(
-                    impl_response, modify_mode,
+                    impl_response,
+                    modify_mode,
                 )
 
             # Transient/empty LLM responses: re-ask for the batch instead of
             # silently dropping the file. Give up only after extra retries.
             parse_retries = 0
-            while not matches and not patch_matches and not compute_diff_matches and parse_retries < 2:
-                print(f"  No [FILE:], [PATCH:], or [COMPUTE_DIFF:] blocks parsed — retry {parse_retries + 1}/2...")
+            while (
+                not matches
+                and not patch_matches
+                and not compute_diff_matches
+                and parse_retries < 2
+            ):
+                print(
+                    f"  No [FILE:], [PATCH:], or [COMPUTE_DIFF:] blocks parsed — retry {parse_retries + 1}/2..."
+                )
                 impl_messages.append(
-                    {"role": "user", "content": f"Output exactly one block for {batch[0]}: [PATCH: {batch[0]}] with diff hunks (for existing files), [COMPUTE_DIFF: {batch[0]}] with complete code (we compute diff), or [FILE: {batch[0]}] with complete code (for new files). No preamble, no prose, no tool calls."}
+                    {
+                        "role": "user",
+                        "content": f"Output exactly one block for {batch[0]}: [PATCH: {batch[0]}] with diff hunks (for existing files), [COMPUTE_DIFF: {batch[0]}] with complete code (we compute diff), or [FILE: {batch[0]}] with complete code (for new files). No preamble, no prose, no tool calls.",
+                    }
                 )
                 try:
-                    impl_response = await agent.llm.chat(impl_messages, max_tokens=12000, disable_thinking=True)
+                    impl_response = await agent.llm.chat(
+                        impl_messages, max_tokens=12000, disable_thinking=True
+                    )
                 except Exception as e:
                     print(f"  Retry error: {e}")
                     impl_response = None
                 matches, patch_matches, compute_diff_matches = _parse_response_blocks(
-                    impl_response, modify_mode,
+                    impl_response,
+                    modify_mode,
                 )
                 parse_retries += 1
 
@@ -2160,10 +2776,14 @@ class ImplementCommand(Command):
             for filename, content in compute_diff_matches:
                 content = content.strip()
                 if filename not in batch:
-                    print(f"  WARNING: [COMPUTE_DIFF: {filename}] is not in the planned batch {batch} — ignored")
+                    print(
+                        f"  WARNING: [COMPUTE_DIFF: {filename}] is not in the planned batch {batch} — ignored"
+                    )
                     continue
                 if not modify_mode:
-                    print(f"  WARNING: [COMPUTE_DIFF: {filename}] — only valid in modify mode, treating as FILE:")
+                    print(
+                        f"  WARNING: [COMPUTE_DIFF: {filename}] — only valid in modify mode, treating as FILE:"
+                    )
                     generated_content[filename] = content
                     print(f"  Generated: {filename} ({len(content)} bytes)")
                     continue
@@ -2171,37 +2791,52 @@ class ImplementCommand(Command):
                 ws_path = Path(workspace_path(target_workspace))
                 filepath = ws_path / filename
                 if not filepath.exists():
-                    print(f"  WARNING: [COMPUTE_DIFF: {filename}] — file does not exist, treating as new FILE:")
+                    print(
+                        f"  WARNING: [COMPUTE_DIFF: {filename}] — file does not exist, treating as new FILE:"
+                    )
                     generated_content[filename] = content
                     print(f"  Generated: {filename} ({len(content)} bytes)")
                     continue
                 try:
                     existing_text = filepath.read_text(encoding="utf-8")
                 except OSError as exc:
-                    print(f"  WARNING: [COMPUTE_DIFF: {filename}] — cannot read file: {exc}")
+                    print(
+                        f"  WARNING: [COMPUTE_DIFF: {filename}] — cannot read file: {exc}"
+                    )
                     continue
                 try:
                     compile(content, filename, "exec")
                 except SyntaxError as exc:
-                    print(f"  WARNING: [COMPUTE_DIFF: {filename}] — content has syntax errors: {exc}")
+                    print(
+                        f"  WARNING: [COMPUTE_DIFF: {filename}] — content has syntax errors: {exc}"
+                    )
                     continue
                 from agent_core.patch_utils import compute_diff, apply_patch
+
                 computed = compute_diff(existing_text, content, filename)
                 if computed.strip():
-                    ok, patched = apply_patch(computed, split_source_lines(existing_text))
+                    ok, patched = apply_patch(
+                        computed, split_source_lines(existing_text)
+                    )
                     if ok:
                         patched_text = str(patched)
                         try:
                             compile(patched_text, filename, "exec")
                             generated_content[filename] = patched_text
-                            print(f"  Generated (computed diff): {filename} ({len(patched_text)} bytes)")
+                            print(
+                                f"  Generated (computed diff): {filename} ({len(patched_text)} bytes)"
+                            )
                             sigs = extract_signatures(patched_text)
                             if sigs:
                                 export_map[filename] = sigs
                         except SyntaxError as exc:
-                            print(f"  WARNING: [COMPUTE_DIFF: {filename}] — computed diff fails syntax: {exc}")
+                            print(
+                                f"  WARNING: [COMPUTE_DIFF: {filename}] — computed diff fails syntax: {exc}"
+                            )
                     else:
-                        print(f"  WARNING: [COMPUTE_DIFF: {filename}] — computed diff failed to apply: {str(patched)[:200]}")
+                        print(
+                            f"  WARNING: [COMPUTE_DIFF: {filename}] — computed diff failed to apply: {str(patched)[:200]}"
+                        )
                 else:
                     print(f"  [COMPUTE_DIFF: {filename}] — no changes needed")
 
@@ -2215,7 +2850,9 @@ class ImplementCommand(Command):
                     # (observed: the secrets.py batch returned a
                     # [FILE: agent_core/security/sanitizer.py] block).  Treat
                     # it as a parse failure for the planned file instead.
-                    print(f"  WARNING: [FILE: {filename}] is not in the planned batch {batch} — ignored")
+                    print(
+                        f"  WARNING: [FILE: {filename}] is not in the planned batch {batch} — ignored"
+                    )
                     continue
                 # For existing files in modify mode, compute diff instead of
                 # wholesale rewrite — this is the generate-then-diff fallback
@@ -2232,29 +2869,42 @@ class ImplementCommand(Command):
                         try:
                             compile(content, filename, "exec")
                         except SyntaxError:
-                            print(f"  WARNING: [FILE: {filename}] — generated content has syntax errors, skipping")
+                            print(
+                                f"  WARNING: [FILE: {filename}] — generated content has syntax errors, skipping"
+                            )
                             continue
                         from agent_core.patch_utils import (
-                            compute_diff, apply_patch, split_source_lines
+                            compute_diff,
+                            apply_patch,
+                            split_source_lines,
                         )
+
                         computed = compute_diff(existing_text, content, filename)
                         if computed.strip():
-                            ok, patched = apply_patch(computed, split_source_lines(existing_text))
+                            ok, patched = apply_patch(
+                                computed, split_source_lines(existing_text)
+                            )
                             if ok:
                                 patched_text = str(patched)
                                 try:
                                     compile(patched_text, filename, "exec")
                                     generated_content[filename] = patched_text
-                                    print(f"  Generated (computed diff): {filename} ({len(patched_text)} bytes)")
+                                    print(
+                                        f"  Generated (computed diff): {filename} ({len(patched_text)} bytes)"
+                                    )
                                     sigs = extract_signatures(patched_text)
                                     if sigs:
                                         export_map[filename] = sigs
                                     continue
                                 except SyntaxError as exc:
-                                    print(f"  WARNING: [FILE: {filename}] — computed diff fails syntax: {exc}")
+                                    print(
+                                        f"  WARNING: [FILE: {filename}] — computed diff fails syntax: {exc}"
+                                    )
                                     # Fall through to store raw content
                             else:
-                                print(f"  WARNING: [FILE: {filename}] — computed diff failed to apply: {str(patched)[:200]}")
+                                print(
+                                    f"  WARNING: [FILE: {filename}] — computed diff failed to apply: {str(patched)[:200]}"
+                                )
                         else:
                             # No diff means files are identical
                             print(f"  [FILE: {filename}] — no changes needed")
@@ -2271,12 +2921,16 @@ class ImplementCommand(Command):
                 filename = filename.strip()
                 patch_text = patch_text.strip()
                 if filename not in batch:
-                    print(f"  WARNING: [PATCH: {filename}] is not in the planned batch {batch} — ignored")
+                    print(
+                        f"  WARNING: [PATCH: {filename}] is not in the planned batch {batch} — ignored"
+                    )
                     continue
                 ws_path = Path(workspace_path(target_workspace))
                 filepath = ws_path / filename
                 if not filepath.exists():
-                    print(f"  WARNING: [PATCH: {filename}] — file does not exist, skipping patch")
+                    print(
+                        f"  WARNING: [PATCH: {filename}] — file does not exist, skipping patch"
+                    )
                     continue
                 try:
                     existing_text = filepath.read_text(encoding="utf-8")
@@ -2284,53 +2938,70 @@ class ImplementCommand(Command):
                     print(f"  WARNING: [PATCH: {filename}] — cannot read file: {exc}")
                     continue
                 from agent_core.patch_utils import apply_patch, split_source_lines
+
                 ok, patched = apply_patch(patch_text, split_source_lines(existing_text))
                 if not ok:
                     # Self-correction retry: send the error back to the model
                     err_msg = str(patched)[:200]
-                    print(f"  WARNING: [PATCH: {filename}] — patch did not apply: {err_msg}")
+                    print(
+                        f"  WARNING: [PATCH: {filename}] — patch did not apply: {err_msg}"
+                    )
                     print(f"  Attempting self-correction retry for {filename}...")
                     retry_msgs = [
-                        {"role": "system", "content": (
-                            "Your patch for this file FAILED to apply. Here is the error:\n"
-                            f"{err_msg}\n\n"
-                            "The existing file content is:\n"
-                            f"--- {filename} ---\n"
-                            f"{existing_text[:4000]}\n"
-                            f"--- end ---\n\n"
-                            "You have THREE options — pick whichever you can do correctly:\n\n"
-                            "Option A — Corrected PATCH (preferred):\n"
-                            "[PATCH: filename.py]\n"
-                            "@@ -line,count +line,count @@\n"
-                            " context line\n"
-                            "-removed\n"
-                            "+added\n\n"
-                            "Option B — Full file with diff computed automatically:\n"
-                            "[COMPUTE_DIFF: filename.py]\n"
-                            "```python\n"
-                            "# complete corrected file — we compute the diff for you\n"
-                            "```\n\n"
-                            "Option C — Full file rewrite (if all else fails):\n"
-                            "[FILE: filename.py]\n"
-                            "```python\n"
-                            "# complete corrected file\n"
-                            "```\n\n"
-                            "Rules:\n"
-                            "- PRESERVE all docstrings, comments, and blank lines.\n"
-                            "- Option B is EASIEST: just write the complete corrected file.\n"
-                            "- Output ONLY one block, no prose."
-                        )},
-                        {"role": "user", "content": f"Fix {filename} using Option A, B, or C."},
+                        {
+                            "role": "system",
+                            "content": (
+                                "Your patch for this file FAILED to apply. Here is the error:\n"
+                                f"{err_msg}\n\n"
+                                "The existing file content is:\n"
+                                f"--- {filename} ---\n"
+                                f"{existing_text[:4000]}\n"
+                                f"--- end ---\n\n"
+                                "You have THREE options — pick whichever you can do correctly:\n\n"
+                                "Option A — Corrected PATCH (preferred):\n"
+                                "[PATCH: filename.py]\n"
+                                "@@ -line,count +line,count @@\n"
+                                " context line\n"
+                                "-removed\n"
+                                "+added\n\n"
+                                "Option B — Full file with diff computed automatically:\n"
+                                "[COMPUTE_DIFF: filename.py]\n"
+                                "```python\n"
+                                "# complete corrected file — we compute the diff for you\n"
+                                "```\n\n"
+                                "Option C — Full file rewrite (if all else fails):\n"
+                                "[FILE: filename.py]\n"
+                                "```python\n"
+                                "# complete corrected file\n"
+                                "```\n\n"
+                                "Rules:\n"
+                                "- PRESERVE all docstrings, comments, and blank lines.\n"
+                                "- Option B is EASIEST: just write the complete corrected file.\n"
+                                "- Output ONLY one block, no prose."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Fix {filename} using Option A, B, or C.",
+                        },
                     ]
                     try:
-                        retry_resp = await agent.llm.chat(retry_msgs, max_tokens=10000, disable_thinking=True)
+                        retry_resp = await agent.llm.chat(
+                            retry_msgs, max_tokens=10000, disable_thinking=True
+                        )
                         # Try Option A: corrected PATCH
                         retry_patch = ""
-                        m = re.search(r'\[PATCH:\s*[^\]]+\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\[COMPUTE_DIFF:|$)', retry_resp, re.DOTALL)
+                        m = re.search(
+                            r"\[PATCH:\s*[^\]]+\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\[COMPUTE_DIFF:|$)",
+                            retry_resp,
+                            re.DOTALL,
+                        )
                         if m:
                             retry_patch = m.group(1).strip()
                         if retry_patch:
-                            ok2, patched2 = apply_patch(retry_patch, split_source_lines(existing_text))
+                            ok2, patched2 = apply_patch(
+                                retry_patch, split_source_lines(existing_text)
+                            )
                             if ok2:
                                 patched_text2 = str(patched2)
                                 try:
@@ -2338,14 +3009,22 @@ class ImplementCommand(Command):
                                     patched = patched2
                                     ok = True
                                     patched_text = patched_text2
-                                    print(f"  Self-correction succeeded (PATCH) for {filename}")
+                                    print(
+                                        f"  Self-correction succeeded (PATCH) for {filename}"
+                                    )
                                 except SyntaxError as exc2:
-                                    print(f"  WARNING: [PATCH: {filename}] — retry PATCH also fails syntax: {exc2}")
+                                    print(
+                                        f"  WARNING: [PATCH: {filename}] — retry PATCH also fails syntax: {exc2}"
+                                    )
                                     # Fall through to try Option B
                                     retry_patch = ""
                         # Try Option B: COMPUTE_DIFF (full file, we compute diff)
                         if not retry_patch or not ok:
-                            m2 = re.search(r'\[COMPUTE_DIFF:\s*[^\]]+\]\s*\n*(?:```\w*\n)?(.*?)\n```', retry_resp, re.DOTALL)
+                            m2 = re.search(
+                                r"\[COMPUTE_DIFF:\s*[^\]]+\]\s*\n*(?:```\w*\n)?(.*?)\n```",
+                                retry_resp,
+                                re.DOTALL,
+                            )
                             if m2:
                                 retry_content = m2.group(1).strip()
                                 if retry_content:
@@ -2353,29 +3032,49 @@ class ImplementCommand(Command):
                                         compile(retry_content, filename, "exec")
                                         # Compute diff programmatically
                                         from agent_core.patch_utils import compute_diff
-                                        computed = compute_diff(existing_text, retry_content, filename)
+
+                                        computed = compute_diff(
+                                            existing_text, retry_content, filename
+                                        )
                                         if computed.strip():
-                                            ok3, patched3 = apply_patch(computed, split_source_lines(existing_text))
+                                            ok3, patched3 = apply_patch(
+                                                computed,
+                                                split_source_lines(existing_text),
+                                            )
                                             if ok3:
                                                 patched_text3 = str(patched3)
                                                 try:
-                                                    compile(patched_text3, filename, "exec")
+                                                    compile(
+                                                        patched_text3, filename, "exec"
+                                                    )
                                                     patched = patched3
                                                     ok = True
                                                     patched_text = patched_text3
-                                                    print(f"  Self-correction succeeded (COMPUTE_DIFF) for {filename}")
+                                                    print(
+                                                        f"  Self-correction succeeded (COMPUTE_DIFF) for {filename}"
+                                                    )
                                                 except SyntaxError as exc3:
-                                                    print(f"  WARNING: [PATCH: {filename}] — computed diff fails syntax: {exc3}")
+                                                    print(
+                                                        f"  WARNING: [PATCH: {filename}] — computed diff fails syntax: {exc3}"
+                                                    )
                                                     # Fall through to Option C
                                         else:
                                             # No diff means files are identical — skip
-                                            print(f"  [PATCH: {filename}] — COMPUTE_DIFF: no changes needed")
+                                            print(
+                                                f"  [PATCH: {filename}] — COMPUTE_DIFF: no changes needed"
+                                            )
                                             continue
                                     except SyntaxError as exc4:
-                                        print(f"  WARNING: [PATCH: {filename}] — COMPUTE_DIFF content fails syntax: {exc4}")
+                                        print(
+                                            f"  WARNING: [PATCH: {filename}] — COMPUTE_DIFF content fails syntax: {exc4}"
+                                        )
                         # Try Option C: full file rewrite (wholesale)
                         if not retry_patch or not ok:
-                            m3 = re.search(r'\[FILE:\s*[^\]]+\]\s*\n*(?:```\w*\n)?(.*?)\n```', retry_resp, re.DOTALL)
+                            m3 = re.search(
+                                r"\[FILE:\s*[^\]]+\]\s*\n*(?:```\w*\n)?(.*?)\n```",
+                                retry_resp,
+                                re.DOTALL,
+                            )
                             if m3:
                                 retry_content = m3.group(1).strip()
                                 if retry_content:
@@ -2388,13 +3087,19 @@ class ImplementCommand(Command):
                                         patched = retry_content
                                         patched_text = retry_content
                                         ok = True
-                                        print(f"  Self-correction succeeded (FILE rewrite) for {filename}")
+                                        print(
+                                            f"  Self-correction succeeded (FILE rewrite) for {filename}"
+                                        )
                                     except SyntaxError as exc5:
-                                        print(f"  WARNING: [PATCH: {filename}] — retry FILE also fails syntax: {exc5}")
+                                        print(
+                                            f"  WARNING: [PATCH: {filename}] — retry FILE also fails syntax: {exc5}"
+                                        )
                                         continue
                         # Fallback D: Extract any ```python...``` code block from prose
                         if not ok:
-                            m4 = re.search(r'```python\s*\n(.*?)\n```', retry_resp, re.DOTALL)
+                            m4 = re.search(
+                                r"```python\s*\n(.*?)\n```", retry_resp, re.DOTALL
+                            )
                             if m4:
                                 fallback_content = m4.group(1).strip()
                                 if fallback_content:
@@ -2402,17 +3107,27 @@ class ImplementCommand(Command):
                                         compile(fallback_content, filename, "exec")
                                         # Compute diff for existing file
                                         from agent_core.patch_utils import compute_diff
-                                        computed = compute_diff(existing_text, fallback_content, filename)
+
+                                        computed = compute_diff(
+                                            existing_text, fallback_content, filename
+                                        )
                                         if computed.strip():
-                                            ok4, patched4 = apply_patch(computed, split_source_lines(existing_text))
+                                            ok4, patched4 = apply_patch(
+                                                computed,
+                                                split_source_lines(existing_text),
+                                            )
                                             if ok4:
                                                 patched_text4 = str(patched4)
                                                 try:
-                                                    compile(patched_text4, filename, "exec")
+                                                    compile(
+                                                        patched_text4, filename, "exec"
+                                                    )
                                                     patched = patched4
                                                     ok = True
                                                     patched_text = patched_text4
-                                                    print(f"  Self-correction succeeded (code block fallback) for {filename}")
+                                                    print(
+                                                        f"  Self-correction succeeded (code block fallback) for {filename}"
+                                                    )
                                                 except SyntaxError:
                                                     pass
                                         if not ok:
@@ -2420,11 +3135,15 @@ class ImplementCommand(Command):
                                             patched = fallback_content
                                             patched_text = fallback_content
                                             ok = True
-                                            print(f"  Self-correction succeeded (code block fallback, raw) for {filename}")
+                                            print(
+                                                f"  Self-correction succeeded (code block fallback, raw) for {filename}"
+                                            )
                                     except SyntaxError:
                                         pass
                         if not ok:
-                            print(f"  WARNING: [PATCH: {filename}] — retry produced no usable content")
+                            print(
+                                f"  WARNING: [PATCH: {filename}] — retry produced no usable content"
+                            )
                     except Exception as exc:
                         print(f"  WARNING: [PATCH: {filename}] — retry failed: {exc}")
                 # Last resort: generate the file directly with a focused prompt
@@ -2434,27 +3153,39 @@ class ImplementCommand(Command):
                         # Read the task context for this file
                         task_line = _extract_task_line(taskplan_content, filename)
                         direct_msgs = [
-                            {"role": "system", "content": (
-                                f"Generate the COMPLETE Python file: {filename}\n\n"
-                                "The file must:\n"
-                                "- Be valid Python (pass py_compile)\n"
-                                "- Preserve all existing docstrings and comments\n"
-                                "- Add the new functionality described below\n\n"
-                                "Output format:\n"
-                                f"[FILE: {filename}]\n"
-                                "```python\n"
-                                "# complete file\n"
-                                "```"
-                            )},
-                            {"role": "user", "content": (
-                                f"Existing file content:\n{existing_text[:3000]}\n\n"
-                                f"Task: {task_line}\n\n"
-                                f"Generate the complete corrected {filename}."
-                            )},
+                            {
+                                "role": "system",
+                                "content": (
+                                    f"Generate the COMPLETE Python file: {filename}\n\n"
+                                    "The file must:\n"
+                                    "- Be valid Python (pass py_compile)\n"
+                                    "- Preserve all existing docstrings and comments\n"
+                                    "- Add the new functionality described below\n\n"
+                                    "Output format:\n"
+                                    f"[FILE: {filename}]\n"
+                                    "```python\n"
+                                    "# complete file\n"
+                                    "```"
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"Existing file content:\n{existing_text[:3000]}\n\n"
+                                    f"Task: {task_line}\n\n"
+                                    f"Generate the complete corrected {filename}."
+                                ),
+                            },
                         ]
-                        direct_resp = await agent.llm.chat(direct_msgs, max_tokens=10000, disable_thinking=True)
+                        direct_resp = await agent.llm.chat(
+                            direct_msgs, max_tokens=10000, disable_thinking=True
+                        )
                         # Extract FILE: block
-                        m5 = re.search(r'\[FILE:\s*[^\]]+\]\s*\n*(?:```\w*\n)?(.*?)\n```', direct_resp, re.DOTALL)
+                        m5 = re.search(
+                            r"\[FILE:\s*[^\]]+\]\s*\n*(?:```\w*\n)?(.*?)\n```",
+                            direct_resp,
+                            re.DOTALL,
+                        )
                         if m5:
                             direct_content = m5.group(1).strip()
                             if direct_content:
@@ -2462,9 +3193,14 @@ class ImplementCommand(Command):
                                     compile(direct_content, filename, "exec")
                                     # Compute diff for existing file
                                     from agent_core.patch_utils import compute_diff
-                                    computed = compute_diff(existing_text, direct_content, filename)
+
+                                    computed = compute_diff(
+                                        existing_text, direct_content, filename
+                                    )
                                     if computed.strip():
-                                        ok5, patched5 = apply_patch(computed, split_source_lines(existing_text))
+                                        ok5, patched5 = apply_patch(
+                                            computed, split_source_lines(existing_text)
+                                        )
                                         if ok5:
                                             patched_text5 = str(patched5)
                                             try:
@@ -2472,7 +3208,9 @@ class ImplementCommand(Command):
                                                 patched = patched5
                                                 ok = True
                                                 patched_text = patched_text5
-                                                print(f"  Direct generation succeeded for {filename}")
+                                                print(
+                                                    f"  Direct generation succeeded for {filename}"
+                                                )
                                             except SyntaxError:
                                                 pass
                                     if not ok:
@@ -2480,11 +3218,17 @@ class ImplementCommand(Command):
                                         patched = direct_content
                                         patched_text = direct_content
                                         ok = True
-                                        print(f"  Direct generation succeeded (raw) for {filename}")
+                                        print(
+                                            f"  Direct generation succeeded (raw) for {filename}"
+                                        )
                                 except SyntaxError:
-                                    print(f"  WARNING: [PATCH: {filename}] — direct generation has syntax errors")
+                                    print(
+                                        f"  WARNING: [PATCH: {filename}] — direct generation has syntax errors"
+                                    )
                     except Exception as exc:
-                        print(f"  WARNING: [PATCH: {filename}] — direct generation failed: {exc}")
+                        print(
+                            f"  WARNING: [PATCH: {filename}] — direct generation failed: {exc}"
+                        )
                 if not ok:
                     continue
                 patched_text = str(patched)
@@ -2494,7 +3238,9 @@ class ImplementCommand(Command):
                 try:
                     compile(patched_text, filename, "exec")
                 except SyntaxError as exc:
-                    print(f"  WARNING: [PATCH: {filename}] — patched file does not compile: {exc}")
+                    print(
+                        f"  WARNING: [PATCH: {filename}] — patched file does not compile: {exc}"
+                    )
                     continue
                 generated_content[filename] = patched_text
                 print(f"  Generated (patch): {filename} ({len(patched_text)} bytes)")
@@ -2512,24 +3258,31 @@ class ImplementCommand(Command):
                         except Exception:
                             print(f"  Warning: Could not read existing file {fname}")
 
-            print(f"\nExport map: {sum(len(v) for v in export_map.values())} exports across {len(export_map)} modules")
+            print(
+                f"\nExport map: {sum(len(v) for v in export_map.values())} exports across {len(export_map)} modules"
+            )
 
             broken_imports: dict[str, list[tuple[str, str]]] = {}
             stdlib_modules = set()
 
             for fname, content in generated_content.items():
                 missing: list[tuple[str, str]] = []
-                for match in re.finditer(r'from\s+(\S+)\s+import\s+(.+?)(?:\s*#|\s*$)', content):
+                for match in re.finditer(
+                    r"from\s+(\S+)\s+import\s+(.+?)(?:\s*#|\s*$)", content
+                ):
                     src_module = match.group(1)
-                    imported_names = [n.strip().split(' as ')[0].strip() for n in match.group(2).strip('()').split(',')]
-                    src_file = src_module.replace('.', '/') + '.py'
+                    imported_names = [
+                        n.strip().split(" as ")[0].strip()
+                        for n in match.group(2).strip("()").split(",")
+                    ]
+                    src_file = src_module.replace(".", "/") + ".py"
 
                     if src_file not in export_map:
                         stdlib_modules.add(src_module)
                         continue
 
                     for name in imported_names:
-                        if name.isupper() or name.startswith('_'):
+                        if name.isupper() or name.startswith("_"):
                             continue
                         src_exports = export_map.get(src_file, {})
                         if name not in src_exports:
@@ -2539,16 +3292,24 @@ class ImplementCommand(Command):
                     broken_imports[fname] = missing
 
             if stdlib_modules:
-                print(f"  Skipped stdlib/third-party: {', '.join(sorted(stdlib_modules))}")
+                print(
+                    f"  Skipped stdlib/third-party: {', '.join(sorted(stdlib_modules))}"
+                )
 
             if broken_imports:
-                print(f"\n  Found {sum(len(v) for v in broken_imports.values())} broken imports in {len(broken_imports)} files:")
+                print(
+                    f"\n  Found {sum(len(v) for v in broken_imports.values())} broken imports in {len(broken_imports)} files:"
+                )
                 for fname, missing in broken_imports.items():
                     for mod, name in missing:
                         print(f"    {fname}: '{name}' from '{mod}' not found")
                     if fname in generated_content:
-                        print(f"  REJECTED: {fname} — references names not defined in the project")
-                        file_outcomes[fname] = f"rejected — {len(missing)} unresolved import(s)"
+                        print(
+                            f"  REJECTED: {fname} — references names not defined in the project"
+                        )
+                        file_outcomes[fname] = (
+                            f"rejected — {len(missing)} unresolved import(s)"
+                        )
                         del generated_content[fname]
             else:
                 print("  All imports verified!")
@@ -2571,8 +3332,11 @@ class ImplementCommand(Command):
             file_outcomes = {}
             for fname, content in generated_content.items():
                 status, reason, effective = gate_file(
-                    fname, content, ws,
-                    allow_rewrite=allow_rewrite, force_mode=force_mode,
+                    fname,
+                    content,
+                    ws,
+                    allow_rewrite=allow_rewrite,
+                    force_mode=force_mode,
                 )
                 # Key outcomes by the ORIGINAL filename so the bundle can map
                 # every generated file back to its outcome (accepted/rejected/
@@ -2583,8 +3347,11 @@ class ImplementCommand(Command):
                     file_outcomes[fname] = f"rejected — {reason}"
                 else:
                     file_outcomes[fname] = f"skipped — {reason}"
-            accepted = {f: c for f, c in generated_content.items()
-                        if file_outcomes.get(f, "").startswith("accepted")}
+            accepted = {
+                f: c
+                for f, c in generated_content.items()
+                if file_outcomes.get(f, "").startswith("accepted")
+            }
             meta: dict[str, object] = {
                 "command": "implement --propose",
                 "model": getattr(getattr(agent, "llm", None), "model", "unknown"),
@@ -2597,10 +3364,14 @@ class ImplementCommand(Command):
                 meta["security_result"] = (sec_passed, sec_detail)
             # Emit the FULL generated set (not just accepted) so rejected /
             # skipped files are recorded in the bundle rather than dropped.
-            emit_proposal(generated_content, ws, file_outcomes, meta=meta, out_dir=out_dir)
-            print(f"\nPropose summary: {len(accepted)} accepted / "
-                  f"{sum(1 for v in file_outcomes.values() if v.startswith('rejected'))} rejected / "
-                  f"{sum(1 for v in file_outcomes.values() if v.startswith('skipped'))} skipped.")
+            emit_proposal(
+                generated_content, ws, file_outcomes, meta=meta, out_dir=out_dir
+            )
+            print(
+                f"\nPropose summary: {len(accepted)} accepted / "
+                f"{sum(1 for v in file_outcomes.values() if v.startswith('rejected'))} rejected / "
+                f"{sum(1 for v in file_outcomes.values() if v.startswith('skipped'))} skipped."
+            )
             return True
 
         # Safety net: back up every existing target BEFORE any write happens,
@@ -2623,11 +3394,13 @@ class ImplementCommand(Command):
                 except OSError as exc:
                     print(f"  WARNING: could not back up existing {bfile}: {exc}")
         if backup_map:
-            print(f"  Backed up {len(backup_map)} existing target file(s) to backups/ ({backup_ts})")
+            print(
+                f"  Backed up {len(backup_map)} existing target file(s) to backups/ ({backup_ts})"
+            )
         written_files: set[str] = set()
 
-        _RE_3 = re.compile(r'_\d+$|_v\d+$|_clean$|_final$')
-        _DEF_RE = re.compile(r'def\s+(\w+)')
+        _RE_3 = re.compile(r"_\d+$|_v\d+$|_clean$|_final$")
+        _DEF_RE = re.compile(r"def\s+(\w+)")
         for filename, content in generated_content.items():
             raw_workspace = workspace_path(target_workspace)
             workspace = Path(raw_workspace)
@@ -2648,14 +3421,20 @@ class ImplementCommand(Command):
             #: skipped (default) or overwritten wholesale (--force).
             modify_target = False
 
-            if not force_mode and not is_analyzed_file and filepath.exists() and filepath.stat().st_size > 0:
+            if (
+                not force_mode
+                and not is_analyzed_file
+                and filepath.exists()
+                and filepath.stat().st_size > 0
+            ):
                 if filename.endswith(".py"):
                     filepath_str = os.path.realpath(filepath)
                     result = subprocess.run(
                         ["python", "-m", "py_compile", filepath_str],
                         capture_output=True,
                         text=True,
-                        encoding="utf-8", errors="replace",
+                        encoding="utf-8",
+                        errors="replace",
                     )
                     if result.returncode == 0:
                         if modify_mode:
@@ -2668,9 +3447,14 @@ class ImplementCommand(Command):
             # skipped instead of generated; the existing module is the right
             # place for the change.
             if skip_reason is None and not force_mode and not is_analyzed_file:
-                if filename.endswith(".py") and not filepath.exists() and not _is_planned_test_file(filename):
+                if (
+                    filename.endswith(".py")
+                    and not filepath.exists()
+                    and not _is_planned_test_file(filename)
+                ):
                     dup_reasons = _check_planned_duplicates(
-                        [filename], str(target_workspace),
+                        [filename],
+                        str(target_workspace),
                         taskplan_content if taskplan_content else "",
                     )
                     if dup_reasons:
@@ -2686,7 +3470,10 @@ class ImplementCommand(Command):
 
             if modify_target:
                 ok_modify, note = self._apply_modify_diff(
-                    filename, filepath, content, allow_rewrite,
+                    filename,
+                    filepath,
+                    content,
+                    allow_rewrite,
                 )
                 print(f"  {filename}: {note}")
                 file_outcomes[filename] = note
@@ -2705,19 +3492,29 @@ class ImplementCommand(Command):
                     # from collections import Counter  # unused_import removed
                     similar_prefixes: dict[str, int] = {}
                     for name in func_names:
-                        prefix = _RE_3.sub('', name)
+                        prefix = _RE_3.sub("", name)
                         similar_prefixes[prefix] = similar_prefixes.get(prefix, 0) + 1
-                    max_dupes = max(similar_prefixes.values()) if similar_prefixes else 1
+                    max_dupes = (
+                        max(similar_prefixes.values()) if similar_prefixes else 1
+                    )
                     if max_dupes > 10:
-                        print(f"  REJECTED: {filename} has {max_dupes} near-duplicate functions")
-                        file_outcomes[filename] = f"rejected — {max_dupes} near-duplicate functions"
+                        print(
+                            f"  REJECTED: {filename} has {max_dupes} near-duplicate functions"
+                        )
+                        file_outcomes[filename] = (
+                            f"rejected — {max_dupes} near-duplicate functions"
+                        )
                         continue
                 if len(content) > 50000:
                     print(f"  REJECTED: {filename} is {len(content)} bytes (max 50KB)")
-                    file_outcomes[filename] = f"rejected — {len(content)} bytes, max 50KB"
+                    file_outcomes[filename] = (
+                        f"rejected — {len(content)} bytes, max 50KB"
+                    )
                     continue
                 if len(content) < 10:
-                    print(f"  REJECTED: {filename} is empty (0 bytes) — LLM returned no content")
+                    print(
+                        f"  REJECTED: {filename} is empty (0 bytes) — LLM returned no content"
+                    )
                     file_outcomes[filename] = "rejected — empty response from LLM"
                     continue
 
@@ -2731,8 +3528,12 @@ class ImplementCommand(Command):
                     new_dangerous, _ = _is_dangerous_filename(new_filename, workspace)
                     if not new_dangerous:
                         if new_filepath.exists() and new_filepath.stat().st_size > 100:
-                            print(f"  Skipped: {new_filename} already exists (avoiding overwrite)")
-                            file_outcomes[filename] = f"skipped — {new_filename} already exists"
+                            print(
+                                f"  Skipped: {new_filename} already exists (avoiding overwrite)"
+                            )
+                            file_outcomes[filename] = (
+                                f"skipped — {new_filename} already exists"
+                            )
                             continue
                         print(f"  Auto-repaired: {filename} -> {new_filename}")
                         file_outcomes[filename] = f"auto-repaired -> {new_filename}"
@@ -2750,7 +3551,9 @@ class ImplementCommand(Command):
                             f_parts[idx] = safe_name
                             new_filename = "/".join(f_parts)
                             new_filepath = workspace / new_filename
-                            print(f"  Redirected: {filename} -> {new_filename} (shadows stdlib '{part}')")
+                            print(
+                                f"  Redirected: {filename} -> {new_filename} (shadows stdlib '{part}')"
+                            )
                             file_outcomes[filename] = f"redirected -> {new_filename}"
                             filename = new_filename
                             filepath = new_filepath
@@ -2762,7 +3565,9 @@ class ImplementCommand(Command):
                     continue
 
             # Write to temp → compile → rename on success, delete on failure
-            prev_content = filepath.read_text(encoding="utf-8") if filepath.exists() else None
+            prev_content = (
+                filepath.read_text(encoding="utf-8") if filepath.exists() else None
+            )
             tmp_path = str(filepath) + ".tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
                 f.write(content)
@@ -2770,8 +3575,10 @@ class ImplementCommand(Command):
             if filename.endswith(".py"):
                 r = subprocess.run(
                     ["python", "-m", "py_compile", tmp_path],
-                    capture_output=True, text=True,
-                    encoding="utf-8", errors="replace",
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                 )
 
                 if r.returncode != 0:
@@ -2779,42 +3586,78 @@ class ImplementCommand(Command):
                     lines = stripped.splitlines() if stripped else []
                     last_line = lines[-1].strip() if lines else ""
 
-                    ends_mid = last_line.endswith(('(', '[', '{', ':', ',', '+', '-', '*', '/', '=', '\\'))
-                    incomplete = (last_line and last_line[-1].isalnum()
-                        and not last_line.endswith(('pass', 'return', 'break', 'continue', 'True', 'False', 'None')))
-                    opens = sum(last_line.count(c) for c in '({[')
-                    closes = sum(last_line.count(c) for c in ')}]')
+                    ends_mid = last_line.endswith(
+                        ("(", "[", "{", ":", ",", "+", "-", "*", "/", "=", "\\")
+                    )
+                    incomplete = (
+                        last_line
+                        and last_line[-1].isalnum()
+                        and not last_line.endswith(
+                            (
+                                "pass",
+                                "return",
+                                "break",
+                                "continue",
+                                "True",
+                                "False",
+                                "None",
+                            )
+                        )
+                    )
+                    opens = sum(last_line.count(c) for c in "({[")
+                    closes = sum(last_line.count(c) for c in ")}]")
                     unbalanced = opens > closes
 
-                    is_truncated = ends_mid or (incomplete and unbalanced) or (incomplete and len(content) < 500)
+                    is_truncated = (
+                        ends_mid
+                        or (incomplete and unbalanced)
+                        or (incomplete and len(content) < 500)
+                    )
 
                     if is_truncated and (
-                        "unterminated" in r.stderr or "unexpected EOF" in r.stderr
-                        or "was never closed" in r.stderr or "invalid syntax" in r.stderr
+                        "unterminated" in r.stderr
+                        or "unexpected EOF" in r.stderr
+                        or "was never closed" in r.stderr
+                        or "invalid syntax" in r.stderr
                         or "SyntaxError" in r.stderr
                     ):
                         os.unlink(tmp_path)
-                        print(f"  WARNING: {filename} appears truncated, re-requesting...")
+                        print(
+                            f"  WARNING: {filename} appears truncated, re-requesting..."
+                        )
                         # Switch to deep-analysis profile (50K tokens) for the retry
                         old_temp = agent.llm._provider.temperature
                         old_tok = agent.llm._provider.max_tokens
                         try:
                             from agent_core.llm.model_profiles import get_profile
+
                             dp = get_profile("deep-analysis")
                             agent.llm._provider.temperature = dp.temperature
                             agent.llm._provider.max_tokens = dp.max_tokens
                         except Exception:
                             print("Warning: failed to switch to deep-analysis profile")
                         retry_msgs = [
-                            {"role": "system", "content": "Generate ONLY the complete code for this file. Output as:\n[FILE: filename.py]\n```python\n# complete code here\n```"},
-                            {"role": "user", "content": f"Generate complete code for {filename}."}
+                            {
+                                "role": "system",
+                                "content": "Generate ONLY the complete code for this file. Output as:\n[FILE: filename.py]\n```python\n# complete code here\n```",
+                            },
+                            {
+                                "role": "user",
+                                "content": f"Generate complete code for {filename}.",
+                            },
                         ]
-                        retry_content = await agent.llm.chat(retry_msgs, disable_thinking=True)
+                        retry_content = await agent.llm.chat(
+                            retry_msgs, disable_thinking=True
+                        )
                         # Restore original profile
                         agent.llm._provider.temperature = old_temp
                         agent.llm._provider.max_tokens = old_tok
                         if not retry_content.startswith("[Error"):
-                            match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', retry_content, re.DOTALL)
+                            match = re.search(
+                                r"\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```",
+                                retry_content,
+                                re.DOTALL,
+                            )
                             if match:
                                 new_content = match.group(2).strip()
                                 if len(new_content) > len(content) * 0.5:
@@ -2823,7 +3666,9 @@ class ImplementCommand(Command):
                                         and filename.endswith(".py")
                                         and not allow_rewrite
                                     ):
-                                        existing_text = filepath.read_text(encoding="utf-8")
+                                        existing_text = filepath.read_text(
+                                            encoding="utf-8"
+                                        )
                                         similarity = difflib.SequenceMatcher(
                                             None, existing_text, new_content
                                         ).ratio()
@@ -2832,18 +3677,24 @@ class ImplementCommand(Command):
                                                 f"  REJECTED: {filename} retry would be a wholesale "
                                                 f"rewrite (similarity {similarity:.2f}) — refusing."
                                             )
-                                            file_outcomes[filename] = "rejected — wholesale rewrite of existing file"
+                                            file_outcomes[filename] = (
+                                                "rejected — wholesale rewrite of existing file"
+                                            )
                                             continue
                                     with open(filepath, "w", encoding="utf-8") as f:
                                         f.write(new_content)
                                     content = new_content
                                     written_files.add(filename)
-                                    print(f"  Re-written: {filename} ({len(content)} bytes)")
+                                    print(
+                                        f"  Re-written: {filename} ({len(content)} bytes)"
+                                    )
                                     filepath_str = os.path.realpath(filepath)
                                     r = subprocess.run(
                                         ["python", "-m", "py_compile", filepath_str],
-                                        capture_output=True, text=True,
-                                        encoding="utf-8", errors="replace",
+                                        capture_output=True,
+                                        text=True,
+                                        encoding="utf-8",
+                                        errors="replace",
                                     )
 
                     if r.returncode != 0:
@@ -2875,7 +3726,9 @@ class ImplementCommand(Command):
                                         f"(similarity {similarity:.2f}) — refusing to replace an "
                                         "existing file; use --allow-rewrite to replace it."
                                     )
-                                    file_outcomes[filename] = "rejected — wholesale rewrite of existing file"
+                                    file_outcomes[filename] = (
+                                        "rejected — wholesale rewrite of existing file"
+                                    )
                                     continue
                         os.replace(tmp_path, filepath)
                         written_files.add(filename)
@@ -2888,13 +3741,18 @@ class ImplementCommand(Command):
             # Post-write: reject files that create class-name conflicts in same directory
             if filepath.exists() and filename.endswith(".py"):
                 from agent_core.patterns import detect_class_conflicts
+
                 conflicts = detect_class_conflicts([filename], ws)
                 if conflicts:
                     if prev_content is not None:
-                        filepath.write_text(prev_content, encoding="utf-8")  # restore original
+                        filepath.write_text(
+                            prev_content, encoding="utf-8"
+                        )  # restore original
                     else:
                         filepath.unlink()  # new file, safe to delete
-                    print(f"  REJECTED: class-name conflict — {conflicts[0]['suggestion']}")
+                    print(
+                        f"  REJECTED: class-name conflict — {conflicts[0]['suggestion']}"
+                    )
                     file_outcomes[filename] = f"rejected — {conflicts[0]['suggestion']}"
                     continue
             implemented.append(filename)
@@ -2913,7 +3771,8 @@ class ImplementCommand(Command):
                     ["python", "-m", "py_compile", filepath_str],
                     capture_output=True,
                     text=True,
-                    encoding="utf-8", errors="replace",
+                    encoding="utf-8",
+                    errors="replace",
                 )
                 if result.returncode != 0:
                     errors.append(f"{filename}: {result.stderr}")
@@ -2932,8 +3791,11 @@ class ImplementCommand(Command):
         # imported a wholesale-rewrite-rejected tool_loop.py).  Written files
         # that had a pre-run original are restored from backups/ instead of
         # being deleted outright.
-        rejected_files = {k for k, v in file_outcomes.items()
-                          if "rejected" in v and "class-name conflict" not in v}
+        rejected_files = {
+            k
+            for k, v in file_outcomes.items()
+            if "rejected" in v and "class-name conflict" not in v
+        }
         if rejected_files:
             for fname in list(implemented):
                 fpath = Path(ws) / fname
@@ -2944,12 +3806,18 @@ class ImplementCommand(Command):
                 except Exception:
                     continue
                 # Check imports against rejected files
-                for m in re.finditer(r'^(?:from|import)\s+(\S+)', content, re.MULTILINE):
+                for m in re.finditer(
+                    r"^(?:from|import)\s+(\S+)", content, re.MULTILINE
+                ):
                     module = m.group(1)
                     mod_file = module.replace(".", "/") + ".py"
                     for rf in rejected_files:
                         rf_no_ext = rf.replace(".py", "").replace("/", ".")
-                        if mod_file == rf or module == rf_no_ext or module.endswith("." + rf_no_ext.rsplit("/", 1)[-1]):
+                        if (
+                            mod_file == rf
+                            or module == rf_no_ext
+                            or module.endswith("." + rf_no_ext.rsplit("/", 1)[-1])
+                        ):
                             if fname not in written_files:
                                 # Pre-existing file this run did NOT write:
                                 # never delete it, report instead.
@@ -2958,23 +3826,31 @@ class ImplementCommand(Command):
                                     "existing file left untouched (only files written "
                                     "this run are removed)"
                                 )
-                                file_outcomes[fname] = f"kept — imports rejected {rf}; existing file preserved"
+                                file_outcomes[fname] = (
+                                    f"kept — imports rejected {rf}; existing file preserved"
+                                )
                                 break
                             p = Path(ws) / fname
                             backup = backup_map.get(fname)
                             if p.exists():
                                 if backup is not None and backup.exists():
                                     shutil.copy2(backup, p)
-                                    print(f"  REJECTED: {fname} depends on rejected file {rf} — original restored from backups/")
+                                    print(
+                                        f"  REJECTED: {fname} depends on rejected file {rf} — original restored from backups/"
+                                    )
                                 else:
                                     p.unlink()
-                                    print(f"  REJECTED: {fname} depends on rejected file {rf}")
-                            file_outcomes[fname] = f"rejected — depends on rejected {rf}"
+                                    print(
+                                        f"  REJECTED: {fname} depends on rejected file {rf}"
+                                    )
+                            file_outcomes[fname] = (
+                                f"rejected — depends on rejected {rf}"
+                            )
                             if fname in implemented:
                                 implemented.remove(fname)
                             break
 
-        print(f"\n{'='*50}")
+        print(f"\n{'=' * 50}")
         print(f"Implementation complete: {len(implemented)}/{len(all_files)} files")
 
         if implemented:
@@ -3048,13 +3924,15 @@ class ImplementCommand(Command):
             )
 
         if fix_mode and implemented:
-            print(f"\n{'='*50}")
+            print(f"\n{'=' * 50}")
             print("[fix] Deep validation: checking imports + class instantiation...")
-            print(f"{'='*50}")
+            print(f"{'=' * 50}")
 
             prev_error_sigs: dict[str, str] = {}
             file_error_sigs: dict[str, str] = {}  # per-file last-seen error signature
-            patch_failed: set[str] = set()  # files where [PATCH:] format failed — prefer [FILE:] next
+            patch_failed: set[str] = (
+                set()
+            )  # files where [PATCH:] format failed — prefer [FILE:] next
 
             # ---- Pre-loop cross-file attribute check ----
             # Verify chained attribute accesses across module boundaries.
@@ -3071,40 +3949,52 @@ class ImplementCommand(Command):
                     src = sf.read()
                 src_dir = str(fp.parent.resolve())
                 imports_by_class: dict[str, str] = {}
-                for im in re.finditer(r'from\s+([\w.]+)\s+import\s+(.+?)(?:\s*$|\s*#)', src, re.MULTILINE):
+                for im in re.finditer(
+                    r"from\s+([\w.]+)\s+import\s+(.+?)(?:\s*$|\s*#)", src, re.MULTILINE
+                ):
                     mod_dotted = im.group(1)
-                    mod_file = mod_dotted.replace('.', '/') + ".py"
+                    mod_file = mod_dotted.replace(".", "/") + ".py"
                     if not (Path(ws) / mod_file).exists():
                         continue
-                    for n in re.findall(r'(\w+)', im.group(2)):
+                    for n in re.findall(r"(\w+)", im.group(2)):
                         if n[0].isupper():
                             imports_by_class[n] = mod_dotted
                 var_types: dict[str, str] = {}
                 for cls_name, mod_file in imports_by_class.items():
-                    for va in re.finditer(rf'(\w+)\s*=\s*{cls_name}\s*\(', src):
+                    for va in re.finditer(rf"(\w+)\s*=\s*{cls_name}\s*\(", src):
                         var_types[va.group(1)] = cls_name
                 for var, cls_name in var_types.items():
-                    for chain_m in re.finditer(rf'\b{var}\.(\w+(?:\.\w+)*)\b', src):
-                        chain = chain_m.group(1).split('.')
+                    for chain_m in re.finditer(rf"\b{var}\.(\w+(?:\.\w+)*)\b", src):
+                        chain = chain_m.group(1).split(".")
                         mod_py = imports_by_class[cls_name]
-                        check_attrs = '[' + ', '.join(f"'{a}'" for a in chain) + ']'
+                        check_attrs = "[" + ", ".join(f"'{a}'" for a in chain) + "]"
                         code = [
                             f"from {mod_py} import {cls_name}",
                             f"try: obj = {cls_name}()",
                             "except: print('SKIP'); sys.exit(0)",
                         ]
                         for attr in chain:
-                            code.append(f"if not hasattr(obj, '{attr}'): print('MISSING: {cls_name}.{attr}'); sys.exit(2)")
+                            code.append(
+                                f"if not hasattr(obj, '{attr}'): print('MISSING: {cls_name}.{attr}'); sys.exit(2)"
+                            )
                             code.append(f"obj = obj.{attr}")
-                        code.append(f"print('OK: {cls_name}.' + '.'.join({check_attrs}))")
+                        code.append(
+                            f"print('OK: {cls_name}.' + '.'.join({check_attrs}))"
+                        )
                         r = _run_python_snippet(ws, [src_dir], code)
                         if r.returncode == 2:
                             err_line = ""
-                            for line in (r.stdout or "").split('\n'):
-                                if 'MISSING:' in line:
+                            for line in (r.stdout or "").split("\n"):
+                                if "MISSING:" in line:
                                     err_line = line.strip()
                                     break
-                            cross_errors.append((fname, str(fp), f"CROSS: {err_line or f'{cls_name}.{chain[0]}'} (accessed as {var}.{chain_m.group(1)} in {fname})"))
+                            cross_errors.append(
+                                (
+                                    fname,
+                                    str(fp),
+                                    f"CROSS: {err_line or f'{cls_name}.{chain[0]}'} (accessed as {var}.{chain_m.group(1)} in {fname})",
+                                )
+                            )
                         elif "OK:" in (r.stdout or ""):
                             print(f"  {r.stdout.strip()}")
             if cross_errors:
@@ -3114,9 +4004,9 @@ class ImplementCommand(Command):
             else:
                 print("[fix] Cross-file attributes all verified!")
 
-            _RE_4 = re.compile(r'^class\s+(\w+)', re.MULTILINE)
+            _RE_4 = re.compile(r"^class\s+(\w+)", re.MULTILINE)
             _NO_MODULE_NAMED_RE = re.compile(r"No module named '([^']+)'")
-            _RE_6 = re.compile(r'^\w+\s*:')
+            _RE_6 = re.compile(r"^\w+\s*:")
             for fix_attempt in range(3):
                 errors_found = []
                 current_error_sigs: dict[str, str] = {}
@@ -3131,52 +4021,77 @@ class ImplementCommand(Command):
                     fp = Path(ws) / fname
                     fpath_str = os.path.realpath(fp)
 
-                    r = subprocess.run(["python", "-m", "py_compile", fpath_str], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                    r = subprocess.run(
+                        ["python", "-m", "py_compile", fpath_str],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                    )
                     if r.returncode != 0:
-                        errors_found.append((fname, fpath_str, f"COMPILE: {r.stderr.strip()}"))
+                        errors_found.append(
+                            (fname, fpath_str, f"COMPILE: {r.stderr.strip()}")
+                        )
                         continue
 
-                    mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
-                    r = _run_python_snippet(ws, [str(fp.parent.resolve())], [
-                        f"import {mod_name}",
-                        "print('OK')",
-                    ])
+                    mod_name = fname[:-3].replace("\\", ".").replace("/", ".")
+                    r = _run_python_snippet(
+                        ws,
+                        [str(fp.parent.resolve())],
+                        [
+                            f"import {mod_name}",
+                            "print('OK')",
+                        ],
+                    )
                     if r.returncode != 0:
                         err_text = r.stderr.strip()
                         mm = _NO_MODULE_NAMED_RE.search(err_text)
                         if mm:
                             batch_mods = {
-                                bm[:-3].replace('\\', '.').replace('/', '.')
+                                bm[:-3].replace("\\", ".").replace("/", ".")
                                 for bm in list(implemented) + list(all_files)
-                                if bm.endswith('.py')
+                                if bm.endswith(".py")
                             }
                             if mm.group(1) not in batch_mods:
-                                preexisting_sigs.add(f"{fname}: missing module '{mm.group(1)}'")
-                                print(f"  (pre-existing, skipped) {fname}: missing module '{mm.group(1)}' is not produced by this batch")
+                                preexisting_sigs.add(
+                                    f"{fname}: missing module '{mm.group(1)}'"
+                                )
+                                print(
+                                    f"  (pre-existing, skipped) {fname}: missing module '{mm.group(1)}' is not produced by this batch"
+                                )
                                 continue
                         errors_found.append((fname, fpath_str, f"IMPORT: {err_text}"))
                         continue
 
                     r = subprocess.run(
                         ["python", "-m", "mypy", fpath_str, "--ignore-missing-imports"],
-                        capture_output=True, text=True, cwd=str(Path(ws)),
-                        encoding="utf-8", errors="replace",
+                        capture_output=True,
+                        text=True,
+                        cwd=str(Path(ws)),
+                        encoding="utf-8",
+                        errors="replace",
                     )
                     if r.returncode != 0 and "No module named" not in r.stderr:
                         norm_fname = fname.replace("\\", "/")
                         real_fname = fpath_str.replace("\\", "/")
                         type_errors = []
                         foreign_errors = []
-                        for line in r.stdout.split('\n'):
+                        for line in r.stdout.split("\n"):
                             line = line.strip()
-                            if not line or ':' not in line or line.startswith('Found'):
+                            if not line or ":" not in line or line.startswith("Found"):
                                 continue
-                            if (': note:' in line or 'annotation-unchecked' in line
-                                    or '"list" is invariant' in line or '--check-untyped-defs' in line
-                                    or 'No overload variant' in line or 'Possible overload variants' in line
-                                    or 'no-untyped-def' in line or 'no-untyped-call' in line):
+                            if (
+                                ": note:" in line
+                                or "annotation-unchecked" in line
+                                or '"list" is invariant' in line
+                                or "--check-untyped-defs" in line
+                                or "No overload variant" in line
+                                or "Possible overload variants" in line
+                                or "no-untyped-def" in line
+                                or "no-untyped-call" in line
+                            ):
                                 continue
-                            err_path = line.split(':', 1)[0].replace("\\", "/")
+                            err_path = line.split(":", 1)[0].replace("\\", "/")
                             if err_path == norm_fname or err_path == real_fname:
                                 type_errors.append(line)
                             else:
@@ -3184,7 +4099,9 @@ class ImplementCommand(Command):
                         if foreign_errors:
                             for fe in foreign_errors:
                                 preexisting_sigs.add(fe)
-                            print(f"  (pre-existing, skipped) {fname}: {len(foreign_errors)} error(s) in other files: {foreign_errors[0]}")
+                            print(
+                                f"  (pre-existing, skipped) {fname}: {len(foreign_errors)} error(s) in other files: {foreign_errors[0]}"
+                            )
                         if type_errors:
                             for te in type_errors[:5]:
                                 errors_found.append((fname, fpath_str, f"TYPE: {te}"))
@@ -3193,20 +4110,28 @@ class ImplementCommand(Command):
                         source = f.read()
                     class_names = _RE_4.findall(source)
                     for cn in class_names:
-                        r = _run_python_snippet(ws, [str(fp.parent.resolve())], [
-                            f"import {mod_name}",
-                            f"c={mod_name}.{cn}",
-                            "import inspect",
-                            f"try:\n    sig=inspect.signature(c)\n    print(f'OK: {cn}'+str(list(sig.parameters.keys())))\n"
-                            f"except (ValueError, TypeError):\n    print(f'OK: {cn} (builtin/Protocol/TypedDict)')",
-                        ])
+                        r = _run_python_snippet(
+                            ws,
+                            [str(fp.parent.resolve())],
+                            [
+                                f"import {mod_name}",
+                                f"c={mod_name}.{cn}",
+                                "import inspect",
+                                f"try:\n    sig=inspect.signature(c)\n    print(f'OK: {cn}'+str(list(sig.parameters.keys())))\n"
+                                f"except (ValueError, TypeError):\n    print(f'OK: {cn} (builtin/Protocol/TypedDict)')",
+                            ],
+                        )
                         if r.returncode != 0:
-                            errors_found.append((fname, fpath_str, f"CLASS {cn}: {r.stderr.strip()}"))
+                            errors_found.append(
+                                (fname, fpath_str, f"CLASS {cn}: {r.stderr.strip()}")
+                            )
                         else:
                             print(f"  {fname}: {r.stdout.strip()}")
 
                 if preexisting_sigs:
-                    print(f"  (pre-existing, skipped) {len(preexisting_sigs)} unique error(s) outside this batch — reported, not LLM-fixed")
+                    print(
+                        f"  (pre-existing, skipped) {len(preexisting_sigs)} unique error(s) outside this batch — reported, not LLM-fixed"
+                    )
 
                 if not errors_found:
                     print("\n[fix] All files pass deep validation!")
@@ -3223,16 +4148,24 @@ class ImplementCommand(Command):
                         with open(fpath_str, "r", encoding="utf-8") as sf:
                             source = sf.read()
 
-                        for cn_match in re.finditer(r'class\s+(\w+)\s*(?:\(.*?\))?\s*:', source):
+                        for cn_match in re.finditer(
+                            r"class\s+(\w+)\s*(?:\(.*?\))?\s*:", source
+                        ):
                             cn = cn_match.group(1)
-                            if cn.startswith('_') or 'Protocol' in source[cn_match.start():cn_match.start()+200]:
+                            if (
+                                cn.startswith("_")
+                                or "Protocol"
+                                in source[cn_match.start() : cn_match.start() + 200]
+                            ):
                                 continue
 
-                            mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
+                            mod_name = fname[:-3].replace("\\", ".").replace("/", ".")
 
                             # Enum classes — validate by accessing members, not calling ()
-                            class_header = source[cn_match.start():cn_match.end()+50]
-                            if 'Enum' in class_header:
+                            class_header = source[
+                                cn_match.start() : cn_match.end() + 50
+                            ]
+                            if "Enum" in class_header:
                                 smoke_lines = [
                                     f"import {mod_name}",
                                     f"print(f'Testing {cn}...')",
@@ -3241,9 +4174,13 @@ class ImplementCommand(Command):
                                     f"    print(f'  OK: {cn} is valid Enum')",
                                     f"except Exception as e:\n    print(f'  FAIL: {cn}: {{type(e).__name__}}: {{e}}')",
                                 ]
-                                r = _run_python_snippet(ws, [str(fp.parent.resolve())], smoke_lines)
+                                r = _run_python_snippet(
+                                    ws, [str(fp.parent.resolve())], smoke_lines
+                                )
                                 if r.returncode != 0:
-                                    smoke_errors.append((fname, fpath_str, r.stderr.strip()[-300:]))
+                                    smoke_errors.append(
+                                        (fname, fpath_str, r.stderr.strip()[-300:])
+                                    )
                                 else:
                                     output = r.stdout.strip()
                                     if "FAIL:" in output:
@@ -3254,31 +4191,38 @@ class ImplementCommand(Command):
                                 continue
 
                             init_match = re.search(
-                                rf'class\s+{re.escape(cn)}\b(?s:.*?)def\s+__init__\s*\((.*?)\)\s*(?:->[^:]+)?:',
-                                source[cn_match.start():cn_match.start() + 2000],
+                                rf"class\s+{re.escape(cn)}\b(?s:.*?)def\s+__init__\s*\((.*?)\)\s*(?:->[^:]+)?:",
+                                source[cn_match.start() : cn_match.start() + 2000],
                             )
                             params = init_match.group(1) if init_match else ""
 
                             required = []
-                            dc_m = re.search(r'@dataclass\b[^\n]*\n\s*class\s+' + re.escape(cn) + r'\b', source[:cn_match.end()])
+                            dc_m = re.search(
+                                r"@dataclass\b[^\n]*\n\s*class\s+"
+                                + re.escape(cn)
+                                + r"\b",
+                                source[: cn_match.end()],
+                            )
                             if dc_m:
-                                for dline in source[cn_match.end():].split('\n'):
+                                for dline in source[cn_match.end() :].split("\n"):
                                     stripped = dline.strip()
-                                    if not stripped or stripped.startswith(('#', '"""', '@', 'def ', 'class ')):
+                                    if not stripped or stripped.startswith(
+                                        ("#", '"""', "@", "def ", "class ")
+                                    ):
                                         continue
-                                    if _RE_6.match(stripped) and '=' not in stripped:
-                                        required.append(stripped.split(':')[0].strip())
-                                    elif not dline.startswith('    ') and stripped:
+                                    if _RE_6.match(stripped) and "=" not in stripped:
+                                        required.append(stripped.split(":")[0].strip())
+                                    elif not dline.startswith("    ") and stripped:
                                         break
                             else:
-                                for p in params.split(','):
+                                for p in params.split(","):
                                     p = p.strip()
-                                    if not p or p == 'self':
+                                    if not p or p == "self":
                                         continue
-                                    if '=' not in p:
-                                        required.append(p.split(':')[0].strip())
+                                    if "=" not in p:
+                                        required.append(p.split(":")[0].strip())
 
-                            mod_name = fname[:-3].replace('\\', '.').replace('/', '.')
+                            mod_name = fname[:-3].replace("\\", ".").replace("/", ".")
 
                             smoke_lines = [
                                 f"import {mod_name}",
@@ -3293,16 +4237,31 @@ class ImplementCommand(Command):
                                 smoke_lines.append(f"    obj = {mod_name}.{cn}()")
                                 smoke_lines.append(f"    print(f'  OK: {cn}() works')")
                             elif len(required) <= 2:
-                                call_args = ", ".join(f'"mock_{r.split(":")[0].strip()}"' if ':' in r else f'"mock_{r.strip()}"' for r in required)
-                                smoke_lines.append(f"    obj = {mod_name}.{cn}({call_args})")
+                                call_args = ", ".join(
+                                    f'"mock_{r.split(":")[0].strip()}"'
+                                    if ":" in r
+                                    else f'"mock_{r.strip()}"'
+                                    for r in required
+                                )
+                                smoke_lines.append(
+                                    f"    obj = {mod_name}.{cn}({call_args})"
+                                )
                                 smoke_lines.append(f"    print(f'  OK: {cn}() works')")
                             else:
-                                smoke_lines.append(f"    print(f'  SKIP: {cn} needs {len(required)} args')")
-                            smoke_lines.append(f"except Exception as e:\n    print(f'  FAIL: {cn}: {{type(e).__name__}}: {{e}}')")
-                            r = _run_python_snippet(ws, [str(fp.parent.resolve())], smoke_lines)
+                                smoke_lines.append(
+                                    f"    print(f'  SKIP: {cn} needs {len(required)} args')"
+                                )
+                            smoke_lines.append(
+                                f"except Exception as e:\n    print(f'  FAIL: {cn}: {{type(e).__name__}}: {{e}}')"
+                            )
+                            r = _run_python_snippet(
+                                ws, [str(fp.parent.resolve())], smoke_lines
+                            )
 
                             if r.returncode != 0:
-                                smoke_errors.append((fname, fpath_str, r.stderr.strip()[-300:]))
+                                smoke_errors.append(
+                                    (fname, fpath_str, r.stderr.strip()[-300:])
+                                )
                             else:
                                 output = r.stdout.strip()
                                 if "FAIL:" in output:
@@ -3333,7 +4292,9 @@ class ImplementCommand(Command):
                 # root causes depend on are fixed first
                 error_groups = _topological_sort_groups(error_groups, ws)
 
-                print(f"\n[fix] Attempt {fix_attempt + 1}: {len(errors_found)} errors in {len(error_groups)} groups")
+                print(
+                    f"\n[fix] Attempt {fix_attempt + 1}: {len(errors_found)} errors in {len(error_groups)} groups"
+                )
                 for fname, fpath, err in errors_found:
                     print(f"  - {fname}:")
                     print(f"    {err}")
@@ -3344,7 +4305,9 @@ class ImplementCommand(Command):
 
                 # Deduplicate: stop if same errors as previous attempt
                 if fix_attempt > 0 and current_error_sigs == prev_error_sigs:
-                    print("\n[fix] Same errors as previous attempt — stopping (no progress possible).")
+                    print(
+                        "\n[fix] Same errors as previous attempt — stopping (no progress possible)."
+                    )
                     break
                 prev_error_sigs = dict(current_error_sigs)
 
@@ -3368,17 +4331,23 @@ class ImplementCommand(Command):
                         # Fix root cause first
                         fname, fpath, err = root_err
                         if fname in fixed_files_this_round:
-                            print(f"\n[fix] Skipping {fname} — already fixed this round.")
+                            print(
+                                f"\n[fix] Skipping {fname} — already fixed this round."
+                            )
                             continue
 
                         prev_sig = file_error_sigs.get(fname, "")
                         cur_sig = f"{err[:200]}"
                         if prev_sig == cur_sig:
-                            print(f"\n[fix] Skipping {fname} — same error as previous attempt.")
+                            print(
+                                f"\n[fix] Skipping {fname} — same error as previous attempt."
+                            )
                             continue
 
                         print(f"\n[fix] Fixing root cause: {fname}...")
-                        print(f"  Downstream files: {', '.join(e[0] for e in downstream_errs)}")
+                        print(
+                            f"  Downstream files: {', '.join(e[0] for e in downstream_errs)}"
+                        )
 
                         if not os.path.exists(fpath):
                             print(f"  Skipping {fname} — file not found")
@@ -3388,20 +4357,25 @@ class ImplementCommand(Command):
                             current_code = f.read()
 
                         # Use root cause prompt with downstream context
-                        _rc_m = re.search(r'ROOT_CAUSE: (\w+)', err)
+                        _rc_m = re.search(r"ROOT_CAUSE: (\w+)", err)
                         _rc_class = _rc_m.group(1) if _rc_m else ""
                         fix_msgs = _build_root_cause_prompt(
                             _rc_class,
                             current_code,
                             downstream_errs,
-                            prefer_file=(fname in patch_failed)
+                            prefer_file=(fname in patch_failed),
                         )
-                        print(f"  [llm] requesting root-cause fix for {fname} ({_rc_class or 'class'}) ...", flush=True)
+                        print(
+                            f"  [llm] requesting root-cause fix for {fname} ({_rc_class or 'class'}) ...",
+                            flush=True,
+                        )
                         fixed = await _chat_fix_text(agent, fix_msgs, fname, err)
                         if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
                             print(f"  LLM error: {fixed}")
                             continue
-                        applied, note = _consume_fix_blocks(fixed, fname, fpath, current_code, file_first=True)
+                        applied, note = _consume_fix_blocks(
+                            fixed, fname, fpath, current_code, file_first=True
+                        )
                         if applied:
                             print(f"  Fixed root cause: {fname} ({note})")
                             file_error_sigs[fname] = ""
@@ -3417,7 +4391,9 @@ class ImplementCommand(Command):
                     if root_err and not root_fixed:
                         # Root cause fix failed — skip downstream to avoid
                         # wasting LLM calls on errors that won't resolve
-                        print(f"\n  Skipping {len(downstream_errs)} downstream errors — root cause fix failed")
+                        print(
+                            f"\n  Skipping {len(downstream_errs)} downstream errors — root cause fix failed"
+                        )
                         for fname, fpath, err in downstream_errs:
                             file_error_sigs[fname] = f"{err[:200]}"
                         continue
@@ -3427,23 +4403,37 @@ class ImplementCommand(Command):
                         prev_sig = file_error_sigs.get(fname, "")
                         cur_sig = f"{err[:200]}"
                         if prev_sig == cur_sig:
-                            print(f"\n[fix] Skipping {fname} — same error as previous attempt.")
+                            print(
+                                f"\n[fix] Skipping {fname} — same error as previous attempt."
+                            )
                             continue
                         print(f"\n[fix] Fixing {fname}...")
                         if not os.path.exists(fpath):
-                            print(f"  Skipping {fname} — file not found (may have been rejected)")
+                            print(
+                                f"  Skipping {fname} — file not found (may have been rejected)"
+                            )
                             file_error_sigs[fname] = cur_sig
                             continue
                         with open(fpath, "r", encoding="utf-8") as f:
                             current_code = f.read()
 
-                        fix_msgs = _build_fix_prompt(err, current_code, fname, prefer_file=(fname in patch_failed))
-                        print(f"  [llm] requesting fix for {fname} ({err.split(':')[0].strip()[:60]}) ...", flush=True)
+                        fix_msgs = _build_fix_prompt(
+                            err,
+                            current_code,
+                            fname,
+                            prefer_file=(fname in patch_failed),
+                        )
+                        print(
+                            f"  [llm] requesting fix for {fname} ({err.split(':')[0].strip()[:60]}) ...",
+                            flush=True,
+                        )
                         fixed = await _chat_fix_text(agent, fix_msgs, fname, err)
                         if fixed.startswith("[Error") or fixed.startswith("[LM Studio"):
                             print(f"  LLM error: {fixed}")
                             continue
-                        applied, note = _consume_fix_blocks(fixed, fname, fpath, current_code, file_first=False)
+                        applied, note = _consume_fix_blocks(
+                            fixed, fname, fpath, current_code, file_first=False
+                        )
                         if applied:
                             print(f"  Fixed: {fname} ({note})")
                             file_error_sigs[fname] = ""
@@ -3456,9 +4446,11 @@ class ImplementCommand(Command):
             print("\n[fix] Complete")
 
         if review_mode and new_files:
-            print(f"\n{'='*50}")
-            print(f"[review] Reviewing {len(new_files)} new file(s): {', '.join(sorted(new_files)[:10])}")
-            print(f"{'='*50}")
+            print(f"\n{'=' * 50}")
+            print(
+                f"[review] Reviewing {len(new_files)} new file(s): {', '.join(sorted(new_files)[:10])}"
+            )
+            print(f"{'=' * 50}")
 
             py_new = sorted(f for f in new_files if f.endswith(".py"))
             all_content: dict[str, str] = {}
@@ -3474,11 +4466,13 @@ class ImplementCommand(Command):
             func_locations: dict[str, list[str]] = {}
             class_locations: dict[str, list[str]] = {}
             for fname, content in all_content.items():
-                for m in re.finditer(r'^\s*def\s+(\w+)', content, re.MULTILINE):
+                for m in re.finditer(r"^\s*def\s+(\w+)", content, re.MULTILINE):
                     name = m.group(1)
-                    if not name.startswith("__"):  # skip dunders (__init__, __str__, etc.)
+                    if not name.startswith(
+                        "__"
+                    ):  # skip dunders (__init__, __str__, etc.)
                         func_locations.setdefault(name, []).append(fname)
-                for m in re.finditer(r'^\s*class\s+(\w+)', content, re.MULTILINE):
+                for m in re.finditer(r"^\s*class\s+(\w+)", content, re.MULTILINE):
                     class_locations.setdefault(m.group(1), []).append(fname)
 
             dup_funcs = {n: fs for n, fs in func_locations.items() if len(fs) > 1}
@@ -3497,25 +4491,35 @@ class ImplementCommand(Command):
                 print("\n  [review] Duplicate functions across files:")
                 for name, files in sorted(dup_funcs.items()):
                     print(f"    {name}() in: {', '.join(files)}")
-                    issues_found.append(f"Duplicate function `{name}()` defined in {len(files)} files: {', '.join(files)}")
+                    issues_found.append(
+                        f"Duplicate function `{name}()` defined in {len(files)} files: {', '.join(files)}"
+                    )
             if dup_classes:
                 print("\n  [review] Duplicate classes across files:")
                 for name, files in sorted(dup_classes.items()):
                     print(f"    {name} in: {', '.join(files)}")
-                    issues_found.append(f"Duplicate class `{name}` defined in {len(files)} files: {', '.join(files)}")
+                    issues_found.append(
+                        f"Duplicate class `{name}` defined in {len(files)} files: {', '.join(files)}"
+                    )
             if near_dupes:
                 print("\n  [review] Near-identical files:")
                 for fa, fb in near_dupes:
                     print(f"    {fa} ≈ {fb} ({len(all_content[fa])} bytes each)")
-                    issues_found.append(f"Nearly identical files: {fa} and {fb} — consider merging")
+                    issues_found.append(
+                        f"Nearly identical files: {fa} and {fb} — consider merging"
+                    )
 
             # ---- Cross-file attribute & wiring checks ----
             from agent_core.patterns import (
-                detect_module_collisions, detect_attribute_errors,
-                detect_unwired_modules, detect_class_conflicts
+                detect_module_collisions,
+                detect_attribute_errors,
+                detect_unwired_modules,
+                detect_class_conflicts,
             )
 
-            collisions = detect_module_collisions(py_new, existing_files=list(all_content.keys()))
+            collisions = detect_module_collisions(
+                py_new, existing_files=list(all_content.keys())
+            )
             if collisions:
                 print("\n  [review] Module name collisions:")
                 for c in collisions:
@@ -3541,7 +4545,9 @@ class ImplementCommand(Command):
                 print("\n  [review] Class/function name conflicts with existing code:")
                 for cc in class_conflicts:
                     print(f"    {cc['file']}:{cc['line']}: {cc['suggestion']}")
-                    issues_found.append(f"{cc['file']}:{cc['line']}: {cc['suggestion']}")
+                    issues_found.append(
+                        f"{cc['file']}:{cc['line']}: {cc['suggestion']}"
+                    )
 
             static_summary = ""
             if issues_found:
@@ -3555,17 +4561,27 @@ class ImplementCommand(Command):
             if dangerous_files:
                 reasons = []
                 if class_conflicts:
-                    reasons.append(f"{sum(1 for cc in class_conflicts if cc['file'] in dangerous_files)} have class-name conflicts")
+                    reasons.append(
+                        f"{sum(1 for cc in class_conflicts if cc['file'] in dangerous_files)} have class-name conflicts"
+                    )
                 if unwired:
-                    reasons.append(f"{sum(1 for uw in unwired if uw['file'] in dangerous_files)} are unwired")
-                print(f"\n  [review] {len(dangerous_files)} file(s) have issues ({', '.join(reasons)}):")
+                    reasons.append(
+                        f"{sum(1 for uw in unwired if uw['file'] in dangerous_files)} are unwired"
+                    )
+                print(
+                    f"\n  [review] {len(dangerous_files)} file(s) have issues ({', '.join(reasons)}):"
+                )
                 for df in sorted(dangerous_files):
                     print(f"    {df}")
-                choice = auto_choice(
-                    "  Delete these files (and any generated files only they import)? (y/N): ",
-                    default="n",
-                    auto_default="n",
-                ).strip().lower()
+                choice = (
+                    auto_choice(
+                        "  Delete these files (and any generated files only they import)? (y/N): ",
+                        default="n",
+                        auto_default="n",
+                    )
+                    .strip()
+                    .lower()
+                )
                 if stop_requested():
                     return True
                 if choice == "y":
@@ -3586,19 +4602,26 @@ class ImplementCommand(Command):
 
             # ---- Wire-in offer for kept unwired modules ----
             kept_unwired = [
-                uw["file"] for uw in unwired
-                if (Path(ws) / uw["file"]).exists()
+                uw["file"] for uw in unwired if (Path(ws) / uw["file"]).exists()
             ]
             if kept_unwired:
                 suggestions = _suggest_consumers(kept_unwired, ws)
-                print(f"\n  [review] {len(kept_unwired)} new module(s) are not imported by any code:")
+                print(
+                    f"\n  [review] {len(kept_unwired)} new module(s) are not imported by any code:"
+                )
                 for fname in kept_unwired:
-                    print(f"    {fname}  → suggested consumer(s): {', '.join(suggestions[fname])}")
-                wire_choice = auto_choice(
-                    "  Wire them into consumers (LLM pass, max 3 files)? (y/N): ",
-                    default="n",
-                    auto_default="n",
-                ).strip().lower()
+                    print(
+                        f"    {fname}  → suggested consumer(s): {', '.join(suggestions[fname])}"
+                    )
+                wire_choice = (
+                    auto_choice(
+                        "  Wire them into consumers (LLM pass, max 3 files)? (y/N): ",
+                        default="n",
+                        auto_default="n",
+                    )
+                    .strip()
+                    .lower()
+                )
                 if stop_requested():
                     return True
                 if wire_choice in ("y", "yes"):
@@ -3611,24 +4634,49 @@ class ImplementCommand(Command):
                 content = all_content[fname]
                 print(f"\n  Reviewing {fname} ({len(content)} bytes)...")
                 review_msg = [
-                    {"role": "system", "content": (
-                        "Review this code for correctness. Check for:\n"
-                        "1. Broken imports (importing from modules/paths that don't exist)\n"
-                        "2. Missing __init__.py in new packages\n"
-                        "3. Invalid API schemas (missing type:object, properties, required)\n"
-                        "4. Off-by-one errors (e.g. 0-index vs 1-index line numbers)\n"
-                        "5. Empty except blocks or silent error swallowing\n"
-                        "6. Unused imports, missing imports, or type mismatches\n"
-                        "7. Duplicated code — functions/classes redefined across files instead of imported\n"
-                        "8. DRY violations — repeated logic that should be extracted into a shared utility\n\n"
-                        "Be concise. List only actual bugs. Skip style concerns."
-                    )},
-                    {"role": "user", "content": f"{static_summary}Review this file for bugs:\n\n```python\n{content}\n```"},
+                    {
+                        "role": "system",
+                        "content": (
+                            "Review this code for correctness. Check for:\n"
+                            "1. Broken imports (importing from modules/paths that don't exist)\n"
+                            "2. Missing __init__.py in new packages\n"
+                            "3. Invalid API schemas (missing type:object, properties, required)\n"
+                            "4. Off-by-one errors (e.g. 0-index vs 1-index line numbers)\n"
+                            "5. Empty except blocks or silent error swallowing\n"
+                            "6. Unused imports, missing imports, or type mismatches\n"
+                            "7. Duplicated code — functions/classes redefined across files instead of imported\n"
+                            "8. DRY violations — repeated logic that should be extracted into a shared utility\n\n"
+                            "Be concise. List only actual bugs. Skip style concerns."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": f"{static_summary}Review this file for bugs:\n\n```python\n{content}\n```",
+                    },
                 ]
                 review = await agent.llm.chat(review_msg, disable_thinking=True)
                 if review.startswith("[Error") or review.startswith("[LM Studio"):
                     continue
-                if any(kw in review.lower() for kw in ("bug", "issue", "error", "broken", "missing", "invalid", "fix", "should", "incorrect", "fails", "dup", "duplicate", "dry", "repeat", "same as")):
+                if any(
+                    kw in review.lower()
+                    for kw in (
+                        "bug",
+                        "issue",
+                        "error",
+                        "broken",
+                        "missing",
+                        "invalid",
+                        "fix",
+                        "should",
+                        "incorrect",
+                        "fails",
+                        "dup",
+                        "duplicate",
+                        "dry",
+                        "repeat",
+                        "same as",
+                    )
+                ):
                     print(f"  {review}")
                 else:
                     print("  No bugs found.")
@@ -3637,14 +4685,17 @@ class ImplementCommand(Command):
         if implemented and target_workspace:
             try:
                 candidates = await extract_from_changes(
-                    agent, implemented,
-                    context=f"Task plan: {taskplan_content[:500] if taskplan_content else 'N/A'}"
+                    agent,
+                    implemented,
+                    context=f"Task plan: {taskplan_content[:500] if taskplan_content else 'N/A'}",
                 )
                 if candidates:
-                    print(f"\n[decide] Extracted {len(candidates)} decision candidates from this run:")
+                    print(
+                        f"\n[decide] Extracted {len(candidates)} decision candidates from this run:"
+                    )
                     for i, c in enumerate(candidates, 1):
                         print(f"  {i}. {c.get('title', 'Untitled')}")
-                        ctx = c.get('context', '')
+                        ctx = c.get("context", "")
                         if ctx:
                             print(f"     {ctx}")
                     print("\n  Record? (1,2/all/N, press Enter to skip): ", end="")
@@ -3685,7 +4736,10 @@ class ImplementCommand(Command):
                 from harnessfix.history import append_execution
 
                 file_records = [
-                    {"path": fname, "status": "written" if fname in implemented else "skipped"}
+                    {
+                        "path": fname,
+                        "status": "written" if fname in implemented else "skipped",
+                    }
                     for fname in all_files
                 ]
                 append_execution(

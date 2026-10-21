@@ -1,7 +1,9 @@
 """Clear command for agent interactive mode."""
+
 from .base import Command
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -17,7 +19,7 @@ class ClearCommand(Command):
     def help_text(self) -> str:
         return "clear [stats|--force] - Show/clear agent memory"
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         force = "--force" in args
         stats_only = "stats" in args
 
@@ -35,7 +37,13 @@ class ClearCommand(Command):
         if stats_only:
             return True
 
-        if stats["chat_history"] == 0 and stats["files_read"] == 0 and stats["working_memory"] == 0 and stats["semantic_index"] == 0 and stats["knowledge_graph"] == 0:
+        if (
+            stats["chat_history"] == 0
+            and stats["files_read"] == 0
+            and stats["working_memory"] == 0
+            and stats["semantic_index"] == 0
+            and stats["knowledge_graph"] == 0
+        ):
             print("Nothing to clear.")
             return True
 

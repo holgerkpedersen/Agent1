@@ -16,6 +16,7 @@ The refactor collapsed four kinds of duplication into single helpers:
 These tests pin the observable contracts so future edits cannot silently
 diverge the call sites again.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -44,6 +45,7 @@ def _make_agent() -> "agent.Agent":
 # 1. Metrics emission has exactly one implementation
 # ---------------------------------------------------------------------------
 
+
 def test_record_command_metrics_delegates_to_emit() -> None:
     """The public REPL entry point is a thin delegate — no second writer."""
     import inspect
@@ -70,11 +72,17 @@ def test_demo_and_real_commands_share_metric_names() -> None:
 # 2. Shared subprocess runner
 # ---------------------------------------------------------------------------
 
+
 def test_run_subprocess_captured_tags_stderr_and_truncates() -> None:
     output, error = agent._run_subprocess_captured(
-        [sys.executable, "-c",
-         "import sys; print('out'); print('bad', file=sys.stderr)"],
-        cwd=".", timeout=30, label="Probe",
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('out'); print('bad', file=sys.stderr)",
+        ],
+        cwd=".",
+        timeout=30,
+        label="Probe",
     )
     assert error is None
     assert "out" in output
@@ -83,7 +91,10 @@ def test_run_subprocess_captured_tags_stderr_and_truncates() -> None:
 
 def test_run_subprocess_captured_reports_launch_failure_with_label() -> None:
     output, error = agent._run_subprocess_captured(
-        ["definitely-not-a-real-binary-xyz"], cwd=".", timeout=5, label="Git",
+        ["definitely-not-a-real-binary-xyz"],
+        cwd=".",
+        timeout=5,
+        label="Git",
     )
     assert output == ""
     assert error is not None and error.startswith("Git error:")
@@ -92,7 +103,9 @@ def test_run_subprocess_captured_reports_launch_failure_with_label() -> None:
 def test_run_subprocess_captured_timeout_message() -> None:
     output, error = agent._run_subprocess_captured(
         [sys.executable, "-c", "import time; time.sleep(10)"],
-        cwd=".", timeout=1, label="Tests",
+        cwd=".",
+        timeout=1,
+        label="Tests",
     )
     assert error is None
     assert output.startswith("Tests timed out after 1s")
@@ -126,6 +139,7 @@ def test_nlp_tests_tool_uses_shared_runner() -> None:
 # ---------------------------------------------------------------------------
 # 3. Write/edit share one save+verify+note tail
 # ---------------------------------------------------------------------------
+
 
 def test_save_verify_note_writes_and_verifies_python(tmp_path) -> None:
     bot = _make_agent()
@@ -166,11 +180,15 @@ def test_nlp_edit_rewrites_file_end_to_end(tmp_path) -> None:
     bot = _make_agent()
     target = tmp_path / "mod.py"
     target.write_text("value = 1\n", encoding="utf-8")
-    out = asyncio.run(bot._nlp_edit({
-        "path": str(target),
-        "old_text": "value = 1",
-        "new_text": "value = 2",
-    }))
+    out = asyncio.run(
+        bot._nlp_edit(
+            {
+                "path": str(target),
+                "old_text": "value = 1",
+                "new_text": "value = 2",
+            }
+        )
+    )
     assert out.startswith(f"Edited {target}")
     assert target.read_text(encoding="utf-8") == "value = 2\n"
 
@@ -178,6 +196,7 @@ def test_nlp_edit_rewrites_file_end_to_end(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 # 4. Dashboard wiring built once
 # ---------------------------------------------------------------------------
+
 
 def test_both_dashboard_entrypoints_share_build_dashboard(monkeypatch) -> None:
     import inspect
@@ -200,6 +219,7 @@ def test_build_dashboard_applies_default_rules() -> None:
 # ---------------------------------------------------------------------------
 # 5. Banner derives from the registry; system prompt is a module constant
 # ---------------------------------------------------------------------------
+
 
 def test_banner_synopses_match_registered_commands(capsys) -> None:
     """Every banner line must come from a command's own help_text."""
@@ -247,9 +267,8 @@ def test_agent_has_no_duplicate_or_unreachable_except_handlers() -> None:
     from harnessfix import issue_loop as il
 
     findings = il.find_duplicate_handlers(il._iter_py_files(il.REPO_ROOT))
-    assert findings == [], (
-        "duplicate/unreachable except handlers found:\n"
-        + "\n".join(f"  {f['file']}:{f['line']} {f['evidence']}" for f in findings)
+    assert findings == [], "duplicate/unreachable except handlers found:\n" + "\n".join(
+        f"  {f['file']}:{f['line']} {f['evidence']}" for f in findings
     )
 
 
@@ -266,13 +285,18 @@ def test_issue_verifier_detects_best_effort_excepts() -> None:
     locations = {f["locations"][0] for f in findings}
     # The eight known sites were resolved by the deterministic resolver.
     for expected in (
-        "agent.py:129", "agent.py:271", "agent.py:1865", "agent.py:1936",
-        "agent_core/security/shutdown.py:50", "agent_core/security/shutdown.py:59",
-        "agent_core/security/shutdown.py:100", "agent_core/security/shutdown.py:109",
+        "agent.py:129",
+        "agent.py:271",
+        "agent.py:1865",
+        "agent.py:1936",
+        "agent_core/security/shutdown.py:50",
+        "agent_core/security/shutdown.py:59",
+        "agent_core/security/shutdown.py:100",
+        "agent_core/security/shutdown.py:109",
     ):
-        assert not any(loc.endswith(expected) or loc == expected for loc in locations), (
-            f"expected {expected} to be fixed; still flagged: {findings}"
-        )
+        assert not any(
+            loc.endswith(expected) or loc == expected for loc in locations
+        ), f"expected {expected} to be fixed; still flagged: {findings}"
     # A synthetic site is still detected (detector still works).
     tmp = Path(tempfile.mkdtemp()) / "sample.py"
     tmp.write_text(
@@ -283,4 +307,3 @@ def test_issue_verifier_detects_best_effort_excepts() -> None:
         encoding="utf-8",
     )
     assert il.find_log_swallow_excepts([tmp]) != []
-

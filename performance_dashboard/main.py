@@ -65,8 +65,12 @@ class SystemBootstrapper:
         if self._task_collector is None or self._aggregator is None:
             return False
         self._shutdown_event.clear()
-        task_thread = threading.Thread(target=self._collection_sweep, name="collector-task", daemon=True)
-        command_thread = threading.Thread(target=self._command_sweep, name="collector-command", daemon=True)
+        task_thread = threading.Thread(
+            target=self._collection_sweep, name="collector-task", daemon=True
+        )
+        command_thread = threading.Thread(
+            target=self._command_sweep, name="collector-command", daemon=True
+        )
         self._task_collector_thread: Optional[threading.Thread] = task_thread
         self._command_collector_thread: Optional[threading.Thread] = command_thread
         task_thread.start()
@@ -82,7 +86,9 @@ class SystemBootstrapper:
                 continue
             point = TimeSeriesPoint(
                 timestamp=time.time(),
-                value=self._task_collector.monitor_task_progress("runtime") if self._task_collector else 0.0,
+                value=self._task_collector.monitor_task_progress("runtime")
+                if self._task_collector
+                else 0.0,
                 series_label="task-progress",
                 confidence_interval_lower=0.0,
                 confidence_interval_upper=1.0,
@@ -115,7 +121,11 @@ class SystemBootstrapper:
             time.sleep(interval)
 
     def initialize_components(self) -> bool:
-        configured = self._config is not None and self._settings is not None and self._intervals is not None
+        configured = (
+            self._config is not None
+            and self._settings is not None
+            and self._intervals is not None
+        )
         db_ready = self._instantiate_database()
         if db_ready and self._database is not None:
             db_ready = self._database.connect()
@@ -131,7 +141,9 @@ class JobScheduler(Generic[T]):
         self._lock: threading.Lock = threading.Lock()
         self._last_run: Dict[str, float] = {}
 
-    def register_job(self, name: str, interval_seconds: float, callback: Callable[..., Any]) -> bool:
+    def register_job(
+        self, name: str, interval_seconds: float, callback: Callable[..., Any]
+    ) -> bool:
         with self._lock:
             if not isinstance(name, str) or interval_seconds <= 0.0:
                 return False
@@ -141,19 +153,29 @@ class JobScheduler(Generic[T]):
 
     def schedule_periodic_jobs(self) -> bool:
         collection_interval = float(os.environ.get("COLLECTION_INTERVAL_SECONDS", "60"))
-        cache_interval = float(os.environ.get("CACHE_MAINTENANCE_INTERVAL_SECONDS", "120"))
+        cache_interval = float(
+            os.environ.get("CACHE_MAINTENANCE_INTERVAL_SECONDS", "120")
+        )
         analytics_interval = float(os.environ.get("ANALYTICS_INTERVAL_SECONDS", "300"))
         registered = True
-        registered &= self.register_job("metric-collection-sweep", collection_interval, lambda: None)
-        registered &= self.register_job("cache-maintenance-routine", cache_interval, lambda: None)
-        registered &= self.register_job("analytics-summary-job", analytics_interval, lambda: None)
+        registered &= self.register_job(
+            "metric-collection-sweep", collection_interval, lambda: None
+        )
+        registered &= self.register_job(
+            "cache-maintenance-routine", cache_interval, lambda: None
+        )
+        registered &= self.register_job(
+            "analytics-summary-job", analytics_interval, lambda: None
+        )
         return registered
 
     def run_once(self) -> int:
         executed = 0
         now = time.time()
         with self._lock:
-            snapshot: List[Tuple[str, Tuple[float, Callable[..., Any]]]] = list(self._jobs.items())
+            snapshot: List[Tuple[str, Tuple[float, Callable[..., Any]]]] = list(
+                self._jobs.items()
+            )
         for name, (interval, callback) in snapshot:
             last = self._last_run.get(name, 0.0)
             if now - last >= interval:
@@ -206,11 +228,21 @@ class DashboardRuntime:
     def schedule_periodic_jobs(self) -> bool:
         ok = self._scheduler.schedule_periodic_jobs()
         collection_interval = float(os.environ.get("COLLECTION_INTERVAL_SECONDS", "60"))
-        cache_interval = float(os.environ.get("CACHE_MAINTENANCE_INTERVAL_SECONDS", "120"))
+        cache_interval = float(
+            os.environ.get("CACHE_MAINTENANCE_INTERVAL_SECONDS", "120")
+        )
         analytics_interval = float(os.environ.get("ANALYTICS_INTERVAL_SECONDS", "300"))
-        ok &= self._scheduler.register_job("metric-collection-sweep", collection_interval, self._bootstrapper._collection_sweep)
-        ok &= self._scheduler.register_job("cache-maintenance-routine", cache_interval, self._cache_maintenance)
-        ok &= self._scheduler.register_job("analytics-summary-job", analytics_interval, self._analytics_summary)
+        ok &= self._scheduler.register_job(
+            "metric-collection-sweep",
+            collection_interval,
+            self._bootstrapper._collection_sweep,
+        )
+        ok &= self._scheduler.register_job(
+            "cache-maintenance-routine", cache_interval, self._cache_maintenance
+        )
+        ok &= self._scheduler.register_job(
+            "analytics-summary-job", analytics_interval, self._analytics_summary
+        )
         return ok
 
     def handle_shutdown_signals(self) -> None:
@@ -228,7 +260,10 @@ class DashboardRuntime:
         if tsdb is not None:
             tsdb.disconnect()  # type: ignore[arg-type]
         self._shutdown_event.set()
-        for thread in (self._bootstrapper._task_collector_thread, self._bootstrapper._command_collector_thread):
+        for thread in (
+            self._bootstrapper._task_collector_thread,
+            self._bootstrapper._command_collector_thread,
+        ):
             if thread is not None and thread.is_alive():
                 thread.join(timeout=5.0)
 

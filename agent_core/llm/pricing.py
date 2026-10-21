@@ -35,6 +35,7 @@ re-fetched at most once per day; ``fetch_cloud_prices(fetch=True, force=True)``
 ignores the TTL for an explicit on-demand refresh (e.g. ``model prices
 --refresh``).
 """
+
 from __future__ import annotations
 
 import json
@@ -65,144 +66,208 @@ _DOCS_URL = "https://opencode.ai/docs/en/go/"
 BASELINE_PRICES: dict[str, dict[str, Any]] = {
     # Keyless opencode-zen FREE tier -- free by definition.
     "opencode-zen/hy3-free": {
-        "prompt_per_1m": 0.0, "completion_per_1m": 0.0,
-        "verified": True, "source": "free-tier",
+        "prompt_per_1m": 0.0,
+        "completion_per_1m": 0.0,
+        "verified": True,
+        "source": "free-tier",
     },
     # --- OpenCode Go keyed tier (opencode.ai docs, prices per 1M tokens) ---
     "opencode-go/grok-4.6": {  # <=200K ; >200K is $4/$12
-        "prompt_per_1m": 2.00, "completion_per_1m": 6.00,
+        "prompt_per_1m": 2.00,
+        "completion_per_1m": 6.00,
         "cached_read_per_1m": 0.50,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/gpt-5.6-luna": {  # <=272K ; >272K is $0.40/$1.80
-        "prompt_per_1m": 0.20, "completion_per_1m": 1.20,
-        "cached_read_per_1m": 0.02, "cached_write_per_1m": 0.25,
-        "verified": True, "source": "opencode-docs",
+        "prompt_per_1m": 0.20,
+        "completion_per_1m": 1.20,
+        "cached_read_per_1m": 0.02,
+        "cached_write_per_1m": 0.25,
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/glm-5.3-flash": {
-        "prompt_per_1m": 0.15, "completion_per_1m": 0.50,
+        "prompt_per_1m": 0.15,
+        "completion_per_1m": 0.50,
         "cached_read_per_1m": 0.03,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/glm-5.3": {
-        "prompt_per_1m": 1.40, "completion_per_1m": 4.40,
+        "prompt_per_1m": 1.40,
+        "completion_per_1m": 4.40,
         "cached_read_per_1m": 0.26,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/glm-5.2": {
-        "prompt_per_1m": 1.40, "completion_per_1m": 4.40,
+        "prompt_per_1m": 1.40,
+        "completion_per_1m": 4.40,
         "cached_read_per_1m": 0.26,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/glm-5.1": {
-        "prompt_per_1m": 1.40, "completion_per_1m": 4.40,
+        "prompt_per_1m": 1.40,
+        "completion_per_1m": 4.40,
         "cached_read_per_1m": 0.26,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/kimi-k3": {
-        "prompt_per_1m": 3.00, "completion_per_1m": 15.00,
+        "prompt_per_1m": 3.00,
+        "completion_per_1m": 15.00,
         "cached_read_per_1m": 0.30,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/kimi-k2.7-code": {
-        "prompt_per_1m": 0.95, "completion_per_1m": 4.00,
+        "prompt_per_1m": 0.95,
+        "completion_per_1m": 4.00,
         "cached_read_per_1m": 0.19,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/kimi-k2.6": {
-        "prompt_per_1m": 0.95, "completion_per_1m": 4.00,
+        "prompt_per_1m": 0.95,
+        "completion_per_1m": 4.00,
         "cached_read_per_1m": 0.16,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/longcat-2.0": {
-        "prompt_per_1m": 0.30, "completion_per_1m": 1.20,
+        "prompt_per_1m": 0.30,
+        "completion_per_1m": 1.20,
         "cached_read_per_1m": 0.006,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/mimo-v2.5": {
-        "prompt_per_1m": 0.14, "completion_per_1m": 0.28,
+        "prompt_per_1m": 0.14,
+        "completion_per_1m": 0.28,
         "cached_read_per_1m": 0.0028,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/mimo-v2.5-pro": {
-        "prompt_per_1m": 0.435, "completion_per_1m": 0.87,
+        "prompt_per_1m": 0.435,
+        "completion_per_1m": 0.87,
         "cached_read_per_1m": 0.003625,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/minimax-m3": {
-        "prompt_per_1m": 0.30, "completion_per_1m": 1.20,
+        "prompt_per_1m": 0.30,
+        "completion_per_1m": 1.20,
         "cached_read_per_1m": 0.06,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/minimax-m2.7": {
-        "prompt_per_1m": 0.30, "completion_per_1m": 1.20,
-        "cached_read_per_1m": 0.06, "cached_write_per_1m": 0.375,
-        "verified": True, "source": "opencode-docs",
+        "prompt_per_1m": 0.30,
+        "completion_per_1m": 1.20,
+        "cached_read_per_1m": 0.06,
+        "cached_write_per_1m": 0.375,
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/minimax-m2.5": {
-        "prompt_per_1m": 0.30, "completion_per_1m": 1.20,
-        "cached_read_per_1m": 0.06, "cached_write_per_1m": 0.375,
-        "verified": True, "source": "opencode-docs",
+        "prompt_per_1m": 0.30,
+        "completion_per_1m": 1.20,
+        "cached_read_per_1m": 0.06,
+        "cached_write_per_1m": 0.375,
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/muse-spark-1.3-contributor": {
-        "prompt_per_1m": 0.10, "completion_per_1m": 0.20,
+        "prompt_per_1m": 0.10,
+        "completion_per_1m": 0.20,
         "cached_read_per_1m": 0.002,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/muse-spark-1.2-contributor": {
-        "prompt_per_1m": 0.10, "completion_per_1m": 0.20,
+        "prompt_per_1m": 0.10,
+        "completion_per_1m": 0.20,
         "cached_read_per_1m": 0.002,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/qwen3.8-max": {
-        "prompt_per_1m": 2.00, "completion_per_1m": 6.00,
-        "cached_read_per_1m": 0.25, "cached_write_per_1m": 2.50,
-        "verified": True, "source": "opencode-docs",
+        "prompt_per_1m": 2.00,
+        "completion_per_1m": 6.00,
+        "cached_read_per_1m": 0.25,
+        "cached_write_per_1m": 2.50,
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/qwen3.8-flash": {
-        "prompt_per_1m": 0.15, "completion_per_1m": 0.47,
-        "cached_read_per_1m": 0.016, "cached_write_per_1m": 0.20,
-        "verified": True, "source": "opencode-docs",
+        "prompt_per_1m": 0.15,
+        "completion_per_1m": 0.47,
+        "cached_read_per_1m": 0.016,
+        "cached_write_per_1m": 0.20,
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/qwen3.7-max": {
-        "prompt_per_1m": 2.50, "completion_per_1m": 7.50,
-        "cached_read_per_1m": 0.50, "cached_write_per_1m": 3.125,
-        "verified": True, "source": "opencode-docs",
+        "prompt_per_1m": 2.50,
+        "completion_per_1m": 7.50,
+        "cached_read_per_1m": 0.50,
+        "cached_write_per_1m": 3.125,
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/qwen3.7-plus": {  # <=256K ; >256K is $1.20/$4.80
-        "prompt_per_1m": 0.40, "completion_per_1m": 1.60,
-        "cached_read_per_1m": 0.04, "cached_write_per_1m": 0.50,
-        "verified": True, "source": "opencode-docs",
+        "prompt_per_1m": 0.40,
+        "completion_per_1m": 1.60,
+        "cached_read_per_1m": 0.04,
+        "cached_write_per_1m": 0.50,
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/qwen3.6-plus": {  # <=256K ; >256K is $2.00/$6.00
-        "prompt_per_1m": 0.50, "completion_per_1m": 3.00,
-        "cached_read_per_1m": 0.05, "cached_write_per_1m": 0.625,
-        "verified": True, "source": "opencode-docs",
+        "prompt_per_1m": 0.50,
+        "completion_per_1m": 3.00,
+        "cached_read_per_1m": 0.05,
+        "cached_write_per_1m": 0.625,
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/deepseek-v4-pro": {  # off-peak ; peak is $1.32/$3.96
-        "prompt_per_1m": 0.66, "completion_per_1m": 1.98,
+        "prompt_per_1m": 0.66,
+        "completion_per_1m": 1.98,
         "cached_read_per_1m": 0.022,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/deepseek-v4-flash": {  # off-peak ; peak is $0.44/$1.32
-        "prompt_per_1m": 0.22, "completion_per_1m": 0.66,
+        "prompt_per_1m": 0.22,
+        "completion_per_1m": 0.66,
         "cached_read_per_1m": 0.007,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/deepseek-v4-flash-vision-exp": {  # off-peak ; peak is $0.44/$1.32
-        "prompt_per_1m": 0.22, "completion_per_1m": 0.66,
+        "prompt_per_1m": 0.22,
+        "completion_per_1m": 0.66,
         "cached_read_per_1m": 0.007,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/hy4-preview": {
-        "prompt_per_1m": 0.834, "completion_per_1m": 2.501,
+        "prompt_per_1m": 0.834,
+        "completion_per_1m": 2.501,
         "cached_read_per_1m": 0.042,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
     "opencode-go/hy3": {
-        "prompt_per_1m": 0.14, "completion_per_1m": 0.58,
+        "prompt_per_1m": 0.14,
+        "completion_per_1m": 0.58,
         "cached_read_per_1m": 0.035,
-        "verified": True, "source": "opencode-docs",
+        "verified": True,
+        "source": "opencode-docs",
     },
 }
 
@@ -307,7 +372,10 @@ def cost_per_token(model_id: str, provider: str = "") -> float:
     entry = load_prices().get(model_id)
     if not entry:
         return 0.0
-    per_1m = (float(entry.get("prompt_per_1m") or 0.0) + float(entry.get("completion_per_1m") or 0.0)) / 2.0
+    per_1m = (
+        float(entry.get("prompt_per_1m") or 0.0)
+        + float(entry.get("completion_per_1m") or 0.0)
+    ) / 2.0
     return per_1m / 1_000_000.0
 
 
@@ -343,7 +411,8 @@ def cheapest_opencode_go_model() -> str | None:
     because they 403 without explicit workspace configuration.
     """
     cloud = {
-        k: v for k, v in load_prices().items()
+        k: v
+        for k, v in load_prices().items()
         if k.startswith("opencode-go/")
         and not _is_free_tier(k)
         and "-contributor" not in k

@@ -1,7 +1,9 @@
 """Read command for agent interactive mode."""
+
 from .base import Command
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -17,7 +19,7 @@ class ReadCommand(Command):
     def help_text(self) -> str:
         return "read <path>        - Read a file"
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         if len(args) < 1:
             self.error("Usage: read <path>")
             return True

@@ -20,7 +20,7 @@ except ImportError:
 needs_backend = pytest.mark.skipif(
     not _HAS_BACKEND,
     reason="no secret backend — install 'keyring' or 'cryptography' "
-           "(pip install -e .[secrets])",
+    "(pip install -e .[secrets])",
 )
 
 
@@ -93,6 +93,7 @@ class TestConfigIntegration:
         # Hermetic: ignore the workspace .env so the real key never leaks in.
         monkeypatch.setattr("agent_core.config._load_env_file", lambda *a, **k: {})
         from agent_core.config import load_agent_settings
+
         return load_agent_settings()
 
     @needs_backend

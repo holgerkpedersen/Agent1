@@ -52,10 +52,7 @@ class TestDuplicateDefinitions:
         assert [issue.name for issue in issues] == ["A"]
 
     def test_async_def_duplicates_counted(self, guard):
-        source = (
-            "async def work():\n    pass\n\n\n"
-            "async def work():\n    pass\n"
-        )
+        source = "async def work():\n    pass\n\n\nasync def work():\n    pass\n"
         issues = guard.find_duplicate_definitions(source)
         assert len(issues) == 1 and issues[0].name == "work"
 
@@ -192,11 +189,7 @@ class TestScanWorkspace:
 
     def test_default_workspace_is_cwd(self, monkeypatch, tmp_path):
         (tmp_path / "here.py").write_text(
-            "def c():\n"
-            "    try:\n"
-            "        pass\n"
-            "    except:\n"
-            "        pass\n",
+            "def c():\n    try:\n        pass\n    except:\n        pass\n",
             encoding="utf-8",
         )
         monkeypatch.chdir(tmp_path)
@@ -218,13 +211,7 @@ class TestScanRegression:
 
     def test_new_bare_except_reported_when_before_clean(self, guard):
         before = "def f():\n    pass\n"
-        after = (
-            "def f():\n"
-            "    try:\n"
-            "        pass\n"
-            "    except:\n"
-            "        pass\n"
-        )
+        after = "def f():\n    try:\n        pass\n    except:\n        pass\n"
         issues = guard.scan_regression(before, after)
         assert [i.kind for i in issues] == ["bare-except"]
 

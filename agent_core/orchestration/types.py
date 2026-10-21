@@ -2,6 +2,7 @@
 
 Moved verbatim from the retired ``src/agent1.core`` namespace.
 """
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional

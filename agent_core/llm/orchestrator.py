@@ -37,7 +37,8 @@ class ConsensusVoter:
     ) -> None:
         """Record a single agent's vote for a given template.
 
-        Optionally persists the vote into a ``prompt_votes`` table when ``db_path`` is provided.
+        Optionally persists the vote into a ``prompt_votes`` table when
+        ``db_path`` is provided.
         """
         self._ensure_template(template_id)
         # Overwrite previous vote from same agent (latest wins).
@@ -57,7 +58,8 @@ class ConsensusVoter:
                     """
                 )
                 conn.execute(
-                    "INSERT OR REPLACE INTO prompt_votes (template_id, agent_id, result) VALUES (?, ?, ?)",
+                    "INSERT OR REPLACE INTO prompt_votes "
+                    "(template_id, agent_id, result) VALUES (?, ?, ?)",
                     (template_id, agent_id, _vote_result_to_str(result)),
                 )
                 conn.commit()

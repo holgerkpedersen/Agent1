@@ -3,6 +3,7 @@
 Relative paths are interpreted against the WORKSPACE (never the process
 CWD); the absolute form is always derivable via join(workspace, rel).
 """
+
 import asyncio
 import json
 from pathlib import Path
@@ -45,13 +46,18 @@ class TestNormalizeAffectedFiles:
     def test_keeps_existing_and_drops_missing(self, tmp_path):
         (tmp_path / "agent.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "agent_core").mkdir()
-        (tmp_path / "agent_core" / "tool_schemas.py").write_text("X = 1\n", encoding="utf-8")
-        normalized = normalize_affected_files(str(tmp_path), [
-            "agent.py",
-            "agent_core/tool_schemas.py",
-            "missing_module.py",
-            "../ReactAgent",
-        ])
+        (tmp_path / "agent_core" / "tool_schemas.py").write_text(
+            "X = 1\n", encoding="utf-8"
+        )
+        normalized = normalize_affected_files(
+            str(tmp_path),
+            [
+                "agent.py",
+                "agent_core/tool_schemas.py",
+                "missing_module.py",
+                "../ReactAgent",
+            ],
+        )
         assert normalized == ["agent.py", "agent_core/tool_schemas.py"]
 
     def test_doc_basename_falls_back_to_newest_run(self, tmp_path):
@@ -63,11 +69,14 @@ class TestNormalizeAffectedFiles:
 
     def test_deduplicates_and_normalizes_absolute(self, tmp_path):
         (tmp_path / "agent.py").write_text("x = 1\n", encoding="utf-8")
-        normalized = normalize_affected_files(str(tmp_path), [
-            "agent.py",
-            str(tmp_path / "agent.py"),
-            "agent.py",
-        ])
+        normalized = normalize_affected_files(
+            str(tmp_path),
+            [
+                "agent.py",
+                str(tmp_path / "agent.py"),
+                "agent.py",
+            ],
+        )
         assert normalized == ["agent.py"]
 
 
@@ -115,7 +124,9 @@ class TestDecisionMatching:
     def test_find_overlaps_normalizes_new_side(self, tmp_path):
         (tmp_path / "agent.py").write_text("x = 1\n", encoding="utf-8")
         add_decision(
-            str(tmp_path), "Overlap decision", decision="A",
+            str(tmp_path),
+            "Overlap decision",
+            decision="A",
             affected_files=["agent.py"],
         )
         existing = load_decisions(str(tmp_path))
@@ -131,10 +142,22 @@ class TestDecisionMatching:
         TypeError at decide_cmd.py:143, ``None[:5]``)."""
         store = tmp_path / ".decisions.json"
         store.write_text(
-            json.dumps([
-                {"id": "001", "title": "legacy", "tags": None, "affected_files": []},
-                {"id": "002", "title": "legacy-obj", "tags": "not-a-list", "affected_files": []},
-            ]),
+            json.dumps(
+                [
+                    {
+                        "id": "001",
+                        "title": "legacy",
+                        "tags": None,
+                        "affected_files": [],
+                    },
+                    {
+                        "id": "002",
+                        "title": "legacy-obj",
+                        "tags": "not-a-list",
+                        "affected_files": [],
+                    },
+                ]
+            ),
             encoding="utf-8",
         )
         decisions = load_decisions(str(tmp_path))
@@ -150,13 +173,23 @@ class TestDecisionMatching:
         KeyError at decide_cmd.py:145, ``d['date'][:10]``."""
         store = tmp_path / ".decisions.json"
         store.write_text(
-            json.dumps([
-                {"id": "078", "title": "renamed-date",
-                 "created_at": "2026-08-24T10:43:00.306892+00:00",
-                 "tags": [], "affected_files": []},
-                {"id": "079", "title": "no-date-at-all",
-                 "tags": [], "affected_files": []},
-            ]),
+            json.dumps(
+                [
+                    {
+                        "id": "078",
+                        "title": "renamed-date",
+                        "created_at": "2026-08-24T10:43:00.306892+00:00",
+                        "tags": [],
+                        "affected_files": [],
+                    },
+                    {
+                        "id": "079",
+                        "title": "no-date-at-all",
+                        "tags": [],
+                        "affected_files": [],
+                    },
+                ]
+            ),
             encoding="utf-8",
         )
         decisions = load_decisions(str(tmp_path))
@@ -175,67 +208,85 @@ class TestAnnotateCandidates:
         (tmp_path / "benchmark.py").write_text("X = 1\n", encoding="utf-8")
         tests = tmp_path / "tests"
         tests.mkdir()
-        (tests / "test_benchmark_scoring.py").write_text("import benchmark\n", encoding="utf-8")
-        candidate = [{
-            "title": "Add tests for benchmark.py",
-            "context": "No test coverage exists for benchmark.py.",
-            "decision": "Write tests.",
-            "affected_files": [],
-        }]
+        (tests / "test_benchmark_scoring.py").write_text(
+            "import benchmark\n", encoding="utf-8"
+        )
+        candidate = [
+            {
+                "title": "Add tests for benchmark.py",
+                "context": "No test coverage exists for benchmark.py.",
+                "decision": "Write tests.",
+                "affected_files": [],
+            }
+        ]
         annotate_candidates(candidate, str(tmp_path))
         warnings = candidate[0].get("warnings", [])
-        assert any("benchmark.py" in w and "test_benchmark_scoring.py" in w for w in warnings)
+        assert any(
+            "benchmark.py" in w and "test_benchmark_scoring.py" in w for w in warnings
+        )
 
     def test_negative_claim_without_file_ref_warns(self, tmp_path):
-        candidate = [{
-            "title": "Cover the untested core",
-            "context": "The core module is completely untested.",
-            "decision": "Add tests.",
-            "affected_files": [],
-        }]
+        candidate = [
+            {
+                "title": "Cover the untested core",
+                "context": "The core module is completely untested.",
+                "decision": "Add tests.",
+                "affected_files": [],
+            }
+        ]
         annotate_candidates(candidate, str(tmp_path))
         assert any("without a file reference" in w for w in candidate[0]["warnings"])
 
     def test_nonexistent_affected_file_warns(self, tmp_path):
-        candidate = [{
-            "title": "Fix phantoms",
-            "context": "Refactor.",
-            "decision": "Do it.",
-            "affected_files": ["missing_module.py"],
-        }]
+        candidate = [
+            {
+                "title": "Fix phantoms",
+                "context": "Refactor.",
+                "decision": "Do it.",
+                "affected_files": ["missing_module.py"],
+            }
+        ]
         annotate_candidates(candidate, str(tmp_path))
         assert any("missing_module.py" in w for w in candidate[0]["warnings"])
 
     def test_clean_candidate_gets_no_warnings_key(self, tmp_path):
         (tmp_path / "real.py").write_text("X = 1\n", encoding="utf-8")
-        candidate = [{
-            "title": "Refactor real.py",
-            "context": "Improve clarity.",
-            "decision": "Refactor.",
-            "affected_files": ["real.py"],
-        }]
+        candidate = [
+            {
+                "title": "Refactor real.py",
+                "context": "Improve clarity.",
+                "decision": "Refactor.",
+                "affected_files": ["real.py"],
+            }
+        ]
         annotate_candidates(candidate, str(tmp_path))
         assert "warnings" not in candidate[0]
 
     def test_repetition_of_unverified_claim_token(self, tmp_path):
-        report = "- [UNVERIFIED] `phantom_symbol` — symbol not found anywhere in workspace"
-        candidate = [{
-            "title": "Track phantom_symbol usage",
-            "context": "phantom_symbol is mutated without locks.",
-            "decision": "Add locking.",
-            "affected_files": [],
-        }]
+        report = (
+            "- [UNVERIFIED] `phantom_symbol` — symbol not found anywhere in workspace"
+        )
+        candidate = [
+            {
+                "title": "Track phantom_symbol usage",
+                "context": "phantom_symbol is mutated without locks.",
+                "decision": "Add locking.",
+                "affected_files": [],
+            }
+        ]
         annotate_candidates(candidate, str(tmp_path), verification_report=report)
         assert any("phantom_symbol" in w for w in candidate[0]["warnings"])
 
     def test_warnings_deduplicated(self, tmp_path):
         report = "- [UNVERIFIED] `dup_token` — not found"
-        candidate = [{
-            "title": "dup_token issue",
-            "context": "dup_token repeated #1",
-            "decision": "Decision mentions dup_token again.",
-            "affected_files": [],
-        }]
+        candidate = [
+            {
+                "title": "dup_token issue",
+                "context": "dup_token repeated #1",
+                "decision": "Decision mentions dup_token again.",
+                "affected_files": [],
+            }
+        ]
         annotate_candidates(candidate, str(tmp_path), verification_report=report)
         assert len(candidate[0]["warnings"]) == 1
 
@@ -257,8 +308,9 @@ class TestMetaWarnings:
         assert stored[0]["meta_warnings"] == record["meta_warnings"]
 
     def test_decisions_as_system_prompt_marks_warned(self, tmp_path):
-        add_decision(str(tmp_path), "Warned decision", decision="X",
-                     warnings=["unverifiable"])
+        add_decision(
+            str(tmp_path), "Warned decision", decision="X", warnings=["unverifiable"]
+        )
         add_decision(str(tmp_path), "Clean decision", decision="Y")
         block = decisions_as_system_prompt(str(tmp_path), files=[])
         assert "⚠ RECORDED WITH UNVERIFIED CLAIMS" in block
@@ -279,12 +331,14 @@ class TestExtractFromAnalysisPrompt:
 
         agent = AsyncMock()
         agent.llm.chat = fake_chat
-        asyncio.run(extract_from_analysis(
-            agent,
-            "Some analysis.",
-            inventory="real.py — does a thing",
-            verification_report="- [UNVERIFIED] `ghost` — not found",
-        ))
+        asyncio.run(
+            extract_from_analysis(
+                agent,
+                "Some analysis.",
+                inventory="real.py — does a thing",
+                verification_report="- [UNVERIFIED] `ghost` — not found",
+            )
+        )
         assert "Workspace listing (ground truth" in captured["user"]
         assert "real.py" in captured["user"]
         assert "Verification report" in captured["user"]

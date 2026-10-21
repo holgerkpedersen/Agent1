@@ -25,6 +25,7 @@ Everything writes into ``tmp_path``; shared singletons (``METRICS``,
 ``EVOLVER``, ``PerfTracker`` class state, module globals) are monkeypatched
 so no state leaks between tests.
 """
+
 from __future__ import annotations
 
 import json
@@ -65,7 +66,8 @@ def _sandbox_learning(tmp_path: Path, monkeypatch) -> MetricsTracker:
     monkeypatch.setattr(learning, "METRICS", metrics)
     monkeypatch.setattr(learning, "EVOLVER", MetaPolicyEvolver())
     monkeypatch.setattr(
-        learning, "_state_path",
+        learning,
+        "_state_path",
         lambda: str(tmp_path / "meta_policy.json"),
     )
     monkeypatch.setattr(learning, "_weights_loaded", True)
@@ -78,7 +80,8 @@ def _finish(bot, monkeypatch, tmp_path, *, final_text, llm_error, user_input):
     monkeypatch.setattr(constants, "TURN_LOG_PATH", str(tmp_path / "turn_log.jsonl"))
     quality_events: list = []
     monkeypatch.setattr(
-        metrics_file, "append_event",
+        metrics_file,
+        "append_event",
         lambda kind, name, value: quality_events.append((kind, name, value)),
     )
     bot._last_user_input = user_input
@@ -93,6 +96,7 @@ def _finish(bot, monkeypatch, tmp_path, *, final_text, llm_error, user_input):
 # 1. _finish_turn records success/failure under the inferred TaskType
 # ---------------------------------------------------------------------------
 
+
 def test_finish_turn_records_success_and_failure_task_types(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -100,23 +104,29 @@ def test_finish_turn_records_success_and_failure_task_types(
     bot = _make_agent(tmp_path / "ws_record", tmp_path, monkeypatch)
 
     _finish(
-        bot, monkeypatch, tmp_path,
-        final_text="Added the widget.", llm_error=None,
+        bot,
+        monkeypatch,
+        tmp_path,
+        final_text="Added the widget.",
+        llm_error=None,
         user_input="implement the new widget",
     )
     _finish(
-        bot, monkeypatch, tmp_path,
-        final_text="Could not finish.", llm_error="boom",
+        bot,
+        monkeypatch,
+        tmp_path,
+        final_text="Could not finish.",
+        llm_error="boom",
         user_input="fix the crash in parsing",
     )
 
     successes = {
-        key: value for key, value in metrics._success_counts.items()
+        key: value
+        for key, value in metrics._success_counts.items()
         if key[0] == "implement"
     }
     failures = {
-        key: value for key, value in metrics._failure_counts.items()
-        if key[0] == "fix"
+        key: value for key, value in metrics._failure_counts.items() if key[0] == "fix"
     }
     assert sum(successes.values()) == 1, (
         "clean turn must record one success under TaskType 'implement'"
@@ -133,6 +143,7 @@ def test_finish_turn_records_success_and_failure_task_types(
 # 2. pinned profile suppresses the suggestion; profile_auto defaults off
 # ---------------------------------------------------------------------------
 
+
 def _run_chat(bot, monkeypatch, user_input: str) -> SimpleNamespace:
     """Drive chat_nlp end-to-end with the tool loop and finish stubbed out."""
     calls = SimpleNamespace(recommend=[], applied=[], finished=[])
@@ -142,24 +153,27 @@ def _run_chat(bot, monkeypatch, user_input: str) -> SimpleNamespace:
 
     monkeypatch.setattr(bot, "_run_chained_tool_loop", _stub_loop)
     monkeypatch.setattr(
-        bot, "_finish_turn",
+        bot,
+        "_finish_turn",
         lambda **kwargs: calls.finished.append(kwargs),
     )
     monkeypatch.setattr(
-        agent_mod, "_resolve_display_mode", lambda: AgentDisplayMode.QUIET,
+        agent_mod,
+        "_resolve_display_mode",
+        lambda: AgentDisplayMode.QUIET,
     )
     monkeypatch.setattr(
-        agent_mod, "recommend_profile",
+        agent_mod,
+        "recommend_profile",
         lambda *args, **kwargs: calls.recommend.append(args) or None,
     )
     import asyncio
+
     asyncio.run(bot.chat_nlp(user_input))
     return calls
 
 
-def test_pinned_profile_suppresses_suggestion(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_pinned_profile_suppresses_suggestion(tmp_path: Path, monkeypatch) -> None:
     bot = _make_agent(tmp_path / "ws_pin", tmp_path, monkeypatch)
     assert hasattr(bot, "llm"), "Agent must own an llm client for this test"
     bot.llm._profile_pinned = True
@@ -173,9 +187,7 @@ def test_pinned_profile_suppresses_suggestion(
     assert len(calls.finished) == 1
 
 
-def test_profile_auto_defaults_off_no_auto_apply(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_profile_auto_defaults_off_no_auto_apply(tmp_path: Path, monkeypatch) -> None:
     from agent_core.llm.workspace_prefs import get_pref
 
     ws = tmp_path / "ws_auto"
@@ -185,9 +197,14 @@ def test_profile_auto_defaults_off_no_auto_apply(
     bot.llm._provider = SimpleNamespace(
         apply_profile=lambda *args: calls.applied.append(args),
     )
-    calls = SimpleNamespace(applied=[], profile_name=getattr(
-        bot.llm, "_profile_name", None,
-    ))
+    calls = SimpleNamespace(
+        applied=[],
+        profile_name=getattr(
+            bot.llm,
+            "_profile_name",
+            None,
+        ),
+    )
 
     async def _stub_loop(*, user_input, messages, display_mode, seen_calls):
         return ("done", messages, None, None)
@@ -195,15 +212,19 @@ def test_profile_auto_defaults_off_no_auto_apply(
     monkeypatch.setattr(bot, "_run_chained_tool_loop", _stub_loop)
     monkeypatch.setattr(bot, "_finish_turn", lambda **kwargs: None)
     monkeypatch.setattr(
-        agent_mod, "_resolve_display_mode", lambda: AgentDisplayMode.QUIET,
+        agent_mod,
+        "_resolve_display_mode",
+        lambda: AgentDisplayMode.QUIET,
     )
     suggested: list = []
     monkeypatch.setattr(
-        agent_mod, "recommend_profile",
+        agent_mod,
+        "recommend_profile",
         lambda *args, **kwargs: suggested.append(args) or "fast-codegen",
     )
 
     import asyncio
+
     asyncio.run(bot.chat_nlp("implement the new feature"))
 
     assert len(suggested) == 1, "un-pinned turns must consider a suggestion"
@@ -218,9 +239,8 @@ def test_profile_auto_defaults_off_no_auto_apply(
 # 3. EVOLVER weights persist to meta_policy.json and restore on reload
 # ---------------------------------------------------------------------------
 
-def test_evolver_weights_persist_and_restore(
-    tmp_path: Path, monkeypatch
-) -> None:
+
+def test_evolver_weights_persist_and_restore(tmp_path: Path, monkeypatch) -> None:
     state = tmp_path / "meta_policy.json"
     monkeypatch.setattr(learning, "_state_path", lambda: str(state))
     monkeypatch.setattr(learning, "_weights_loaded", True)
@@ -240,9 +260,7 @@ def test_evolver_weights_persist_and_restore(
     assert fresh._weights[ProfileType.FAST_CODEGEN] == pytest.approx(1.5)
 
     # Out-of-range persisted weights are clamped to the evolver bounds.
-    state.write_text(
-        json.dumps({"weights": {"fast_codegen": 99.0}}), encoding="utf-8"
-    )
+    state.write_text(json.dumps({"weights": {"fast_codegen": 99.0}}), encoding="utf-8")
     learning.load_weights(force=True)
     assert fresh._weights[ProfileType.FAST_CODEGEN] == pytest.approx(2.0)
 
@@ -250,6 +268,7 @@ def test_evolver_weights_persist_and_restore(
 # ---------------------------------------------------------------------------
 # 4. quality proxy with tracing disabled + append_event wiring
 # ---------------------------------------------------------------------------
+
 
 def test_quality_proxy_values_with_tracing_disabled(monkeypatch) -> None:
     import harnessfix.tracing as tracing
@@ -273,18 +292,22 @@ def test_finish_turn_records_quality_event_with_tracing_disabled(
     # test_finish_turn_records_success_and_failure_task_types above).  The
     # real call passes the user input positionally — the stub must accept it.
     monkeypatch.setattr(
-        agent_mod, "record_turn_outcome", lambda *args, **kwargs: None,
+        agent_mod,
+        "record_turn_outcome",
+        lambda *args, **kwargs: None,
     )
 
     events = _finish(
-        bot, monkeypatch, tmp_path,
-        final_text="All good.", llm_error=None,
+        bot,
+        monkeypatch,
+        tmp_path,
+        final_text="All good.",
+        llm_error=None,
         user_input="analyze the logs",
     )
 
     assert any(
-        kind == "turn" and name == "quality"
-        and value == pytest.approx(0.7)
+        kind == "turn" and name == "quality" and value == pytest.approx(0.7)
         for kind, name, value in events
     ), f"expected a ('turn','quality',0.7) event with tracing off, got {events!r}"
 
@@ -293,9 +316,8 @@ def test_finish_turn_records_quality_event_with_tracing_disabled(
 # 5. perf_history.json round-trips across PerfTracker instances
 # ---------------------------------------------------------------------------
 
-def test_perf_history_round_trips_across_instances(
-    tmp_path: Path, monkeypatch
-) -> None:
+
+def test_perf_history_round_trips_across_instances(tmp_path: Path, monkeypatch) -> None:
     history = tmp_path / "perf_history.json"
     monkeypatch.setattr(perf_cmd, "PERF_HISTORY_JSON_PATH", str(history))
     monkeypatch.setattr(PerfTracker, "_records", [])
@@ -319,6 +341,7 @@ def test_perf_history_round_trips_across_instances(
 # ---------------------------------------------------------------------------
 # 6. The suite redirects the A3/B2 state files out of the live repo root
 # ---------------------------------------------------------------------------
+
 
 def test_suite_redirects_turn_log_and_meta_policy_out_of_the_live_repo(
     tmp_path: Path,
@@ -370,8 +393,15 @@ def test_suite_redirects_turn_log_and_meta_policy_out_of_the_live_repo(
 # 7. turn-scoped trace quality feeds score_run back (plan item #4 residual)
 # ---------------------------------------------------------------------------
 
-def _trace_one_turn(tmp_path: Path, monkeypatch, *, outcome: str,
-                    tool_duration_s: float | None = None, task_id: str = "q"):
+
+def _trace_one_turn(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    outcome: str,
+    tool_duration_s: float | None = None,
+    task_id: str = "q",
+):
     """Arm a turn and emit one realistic run through the real TraceWriter."""
     import harnessfix.tracing as tracing
     from harnessfix.tracing import KIND_LOOP_END, KIND_TOOL_RESULT, TraceWriter
@@ -380,8 +410,14 @@ def _trace_one_turn(tmp_path: Path, monkeypatch, *, outcome: str,
     tracing.begin_turn()
     writer = TraceWriter(task_id=task_id, directory=tmp_path / "traces")
     if tool_duration_s is not None:
-        writer.emit({"kind": KIND_TOOL_RESULT, "layer": "tool_interface",
-                     "tool": "run", "duration_s": tool_duration_s})
+        writer.emit(
+            {
+                "kind": KIND_TOOL_RESULT,
+                "layer": "tool_interface",
+                "tool": "run",
+                "duration_s": tool_duration_s,
+            }
+        )
     writer.emit({"kind": KIND_LOOP_END, "layer": "lifecycle", "outcome": outcome})
     return tracing
 
@@ -392,8 +428,11 @@ def test_turn_quality_scores_the_turns_own_events_with_score_run(
     from harnessfix.evolution_metrics import score_run
 
     tracing = _trace_one_turn(
-        tmp_path, monkeypatch, outcome="completed",
-        tool_duration_s=5.0, task_id="q1",
+        tmp_path,
+        monkeypatch,
+        outcome="completed",
+        tool_duration_s=5.0,
+        task_id="q1",
     )
     try:
         events = tracing.current_turn_events()
@@ -411,11 +450,15 @@ def test_turn_quality_is_zero_on_llm_error_even_with_a_completed_trace(
     tmp_path: Path, monkeypatch
 ) -> None:
     tracing = _trace_one_turn(
-        tmp_path, monkeypatch, outcome="completed", task_id="q2",
+        tmp_path,
+        monkeypatch,
+        outcome="completed",
+        task_id="q2",
     )
     try:
         assert agent_mod._turn_quality_score(
-            "provider exploded", [],
+            "provider exploded",
+            [],
         ) == pytest.approx(0.0), "an errored turn must never score as quality"
         # ...and its events were still consumed (no leak into the next turn).
         assert tracing.take_turn_events() == []
@@ -430,11 +473,17 @@ def test_record_turn_outcome_lets_trace_quality_decide_success(
 
     # A trace score of 0.0 wins over the caller's optimistic success flag ...
     learning.record_turn_outcome(
-        "fix the crash", profile_name=None, success=True, quality=0.0,
+        "fix the crash",
+        profile_name=None,
+        success=True,
+        quality=0.0,
     )
     # ... and a good trace score wins over a pessimistic flag.
     learning.record_turn_outcome(
-        "implement the widget", profile_name=None, success=False, quality=0.9,
+        "implement the widget",
+        profile_name=None,
+        success=False,
+        quality=0.9,
     )
 
     assert sum(metrics._failure_counts.values()) == 1, (
@@ -454,12 +503,18 @@ def test_finish_turn_feeds_traced_quality_into_the_meta_policy(
     # answered without a provider error: score_run(...) == 0.0, so the
     # meta-policy must record a FAILURE although the proxy says success.
     tracing = _trace_one_turn(
-        tmp_path, monkeypatch, outcome="no_progress", task_id="q3",
+        tmp_path,
+        monkeypatch,
+        outcome="no_progress",
+        task_id="q3",
     )
     try:
         events = _finish(
-            bot, monkeypatch, tmp_path,
-            final_text="Hmm.", llm_error=None,
+            bot,
+            monkeypatch,
+            tmp_path,
+            final_text="Hmm.",
+            llm_error=None,
             user_input="fix the flaky test",
         )
     finally:
@@ -470,6 +525,5 @@ def test_finish_turn_feeds_traced_quality_into_the_meta_policy(
     )
     assert sum(metrics._success_counts.values()) == 0
     assert any(
-        name == "quality" and value == pytest.approx(0.0)
-        for _, name, value in events
+        name == "quality" and value == pytest.approx(0.0) for _, name, value in events
     ), f"expected the trace score 0.0 as quality event, got {events!r}"

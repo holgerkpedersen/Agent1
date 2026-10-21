@@ -42,7 +42,9 @@ from pathlib import Path
 from .base import Command, show_file_diff, save_file_py, read_choice, stop_requested
 from .doc_paths import find_doc
 from agent_core.decisions import (
-    decisions_as_system_prompt, extract_from_changes, add_decision
+    decisions_as_system_prompt,
+    extract_from_changes,
+    add_decision,
 )
 from agent_core.subprocess_utils import shell_info as _shell_info
 from .implement_cmd import (
@@ -53,6 +55,7 @@ from .implement_cmd import (
 )
 
 from typing import TYPE_CHECKING, Any
+
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -73,9 +76,13 @@ def _run_capped(
     """Run *cmd* capturing output; never blocks forever."""
     try:
         return subprocess.run(
-            cmd, capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            cwd=cwd, timeout=timeout_s,
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+            timeout=timeout_s,
         )
     except subprocess.TimeoutExpired:
         print(
@@ -83,7 +90,9 @@ def _run_capped(
             file=sys.stderr,
         )
         return subprocess.CompletedProcess(
-            cmd, returncode=-1, stdout="",
+            cmd,
+            returncode=-1,
+            stdout="",
             stderr=f"timed out after {timeout_s:.0f}s",
         )
 
@@ -164,8 +173,8 @@ def _max_identical_run(text: str) -> int:
     longest = 0
     prev: str | None = None
     run = 0
-    for raw in text.split('\n'):
-        line = raw.rstrip('\r').strip()
+    for raw in text.split("\n"):
+        line = raw.rstrip("\r").strip()
         if not line:
             run = 0
             prev = None
@@ -199,13 +208,17 @@ def _looks_corrupted(original: str, result: str) -> str | None:
     res_run = _max_identical_run(result)
     orig_run = _max_identical_run(original)
     if res_run > 8 and res_run > 2 * max(orig_run, 1):
-        return (f"result introduces a {res_run}-long identical-line run "
-                f"(original max {orig_run}) — likely a mis-anchored patch")
-    orig_n = sum(1 for ln in original.split('\n') if ln.strip())
-    res_n = sum(1 for ln in result.split('\n') if ln.strip())
+        return (
+            f"result introduces a {res_run}-long identical-line run "
+            f"(original max {orig_run}) — likely a mis-anchored patch"
+        )
+    orig_n = sum(1 for ln in original.split("\n") if ln.strip())
+    res_n = sum(1 for ln in result.split("\n") if ln.strip())
     if orig_n > 20 and res_n > 2 * orig_n:
-        return (f"result grew {orig_n}->{res_n} non-blank lines (>2x) — "
-                "rejecting runaway patch")
+        return (
+            f"result grew {orig_n}->{res_n} non-blank lines (>2x) — "
+            "rejecting runaway patch"
+        )
     return None
 
 
@@ -219,7 +232,7 @@ def _looks_corrupted(original: str, result: str) -> str | None:
 # Every transform re-validates with ``compile``; the caller re-runs mypy
 # afterwards, so a wrong guess is rolled back by the normal verification.
 
-_TYPE_IGNORE_RE = re.compile(r'\s*#\s*type:\s*ignore(?:\[[^\]]*\])?\s*$')
+_TYPE_IGNORE_RE = re.compile(r"\s*#\s*type:\s*ignore(?:\[[^\]]*\])?\s*$")
 
 
 def _collapse_duplicate_runs(text: str, threshold: int = 5) -> tuple[str, int]:
@@ -230,7 +243,7 @@ def _collapse_duplicate_runs(text: str, threshold: int = 5) -> tuple[str, int]:
     corruption seen in the wild (a ``# TODO`` comment copy-pasted 45x by a
     mis-anchored patch).
     """
-    lines = text.split('\n')
+    lines = text.split("\n")
     out: list[str] = []
     i = 0
     runs = 0
@@ -246,7 +259,7 @@ def _collapse_duplicate_runs(text: str, threshold: int = 5) -> tuple[str, int]:
         else:
             out.extend(lines[i:j])
         i = j
-    return '\n'.join(out), runs
+    return "\n".join(out), runs
 
 
 def _syntax_ok(source: str) -> bool:
@@ -265,10 +278,10 @@ def _fix_unused_ignore(lines: list[str], lineno: int) -> list[str] | None:
     m = _TYPE_IGNORE_RE.search(lines[idx])
     if not m:
         return None
-    new_line = lines[idx][:m.start()].rstrip()
+    new_line = lines[idx][: m.start()].rstrip()
     if not new_line.strip():
-        return lines[:idx] + lines[idx + 1:]  # whole line was the comment
-    return lines[:idx] + [new_line] + lines[idx + 1:]
+        return lines[:idx] + lines[idx + 1 :]  # whole line was the comment
+    return lines[:idx] + [new_line] + lines[idx + 1 :]
 
 
 def _fix_redundant_cast(lines: list[str], lineno: int, typ: str) -> list[str] | None:
@@ -277,22 +290,22 @@ def _fix_redundant_cast(lines: list[str], lineno: int, typ: str) -> list[str] | 
     if idx < 0 or idx >= len(lines):
         return None
     line = lines[idx]
-    m = re.search(r'\bcast\s*\(\s*', line)
+    m = re.search(r"\bcast\s*\(\s*", line)
     if not m:
         return None
-    rest = line[m.end():]
+    rest = line[m.end() :]
     depth = 1
     i = 0
     type_end: int | None = None
     while i < len(rest):
         c = rest[i]
-        if c == '(':
+        if c == "(":
             depth += 1
-        elif c == ')':
+        elif c == ")":
             depth -= 1
             if depth == 0:
                 break
-        elif c == ',' and depth == 1:
+        elif c == "," and depth == 1:
             type_end = i
             break
         i += 1
@@ -306,9 +319,9 @@ def _fix_redundant_cast(lines: list[str], lineno: int, typ: str) -> list[str] | 
     arg_end: int | None = None
     while j < len(rest):
         c = rest[j]
-        if c == '(':
+        if c == "(":
             depth += 1
-        elif c == ')':
+        elif c == ")":
             depth -= 1
             if depth == 0:
                 arg_end = j
@@ -317,8 +330,8 @@ def _fix_redundant_cast(lines: list[str], lineno: int, typ: str) -> list[str] | 
     if arg_end is None:
         return None
     arg = rest[arg_start:arg_end].strip()
-    new_line = line[:m.start()] + arg + rest[arg_end + 1:]
-    return lines[:idx] + [new_line] + lines[idx + 1:]
+    new_line = line[: m.start()] + arg + rest[arg_end + 1 :]
+    return lines[:idx] + [new_line] + lines[idx + 1 :]
 
 
 def _fix_implicit_optional(lines: list[str], lineno: int) -> list[str] | None:
@@ -332,16 +345,16 @@ def _fix_implicit_optional(lines: list[str], lineno: int) -> list[str] | None:
         return None
     line = lines[idx]
     m = re.search(
-        r'(\b\w+\s*:\s*)([A-Za-z_][\w.]*(?:\[[^\]]*\])?)\s*=\s*None\b',
+        r"(\b\w+\s*:\s*)([A-Za-z_][\w.]*(?:\[[^\]]*\])?)\s*=\s*None\b",
         line,
     )
     if not m:
         return None
     type_str = m.group(2)
-    if type_str.endswith('None') or 'Optional' in type_str:
+    if type_str.endswith("None") or "Optional" in type_str:
         return None
-    new_line = line[:m.end(2)] + ' | None' + line[m.end(2):]
-    return lines[:idx] + [new_line] + lines[idx + 1:]
+    new_line = line[: m.end(2)] + " | None" + line[m.end(2) :]
+    return lines[:idx] + [new_line] + lines[idx + 1 :]
 
 
 def _fix_optional_import_none(lines: list[str], lineno: int) -> list[str] | None:
@@ -361,13 +374,13 @@ def _fix_optional_import_none(lines: list[str], lineno: int) -> list[str] | None
     line = lines[idx]
     if "# type: ignore" in line:
         return None
-    code, _, comment = line.partition('#')
-    if "=" not in code or not re.search(r'=\s*None\b', code):
+    code, _, comment = line.partition("#")
+    if "=" not in code or not re.search(r"=\s*None\b", code):
         return None
     new_line = code.rstrip() + "  # type: ignore[assignment]"
     if comment.strip():
         new_line += "  # " + comment.strip()
-    return lines[:idx] + [new_line] + lines[idx + 1:]
+    return lines[:idx] + [new_line] + lines[idx + 1 :]
 
 
 def _enclosing_function_name(source: str, lineno: int) -> str | None:
@@ -402,16 +415,14 @@ def _fix_attr_defined_rename(
     idx = lineno - 1
     if idx < 0 or idx >= len(lines):
         return None
-    if not re.search(r'\bdef\s+' + re.escape(suggested) + r'\s*\(', full_source):
+    if not re.search(r"\bdef\s+" + re.escape(suggested) + r"\s*\(", full_source):
         return None
     if _enclosing_function_name(full_source, lineno) == suggested:
         return None  # would be self-recursion — skip
-    if not re.search(r'\.' + re.escape(bad) + r'\b', lines[idx]):
+    if not re.search(r"\." + re.escape(bad) + r"\b", lines[idx]):
         return None
-    new_line = re.sub(
-        r'(\.)' + re.escape(bad) + r'\b', r'\1' + suggested, lines[idx]
-    )
-    return lines[:idx] + [new_line] + lines[idx + 1:]
+    new_line = re.sub(r"(\.)" + re.escape(bad) + r"\b", r"\1" + suggested, lines[idx])
+    return lines[:idx] + [new_line] + lines[idx + 1 :]
 
 
 def _function_returns_value(source: str, def_lineno: int) -> bool:
@@ -424,26 +435,37 @@ def _function_returns_value(source: str, def_lineno: int) -> bool:
     def returns_value(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
         def _scan(body: list[ast.stmt]) -> bool:
             for stmt in body:
-                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if isinstance(
+                    stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                ):
                     continue
                 if isinstance(stmt, ast.Return) and stmt.value is not None:
-                    if not (isinstance(stmt.value, ast.Constant) and stmt.value.value is None):
+                    if not (
+                        isinstance(stmt.value, ast.Constant)
+                        and stmt.value.value is None
+                    ):
                         return True
-                body_attr = getattr(stmt, 'body', None)
+                body_attr = getattr(stmt, "body", None)
                 if isinstance(body_attr, list) and _scan(body_attr):
                     return True
             return False
+
         return _scan(node.body)
 
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.lineno == def_lineno:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.lineno == def_lineno
+        ):
             return returns_value(node)
     return True
 
 
-def _enclosing_function_extent(lines: list[str], error_line: int) -> tuple[int, int] | None:
+def _enclosing_function_extent(
+    lines: list[str], error_line: int
+) -> tuple[int, int] | None:
     """Return (start, end) line numbers of the function containing *error_line*, or None."""
-    source = '\n'.join(lines)
+    source = "\n".join(lines)
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -518,7 +540,10 @@ def _function_can_fall_off_end(source: str, def_lineno: int) -> bool:
         return True
 
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.lineno == def_lineno:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.lineno == def_lineno
+        ):
             return _check(node)
     return False
 
@@ -530,14 +555,14 @@ def _signature_close_line(lines: list[str], def_idx: int) -> int | None:
     the first ``:`` line at or above the def's indentation.
     """
     def_line = lines[def_idx]
-    if def_line.rstrip().endswith(':'):
+    if def_line.rstrip().endswith(":"):
         return def_idx
     indent = len(def_line) - len(def_line.lstrip())
     for j in range(def_idx + 1, len(lines)):
         cand = lines[j]
         cstrip = cand.strip()
         cindent = len(cand) - len(cand.lstrip())
-        if cstrip.endswith(':') and (cindent <= indent or cstrip[:1] in ')]}'):
+        if cstrip.endswith(":") and (cindent <= indent or cstrip[:1] in ")]}"):
             return j
     return None
 
@@ -551,26 +576,26 @@ def _fix_missing_return_none(lines: list[str], def_lineno: int) -> list[str] | N
         return None
     def_line = lines[idx]
     stripped = def_line.lstrip()
-    if not (stripped.startswith('def ') or stripped.startswith('async def ')):
+    if not (stripped.startswith("def ") or stripped.startswith("async def ")):
         return None
     close_idx = _signature_close_line(lines, idx)
     if close_idx is None:
         return None
-    sig_text = '\n'.join(lines[idx:close_idx + 1])
-    if '->' in sig_text:
+    sig_text = "\n".join(lines[idx : close_idx + 1])
+    if "->" in sig_text:
         return None
-    source_for_check = '\n'.join(lines)
+    source_for_check = "\n".join(lines)
     if _function_returns_value(source_for_check, def_lineno):
         return None
     close_line = lines[close_idx]
-    colon = close_line.rfind(':')
-    new_close = close_line[:colon] + ' -> None' + close_line[colon:]
-    return lines[:close_idx] + [new_close] + lines[close_idx + 1:]
+    colon = close_line.rfind(":")
+    new_close = close_line[:colon] + " -> None" + close_line[colon:]
+    return lines[:close_idx] + [new_close] + lines[close_idx + 1 :]
 
 
 def _parse_mypy_error(err: str) -> tuple[int, str] | None:
     """Extract ``(line_number, error_code)`` from a mypy error line."""
-    m = re.match(r'^(.*?):(\d+): error: (.*?)\s*\[([a-z-]+)\]\s*$', err.strip())
+    m = re.match(r"^(.*?):(\d+): error: (.*?)\s*\[([a-z-]+)\]\s*$", err.strip())
     if not m:
         return None
     return int(m.group(2)), m.group(4)
@@ -607,13 +632,13 @@ def _fix_bare_generic(lines: list[str], lineno: int, err: str) -> list[str] | No
         return None
     line = lines[idx]
     new_line = re.sub(
-        rf'\b{re.escape(typ)}\b(?!\s*[\[(])',
+        rf"\b{re.escape(typ)}\b(?!\s*[\[(])",
         fill,
         line,
     )
     if new_line == line:
         return None
-    return _ensure_typing_any(lines[:idx] + [new_line] + lines[idx + 1:])
+    return _ensure_typing_any(lines[:idx] + [new_line] + lines[idx + 1 :])
 
 
 def _strip_strings(line: str) -> str:
@@ -637,14 +662,14 @@ def _fix_container_optional(lines: list[str], err: str) -> list[str] | None:
     if m is None:
         return None
     union = m.group(1).strip()
-    mm = re.match(r'^(.*?)\s*\|\s*None$', union)
+    mm = re.match(r"^(.*?)\s*\|\s*None$", union)
     if mm is None:
         return None
     base = mm.group(1).strip()
-    if not re.match(r'^[A-Za-z_][\w.]*$', base):
+    if not re.match(r"^[A-Za-z_][\w.]*$", base):
         return None
-    container = re.compile(r'\b(list|tuple|dict|set|frozenset)\[')
-    pair = re.compile(rf'\b{re.escape(base)}\s*\|\s*None\b')
+    container = re.compile(r"\b(list|tuple|dict|set|frozenset)\[")
+    pair = re.compile(rf"\b{re.escape(base)}\s*\|\s*None\b")
     in_docstring: str | None = None  # '"' or "'" — the open triple-quote
     _RF_FR_RE = re.compile(r'^(?:r|u|f|rf|fr|b)?("""|\'\'\')')
     for i, line in enumerate(lines):
@@ -669,13 +694,13 @@ def _fix_container_optional(lines: list[str], err: str) -> list[str] | None:
             continue
         # Never edit inside a comment or a one-line string literal either.
         code_part = _strip_strings(line)
-        if '#' in code_part:
-            code_part = code_part.split('#', 1)[0]
+        if "#" in code_part:
+            code_part = code_part.split("#", 1)[0]
         if not pair.search(code_part):
             continue
-        new_line = re.sub(rf'\b{re.escape(base)}\s*\|\s*None\b', base, line)
+        new_line = re.sub(rf"\b{re.escape(base)}\s*\|\s*None\b", base, line)
         if new_line != line:
-            return lines[:i] + [new_line] + lines[i + 1:]
+            return lines[:i] + [new_line] + lines[i + 1 :]
     return None
 
 
@@ -706,7 +731,7 @@ def _fix_tuple_arity(lines: list[str], lineno: int, err: str) -> list[str] | Non
     code unpacks (e.g. ``valid: list[tuple[int, list[tuple[str, str]], bool]]``
     unpacked as ``for claimed, chunks in valid:``).
     """
-    m = re.search(r'Too many values to unpack \((\d+) expected, (\d+) provided\)', err)
+    m = re.search(r"Too many values to unpack \((\d+) expected, (\d+) provided\)", err)
     if m is None:
         return None
     expected, provided = int(m.group(1)), int(m.group(2))
@@ -715,11 +740,11 @@ def _fix_tuple_arity(lines: list[str], lineno: int, err: str) -> list[str] | Non
     idx = lineno - 1
     if idx < 0 or idx >= len(lines):
         return None
-    vm = re.search(r'\bfor\b.*?\bin\s+([A-Za-z_]\w*)\s*:', lines[idx])
+    vm = re.search(r"\bfor\b.*?\bin\s+([A-Za-z_]\w*)\s*:", lines[idx])
     if vm is None:
         return None
     var = vm.group(1)
-    ann = re.compile(rf'\b{re.escape(var)}\s*:\s*list\[tuple\[')
+    ann = re.compile(rf"\b{re.escape(var)}\s*:\s*list\[tuple\[")
     for i, line in enumerate(lines):
         am = ann.search(line)
         if am is None:
@@ -728,40 +753,40 @@ def _fix_tuple_arity(lines: list[str], lineno: int, err: str) -> list[str] | Non
         depth = 0
         end = am.end() - 1
         while end < len(line):
-            if line[end] == '[':
+            if line[end] == "[":
                 depth += 1
-            elif line[end] == ']':
+            elif line[end] == "]":
                 depth -= 1
                 if depth == 0:
                     break
             end += 1
-        inner = line[am.end():end]
+        inner = line[am.end() : end]
         elems = _split_top_level(inner)
         if len(elems) != provided:
             continue
         trimmed = ", ".join(elems[:expected])
-        new_line = line[:am.end()] + trimmed + line[end:]
+        new_line = line[: am.end()] + trimmed + line[end:]
         if new_line == line:
             return None
-        return lines[:i] + [new_line] + lines[i + 1:]
+        return lines[:i] + [new_line] + lines[i + 1 :]
     return None
 
 
 def _ensure_typing_any(lines: list[str]) -> list[str]:
     """Return *lines* with ``Any`` importable (merge or add typing import)."""
-    _FROM_TYPING_IMPORT_RE = re.compile(r'^from typing import (.+)$')
-    _FROM_IMPORT_RE = re.compile(r'^(from|import) ')
+    _FROM_TYPING_IMPORT_RE = re.compile(r"^from typing import (.+)$")
+    _FROM_IMPORT_RE = re.compile(r"^(from|import) ")
     for i, line in enumerate(lines):
         m = _FROM_TYPING_IMPORT_RE.match(line.strip())
         if m:
             names = {n.strip() for n in m.group(1).split(",")}
             if "Any" not in names:
                 new_line = line.rstrip() + ", Any"
-                return lines[:i] + [new_line] + lines[i + 1:]
+                return lines[:i] + [new_line] + lines[i + 1 :]
             return lines
     for i, line in enumerate(lines):
         if _FROM_IMPORT_RE.match(line.strip()):
-            return lines[:i] + [line] + ["from typing import Any"] + lines[i + 1:]
+            return lines[:i] + [line] + ["from typing import Any"] + lines[i + 1 :]
     return ["from typing import Any"] + lines
 
 
@@ -776,21 +801,29 @@ def _fix_untyped_params(lines: list[str], def_lineno: int) -> list[str] | None:
     idx = def_lineno - 1
     if idx < 0 or idx >= len(lines):
         return None
-    if not (lines[idx].lstrip().startswith('def ') or lines[idx].lstrip().startswith('async def ')):
+    if not (
+        lines[idx].lstrip().startswith("def ")
+        or lines[idx].lstrip().startswith("async def ")
+    ):
         return None
-    source = '\n'.join(lines)
+    source = "\n".join(lines)
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return None
     node: ast.FunctionDef | ast.AsyncFunctionDef | None = None
     for n in ast.walk(tree):
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.lineno == def_lineno:
+        if (
+            isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.lineno == def_lineno
+        ):
             node = n
             break
     if node is None:
         return None
-    args = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+    args = (
+        list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+    )
     if node.args.vararg is not None:
         args.append(node.args.vararg)
     if node.args.kwarg is not None:
@@ -807,10 +840,17 @@ def _fix_untyped_params(lines: list[str], def_lineno: int) -> list[str] | None:
             new_lines[ln] = new_lines[ln][:col] + insert + new_lines[ln][col:]
             # normalize a default: `c: Any=3` / `c: Any =3` -> `c: Any = 3`
             eq = col + len(insert)
-            if new_lines[ln][eq:eq + 1] == "=":
-                new_lines[ln] = new_lines[ln][:eq] + " = " + new_lines[ln][eq + 1:].lstrip()
-            elif new_lines[ln][eq:eq + 1] == " " and new_lines[ln][eq + 1:eq + 2] == "=":
-                new_lines[ln] = new_lines[ln][:eq] + " = " + new_lines[ln][eq + 2:].lstrip()
+            if new_lines[ln][eq : eq + 1] == "=":
+                new_lines[ln] = (
+                    new_lines[ln][:eq] + " = " + new_lines[ln][eq + 1 :].lstrip()
+                )
+            elif (
+                new_lines[ln][eq : eq + 1] == " "
+                and new_lines[ln][eq + 1 : eq + 2] == "="
+            ):
+                new_lines[ln] = (
+                    new_lines[ln][:eq] + " = " + new_lines[ln][eq + 2 :].lstrip()
+                )
     # If the signature has no return annotation, add `` -> Any`` as well so
     # the whole "missing a type annotation" error is resolved, not just the
     # parameters (a function with untyped params AND no return type would
@@ -821,13 +861,15 @@ def _fix_untyped_params(lines: list[str], def_lineno: int) -> list[str] | None:
     # `` -> Any`` here.
     close_idx = _signature_close_line(lines, idx)
     if close_idx is not None:
-        sig_lines = lines[idx:close_idx + 1]
+        sig_lines = lines[idx : close_idx + 1]
         if not any("->" in ln for ln in sig_lines):
             if _function_returns_value(source, def_lineno):
                 close_line = new_lines[close_idx]
                 colon = close_line.rfind(":")
                 if colon > 0 and not close_line[:colon].rstrip().endswith(":"):
-                    new_lines[close_idx] = close_line[:colon] + " -> Any" + close_line[colon:]
+                    new_lines[close_idx] = (
+                        close_line[:colon] + " -> Any" + close_line[colon:]
+                    )
     if new_lines == lines:
         return None
     return _ensure_typing_any(new_lines)
@@ -842,12 +884,14 @@ def _import_graph_deps(err_files: list[str], ws_dir: str) -> dict[str, set[str]]
     keys = set(err_files)
     deps: dict[str, set[str]] = {}
     pat = re.compile(
-        r'^\s*(?:from\s+([\w.]+)\s+import\s+\w+|import\s+([\w.]+))',
+        r"^\s*(?:from\s+([\w.]+)\s+import\s+\w+|import\s+([\w.]+))",
         re.MULTILINE,
     )
     for k in err_files:
         try:
-            with open(os.path.join(ws_dir, k.replace('/', os.sep)), 'r', encoding='utf-8') as f:
+            with open(
+                os.path.join(ws_dir, k.replace("/", os.sep)), "r", encoding="utf-8"
+            ) as f:
                 src = f.read()
         except OSError:
             deps[k] = set()
@@ -856,8 +900,8 @@ def _import_graph_deps(err_files: list[str], ws_dir: str) -> dict[str, set[str]]
         for m in pat.finditer(src):
             mod = m.group(1) or m.group(2)
             for cand in (
-                mod.replace('.', '/') + '.py',
-                mod.replace('.', '/') + '/__init__.py',
+                mod.replace(".", "/") + ".py",
+                mod.replace(".", "/") + "/__init__.py",
             ):
                 if cand in keys:
                     local.add(cand)
@@ -879,10 +923,7 @@ def _order_leaves_first(
     remaining = set(err_files)
     ordered: list[str] = []
     while remaining:
-        ready = [
-            k for k in remaining
-            if not (deps[k] & remaining)
-        ]
+        ready = [k for k in remaining if not (deps[k] & remaining)]
         if not ready:
             ready = [max(remaining, key=lambda k: len(errs_by_file[k]))]
         ready.sort(key=lambda k: -len(errs_by_file[k]))
@@ -927,7 +968,7 @@ def _cluster_mypy_errors(lines: list[str], errs: list[str]) -> list[list[str]]:
     ordered: list[list[str]] = []
     for key in sorted(groups):
         group = groups[key]
-        group.sort(key=lambda e: (_parse_mypy_error(e) or (0, ''))[0])
+        group.sort(key=lambda e: (_parse_mypy_error(e) or (0, ""))[0])
         ordered.append(group)
     return ordered
 
@@ -943,31 +984,152 @@ def _error_identifiers(lines: list[str], err: str, error_line: int) -> set[str]:
     msg = err.split("error: ", 1)[-1] if "error: " in err else err
     # Drop the trailing [error-code] bracket and quoted literals before
     # scanning for variable names; lowercase so skip-words match exactly.
-    msg = re.sub(r'\s*\[[a-z-]+\]\s*$', '', msg).lower()
-    msg = re.sub(r'"[^"]*"', '', msg)
+    msg = re.sub(r"\s*\[[a-z-]+\]\s*$", "", msg).lower()
+    msg = re.sub(r'"[^"]*"', "", msg)
     # Only identifiers that are likely *variables*, not type names / messages.
     skip = {
-        "None", "Any", "int", "str", "float", "bool", "list", "dict", "set",
-        "tuple", "Match", "type", "object", "bytes", "error", "expected",
-        "has", "no", "attribute", "incompatible", "types", "argument",
-        "returning", "from", "function", "declared", "to", "variable",
-        "expression", "item", "value", "callable", "untyped", "missing",
-        "annotation", "parameter", "supertype", "signature", "await", "and",
-        "with", "not", "for", "in", "is", "or", "the", "of", "at", "line",
-        "always", "never", "already", "defined", "name", "statement",
-        "unreachable", "cannot", "be", "could", "may", "possibly", "maybe",
-        "unsupported", "operand", "left", "right", "both", "are", "unions",
-        "too", "many", "values", "unpack", "provided", "misc",
-        "got", "supports", "dunder", "attr", "module", "class", "self",
-        "cls", "note", "code", "covered", "comment", "ignore", "redundant",
-        "cast", "assignment", "import", "empty", "replacement", "break",
-        "continue", "return", "raise", "pass", "print", "len", "sorted",
-        "range", "max", "min", "any", "all", "sum", "join", "list_comp",
-        "dict_comp", "set_comp", "generator", "append", "extend", "arg",
-        "operator", "overload", "variant", "matches", "never", "instance",
-        "member", "method", "call", "argument", "each", "uses", "used",
-        "between", "items", "item", "wrapped", "buffer", "default",
-        "non", "zero", "types", "generic", "arguments", "container",
+        "None",
+        "Any",
+        "int",
+        "str",
+        "float",
+        "bool",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "Match",
+        "type",
+        "object",
+        "bytes",
+        "error",
+        "expected",
+        "has",
+        "no",
+        "attribute",
+        "incompatible",
+        "types",
+        "argument",
+        "returning",
+        "from",
+        "function",
+        "declared",
+        "to",
+        "variable",
+        "expression",
+        "item",
+        "value",
+        "callable",
+        "untyped",
+        "missing",
+        "annotation",
+        "parameter",
+        "supertype",
+        "signature",
+        "await",
+        "and",
+        "with",
+        "not",
+        "for",
+        "in",
+        "is",
+        "or",
+        "the",
+        "of",
+        "at",
+        "line",
+        "always",
+        "never",
+        "already",
+        "defined",
+        "name",
+        "statement",
+        "unreachable",
+        "cannot",
+        "be",
+        "could",
+        "may",
+        "possibly",
+        "maybe",
+        "unsupported",
+        "operand",
+        "left",
+        "right",
+        "both",
+        "are",
+        "unions",
+        "too",
+        "many",
+        "values",
+        "unpack",
+        "provided",
+        "misc",
+        "got",
+        "supports",
+        "dunder",
+        "attr",
+        "module",
+        "class",
+        "self",
+        "cls",
+        "note",
+        "code",
+        "covered",
+        "comment",
+        "ignore",
+        "redundant",
+        "cast",
+        "assignment",
+        "import",
+        "empty",
+        "replacement",
+        "break",
+        "continue",
+        "return",
+        "raise",
+        "pass",
+        "print",
+        "len",
+        "sorted",
+        "range",
+        "max",
+        "min",
+        "any",
+        "all",
+        "sum",
+        "join",
+        "list_comp",
+        "dict_comp",
+        "set_comp",
+        "generator",
+        "append",
+        "extend",
+        "arg",
+        "operator",
+        "overload",
+        "variant",
+        "matches",
+        "never",
+        "instance",
+        "member",
+        "method",
+        "call",
+        "argument",
+        "each",
+        "uses",
+        "used",
+        "between",
+        "items",
+        "item",
+        "wrapped",
+        "buffer",
+        "default",
+        "non",
+        "zero",
+        "types",
+        "generic",
+        "arguments",
+        "container",
     }
     names = {m for m in _IDENT_RE.findall(msg) if m not in skip}
     # Operator/arg-type errors mention the *type*, not the variable — so when
@@ -979,15 +1141,19 @@ def _error_identifiers(lines: list[str], err: str, error_line: int) -> set[str]:
 
 
 #: ``def``/``class`` (optionally async) name at the start of a line.
-_DEF_NAME_RE = re.compile(r'^\s*(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)\b')
+_DEF_NAME_RE = re.compile(r"^\s*(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)\b")
 
 #: ``name(`` — a call site, e.g. ``_numpy()``.
-_CALL_NAME_RE = re.compile(r'([A-Za-z_]\w*)\s*\(')
+_CALL_NAME_RE = re.compile(r"([A-Za-z_]\w*)\s*\(")
 
 
 def _referenced_definitions(
-    lines: list[str], err: str, error_line: int, *,
-    window: int = 6, max_lines: int = 14,
+    lines: list[str],
+    err: str,
+    error_line: int,
+    *,
+    window: int = 6,
+    max_lines: int = 14,
 ) -> str:
     """Definitions of helpers the error references, for root-cause fixing.
 
@@ -1011,7 +1177,9 @@ def _referenced_definitions(
             continue
         end = min(len(lines), idx + max_lines)
         snippets.append(
-            "\n".join(f"{i:>4} {lines[i - 1].rstrip()}" for i in range(idx + 1, end + 1))
+            "\n".join(
+                f"{i:>4} {lines[i - 1].rstrip()}" for i in range(idx + 1, end + 1)
+            )
         )
     if not snippets:
         return ""
@@ -1023,8 +1191,12 @@ def _referenced_definitions(
 
 
 def _signature_call_sites(
-    lines: list[str], err: str, error_line: int, *,
-    window: int = 12, max_lines: int = 6,
+    lines: list[str],
+    err: str,
+    error_line: int,
+    *,
+    window: int = 12,
+    max_lines: int = 6,
 ) -> str:
     """Call sites of functions whose signature is near the error.
 
@@ -1051,7 +1223,7 @@ def _signature_call_sites(
     if not signature_names:
         return ""
     call_re = re.compile(
-        r'\b(' + "|".join(re.escape(n) for n in sorted(signature_names)) + r')\s*\('
+        r"\b(" + "|".join(re.escape(n) for n in sorted(signature_names)) + r")\s*\("
     )
     snippets: list[str] = []
     for idx, line in enumerate(lines):
@@ -1061,7 +1233,9 @@ def _signature_call_sites(
             continue
         end = min(len(lines), idx + max_lines)
         snippets.append(
-            "\n".join(f"{i:>4} {lines[i - 1].rstrip()}" for i in range(idx + 1, end + 1))
+            "\n".join(
+                f"{i:>4} {lines[i - 1].rstrip()}" for i in range(idx + 1, end + 1)
+            )
         )
     if not snippets:
         return ""
@@ -1074,15 +1248,41 @@ def _signature_call_sites(
 
 #: typing names the LLM regularly uses WITHOUT importing (the `name-defined`
 #: class of failed patch, e.g. ``nx: Any`` with no ``from typing import Any``).
-_TYPING_NAMES = frozenset({
-    "Any", "Optional", "Union", "Callable", "Iterable", "Iterator", "List",
-    "Dict", "Set", "FrozenSet", "Tuple", "Mapping", "MutableMapping",
-    "Sequence", "MutableSequence", "Generator", "cast", "Protocol",
-    "TypeVar", "Literal", "Final", "ClassVar", "TypedDict", "NamedTuple",
-    "overload", "runtime_checkable", "TYPE_CHECKING", "AnyStr", "Text",
-})
+_TYPING_NAMES = frozenset(
+    {
+        "Any",
+        "Optional",
+        "Union",
+        "Callable",
+        "Iterable",
+        "Iterator",
+        "List",
+        "Dict",
+        "Set",
+        "FrozenSet",
+        "Tuple",
+        "Mapping",
+        "MutableMapping",
+        "Sequence",
+        "MutableSequence",
+        "Generator",
+        "cast",
+        "Protocol",
+        "TypeVar",
+        "Literal",
+        "Final",
+        "ClassVar",
+        "TypedDict",
+        "NamedTuple",
+        "overload",
+        "runtime_checkable",
+        "TYPE_CHECKING",
+        "AnyStr",
+        "Text",
+    }
+)
 
-_TYPING_FROM_RE = re.compile(r'^\s*from\s+([\w.]+)\s+import\s+(.+)$')
+_TYPING_FROM_RE = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+(.+)$")
 
 
 def _ensure_typing_imports(source: str) -> tuple[str, list[str]]:
@@ -1100,7 +1300,8 @@ def _ensure_typing_imports(source: str) -> tuple[str, list[str]]:
         return source, []
 
     used = {
-        node.id for node in ast.walk(tree)
+        node.id
+        for node in ast.walk(tree)
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
     }
     missing = set(used & _TYPING_NAMES)
@@ -1114,18 +1315,24 @@ def _ensure_typing_imports(source: str) -> tuple[str, list[str]]:
         m = _TYPING_FROM_RE.match(line)
         if not m:
             continue
-        for part in m.group(2).split(','):
-            name = part.strip().split(' as ')[-1].strip().rstrip(')').strip()
+        for part in m.group(2).split(","):
+            name = part.strip().split(" as ")[-1].strip().rstrip(")").strip()
             if name:
                 bound.add(name)
-        if m.group(1) == "typing" and typing_line is None and not line.rstrip().endswith('('):
+        if (
+            m.group(1) == "typing"
+            and typing_line is None
+            and not line.rstrip().endswith("(")
+        ):
             typing_line = i
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             bound.add(node.name)
     for node in tree.body:
-        targets = node.targets if isinstance(node, ast.Assign) else (
-            [node.target] if isinstance(node, ast.AnnAssign) else []
+        targets = (
+            node.targets
+            if isinstance(node, ast.Assign)
+            else ([node.target] if isinstance(node, ast.AnnAssign) else [])
         )
         for target in targets:
             if isinstance(target, ast.Name):
@@ -1138,14 +1345,15 @@ def _ensure_typing_imports(source: str) -> tuple[str, list[str]]:
     ending = "\n" if source.endswith("\n") else ""
     if typing_line is not None:
         existing = [
-            p.strip() for p in _TYPING_FROM_RE.match(lines[typing_line]).group(2).split(',')
+            p.strip()
+            for p in _TYPING_FROM_RE.match(lines[typing_line]).group(2).split(",")
             if p.strip()
         ]
         lines[typing_line] = f"from typing import {', '.join(existing + added)}"
     else:
         insert_at = 0
         for i, line in enumerate(lines):
-            if re.match(r'^\s*(import|from)\s', line):
+            if re.match(r"^\s*(import|from)\s", line):
                 insert_at = i + 1
         lines.insert(insert_at, f"from typing import {', '.join(added)}")
     return "\n".join(lines) + ending, added
@@ -1167,22 +1375,22 @@ def _type_context(lines: list[str], err: str, error_line: int) -> str:
     if extent is None:
         return ""
     fstart, fend = extent
-    body = lines[fstart - 1:fend]
+    body = lines[fstart - 1 : fend]
 
     # One pass over the function body: annotated locals/params win, plain
     # assignments and imports fill in the rest.  dict.fromkeys keeps the
     # first mention per name (dedup without a second loop).
     def _extract(ln: str) -> str | None:
-        m = re.match(r'^\s*([A-Za-z_]\w*)\s*:\s*([^=#]+?)\s*(?:=|$)', ln)
+        m = re.match(r"^\s*([A-Za-z_]\w*)\s*:\s*([^=#]+?)\s*(?:=|$)", ln)
         if m and m.group(1) in names:
             return f"{m.group(1)}: {m.group(2).strip()}"
-        m = re.match(r'^\s*([A-Za-z_]\w*)\s*=\s*(.+?)\s*(?:#.*)?$', ln)
+        m = re.match(r"^\s*([A-Za-z_]\w*)\s*=\s*(.+?)\s*(?:#.*)?$", ln)
         if m and m.group(1) in names:
             return f"{m.group(1)} = {m.group(2).strip()}"
-        m = re.match(r'^\s*for\s+([A-Za-z_]\w*)\s+in\s+(.+?)\s*:', ln)
+        m = re.match(r"^\s*for\s+([A-Za-z_]\w*)\s+in\s+(.+?)\s*:", ln)
         if m and m.group(1) in names:
             return f"{m.group(1)} in {m.group(2).strip()}"
-        m = re.match(r'^\s*(?:from\s+[\w.]+\s+import\s+|import\s+)(.+)$', ln)
+        m = re.match(r"^\s*(?:from\s+[\w.]+\s+import\s+|import\s+)(.+)$", ln)
         if m and any(n.strip() in names for n in m.group(1).split(",")):
             return ln.strip()
         return None
@@ -1190,7 +1398,11 @@ def _type_context(lines: list[str], err: str, error_line: int) -> str:
     found = list(dict.fromkeys(x for x in (_extract(ln) for ln in body) if x))
     if not found:
         return ""
-    return "Types in scope (from annotations/assignments/imports):\n" + "\n".join(f"  {ln}" for ln in found) + "\n"
+    return (
+        "Types in scope (from annotations/assignments/imports):\n"
+        + "\n".join(f"  {ln}" for ln in found)
+        + "\n"
+    )
 
 
 def _shared_type_hint(errs: list[str]) -> str:
@@ -1199,7 +1411,7 @@ def _shared_type_hint(errs: list[str]) -> str:
     counts: dict[str, int] = {}
     for err in errs:
         for t in re.findall(
-            r'\b(dict|list|Match|set|tuple|Optional|Union|Callable|Any)\b', err
+            r"\b(dict|list|Match|set|tuple|Optional|Union|Callable|Any)\b", err
         ):
             counts[t] = counts.get(t, 0) + 1
     shared = [t for t, n in counts.items() if n >= 2]
@@ -1225,19 +1437,23 @@ def _mypy_error_signatures(stdout: str) -> list[tuple[str, str, str]]:
     so fixing one of several still counts as progress.
     """
     sigs: list[tuple[str, str, str]] = []
-    _ERROR_ID_RE = re.compile(r'^(.*?):(\d+): error: (.*?)\s*\[([a-z-]+)\]\s*$')
-    for line in stdout.split('\n'):
+    _ERROR_ID_RE = re.compile(r"^(.*?):(\d+): error: (.*?)\s*\[([a-z-]+)\]\s*$")
+    for line in stdout.split("\n"):
         m = _ERROR_ID_RE.match(line.strip())
         if m:
-            sigs.append((
-                m.group(1).replace('\\', '/'),
-                m.group(4),
-                m.group(3).strip(),
-            ))
+            sigs.append(
+                (
+                    m.group(1).replace("\\", "/"),
+                    m.group(4),
+                    m.group(3).strip(),
+                )
+            )
     return sigs
 
 
-def _multiset_excess(after: list[tuple[str, str, str]], before: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+def _multiset_excess(
+    after: list[tuple[str, str, str]], before: list[tuple[str, str, str]]
+) -> list[tuple[str, str, str]]:
     """Signatures present MORE often in *after* than in *before*.
 
     Both lists are multisets of ``(file, code, message)``; an error kind that
@@ -1247,6 +1463,7 @@ def _multiset_excess(after: list[tuple[str, str, str]], before: list[tuple[str, 
     lines), only counts matter.
     """
     from collections import Counter
+
     after_c = Counter(after)
     before_c = Counter(before)
     excess: list[tuple[str, str, str]] = []
@@ -1264,8 +1481,8 @@ def _mypy_error_kinds(stdout: str) -> set[tuple[str, str]]:
     so a fix is recognized by its error code + message text surviving or not.
     """
     kinds: set[tuple[str, str]] = set()
-    _ERROR_ID_RE = re.compile(r'^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$')
-    for line in stdout.split('\n'):
+    _ERROR_ID_RE = re.compile(r"^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$")
+    for line in stdout.split("\n"):
         m = _ERROR_ID_RE.match(line.strip())
         if m:
             kinds.add((m.group(3), m.group(2).strip()))
@@ -1275,12 +1492,14 @@ def _mypy_error_kinds(stdout: str) -> set[tuple[str, str]]:
 def extract_signatures(source: str) -> dict[str, Any]:
     """Extract function/class signatures from Python source."""
     sigs = {}
-    for m in re.finditer(r'^class\s+(\w+)\s*(?:\((.*?)\))?\s*:', source, re.MULTILINE):
+    for m in re.finditer(r"^class\s+(\w+)\s*(?:\((.*?)\))?\s*:", source, re.MULTILINE):
         cls_name = m.group(1)
         bases = m.group(2).strip() if m.group(2) else ""
         sigs[cls_name] = f"class {cls_name}({bases})" if bases else f"class {cls_name}"
 
-    for m in re.finditer(r'^\s+def\s+(\w+)\s*\((.*?)\)\s*(?:->\s*(.+?))?\s*:', source, re.MULTILINE):
+    for m in re.finditer(
+        r"^\s+def\s+(\w+)\s*\((.*?)\)\s*(?:->\s*(.+?))?\s*:", source, re.MULTILINE
+    ):
         func_name = m.group(1)
         params = m.group(2).strip() if m.group(2) else ""
         returns = m.group(3).strip() if m.group(3) else ""
@@ -1310,7 +1529,7 @@ class FixCommand(Command):
     def help_text(self) -> str:
         return 'fix "<traceback>" | <file> --desc "issue" [--full] | --mypy [path...] - Fix code errors'
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         parts = args
 
         # Wholesale-rewrite guard (AGENTS.md #2): a [FILE:] block replaces the
@@ -1335,7 +1554,10 @@ class FixCommand(Command):
         if stdin_mode:
             parts = [p for p in parts if p != "--stdin"]
             from .base import read_stdin
-            stdin_text = read_stdin("Paste problem description or traceback. Type --- on its own line when done, or Ctrl+Z to finish:")
+
+            stdin_text = read_stdin(
+                "Paste problem description or traceback. Type --- on its own line when done, or Ctrl+Z to finish:"
+            )
             if not stdin_text.strip():
                 self.error("No input provided")
                 return True
@@ -1384,7 +1606,8 @@ class FixCommand(Command):
                         candidate_files.add(fp)
                         print(f"  Seed: {f}")
 
-            _IMPORT_FROM_RE = re.compile(r'from\s+(\S+)\s+import\s+')
+            _IMPORT_FROM_RE = re.compile(r"from\s+(\S+)\s+import\s+")
+
             def get_imported_files(filepath: str) -> set[str]:
                 result = set()
                 try:
@@ -1392,7 +1615,7 @@ class FixCommand(Command):
                         content = f.read()
                     for match in _IMPORT_FROM_RE.finditer(content):
                         module = match.group(1)
-                        path = module.replace('.', os.sep) + '.py'
+                        path = module.replace(".", os.sep) + ".py"
                         for search_dir in [ws_dir, str(Path(filepath).parent)]:
                             full = os.path.join(search_dir, path)
                             if os.path.isfile(full):
@@ -1407,9 +1630,25 @@ class FixCommand(Command):
             for f in list(candidate_files):
                 candidate_files |= get_imported_files(f)
 
-            keywords = {w.lower() for w in re.findall(r'\w+', desc_text) if len(w) > 3} - {'this', 'that', 'with', 'from', 'they', 'have', 'what', 'when', 'then', 'than', 'show', 'just', 'like'}
+            keywords = {
+                w.lower() for w in re.findall(r"\w+", desc_text) if len(w) > 3
+            } - {
+                "this",
+                "that",
+                "with",
+                "from",
+                "they",
+                "have",
+                "what",
+                "when",
+                "then",
+                "than",
+                "show",
+                "just",
+                "like",
+            }
 
-            _TASK_FILE_RE = re.compile(r'`([^`]+\.py)`')
+            _TASK_FILE_RE = re.compile(r"`([^`]+\.py)`")
             resp_matched = set()
             # Docs live in .docs/<timestamp>/ — newest run first, root (legacy) second.
             tasks_md_path = find_doc(ws_dir, "project_tasks.md")
@@ -1420,16 +1659,22 @@ class FixCommand(Command):
                         m = _TASK_FILE_RE.search(line)
                         if m:
                             current_file = m.group(1)
-                        elif current_file and line.strip().startswith('-'):
-                            task_text = line.strip('- ').strip().lower()
+                        elif current_file and line.strip().startswith("-"):
+                            task_text = line.strip("- ").strip().lower()
                             if any(kw in task_text for kw in keywords):
-                                fp = os.path.normpath(os.path.join(ws_dir, current_file))
+                                fp = os.path.normpath(
+                                    os.path.join(ws_dir, current_file)
+                                )
                                 if os.path.isfile(fp):
                                     resp_matched.add(fp)
-                                    print(f"  Responsibility match: {current_file} -> '{task_text[:80]}'")
+                                    print(
+                                        f"  Responsibility match: {current_file} -> '{task_text[:80]}'"
+                                    )
                 if resp_matched:
                     candidate_files |= resp_matched
-                    print(f"  + {len(resp_matched)} files from project_tasks.md responsibility matching")
+                    print(
+                        f"  + {len(resp_matched)} files from project_tasks.md responsibility matching"
+                    )
 
             plan_md_path = find_doc(ws_dir, "project_plan.md")
             if plan_md_path:
@@ -1443,7 +1688,9 @@ class FixCommand(Command):
                             rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
                             idx = plan_text.find(rel)
                             if idx > 0:
-                                snippet = plan_text[max(0, idx-100):idx+200].lower()
+                                snippet = plan_text[
+                                    max(0, idx - 100) : idx + 200
+                                ].lower()
                                 if any(kw in snippet for kw in keywords):
                                     plan_matched.add(fp)
                                     print(f"  Plan match: {rel}")
@@ -1475,16 +1722,28 @@ class FixCommand(Command):
                             try:
                                 sigs = extract_signatures(content)
                                 if sigs:
-                                    sig_map[rel] = ", ".join(f"{n}" for n in sorted(sigs.keys())[:8])
+                                    sig_map[rel] = ", ".join(
+                                        f"{n}" for n in sorted(sigs.keys())[:8]
+                                    )
                             except Exception as exc:
-                                print(f"  Warning: failed to extract signatures from {fp}: {exc}")
+                                print(
+                                    f"  Warning: failed to extract signatures from {fp}: {exc}"
+                                )
                 all_source += f"\n\n## Other project files (signatures only, {len(sig_map)} total)\n\n"
                 for rel, names in sorted(sig_map.items()):
                     all_source += f"  {rel}: {names}\n"
-                print(f"  Collected {len(py_files)} Python files ({len(all_source)} bytes)")
+                print(
+                    f"  Collected {len(py_files)} Python files ({len(all_source)} bytes)"
+                )
                 msgs = [
-                    {"role": "system", "content": "You are an expert Python debugger. Analyze the codebase below. Fix ALL files needed. Keep code concise. NEVER create duplicate functions or classes (_v1, _v2, _clean, _final variants). One implementation per concept.\n\nPrefer [PATCH:] format (minimal diff — only the lines that change):\n[PATCH: path/to/file.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n- old line\n\nOnly use [FILE:] for new files or when the entire file must be rewritten:\n[FILE: absolute/path/to/file.py]\n```python\n# complete fixed code\n```"},
-                    {"role": "user", "content": f"The user reports this issue:\n\n{desc_text}\n\nFull project codebase:\n\n{all_source}\n\nAnalyze the issue, find the root cause, and fix ALL affected files. Output each fixed file with its full path."}
+                    {
+                        "role": "system",
+                        "content": "You are an expert Python debugger. Analyze the codebase below. Fix ALL files needed. Keep code concise. NEVER create duplicate functions or classes (_v1, _v2, _clean, _final variants). One implementation per concept.\n\nPrefer [PATCH:] format (minimal diff — only the lines that change):\n[PATCH: path/to/file.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n- old line\n\nOnly use [FILE:] for new files or when the entire file must be rewritten:\n[FILE: absolute/path/to/file.py]\n```python\n# complete fixed code\n```",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"The user reports this issue:\n\n{desc_text}\n\nFull project codebase:\n\n{all_source}\n\nAnalyze the issue, find the root cause, and fix ALL affected files. Output each fixed file with its full path.",
+                    },
                 ]
                 print("Sending to LLM for deep analysis...")
                 response = await agent.llm.chat(msgs)
@@ -1529,9 +1788,13 @@ class FixCommand(Command):
                     try:
                         sigs = extract_signatures(content)
                         if sigs:
-                            sig_map[rel] = ", ".join(f"{n}" for n in sorted(sigs.keys())[:8])
+                            sig_map[rel] = ", ".join(
+                                f"{n}" for n in sorted(sigs.keys())[:8]
+                            )
                     except Exception as exc:
-                        print(f"  Warning: failed to extract signatures from {fp}: {exc}")
+                        print(
+                            f"  Warning: failed to extract signatures from {fp}: {exc}"
+                        )
 
             # ---- Context size budget (prevents local-model timeouts) ----
             # A single best-effort-except issue used to pull full source of the
@@ -1558,7 +1821,9 @@ class FixCommand(Command):
                     out[os.path.basename(m.group(1)).lower()] = int(m.group(2))
                 return out
 
-            def _focused_window(content: str, center: int | None, max_chars: int) -> str:
+            def _focused_window(
+                content: str, center: int | None, max_chars: int
+            ) -> str:
                 lines = content.splitlines()
                 if not lines:
                     return content
@@ -1597,12 +1862,16 @@ class FixCommand(Command):
             def _file_block(fp: str, score: int, content: str) -> str:
                 rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
                 if len(content) <= _per_file_cap:
-                    return f"\n# === {rel} (relevance: {score} keywords) ===\n{content}\n"
+                    return (
+                        f"\n# === {rel} (relevance: {score} keywords) ===\n{content}\n"
+                    )
                 center = _lines_map.get(os.path.basename(fp).lower())
                 window = _focused_window(content, center, _per_file_cap)
-                return (f"\n# === {rel} (relevance: {score} keywords; "
-                        f"{len(content)} bytes total — showing focused window, "
-                        f"request full with [READ: {rel}]) ===\n{window}\n")
+                return (
+                    f"\n# === {rel} (relevance: {score} keywords; "
+                    f"{len(content)} bytes total — showing focused window, "
+                    f"request full with [READ: {rel}]) ===\n{window}\n"
+                )
 
             # Build initial context: focused source for top-N, signatures for rest
             context = f"## Issue\n{desc_text}\n\n"
@@ -1619,8 +1888,10 @@ class FixCommand(Command):
                     _rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
                     _sigs = extract_signatures(content)
                     _names = ", ".join(sorted(_sigs.keys())[:8]) if _sigs else "(empty)"
-                    context += (f"\n# === {_rel} (omitted — {len(content)} bytes; "
-                                f"signatures: {_names}; request with [READ: {_rel}]) ===\n")
+                    context += (
+                        f"\n# === {_rel} (omitted — {len(content)} bytes; "
+                        f"signatures: {_names}; request with [READ: {_rel}]) ===\n"
+                    )
                     _running = len(context)
 
             if rest_files:
@@ -1631,7 +1902,9 @@ class FixCommand(Command):
                     names = ", ".join(sorted(sigs.keys())[:8]) if sigs else "(empty)"
                     context += f"  {rel}  [{names}]\n"
 
-            context += f"\n## Other project files ({len(sig_map)} total — signatures only)\n"
+            context += (
+                f"\n## Other project files ({len(sig_map)} total — signatures only)\n"
+            )
             for rel, names in sorted(sig_map.items())[:20]:
                 context += f"  {rel}: {names}\n"
             if len(sig_map) > 20:
@@ -1643,8 +1916,13 @@ class FixCommand(Command):
 
                 hroot = history_root(ws_dir)
                 if hroot:
-                    cand = [os.path.relpath(fp, hroot).replace("\\", "/") for fp, _, _ in top_files]
-                    history_block = format_batch_history(cand, hroot, per_file=1, line_cap=8)
+                    cand = [
+                        os.path.relpath(fp, hroot).replace("\\", "/")
+                        for fp, _, _ in top_files
+                    ]
+                    history_block = format_batch_history(
+                        cand, hroot, per_file=1, line_cap=8
+                    )
                     if history_block:
                         context += history_block
             except Exception:
@@ -1657,7 +1935,10 @@ class FixCommand(Command):
 
                 hroot = history_root(ws_dir)
                 if hroot:
-                    cand = [os.path.relpath(fp, hroot).replace("\\", "/") for fp, _, _ in top_files]
+                    cand = [
+                        os.path.relpath(fp, hroot).replace("\\", "/")
+                        for fp, _, _ in top_files
+                    ]
                     episodic = format_episodic_notes(
                         f"{desc_text}\n" + "\n".join(cand), mode="fix", workspace=hroot
                     )
@@ -1669,19 +1950,32 @@ class FixCommand(Command):
             # WikiSkill layer 2 - consolidated knowledge for the candidate batch.
             try:
                 from harnessfix.wiki import format_wiki_notes
-                wiki = format_wiki_notes(
-                    f"{desc_text}\n" + "\n".join(cand), k=3,
-                    path=Path(hroot) / "reports" / "wiki" / "wiki.jsonl",
-                ) if hroot else ""
+
+                wiki = (
+                    format_wiki_notes(
+                        f"{desc_text}\n" + "\n".join(cand),
+                        k=3,
+                        path=Path(hroot) / "reports" / "wiki" / "wiki.jsonl",
+                    )
+                    if hroot
+                    else ""
+                )
                 if wiki:
                     context += wiki
             except Exception:
                 print("Silenced exception in fix_cmd.py:1446")
 
-            print(f"  On-demand: {len(top_files)} full files + {len(rest_files)} candidate sigs + {len(sig_map)} other sigs ({len(context)} bytes)")
-            print(f"  Full source: {', '.join(os.path.basename(fp) for fp, _, _ in top_files)}")
+            print(
+                f"  On-demand: {len(top_files)} full files + {len(rest_files)} candidate sigs + {len(sig_map)} other sigs ({len(context)} bytes)"
+            )
+            print(
+                f"  Full source: {', '.join(os.path.basename(fp) for fp, _, _ in top_files)}"
+            )
             if rest_files:
-                print(f"  Candidates (sigs only): {', '.join(os.path.basename(fp) for fp, _, _ in rest_files[:8])}", end="")
+                print(
+                    f"  Candidates (sigs only): {', '.join(os.path.basename(fp) for fp, _, _ in rest_files[:8])}",
+                    end="",
+                )
                 if len(rest_files) > 8:
                     print(f" ... +{len(rest_files) - 8} more", end="")
                 print()
@@ -1691,42 +1985,52 @@ class FixCommand(Command):
             # (otherwise the model can never see the whole file to edit it) — this
             # was the bug that made the autonomous loop abort with verify_failed
             # on a one-line issue (2026-08-28).
-            read_paths: set[str] = {fp for fp, _, c in top_files if len(c) <= _per_file_cap}
-            windowed_paths: set[str] = {fp for fp, _, c in top_files if len(c) > _per_file_cap}
+            read_paths: set[str] = {
+                fp for fp, _, c in top_files if len(c) <= _per_file_cap
+            }
+            windowed_paths: set[str] = {
+                fp for fp, _, c in top_files if len(c) > _per_file_cap
+            }
             _nudged = False
-            system = ("You are an expert Python debugger.\n\n"
-                      f"WORKSPACE: {ws_dir}\n"
-                      "Files below use paths RELATIVE to the workspace.\n\n"
-                      "You have NO shell/terminal access and cannot run commands. "
-                      "Do NOT emit <tool_call>, shell, or any tool invocations — "
-                      "they will be ignored. Only the directives below are recognized.\n\n"
-                      "FORMAT (plain text only — NO XML or <tool_call> tags):\n"
-                      "  To view a file:  [READ: <relative_path>]\n"
-                      "  To submit a fix: [FILE: <relative_path>]\n"
-                      "    ```python\n    # complete corrected code here\n    ```\n\n"
-                      "First decide the fix. Request at most one or two files with "
-                      "[READ:] if you truly need more context, then submit the fix "
-                      "with [FILE:]/[PATCH:]. Do not keep asking to read; output the "
-                      "fix directly.\n"
-                      "Use EXACTLY the relative filenames shown in the 'Relevant files' section above.\n"
-                      "Do NOT add directory prefixes that aren't already shown.\n"
-                      "If you cannot determine the exact file, explain without [READ:] or [FILE:] tags.")
+            system = (
+                "You are an expert Python debugger.\n\n"
+                f"WORKSPACE: {ws_dir}\n"
+                "Files below use paths RELATIVE to the workspace.\n\n"
+                "You have NO shell/terminal access and cannot run commands. "
+                "Do NOT emit <tool_call>, shell, or any tool invocations — "
+                "they will be ignored. Only the directives below are recognized.\n\n"
+                "FORMAT (plain text only — NO XML or <tool_call> tags):\n"
+                "  To view a file:  [READ: <relative_path>]\n"
+                "  To submit a fix: [FILE: <relative_path>]\n"
+                "    ```python\n    # complete corrected code here\n    ```\n\n"
+                "First decide the fix. Request at most one or two files with "
+                "[READ:] if you truly need more context, then submit the fix "
+                "with [FILE:]/[PATCH:]. Do not keep asking to read; output the "
+                "fix directly.\n"
+                "Use EXACTLY the relative filenames shown in the 'Relevant files' section above.\n"
+                "Do NOT add directory prefixes that aren't already shown.\n"
+                "If you cannot determine the exact file, explain without [READ:] or [FILE:] tags."
+            )
 
-            _TOOL_CALL_RE = re.compile(r'</?tool_call>')
+            _TOOL_CALL_RE = re.compile(r"</?tool_call>")
             # Strip whole <tool_call>...</tool_call> blocks (e.g. shell calls the
             # model emits) so they don't pollute the parse or look like a fix.
-            _TOOL_CALL_BLOCK_RE = re.compile(r'<tool_call>.*?</tool_call>', re.DOTALL)
-            _READ_DIRECTIVE_RE = re.compile(r'\[?READ:\s*([^\]\n<]+)\]?')
+            _TOOL_CALL_BLOCK_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
+            _READ_DIRECTIVE_RE = re.compile(r"\[?READ:\s*([^\]\n<]+)\]?")
             response = ""
             for round_num in range(1, 4):
-                user = (f"Issue: {desc_text}\n\n## Context\n{context}\n\n"
-                        "Find the root cause. Request files with [READ: path] or provide fixes with [FILE: path].")
+                user = (
+                    f"Issue: {desc_text}\n\n## Context\n{context}\n\n"
+                    "Find the root cause. Request files with [READ: path] or provide fixes with [FILE: path]."
+                )
 
                 print(f"  Round {round_num} ({len(context)} bytes)...")
-                response = await agent.llm.chat([
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ])
+                response = await agent.llm.chat(
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ]
+                )
 
                 if response.startswith("[Error") or response.startswith("[LM Studio"):
                     self.error(f"LLM error: {response[:200]}")
@@ -1735,12 +2039,17 @@ class FixCommand(Command):
                 # Check for [READ:] directives — handle both plain and <tool_call> wrapped
                 raw = response
                 # Strip <tool_call> / </tool_call> wrappers if present
-                raw = _TOOL_CALL_RE.sub('', raw)
+                raw = _TOOL_CALL_RE.sub("", raw)
                 raw_reads = _READ_DIRECTIVE_RE.findall(raw)
                 read_requests = [
-                    r.strip() for r in raw_reads
-                    if ".py" in r and "\\" not in r and "$" not in r
-                    and "^" not in r and "(" not in r and not r.startswith("\\")
+                    r.strip()
+                    for r in raw_reads
+                    if ".py" in r
+                    and "\\" not in r
+                    and "$" not in r
+                    and "^" not in r
+                    and "(" not in r
+                    and not r.startswith("\\")
                 ]
                 if read_requests:
                     new_files = []
@@ -1762,7 +2071,9 @@ class FixCommand(Command):
                                 windowed_paths.discard(full)
                                 new_files.append(rel)
                             except Exception as exc:
-                                print(f"  Warning: failed to read requested file {full}: {exc}")
+                                print(
+                                    f"  Warning: failed to read requested file {full}: {exc}"
+                                )
                             continue
                         if os.path.isfile(full) and full.endswith(".py"):
                             try:
@@ -1771,14 +2082,18 @@ class FixCommand(Command):
                                 read_paths.add(full)
                                 new_files.append(rel)
                             except Exception as exc:
-                                print(f"  Warning: failed to read requested file {full}: {exc}")
+                                print(
+                                    f"  Warning: failed to read requested file {full}: {exc}"
+                                )
                         else:
                             bad_reads.append(req_path)
                     if new_files:
                         print(f"    Read: {', '.join(new_files)}")
                         continue
                     elif bad_reads:
-                        print(f"    [READ] could not resolve: {', '.join(bad_reads[:3])} — stopping")
+                        print(
+                            f"    [READ] could not resolve: {', '.join(bad_reads[:3])} — stopping"
+                        )
                         break
                     else:
                         # Every requested file was already fully in context, but the
@@ -1802,15 +2117,21 @@ class FixCommand(Command):
                 return True
 
             # Display response if it's informational (no file fixes)
-            clean = _TOOL_CALL_RE.sub('', response)
+            clean = _TOOL_CALL_RE.sub("", response)
 
             # Parse [PATCH:] blocks
-            patches = re.findall(r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL)
+            patches = re.findall(
+                r"\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\Z)",
+                clean,
+                re.DOTALL,
+            )
             if patches:
                 for fpath, patch_text in patches:
                     self._apply_patch(patch_text.strip(), fpath.strip(), ws_dir)
 
-            fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', clean, re.DOTALL)
+            fixes = re.findall(
+                r"\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```", clean, re.DOTALL
+            )
             valid_fixes = []
             for fpath, new_code in fixes:
                 full = os.path.normpath(os.path.join(ws_dir, fpath.strip()))
@@ -1819,7 +2140,9 @@ class FixCommand(Command):
 
             if not valid_fixes:
                 if fixes and not patches:
-                    print(f"  (ignored {len(fixes)} [FILE:] blocks — no matching files on disk)")
+                    print(
+                        f"  (ignored {len(fixes)} [FILE:] blocks — no matching files on disk)"
+                    )
                 elif not patches:
                     print(response)
                 return True
@@ -1834,10 +2157,16 @@ class FixCommand(Command):
                 # Wholesale-rewrite guard: never let a [FILE:] block replace a
                 # large existing file with drastically smaller content (a partial
                 # write that would destroy the file). Blocked unless overridden.
-                if not allow_rewrite and os.path.getsize(full) > 10000 and len(new_code) < 0.5 * os.path.getsize(full):
-                    print(f"  Skipping {fpath} (existing-file rewrite blocked: new "
-                          f"{len(new_code)}B vs existing {os.path.getsize(full)}B — "
-                          f"pass --allow-rewrite to override)")
+                if (
+                    not allow_rewrite
+                    and os.path.getsize(full) > 10000
+                    and len(new_code) < 0.5 * os.path.getsize(full)
+                ):
+                    print(
+                        f"  Skipping {fpath} (existing-file rewrite blocked: new "
+                        f"{len(new_code)}B vs existing {os.path.getsize(full)}B — "
+                        f"pass --allow-rewrite to override)"
+                    )
                     continue
                 if len(new_code) < 50 or "import" not in new_code:
                     print(f"  Skipping {fpath} (invalid content)")
@@ -1866,7 +2195,10 @@ class FixCommand(Command):
                     hroot = history_root(ws_dir)
                     if hroot:
                         hist_files = [
-                            {"path": os.path.relpath(fp, hroot).replace("\\", "/"), "status": "fixed"}
+                            {
+                                "path": os.path.relpath(fp, hroot).replace("\\", "/"),
+                                "status": "fixed",
+                            }
                             for fp, _content in valid_fixes
                         ]
                         append_execution(
@@ -1878,13 +2210,19 @@ class FixCommand(Command):
             return True
 
         if "--mypy" in parts:
-            return await self._fix_mypy(parts, agent, propose_mode=propose_mode, out_dir=out_dir)
+            return await self._fix_mypy(
+                parts, agent, propose_mode=propose_mode, out_dir=out_dir
+            )
 
         else:
             return await self._fix_traceback(parts, agent)
 
     async def _fix_mypy(
-        self, parts: list[str], agent: 'Agent', propose_mode: bool = False, out_dir: str | None = None
+        self,
+        parts: list[str],
+        agent: "Agent",
+        propose_mode: bool = False,
+        out_dir: str | None = None,
     ) -> bool:
         """Run mypy over the workspace and LLM-fix errors grouped by owning file.
 
@@ -1947,18 +2285,20 @@ class FixCommand(Command):
 
         def parse_errors(stdout: str) -> dict[str, list[str]]:
             by_file: dict[str, list[str]] = {}
-            _ERROR_RE = re.compile(r'^(.*?):(\d+): error: (.*)$')
-            for line in stdout.split('\n'):
+            _ERROR_RE = re.compile(r"^(.*?):(\d+): error: (.*)$")
+            for line in stdout.split("\n"):
                 m = _ERROR_RE.match(line.strip())
                 if m:
-                    fpath = m.group(1).replace('\\', '/')
+                    fpath = m.group(1).replace("\\", "/")
                     by_file.setdefault(fpath, []).append(line.strip())
             return by_file
 
         errors_by_file = parse_errors(run_mypy(targets))
         ordered = _order_leaves_first(list(errors_by_file), errors_by_file, ws_dir)
         files = [(k, errors_by_file[k]) for k in ordered]
-        print(f"[fix --mypy] {sum(len(v) for v in errors_by_file.values())} error(s) in {len(files)} file(s)")
+        print(
+            f"[fix --mypy] {sum(len(v) for v in errors_by_file.values())} error(s) in {len(files)} file(s)"
+        )
         if not files:
             print("Workspace is mypy-clean. Nothing to fix.")
             return True
@@ -1976,7 +2316,9 @@ class FixCommand(Command):
                 continue
             print(f"\n[fix --mypy] {rel_file}: {len(errs)} error(s)")
             remaining = list(errs)
-            remaining = self._repair_and_mechanical(full, rel_file, remaining, yes_mode, targets, ws_dir)
+            remaining = self._repair_and_mechanical(
+                full, rel_file, remaining, yes_mode, targets, ws_dir
+            )
             for attempt in range(max(rounds, 1)):
                 if stop_requested():
                     break
@@ -1988,7 +2330,7 @@ class FixCommand(Command):
                 except OSError as e:
                     print(f"  Cannot read {rel_file}: {e}")
                     break
-                lines = current.split('\n')
+                lines = current.split("\n")
                 clusters = _cluster_mypy_errors(lines, remaining)
                 slice_errs = (clusters[0] if clusters else remaining)[:8]
                 baseline_sigs = _mypy_error_signatures(run_mypy(targets))
@@ -2003,7 +2345,11 @@ class FixCommand(Command):
                     window = _extract_window(lines, start, 0, end - start + 2)
                     err_block = "\n".join(f"- {e}" for e in slice_errs)
                     type_blocks = [
-                        _tc for _tc in (_type_context(lines, e, _parse_line_number(e)) for e in slice_errs)
+                        _tc
+                        for _tc in (
+                            _type_context(lines, e, _parse_line_number(e))
+                            for e in slice_errs
+                        )
                         if _tc
                     ]
                     type_section = "\n".join(type_blocks)
@@ -2072,13 +2418,25 @@ class FixCommand(Command):
                 )
                 msgs = [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": "\n".join(user_sections) + f"\n\nOutput format:\n[PATCH: {rel_file}]\n@@ -line,count +line,count @@\n unchanged line\n-removed line\n+added line\n\nOR if a larger rewrite is needed:\n[FILE: {rel_file}]\n```python\n# complete corrected file\n```"},
+                    {
+                        "role": "user",
+                        "content": "\n".join(user_sections)
+                        + f"\n\nOutput format:\n[PATCH: {rel_file}]\n@@ -line,count +line,count @@\n unchanged line\n-removed line\n+added line\n\nOR if a larger rewrite is needed:\n[FILE: {rel_file}]\n```python\n# complete corrected file\n```",
+                    },
                 ]
                 print(f"  Attempt {attempt + 1} on {len(slice_errs)} error(s)...")
-                response = await agent.llm.chat(msgs, max_tokens=8000, disable_thinking=True)
-                if not response or response.startswith("[Error") or response.startswith("[LM Studio"):
+                response = await agent.llm.chat(
+                    msgs, max_tokens=8000, disable_thinking=True
+                )
+                if (
+                    not response
+                    or response.startswith("[Error")
+                    or response.startswith("[LM Studio")
+                ):
                     print(f"  LLM error: {response}")
-                    print("  Hint: the model burned its whole output budget on reasoning. Load a non-thinking model (`model load <name>`) or a faster coder model for fix --mypy.")
+                    print(
+                        "  Hint: the model burned its whole output budget on reasoning. Load a non-thinking model (`model load <name>`) or a faster coder model for fix --mypy."
+                    )
                     break
                 # PROPOSE MODE: capture the candidate fix in memory; never apply
                 # it to the tree.  The first successful-looking response per
@@ -2091,35 +2449,59 @@ class FixCommand(Command):
                 before_errs = list(remaining)
                 count_before = len(before_errs)
                 failures: list[str] = []
-                changed, failures = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode, context_errors=slice_errs)
+                changed, failures = self._apply_fix_blocks(
+                    response,
+                    ws_dir,
+                    rel_file,
+                    auto_yes=yes_mode,
+                    context_errors=slice_errs,
+                )
                 if stop_requested():
                     print("  Stopped by user — skipping remaining attempts.")
                     break
                 if not changed:
-                    fail_summary = "\n".join(f"  - {f}" for f in failures) if failures else "  (unknown — no diagnostics captured)"
-                    print("  Fix did not apply — retrying once with verbatim-copy instructions")
+                    fail_summary = (
+                        "\n".join(f"  - {f}" for f in failures)
+                        if failures
+                        else "  (unknown — no diagnostics captured)"
+                    )
+                    print(
+                        "  Fix did not apply — retrying once with verbatim-copy instructions"
+                    )
                     if stop_requested():
                         break
                     retry_msgs = [
                         msgs[0],
-                        {"role": "user", "content": (
-                            "Your previous [PATCH: ...] hunks did not apply. "
-                            "Failure reasons:\n" + fail_summary + "\n\n"
-                            "Reproduce the hunks using ONLY the exact lines shown in the "
-                            "'Relevant code' windows above — copy them character-for-character, "
-                            "including indentation. Output a focused patch that touches only the "
-                            "listed lines. Do NOT rewrite whole functions or files.\n\n"
-                            "Output format (strictly a patch):\n"
-                            f"[PATCH: {rel_file}]\n@@ -line,count +line,count @@\n"
-                            " unchanged line\n-removed line\n+added line\n"
-                        )},
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your previous [PATCH: ...] hunks did not apply. "
+                                "Failure reasons:\n" + fail_summary + "\n\n"
+                                "Reproduce the hunks using ONLY the exact lines shown in the "
+                                "'Relevant code' windows above — copy them character-for-character, "
+                                "including indentation. Output a focused patch that touches only the "
+                                "listed lines. Do NOT rewrite whole functions or files.\n\n"
+                                "Output format (strictly a patch):\n"
+                                f"[PATCH: {rel_file}]\n@@ -line,count +line,count @@\n"
+                                " unchanged line\n-removed line\n+added line\n"
+                            ),
+                        },
                     ]
-                    response = await agent.llm.chat(retry_msgs, max_tokens=5000, disable_thinking=True)
-                    if not response or response.startswith("[Error") or response.startswith("[LM Studio"):
+                    response = await agent.llm.chat(
+                        retry_msgs, max_tokens=5000, disable_thinking=True
+                    )
+                    if (
+                        not response
+                        or response.startswith("[Error")
+                        or response.startswith("[LM Studio")
+                    ):
                         print(f"  LLM error: {response}")
                         break
                     changed, retry_failures = self._apply_fix_blocks(
-                        response, ws_dir, rel_file, auto_yes=yes_mode,
+                        response,
+                        ws_dir,
+                        rel_file,
+                        auto_yes=yes_mode,
                         context_errors=slice_errs,
                     )
                     failures.extend(retry_failures)
@@ -2127,73 +2509,110 @@ class FixCommand(Command):
                     print("  Stopped by user — skipping remaining attempts.")
                     break
                 if not changed:
-                    fail_summary = "\n".join(f"  - {f}" for f in failures) if failures else "  (unknown — no diagnostics captured)"
+                    fail_summary = (
+                        "\n".join(f"  - {f}" for f in failures)
+                        if failures
+                        else "  (unknown — no diagnostics captured)"
+                    )
                     print("  Slice failed — retrying the first error alone")
                     if stop_requested():
                         break
                     single_msgs = [
                         msgs[0],
-                        {"role": "user", "content": (
-                            user_sections[0] +
-                            "\n\nPrevious patch attempts failed:\n" + fail_summary + "\n\n"
-                            "Output ONLY a minimal [PATCH:] fixing this one error. "
-                            "Copy the context lines character-for-character from the window above."
-                        )},
+                        {
+                            "role": "user",
+                            "content": (
+                                user_sections[0]
+                                + "\n\nPrevious patch attempts failed:\n"
+                                + fail_summary
+                                + "\n\n"
+                                "Output ONLY a minimal [PATCH:] fixing this one error. "
+                                "Copy the context lines character-for-character from the window above."
+                            ),
+                        },
                     ]
-                    response = await agent.llm.chat(single_msgs, max_tokens=4000, disable_thinking=True)
-                    if response and not response.startswith("[Error") and not response.startswith("[LM Studio"):
-                        changed, _ = self._apply_fix_blocks(response, ws_dir, rel_file, auto_yes=yes_mode, context_errors=slice_errs[:1])
+                    response = await agent.llm.chat(
+                        single_msgs, max_tokens=4000, disable_thinking=True
+                    )
+                    if (
+                        response
+                        and not response.startswith("[Error")
+                        and not response.startswith("[LM Studio")
+                    ):
+                        changed, _ = self._apply_fix_blocks(
+                            response,
+                            ws_dir,
+                            rel_file,
+                            auto_yes=yes_mode,
+                            context_errors=slice_errs[:1],
+                        )
                     if changed:
                         remaining = parse_errors(run_mypy([rel_file])).get(rel_file, [])
                         new_sigs = _multiset_excess(
                             _mypy_error_signatures(run_mypy(targets)), baseline_sigs
                         )
                         if new_sigs:
-                            print(f"  Single-error fix introduced {len(new_sigs)} new error(s) elsewhere ({next(iter(sorted(new_sigs)))}) — restoring previous version")
+                            print(
+                                f"  Single-error fix introduced {len(new_sigs)} new error(s) elsewhere ({next(iter(sorted(new_sigs)))}) — restoring previous version"
+                            )
                             with open(full, "w", encoding="utf-8") as f:
                                 f.write(prev)
-                            remaining = before_errs[len(slice_errs):]
+                            remaining = before_errs[len(slice_errs) :]
                             continue
                         if len(remaining) > count_before:
-                            print(f"  Single-error fix regressed: {count_before} -> {len(remaining)} errors — restoring previous version")
+                            print(
+                                f"  Single-error fix regressed: {count_before} -> {len(remaining)} errors — restoring previous version"
+                            )
                             with open(full, "w", encoding="utf-8") as f:
                                 f.write(prev)
-                            remaining = before_errs[len(slice_errs):]
+                            remaining = before_errs[len(slice_errs) :]
                             continue
-                        print(f"  Single-error fallback applied: {len(remaining)} error(s) remaining")
+                        print(
+                            f"  Single-error fallback applied: {len(remaining)} error(s) remaining"
+                        )
                         if not remaining:
                             break
                         continue
-                    remaining = remaining[len(slice_errs):]
-                    print(f"  No usable fix for these {len(slice_errs)} error(s) — skipping them")
+                    remaining = remaining[len(slice_errs) :]
+                    print(
+                        f"  No usable fix for these {len(slice_errs)} error(s) — skipping them"
+                    )
                     continue
                 r = _run_capped(
                     [sys.executable, "-m", "py_compile", full],
                     timeout_s=PY_COMPILE_TIMEOUT_S,
                 )
                 if r.returncode != 0:
-                    print(f"  Fix introduced a compile error — restoring previous version\n  {r.stderr.strip()[:200]}")
+                    print(
+                        f"  Fix introduced a compile error — restoring previous version\n  {r.stderr.strip()[:200]}"
+                    )
                     with open(full, "w", encoding="utf-8") as f:
                         f.write(prev)
-                    remaining = before_errs[len(slice_errs):]
+                    remaining = before_errs[len(slice_errs) :]
                     continue
                 remaining = parse_errors(run_mypy([rel_file])).get(rel_file, [])
                 new_sigs = _multiset_excess(
                     _mypy_error_signatures(run_mypy(targets)), baseline_sigs
                 )
                 if new_sigs:
-                    print(f"  Fix introduced {len(new_sigs)} new error(s) elsewhere ({next(iter(sorted(new_sigs)))}) — restoring previous version")
+                    print(
+                        f"  Fix introduced {len(new_sigs)} new error(s) elsewhere ({next(iter(sorted(new_sigs)))}) — restoring previous version"
+                    )
                     with open(full, "w", encoding="utf-8") as f:
                         f.write(prev)
-                    remaining = before_errs[len(slice_errs):]
+                    remaining = before_errs[len(slice_errs) :]
                     continue
                 if len(remaining) > count_before:
-                    print(f"  Fix regressed: {count_before} -> {len(remaining)} errors — restoring previous version")
+                    print(
+                        f"  Fix regressed: {count_before} -> {len(remaining)} errors — restoring previous version"
+                    )
                     with open(full, "w", encoding="utf-8") as f:
                         f.write(prev)
-                    remaining = before_errs[len(slice_errs):]
+                    remaining = before_errs[len(slice_errs) :]
                     continue
-                print(f"  Attempt {attempt + 1}: {len(remaining)} error(s) remaining in {rel_file}")
+                print(
+                    f"  Attempt {attempt + 1}: {len(remaining)} error(s) remaining in {rel_file}"
+                )
                 if not remaining:
                     break
 
@@ -2214,14 +2633,21 @@ class FixCommand(Command):
                 "rationale": {},
             }
             if proposed:
-                emit_proposal(proposed, ws_dir, file_outcomes, meta=meta, out_dir=out_dir)
+                emit_proposal(
+                    proposed, ws_dir, file_outcomes, meta=meta, out_dir=out_dir
+                )
             else:
                 print("[fix --mypy --propose] No candidate fixes were produced.")
         return True
 
     def _repair_and_mechanical(
-        self, full: str, rel_file: str, errs: list[str], auto_yes: bool,
-        targets: list[str], ws_dir: str,
+        self,
+        full: str,
+        rel_file: str,
+        errs: list[str],
+        auto_yes: bool,
+        targets: list[str],
+        ws_dir: str,
     ) -> list[str]:
         """Pre-flight corruption repair + deterministic mypy fixes.
 
@@ -2234,17 +2660,25 @@ class FixCommand(Command):
         mypy so the caller's attempt loop only sees what genuinely needs
         the LLM).
         """
+
         def mypy_sigs() -> list[tuple[str, str, str]]:
             r = _run_capped(
-                [sys.executable, "-m", "mypy", *targets, "--ignore-missing-imports",
-                 "--explicit-package-bases", "--namespace-packages"],
+                [
+                    sys.executable,
+                    "-m",
+                    "mypy",
+                    *targets,
+                    "--ignore-missing-imports",
+                    "--explicit-package-bases",
+                    "--namespace-packages",
+                ],
                 cwd=ws_dir,
             )
             return _mypy_error_signatures(r.stdout)
 
         def file_error_count(sigs: list[tuple[str, str, str]]) -> int:
-            key = rel_file.replace('\\', '/')
-            return sum(1 for f, _, _ in sigs if f == key or f.endswith('/' + key))
+            key = rel_file.replace("\\", "/")
+            return sum(1 for f, _, _ in sigs if f == key or f.endswith("/" + key))
 
         try:
             with open(full, "r", encoding="utf-8") as f:
@@ -2264,12 +2698,14 @@ class FixCommand(Command):
         # 2) Deterministic fixes — process bottom-up so a dropped line never
         #    invalidates the line numbers of errors yet to be handled.
         baseline: list[tuple[str, str, str]] | None = None
-        new_lines = source.split('\n')
+        new_lines = source.split("\n")
         changed = False
         work = list(errs)
         rejected: set[tuple[str, str]] = set()
         _REDUNDANT_CAST_TO_RE = re.compile(r'Redundant cast to "([^"]+)"')
-        _HAS_NO_ATTRIBUTE_MAYBE_RE = re.compile(r'has no attribute "([^"]+)"; maybe "([^"]+)"')
+        _HAS_NO_ATTRIBUTE_MAYBE_RE = re.compile(
+            r'has no attribute "([^"]+)"; maybe "([^"]+)"'
+        )
         while True:
             if stop_requested():
                 print("  Stopped by user — remaining mechanical fixes skipped.")
@@ -2282,7 +2718,7 @@ class FixCommand(Command):
                 info = _parse_mypy_error(err)
                 if info is None:
                     continue
-                kind = (info[1], err.split('error: ', 1)[-1].split('  [')[0].strip())
+                kind = (info[1], err.split("error: ", 1)[-1].split("  [")[0].strip())
                 if kind in rejected:
                     continue
                 parsed.append((info[0], info[1], err))
@@ -2301,7 +2737,7 @@ class FixCommand(Command):
                     if m:
                         after = _fix_redundant_cast(before, lineno, m.group(1))
                     label = "redundant-cast"
-                elif code == "assignment" and "default has type \"None\"" in err:
+                elif code == "assignment" and 'default has type "None"' in err:
                     after = _fix_implicit_optional(before, lineno)
                     label = "implicit-optional"
                 elif code == "assignment" and 'expression has type "None"' in err:
@@ -2311,7 +2747,7 @@ class FixCommand(Command):
                     m = _HAS_NO_ATTRIBUTE_MAYBE_RE.search(err)
                     if m:
                         after = _fix_attr_defined_rename(
-                            before, lineno, '\n'.join(new_lines), m.group(1), m.group(2)
+                            before, lineno, "\n".join(new_lines), m.group(1), m.group(2)
                         )
                     label = "attr-defined-rename"
                 elif code == "no-untyped-def":
@@ -2338,7 +2774,7 @@ class FixCommand(Command):
                     continue
                 if after is None or after == before:
                     continue
-                joined = '\n'.join(after)
+                joined = "\n".join(after)
                 if not _syntax_ok(joined):
                     print(f"  mechanical {label} rejected (syntax) — {err[:80]}")
                     continue
@@ -2346,11 +2782,15 @@ class FixCommand(Command):
                     # snapshot the pre-fix state BEFORE the first write so the
                     # improvement check compares against the untouched file
                     baseline = mypy_sigs()
-                print(f"  mechanical {label} @ {rel_file}:{lineno} — {err.split('error: ')[-1][:70]}")
+                print(
+                    f"  mechanical {label} @ {rel_file}:{lineno} — {err.split('error: ')[-1][:70]}"
+                )
                 if not save_file_py(full, joined, auto_yes=auto_yes):
                     # declined (n) or stopped (s/q): remember the candidate so
                     # later passes do not re-prompt the same change
-                    rejected.add((code, err.split('error: ', 1)[-1].split('  [')[0].strip()))
+                    rejected.add(
+                        (code, err.split("error: ", 1)[-1].split("  [")[0].strip())
+                    )
                     if stop_requested():
                         print("  Stopped by user — remaining mechanical fixes skipped.")
                         break
@@ -2360,12 +2800,16 @@ class FixCommand(Command):
                 new_only = _multiset_excess(new_sigs, baseline)
                 count_after = file_error_count(new_sigs)
                 if new_only or count_after >= count_before:
-                    print(f"    reverted — {len(new_only)} new signature(s) elsewhere, file {count_before}->{count_after}")
+                    print(
+                        f"    reverted — {len(new_only)} new signature(s) elsewhere, file {count_before}->{count_after}"
+                    )
                     with open(full, "w", encoding="utf-8") as f:
-                        f.write('\n'.join(before))
+                        f.write("\n".join(before))
                     # remember the (code, message) so later passes do not
                     # retry the same mechanical transformation in vain
-                    rejected.add((code, err.split('error: ', 1)[-1].split('  [')[0].strip()))
+                    rejected.add(
+                        (code, err.split("error: ", 1)[-1].split("  [")[0].strip())
+                    )
                     continue
                 print(f"    applied ({count_before}->{count_after} errors)")
                 baseline = new_sigs
@@ -2392,22 +2836,27 @@ class FixCommand(Command):
             cwd=ws_dir,
         )
         by_file: dict[str, list[str]] = {}
-        _ERROR_RE = re.compile(r'^(.*?):(\d+): error: (.*)$')
-        for line in r.stdout.split('\n'):
+        _ERROR_RE = re.compile(r"^(.*?):(\d+): error: (.*)$")
+        for line in r.stdout.split("\n"):
             m = _ERROR_RE.match(line.strip())
             if m:
-                fpath = m.group(1).replace('\\', '/')
+                fpath = m.group(1).replace("\\", "/")
                 by_file.setdefault(fpath, []).append(line.strip())
-        match_key = rel_file.replace('\\', '/')
+        match_key = rel_file.replace("\\", "/")
         # mypy prints the path as it was given; try both rel and basename.
-        for key in (match_key, os.path.basename(rel_file), full.replace('\\', '/')):
+        for key in (match_key, os.path.basename(rel_file), full.replace("\\", "/")):
             if key in by_file:
                 return by_file[key]
         return []
 
-    def _apply_fix_blocks(self, response: str, ws_dir: str, rel_file: str,
-                          auto_yes: bool = False,
-                          context_errors: list[str] | None = None) -> tuple[int, list[str]]:
+    def _apply_fix_blocks(
+        self,
+        response: str,
+        ws_dir: str,
+        rel_file: str,
+        auto_yes: bool = False,
+        context_errors: list[str] | None = None,
+    ) -> tuple[int, list[str]]:
         """Apply [PATCH:]/[FILE:] blocks targeting rel_file with diff+confirm.
 
         Returns (applied_count, failures).  Writes go through save_file_py
@@ -2418,7 +2867,7 @@ class FixCommand(Command):
         full = os.path.normpath(os.path.join(ws_dir, rel_file))
         if not os.path.isfile(full):
             return 0, []
-        clean = re.sub(r'</?tool_call>', '', response)
+        clean = re.sub(r"</?tool_call>", "", response)
         try:
             with open(full, "r", encoding="utf-8") as f:
                 current = f.read()
@@ -2427,7 +2876,7 @@ class FixCommand(Command):
             return 0, []
 
         def _targets(block_path: str) -> bool:
-            bp = block_path.replace('\\', '/')
+            bp = block_path.replace("\\", "/")
             return bp == rel_file or bp == os.path.basename(rel_file)
 
         applied = 0
@@ -2455,8 +2904,10 @@ class FixCommand(Command):
         lines = split_source_lines(current)
         failed_attempts = 0
         seen_failures: set[str] = set()
-        _IMPORT_DEF_CLASS_RE = re.compile(r'\b(import|def |class )\b')
-        for m in re.finditer(r'\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL):
+        _IMPORT_DEF_CLASS_RE = re.compile(r"\b(import|def |class )\b")
+        for m in re.finditer(
+            r"\[PATCH:\s*([^\]]+)\]\s*\n?(.*?)(?=\[PATCH:|\[FILE:|\Z)", clean, re.DOTALL
+        ):
             if applied:
                 break
             if not _targets(m.group(1).strip()):
@@ -2465,6 +2916,7 @@ class FixCommand(Command):
             ok, result = _impl_apply_patch(patch_text, full, lines)
             if not ok:
                 from agent_core.patch_utils import apply_anchored_patch
+
                 ok, result = apply_anchored_patch(patch_text, lines)
             if not ok:
                 # The model often repeats the same broken hunk many times in
@@ -2479,7 +2931,9 @@ class FixCommand(Command):
                     print(f"  Patch apply failed: {msg}")
                     failed_attempts += 1
                 if failed_attempts >= 4:
-                    print("  Too many failed patch attempts in this response — skipping the rest.")
+                    print(
+                        "  Too many failed patch attempts in this response — skipping the rest."
+                    )
                     break
                 continue
             reason = _looks_corrupted(current, result)
@@ -2489,35 +2943,51 @@ class FixCommand(Command):
                 continue
             result, added = _ensure_typing_imports(result)
             if added:
-                print(f"  [fix] added missing import(s) the patch needed: {', '.join(added)}")
+                print(
+                    f"  [fix] added missing import(s) the patch needed: {', '.join(added)}"
+                )
             if _has_return_error and _return_error_line is not None:
                 from agent_core.commands.fix_cmd import (
-                    _enclosing_function_extent, _function_can_fall_off_end
+                    _enclosing_function_extent,
+                    _function_can_fall_off_end,
                 )
-                extent = _enclosing_function_extent(result.split('\n'), _return_error_line)
+
+                extent = _enclosing_function_extent(
+                    result.split("\n"), _return_error_line
+                )
                 if extent:
                     _, end_line = extent
-                    patched_func_lines = result.split('\n')[0:end_line]
-                    patched_func_src = '\n'.join(patched_func_lines)
+                    patched_func_lines = result.split("\n")[0:end_line]
+                    patched_func_src = "\n".join(patched_func_lines)
                     if _function_can_fall_off_end(patched_func_src, _return_error_line):
-                        print("  WARNING: patch does not resolve 'Missing return statement' "
-                              f"at line {_return_error_line} — function still falls off the end")
+                        print(
+                            "  WARNING: patch does not resolve 'Missing return statement' "
+                            f"at line {_return_error_line} — function still falls off the end"
+                        )
             _show_targeted_issues()
             if not auto_yes and context_errors:
-                new_kinds = self._show_patch_verdict(full, result, rel_file, context_errors, ws_dir)
+                new_kinds = self._show_patch_verdict(
+                    full, result, rel_file, context_errors, ws_dir
+                )
                 if new_kinds:
-                    detail = "; ".join(f"[{c}] {m[:80]}" for c, m in sorted(new_kinds)[:3])
+                    detail = "; ".join(
+                        f"[{c}] {m[:80]}" for c, m in sorted(new_kinds)[:3]
+                    )
                     failures.append(
                         f"Patch rejected — introduces new mypy error(s): {detail}"
                     )
-                    print("  Rejected patch — it introduces new mypy errors (not applied).")
+                    print(
+                        "  Rejected patch — it introduces new mypy errors (not applied)."
+                    )
                     continue
             if save_file_py(full, result, auto_yes=auto_yes):
                 current = result
                 applied += 1
             if stop_requested():
                 break
-        for m in re.finditer(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?:\n```|$)', clean, re.DOTALL):
+        for m in re.finditer(
+            r"\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?:\n```|$)", clean, re.DOTALL
+        ):
             if applied or stop_requested():
                 break
             if not _targets(m.group(1).strip()):
@@ -2525,28 +2995,42 @@ class FixCommand(Command):
             new_code = m.group(2).strip()
             if len(new_code) < 10 or not _IMPORT_DEF_CLASS_RE.search(new_code):
                 failures.append(f"Invalid [FILE:] content for {rel_file}")
-                print(f"  WARNING: [FILE:] content for {rel_file} looks invalid, skipping")
+                print(
+                    f"  WARNING: [FILE:] content for {rel_file} looks invalid, skipping"
+                )
                 continue
             if len(current.splitlines()) > 200 and len(new_code) > len(current) * 1.5:
                 failures.append(f"Oversized [FILE:] rewrite for {rel_file}")
-                print(f"  WARNING: [FILE:] content for {rel_file} is an oversized rewrite, skipping (use [PATCH:] instead)")
+                print(
+                    f"  WARNING: [FILE:] content for {rel_file} is an oversized rewrite, skipping (use [PATCH:] instead)"
+                )
                 continue
             if len(current.splitlines()) > 200 and len(new_code) < len(current) * 0.3:
                 failures.append(f"Shrinking [FILE:] rewrite for {rel_file}")
-                print(f"  WARNING: [FILE:] content for {rel_file} drops more than 70% of the file, skipping (use [PATCH:] instead)")
+                print(
+                    f"  WARNING: [FILE:] content for {rel_file} drops more than 70% of the file, skipping (use [PATCH:] instead)"
+                )
                 continue
             new_code, added = _ensure_typing_imports(new_code)
             if added:
-                print(f"  [fix] added missing import(s) the patch needed: {', '.join(added)}")
+                print(
+                    f"  [fix] added missing import(s) the patch needed: {', '.join(added)}"
+                )
             _show_targeted_issues()
             if not auto_yes and context_errors:
-                new_kinds = self._show_patch_verdict(full, new_code, rel_file, context_errors, ws_dir)
+                new_kinds = self._show_patch_verdict(
+                    full, new_code, rel_file, context_errors, ws_dir
+                )
                 if new_kinds:
-                    detail = "; ".join(f"[{c}] {m[:80]}" for c, m in sorted(new_kinds)[:3])
+                    detail = "; ".join(
+                        f"[{c}] {m[:80]}" for c, m in sorted(new_kinds)[:3]
+                    )
                     failures.append(
                         f"Patch rejected — introduces new mypy error(s): {detail}"
                     )
-                    print("  Rejected patch — it introduces new mypy errors (not applied).")
+                    print(
+                        "  Rejected patch — it introduces new mypy errors (not applied)."
+                    )
                     continue
             if save_file_py(full, new_code, auto_yes=auto_yes):
                 current = new_code
@@ -2566,7 +3050,12 @@ class FixCommand(Command):
         return applied, failures
 
     def _show_patch_verdict(
-        self, full: str, result: str, rel_file: str, context_errors: list[str], ws_dir: str
+        self,
+        full: str,
+        result: str,
+        rel_file: str,
+        context_errors: list[str],
+        ws_dir: str,
     ) -> set[tuple[str, str]]:
         """Verify a candidate result against mypy BEFORE prompting.
 
@@ -2578,6 +3067,7 @@ class FixCommand(Command):
         """
         try:
             import tempfile
+
             fd, tmp = tempfile.mkstemp(
                 suffix=".py", prefix=".mypycheck_", dir=os.path.dirname(full)
             )
@@ -2587,8 +3077,15 @@ class FixCommand(Command):
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(result)
             r = _run_capped(
-                [sys.executable, "-m", "mypy", tmp, "--ignore-missing-imports",
-                 "--explicit-package-bases", "--namespace-packages"],
+                [
+                    sys.executable,
+                    "-m",
+                    "mypy",
+                    tmp,
+                    "--ignore-missing-imports",
+                    "--explicit-package-bases",
+                    "--namespace-packages",
+                ],
                 cwd=ws_dir,
             )
         except OSError:
@@ -2603,14 +3100,16 @@ class FixCommand(Command):
 
         tmp_base = os.path.basename(tmp)
         patched_counts: Counter[tuple[str, str]] = Counter()
-        _ERROR_ID_RE = re.compile(r'^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$')
-        for line in r.stdout.split('\n'):
+        _ERROR_ID_RE = re.compile(r"^(.*?):\d+: error: (.*?)\s*\[([a-z-]+)\]\s*$")
+        for line in r.stdout.split("\n"):
             m = _ERROR_ID_RE.match(line.strip())
-            if m and m.group(1).replace('\\', '/').split('/')[-1] == tmp_base:
+            if m and m.group(1).replace("\\", "/").split("/")[-1] == tmp_base:
                 patched_counts[(m.group(3), m.group(2).strip())] += 1
 
         if not patched_counts:
-            print("  [verify] patched file is mypy-clean — fixes all targeted errors, no new errors. → y")
+            print(
+                "  [verify] patched file is mypy-clean — fixes all targeted errors, no new errors. → y"
+            )
             return set()
 
         targeted_counts: Counter[tuple[str, str]] = Counter()
@@ -2627,14 +3126,22 @@ class FixCommand(Command):
             current_text = ""
         try:
             import tempfile
+
             fd2, tmp2 = tempfile.mkstemp(
                 suffix=".py", prefix=".mypycheck_", dir=os.path.dirname(full)
             )
             with os.fdopen(fd2, "w", encoding="utf-8") as f:
                 f.write(current_text)
             r2 = _run_capped(
-                [sys.executable, "-m", "mypy", tmp2, "--ignore-missing-imports",
-                 "--explicit-package-bases", "--namespace-packages"],
+                [
+                    sys.executable,
+                    "-m",
+                    "mypy",
+                    tmp2,
+                    "--ignore-missing-imports",
+                    "--explicit-package-bases",
+                    "--namespace-packages",
+                ],
                 cwd=ws_dir,
             )
         except OSError:
@@ -2647,9 +3154,9 @@ class FixCommand(Command):
         baseline_counts: Counter[tuple[str, str]] = Counter()
         if r2 is not None:
             tmp2_base = os.path.basename(tmp2)
-            for line in r2.stdout.split('\n'):
+            for line in r2.stdout.split("\n"):
                 m = _ERROR_ID_RE.match(line.strip())
-                if m and m.group(1).replace('\\', '/').split('/')[-1] == tmp2_base:
+                if m and m.group(1).replace("\\", "/").split("/")[-1] == tmp2_base:
                     baseline_counts[(m.group(3), m.group(2).strip())] += 1
 
         # COUNT-based, not set-based: several errors can share the identical
@@ -2658,13 +3165,17 @@ class FixCommand(Command):
         # survives — rejecting a correct partial patch.  (Seen live: two
         # functions with the same "Incompatible default for parameter ...".)
         fixed = sum(
-            min(count, max(0, baseline_counts.get(kind, 0) - patched_counts.get(kind, 0)))
+            min(
+                count,
+                max(0, baseline_counts.get(kind, 0) - patched_counts.get(kind, 0)),
+            )
             for kind, count in targeted_counts.items()
         )
         total_targeted = sum(targeted_counts.values())
         # NEW errors = more occurrences after the patch than before it.
         new_kinds = {
-            kind for kind, n in patched_counts.items()
+            kind
+            for kind, n in patched_counts.items()
             if n > baseline_counts.get(kind, 0)
         }
         print(f"  [verify] fixes {fixed}/{total_targeted} targeted error(s)")
@@ -2681,7 +3192,9 @@ class FixCommand(Command):
             print("  → n (some targeted errors remain)  [s/q = stop whole run]")
         return new_kinds
 
-    def _capture_proposed(self, response: str, rel_file: str, ws_dir: str) -> dict[str, str]:
+    def _capture_proposed(
+        self, response: str, rel_file: str, ws_dir: str
+    ) -> dict[str, str]:
         """PROPOSE MODE: turn an LLM [PATCH:]/[FILE:] response into in-memory
         proposed file contents (full file text) WITHOUT writing the tree.
 
@@ -2692,25 +3205,43 @@ class FixCommand(Command):
         from agent_core.commands.proposal_core import in_memory_apply_patch
 
         out: dict[str, str] = {}
-        clean = re.sub(r'</?tool_call>', '', response or "")
+        clean = re.sub(r"</?tool_call>", "", response or "")
         patches = re.findall(
-            r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL
+            r"\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\Z)", clean, re.DOTALL
         )
         for fpath, patch_text in patches:
             fpath = fpath.strip()
-            target = fpath if os.path.isfile(fpath) else os.path.normpath(os.path.join(ws_dir, fpath))
+            target = (
+                fpath
+                if os.path.isfile(fpath)
+                else os.path.normpath(os.path.join(ws_dir, fpath))
+            )
             try:
-                existing = open(target, "r", encoding="utf-8").read() if os.path.isfile(target) else ""
+                existing = (
+                    open(target, "r", encoding="utf-8").read()
+                    if os.path.isfile(target)
+                    else ""
+                )
             except OSError:
                 existing = ""
-            ok, result = in_memory_apply_patch(os.path.basename(target), existing, patch_text.strip())
+            ok, result = in_memory_apply_patch(
+                os.path.basename(target), existing, patch_text.strip()
+            )
             if ok:
                 out[fpath] = result
             else:
-                print(f"  [propose] candidate patch for {fpath} not applied: {str(result)[:120]}")
-        fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', clean, re.DOTALL)
+                print(
+                    f"  [propose] candidate patch for {fpath} not applied: {str(result)[:120]}"
+                )
+        fixes = re.findall(
+            r"\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```", clean, re.DOTALL
+        )
         if not fixes and not patches:
-            fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?=\n```|\Z)', clean, re.DOTALL)
+            fixes = re.findall(
+                r"\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)(?=\n```|\Z)",
+                clean,
+                re.DOTALL,
+            )
         for fpath, content in fixes:
             fpath = fpath.strip()
             out[fpath] = content.strip()
@@ -2721,17 +3252,21 @@ class FixCommand(Command):
         if response.startswith("[Error") or response.startswith("[LM Studio"):
             print(f"LLM error: {response[:200]}")
             return
-        clean = re.sub(r'</?tool_call>', '', response)
+        clean = re.sub(r"</?tool_call>", "", response)
 
         # Parse [PATCH:] blocks
-        patches = re.findall(r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\Z)', clean, re.DOTALL)
+        patches = re.findall(
+            r"\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[PATCH:|\[FILE:|\Z)", clean, re.DOTALL
+        )
         if patches:
             for fpath, patch_text in patches:
                 fpath = fpath.strip()
                 self._apply_patch(patch_text.strip(), fpath, ws_dir, reason=desc_text)
 
         # Parse [FILE:] blocks (full file rewrite)
-        fixes = re.findall(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', clean, re.DOTALL)
+        fixes = re.findall(
+            r"\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```", clean, re.DOTALL
+        )
         if not fixes:
             if not patches:
                 print("Could not parse fixes.")
@@ -2741,7 +3276,11 @@ class FixCommand(Command):
         for fpath, new_code in fixes:
             fpath = fpath.strip()
             new_code = new_code.strip()
-            full = os.path.normpath(os.path.join(ws_dir, fpath)) if not os.path.isabs(fpath) else fpath
+            full = (
+                os.path.normpath(os.path.join(ws_dir, fpath))
+                if not os.path.isabs(fpath)
+                else fpath
+            )
             if not os.path.exists(full):
                 continue
             if len(new_code) < 50 or "import" not in new_code:
@@ -2756,14 +3295,19 @@ class FixCommand(Command):
             print(f"  Fixed: {fpath} ({len(new_code)} bytes)")
         print(f"\nFixed {fixed_count}/{len(fixes)} files.")
 
-    def _apply_patch(self, patch_text: str, fpath: str, ws_dir: str,
-                     reason: str | None = None) -> bool:
+    def _apply_patch(
+        self, patch_text: str, fpath: str, ws_dir: str, reason: str | None = None
+    ) -> bool:
         """Apply a unified-diff-style patch to a file. Returns True on success.
 
         *reason* (the issue the patch is meant to fix) is shown above the
         diff so the user can judge the patch against it.
         """
-        full = os.path.normpath(os.path.join(ws_dir, fpath)) if not os.path.isabs(fpath) else fpath
+        full = (
+            os.path.normpath(os.path.join(ws_dir, fpath))
+            if not os.path.isabs(fpath)
+            else fpath
+        )
         if not os.path.exists(full):
             print(f"  Skipping {fpath} (not found)")
             return False
@@ -2780,18 +3324,24 @@ class FixCommand(Command):
 
         # Parse hunks: @@ -start,count @@ ... @@
         hunks = []
-        for m in re.finditer(r'@@\s*-(\d+)(?:,\d+)?\s*\+(\d+)(?:,\d+)?\s*@@(.*?)(?=@@|\Z)', patch_text, re.DOTALL):
+        for m in re.finditer(
+            r"@@\s*-(\d+)(?:,\d+)?\s*\+(\d+)(?:,\d+)?\s*@@(.*?)(?=@@|\Z)",
+            patch_text,
+            re.DOTALL,
+        ):
             start = int(m.group(1))
             body = m.group(3).rstrip()
-            chunks: list[tuple[str, str]] = []  # ('-', line) or ('+', line) or (' ', line)
-            for line in body.split('\n'):
-                line = line.rstrip('\r')
-                if line.startswith('-'):
-                    chunks.append(('-', line[1:]))
-                elif line.startswith('+'):
-                    chunks.append(('+', line[1:]))
-                elif line.startswith(' '):
-                    chunks.append((' ', line[1:]))
+            chunks: list[
+                tuple[str, str]
+            ] = []  # ('-', line) or ('+', line) or (' ', line)
+            for line in body.split("\n"):
+                line = line.rstrip("\r")
+                if line.startswith("-"):
+                    chunks.append(("-", line[1:]))
+                elif line.startswith("+"):
+                    chunks.append(("+", line[1:]))
+                elif line.startswith(" "):
+                    chunks.append((" ", line[1:]))
             if chunks:
                 hunks.append((start, chunks))
 
@@ -2800,17 +3350,20 @@ class FixCommand(Command):
             return False
 
         # Filter out broken hunks (incomplete: has - but no +, empty + lines, or incomplete lines)
-        incomplete_ops = ('=', '+', '-', '*', '/', ',', '(', '[', '{')
+        incomplete_ops = ("=", "+", "-", "*", "/", ",", "(", "[", "{")
         valid_hunks = []
         for start, chunks in hunks:
-            has_minus = any(op == '-' for op, _ in chunks)
-            has_plus = any(op == '+' for op, _ in chunks)
+            has_minus = any(op == "-" for op, _ in chunks)
+            has_plus = any(op == "+" for op, _ in chunks)
             if has_minus and not has_plus:
                 continue  # Removal only — skip
-            if any(op == '+' and not text.strip() for op, text in chunks):
+            if any(op == "+" and not text.strip() for op, text in chunks):
                 continue  # Empty replacement — skip
             # Filter incomplete lines (trailing operators like =, +, -, etc.)
-            if any(op == '+' and text.rstrip().endswith(incomplete_ops) for op, text in chunks):
+            if any(
+                op == "+" and text.rstrip().endswith(incomplete_ops)
+                for op, text in chunks
+            ):
                 continue  # Incomplete replacement — skip
             valid_hunks.append((start, chunks))
 
@@ -2830,26 +3383,32 @@ class FixCommand(Command):
             idx = start - 1
             padded = False
             for op, text in chunks:
-                if op in ('-', ' '):
+                if op in ("-", " "):
                     if idx < 0 or idx >= len(lines):
-                        print(f"  Patch mismatch at line {idx+1}: line out of range")
+                        print(f"  Patch mismatch at line {idx + 1}: line out of range")
                         return False
-                    actual = lines[idx].rstrip('\r\n')
-                    if op == '-':
+                    actual = lines[idx].rstrip("\r\n")
+                    if op == "-":
                         patch_lead = len(text) - len(text.lstrip())
                         file_lead = len(actual) - len(actual.lstrip())
-                        if not padded and patch_lead != file_lead and text.strip() == actual.strip():
+                        if (
+                            not padded
+                            and patch_lead != file_lead
+                            and text.strip() == actual.strip()
+                        ):
                             padded = True
                     if actual.strip() != text.strip():
-                        print(f"  Patch mismatch at line {idx+1}: expected '{text[:60]}', got '{actual[:60]}'")
+                        print(
+                            f"  Patch mismatch at line {idx + 1}: expected '{text[:60]}', got '{actual[:60]}'"
+                        )
                         return False
                     idx += 1
-                elif op == '+':
+                elif op == "+":
                     pass  # new lines don't need verification
             hunk_padding[start] = padded
 
         def _render_plus(start: int, text: str) -> str:
-            if hunk_padding.get(start, False) and text.startswith(' '):
+            if hunk_padding.get(start, False) and text.startswith(" "):
                 return text[1:]
             return text
 
@@ -2863,9 +3422,9 @@ class FixCommand(Command):
             i = 0
             while i < len(chunks):
                 op, text = chunks[i]
-                if op == '-':
+                if op == "-":
                     # Check if next chunk is a + line (same logical change)
-                    if i + 1 < len(chunks) and chunks[i + 1][0] == '+':
+                    if i + 1 < len(chunks) and chunks[i + 1][0] == "+":
                         # The + line is applied verbatim.
                         new_lines.append(_render_plus(start, chunks[i + 1][1]))
                         old_lines.append(text)
@@ -2874,26 +3433,31 @@ class FixCommand(Command):
                         new_lines.append(_render_plus(start, text))
                         old_lines.append(text)
                         i += 1
-                elif op == '+':
+                elif op == "+":
                     new_lines.append(_render_plus(start, text))
                     i += 1
-                elif op == ' ':
+                elif op == " ":
                     old_lines.append(text)
                     new_lines.append(text)
                     i += 1
 
             idx = start - 1
             if idx + len(old_lines) <= len(result):
-                del result[idx:idx + len(old_lines)]
+                del result[idx : idx + len(old_lines)]
                 for i, text in enumerate(new_lines):
-                    result.insert(idx + i, text + '\n')
+                    result.insert(idx + i, text + "\n")
 
         # Syntax check
         import tempfile
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
-            tf.write(''.join(result))
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as tf:
+            tf.write("".join(result))
             tmp = tf.name
-        r = _run_capped(["python", "-m", "py_compile", tmp], timeout_s=PY_COMPILE_TIMEOUT_S)
+        r = _run_capped(
+            ["python", "-m", "py_compile", tmp], timeout_s=PY_COMPILE_TIMEOUT_S
+        )
         os.unlink(tmp)
         if r.returncode != 0:
             print(f"  Patch would break syntax: {r.stderr[:200]}")
@@ -2902,7 +3466,7 @@ class FixCommand(Command):
         # Show diff
         if reason:
             print(f"  Reason: {reason[:400]}")
-        show_file_diff(fpath, ''.join(lines), ''.join(result))
+        show_file_diff(fpath, "".join(lines), "".join(result))
 
         # Apply
         if not read_choice("  Apply this patch? (y/N): "):
@@ -2910,10 +3474,11 @@ class FixCommand(Command):
             return False
 
         with open(full, "w", encoding="utf-8") as f:
-            f.write(''.join(result))
+            f.write("".join(result))
         print(f"  Patched: {fpath}")
         return True
-    async def _fix_traceback(self, parts: list[str], agent: 'Agent') -> bool:
+
+    async def _fix_traceback(self, parts: list[str], agent: "Agent") -> bool:
         traceback_text = ""
         if parts:
             traceback_text = " ".join(parts)
@@ -2921,7 +3486,7 @@ class FixCommand(Command):
         if traceback_text.startswith('"') and traceback_text.endswith('"'):
             traceback_text = traceback_text[1:-1]
 
-        if not traceback_text or "File \"" not in traceback_text:
+        if not traceback_text or 'File "' not in traceback_text:
             print("Paste the full traceback, then press Enter on an empty line:")
             lines = []
             if traceback_text:
@@ -2936,7 +3501,7 @@ class FixCommand(Command):
                     break
             traceback_text = "\n".join(lines)
 
-        if not traceback_text or "File \"" not in traceback_text:
+        if not traceback_text or 'File "' not in traceback_text:
             self.error("Could not find file references in traceback.")
             return True
 
@@ -2959,18 +3524,24 @@ class FixCommand(Command):
             self.error(f"File not found: {fpath}")
             return True
 
-        error_lines = traceback_text.strip().split('\n')
+        error_lines = traceback_text.strip().split("\n")
         error_msg = error_lines[-1] if error_lines else "Unknown error"
 
         print(f"\nError in {fpath}:{line_num}")
         print(f"  {error_msg}")
 
-        is_import_error = "ImportError" in error_msg or "ModuleNotFoundError" in error_msg or "cannot import" in error_msg
+        is_import_error = (
+            "ImportError" in error_msg
+            or "ModuleNotFoundError" in error_msg
+            or "cannot import" in error_msg
+        )
 
         if is_import_error:
             all_files_in_trace = matches
             if len(all_files_in_trace) > 1:
-                print(f"\n  Cascade detected! {len(all_files_in_trace)} files in trace:")
+                print(
+                    f"\n  Cascade detected! {len(all_files_in_trace)} files in trace:"
+                )
                 # Find the first trackable file to mark as ROOT in the listing.
                 root_idx: int | None = None
                 for idx, (fp, _ln) in enumerate(all_files_in_trace):
@@ -2979,7 +3550,7 @@ class FixCommand(Command):
                         break
                 for i, (fp, ln) in enumerate(all_files_in_trace):
                     marker = " -> ROOT" if i == root_idx else ""
-                    print(f"    {i+1}. {fp}:{ln}{marker}")
+                    print(f"    {i + 1}. {fp}:{ln}{marker}")
 
                 # Walk from the start to find the first *user* file that actually
                 # exists and isn't frozen or under the Python installation.
@@ -2987,7 +3558,9 @@ class FixCommand(Command):
                     if not _is_trackable_file(root_file):
                         continue
                     if root_file != fpath:
-                        print(f"\n  Root cause is in {root_file}:{root_ln}, not in {fpath}")
+                        print(
+                            f"\n  Root cause is in {root_file}:{root_ln}, not in {fpath}"
+                        )
                         print(f"  Fixing {root_file} instead...")
                         fpath = root_file
                         line_num = root_ln
@@ -3002,35 +3575,47 @@ class FixCommand(Command):
                 )
                 if shadow_match:
                     shadowed = shadow_match.group(1)
-                    print(f"\n  Shadow warning: local file is conflicting with stdlib module '{shadowed}'")
+                    print(
+                        f"\n  Shadow warning: local file is conflicting with stdlib module '{shadowed}'"
+                    )
                     ws = os.path.dirname(os.path.abspath(fpath))
                     for root, _dirs, files in os.walk(ws):
                         for fn in files:
                             if fn == f"{shadowed}.py":
                                 candidate = os.path.normpath(os.path.join(root, fn))
-                                print(f"  The local file {candidate} shadows '{shadowed}' from the Python stdlib.")
-                                print(f"  Fix: rename or move it (e.g. {shadowed}_defs.py or put it inside a package).")
+                                print(
+                                    f"  The local file {candidate} shadows '{shadowed}' from the Python stdlib."
+                                )
+                                print(
+                                    f"  Fix: rename or move it (e.g. {shadowed}_defs.py or put it inside a package)."
+                                )
                         _dirs[:] = []
                         break
-                    print("  Skipping LLM fix — this is a naming conflict, not a code error.")
+                    print(
+                        "  Skipping LLM fix — this is a naming conflict, not a code error."
+                    )
                     return True
 
         if _is_stdlib_path(fpath):
-            print(f"\n  Skipping: {fpath} is a stdlib file (under Python installation).")
-            print("  The root cause is likely a local file shadowing a stdlib module name.")
+            print(
+                f"\n  Skipping: {fpath} is a stdlib file (under Python installation)."
+            )
+            print(
+                "  The root cause is likely a local file shadowing a stdlib module name."
+            )
             return True
 
         with open(fpath, "r", encoding="utf-8") as f:
             current_code = f.read()
 
-        lines_list = current_code.split('\n')
+        lines_list = current_code.split("\n")
         line_idx = int(line_num) - 1
         start = max(0, line_idx - 3)
         end = min(len(lines_list), line_idx + 4)
-        print(f"\n  Context (lines {start+1}-{end}):")
+        print(f"\n  Context (lines {start + 1}-{end}):")
         for i in range(start, end):
             marker = ">>>" if i == line_idx else "   "
-            print(f"  {marker} {i+1}: {lines_list[i][:120]}")
+            print(f"  {marker} {i + 1}: {lines_list[i][:120]}")
 
         project_dir = str(Path(fpath).parent)
         export_map = {}
@@ -3044,7 +3629,9 @@ class FixCommand(Command):
                         with open(full, "r", encoding="utf-8", errors="replace") as pf:
                             src = pf.read()
                         exports = set()
-                        for m in re.finditer(r'^(?:class|def)\s+(\w+)', src, re.MULTILINE):
+                        for m in re.finditer(
+                            r"^(?:class|def)\s+(\w+)", src, re.MULTILINE
+                        ):
                             exports.add(m.group(1))
                         if exports:
                             rel = os.path.relpath(full, project_dir).replace("\\", "/")
@@ -3053,15 +3640,20 @@ class FixCommand(Command):
                         print(f"  Warning: failed to parse {full}: {e}")
 
         all_broken = []
-        for import_match in re.finditer(r'from\s+(\S+)\s+import\s+(.+?)(?:\s*#|\s*$)', current_code):
+        for import_match in re.finditer(
+            r"from\s+(\S+)\s+import\s+(.+?)(?:\s*#|\s*$)", current_code
+        ):
             src_module = import_match.group(1)
-            imported_names = [n.strip().split(' as ')[0].strip() for n in import_match.group(2).strip('()').split(',')]
-            src_file = src_module.replace('.', '/') + '.py'
+            imported_names = [
+                n.strip().split(" as ")[0].strip()
+                for n in import_match.group(2).strip("()").split(",")
+            ]
+            src_file = src_module.replace(".", "/") + ".py"
             if src_file not in export_map:
                 continue
             src_exports = export_map.get(src_file, set())
             for name in imported_names:
-                if name.isupper() or name.startswith('_'):
+                if name.isupper() or name.startswith("_"):
                     continue
                 if name not in src_exports:
                     all_broken.append((src_module, name, src_file, sorted(src_exports)))
@@ -3069,7 +3661,9 @@ class FixCommand(Command):
         if all_broken:
             print(f"\n  Found {len(all_broken)} broken imports in {fpath}:")
             for mod, name, src_file, avail in all_broken:
-                print(f"    '{name}' from '{mod}' not found. Available: {', '.join(avail[:5])}")
+                print(
+                    f"    '{name}' from '{mod}' not found. Available: {', '.join(avail[:5])}"
+                )
 
         print("\nSending to LLM for fix...")
         fix_system = "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged. No duplicate functions. No _v1/_v2 variants.\n\nWhen fixing type errors (arg-type, incompatible type), search the ENTIRE file for where the variable is defined/initialized, not just where the error occurs. Fix the initialization to use the correct type. Do NOT change function signatures.\n\nOutput the fix using ONE of these formats:\n[PATCH: filename.py] — for small fixes near the error line\n[FILE: filename.py] — when the fix is far from the error or needs full context\n\n[PATCH:] example:\n[PATCH: filename.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n\n[FILE:] example:\n[FILE: filename.py]\n```python\n# complete corrected file\n```"
@@ -3104,7 +3698,9 @@ class FixCommand(Command):
             if root_r:
                 rel_r = os.path.relpath(fpath, root_r).replace("\\", "/")
                 episodic = format_episodic_notes(
-                    f"{error_msg}\n{rel_r}\n{traceback_text}", mode="fix", workspace=root_r
+                    f"{error_msg}\n{rel_r}\n{traceback_text}",
+                    mode="fix",
+                    workspace=root_r,
                 )
                 if episodic:
                     fix_system += episodic
@@ -3114,17 +3710,33 @@ class FixCommand(Command):
         # WikiSkill layer 2 - consolidated knowledge for this file/layer.
         try:
             from harnessfix.wiki import format_wiki_notes
-            wiki = format_wiki_notes(
-                f"{error_msg}\n{rel_r}", k=3,
-                path=Path(root_r) / "reports" / "wiki" / "wiki.jsonl",
-            ) if root_r else ""
+
+            wiki = (
+                format_wiki_notes(
+                    f"{error_msg}\n{rel_r}",
+                    k=3,
+                    path=Path(root_r) / "reports" / "wiki" / "wiki.jsonl",
+                )
+                if root_r
+                else ""
+            )
             if wiki:
                 fix_system += wiki
         except Exception:
             print("Silenced exception in fix_cmd.py:2735")
         fix_msgs = [
             {"role": "system", "content": fix_system},
-            {"role": "user", "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n" + "\n".join([f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}" for m, n, s, a in all_broken]) + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```"}
+            {
+                "role": "user",
+                "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n"
+                + "\n".join(
+                    [
+                        f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}"
+                        for m, n, s, a in all_broken
+                    ]
+                )
+                + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```",
+            },
         ]
         fixed = await agent.llm.chat(fix_msgs)
 
@@ -3132,8 +3744,12 @@ class FixCommand(Command):
             self.error(f"LLM error: {fixed[:200]}")
             return True
 
-        match = re.search(r'\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```', fixed, re.DOTALL)
-        patch_match = re.search(r'\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[FILE:|\Z)', fixed, re.DOTALL)
+        match = re.search(
+            r"\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```", fixed, re.DOTALL
+        )
+        patch_match = re.search(
+            r"\[PATCH:\s*([^\]]+)\]\s*\n(.*?)(?=\[FILE:|\Z)", fixed, re.DOTALL
+        )
 
         if patch_match:
             fpath_patch = patch_match.group(1).strip()
@@ -3154,7 +3770,7 @@ class FixCommand(Command):
                 print(f"\nPatch failed for {fpath_patch}")
         elif match:
             new_code = match.group(2).strip()
-            if len(new_code) > len(current_code) * 0.1 and 'import' in new_code:
+            if len(new_code) > len(current_code) * 0.1 and "import" in new_code:
                 if _is_stdlib_path(fpath):
                     print(f"\nSkipping: {fpath} is a stdlib file.")
                     return True
@@ -3189,11 +3805,14 @@ class FixCommand(Command):
             try:
                 basename = os.path.basename(fpath)
                 candidates = await extract_from_changes(
-                    agent, [basename],
-                    context=f"Fixed {fpath}: {error_msg[:300] if error_msg else 'unknown error'}"
+                    agent,
+                    [basename],
+                    context=f"Fixed {fpath}: {error_msg[:300] if error_msg else 'unknown error'}",
                 )
                 if candidates:
-                    print(f"\n[decide] Extracted {len(candidates)} decision candidates from this fix:")
+                    print(
+                        f"\n[decide] Extracted {len(candidates)} decision candidates from this fix:"
+                    )
                     for i, c in enumerate(candidates, 1):
                         print(f"  {i}. {c.get('title', 'Untitled')}")
                     print("  Record? (1/all/N, press Enter to skip): ", end="")
@@ -3235,9 +3854,18 @@ class FixCommand(Command):
             root = history_root(fpath) if fpath else None
             if root:
                 files = [
-                    {"path": os.path.relpath(fpath, root).replace("\\", "/"), "status": "fixed"}
+                    {
+                        "path": os.path.relpath(fpath, root).replace("\\", "/"),
+                        "status": "fixed",
+                    }
                 ]
-                append_execution(root, "fix", files, outcome="ok", note=error_msg[:120] if error_msg else "")
+                append_execution(
+                    root,
+                    "fix",
+                    files,
+                    outcome="ok",
+                    note=error_msg[:120] if error_msg else "",
+                )
         except Exception:
             print("Silenced exception in fix_cmd.py:2695")
 

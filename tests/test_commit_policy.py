@@ -146,10 +146,7 @@ class TestCheckMessage:
 
     def test_multiline_body_does_not_trigger_a_warning(self) -> None:
         report = check_message(
-            "chore: bump the ruff pin\n"
-            "\n"
-            "Body line one.\n"
-            "Body line two.\n"
+            "chore: bump the ruff pin\n\nBody line one.\nBody line two.\n"
         )
         assert report.warnings == []
 
@@ -214,9 +211,7 @@ class TestCommitMsgHookEndToEnd:
         # that means climbing back out to the worktree root.
         (tmp_path / "agent_core").mkdir(exist_ok=True)
         (tmp_path / "agent_core" / "commit_policy.py").write_text(
-            (REPO_ROOT / "agent_core" / "commit_policy.py").read_text(
-                encoding="utf-8"
-            ),
+            (REPO_ROOT / "agent_core" / "commit_policy.py").read_text(encoding="utf-8"),
             encoding="utf-8",
         )
         return tmp_path
@@ -227,7 +222,9 @@ class TestCommitMsgHookEndToEnd:
         # hook only runs once there is a real commit to make.
         subprocess.run(
             ["git", "-C", str(tmp_path), "add", "a.txt"],
-            capture_output=True, timeout=60, check=True,
+            capture_output=True,
+            timeout=60,
+            check=True,
         )
         return subprocess.run(
             ["git", "-C", str(tmp_path), "commit", "-m", message],
@@ -252,7 +249,9 @@ class TestCommitMsgHookEndToEnd:
         assert proc.returncode == 0, proc.stdout + proc.stderr
         subject = subprocess.run(
             ["git", "-C", str(repo), "log", "-1", "--format=%s"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         ).stdout.strip()
         assert subject == "fix(commit): block vacuous subjects"
 
@@ -286,5 +285,9 @@ class TestCommitMsgHookEndToEnd:
             )
         }
         assert imported <= {
-            "__future__", "importlib", "os", "pathlib", "sys",
+            "__future__",
+            "importlib",
+            "os",
+            "pathlib",
+            "sys",
         }, imported

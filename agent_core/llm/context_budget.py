@@ -8,6 +8,7 @@ the big model can overflow the small one and the whole request is rejected
 token budget derived from the provider's REAL context window, plus a message
 trimmer that keeps the system prompt and the newest turns.
 """
+
 from __future__ import annotations
 
 from typing import Any, Sequence

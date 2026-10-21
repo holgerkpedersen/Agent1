@@ -5,6 +5,7 @@ results for tokens (file paths / identifiers) the call's arguments reuse.
 Control-flow links: a step caused by harness logic (e.g. a step that follows
 an injected guard note, or the third identical call in a stuck cycle).
 """
+
 from __future__ import annotations
 
 import re
@@ -19,7 +20,9 @@ _MIN_TOKEN = 6
 
 def _significant_tokens(text: str) -> set[str]:
     """Lowercased alnum tokens of meaningful length, deduplicated."""
-    tokens = {t for t in re.findall(r"[A-Za-z0-9_.\-/\\]+", text) if len(t) >= _MIN_TOKEN}
+    tokens = {
+        t for t in re.findall(r"[A-Za-z0-9_.\-/\\]+", text) if len(t) >= _MIN_TOKEN
+    }
     return {t.lower() for t in tokens}
 
 
@@ -33,7 +36,9 @@ def _infer_provenance(graph: TraceGraph) -> list[HTIRLink]:
     results: list[tuple[int, set[str]]] = []  # (step index, token set)
     for step in graph.steps:
         if step.kind == "tool_result" and not step.payload.get("duplicate"):
-            results.append((step.index, _significant_tokens(str(step.payload.get("result", "")))))
+            results.append(
+                (step.index, _significant_tokens(str(step.payload.get("result", ""))))
+            )
         elif step.kind == "tool_call":
             args_tokens = _significant_tokens(_args_text(step.payload))
             if not args_tokens:
@@ -88,7 +93,7 @@ def _infer_control_flow(graph: TraceGraph) -> list[HTIRLink]:
                     detail="repeated identical tool call (stuck cycle)",
                 )
             )
-    return links[: _MAX_LINKS]
+    return links[:_MAX_LINKS]
 
 
 def infer_links(graph: TraceGraph) -> list[HTIRLink]:

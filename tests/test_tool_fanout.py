@@ -4,6 +4,7 @@ Read-only, non-duplicate tool calls in a single model batch must execute
 concurrently (one wall-clock wait, not N), while mutating calls and
 ``delegate`` still run sequentially and all existing guards stay intact.
 """
+
 import asyncio
 import time
 
@@ -27,10 +28,12 @@ def test_readonly_batch_runs_concurrently():
         order.append((name, start, end))
         return f"result-of-{name}"
 
-    fake = _ScriptedLLM([
-        ([("read", {"path": "a.py"}), ("search", {"query": "x"})], None),
-        "Done.",
-    ])
+    fake = _ScriptedLLM(
+        [
+            ([("read", {"path": "a.py"}), ("search", {"query": "x"})], None),
+            "Done.",
+        ]
+    )
     _runner(fake, execute_tool)
     assert len(order) == 2
     # The second call started before the first finished -> genuine overlap.
@@ -40,16 +43,19 @@ def test_readonly_batch_runs_concurrently():
 def test_tool_messages_keep_tool_call_id_order():
     """Tool messages are appended in assistant tool_call_id order, not
     gather-completion order."""
+
     async def execute_tool(name, args):
         # Make the first call artificially slow so gather finishes it last.
         if name == "read":
             await asyncio.sleep(0.05)
         return f"result-of-{name}"
 
-    fake = _ScriptedLLM([
-        ([("read", {"path": "a.py"}), ("search", {"query": "x"})], None),
-        "Done.",
-    ])
+    fake = _ScriptedLLM(
+        [
+            ([("read", {"path": "a.py"}), ("search", {"query": "x"})], None),
+            "Done.",
+        ]
+    )
     final_text, messages = _runner(fake, execute_tool)
     assert final_text == "Done."
     tool_msgs = [m for m in messages if m["role"] == "tool"]
@@ -68,11 +74,19 @@ def test_mutating_calls_run_after_reads():
         order.append((name, start, end))
         return f"result-of-{name}"
 
-    fake = _ScriptedLLM([
-        ([("read", {"path": "a.py"}), ("write", {"path": "b.py", "content": "x"}),
-          ("read", {"path": "c.py"})], None),
-        "Done.",
-    ])
+    fake = _ScriptedLLM(
+        [
+            (
+                [
+                    ("read", {"path": "a.py"}),
+                    ("write", {"path": "b.py", "content": "x"}),
+                    ("read", {"path": "c.py"}),
+                ],
+                None,
+            ),
+            "Done.",
+        ]
+    )
     _runner(fake, execute_tool)
     names = [o[0] for o in order]
     assert names.count("read") == 2 and names.count("write") == 1
@@ -107,11 +121,19 @@ def test_single_call_batch_is_sequential_noop():
 
 def test_duplicate_third_call_still_stops_loop():
     """Repeated identical calls still trigger stuck synthesis under fan-out."""
-    fake = _ScriptedLLM([
-        ([("list_files", {"path": "."}), ("list_files", {"path": "."}),
-          ("list_files", {"path": "."})], None),
-        "Final answer.",
-    ])
+    fake = _ScriptedLLM(
+        [
+            (
+                [
+                    ("list_files", {"path": "."}),
+                    ("list_files", {"path": "."}),
+                    ("list_files", {"path": "."}),
+                ],
+                None,
+            ),
+            "Final answer.",
+        ]
+    )
     executed = []
 
     async def execute_tool(name, args):
@@ -134,11 +156,19 @@ def test_plan_mode_batch_fans_out_all_readonly():
         order.append((name, start))
         return f"result-of-{name}"
 
-    fake = _ScriptedLLM([
-        ([("read", {"path": "a.py"}), ("search", {"query": "x"}),
-          ("references", {"symbol": "foo"})], None),
-        "Done.",
-    ])
+    fake = _ScriptedLLM(
+        [
+            (
+                [
+                    ("read", {"path": "a.py"}),
+                    ("search", {"query": "x"}),
+                    ("references", {"symbol": "foo"}),
+                ],
+                None,
+            ),
+            "Done.",
+        ]
+    )
     _runner(fake, execute_tool)
     assert len(order) == 3
     # All three started within a tiny window of each other (concurrent).

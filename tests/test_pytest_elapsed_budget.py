@@ -18,6 +18,7 @@ Two rules now hold:
    that killed it instead of losing the same run again.  The floor itself
    comes from measurement (a real full run took 861.5s here, 608s in CI).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -26,6 +27,7 @@ import subprocess
 import pytest
 
 import agent
+import conftest
 import agent_core.pytest_gate as agent_core_pytest_gate
 from agent import Agent
 from agent_core.pytest_gate import (
@@ -43,7 +45,9 @@ def bot(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Agent:
     # Never let a test write timings into the LIVE repo `.env`: the recorded
     # full-run measurement there is real machine history.
     monkeypatch.setattr(
-        agent_core_pytest_gate, "_ENV_FILE_PATH", str(tmp_path / "pytest.env"),
+        agent_core_pytest_gate,
+        "_ENV_FILE_PATH",
+        str(tmp_path / "pytest.env"),
     )
     return Agent(workspace=".")
 
@@ -107,11 +111,14 @@ class TestSubsetSelectorGetsSuiteBudget:
             "python -m pytest --nf -q --no-cov",
             "python -m pytest --testmon -q --no-cov",
             "python -m pytest --last-failed -q",
-            "python -m pytest --lf -q --no-cov 2>&1 | findstr /c:\"passed\"",
+            'python -m pytest --lf -q --no-cov 2>&1 | findstr /c:"passed"',
         ],
     )
     def test_subset_selectors_get_the_budget(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch, command: str,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
+        command: str,
     ) -> None:
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)
         monkeypatch.setattr(agent, "_pytest_full_suite_timeout", lambda: 1800.0)
@@ -119,7 +126,9 @@ class TestSubsetSelectorGetsSuiteBudget:
         assert proc.timeout_seen == 1800.0
 
     def test_full_run_still_gets_the_budget(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)
         monkeypatch.setattr(agent, "_pytest_full_suite_timeout", lambda: 1800.0)
@@ -128,26 +137,32 @@ class TestSubsetSelectorGetsSuiteBudget:
         assert proc.timeout_seen == 1800.0
 
     def test_targeted_run_stays_capped(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A single-file run must not inherit the whole-suite ceiling."""
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)
         monkeypatch.setattr(agent, "_pytest_full_suite_timeout", lambda: 1800.0)
         proc = _run(
             bot,
-            {"command": "python -m pytest tests/test_x.py -q", "timeout": 10 ** 6},
+            {"command": "python -m pytest tests/test_x.py -q", "timeout": 10**6},
         )
         assert proc.timeout_seen == agent._MAX_RUN_TIMEOUT_S
 
     def test_non_pytest_command_stays_capped(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)
-        proc = _run(bot, {"command": "echo hi", "timeout": 10 ** 6})
+        proc = _run(bot, {"command": "echo hi", "timeout": 10**6})
         assert proc.timeout_seen == agent._MAX_RUN_TIMEOUT_S
 
     def test_timeout_message_names_the_budget(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProcTimesOut)
         monkeypatch.setattr(agent, "_kill_process_tree", lambda proc: None)
@@ -165,12 +180,16 @@ class TestSubsetSelectorGetsSuiteBudget:
 
 class TestBudgetIsMeasuredNotGuessed:
     def test_measurement_wins_over_the_floor(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("PYTEST_FULL_SUITE_TIMEOUT", raising=False)
         monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
         monkeypatch.setattr(
-            agent_core_pytest_gate, "_ENV_FILE_PATH", str(tmp_path / ".env"),
+            agent_core_pytest_gate,
+            "_ENV_FILE_PATH",
+            str(tmp_path / ".env"),
         )
         (tmp_path / ".env").write_text(
             "PYTEST_FULL_SUITE_TIMEOUT=100\nPYTEST_LAST_FULL_RUN_SECONDS=1000\n",
@@ -179,12 +198,16 @@ class TestBudgetIsMeasuredNotGuessed:
         assert full_suite_timeout() == 1500.0  # 1000 * 1.5
 
     def test_floor_wins_when_nothing_measured(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "700")
         monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
         monkeypatch.setattr(
-            agent_core_pytest_gate, "_ENV_FILE_PATH", str(tmp_path / "absent.env"),
+            agent_core_pytest_gate,
+            "_ENV_FILE_PATH",
+            str(tmp_path / "absent.env"),
         )
         assert full_suite_timeout() == 700.0
 
@@ -193,25 +216,87 @@ class TestBudgetIsMeasuredNotGuessed:
         assert DEFAULT_FULL_SUITE_TIMEOUT > MEASURED_FULL_RUN_SECONDS
         assert agent._FULL_SUITE_MARGIN == agent_core_pytest_gate.FULL_SUITE_MARGIN
 
+    def test_measured_duration_ignores_process_env(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A CI matrix must not let the faster job shrink the slower job's budget.
+
+        The ubuntu and windows jobs write ``PYTEST_LAST_FULL_RUN_SECONDS`` in
+        ``.env`` on the same checkout; a process-env value for that key is not
+        a setting, so it must be ignored (``.env`` is the measurement's only
+        source).  The floor key keeps its env override — that is how CI raises
+        it per job.
+        """
+        monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "100")
+        monkeypatch.setenv("PYTEST_LAST_FULL_RUN_SECONDS", "100")
+        monkeypatch.setattr(
+            agent_core_pytest_gate,
+            "_ENV_FILE_PATH",
+            str(tmp_path / ".env"),
+        )
+        (tmp_path / ".env").write_text(
+            "PYTEST_LAST_FULL_RUN_SECONDS=1000\n",
+            encoding="utf-8",
+        )
+        # Floor 100 (env) so the measurement is the binding term: .env's
+        # 1000*1.5=1500 wins, NOT the env's 100*1.5=150.
+        assert full_suite_timeout() == 1500.0
+
+    def test_conftest_measured_duration_ignores_process_env(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Same rule in the in-suite watchdog, so tool and watchdog agree."""
+        monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "100")
+        monkeypatch.setenv("PYTEST_LAST_FULL_RUN_SECONDS", "100")
+        monkeypatch.setattr(conftest, "_ENV_FILE", tmp_path / ".env")
+        (tmp_path / ".env").write_text(
+            "PYTEST_LAST_FULL_RUN_SECONDS=1000\n",
+            encoding="utf-8",
+        )
+        assert conftest._resolve_budget() == 1500.0
+
+    def test_conftest_floor_still_reads_process_env(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The floor stays overridable — CI sets it per job in the env."""
+        monkeypatch.setenv("PYTEST_FULL_SUITE_TIMEOUT", "1800")
+        monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
+        monkeypatch.setattr(conftest, "_ENV_FILE", tmp_path / "absent.env")
+        assert conftest._resolve_budget() == 1800.0
+
 
 class TestElapsedRecording:
     def test_completed_run_overwrites_the_measurement(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         env = tmp_path / ".env"
         monkeypatch.setattr(
-            agent_core_pytest_gate, "_ENV_FILE_PATH", str(env),
+            agent_core_pytest_gate,
+            "_ENV_FILE_PATH",
+            str(env),
         )
         record_full_run_seconds(500.0)
         record_full_run_seconds(321.5)
         assert "PYTEST_LAST_FULL_RUN_SECONDS=321.5" in env.read_text(encoding="utf-8")
 
     def test_killed_run_grows_the_budget(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         env = tmp_path / ".env"
         monkeypatch.setattr(
-            agent_core_pytest_gate, "_ENV_FILE_PATH", str(env),
+            agent_core_pytest_gate,
+            "_ENV_FILE_PATH",
+            str(env),
         )
         record_full_run_seconds(200.0)
         # Killed at 800s: the true cost is >= 800, so the budget must grow.
@@ -219,33 +304,45 @@ class TestElapsedRecording:
         assert "PYTEST_LAST_FULL_RUN_SECONDS=800.0" in env.read_text(encoding="utf-8")
 
     def test_killed_run_never_shrinks_the_budget(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         env = tmp_path / ".env"
         monkeypatch.setattr(
-            agent_core_pytest_gate, "_ENV_FILE_PATH", str(env),
+            agent_core_pytest_gate,
+            "_ENV_FILE_PATH",
+            str(env),
         )
         record_full_run_seconds(900.0)
         record_full_run_seconds(120.0, completed=False)
         assert "PYTEST_LAST_FULL_RUN_SECONDS=900.0" in env.read_text(encoding="utf-8")
 
     def test_recorded_value_drives_the_next_budget(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("PYTEST_FULL_SUITE_TIMEOUT", raising=False)
         monkeypatch.delenv("PYTEST_LAST_FULL_RUN_SECONDS", raising=False)
         monkeypatch.setattr(
-            agent_core_pytest_gate, "_ENV_FILE_PATH", str(tmp_path / ".env"),
+            agent_core_pytest_gate,
+            "_ENV_FILE_PATH",
+            str(tmp_path / ".env"),
         )
         record_full_run_seconds(1000.0)
         assert full_suite_timeout() == 1500.0
 
     def test_recording_preserves_other_env_keys(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         env = tmp_path / ".env"
         monkeypatch.setattr(
-            agent_core_pytest_gate, "_ENV_FILE_PATH", str(env),
+            agent_core_pytest_gate,
+            "_ENV_FILE_PATH",
+            str(env),
         )
         env.write_text(
             "# comment\nGITHUB_TOKEN=secret\nPYTEST_FULL_SUITE_TIMEOUT=2400\n",
@@ -261,7 +358,9 @@ class TestElapsedRecording:
 
 class TestRunToolRecordsElapsed:
     def test_completed_full_run_records_its_elapsed(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         seen: list[float] = []
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)
@@ -283,7 +382,9 @@ class TestRunToolRecordsElapsed:
         assert seen[0] >= 0.0
 
     def test_killed_full_run_records_a_lower_bound(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         seen: list[tuple[float, bool]] = []
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProcTimesOut)
@@ -305,7 +406,9 @@ class TestRunToolRecordsElapsed:
         assert seen[0][1] is False, "a killed run is a lower bound, not a measurement"
 
     def test_non_pytest_run_records_nothing(
-        self, bot: Agent, monkeypatch: pytest.MonkeyPatch,
+        self,
+        bot: Agent,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         seen: list[float] = []
         monkeypatch.setattr(agent.subprocess, "Popen", _FakeProc)

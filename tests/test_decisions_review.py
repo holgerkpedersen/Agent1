@@ -1,6 +1,5 @@
 """Tests for the decision-ledger health check (decision #054, #080-#087)."""
 
-
 from agent_core.decisions import (
     find_stale_decisions,
     find_open_contradictions,
@@ -80,10 +79,14 @@ def test_stale_marks_do_not_mutate_ledger_records(tmp_path):
 
 def test_open_contradictions_flags_unresolved():
     """Decision with unresolved contradictions is flagged."""
-    d = _decision("010", [], contradictions=[
-        {"id": "005", "status": "open"},
-        {"id": "003", "status": "resolved"},
-    ])
+    d = _decision(
+        "010",
+        [],
+        contradictions=[
+            {"id": "005", "status": "open"},
+            {"id": "003", "status": "resolved"},
+        ],
+    )
     result = find_open_contradictions([d])
     assert len(result) == 1
     assert result[0]["id"] == "010"
@@ -92,10 +95,14 @@ def test_open_contradictions_flags_unresolved():
 
 def test_open_contradictions_ignores_resolved():
     """Decision with only resolved/superseded contradictions is not flagged."""
-    d = _decision("010", [], contradictions=[
-        {"id": "005", "status": "resolved"},
-        {"id": "003", "status": "superseded"},
-    ])
+    d = _decision(
+        "010",
+        [],
+        contradictions=[
+            {"id": "005", "status": "resolved"},
+            {"id": "003", "status": "superseded"},
+        ],
+    )
     assert find_open_contradictions([d]) == []
 
 
@@ -107,9 +114,13 @@ def test_open_contradictions_ignores_empty_list():
 
 def test_open_contradictions_ignores_missing_status():
     """Contradiction dict without status field is treated as open."""
-    d = _decision("010", [], contradictions=[
-        {"id": "005"},  # no status field
-    ])
+    d = _decision(
+        "010",
+        [],
+        contradictions=[
+            {"id": "005"},  # no status field
+        ],
+    )
     result = find_open_contradictions([d])
     assert len(result) == 1
     assert result[0]["_open_contradiction_ids"] == ["005"]
@@ -117,9 +128,13 @@ def test_open_contradictions_ignores_missing_status():
 
 def test_open_contradictions_does_not_mutate():
     """Original decision dict is not mutated."""
-    d = _decision("010", [], contradictions=[
-        {"id": "005", "status": "open"},
-    ])
+    d = _decision(
+        "010",
+        [],
+        contradictions=[
+            {"id": "005", "status": "open"},
+        ],
+    )
     find_open_contradictions([d])
     assert "_open_contradiction_ids" not in d
 
@@ -130,7 +145,8 @@ def test_open_contradictions_does_not_mutate():
 def test_meta_warnings_flags_decisions_with_warnings():
     """Decision carrying meta_warnings is flagged."""
     d = _decision(
-        "080", ["agent.py"],
+        "080",
+        ["agent.py"],
         meta_warnings=["Repeats unverified claim reference: .plans.json"],
     )
     result = find_meta_warnings([d])
@@ -150,7 +166,8 @@ def test_meta_warnings_ignores_empty_warnings():
 def test_meta_warnings_does_not_mutate():
     """Original decision dict is not mutated."""
     d = _decision(
-        "082", ["agent.py"],
+        "082",
+        ["agent.py"],
         meta_warnings=["some warning"],
     )
     find_meta_warnings([d])
@@ -175,11 +192,13 @@ def test_ledger_health_combines_stale_and_contradictions(tmp_path):
     (tmp_path / "exists.py").write_text("", encoding="utf-8")
     decisions = [
         _decision(
-            "001", ["exists.py", "gone.py"],
+            "001",
+            ["exists.py", "gone.py"],
             contradictions=[{"id": "003", "status": "open"}],
         ),
         _decision(
-            "080", [],
+            "080",
+            [],
             meta_warnings=["unverified claim"],
         ),
     ]

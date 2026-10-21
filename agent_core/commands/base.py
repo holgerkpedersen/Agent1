@@ -74,7 +74,9 @@ def _wrap_line(text: str, width: int) -> list[str]:
     return out
 
 
-def read_stdin(prompt: str = "Paste text. Type --- on its own line when done, or Ctrl+Z to finish:") -> str:
+def read_stdin(
+    prompt: str = "Paste text. Type --- on its own line when done, or Ctrl+Z to finish:",
+) -> str:
     """Read multi-line text from stdin until a sentinel line or EOF.
 
     Blank lines are preserved.  The sentinel line ``---`` (three dashes,
@@ -164,7 +166,9 @@ def read_choice(prompt: str) -> bool:
     return resp in ("y", "yes")
 
 
-def chat_stoppable(chat: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+def chat_stoppable(
+    chat: Callable[..., Awaitable[Any]],
+) -> Callable[..., Awaitable[Any]]:
     """Wrap an async chat callable so Ctrl+C mid-request turns into a
     graceful FlowStopped + request_stop() instead of tearing down the run.
 
@@ -172,6 +176,7 @@ def chat_stoppable(chat: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitab
     ``await`` surfaces as a CancelledError thrown at that await point; the
     wrapper converts it back into an orderly stop.
     """
+
     async def wrapped(msgs: Any, **kw: Any) -> Any:
         task = asyncio.current_task()
         try:
@@ -182,6 +187,7 @@ def chat_stoppable(chat: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitab
             request_stop()
             print("\n  Stopped by user (Ctrl+C) — the current run was aborted.")
             raise FlowStopped() from None
+
     return wrapped
 
 
@@ -197,7 +203,11 @@ def is_autonomous() -> bool:
     """True when interactive prompts should auto-select their safe defaults."""
     if _AUTONOMOUS_OVERRIDE is not None:
         return _AUTONOMOUS_OVERRIDE
-    return os.environ.get("AGENT_AUTONOMOUS", "").strip().lower() in ("1", "true", "yes")
+    return os.environ.get("AGENT_AUTONOMOUS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def set_autonomous(flag: "bool | None") -> None:
@@ -231,11 +241,13 @@ def show_file_diff(basename: str, original: str, new: str) -> None:
     """Display a side-by-side diff with aligned columns, line numbers, 5 lines of context, and colors."""
     original_lines = original.splitlines()
     new_lines = new.splitlines()
-    diff = list(difflib.unified_diff(
-        original_lines,
-        new_lines,
-        n=5,
-    ))
+    diff = list(
+        difflib.unified_diff(
+            original_lines,
+            new_lines,
+            n=5,
+        )
+    )
     if not diff:
         print(f"\n  [PATCH: {basename}] (no changes)")
         return
@@ -254,14 +266,18 @@ def show_file_diff(basename: str, original: str, new: str) -> None:
 
     def flush_pair() -> None:
         while pending_removes or pending_adds:
-            old_no, old_text = pending_removes.pop(0) if pending_removes else (None, None)
+            old_no, old_text = (
+                pending_removes.pop(0) if pending_removes else (None, None)
+            )
             new_no, new_text = pending_adds.pop(0) if pending_adds else (None, None)
-            rows.append((
-                str(old_no) if old_no is not None else "",
-                old_text if old_text is not None else "",
-                str(new_no) if new_no is not None else "",
-                new_text if new_text is not None else "",
-            ))
+            rows.append(
+                (
+                    str(old_no) if old_no is not None else "",
+                    old_text if old_text is not None else "",
+                    str(new_no) if new_no is not None else "",
+                    new_text if new_text is not None else "",
+                )
+            )
 
     for line in diff:
         stripped = line.rstrip("\n")
@@ -338,7 +354,9 @@ def show_file_diff(basename: str, original: str, new: str) -> None:
                     nnum = f"{new_no:>{max_new_no}}" if i == 0 else new_blank_no
                     o = old_parts[i] if i < len(old_parts) else ""
                     n = new_parts[i] if i < len(new_parts) else ""
-                    print(f"  {onum} | {RED}{o:<{old_col}}{RESET}  {nnum} | {GREEN}{n}{RESET}")
+                    print(
+                        f"  {onum} | {RED}{o:<{old_col}}{RESET}  {nnum} | {GREEN}{n}{RESET}"
+                    )
                 removed += 1
                 added += 1
         elif has_old:
@@ -396,6 +414,7 @@ class Command(ABC):
 
     All commands must implement execute() and provide a help text.
     """
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -409,7 +428,7 @@ class Command(ABC):
         ...
 
     @abstractmethod
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         """Execute the command.
 
         Args:

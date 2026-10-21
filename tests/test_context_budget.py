@@ -1,4 +1,5 @@
 """Tests for per-provider context budgeting (NPU small-window safety)."""
+
 from __future__ import annotations
 
 from agent_core.llm.context_budget import (
@@ -47,8 +48,7 @@ class TestCharBudgetForLimit:
     def test_respects_reserve_and_safety(self):
         full = char_budget_for_limit(10_000, reserve_tokens=0, safety=1.0)
         assert full == int(10_000 * CHARS_PER_TOKEN)
-        reserved = char_budget_for_limit(
-            10_000, reserve_tokens=2_000, safety=1.0)
+        reserved = char_budget_for_limit(10_000, reserve_tokens=2_000, safety=1.0)
         assert reserved == int(8_000 * CHARS_PER_TOKEN)
 
     def test_char_budget_for_delegates_to_limit(self):

@@ -3,197 +3,277 @@
 from __future__ import annotations
 import re
 
-THINK_OPEN = chr(60) + 'think' + chr(62)
-THINK_CLOSE = chr(60) + '/think' + chr(62)
-TOOL_OPEN = chr(60) + 'tool_call' + chr(62)
-TOOL_CLOSE = chr(60) + '/tool_call' + chr(62)
+THINK_OPEN = chr(60) + "think" + chr(62)
+THINK_CLOSE = chr(60) + "/think" + chr(62)
+TOOL_OPEN = chr(60) + "tool_call" + chr(62)
+TOOL_CLOSE = chr(60) + "/tool_call" + chr(62)
 CHECKMARK = chr(9989)
 
 _REASONING_LINE_PREFIXES = (
-    "Ah,", "Wait,", "Let's", "Let me",
-    "I see", "I will", "I'll", "I've", "I am",
-    "Now,", "Hmm", "Actually", "Okay",
-    "Draft", "All good", "All constraints", "Ready.",
-    "Proceeds.", "Output matches", "Self-Correction",
-    "[Output", "[Self", "Output Generation",
-    "Check constraints", "I need to", "I should",
-    "First,", "Second,", "Third,",
-    "I'll just", "I'll provide", "I'll output",
-    "One minor", "One detail",
-    "Draft looks", "Structure:", "End with exactly",
-    "one of the lines", "one of these formats",
-    "Check bullet", "No intro text", "Code block only",
-    "Constraint:", "Constraints:", "Check:",
-    "I'll verify", "I'll ensure", "I'll keep",
-    "I'll stick", "I'll put", "I'll add",
-    "I will strictly", "I will structure",
-    "I will ensure", "I will just",
-    "My task:", "Critique points", "This looks like",
-    "Let me verify line", "Let me count",
-    "Let me look", "Let me trace",
-    "I will craft", "I will produce",
-    "Ready to produce", "Ready,",
-    "Focus on:", "I will list",
+    "Ah,",
+    "Wait,",
+    "Let's",
+    "Let me",
+    "I see",
+    "I will",
+    "I'll",
+    "I've",
+    "I am",
+    "Now,",
+    "Hmm",
+    "Actually",
+    "Okay",
+    "Draft",
+    "All good",
+    "All constraints",
+    "Ready.",
+    "Proceeds.",
+    "Output matches",
+    "Self-Correction",
+    "[Output",
+    "[Self",
+    "Output Generation",
+    "Check constraints",
+    "I need to",
+    "I should",
+    "First,",
+    "Second,",
+    "Third,",
+    "I'll just",
+    "I'll provide",
+    "I'll output",
+    "One minor",
+    "One detail",
+    "Draft looks",
+    "Structure:",
+    "End with exactly",
+    "one of the lines",
+    "one of these formats",
+    "Check bullet",
+    "No intro text",
+    "Code block only",
+    "Constraint:",
+    "Constraints:",
+    "Check:",
+    "I'll verify",
+    "I'll ensure",
+    "I'll keep",
+    "I'll stick",
+    "I'll put",
+    "I'll add",
+    "I will strictly",
+    "I will structure",
+    "I will ensure",
+    "I will just",
+    "My task:",
+    "Critique points",
+    "This looks like",
+    "Let me verify line",
+    "Let me count",
+    "Let me look",
+    "Let me trace",
+    "I will craft",
+    "I will produce",
+    "Ready to produce",
+    "Ready,",
+    "Focus on:",
+    "I will list",
 )
 
 # Build the think/tool_call tag regex at runtime to avoid source-level stripping
 _re_think = re.compile(
-    re.escape(THINK_OPEN) + r'.*?' + re.escape(THINK_CLOSE)
-    + r'|' + re.escape(THINK_OPEN) + r'.*$'
-    + r'|' + re.escape(TOOL_OPEN) + r'.*?' + re.escape(TOOL_CLOSE)
-    + r'|' + re.escape(TOOL_OPEN) + r'.*$'
-    , re.DOTALL | re.MULTILINE
+    re.escape(THINK_OPEN)
+    + r".*?"
+    + re.escape(THINK_CLOSE)
+    + r"|"
+    + re.escape(THINK_OPEN)
+    + r".*$"
+    + r"|"
+    + re.escape(TOOL_OPEN)
+    + r".*?"
+    + re.escape(TOOL_CLOSE)
+    + r"|"
+    + re.escape(TOOL_OPEN)
+    + r".*$",
+    re.DOTALL | re.MULTILINE,
 )
 # When the entire response is wrapped in think tags, keep the content
 _re_think_tags_only = re.compile(
-    re.escape(THINK_OPEN) + r'|' + re.escape(THINK_CLOSE)
-    + r'|' + re.escape(TOOL_OPEN) + r'|' + re.escape(TOOL_CLOSE)
-    , re.DOTALL | re.MULTILINE
+    re.escape(THINK_OPEN)
+    + r"|"
+    + re.escape(THINK_CLOSE)
+    + r"|"
+    + re.escape(TOOL_OPEN)
+    + r"|"
+    + re.escape(TOOL_CLOSE),
+    re.DOTALL | re.MULTILINE,
 )
-_re_arrow = re.compile(r'^\s*->\s*\*?Proceeds\*?\.?\s*$', re.MULTILINE | re.IGNORECASE)
-_re_markers = re.compile(r'^\s*\[(?:Output|Self)[^\]]*\]\s*$', re.MULTILINE | re.IGNORECASE)
-_re_multi_blank = re.compile(r'\n{3,}', re.DOTALL)
+_re_arrow = re.compile(r"^\s*->\s*\*?Proceeds\*?\.?\s*$", re.MULTILINE | re.IGNORECASE)
+_re_markers = re.compile(
+    r"^\s*\[(?:Output|Self)[^\]]*\]\s*$", re.MULTILINE | re.IGNORECASE
+)
+_re_multi_blank = re.compile(r"\n{3,}", re.DOTALL)
 
 
 def _is_reasoning_line(stripped: str) -> bool:
     """Check if a stripped line is reasoning leak."""
-    check = re.sub(r'^\d+\.\s+', '', stripped)
-    check = check.lstrip('*').strip()
+    check = re.sub(r"^\d+\.\s+", "", stripped)
+    check = check.lstrip("*").strip()
     check_lower = check.lower()
     for prefix in _REASONING_LINE_PREFIXES:
         if check_lower.startswith(prefix.lower()):
             return True
     if CHECKMARK in check:
         return True
-    if 'Output matches response' in check:
+    if "Output matches response" in check:
         return True
-    if '-> *Proceeds*' in check:
+    if "-> *Proceeds*" in check:
         return True
-    if check.endswith('Proceeds.') and len(check) < 30:
+    if check.endswith("Proceeds.") and len(check) < 30:
         return True
-    if check.endswith('Yes.') and len(check) < 40 and '?' in check:
+    if check.endswith("Yes.") and len(check) < 40 and "?" in check:
         return True
-    if check == 'Checked.':
+    if check == "Checked.":
         return True
-    if check.startswith('End with exactly'):
+    if check.startswith("End with exactly"):
         return True
-    if check_lower.startswith('let me'):
+    if check_lower.startswith("let me"):
         return True
-    if check_lower.startswith('this looks like'):
+    if check_lower.startswith("this looks like"):
         return True
-    if check_lower.startswith('my task:'):
+    if check_lower.startswith("my task:"):
         return True
-    if check_lower.startswith('critique points'):
+    if check_lower.startswith("critique points"):
         return True
-    if check.lower().startswith('i will craft'):
+    if check.lower().startswith("i will craft"):
         return True
-    if check.lower().startswith('focus on:'):
+    if check.lower().startswith("focus on:"):
         return True
-    if re.match(r'^\d+\.\s+`', stripped):
+    if re.match(r"^\d+\.\s+`", stripped):
         return True
-    if stripped.startswith('## Analysis to critique:'):
+    if stripped.startswith("## Analysis to critique:"):
         return True
-    if stripped.startswith('Wait, let'):
+    if stripped.startswith("Wait, let"):
         return True
-    if stripped.startswith('Ah, I see'):
+    if stripped.startswith("Ah, I see"):
         return True
-    if stripped.startswith('And then'):
+    if stripped.startswith("And then"):
         return True
-    if stripped.startswith('```'):
+    if stripped.startswith("```"):
         return True
-    if stripped == '...':
+    if stripped == "...":
         return True
-    if stripped.startswith('## Analysis to critique:'):
+    if stripped.startswith("## Analysis to critique:"):
         return True
-    if re.match(r'^\d+\.\s+(Sandbox|LLM|Missing|Success|Prompt)', stripped):
+    if re.match(r"^\d+\.\s+(Sandbox|LLM|Missing|Success|Prompt)", stripped):
         return True
-    if stripped.lower().startswith('draft points to refine:'):
+    if stripped.lower().startswith("draft points to refine:"):
         return True
-    if stripped.lower().startswith('output matches response'):
+    if stripped.lower().startswith("output matches response"):
         return True
     if stripped.startswith(chr(96)):  # ASCII backtick
         return True
-    if 'wait, no.' in check_lower or 'wait, no' in check_lower:
+    if "wait, no." in check_lower or "wait, no" in check_lower:
         return True
-    if 'let me re-read' in check_lower:
+    if "let me re-read" in check_lower:
         return True
-    if check_lower.startswith('and then immediately'):
+    if check_lower.startswith("and then immediately"):
         return True
-    if check_lower.startswith('this looks like'):
+    if check_lower.startswith("this looks like"):
         return True
-    if re.match(r'^\d+\.\s+(Shell|Path|The sanitizer)', stripped):
+    if re.match(r"^\d+\.\s+(Shell|Path|The sanitizer)", stripped):
         return True
-    if check_lower == 'the prompt says':
+    if check_lower == "the prompt says":
         return True
-    if check_lower.startswith('looks like a draft'):
+    if check_lower.startswith("looks like a draft"):
         return True
-    if check_lower.startswith('the prompt says') or check_lower.startswith('the prompt actually'):
+    if check_lower.startswith("the prompt says") or check_lower.startswith(
+        "the prompt actually"
+    ):
         return True
-    if check_lower.startswith('the provided analysis says'):
+    if check_lower.startswith("the provided analysis says"):
         return True
-    if check_lower.startswith('check tone:'):
+    if check_lower.startswith("check tone:"):
         return True
-    if check_lower.startswith('format:'):
+    if check_lower.startswith("format:"):
         return True
-    if check_lower.startswith('- the provided'):
+    if check_lower.startswith("- the provided"):
         return True
-    if re.match(r'^\d+\.\s+(Shell|Path|The sanitizer|Context|Async)', stripped):
+    if re.match(r"^\d+\.\s+(Shell|Path|The sanitizer|Context|Async)", stripped):
         return True
     if stripped.startswith('- "No explicit') or stripped.startswith('- "Sandbox'):
         return True
-    if '-> True, but misses' in check:
+    if "-> True, but misses" in check:
         return True
-    if check_lower.startswith('i will list') or check_lower.startswith('i will produce') or check_lower.startswith('i will craft'):
+    if (
+        check_lower.startswith("i will list")
+        or check_lower.startswith("i will produce")
+        or check_lower.startswith("i will craft")
+    ):
         return True
-    if check_lower.startswith('ready.') or check_lower.startswith('all set.') or check_lower.startswith('ready,'):
+    if (
+        check_lower.startswith("ready.")
+        or check_lower.startswith("all set.")
+        or check_lower.startswith("ready,")
+    ):
         return True
-    if check_lower.startswith('also,'):
+    if check_lower.startswith("also,"):
         return True
-    if check_lower.startswith('this string') or check_lower.startswith('this is'):
+    if check_lower.startswith("this string") or check_lower.startswith("this is"):
         return True
-    if check.startswith('- **)Verdict**)') or check.startswith('- **)Verdict Shallow'):
+    if check.startswith("- **)Verdict**)") or check.startswith("- **)Verdict Shallow"):
         return True
-    if re.match(r'^- \*\*(\w+(?:\s+\w+){0,5})\*\*\s*$', stripped):
+    if re.match(r"^- \*\*(\w+(?:\s+\w+){0,5})\*\*\s*$", stripped):
         # Lines that are only a short bold label like "- **Verdict**" with no content
         return True
-    if re.match(r'^- \*\*(?:Missed|Overlooked|Missing|Verdict)\b', stripped):
+    if re.match(r"^- \*\*(?:Missed|Overlooked|Missing|Verdict)\b", stripped):
         # Standalone section labels from response structure plan
         return True
-    if re.match(r'^- Missing metrics:', stripped):
+    if re.match(r"^- Missing metrics:", stripped):
         return True
-    if check_lower.startswith('does enforce boundary') or check_lower.startswith("don't call it"):
+    if check_lower.startswith("does enforce boundary") or check_lower.startswith(
+        "don't call it"
+    ):
         return True
-    if re.match(r'^\s+(timeout_match|if timeout_match|run_args)\b', stripped):
+    if re.match(r"^\s+(timeout_match|if timeout_match|run_args)\b", stripped):
         # Embedded Python code snippet from reasoning process
         return True
-    if re.match(r'^\s{8,}(if |return |def |path |filename |import )', stripped):
+    if re.match(r"^\s{8,}(if |return |def |path |filename |import )", stripped):
         # Indented code snippet from reasoning (8+ spaces of code indent)
         return True
     # Check code-snippet patterns against the stripped content (no leading spaces)
     code_patterns = [
-        r'^(timeout_match|timeout|run_args|cmd_to_run)\s*=',
-        r'^if\s+\w+:',
-        r'^if\s+path\s*\.startswith',
-        r'^filename\s*=\s*query',
-        r'^return\s+self\.',
-        r'^return\s+str\(normalize',
-        r'^path\s*=\s*path\[2:\]',
-        r'^return\s+\(',
+        r"^(timeout_match|timeout|run_args|cmd_to_run)\s*=",
+        r"^if\s+\w+:",
+        r"^if\s+path\s*\.startswith",
+        r"^filename\s*=\s*query",
+        r"^return\s+self\.",
+        r"^return\s+str\(normalize",
+        r"^path\s*=\s*path\[2:\]",
+        r"^return\s+\(",
     ]
     for pat in code_patterns:
         if re.match(pat, check):
             return True
-    if stripped.startswith('def safe_path') or stripped.startswith('def _safe_path') or stripped.startswith('def _normalize_path'):
+    if (
+        stripped.startswith("def safe_path")
+        or stripped.startswith("def _safe_path")
+        or stripped.startswith("def _normalize_path")
+    ):
         return True
-    if stripped.startswith('from agent_core') and 'import' in stripped and len(stripped) < 120:
+    if (
+        stripped.startswith("from agent_core")
+        and "import" in stripped
+        and len(stripped) < 120
+    ):
         return True
-    if check_lower.startswith('so `') and 'uses' in check_lower:
+    if check_lower.startswith("so `") and "uses" in check_lower:
         return True
-    if check_lower.startswith('however, `') and 'do not' in check_lower:
+    if check_lower.startswith("however, `") and "do not" in check_lower:
         return True
-    if check == 'So `agent.py` actually uses the secure one.':
+    if check == "So `agent.py` actually uses the secure one.":
         return True
-    if re.match(r'^path\s*=\s*path\[', stripped):
+    if re.match(r"^path\s*=\s*path\[", stripped):
         return True
     return False
 
@@ -205,7 +285,7 @@ def _clean_analysis_sections(text: str) -> str:
     We keep only content from the first '## 1.' header onwards, plus the
     header lines and refinement/verification sections.
     """
-    lines = text.split('\n')
+    lines = text.split("\n")
 
     # Find header (first lines that start with '# ' (not '##') or '|')
     header_lines = []
@@ -218,7 +298,7 @@ def _clean_analysis_sections(text: str) -> str:
         if not s:
             i += 1
             continue
-        if s.startswith('# ') or s.startswith('|'):
+        if s.startswith("# ") or s.startswith("|"):
             header_lines.append(lines[i])
             i += 1
         else:
@@ -226,7 +306,7 @@ def _clean_analysis_sections(text: str) -> str:
 
     # Find first '## 1.' section header at column 0 (no leading whitespace)
     first_section = -1
-    _RE_1 = re.compile(r'^##\s+1\.')
+    _RE_1 = re.compile(r"^##\s+1\.")
     for j, line in enumerate(lines):
         if _RE_1.match(line):  # no strip() - must start at col 0
             first_section = j
@@ -241,51 +321,55 @@ def _clean_analysis_sections(text: str) -> str:
     verification_start = -1
     for j in range(first_section, len(lines)):
         stripped = lines[j].strip()
-        if stripped.startswith('## Refinement'):
+        if stripped.startswith("## Refinement"):
             refinement_start = j
             break
-        if stripped.startswith('## Verification'):
+        if stripped.startswith("## Verification"):
             verification_start = j
             break
 
     # Build clean sections: header + sections 1-8 + BLOCKED
     section_lines = header_lines
     if first_section >= 0:
-        end = refinement_start if refinement_start >= 0 else (verification_start if verification_start >= 0 else len(lines))
-        section_lines.append('')
+        end = (
+            refinement_start
+            if refinement_start >= 0
+            else (verification_start if verification_start >= 0 else len(lines))
+        )
+        section_lines.append("")
         section_lines.extend(lines[first_section:end])
 
     # Add refinement section if it exists, cleaned
     if refinement_start >= 0:
         refinement_end = verification_start if verification_start >= 0 else len(lines)
-        section_lines.append('')
+        section_lines.append("")
         for rl in lines[refinement_start:refinement_end]:
             if not _is_reasoning_line(rl.strip()):
                 section_lines.append(rl)
 
     # Add verification section if it exists
     if verification_start >= 0:
-        section_lines.append('')
+        section_lines.append("")
         section_lines.extend(lines[verification_start:])
 
-    return '\n'.join(section_lines)
+    return "\n".join(section_lines)
 
 
 _TASKPLAN_REASONING_RE = re.compile(
-    r'^\s*\d+\.\s*\*\*.*\*\*\s*$|'           # " N.  **Header**"
-    r'^\s*-\s+(?:CRITICAL|DO NOT|PATH RULES|SIZE RULES|STDLIB SHADOWING):|'  # prompt context leaks
-    r'^\s*(?:Let\'s|Need to|First,?|I\'ll|I will|The prompt|Wait,|Now,?|'
-    r'One minor|Check format|Also,?)\s|'  # self-talk starts
-    r'^\s*(?:Input Analysis|Map to Existing|Dependency Order|Output Generation|'
-    r'Self-Correction|Check constraints|Check,|CRITICAL:)',  # planning headers
-    re.MULTILINE | re.IGNORECASE
+    r"^\s*\d+\.\s*\*\*.*\*\*\s*$|"  # " N.  **Header**"
+    r"^\s*-\s+(?:CRITICAL|DO NOT|PATH RULES|SIZE RULES|STDLIB SHADOWING):|"  # prompt context leaks
+    r"^\s*(?:Let\'s|Need to|First,?|I\'ll|I will|The prompt|Wait,|Now,?|"
+    r"One minor|Check format|Also,?)\s|"  # self-talk starts
+    r"^\s*(?:Input Analysis|Map to Existing|Dependency Order|Output Generation|"
+    r"Self-Correction|Check constraints|Check,|CRITICAL:)",  # planning headers
+    re.MULTILINE | re.IGNORECASE,
 )
 
 _TASKPLAN_FRAGMENT_RE = re.compile(
-    r'^\s*(?:or XML tags|or function|All constraints met|One check:|'
-    r'This strictly adheres|Final check|Ready\.\s*\u2705?$|'
-    r'All good\.|Proceeds\.\s*$|Output matches)',  # sentence fragments / self-verification
-    re.MULTILINE | re.IGNORECASE
+    r"^\s*(?:or XML tags|or function|All constraints met|One check:|"
+    r"This strictly adheres|Final check|Ready\.\s*\u2705?$|"
+    r"All good\.|Proceeds\.\s*$|Output matches)",  # sentence fragments / self-verification
+    re.MULTILINE | re.IGNORECASE,
 )
 
 
@@ -295,10 +379,10 @@ def _strip_taskplan_reasoning(text: str) -> str:
     Removes paragraphs that start with planning headers or self-talk patterns,
     but preserves numbered task items like ``1. `file.py` — description``.
     """
-    lines = text.split('\n')
+    lines = text.split("\n")
     result = []
     in_reasoning_block = False
-    _RE_2 = re.compile(r'^\d+\.\s+`')
+    _RE_2 = re.compile(r"^\d+\.\s+`")
     for line in lines:
         stripped = line.strip()
 
@@ -321,7 +405,7 @@ def _strip_taskplan_reasoning(text: str) -> str:
         elif not stripped:
             result.append(line)
 
-    return '\n'.join(result)
+    return "\n".join(result)
 
 
 def strip_reasoning(text: str, mode: str = "analysis") -> str:
@@ -336,25 +420,29 @@ def strip_reasoning(text: str, mode: str = "analysis") -> str:
     if not text:
         return text
 
-    out = _re_think.sub('', text)
+    out = _re_think.sub("", text)
     # Fallback: if think/tool_call stripping left nothing, content was
     # fully wrapped — just remove the tag markers, keep the content.
     if not out.strip():
-        out = _re_think_tags_only.sub('', text)
-    out = _re_arrow.sub('', out)
-    out = _re_markers.sub('', out)
+        out = _re_think_tags_only.sub("", text)
+    out = _re_arrow.sub("", out)
+    out = _re_markers.sub("", out)
 
     # Try section-based extraction for analysis files
-    if mode == "analysis" and '## 1.' in out and ('## Refinement' in out or '## Verification' in out):
+    if (
+        mode == "analysis"
+        and "## 1." in out
+        and ("## Refinement" in out or "## Verification" in out)
+    ):
         out = _clean_analysis_sections(out)
     elif mode == "analysis":
         # Line-by-line reasoning removal (only for analysis mode)
         lines_out = []
-        for line in out.split('\n'):
+        for line in out.split("\n"):
             stripped = line.strip()
             if not _is_reasoning_line(stripped):
                 lines_out.append(line)
-        out = '\n'.join(lines_out)
+        out = "\n".join(lines_out)
     elif mode == "light":
         # Light filtering for plan/entities/taskplan — strip obvious reasoning
         # sections without destroying legitimate content
@@ -363,8 +451,8 @@ def strip_reasoning(text: str, mode: str = "analysis") -> str:
     if mode == "analysis":
         out = dedupe_repeated_sections(out)
 
-    out = _re_multi_blank.sub('\n\n', out)
-    return out.strip() + '\n'
+    out = _re_multi_blank.sub("\n\n", out)
+    return out.strip() + "\n"
 
 
 def dedupe_repeated_sections(text: str) -> str:
@@ -384,12 +472,12 @@ def dedupe_repeated_sections(text: str) -> str:
     out: list[str] = []
     seen_keys: set[str] = set()
     draining = False
-    _RE_3 = re.compile(r'\s*\(.*?\)\s*$')
-    _BLOCKED_RE = re.compile(r'^\*\*BLOCKED:')
-    for line in text.split('\n'):
+    _RE_3 = re.compile(r"\s*\(.*?\)\s*$")
+    _BLOCKED_RE = re.compile(r"^\*\*BLOCKED:")
+    for line in text.split("\n"):
         stripped = line.strip()
-        if stripped.startswith('## '):
-            key = _RE_3.sub('', stripped)
+        if stripped.startswith("## "):
+            key = _RE_3.sub("", stripped)
             if key in seen_keys:
                 draining = True
                 continue
@@ -406,7 +494,7 @@ def dedupe_repeated_sections(text: str) -> str:
                 out.append(line)
             continue
         out.append(line)
-    return '\n'.join(out)
+    return "\n".join(out)
 
 
 def extract_section(text: str, marker: str) -> str:
@@ -419,7 +507,7 @@ def extract_section(text: str, marker: str) -> str:
     idx = text.find(marker)
     if idx == -1:
         return ""
-    end = text.find('\n## ', idx + 1)
+    end = text.find("\n## ", idx + 1)
     if end == -1:
         end = len(text)
     return text[idx:end].strip()

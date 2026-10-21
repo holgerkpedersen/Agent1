@@ -11,6 +11,7 @@ Two subcommands:
   ``plan exec`` runs it.  Plan mode is read-only, so ``plan exec`` refuses to
   run while the session is in plan mode.
 """
+
 from .base import Command, auto_choice, stop_requested
 from .doc_paths import find_input, resolve_output, new_run_dir
 from .plan_verifier import check_doc, apply_report, summarize
@@ -20,6 +21,7 @@ from .plan_dry_run import PlanDryRunner
 from .plan_decision_gate import PlanDecisionGate
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from agent import Agent
 
@@ -49,7 +51,7 @@ class PlanCommand(Command):
             "  via isolated subagents. Requires build mode (run 'mode build' first)."
         )
 
-    async def execute(self, args: list[str], agent: 'Agent') -> bool:
+    async def execute(self, args: list[str], agent: "Agent") -> bool:
         if not args:
             self.error(self.help_text)
             return True
@@ -66,7 +68,7 @@ class PlanCommand(Command):
         return await self._cmd_generate(args, agent)
 
     # ── plan generate ────────────────────────────────────────────────────
-    async def _cmd_generate(self, args: list[str], agent: 'Agent') -> bool:
+    async def _cmd_generate(self, args: list[str], agent: "Agent") -> bool:
         if len(args) < 2:
             self.error("Usage: plan <analysis.md> <plan.md>")
             return True
@@ -81,7 +83,9 @@ class PlanCommand(Command):
         analysis_file = find_input(agent.workspace, clean_args[0])
         # Bare output filenames go to .docs/<timestamp>/ (the input's run
         # folder when it has one) — explicit paths are kept.
-        plan_file = resolve_output(agent.workspace, clean_args[1], sibling_of=analysis_file)
+        plan_file = resolve_output(
+            agent.workspace, clean_args[1], sibling_of=analysis_file
+        )
 
         try:
             with open(analysis_file, "r", encoding="utf-8") as f:
@@ -91,8 +95,14 @@ class PlanCommand(Command):
             return True
 
         messages = [
-            {"role": "system", "content": "You are an expert software architect. Based on the code analysis provided, create a detailed coding plan with specific implementation steps, prioritized by impact and dependencies."},
-            {"role": "user", "content": f"Create a coding plan based on this analysis:\n\n{analysis_content}"}
+            {
+                "role": "system",
+                "content": "You are an expert software architect. Based on the code analysis provided, create a detailed coding plan with specific implementation steps, prioritized by impact and dependencies.",
+            },
+            {
+                "role": "user",
+                "content": f"Create a coding plan based on this analysis:\n\n{analysis_content}",
+            },
         ]
         plan = await agent.llm.chat(messages)
 
@@ -102,18 +112,25 @@ class PlanCommand(Command):
         if not result.clean and not force:
             answer = auto_choice(
                 "  Plan references unverifiable paths — write anyway? (y/N): ",
-                default="n", auto_default="n",
+                default="n",
+                auto_default="n",
             )
             if answer.strip().lower() not in ("y", "yes"):
-                print("[plan] Halted — regenerate with corrected paths "
-                      "(or rerun with --force).")
+                print(
+                    "[plan] Halted — regenerate with corrected paths "
+                    "(or rerun with --force)."
+                )
                 return True
         # Schema validation on proposal.
         ok, errs = validate_plan_markdown(content)
         if not ok and not force:
-            self.error("Plan schema validation failed:\n" + "\n".join(f"  - {e}" for e in errs))
+            self.error(
+                "Plan schema validation failed:\n" + "\n".join(f"  - {e}" for e in errs)
+            )
             answer = auto_choice(
-                "  Write anyway? (y/N): ", default="n", auto_default="n",
+                "  Write anyway? (y/N): ",
+                default="n",
+                auto_default="n",
             )
             if answer.strip().lower() not in ("y", "yes"):
                 print("[plan] Halted — fix schema issues and regenerate.")
@@ -128,7 +145,7 @@ class PlanCommand(Command):
         return True
 
     # ── plan exec ────────────────────────────────────────────────────────
-    async def _cmd_exec(self, args: list[str], agent: 'Agent') -> bool:
+    async def _cmd_exec(self, args: list[str], agent: "Agent") -> bool:
         if agent.is_plan_mode():
             print(
                 "[plan exec] Refused: plan mode is read-only. "
@@ -151,7 +168,9 @@ class PlanCommand(Command):
         # Resolve the plan text.
         if json_file is not None:
             try:
-                with open(find_input(agent.workspace, json_file), "r", encoding="utf-8") as f:
+                with open(
+                    find_input(agent.workspace, json_file), "r", encoding="utf-8"
+                ) as f:
                     plan_text = f.read()
             except FileNotFoundError:
                 self.error(f"Tasks file not found: {json_file}")
@@ -163,6 +182,7 @@ class PlanCommand(Command):
                 plan_path = find_input(agent.workspace, tasks_file)
             else:
                 from .doc_paths import latest_run_dir
+
                 run = latest_run_dir(agent.workspace)
                 if run is not None and (run / "plan_proposed.md").is_file():
                     plan_path = str(run / "plan_proposed.md")
@@ -206,7 +226,9 @@ class PlanCommand(Command):
         for i, tid in enumerate(order, 1):
             t = next((x for x in tasks if x.id == tid), None)
             deps = f" (deps: {', '.join(t.depends_on)})" if t and t.depends_on else ""
-            print(f"  {i}. [{tid}] {t.role if t else '?'}: {t.description if t else ''}{deps}")
+            print(
+                f"  {i}. [{tid}] {t.role if t else '?'}: {t.description if t else ''}{deps}"
+            )
 
         # ── Pre-execution gates ───────────────────────────────────────
         # Dry-run safety gate
@@ -228,7 +250,9 @@ class PlanCommand(Command):
         decision_gate = PlanDecisionGate(agent.workspace)
         gate_result = decision_gate.validate(plan_text)
         if not gate_result.passed:
-            print("[plan exec] Decision gate FAILED — plan violates architectural constraints:")
+            print(
+                "[plan exec] Decision gate FAILED — plan violates architectural constraints:"
+            )
             for v in gate_result.violations:
                 print(f"  ✗ {v}")
             if not force:
@@ -241,6 +265,7 @@ class PlanCommand(Command):
 
         # Lifecycle: transition proposed → executing
         from .doc_paths import latest_run_dir
+
         run_dir = latest_run_dir(agent.workspace)
         lifecycle = None
         if run_dir is not None:
@@ -253,7 +278,8 @@ class PlanCommand(Command):
         if not yes:
             answer = auto_choice(
                 "  Execute this plan with isolated subagents? (y/N): ",
-                default="n", auto_default="n",
+                default="n",
+                auto_default="n",
             )
             if answer.strip().lower() not in ("y", "yes"):
                 print("[plan exec] Aborted — no changes made.")
@@ -272,7 +298,9 @@ class PlanCommand(Command):
             node = graph.get_node(t["task_id"])
             role = getattr(node, "task_type", "?") or "?"
             inputs = t.get("input_data") or {}
-            dep_note = f" (consumed {len(inputs)} dependency result(s))" if inputs else ""
+            dep_note = (
+                f" (consumed {len(inputs)} dependency result(s))" if inputs else ""
+            )
             report_lines.append(
                 f"- [{t['task_id']}] {t['status']} (role: {role}){dep_note}"
             )

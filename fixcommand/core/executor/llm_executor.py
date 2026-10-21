@@ -51,7 +51,9 @@ class LLMExecutor:
             *(self._execute_tool_safe(call) for call in parsed_calls),
             return_exceptions=True,
         )
-        return [str(r) if not isinstance(r, Exception) else f"Error: {r}" for r in results]
+        return [
+            str(r) if not isinstance(r, Exception) else f"Error: {r}" for r in results
+        ]
 
     def _create_chat_completion(self, messages: List[Dict[str, Any]]):
         kwargs: Dict[str, Any] = {

@@ -48,8 +48,12 @@ def _git_status_porcelain() -> str:
     try:
         proc = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=ROOT, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=30,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
         )
         return proc.stdout if proc.returncode == 0 else ""
     except (OSError, subprocess.TimeoutExpired):
@@ -82,9 +86,9 @@ def _phantom_modules() -> list[str]:
                 candidate = ROOT / span
             names.add(span)
     missing = sorted(
-        n for n in names
-        if not (ROOT / n.replace("/", "\\")).exists()
-        and not (ROOT / n).exists()
+        n
+        for n in names
+        if not (ROOT / n.replace("/", "\\")).exists() and not (ROOT / n).exists()
     )
     return missing
 
@@ -110,9 +114,9 @@ def _trace_health() -> tuple[int, int, str | None]:
     verdict = None
     if summary_path.is_file():
         try:
-            verdict = json.loads(
-                summary_path.read_text(encoding="utf-8")
-            ).get("verdict")
+            verdict = json.loads(summary_path.read_text(encoding="utf-8")).get(
+                "verdict"
+            )
         except (OSError, json.JSONDecodeError):
             verdict = None
     return len(traces), interrupted, verdict
@@ -145,9 +149,7 @@ def main() -> int:
     if mem_present[_MEMORY_FILES[0]] != mem_present[_MEMORY_FILES[1]]:
         errors.append(
             "memory files must exist or be absent TOGETHER (invariant 7): "
-            + ", ".join(
-                f"{f}={v}" for f, v in mem_present.items()
-            )
+            + ", ".join(f"{f}={v}" for f, v in mem_present.items())
         )
 
     phantoms = _phantom_modules()
@@ -189,6 +191,7 @@ def main() -> int:
                 find_stale_decisions,
                 find_open_contradictions,
             )
+
             ledger = json.loads(decision_file.read_text(encoding="utf-8"))
             if isinstance(ledger, list):
                 stale = find_stale_decisions(ROOT, ledger)
@@ -206,10 +209,7 @@ def main() -> int:
                     warnings.append(
                         f"{len(open_contras)} decision(s) with open "
                         "contradictions (not resolved/superseded): "
-                        + ", ".join(
-                            f"#{d['id']}"
-                            for d in open_contras[:5]
-                        )
+                        + ", ".join(f"#{d['id']}" for d in open_contras[:5])
                     )
         except (json.JSONDecodeError, OSError):
             pass  # already reported in check 2
@@ -218,6 +218,7 @@ def main() -> int:
     if decision_file.is_file():
         try:
             from agent_core.decisions import find_meta_warnings as _find_mw
+
             ledger2 = json.loads(decision_file.read_text(encoding="utf-8"))
             if isinstance(ledger2, list):
                 mw = _find_mw(ledger2)

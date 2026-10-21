@@ -40,22 +40,18 @@ endpoints: Any = None
 serializers: Any = None
 
 try:
-    endpoints = __import__(
-        "performance_dashboard.api.endpoints", fromlist=["*"]
-    )
+    endpoints = __import__("performance_dashboard.api.endpoints", fromlist=["*"])
 except ImportError:
     print("Silenced exception in __init__.py:46")
 
 try:
-    serializers = __import__(
-        "performance_dashboard.api.serializers", fromlist=["*"]
-    )
+    serializers = __import__("performance_dashboard.api.serializers", fromlist=["*"])
 except ImportError:
     print("Silenced exception in __init__.py:53")
 
 
 def is_module_available(module_name: str) -> bool:
     """Check whether a named submodule has been successfully imported."""
-    return module_name in public_modules and globals().get(
-        module_name, None
-    ) is not None
+    return (
+        module_name in public_modules and globals().get(module_name, None) is not None
+    )

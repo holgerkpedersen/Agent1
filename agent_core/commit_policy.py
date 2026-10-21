@@ -44,23 +44,88 @@ _SUBJECT_RE = re.compile(r"^([A-Za-z]+)(\([^)]*\))?!?:\s*")
 #: vacuous ("commit changes", "minor fixes", "various improvements").
 _FILLER_WORDS: frozenset[str] = frozenset(
     {
-        "a", "add", "added", "address", "addresses", "again", "asdf", "bug",
-        "bugs", "change", "changed", "changes", "cleanup", "code", "commit",
-        "committed", "done", "edit", "edits", "file", "files", "final",
-        "fix", "fixed", "fixes", "improve", "improvement", "improvements",
-        "js", "minor", "misc", "more", "next", "ok", "okay", "patch", "py",
-        "refactor", "resolve", "resolved", "small", "some", "source",
-        "sources", "stuff", "sundry", "sync", "temp", "test", "tests", "thing",
-        "things", "tmp", "tweak", "tweaks", "untitled", "update", "updated",
-        "updates", "various", "version", "whatever", "wip", "work",
+        "a",
+        "add",
+        "added",
+        "address",
+        "addresses",
+        "again",
+        "asdf",
+        "bug",
+        "bugs",
+        "change",
+        "changed",
+        "changes",
+        "cleanup",
+        "code",
+        "commit",
+        "committed",
+        "done",
+        "edit",
+        "edits",
+        "file",
+        "files",
+        "final",
+        "fix",
+        "fixed",
+        "fixes",
+        "improve",
+        "improvement",
+        "improvements",
+        "js",
+        "minor",
+        "misc",
+        "more",
+        "next",
+        "ok",
+        "okay",
+        "patch",
+        "py",
+        "refactor",
+        "resolve",
+        "resolved",
+        "small",
+        "some",
+        "source",
+        "sources",
+        "stuff",
+        "sundry",
+        "sync",
+        "temp",
+        "test",
+        "tests",
+        "thing",
+        "things",
+        "tmp",
+        "tweak",
+        "tweaks",
+        "untitled",
+        "update",
+        "updated",
+        "updates",
+        "various",
+        "version",
+        "whatever",
+        "wip",
+        "work",
     }
 )
 
 #: Suffixes that make a whole-subject string a bare filename reference.
 _FILE_SUFFIXES: frozenset[str] = frozenset(
     {
-        ".cfg", ".cmd", ".ini", ".json", ".md", ".py", ".ps1", ".sh", ".toml",
-        ".txt", ".yaml", ".yml",
+        ".cfg",
+        ".cmd",
+        ".ini",
+        ".json",
+        ".md",
+        ".py",
+        ".ps1",
+        ".sh",
+        ".toml",
+        ".txt",
+        ".yaml",
+        ".yml",
     }
 )
 
@@ -141,8 +206,7 @@ def validate_subject(subject: str) -> SubjectResult:
         raw_type = match.group(1)
         if raw_type != raw_type.lower():
             result.warnings.append(
-                f"type prefix {raw_type!r} should be lowercase "
-                f"({raw_type.lower()})"
+                f"type prefix {raw_type!r} should be lowercase ({raw_type.lower()})"
             )
         elif raw_type not in ALLOWED_TYPES:
             result.warnings.append(
@@ -183,7 +247,7 @@ class MessageReport:
                 # NOTE: the conditional must yield a LIST.  Returning a bare
                 # string here made `*` unpack it character by character, so
                 # the subject printed one letter per line.
-                *( [f"  subject: {self.subject!r}"] if self.subject else [] ),
+                *([f"  subject: {self.subject!r}"] if self.subject else []),
                 *lines,
                 "",
                 "  Format: <type>(<scope>): <imperative summary>",

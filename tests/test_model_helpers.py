@@ -1,6 +1,5 @@
 """Tests for model command fuzzy matching and model resolution logic."""
 
-
 from agent_core.commands.model_cmd import ModelCommand
 from agent_core.constants import (
     resolve_model,
@@ -21,45 +20,65 @@ class TestModelCommandProviderSync:
         from agent_core.llm.opencode_provider import OpencodeProvider
 
         provider = OpencodeProvider(_default_llm(), read_store=False)
-        llm = type("L", (), {
-            "model_name": _default_llm(),
-            "_provider": provider,
-        })()
+        llm = type(
+            "L",
+            (),
+            {
+                "model_name": _default_llm(),
+                "_provider": provider,
+            },
+        )()
         return type("A", (), {"llm": llm})()
 
     @staticmethod
     def _settings(provider: str):
-        return type("S", (), {
-            "llm_provider": provider,
-            "opencode_server_url": "http://127.0.0.1:4096",
-            "opencode_password": "",
-            "opencode_api_url": "https://opencode.ai/zen/go/v1",
-            "opencode_api_key": "",
-        })()
+        return type(
+            "S",
+            (),
+            {
+                "llm_provider": provider,
+                "opencode_server_url": "http://127.0.0.1:4096",
+                "opencode_password": "",
+                "opencode_api_url": "https://opencode.ai/zen/go/v1",
+                "opencode_api_key": "",
+            },
+        )()
 
     def test_list_models_skips_autosync_for_opencode(self, monkeypatch, capsys):
         from agent_core.llm.opencode_provider import OpencodeProvider
 
         cmd = ModelCommand()
         agent = self._opencode_agent()
-        fake_models = [{
-            "key": "qwen/qwen3.8-27b", "display_name": "Qwen3.8 27B",
-            "params_string": "27B", "size_bytes": 100, "loaded": True,
-            "instance_id": "i1",
-        }]
-        monkeypatch.setattr("agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: self._settings("opencode"))
+        fake_models = [
+            {
+                "key": "qwen/qwen3.8-27b",
+                "display_name": "Qwen3.8 27B",
+                "params_string": "27B",
+                "size_bytes": 100,
+                "loaded": True,
+                "instance_id": "i1",
+            }
+        ]
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: self._settings("opencode")
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": _default_llm(), "provider": "opencode"},
         )
         monkeypatch.setattr(
-            OpencodeProvider, "list_models",
+            OpencodeProvider,
+            "list_models",
             lambda self: [_default_llm()],
         )
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.persist_model_choice",
-            lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not persist on opencode list")),
+            lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("must not persist on opencode list")
+            ),
         )
 
         cmd._list_models(agent)
@@ -70,7 +89,9 @@ class TestModelCommandProviderSync:
     def test_reload_skips_sync_for_opencode(self, monkeypatch, capsys):
         cmd = ModelCommand()
         agent = self._opencode_agent()
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: self._settings("opencode"))
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: self._settings("opencode")
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": _default_llm(), "provider": "opencode"},
@@ -87,18 +108,29 @@ class TestModelCommandProviderSync:
         provider = LMStudioProvider(model_name="laguna-s-2.1")
         llm = type("L", (), {"model_name": "laguna-s-2.1", "_provider": provider})()
         agent = type("A", (), {"llm": llm})()
-        fake_models = [{
-            "key": "qwen/qwen3.8-27b", "display_name": "Qwen3.8 27B",
-            "params_string": "27B", "size_bytes": 100, "loaded": True,
-            "instance_id": "i1",
-        }]
-        monkeypatch.setattr("agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: self._settings("lmstudio"))
+        fake_models = [
+            {
+                "key": "qwen/qwen3.8-27b",
+                "display_name": "Qwen3.8 27B",
+                "params_string": "27B",
+                "size_bytes": 100,
+                "loaded": True,
+                "instance_id": "i1",
+            }
+        ]
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: self._settings("lmstudio")
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": "laguna-s-2.1", "provider": "lmstudio"},
         )
-        monkeypatch.setattr("agent_core.commands.model_cmd.persist_model_choice", lambda *a, **k: None)
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd.persist_model_choice", lambda *a, **k: None
+        )
 
         cmd = ModelCommand()
         cmd._sync_with_lmstudio(agent)
@@ -113,15 +145,33 @@ class TestModelCommandResolveMatch:
     def setup_method(self):
         self.cmd = ModelCommand()
         self.fake_models = [
-            {"key": "laguna-s-2.1", "display_name": "Laguna S 2.1 UD", "params_string": "8B-MoE"},
+            {
+                "key": "laguna-s-2.1",
+                "display_name": "Laguna S 2.1 UD",
+                "params_string": "8B-MoE",
+            },
             {"key": "qwen3.5-9b", "display_name": "Qwen3.5 9B", "params_string": "9B"},
-            {"key": "qwen3.6-27b-mtp", "display_name": "Qwen3.6 27B", "params_string": "27B"},
-            {"key": "google/gemma-4-31b", "display_name": "Gemma 4 31B", "params_string": "31B"},
-            {"key": "qwen3.6-35b-a3b-mtp", "display_name": "Qwen3.6 35B A3B", "params_string": "35B-A3B"},
+            {
+                "key": "qwen3.6-27b-mtp",
+                "display_name": "Qwen3.6 27B",
+                "params_string": "27B",
+            },
+            {
+                "key": "google/gemma-4-31b",
+                "display_name": "Gemma 4 31B",
+                "params_string": "31B",
+            },
+            {
+                "key": "qwen3.6-35b-a3b-mtp",
+                "display_name": "Qwen3.6 35B A3B",
+                "params_string": "35B-A3B",
+            },
         ]
 
     def test_exact_key_match(self):
-        assert self.cmd._resolve_match("laguna-s-2.1", self.fake_models) == "laguna-s-2.1"
+        assert (
+            self.cmd._resolve_match("laguna-s-2.1", self.fake_models) == "laguna-s-2.1"
+        )
 
     def test_exact_display_name_match(self):
         assert self.cmd._resolve_match("Qwen3.5 9B", self.fake_models) == "qwen3.5-9b"
@@ -139,7 +189,9 @@ class TestModelCommandResolveMatch:
         assert self.cmd._resolve_match("35b", self.fake_models) == "qwen3.6-35b-a3b-mtp"
 
     def test_substring_key_match(self):
-        assert self.cmd._resolve_match("gemma", self.fake_models) == "google/gemma-4-31b"
+        assert (
+            self.cmd._resolve_match("gemma", self.fake_models) == "google/gemma-4-31b"
+        )
 
     def test_substring_display_match(self):
         assert self.cmd._resolve_match("laguna", self.fake_models) == "laguna-s-2.1"
@@ -148,7 +200,9 @@ class TestModelCommandResolveMatch:
         assert self.cmd._resolve_match("qwen", self.fake_models) == "qwen3.5-9b"
 
     def test_no_match_returns_none(self):
-        assert self.cmd._resolve_match("nonexistent-model-xyz", self.fake_models) is None
+        assert (
+            self.cmd._resolve_match("nonexistent-model-xyz", self.fake_models) is None
+        )
 
     def test_empty_query_returns_none(self):
         assert self.cmd._resolve_match("", self.fake_models) is None
@@ -157,7 +211,10 @@ class TestModelCommandResolveMatch:
         assert self.cmd._resolve_match("LAGUNA", self.fake_models) == "laguna-s-2.1"
 
     def test_unique_display_substring(self):
-        assert self.cmd._resolve_match("35B A3B", self.fake_models) == "qwen3.6-35b-a3b-mtp"
+        assert (
+            self.cmd._resolve_match("35B A3B", self.fake_models)
+            == "qwen3.6-35b-a3b-mtp"
+        )
 
 
 class TestResolveOpencodeMatch:
@@ -176,27 +233,37 @@ class TestResolveOpencodeMatch:
         ]
 
     def test_exact_prefixed_match(self):
-        assert self.cmd._resolve_opencode_match(
-            _default_llm(), self.catalog) == _default_llm()
+        assert (
+            self.cmd._resolve_opencode_match(_default_llm(), self.catalog)
+            == _default_llm()
+        )
 
     def test_exact_unprefixed_tail_match(self):
-        assert self.cmd._resolve_opencode_match(
-            _default_llm_short(), self.catalog) == _default_llm()
+        assert (
+            self.cmd._resolve_opencode_match(_default_llm_short(), self.catalog)
+            == _default_llm()
+        )
 
     def test_partial_free_model_resolves(self):
         # The exact failing query from the user report.
-        assert self.cmd._resolve_opencode_match(
-            "nemotron-3.5-lightning-free", self.catalog
-        ) == "opencode-go/nemotron-3.5-lightning-free"
+        assert (
+            self.cmd._resolve_opencode_match(
+                "nemotron-3.5-lightning-free", self.catalog
+            )
+            == "opencode-go/nemotron-3.5-lightning-free"
+        )
 
     def test_partial_free_model_short(self):
-        assert self.cmd._resolve_opencode_match(
-            "lightning-free", self.catalog
-        ) == "opencode-go/nemotron-3.5-lightning-free"
+        assert (
+            self.cmd._resolve_opencode_match("lightning-free", self.catalog)
+            == "opencode-go/nemotron-3.5-lightning-free"
+        )
 
     def test_substring_unique_tail(self):
-        assert self.cmd._resolve_opencode_match(
-            "glm", self.catalog) == "opencode-go/glm-5.2"
+        assert (
+            self.cmd._resolve_opencode_match("glm", self.catalog)
+            == "opencode-go/glm-5.2"
+        )
 
     def test_empty_catalog_returns_none(self):
         assert self.cmd._resolve_opencode_match("hy3", []) is None
@@ -219,37 +286,57 @@ class TestModelListShowsOpencodeCatalog:
         from agent_core.llm.opencode_provider import OpencodeProvider
 
         provider = OpencodeProvider(
-            _default_llm(), api_key="sk-test", read_store=False,
+            _default_llm(),
+            api_key="sk-test",
+            read_store=False,
         )
-        llm = type("L", (), {
-            "model_name": _default_llm(),
-            "_provider": provider,
-        })()
+        llm = type(
+            "L",
+            (),
+            {
+                "model_name": _default_llm(),
+                "_provider": provider,
+            },
+        )()
         return type("A", (), {"llm": llm})()
 
     @staticmethod
     def _settings():
-        return type("S", (), {
-            "llm_provider": "opencode",
-            "opencode_server_url": "http://127.0.0.1:4096",
-            "opencode_password": "",
-            "opencode_api_url": "https://opencode.ai/zen/go/v1",
-            "opencode_api_key": "sk-test",
-        })()
+        return type(
+            "S",
+            (),
+            {
+                "llm_provider": "opencode",
+                "opencode_server_url": "http://127.0.0.1:4096",
+                "opencode_password": "",
+                "opencode_api_url": "https://opencode.ai/zen/go/v1",
+                "opencode_api_key": "sk-test",
+            },
+        )()
 
-    def test_list_includes_opencode_models_from_real_provider(self, monkeypatch, capsys):
+    def test_list_includes_opencode_models_from_real_provider(
+        self, monkeypatch, capsys
+    ):
         from agent_core.commands.model_cmd import ModelCommand
 
         cmd = ModelCommand()
         agent = self._opencode_agent()
-        fake_models = [{
-            "key": "qwen/qwen3.8-27b", "display_name": "Qwen3.8 27B",
-            "params_string": "27B", "size_bytes": 100, "loaded": True,
-            "instance_id": "i1",
-        }]
+        fake_models = [
+            {
+                "key": "qwen/qwen3.8-27b",
+                "display_name": "Qwen3.8 27B",
+                "params_string": "27B",
+                "size_bytes": 100,
+                "loaded": True,
+                "instance_id": "i1",
+            }
+        ]
         monkeypatch.setattr(
-            "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: self._settings())
+            "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: self._settings()
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": _default_llm(), "provider": "opencode"},
@@ -257,7 +344,8 @@ class TestModelListShowsOpencodeCatalog:
         # The real provider's list_models is hit; mock the HTTP fetch to a
         # catalog that includes the free model the user wanted.
         monkeypatch.setattr(
-            type(agent.llm._provider), "list_models",
+            type(agent.llm._provider),
+            "list_models",
             lambda self: [
                 _default_llm(),
             ],
@@ -279,11 +367,15 @@ class TestSwitchModelPrefersOpencode:
         from agent_core.llm.lmstudio import LMStudioProvider
 
         provider = LMStudioProvider(model_name=_default_llm())
-        llm = type("L", (), {
-            "model_name": _default_llm(),
-            "_provider": provider,
-            "_profile_name": None,
-        })()
+        llm = type(
+            "L",
+            (),
+            {
+                "model_name": _default_llm(),
+                "_provider": provider,
+                "_profile_name": None,
+            },
+        )()
         return type("A", (), {"llm": llm})()
 
     def test_partial_free_name_switches_to_opencode(self, monkeypatch):
@@ -292,21 +384,34 @@ class TestSwitchModelPrefersOpencode:
         cmd = ModelCommand()
         agent = self._lmstudio_agent_current()
         # LM Studio has a nemotron loaded — the buggy code matched this.
-        fake_models = [{
-            "key": "nvidia/nemotron-3-nano-4b", "display_name": "Nemotron 3 Nano 4B",
-            "params_string": "4B", "size_bytes": 100, "loaded": True,
-            "instance_id": "i1",
-        }]
+        fake_models = [
+            {
+                "key": "nvidia/nemotron-3-nano-4b",
+                "display_name": "Nemotron 3 Nano 4B",
+                "params_string": "4B",
+                "size_bytes": 100,
+                "loaded": True,
+                "instance_id": "i1",
+            }
+        ]
         monkeypatch.setattr(
-            "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: type("S", (), {
-            "llm_provider": "opencode",
-            "opencode_model": _default_llm(),
-            "opencode_server_url": "http://127.0.0.1:4096",
-            "opencode_password": "",
-            "opencode_api_url": "https://opencode.ai/zen/go/v1",
-            "opencode_api_key": "sk-test",
-        })())
+            "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "opencode",
+                    "opencode_model": _default_llm(),
+                    "opencode_server_url": "http://127.0.0.1:4096",
+                    "opencode_password": "",
+                    "opencode_api_url": "https://opencode.ai/zen/go/v1",
+                    "opencode_api_key": "sk-test",
+                },
+            )(),
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": _default_llm(), "provider": "opencode"},
@@ -314,12 +419,19 @@ class TestSwitchModelPrefersOpencode:
         # Build a fresh opencode provider that returns the free model.
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.ModelCommand._opencode_catalog",
-            lambda self, agent: (["opencode-go/deepseek-v4-flash",
-                                  "opencode-go/nemotron-3.5-lightning-free"], [], True),
+            lambda self, agent: (
+                [
+                    "opencode-go/deepseek-v4-flash",
+                    "opencode-go/nemotron-3.5-lightning-free",
+                ],
+                [],
+                True,
+            ),
         )
         # Capture the provider that gets built for the switch.
         built: dict[str, object] = {}
         import agent_core.llm.provider as prov_mod
+
         real_build = prov_mod.build_provider
 
         def fake_build(settings, model_name, provider_override=None):
@@ -334,6 +446,7 @@ class TestSwitchModelPrefersOpencode:
         )
 
         import asyncio
+
         asyncio.run(cmd._switch_model(["nemotron-3.5-lightning-free"], agent))
 
         assert agent.llm.model_name == "opencode-go/nemotron-3.5-lightning-free"
@@ -352,12 +465,18 @@ class TestModelListShowsZenFreeTier:
         from agent_core.llm.opencode_provider import OpencodeProvider
 
         provider = OpencodeProvider(
-            _default_llm(), api_key="sk-test", read_store=False,
+            _default_llm(),
+            api_key="sk-test",
+            read_store=False,
         )
-        llm = type("L", (), {
-            "model_name": _default_llm(),
-            "_provider": provider,
-        })()
+        llm = type(
+            "L",
+            (),
+            {
+                "model_name": _default_llm(),
+                "_provider": provider,
+            },
+        )()
         return type("A", (), {"llm": llm})()
 
     def test_list_includes_zen_free_models(self, monkeypatch, capsys):
@@ -365,20 +484,33 @@ class TestModelListShowsZenFreeTier:
 
         cmd = ModelCommand()
         agent = self._opencode_agent()
-        fake_models = [{
-            "key": "qwen/qwen3.8-27b", "display_name": "Qwen3.8 27B",
-            "params_string": "27B", "size_bytes": 100, "loaded": True,
-            "instance_id": "i1",
-        }]
+        fake_models = [
+            {
+                "key": "qwen/qwen3.8-27b",
+                "display_name": "Qwen3.8 27B",
+                "params_string": "27B",
+                "size_bytes": 100,
+                "loaded": True,
+                "instance_id": "i1",
+            }
+        ]
         monkeypatch.setattr(
-            "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: type("S", (), {
-            "llm_provider": "opencode",
-            "opencode_server_url": "http://127.0.0.1:4096",
-            "opencode_password": "",
-            "opencode_api_url": "https://opencode.ai/zen/go/v1",
-            "opencode_api_key": "sk-test",
-        })())
+            "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "opencode",
+                    "opencode_server_url": "http://127.0.0.1:4096",
+                    "opencode_password": "",
+                    "opencode_api_url": "https://opencode.ai/zen/go/v1",
+                    "opencode_api_key": "sk-test",
+                },
+            )(),
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": _default_llm(), "provider": "opencode"},
@@ -388,8 +520,11 @@ class TestModelListShowsZenFreeTier:
             "agent_core.commands.model_cmd.ModelCommand._opencode_catalog",
             lambda self, agent: (
                 [_default_llm(), _default_llm()],
-                ["opencode-zen/hy3-free", "opencode-zen/nemotron-3.5-lightning-free",
-                 "opencode-zen/laguna-s-2.1-free"],
+                [
+                    "opencode-zen/hy3-free",
+                    "opencode-zen/nemotron-3.5-lightning-free",
+                    "opencode-zen/laguna-s-2.1-free",
+                ],
                 True,
             ),
         )
@@ -415,10 +550,14 @@ class TestModelListGoVsZenNoDuplicate:
 
         # Active model is a keyless zen-free model -> provider.zen_mode is True.
         provider = OpencodeProvider("opencode-zen/hy3-free", read_store=False)
-        llm = type("L", (), {
-            "model_name": "opencode-zen/hy3-free",
-            "_provider": provider,
-        })()
+        llm = type(
+            "L",
+            (),
+            {
+                "model_name": "opencode-zen/hy3-free",
+                "_provider": provider,
+            },
+        )()
         return type("A", (), {"llm": llm})()
 
     def test_go_block_shows_go_catalog_not_zen(self, monkeypatch, capsys):
@@ -426,21 +565,34 @@ class TestModelListGoVsZenNoDuplicate:
 
         cmd = ModelCommand()
         agent = self._zen_active_agent()
-        fake_models = [{
-            "key": "qwen/qwen3.8-27b", "display_name": "Qwen3.8 27B",
-            "params_string": "27B", "size_bytes": 100, "loaded": True,
-            "instance_id": "i1",
-        }]
+        fake_models = [
+            {
+                "key": "qwen/qwen3.8-27b",
+                "display_name": "Qwen3.8 27B",
+                "params_string": "27B",
+                "size_bytes": 100,
+                "loaded": True,
+                "instance_id": "i1",
+            }
+        ]
         monkeypatch.setattr(
-            "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: type("S", (), {
-            "llm_provider": "opencode",
-            "opencode_model": _default_llm(),
-            "opencode_server_url": "http://127.0.0.1:4096",
-            "opencode_password": "",
-            "opencode_api_url": "https://opencode.ai/zen/go/v1",
-            "opencode_api_key": "sk-test",
-        })())
+            "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "opencode",
+                    "opencode_model": _default_llm(),
+                    "opencode_server_url": "http://127.0.0.1:4096",
+                    "opencode_password": "",
+                    "opencode_api_url": "https://opencode.ai/zen/go/v1",
+                    "opencode_api_key": "sk-test",
+                },
+            )(),
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": "opencode-zen/hy3-free", "provider": "opencode"},
@@ -449,8 +601,11 @@ class TestModelListGoVsZenNoDuplicate:
         # (the live ZEN_API_BASE is unreachable under test).
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.ModelCommand._zen_free_catalog",
-            lambda self: ["opencode-zen/hy3-free", "opencode-zen/nemotron-3.5-lightning-free",
-                          "opencode-zen/claude-opus-5"],
+            lambda self: [
+                "opencode-zen/hy3-free",
+                "opencode-zen/nemotron-3.5-lightning-free",
+                "opencode-zen/claude-opus-5",
+            ],
         )
         # The go block builds a real keyed OpencodeProvider (the zen-mode agent
         # is never reused for the go catalog), whose list_models() does a live
@@ -507,11 +662,15 @@ class TestSwitchModelPrefersZenFree:
         from agent_core.llm.lmstudio import LMStudioProvider
 
         provider = LMStudioProvider(model_name=_default_llm())
-        llm = type("L", (), {
-            "model_name": _default_llm(),
-            "_provider": provider,
-            "_profile_name": None,
-        })()
+        llm = type(
+            "L",
+            (),
+            {
+                "model_name": _default_llm(),
+                "_provider": provider,
+                "_profile_name": None,
+            },
+        )()
         return type("A", (), {"llm": llm})()
 
     def test_partial_free_name_switches_to_zen(self, monkeypatch):
@@ -520,20 +679,33 @@ class TestSwitchModelPrefersZenFree:
 
         cmd = ModelCommand()
         agent = self._agent()
-        fake_models = [{
-            "key": "nvidia/nemotron-3-nano-4b", "display_name": "Nemotron 3 Nano 4B",
-            "params_string": "4B", "size_bytes": 100, "loaded": True,
-            "instance_id": "i1",
-        }]
+        fake_models = [
+            {
+                "key": "nvidia/nemotron-3-nano-4b",
+                "display_name": "Nemotron 3 Nano 4B",
+                "params_string": "4B",
+                "size_bytes": 100,
+                "loaded": True,
+                "instance_id": "i1",
+            }
+        ]
         monkeypatch.setattr(
-            "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: type("S", (), {
-            "llm_provider": "opencode",
-            "opencode_server_url": "http://127.0.0.1:4096",
-            "opencode_password": "",
-            "opencode_api_url": "https://opencode.ai/zen/go/v1",
-            "opencode_api_key": "sk-test",
-        })())
+            "agent_core.commands.model_cmd._lms.get_models_status", lambda: fake_models
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "opencode",
+                    "opencode_server_url": "http://127.0.0.1:4096",
+                    "opencode_password": "",
+                    "opencode_api_url": "https://opencode.ai/zen/go/v1",
+                    "opencode_api_key": "sk-test",
+                },
+            )(),
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": _default_llm(), "provider": "opencode"},
@@ -562,6 +734,7 @@ class TestSwitchModelPrefersZenFree:
         )
 
         import asyncio
+
         asyncio.run(cmd._switch_model(["nemotron-3.5-lightning-free"], agent))
 
         assert agent.llm.model_name == "opencode-zen/nemotron-3.5-lightning-free"
@@ -575,14 +748,22 @@ class TestSwitchModelPrefersZenFree:
         cmd = ModelCommand()
         agent = self._agent()
         monkeypatch.setattr(
-            "agent_core.commands.model_cmd._lms.get_models_status", lambda: [])
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: type("S", (), {
-            "llm_provider": "opencode",
-            "opencode_server_url": "http://127.0.0.1:4096",
-            "opencode_password": "",
-            "opencode_api_url": "https://opencode.ai/zen/go/v1",
-            "opencode_api_key": "sk-test",
-        })())
+            "agent_core.commands.model_cmd._lms.get_models_status", lambda: []
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "opencode",
+                    "opencode_server_url": "http://127.0.0.1:4096",
+                    "opencode_password": "",
+                    "opencode_api_url": "https://opencode.ai/zen/go/v1",
+                    "opencode_api_key": "sk-test",
+                },
+            )(),
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": _default_llm(), "provider": "opencode"},
@@ -602,6 +783,7 @@ class TestSwitchModelPrefersZenFree:
         )
 
         import asyncio
+
         asyncio.run(cmd._switch_model(["opencode-zen/hy3-free"], agent))
         assert agent.llm.model_name == "opencode-zen/hy3-free"
         assert built["model"] == "opencode-zen/hy3-free"
@@ -618,56 +800,113 @@ class TestLmstudioSelectionPrecedence:
         from agent_core.llm.lmstudio import LMStudioProvider
 
         provider = LMStudioProvider(model_name=_default_llm())
-        llm = type("L", (), {
-            "model_name": _default_llm(),
-            "_provider": provider,
-            "_profile_name": None,
-        })()
+        llm = type(
+            "L",
+            (),
+            {
+                "model_name": _default_llm(),
+                "_provider": provider,
+                "_profile_name": None,
+            },
+        )()
         return type("A", (), {"llm": llm})()
 
     @staticmethod
     def _lmstudio_models():
         return [
-            {"key": "gemma-4-26b", "display_name": "Gemma 4 26B",
-             "params_string": "26B", "size_bytes": 14_000_000_000,
-             "loaded": False, "instance_id": "i1"},
-            {"key": "qwen3.8-9b", "display_name": "Qwen3.8 9B",
-             "params_string": "9B", "size_bytes": 5_000_000_000,
-             "loaded": False, "instance_id": "i2"},
-            {"key": "laguna-s-2.1", "display_name": "Laguna S 2.1 UD",
-             "params_string": "8B-MoE", "size_bytes": 63_000_000_000,
-             "loaded": True, "instance_id": "i3"},
-            {"key": "nemotron-3-nano-4b", "display_name": "Nemotron 3 Nano 4B",
-             "params_string": "4B", "size_bytes": 2_500_000_000,
-             "loaded": False, "instance_id": "i4"},
-            {"key": "gpt-oss-20b", "display_name": "GPT-OSS 20B",
-             "params_string": "20B", "size_bytes": 11_000_000_000,
-             "loaded": False, "instance_id": "i5"},
-            {"key": "gemma-4-31b", "display_name": "Gemma 4 31B",
-             "params_string": "31B", "size_bytes": 18_000_000_000,
-             "loaded": False, "instance_id": "i6"},
-            {"key": "qwen3.6-27b-mtp", "display_name": "Qwen3.6 27B",
-             "params_string": "27B", "size_bytes": 28_000_000_000,
-             "loaded": False, "instance_id": "i7"},
-            {"key": "gpt-oss-120b", "display_name": "GPT-OSS 120B",
-             "params_string": "120B", "size_bytes": 59_000_000_000,
-             "loaded": False, "instance_id": "i8"},
-            {"key": "gemma-4-26b-a4b", "display_name": "Gemma 4 26B A4B",
-             "params_string": "26B-A4B", "size_bytes": 26_000_000_000,
-             "loaded": False, "instance_id": "i9"},
+            {
+                "key": "gemma-4-26b",
+                "display_name": "Gemma 4 26B",
+                "params_string": "26B",
+                "size_bytes": 14_000_000_000,
+                "loaded": False,
+                "instance_id": "i1",
+            },
+            {
+                "key": "qwen3.8-9b",
+                "display_name": "Qwen3.8 9B",
+                "params_string": "9B",
+                "size_bytes": 5_000_000_000,
+                "loaded": False,
+                "instance_id": "i2",
+            },
+            {
+                "key": "laguna-s-2.1",
+                "display_name": "Laguna S 2.1 UD",
+                "params_string": "8B-MoE",
+                "size_bytes": 63_000_000_000,
+                "loaded": True,
+                "instance_id": "i3",
+            },
+            {
+                "key": "nemotron-3-nano-4b",
+                "display_name": "Nemotron 3 Nano 4B",
+                "params_string": "4B",
+                "size_bytes": 2_500_000_000,
+                "loaded": False,
+                "instance_id": "i4",
+            },
+            {
+                "key": "gpt-oss-20b",
+                "display_name": "GPT-OSS 20B",
+                "params_string": "20B",
+                "size_bytes": 11_000_000_000,
+                "loaded": False,
+                "instance_id": "i5",
+            },
+            {
+                "key": "gemma-4-31b",
+                "display_name": "Gemma 4 31B",
+                "params_string": "31B",
+                "size_bytes": 18_000_000_000,
+                "loaded": False,
+                "instance_id": "i6",
+            },
+            {
+                "key": "qwen3.6-27b-mtp",
+                "display_name": "Qwen3.6 27B",
+                "params_string": "27B",
+                "size_bytes": 28_000_000_000,
+                "loaded": False,
+                "instance_id": "i7",
+            },
+            {
+                "key": "gpt-oss-120b",
+                "display_name": "GPT-OSS 120B",
+                "params_string": "120B",
+                "size_bytes": 59_000_000_000,
+                "loaded": False,
+                "instance_id": "i8",
+            },
+            {
+                "key": "gemma-4-26b-a4b",
+                "display_name": "Gemma 4 26B A4B",
+                "params_string": "26B-A4B",
+                "size_bytes": 26_000_000_000,
+                "loaded": False,
+                "instance_id": "i9",
+            },
         ]
 
     def _patch_common(self, monkeypatch, cmd):
         monkeypatch.setattr(
             "agent_core.commands.model_cmd._lms.get_models_status",
-            lambda: self._lmstudio_models())
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: type("S", (), {
-            "llm_provider": "opencode",
-            "opencode_server_url": "http://127.0.0.1:4096",
-            "opencode_password": "",
-            "opencode_api_url": "https://opencode.ai/zen/go/v1",
-            "opencode_api_key": "sk-test",
-        })())
+            lambda: self._lmstudio_models(),
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "opencode",
+                    "opencode_server_url": "http://127.0.0.1:4096",
+                    "opencode_password": "",
+                    "opencode_api_url": "https://opencode.ai/zen/go/v1",
+                    "opencode_api_key": "sk-test",
+                },
+            )(),
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": _default_llm(), "provider": "opencode"},
@@ -684,7 +923,8 @@ class TestLmstudioSelectionPrecedence:
         )
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.persist_model_choice",
-            lambda name, provider=None: None)
+            lambda name, provider=None: None,
+        )
 
     def test_number_index_selects_lmstudio(self, monkeypatch):
         import asyncio
@@ -737,25 +977,34 @@ class TestLmstudioSelectionPrecedence:
         for m in models:
             m["loaded"] = True
         monkeypatch.setattr(
-            "agent_core.commands.model_cmd._lms.get_models_status",
-            lambda: models)
-        monkeypatch.setattr("agent_core.config.load_agent_settings", lambda: type("S", (), {
-            "llm_provider": "opencode",
-            "opencode_server_url": "http://127.0.0.1:4096",
-            "opencode_password": "",
-            "opencode_api_url": "https://opencode.ai/zen/go/v1",
-            "opencode_api_key": "sk-test",
-        })())
+            "agent_core.commands.model_cmd._lms.get_models_status", lambda: models
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "opencode",
+                    "opencode_server_url": "http://127.0.0.1:4096",
+                    "opencode_password": "",
+                    "opencode_api_url": "https://opencode.ai/zen/go/v1",
+                    "opencode_api_key": "sk-test",
+                },
+            )(),
+        )
         monkeypatch.setattr(
             "agent_core.constants.load_model_json",
             lambda: {"model": _default_llm(), "provider": "opencode"},
         )
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.ModelCommand._opencode_catalog",
-            lambda self, agent: ([_default_llm()], [], True))
+            lambda self, agent: ([_default_llm()], [], True),
+        )
         monkeypatch.setattr(
             "agent_core.commands.model_cmd.persist_model_choice",
-            lambda name, provider=None: None)
+            lambda name, provider=None: None,
+        )
 
         asyncio.run(cmd._switch_model(["9b"], agent))
         assert agent.llm.model_name == "qwen3.8-9b"
@@ -771,7 +1020,9 @@ class TestLmstudioSelectionPrecedence:
         self._patch_common(monkeypatch, cmd)
 
         captured = []
-        monkeypatch.setattr(cmd, "_list_models", lambda a, interactive=False: captured.append("listed"))
+        monkeypatch.setattr(
+            cmd, "_list_models", lambda a, interactive=False: captured.append("listed")
+        )
         asyncio.run(cmd._switch_model(["99"], agent))
         # No LM Studio model at index 99, no opencode match → list shown.
         assert captured == ["listed"]
@@ -807,7 +1058,9 @@ class TestPersistModelChoice:
         # Never touch the developer's real model.json: a failed assertion in
         # the old save/restore version could leave test data behind.
         monkeypatch.setattr(
-            constants, "MODEL_JSON_PATH", str(tmp_path / "model.json"),
+            constants,
+            "MODEL_JSON_PATH",
+            str(tmp_path / "model.json"),
         )
         test_data = {"model": "laguna-s-2.1", "test_marker": "pytest"}
         save_model_json(test_data)

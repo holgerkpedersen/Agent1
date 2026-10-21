@@ -1,4 +1,4 @@
-﻿"""Agent core module providing an LLM agent with file-context integration."""
+"""Agent core module providing an LLM agent with file-context integration."""
 
 from __future__ import annotations
 
@@ -78,9 +78,10 @@ class LLMAgent:
         finally:
             # Clear temporary system messages after response generation.
             self._pending_temp_systems.clear()
-            if 'response_text' in locals():
-                self._conversation.append({"role": "assistant", "content": response_text})
-
+            if "response_text" in locals():
+                self._conversation.append(
+                    {"role": "assistant", "content": response_text}
+                )
 
     def _fallback_response(self) -> str:
         """Return a basic acknowledgement when no LLM client is configured."""

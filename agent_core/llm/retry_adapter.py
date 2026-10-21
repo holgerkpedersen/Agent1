@@ -6,15 +6,18 @@ from dataclasses import dataclass
 
 R = TypeVar("R")
 
+
 @dataclass(frozen=True)
 class RetryConfig:
     """Configuration for exponential backoff retry behavior."""
+
     max_retries: int = 3
     base_delay: float = 1.0
     max_delay: float = 60.0
     backoff_factor: float = 2.0
     jitter: bool = True
     retryable_exceptions: tuple[type[Exception], ...] = (Exception,)
+
 
 class RateLimiter:
     """Simple fixed-interval rate limiter based on monotonic time."""
@@ -33,10 +36,13 @@ class RateLimiter:
             time.sleep(sleep_time)
         self._last_call_time = time.monotonic()
 
+
 class RetryAdapter:
     """Applies exponential backoff retries and optional rate limiting to callable targets."""
 
-    def __init__(self, config: RetryConfig | None = None, rate_limiter: RateLimiter | None = None) -> None:
+    def __init__(
+        self, config: RetryConfig | None = None, rate_limiter: RateLimiter | None = None
+    ) -> None:
         self.config = config or RetryConfig()
         self.rate_limiter = rate_limiter
 
@@ -53,8 +59,8 @@ class RetryAdapter:
                 last_exception = exc
                 if attempt < self.config.max_retries:
                     delay = min(
-                        self.config.base_delay * (self.config.backoff_factor ** attempt),
-                        self.config.max_delay
+                        self.config.base_delay * (self.config.backoff_factor**attempt),
+                        self.config.max_delay,
                     )
                     if self.config.jitter:
                         delay *= random.uniform(0.5, 1.5)

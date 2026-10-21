@@ -8,6 +8,7 @@ with history and eventually trip the llama-server client socket timeout (the
 drop the oldest CLOSED tool-exchange prefix once the list passes a bound,
 never split an assistant/tool pair, and never drop the live (pending) tail.
 """
+
 import json
 from typing import Any
 
@@ -28,6 +29,7 @@ from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
 
 def _make_llm_chat_fn(fake_llm):
     """Wrap a scripted fake LLM the same way chat_nlp wraps the real provider."""
+
     async def llm_chat_fn(messages, tools):
         raw = await fake_llm.chat(messages, tools)
         try:
@@ -38,7 +40,8 @@ def _make_llm_chat_fn(fake_llm):
             parsed.pop("role", None)
             updated = list(messages)
             updated.append(
-                {"role": "assistant", "content": parsed.get("content") or "", **parsed})
+                {"role": "assistant", "content": parsed.get("content") or "", **parsed}
+            )
             return str(parsed.get("content") or ""), updated
         updated = list(messages)
         updated.append({"role": "assistant", "content": raw})
@@ -62,14 +65,16 @@ class _ScriptedLLM:
             message = {
                 "role": "assistant",
                 "content": "",
-                "tool_calls": [{
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(args),
-                    },
-                }],
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(args),
+                        },
+                    }
+                ],
             }
             return json.dumps(message)
         return step
@@ -77,13 +82,16 @@ class _ScriptedLLM:
 
 def _loop_runner_sync(runner, fake_llm, execute_tool, **kwargs):
     import asyncio
-    return asyncio.run(runner.run(
-        messages=[{"role": "user", "content": "do the thing"}],
-        llm_chat_fn=_make_llm_chat_fn(fake_llm),
-        execute_tool_fn=execute_tool,
-        tools=list(NLP_TOOL_SCHEMAS),
-        **kwargs,
-    ))
+
+    return asyncio.run(
+        runner.run(
+            messages=[{"role": "user", "content": "do the thing"}],
+            llm_chat_fn=_make_llm_chat_fn(fake_llm),
+            execute_tool_fn=execute_tool,
+            tools=list(NLP_TOOL_SCHEMAS),
+            **kwargs,
+        )
+    )
 
 
 def _build_history(n_exchanges: int, tail_text: str = "answer") -> list[dict[str, Any]]:
@@ -93,15 +101,22 @@ def _build_history(n_exchanges: int, tail_text: str = "answer") -> list[dict[str
         {"role": "user", "content": "task"},
     ]
     for i in range(n_exchanges):
-        msgs.append({
-            "role": "assistant",
-            "content": f"call {i}",
-            "tool_calls": [{
-                "id": f"t{i}",
-                "type": "function",
-                "function": {"name": "read", "arguments": json.dumps({"path": f"f{i}"})},
-            }],
-        })
+        msgs.append(
+            {
+                "role": "assistant",
+                "content": f"call {i}",
+                "tool_calls": [
+                    {
+                        "id": f"t{i}",
+                        "type": "function",
+                        "function": {
+                            "name": "read",
+                            "arguments": json.dumps({"path": f"f{i}"}),
+                        },
+                    }
+                ],
+            }
+        )
         msgs.append({"role": "tool", "tool_call_id": f"t{i}", "content": f"result {i}"})
     msgs.append({"role": "assistant", "content": tail_text})
     return msgs
@@ -186,7 +201,9 @@ class TestCompactMessages:
             assert notes and "working summary" not in notes[0]["content"]
 
     def test_real_summary_is_included(self):
-        out, note = _compact_messages(_build_history(10), 8, 1_000_000, "  found the bug  ")
+        out, note = _compact_messages(
+            _build_history(10), 8, 1_000_000, "  found the bug  "
+        )
         assert note is not None
         assert "(working summary: found the bug)" in note
 
@@ -206,9 +223,17 @@ class TestCharBudgetTrigger:
     def _huge_tool_result_history(self, size: int) -> list[dict[str, Any]]:
         return [
             {"role": "user", "content": "task"},
-            {"role": "assistant", "content": "calling",
-             "tool_calls": [{"id": "t0", "type": "function",
-                             "function": {"name": "read", "arguments": "{}"}}]},
+            {
+                "role": "assistant",
+                "content": "calling",
+                "tool_calls": [
+                    {
+                        "id": "t0",
+                        "type": "function",
+                        "function": {"name": "read", "arguments": "{}"},
+                    }
+                ],
+            },
             {"role": "tool", "tool_call_id": "t0", "content": "x" * size},
             {"role": "assistant", "content": "still working"},
             {"role": "assistant", "content": "tail answer"},
@@ -253,15 +278,24 @@ class TestCharBudgetTrigger:
             return "z" * 400_000 if args.get("path") == "big.py" else "small"
 
         runner = ToolLoopRunner(
-            max_iterations=10, in_loop_compact=True, compact_strategy="note",
-            compact_max_messages=80, compact_char_budget=50_000, trace=sink,
+            max_iterations=10,
+            in_loop_compact=True,
+            compact_strategy="note",
+            compact_max_messages=80,
+            compact_char_budget=50_000,
+            trace=sink,
         )
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
         assert final_text == "Done after two reads."
         # Precondition for the claim: the count cap was never even near breaching.
-        assert max(len(c) for c in fake.calls) <= 80, "count cap must not be the trigger"
-        guards = [e for e in sink.events if e.get("kind") == "guard_triggered"
-                  and e.get("guard") == GUARD_COMPACT]
+        assert max(len(c) for c in fake.calls) <= 80, (
+            "count cap must not be the trigger"
+        )
+        guards = [
+            e
+            for e in sink.events
+            if e.get("kind") == "guard_triggered" and e.get("guard") == GUARD_COMPACT
+        ]
         assert guards, "the char budget alone must trigger compaction"
         assert not any(
             m.get("content", "").startswith("CONTEXT NOTE:") for m in messages
@@ -307,7 +341,8 @@ class TestSummarizePayloadCap:
 
         async def spy_chat(messages, tools=None, **kwargs):
             is_summarizer = any(
-                m.get("role") == "system" and "Summarize the tool-call history" in str(m.get("content"))
+                m.get("role") == "system"
+                and "Summarize the tool-call history" in str(m.get("content"))
                 for m in messages
             )
             if is_summarizer:
@@ -325,14 +360,19 @@ class TestSummarizePayloadCap:
             return "w" * 40_000
 
         runner = ToolLoopRunner(
-            max_iterations=10, in_loop_compact=True, compact_strategy="summarize",
-            compact_max_messages=80, compact_char_budget=50_000,
+            max_iterations=10,
+            in_loop_compact=True,
+            compact_strategy="summarize",
+            compact_max_messages=80,
+            compact_char_budget=50_000,
         )
         _loop_runner_sync(runner, fake, execute_tool)
         assert summarizer_prompts, "the summarizer must have been invoked"
         # The dropped prefix was ~40KB; the summarizer prompt must be capped.
         assert max(summarizer_prompts) < 40_000, summarizer_prompts
-        assert max(summarizer_prompts) <= _SUMMARIZE_MAX_CHARS + 5_000, summarizer_prompts
+        assert max(summarizer_prompts) <= _SUMMARIZE_MAX_CHARS + 5_000, (
+            summarizer_prompts
+        )
 
 
 class TestInLoopCompaction:
@@ -349,8 +389,10 @@ class TestInLoopCompaction:
             return f"content of {args.get('path')}"
 
         runner = ToolLoopRunner(
-            max_iterations=30, in_loop_compact=True,
-            compact_strategy="note", compact_max_messages=6,
+            max_iterations=30,
+            in_loop_compact=True,
+            compact_strategy="note",
+            compact_max_messages=6,
         )
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
 
@@ -374,12 +416,18 @@ class TestInLoopCompaction:
             return "ok"
 
         runner = ToolLoopRunner(
-            max_iterations=20, in_loop_compact=True,
-            compact_strategy="note", compact_max_messages=6, trace=sink,
+            max_iterations=20,
+            in_loop_compact=True,
+            compact_strategy="note",
+            compact_max_messages=6,
+            trace=sink,
         )
         _loop_runner_sync(runner, fake, execute_tool)
-        guards = [e for e in sink.events if e.get("kind") == "guard_triggered"
-                  and e.get("guard") == GUARD_COMPACT]
+        guards = [
+            e
+            for e in sink.events
+            if e.get("kind") == "guard_triggered" and e.get("guard") == GUARD_COMPACT
+        ]
         assert guards, "compaction must emit a GUARD_COMPACT trace event"
 
     def test_disabled_does_not_compact(self):
@@ -394,12 +442,17 @@ class TestInLoopCompaction:
             return "ok"
 
         runner = ToolLoopRunner(
-            max_iterations=20, in_loop_compact=False, compact_max_messages=6,
+            max_iterations=20,
+            in_loop_compact=False,
+            compact_max_messages=6,
             trace=sink,
         )
         _loop_runner_sync(runner, fake, execute_tool)
-        guards = [e for e in sink.events if e.get("kind") == "guard_triggered"
-                  and e.get("guard") == GUARD_COMPACT]
+        guards = [
+            e
+            for e in sink.events
+            if e.get("kind") == "guard_triggered" and e.get("guard") == GUARD_COMPACT
+        ]
         assert not guards
 
 
@@ -418,9 +471,17 @@ class TestShrinkFallback:
         return [
             {"role": "system", "content": "system"},
             {"role": "user", "content": "task"},
-            {"role": "assistant", "content": "calling",
-             "tool_calls": [{"id": "t0", "type": "function",
-                             "function": {"name": "run", "arguments": "{}"}}]},
+            {
+                "role": "assistant",
+                "content": "calling",
+                "tool_calls": [
+                    {
+                        "id": "t0",
+                        "type": "function",
+                        "function": {"name": "run", "arguments": "{}"},
+                    }
+                ],
+            },
             {"role": "tool", "tool_call_id": "t0", "content": "x" * size},
         ]
 
@@ -432,7 +493,7 @@ class TestShrinkFallback:
         # The budget now holds (small slack for the appended note).
         assert _total_chars(out) <= budget + 500
         # Nothing was dropped: same roles, same count (+ note), ids intact.
-        assert [m["role"] for m in out[:len(msgs)]] == [m["role"] for m in msgs]
+        assert [m["role"] for m in out[: len(msgs)]] == [m["role"] for m in msgs]
         assert out[3].get("tool_call_id") == "t0"
         assert "truncated" in str(out[3].get("content"))
         # System prompt and task prompt untouched.
@@ -452,12 +513,22 @@ class TestShrinkFallback:
         msgs = [
             {"role": "system", "content": "system"},
             {"role": "user", "content": "task"},
-            {"role": "assistant", "content": "writing",
-             "tool_calls": [{"id": "w0", "type": "function",
-                             "function": {"name": "write",
-                                          "arguments": json.dumps(
-                                              {"path": "f.py",
-                                               "content": "w" * 30_000})}}]},
+            {
+                "role": "assistant",
+                "content": "writing",
+                "tool_calls": [
+                    {
+                        "id": "w0",
+                        "type": "function",
+                        "function": {
+                            "name": "write",
+                            "arguments": json.dumps(
+                                {"path": "f.py", "content": "w" * 30_000}
+                            ),
+                        },
+                    }
+                ],
+            },
         ]
         out, note = _compact_messages(msgs, 80, 10_000, None)
         assert note is not None
@@ -475,11 +546,7 @@ class TestShrinkFallback:
             if m.get("role") == "assistant"
             for tc in (m.get("tool_calls") or [])
         }
-        answered = {
-            str(m.get("tool_call_id"))
-            for m in out
-            if m.get("role") == "tool"
-        }
+        answered = {str(m.get("tool_call_id")) for m in out if m.get("role") == "tool"}
         assert announced == answered
 
     def test_impossible_budget_raises_clear_error(self):
@@ -503,20 +570,24 @@ class TestBudgetGuaranteeInRun:
             return "e" * 400_000
 
         runner = ToolLoopRunner(
-            max_iterations=1, display_mode="quiet", in_loop_compact=True,
-            compact_strategy="note", compact_char_budget=20_000, trace=sink,
+            max_iterations=1,
+            display_mode="quiet",
+            in_loop_compact=True,
+            compact_strategy="note",
+            compact_char_budget=20_000,
+            trace=sink,
         )
         final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
         budget = runner.compact_char_budget
         assert fake.calls, "the loop must have called the llm"
         for sent in fake.calls:
             assert _total_chars(sent) <= budget + 1_000, (
-                "an llm call received an over-budget prompt")
+                "an llm call received an over-budget prompt"
+            )
         assert final_text == "Final answer."
         # The shrink note was stripped from the persisted history at run end.
         assert not any(
-            str(m.get("content") or "").startswith("CONTEXT NOTE:")
-            for m in messages
+            str(m.get("content") or "").startswith("CONTEXT NOTE:") for m in messages
         )
 
 
@@ -534,13 +605,11 @@ class TestContextDerivedBudget:
         assert runner.compact_char_budget == max(4_000, _IN_LOOP_CHAR_BUDGET)
 
     def test_explicit_budget_wins(self):
-        runner = ToolLoopRunner(
-            compact_char_budget=9_999, context_limit_tokens=262_144)
+        runner = ToolLoopRunner(compact_char_budget=9_999, context_limit_tokens=262_144)
         assert runner.compact_char_budget == 9_999
 
     def test_unknown_window_keeps_default(self):
-        assert ToolLoopRunner().compact_char_budget == max(
-            4_000, _IN_LOOP_CHAR_BUDGET)
+        assert ToolLoopRunner().compact_char_budget == max(4_000, _IN_LOOP_CHAR_BUDGET)
 
 
 class _TraceSink:

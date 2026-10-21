@@ -20,10 +20,16 @@ from agent_core.commands.optimize_cmd import (
     _surgically_revert_regressions,
 )
 from agent_core.patterns import (
-    analyze as static_analyze, detect_list_append_join, detect_none_eq,
-    detect_fstring_without_placeholder, detect_iter_dict_keys, detect_type_comparison,
-    detect_mutable_default_arg, detect_redundant_bool_expr,
-    detect_missing_context_manager, _docstring_lines
+    analyze as static_analyze,
+    detect_list_append_join,
+    detect_none_eq,
+    detect_fstring_without_placeholder,
+    detect_iter_dict_keys,
+    detect_type_comparison,
+    detect_mutable_default_arg,
+    detect_redundant_bool_expr,
+    detect_missing_context_manager,
+    _docstring_lines,
 )
 
 
@@ -58,15 +64,20 @@ def _fix_hunk_for_pattern(basename: str, user_content: str) -> str:
     numbered = _numbered_context(user_content)
     pat = _finding_pattern(user_content)
     if pat == "silent_except":
-        idx = next(i for i, (num, text) in enumerate(numbered)
-                   if text.strip() == "except Exception:")
+        idx = next(
+            i
+            for i, (num, text) in enumerate(numbered)
+            if text.strip() == "except Exception:"
+        )
         start = numbered[idx - 1][0] if idx > 0 else numbered[idx][0]
         ctx = numbered[idx - 1][1] if idx > 0 else None
         body = ""
         if ctx is not None:
             body += f" {ctx}\n"
-        body += (f"-{numbered[idx][1]}\n"
-                 f"+{numbered[idx][1].replace('Exception', 'OSError')}\n")
+        body += (
+            f"-{numbered[idx][1]}\n"
+            f"+{numbered[idx][1].replace('Exception', 'OSError')}\n"
+        )
         pass_next = idx + 1 < len(numbered) and numbered[idx + 1][1].strip() == "pass"
         if idx + 1 < len(numbered) and not pass_next:
             body += f" {numbered[idx + 1][1]}\n"
@@ -82,11 +93,14 @@ def _fix_hunk_for_pattern(basename: str, user_content: str) -> str:
             )
         return out_hunks
     if pat == "missing_context_manager":
-        idx = next(i for i, (num, text) in enumerate(numbered)
-                   if text.strip().startswith("return open("))
+        idx = next(
+            i
+            for i, (num, text) in enumerate(numbered)
+            if text.strip().startswith("return open(")
+        )
         line = numbered[idx][1]
         indent = line[: len(line) - len(line.lstrip())]
-        expr = line.strip()[len("return "):].removesuffix(".read()")
+        expr = line.strip()[len("return ") :].removesuffix(".read()")
         num = numbered[idx][0]
         return (
             f"[PATCH: {basename}]\n"
@@ -108,16 +122,16 @@ def _fix_hunk_for_pattern(basename: str, user_content: str) -> str:
             f"+{indent}{modname}  # keep referenced\n"
         )
     if pat == "string_concat_in_loop":
-        idx = next(i for i, (num, text) in enumerate(numbered)
-                   if "+=" in text and isinstance(num, int))
+        idx = next(
+            i
+            for i, (num, text) in enumerate(numbered)
+            if "+=" in text and isinstance(num, int)
+        )
         num = numbered[idx][0]
         old_line = numbered[idx][1]
         new_line = old_line.replace("+=", "=", 1).rstrip() + "  # FIXME"
         return (
-            f"[PATCH: {basename}]\n"
-            f"@@ -{num},1 +{num},1 @@\n"
-            f"-{old_line}\n"
-            f"+{new_line}\n"
+            f"[PATCH: {basename}]\n@@ -{num},1 +{num},1 @@\n-{old_line}\n+{new_line}\n"
         )
     if pat == "dead_assignment":
         num, text = next((n, t) for n, t in numbered if "=" in t)
@@ -125,7 +139,7 @@ def _fix_hunk_for_pattern(basename: str, user_content: str) -> str:
             f"[PATCH: {basename}]\n"
             f"@@ -{num},1 +{num},1 @@\n"
             f"-{text}\n"
-            f"+{text[:len(text)-len(text.lstrip())]}pass  # removed\n"
+            f"+{text[: len(text) - len(text.lstrip())]}pass  # removed\n"
         )
     raise AssertionError(f"fake LLM does not know pattern {pat!r}")
 
@@ -133,6 +147,7 @@ def _fix_hunk_for_pattern(basename: str, user_content: str) -> str:
 # ---------------------------------------------------------------------------
 # estimate_tokens
 # ---------------------------------------------------------------------------
+
 
 class TestEstimateTokens:
     def test_empty_string(self) -> None:
@@ -153,32 +168,44 @@ class TestEstimateTokens:
 # _request_max_tokens (context-aware output budget)
 # ---------------------------------------------------------------------------
 
+
 class TestRequestMaxTokens:
     def test_context_aware_budget_fits_window(self) -> None:
         """With a known context window the budget shrinks so prompt + output
         (plus the reserve) always fit — the HTTP-400 overflow is impossible."""
         from agent_core.commands.optimize_cmd import _request_max_tokens
+
         assert _request_max_tokens(20000, context_tokens=32768) <= 32768 - 20000
 
     def test_context_near_full_window_still_positive(self) -> None:
         from agent_core.commands.optimize_cmd import _request_max_tokens
+
         assert _request_max_tokens(32000, context_tokens=32768) >= 1
 
     def test_heuristic_budget_when_context_unknown(self) -> None:
         from agent_core.commands.optimize_cmd import _request_max_tokens
+
         assert _request_max_tokens(100) >= 8192
 
     def test_hard_ceiling_respected(self) -> None:
         from agent_core.commands.optimize_cmd import (
-            _request_max_tokens, REGION_HARD_MAX_TOKENS
+            _request_max_tokens,
+            REGION_HARD_MAX_TOKENS,
         )
-        assert _request_max_tokens(100, context_tokens=1000000) <= REGION_HARD_MAX_TOKENS
-        assert _request_max_tokens(100000000, context_tokens=None) == REGION_HARD_MAX_TOKENS
+
+        assert (
+            _request_max_tokens(100, context_tokens=1000000) <= REGION_HARD_MAX_TOKENS
+        )
+        assert (
+            _request_max_tokens(100000000, context_tokens=None)
+            == REGION_HARD_MAX_TOKENS
+        )
 
 
 # ---------------------------------------------------------------------------
 # create_batches
 # ---------------------------------------------------------------------------
+
 
 class TestCreateBatches:
     def _contents(self, files: dict[str, str]) -> dict[str, str]:
@@ -222,6 +249,7 @@ class TestCreateBatches:
 # format_batch_context
 # ---------------------------------------------------------------------------
 
+
 class TestFormatBatchContext:
     def test_includes_filename_and_code(self) -> None:
         batch = {
@@ -238,7 +266,11 @@ class TestFormatBatchContext:
         batch = {
             "files": ["bar.py"],
             "contents": {"bar.py": "x = 1"},
-            "findings": {"bar.py": [{"line": 1, "pattern": "bare_except", "suggestion": "fix this"}]},
+            "findings": {
+                "bar.py": [
+                    {"line": 1, "pattern": "bare_except", "suggestion": "fix this"}
+                ]
+            },
             "total_tokens": 10,
         }
         result = format_batch_context(batch)
@@ -259,6 +291,7 @@ class TestFormatBatchContext:
 # ---------------------------------------------------------------------------
 # parse_llm_fixes
 # ---------------------------------------------------------------------------
+
 
 class TestParseLLMFixes:
     def test_extracts_file_blocks(self) -> None:
@@ -335,6 +368,7 @@ class TestParseLLMFixes:
 # Static analysis: list_append_join detector
 # ---------------------------------------------------------------------------
 
+
 class TestListAppendJoinDetector:
     """Verify the detector flags the unfixed code and clears after the fix."""
 
@@ -393,6 +427,7 @@ class TestListAppendJoinDetector:
     def test_tool_loop_no_finding(self) -> None:
         """Real-world case: tool_loop.py should not be flagged."""
         from pathlib import Path
+
         code = Path("agent_core/llm/tool_loop.py").read_text()
         findings = detect_list_append_join(code)
         assert findings == []
@@ -449,6 +484,7 @@ class TestListAppendJoinDetector:
 # Loop-scope detectors: dedent ends loop (not just column-0)
 # ---------------------------------------------------------------------------
 
+
 class TestLoopScopeDedent:
     """Regression guard for the column-0-only loop-exit false-positive bug.
 
@@ -460,8 +496,11 @@ class TestLoopScopeDedent:
         """`combined += "".join(...)` placed after a loop, inside a method,
         must not trigger string_concat_in_loop (the bug from analyze_cmd.py)."""
         from agent_core.patterns import (
-            detect_string_concat_in_loop, detect_file_read_in_loop, detect_regex_in_loop
+            detect_string_concat_in_loop,
+            detect_file_read_in_loop,
+            detect_regex_in_loop,
         )
+
         code = textwrap.dedent("""\
             async def _deep_analyze(self, path):
                 combined = content
@@ -480,6 +519,7 @@ class TestLoopScopeDedent:
     def test_genuine_in_loop_still_flagged(self) -> None:
         """A real `path += ".x"` inside a loop body is still detected."""
         from agent_core.patterns import detect_string_concat_in_loop
+
         code = textwrap.dedent("""\
             def build(rows):
                 for r in rows:
@@ -491,6 +531,7 @@ class TestLoopScopeDedent:
     def test_genuine_file_read_in_loop_still_flagged(self) -> None:
         """A real repeated read of the same file inside a loop is detected."""
         from agent_core.patterns import detect_file_read_in_loop
+
         code = textwrap.dedent("""\
             def collect():
                 cfg = "config.json"
@@ -504,6 +545,7 @@ class TestLoopScopeDedent:
         """Reads of distinct files per iteration are NOT flagged: nothing to
         hoist, so the suggested fix does not apply."""
         from agent_core.patterns import detect_file_read_in_loop
+
         code = textwrap.dedent("""\
             def collect():
                 for p in paths:
@@ -514,6 +556,7 @@ class TestLoopScopeDedent:
 
     def test_regex_in_loop_still_flagged(self) -> None:
         from agent_core.patterns import detect_regex_in_loop
+
         code = textwrap.dedent("""\
             for i in range(3):
                 re.compile("^x")
@@ -524,6 +567,7 @@ class TestLoopScopeDedent:
         """Regression: a string ``+=`` after a loop, still inside a method
         body, must not be falsely reported (the column-0 bug)."""
         from agent_core.patterns import detect_string_concat_in_loop
+
         code = textwrap.dedent("""\
             class C:
                 def f(self):
@@ -536,6 +580,7 @@ class TestLoopScopeDedent:
 
     def test_file_read_in_loop_flagged_unless_cached(self) -> None:
         from agent_core.patterns import detect_file_read_in_loop
+
         # cached reads must not be flagged
         cached = textwrap.dedent("""\
             async def f():
@@ -564,6 +609,7 @@ class TestLoopScopeDedent:
         ``os.walk``, or ``tmp = os.path.join(root, f)``) must not be flagged:
         each iteration reads a distinct file."""
         from agent_core.patterns import detect_file_read_in_loop
+
         walked = textwrap.dedent("""\
             import os
             def collect():
@@ -588,6 +634,7 @@ class TestLoopScopeDedent:
         """``with open(path) as fh: fh.read()`` — the path used on the
         ``.read()`` line is the loop variable, so not flagged."""
         from agent_core.patterns import detect_file_read_in_loop
+
         code = textwrap.dedent("""\
             def f():
                 for p in paths:
@@ -601,6 +648,7 @@ class TestLoopScopeDedent:
         """``rel = os.path.join(root, f); full = os.path.join(base, rel)``:
         the second assignment is derived transitively from the loop vars."""
         from agent_core.patterns import detect_file_read_in_loop
+
         code = textwrap.dedent("""\
             def f():
                 for root, f in files:
@@ -616,6 +664,7 @@ class TestLoopScopeDedent:
         ``os.walk``: the path is derived from outer loop targets, so distinct
         files are read per iteration — no hoistable work."""
         from agent_core.patterns import detect_file_read_in_loop
+
         code = textwrap.dedent("""\
             def search(path, query):
                 results = []
@@ -641,6 +690,7 @@ class TestLoopScopeDedent:
         """``open(CONFIG_PATH).read()`` inside nested ``for`` loops: the path is
         a constant — same file re-read every iteration, must be flagged."""
         from agent_core.patterns import detect_file_read_in_loop
+
         code = textwrap.dedent("""\
             CONFIG_PATH = "/etc/config.yaml"
             def f():
@@ -658,11 +708,13 @@ class TestLoopScopeDedent:
 # New detectors: dead_assignment, unreachable_code, unused_imports
 # ---------------------------------------------------------------------------
 
+
 class TestNewDetectors:
     """Tests for dead_assignment, unreachable_code, and unused_imports."""
 
     def test_dead_assignment_detected(self) -> None:
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             x = [i for i in range(5)]
             x = []
@@ -674,6 +726,7 @@ class TestNewDetectors:
 
     def test_dead_assignment_no_false_positive(self) -> None:
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             x = 1
             y = 2
@@ -684,6 +737,7 @@ class TestNewDetectors:
 
     def test_dead_assignment_overwrite_reading_rhs_not_flagged(self) -> None:
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             ws = agent.workspace
             ws = to_windows_path(ws)
@@ -694,6 +748,7 @@ class TestNewDetectors:
 
     def test_dead_assignment_overwrite_reading_rhs_clamp_not_flagged(self) -> None:
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             max_old_no = max(old_lineno, 0)
             max_old_no = max(max_old_no, 4)
@@ -704,6 +759,7 @@ class TestNewDetectors:
 
     def test_unreachable_code_detected(self) -> None:
         from agent_core.patterns import detect_unreachable_code
+
         code = textwrap.dedent("""\
             def foo():
                 return 1
@@ -715,6 +771,7 @@ class TestNewDetectors:
 
     def test_unreachable_code_no_false_positive(self) -> None:
         from agent_core.patterns import detect_unreachable_code
+
         code = textwrap.dedent("""\
             def foo():
                 if x:
@@ -729,6 +786,7 @@ class TestNewDetectors:
         """Multi-line return statements (unclosed brackets) should not flag
         continuation lines as unreachable."""
         from agent_core.patterns import detect_unreachable_code
+
         code = textwrap.dedent("""\
             def _parse_imports(source):
                 result = []
@@ -753,6 +811,7 @@ class TestNewDetectors:
 
     def test_unused_imports_detected(self) -> None:
         from agent_core.patterns import detect_unused_imports
+
         code = textwrap.dedent("""\
             import os
             import re
@@ -765,6 +824,7 @@ class TestNewDetectors:
 
     def test_unused_imports_with_alias(self) -> None:
         from agent_core.patterns import detect_unused_imports
+
         code = textwrap.dedent("""\
             import os as operating_system
             print(operating_system.getcwd())
@@ -776,6 +836,7 @@ class TestNewDetectors:
         """An assignment inside a function whose name is never referenced again
         — reproducing the LLM's dead `combined`-store pattern — must flag."""
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             async def _deep_analyze(path):
                 combined_parts = [path]
@@ -796,6 +857,7 @@ class TestNewDetectors:
     def test_dead_assignment_annotated_store_detected(self) -> None:
         """Annotated assignment (`x: T = ...`) that is never used must flag."""
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             async def f():
                 combined_parts: list[str] = [x]
@@ -811,6 +873,7 @@ class TestNewDetectors:
     def test_dead_assignment_module_level_not_flagged(self) -> None:
         """Module-level assignments may be imported elsewhere — skip them."""
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             API_KEY = os.environ["KEY"]
             def helper():
@@ -823,6 +886,7 @@ class TestNewDetectors:
     def test_dead_assignment_underscore_skip(self) -> None:
         """Conventionally-unused (`_`) locals are intentionally ignored."""
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             async def f():
                 _unused = 1
@@ -836,6 +900,7 @@ class TestNewDetectors:
     def test_dead_assignment_used_in_fstring_not_flagged(self) -> None:
         """Usage inside an f-string counts as a real use."""
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             async def f():
                 name = "x"
@@ -848,6 +913,7 @@ class TestNewDetectors:
         """Kwargs like ``capture_output=True`` inside a multi-line call are
         not assignments — a kwarg-context false positive regression test."""
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             def f(path):
                 result = subprocess.run(
@@ -864,6 +930,7 @@ class TestNewDetectors:
         """Single-line kwarg calls must also stay clean: the detector's
         bracket-depth tracking covers both single- and multi-line forms."""
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             def f():
                 r = subprocess.run(
@@ -879,6 +946,7 @@ class TestNewDetectors:
         iteration (e.g. ``prev_error_sigs = dict(...)`` compared at the top
         of the body).  Such loop-state variables are live, never dead."""
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             def fix_signatures(tree):
                 prev_error_sigs = {}
@@ -895,6 +963,7 @@ class TestNewDetectors:
         """A store inside a loop that no other line of the loop body reads is
         still a dead store — the back-edge rule only suppresses real loop state."""
         from agent_core.patterns import detect_dead_assignment
+
         code = textwrap.dedent("""\
             def walk(items):
                 total = 0
@@ -910,11 +979,13 @@ class TestNewDetectors:
 # LLM output validation
 # ---------------------------------------------------------------------------
 
+
 class TestValidateLLMCode:
     """Tests for validate_llm_code blocking LLM output with quality issues."""
 
     def test_silent_except_blocked(self) -> None:
         from agent_core.commands.optimize_cmd import validate_llm_code
+
         code = textwrap.dedent("""\
             import os
             try:
@@ -928,6 +999,7 @@ class TestValidateLLMCode:
 
     def test_dead_assignment_blocked(self) -> None:
         from agent_core.commands.optimize_cmd import validate_llm_code
+
         code = textwrap.dedent("""\
             def foo():
                 x = [i for i in range(5)]
@@ -939,6 +1011,7 @@ class TestValidateLLMCode:
 
     def test_clean_code_passes(self) -> None:
         from agent_core.commands.optimize_cmd import validate_llm_code
+
         code = textwrap.dedent("""\
             import os
             try:
@@ -953,6 +1026,7 @@ class TestValidateLLMCode:
         """The `combined`/`combined_parts` dead store from an earlier LLM
         rewrite must now be rejected by the validator."""
         from agent_core.commands.optimize_cmd import validate_llm_code
+
         code = textwrap.dedent("""\
             import os
             async def _deep_analyze(path):
@@ -977,6 +1051,7 @@ class TestValidateLLMCode:
 class TestWalrusInComprehension:
     def test_walrus_in_listcomp_flagged(self) -> None:
         from agent_core.patterns import detect_walrus_in_comprehension
+
         code = textwrap.dedent("""\
             def f(items):
                 return [y for x in items if (y := x % 2) == 1]
@@ -987,6 +1062,7 @@ class TestWalrusInComprehension:
 
     def test_walrus_in_genexpr_flagged(self) -> None:
         from agent_core.patterns import detect_walrus_in_comprehension
+
         code = textwrap.dedent("""\
             def f(items):
                 return sum(y for x in items if (y := x * 2) > 0)
@@ -997,6 +1073,7 @@ class TestWalrusInComprehension:
 
     def test_walrus_in_dict_comp_flagged(self) -> None:
         from agent_core.patterns import detect_walrus_in_comprehension
+
         code = textwrap.dedent("""\
             def f(items):
                 return {x: (y := x) for x in items}
@@ -1006,6 +1083,7 @@ class TestWalrusInComprehension:
 
     def test_walrus_outside_comprehension_not_flagged(self) -> None:
         from agent_core.patterns import detect_walrus_in_comprehension
+
         code = textwrap.dedent("""\
             import re
             def f(text):
@@ -1017,6 +1095,7 @@ class TestWalrusInComprehension:
 
     def test_clean_comprehension_not_flagged(self) -> None:
         from agent_core.patterns import detect_walrus_in_comprehension
+
         code = textwrap.dedent("""\
             def f(items):
                 return [x * 2 for x in items if x > 0]
@@ -1035,6 +1114,7 @@ class TestWalrusInComprehension:
         """An LLM rewrite that introduces a walrus in a comprehension must be
         rejected by the validator so it can never be applied."""
         from agent_core.commands.optimize_cmd import validate_llm_code
+
         code = textwrap.dedent("""\
             import re
 
@@ -1067,8 +1147,11 @@ class TestWalrusInComprehension:
 # show_file_diff
 # ---------------------------------------------------------------------------
 
+
 class TestShowFileDiff:
-    def test_shows_added_and_removed_lines(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_shows_added_and_removed_lines(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         show_file_diff("test.py", "line1\nline2\n", "line1\nline3\n")
         out = capsys.readouterr().out
         assert "line2" in out
@@ -1081,14 +1164,18 @@ class TestShowFileDiff:
         out = capsys.readouterr().out
         assert "no changes" in out
 
-    def test_empty_original_all_additions(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_empty_original_all_additions(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         show_file_diff("test.py", "", "new_line\n")
         out = capsys.readouterr().out
         assert "new_line" in out
         assert "0 lines removed" in out
         assert "1 lines added" in out
 
-    def test_shows_side_by_side_columns(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_shows_side_by_side_columns(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         original = "line1\nline2\nline3\nline4\n"
         new = "line1\nmodified\nline3\nline4\n"
         show_file_diff("test.py", original, new)
@@ -1097,7 +1184,9 @@ class TestShowFileDiff:
         assert "line2" in out
         assert "modified" in out
 
-    def test_context_lines_show_both_columns(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_context_lines_show_both_columns(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         original = "a\nb\nc\n"
         new = "a\nX\nc\n"
         show_file_diff("test.py", original, new)
@@ -1115,39 +1204,51 @@ class TestShowFileDiff:
         out = capsys.readouterr().out
         assert "\033[42m" in out
 
-    def test_blank_added_line_shows_line_number(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_blank_added_line_shows_line_number(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         show_file_diff("test.py", "line1\nline2\n", "line1\n\nline2\n")
         out = capsys.readouterr().out
         assert "2" in out
         assert "3" in out
         assert "\033[42m" in out
 
-    def test_blank_removed_line_shows_line_number(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_blank_removed_line_shows_line_number(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         show_file_diff("test.py", "line1\n\nline2\n", "line1\nline2\n")
         out = capsys.readouterr().out
         assert "\033[41m" in out
 
-    def test_long_added_line_is_wrapped(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_long_added_line_is_wrapped(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import agent_core.commands.base as base
+
         monkeypatch.setattr(base, "_diff_terminal_width", lambda: 80)
         huge = "x" * 300
         show_file_diff("test.py", "line1\n", f"line1\n{huge}\n")
         out = capsys.readouterr().out
         # Each visible (stripped of ANSI) printed line stays within the width cap.
         import re as _re
+
         stripped = _re.sub(r"\033\[[0-9]*m", "", out)
         for line in stripped.splitlines():
             assert len(line) <= 80, f"line too wide ({len(line)}): {line!r}"
         # The long token must be split across multiple lines.
         assert stripped.count("x") == 300
 
-    def test_long_line_word_wraps(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_long_line_word_wraps(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import agent_core.commands.base as base
+
         monkeypatch.setattr(base, "_diff_terminal_width", lambda: 80)
         words = " ".join(["word"] * 30)  # ~119 chars
         show_file_diff("test.py", "line1\n", f"line1\n{words}\n")
         out = capsys.readouterr().out
         import re as _re
+
         stripped = _re.sub(r"\033\[[0-9]*m", "", out)
         for line in stripped.splitlines():
             assert len(line) <= 80, f"line too wide ({len(line)}): {line!r}"
@@ -1157,7 +1258,9 @@ class TestShowFileDiff:
 
 
 class TestOptimizeEmptyOutput:
-    def test_empty_llm_response_retries_then_gives_up(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_empty_llm_response_retries_then_gives_up(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """A model that burns its budget in reasoning and returns an empty
         message must NOT silently drop the finding: the per-finding loop
         retries with feedback, then reports the finding as unresolved."""
@@ -1166,13 +1269,16 @@ class TestOptimizeEmptyOutput:
         from agent_core.commands.optimize_cmd import OptimizeCommand
 
         target = tmp_path / "sloppy.py"
-        target.write_text(textwrap.dedent("""\
+        target.write_text(
+            textwrap.dedent("""\
             def read(path):
                 s = ""
                 for i in range(10):
                     s += "x"
                 return s
-        """), encoding="utf-8")
+        """),
+            encoding="utf-8",
+        )
 
         calls = 0
 
@@ -1185,15 +1291,21 @@ class TestOptimizeEmptyOutput:
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert calls == 3  # initial + 2 retries (FINDING_MAX_ATTEMPTS=3)
         assert "Unresolved" in out
         assert "No fixes were generated" in out
-        assert "for i in range(10):" in target.read_text(encoding="utf-8")  # file untouched
+        assert "for i in range(10):" in target.read_text(
+            encoding="utf-8"
+        )  # file untouched
 
-    def test_prose_only_response_retries_then_recovers(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_prose_only_response_retries_then_recovers(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """A response containing no [PATCH:] block triggers the retry; a
         subsequent hunk response is accepted and applied."""
         import asyncio
@@ -1224,7 +1336,9 @@ class TestOptimizeEmptyOutput:
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert calls == 2
@@ -1235,7 +1349,9 @@ class TestOptimizeEmptyOutput:
         assert 's += "' not in final
         assert 's += "x"' not in final
 
-    def test_list_append_join_rejects_extend_evasion(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_list_append_join_rejects_extend_evasion(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """For list_append_join, .append(x) → .extend([x]) is a lateral move.
         The detector now flags .extend( in loops too, so the acceptance gate
         rejects it (after_cnt stays 1).  A proper comprehension on retry is
@@ -1264,8 +1380,8 @@ class TestOptimizeEmptyOutput:
                 return (
                     "[PATCH: joiner.py]\n"
                     "@@ -3,1 +3,1 @@\n"
-                    "-    lines.append(f\"{item}\")\n"
-                    "+    lines.extend([f\"{item}\"])\n"
+                    '-    lines.append(f"{item}")\n'
+                    '+    lines.extend([f"{item}"])\n'
                 )
             # proper comprehension fix — accepted
             return (
@@ -1273,15 +1389,17 @@ class TestOptimizeEmptyOutput:
                 "@@ -2,3 +2,1 @@\n"
                 "-    lines = []\n"
                 "-    for item in items:\n"
-                "-        lines.append(f\"{item}\")\n"
-                "+    lines = [f\"{item}\" for item in items]\n"
+                '-        lines.append(f"{item}")\n'
+                '+    lines = [f"{item}" for item in items]\n'
             )
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert calls == 0
@@ -1296,6 +1414,7 @@ class TestOptimizeEmptyOutput:
 class TestChangedImports:
     def test_import_entries_normalization(self) -> None:
         from agent_core.commands.optimize_cmd import _import_entries
+
         code = textwrap.dedent("""\
             import os
             from .base import Command
@@ -1311,6 +1430,7 @@ class TestChangedImports:
 
     def test_removing_unused_import_is_subset(self) -> None:
         from agent_core.commands.optimize_cmd import _import_entries
+
         original = "import os\nimport re\n\ndef f():\n    return re.compile('x')\n"
         fixed = "import re\n\ndef f():\n    return re.compile('x')\n"
         added = _import_entries(fixed) - _import_entries(original)
@@ -1320,6 +1440,7 @@ class TestChangedImports:
         """Removing an unused name from a multi-name ``from .`` import reduces
         the import set and must NOT be blocked by the import gate."""
         from agent_core.commands.optimize_cmd import _blocked_added_imports
+
         original = textwrap.dedent("""\
             from .types import TaskType, ProfileType
 
@@ -1337,6 +1458,7 @@ class TestChangedImports:
     def test_adding_name_to_relative_import_is_blocked(self) -> None:
         """Adding a new name to a ``from .`` import must still be blocked."""
         from agent_core.commands.optimize_cmd import _blocked_added_imports
+
         original = textwrap.dedent("""\
             from .types import ProfileType
 
@@ -1357,14 +1479,18 @@ class TestChangedImports:
         has (region splices re-inject import os/import re) is a new
         duplicate_import defect and must be rejected even for stdlib modules."""
         from agent_core.commands.optimize_cmd import _blocked_added_imports
+
         original = "import os\nimport re\n\ndef f():\n    return re.compile('x')\n"
-        candidate = "import os\nimport re\nimport os\n\ndef f():\n    return re.compile('x')\n"
+        candidate = (
+            "import os\nimport re\nimport os\n\ndef f():\n    return re.compile('x')\n"
+        )
         assert "import os" in _blocked_added_imports(candidate, original)
 
     def test_new_stdlib_import_is_allowed(self) -> None:
         """A genuinely new stdlib import (e.g. import json for a logging fix)
         is safe and must NOT be blocked."""
         from agent_core.commands.optimize_cmd import _blocked_added_imports
+
         original = "import re\n\ndef f():\n    return re.compile('x')\n"
         candidate = "import re\nimport json\n\ndef f():\n    return json.dumps(re.compile('x').pattern)\n"
         assert _blocked_added_imports(candidate, original) == set()
@@ -1410,7 +1536,9 @@ class TestChangedImports:
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert calls == 0  # mechanical fix handled unused_import
@@ -1444,8 +1572,11 @@ class TestChangedImports:
 
         async def chat(messages, **kwargs):
             numbered = _numbered_context(messages[-1]["content"])
-            idx = next(i for i, (num, text) in enumerate(numbered)
-                       if text.strip() == "except Exception:")
+            idx = next(
+                i
+                for i, (num, text) in enumerate(numbered)
+                if text.strip() == "except Exception:"
+            )
             return (
                 "[PATCH: sample.py]\n"
                 "@@ -5,1 +5,1 @@\n"
@@ -1463,7 +1594,9 @@ class TestChangedImports:
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert "Applied: sample.py" in out
@@ -1497,7 +1630,9 @@ class TestChangedImports:
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert "Rejected" not in out
@@ -1511,6 +1646,7 @@ class TestNoopRewriteGate:
 
     def test_whitespace_only_change_to_unrelated_line_is_noop(self) -> None:
         from agent_core.commands.optimize_cmd import _blocked_regressions
+
         original = textwrap.dedent("""\
             def probe(a):
                 try:
@@ -1542,6 +1678,7 @@ class TestNoopRewriteGate:
 
     def test_real_fix_touching_finding_line_is_not_noop(self) -> None:
         from agent_core.commands.optimize_cmd import _blocked_regressions
+
         original = textwrap.dedent("""\
             def probe(a):
                 try:
@@ -1608,15 +1745,18 @@ class TestPerFindingPatches:
         parts.append("def read_all(path):\n")
         parts.append("    s = ''\n")
         parts.append("    for i in range(10):\n")
-        parts.append("        s += \"x\"\n")
+        parts.append('        s += "x"\n')
         parts.append("    return s\n")
         return "".join(parts)
 
     def _except_fix_hunk(self, basename: str, numbered: list[tuple[int, str]]) -> str:
         """Build a hunk that converts the first `except Exception:` line in
         the numbered context to `except OSError:` — the canonical finding fix."""
-        idx = next(i for i, (num, text) in enumerate(numbered)
-                   if text.strip() == "except Exception:")
+        idx = next(
+            i
+            for i, (num, text) in enumerate(numbered)
+            if text.strip() == "except Exception:"
+        )
         num = numbered[idx - 1][0] if idx > 0 else numbered[idx][0]
         ctx = numbered[idx - 1][1] if idx > 0 else None
         body = ""
@@ -1664,7 +1804,9 @@ class TestPerFindingPatches:
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert calls == 60, "one LLM call per non-mechanical finding"
@@ -1691,15 +1833,18 @@ class TestPerFindingPatches:
         async def chat(messages, **kwargs):
             user = messages[-1]["content"]
             numbered = _numbered_context(user)
-            assert all(text.startswith(" ") for _, text in numbered
-                       if text.strip()), "context must preserve indentation"
+            assert all(text.startswith(" ") for _, text in numbered if text.strip()), (
+                "context must preserve indentation"
+            )
             return self._except_fix_hunk("svc.py", numbered)
 
         agent = SimpleNamespace(
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert "Applied: svc.py" in out
@@ -1733,14 +1878,15 @@ class TestPerFindingPatches:
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         capsys.readouterr()
         assert ok is True
         assert "absolute" in seen_user  # numbers ARE the absolute line numbers
         assert "[PATCH: svc.py]" in seen_system
         assert "[FILE: svc.py]" not in seen_user and "[FILE: svc.py]" not in seen_system
         assert " | " in seen_user  # numbered context
-
 
     def test_syntax_broken_patch_retries_until_valid(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1775,7 +1921,9 @@ class TestPerFindingPatches:
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert calls >= 2
@@ -1802,11 +1950,15 @@ class TestPerFindingPatches:
             user = messages[-1]["content"]
             numbered = _numbered_context(user)
             if calls == 1:
-                idx = next(i for i, (num, text) in enumerate(numbered)
-                           if text.strip().startswith("return open"))
+                idx = next(
+                    i
+                    for i, (num, text) in enumerate(numbered)
+                    if text.strip().startswith("return open")
+                )
                 num = numbered[idx][0]
                 fixed_line = numbered[idx][1].replace(
-                    "open(fname)", 'open(fname, mode="r")')
+                    "open(fname)", 'open(fname, mode="r")'
+                )
                 return (
                     "[PATCH: big.py]\n"
                     f"@@ -{num},1 +{num},1 @@\n"
@@ -1819,13 +1971,15 @@ class TestPerFindingPatches:
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert "still contains" in out
         assert "Applied: big.py" in out
         final = target.read_text(encoding="utf-8")
-        assert "mode=\"r\"" not in final  # the unrelated edit was never applied
+        assert 'mode="r"' not in final  # the unrelated edit was never applied
 
     def test_whitespace_only_patch_rejected_as_cosmetic(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1857,8 +2011,11 @@ class TestPerFindingPatches:
             user = messages[-1]["content"]
             numbered = _numbered_context(user)
             if calls == 1:
-                idx = next(i for i, (num, text) in enumerate(numbered)
-                           if text.strip() == "for i in range(10):")
+                idx = next(
+                    i
+                    for i, (num, text) in enumerate(numbered)
+                    if text.strip() == "for i in range(10):"
+                )
                 num = numbered[idx][0]
                 return (
                     "[PATCH: baseish.py]\n"
@@ -1872,7 +2029,9 @@ class TestPerFindingPatches:
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert "whitespace" in out
@@ -1907,7 +2066,9 @@ class TestPerFindingPatches:
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert max_tokens_seen <= 8192, "hunk output budget must stay small"
@@ -1941,7 +2102,9 @@ class TestPerFindingPatches:
             workspace=str(tmp_path),
             llm=SimpleNamespace(chat=chat),
         )
-        ok = asyncio.run(OptimizeCommand().execute([target.name, "--apply", "--yes"], agent))
+        ok = asyncio.run(
+            OptimizeCommand().execute([target.name, "--apply", "--yes"], agent)
+        )
         out = capsys.readouterr().out
         assert ok is True
         assert calls == 2
@@ -1955,7 +2118,9 @@ class TestSurgicalRevertRegressions:
     regressions, so the merge gate must revert them without the LLM."""
 
     def test_reverts_introduced_walrus_line(self) -> None:
-        original = "def pick(nums):\n    vals = [n for n in nums if n > 0]\n    return vals\n"
+        original = (
+            "def pick(nums):\n    vals = [n for n in nums if n > 0]\n    return vals\n"
+        )
         candidate = "def pick(nums):\n    vals = [n for n in nums if (p := n) > 0]\n    return vals\n"
         assert "walrus_in_comprehension" in {
             f["pattern"] for f in static_analyze(candidate)
@@ -2007,6 +2172,7 @@ class TestSurgicalRevertRegressions:
 # ---------------------------------------------------------------------------
 # New detectors (added 2026-08-09)
 # ---------------------------------------------------------------------------
+
 
 class TestNoneEqDetector:
     """``x == None`` / ``x != None`` → ``is None`` / ``is not None``."""
@@ -2111,7 +2277,6 @@ class TestIterDictKeysDetector:
         assert detect_iter_dict_keys(code) == []
 
 
-
 class TestTypeComparisonDetector:
     """``type(x) == Foo`` → ``isinstance(x, Foo)``."""
 
@@ -2145,11 +2310,7 @@ class TestTypeComparisonDetector:
         assert "type_comparison" not in {r["pattern"] for r in results}
 
     def test_docstring_not_flagged(self) -> None:
-        code = (
-            "def g(x):\n"
-            '    """``type(x) == Foo`` — use isinstance.\"\""\n'
-            "    pass\n"
-        )
+        code = 'def g(x):\n    """``type(x) == Foo`` — use isinstance."""\n    pass\n'
         assert detect_type_comparison(code) == []
 
 
@@ -2210,7 +2371,9 @@ class TestMissingContextManagerDetector:
     """AST-based ``open(...)`` without ``with`` — no false positives."""
 
     def test_simple_open_read_flagged(self) -> None:
-        findings = detect_missing_context_manager("def f(p):\n    return open(p).read()")
+        findings = detect_missing_context_manager(
+            "def f(p):\n    return open(p).read()"
+        )
         assert len(findings) == 1
         assert findings[0][1] == "missing_context_manager"
         assert findings[0][0] == 2
@@ -2242,30 +2405,25 @@ class TestMissingContextManagerDetector:
 
     def test_closing_open_not_flagged(self) -> None:
         findings = detect_missing_context_manager(
-            "import contextlib\n"
-            "f = contextlib.closing(open(path))"
+            "import contextlib\nf = contextlib.closing(open(path))"
         )
         assert findings == []
 
     def test_path_dot_open_not_flagged(self) -> None:
         findings = detect_missing_context_manager(
-            "from pathlib import Path\n"
-            "f = Path('x').open()"
+            "from pathlib import Path\nf = Path('x').open()"
         )
         assert findings == []
 
     def test_string_literal_not_flagged(self) -> None:
         findings = detect_missing_context_manager(
-            'x = "use open(path) here"\n'
-            'y = f"open(other)"'
+            'x = "use open(path) here"\ny = f"open(other)"'
         )
         assert findings == []
 
     def test_comment_docstring_not_flagged(self) -> None:
         findings = detect_missing_context_manager(
-            '# open(x) leaks\n'
-            '"""open() without with"""\n'
-            "def f(x): return x"
+            '# open(x) leaks\n"""open() without with"""\ndef f(x): return x'
         )
         assert findings == []
 
@@ -2277,21 +2435,19 @@ class TestMissingContextManagerDetector:
 
     def test_shadowed_assign_not_flagged(self) -> None:
         findings = detect_missing_context_manager(
-            "def wrapper():\n"
-            "    open = my_factory\n"
-            "    return open('data')"
+            "def wrapper():\n    open = my_factory\n    return open('data')"
         )
         assert findings == []
 
     def test_shadowed_module_var_not_flagged(self) -> None:
         findings = detect_missing_context_manager(
-            "open = my_factory\n"
-            "def f(x):\n    return open(x)"
+            "open = my_factory\ndef f(x):\n    return open(x)"
         )
         assert findings == []
 
     def test_patterns_py_self_check(self) -> None:
         import os
+
         tests_dir = os.path.dirname(__file__)
         patterns_path = os.path.join(tests_dir, "..", "agent_core", "patterns.py")
         code = open(patterns_path).read()
@@ -2312,6 +2468,7 @@ class TestRegexInLoopDetector:
 
     def test_literal_flagged(self) -> None:
         from agent_core.patterns import detect_regex_in_loop
+
         code = textwrap.dedent("""\
             for f in files:
                 m = re.search(r"^class", f)
@@ -2322,6 +2479,7 @@ class TestRegexInLoopDetector:
 
     def test_variable_not_flagged(self) -> None:
         from agent_core.patterns import detect_regex_in_loop
+
         code = textwrap.dedent("""\
             for pattern in patterns:
                 re.compile(pattern)
@@ -2331,6 +2489,7 @@ class TestRegexInLoopDetector:
 
     def test_fstring_not_flagged(self) -> None:
         from agent_core.patterns import detect_regex_in_loop
+
         code = textwrap.dedent("""\
             for cn in class_names:
                 m = re.match(rf"^class\\s+{cn}", line)
@@ -2340,6 +2499,7 @@ class TestRegexInLoopDetector:
 
     def test_concat_not_flagged(self) -> None:
         from agent_core.patterns import detect_regex_in_loop
+
         code = textwrap.dedent("""\
             for prefix in prefixes:
                 re.compile("pre_" + prefix)
@@ -2359,6 +2519,7 @@ class TestRegexInLoopDetector:
 
     def test_fixed_clears(self) -> None:
         from agent_core.patterns import detect_regex_in_loop
+
         code = textwrap.dedent("""\
             def f():
                 _RE_1 = re.compile("static_pattern")
@@ -2374,42 +2535,65 @@ class TestRegexConstName:
 
     def test_simple_words(self) -> None:
         from agent_core.commands.optimize_cmd import _regex_const_name
+
         assert _regex_const_name(r"r'^class'") == "_CLASS_RE"
         assert _regex_const_name(r"r'-foo  bar-'") == "_FOO_BAR_RE"
 
     def test_keywords_and_escape_words_kept(self) -> None:
         from agent_core.commands.optimize_cmd import _regex_const_name
+
         assert _regex_const_name(r"r'^\s*(for|while)\s'") == "_FOR_WHILE_RE"
 
     def test_operator_tagged(self) -> None:
         from agent_core.commands.optimize_cmd import _regex_const_name
+
         assert _regex_const_name(r'r"type\(\w+\)\s*==\s*\w+"') == "_TYPE_EQ_RE"
         assert _regex_const_name(r'r"alpha\s*!=\s*beta"') == "_ALPHA_BETA_NE_RE"
 
     def test_truncates_long_patterns(self) -> None:
         from agent_core.commands.optimize_cmd import _regex_const_name
-        assert _regex_const_name(r"r'one two three four five six'") == "_ONE_TWO_FIVE_SIX_RE"
+
+        assert (
+            _regex_const_name(r"r'one two three four five six'")
+            == "_ONE_TWO_FIVE_SIX_RE"
+        )
 
     def test_drops_re_word(self) -> None:
         from agent_core.commands.optimize_cmd import _regex_const_name
+
         assert _regex_const_name(r"r'@re.match cue'") == "_MATCH_CUE_RE"
 
     def test_no_words_falls_back(self) -> None:
         from agent_core.commands.optimize_cmd import _regex_const_name
+
         assert _regex_const_name(r"r'\s+'") == ""
         assert _regex_const_name(r"r'\d{2,4}'") == ""
 
     def test_char_class_noise_gone(self) -> None:
         from agent_core.commands.optimize_cmd import _regex_const_name
+
         assert _regex_const_name(r"\s*([A-Za-z_]\w*)\s*=") == "_ID_ASSIGN_RE"
-        assert _regex_const_name(r"\s*([A-Za-z_]\w*)\s*=\s*open\s*\(") == "_ID_OPEN_ASSIGN_RE"
+        assert (
+            _regex_const_name(r"\s*([A-Za-z_]\w*)\s*=\s*open\s*\(")
+            == "_ID_OPEN_ASSIGN_RE"
+        )
         assert _regex_const_name(r"[A-Za-z_]\w*") == "_ID_RE"
-        assert _regex_const_name(r"\s*with\s+(.+?)\s+as\s+([A-Za-z_]\w*)\s*:") == "_WITH_AS_ID_RE"
+        assert (
+            _regex_const_name(r"\s*with\s+(.+?)\s+as\s+([A-Za-z_]\w*)\s*:")
+            == "_WITH_AS_ID_RE"
+        )
 
     def test_escape_merge_gone(self) -> None:
         from agent_core.commands.optimize_cmd import _regex_const_name
-        assert _regex_const_name(r"\bre\.(compile|match|search|sub|findall)\(") == "_COMPILE_MATCH_SUB_FINDALL_RE"
-        assert _regex_const_name(r"return\s+True\s+if\s+(.+?)\s+else\s+False\s*$") == "_RETURN_TRUE_ELSE_FALSE_RE"
+
+        assert (
+            _regex_const_name(r"\bre\.(compile|match|search|sub|findall)\(")
+            == "_COMPILE_MATCH_SUB_FINDALL_RE"
+        )
+        assert (
+            _regex_const_name(r"return\s+True\s+if\s+(.+?)\s+else\s+False\s*$")
+            == "_RETURN_TRUE_ELSE_FALSE_RE"
+        )
 
 
 class TestMechanicalRegexHoist:
@@ -2417,6 +2601,7 @@ class TestMechanicalRegexHoist:
 
     def test_hoist_produces_hunk(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+
         code = "def scan():\n    for f in files:\n        m = re.search(r'^class', f)"
         wl = code.split("\n")
         hunk = _fix_regex_in_loop(wl, 2, 3, "test.py", {})
@@ -2427,6 +2612,7 @@ class TestMechanicalRegexHoist:
     def test_hoist_applies_and_compiles(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_regex_in_loop
         from agent_core.patch_utils import apply_patch
+
         code = textwrap.dedent("""\
             import re
 
@@ -2446,6 +2632,7 @@ class TestMechanicalRegexHoist:
 
     def test_variable_arg_returns_none(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+
         code = "for p in pats:\n    re.compile(p)"
         wl = code.split("\n")
         hunk = _fix_regex_in_loop(wl, 1, 2, "test.py", {})
@@ -2453,6 +2640,7 @@ class TestMechanicalRegexHoist:
 
     def test_concat_arg_returns_none(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+
         code = "for p in pats:\n    re.compile('pre_' + p)"
         wl = code.split("\n")
         hunk = _fix_regex_in_loop(wl, 1, 2, "test.py", {})
@@ -2461,6 +2649,7 @@ class TestMechanicalRegexHoist:
     def test_descriptive_name_in_hunk(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_regex_in_loop
         from agent_core.patch_utils import apply_patch
+
         code = textwrap.dedent("""\
             import re
 
@@ -2482,6 +2671,7 @@ class TestMechanicalRegexHoist:
     def test_reuses_existing_same_function_compile(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_regex_in_loop
         from agent_core.patch_utils import apply_patch
+
         code = textwrap.dedent("""\
             import re
 
@@ -2503,6 +2693,7 @@ class TestMechanicalRegexHoist:
 
     def test_suffixes_visible_name_conflict(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+
         code = textwrap.dedent("""\
             import re
 
@@ -2520,6 +2711,7 @@ class TestMechanicalRegexHoist:
 
     def test_no_suffix_across_functions(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+
         code = textwrap.dedent("""\
             import re
 
@@ -2539,6 +2731,7 @@ class TestMechanicalRegexHoist:
 
     def test_numeric_fallback_when_no_words(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_regex_in_loop
+
         code = textwrap.dedent("""\
             import re
 
@@ -2552,11 +2745,11 @@ class TestMechanicalRegexHoist:
         assert hunk is not None
         assert "+    _RE_1 = re.compile(r'\\s+')" in hunk
 
-
     def test_nested_loop_hoists_above_outermost(self) -> None:
         """When a re call is inside a nested loop, hoist above the OUTERMOST enclosing loop."""
         from agent_core.commands.optimize_cmd import _fix_regex_in_loop
         from agent_core.patch_utils import apply_patch
+
         code = textwrap.dedent("""\
             import re
 
@@ -2576,6 +2769,7 @@ class TestMechanicalRegexHoist:
         # The inserted _RE_N = re.compile(...) must NOT be inside any loop body
         # Verify count drops (no new finding at the insert position)
         from agent_core.commands.optimize_cmd import _count_pattern
+
         before = _count_pattern("\n".join(wl), "regex_in_loop")
         after = _count_pattern(patched, "regex_in_loop")
         assert after < before, f"count gate must pass: {before} -> {after}"
@@ -2586,6 +2780,7 @@ class TestUndefinedHoistedNamesGate:
 
     def test_detects_undefined(self) -> None:
         from agent_core.commands.optimize_cmd import _undefined_hoisted_names
+
         code = "_INIT_PATTERN.match(x)\n_PREFIX_RE.sub('', y)"
         result = _undefined_hoisted_names(code)
         assert "_INIT_PATTERN" in result
@@ -2593,18 +2788,21 @@ class TestUndefinedHoistedNamesGate:
 
     def test_passes_defined(self) -> None:
         from agent_core.commands.optimize_cmd import _undefined_hoisted_names
+
         code = "_RE_1 = re.compile(r'x')\n_RE_1.search(line)"
         result = _undefined_hoisted_names(code)
         assert result == []
 
     def test_passes_import_alias(self) -> None:
         from agent_core.commands.optimize_cmd import _undefined_hoisted_names
+
         code = "import _io\n_io.open('f')"
         result = _undefined_hoisted_names(code)
         assert result == []
 
     def test_passes_function_def(self) -> None:
         from agent_core.commands.optimize_cmd import _undefined_hoisted_names
+
         code = textwrap.dedent("""\
             def _helper():
                 return 1
@@ -2616,7 +2814,8 @@ class TestUndefinedHoistedNamesGate:
 
     def test_passes_module_dunders(self) -> None:
         from agent_core.commands.optimize_cmd import _undefined_hoisted_names
-        code = 'import os\nos.path.abspath(__file__)\n__doc__\n__package__'
+
+        code = "import os\nos.path.abspath(__file__)\n__doc__\n__package__"
         result = _undefined_hoisted_names(code)
         assert result == []
 
@@ -2628,6 +2827,7 @@ class TestRegressesDefinedNames:
 
     def test_catches_removed_def(self) -> None:
         from agent_core.commands.optimize_cmd import _regresses_defined_names
+
         original = textwrap.dedent("""\
             def merge(original, regions):
                 lines = original.split("\\n")
@@ -2654,6 +2854,7 @@ class TestRegressesDefinedNames:
 
     def test_clean_patch_passes(self) -> None:
         from agent_core.commands.optimize_cmd import _regresses_defined_names
+
         original = textwrap.dedent("""\
             def f(items):
                 out = []
@@ -2674,6 +2875,7 @@ class TestCountAnyIncreased:
 
     def test_detects_cross_regression(self) -> None:
         from agent_core.commands.optimize_cmd import _count_any_increased
+
         old_code = textwrap.dedent("""\
             def f(items):
                 out = []
@@ -2693,6 +2895,7 @@ class TestCountAnyIncreased:
 
     def test_clean_fix_passes(self) -> None:
         from agent_core.commands.optimize_cmd import _count_any_increased
+
         old_code = textwrap.dedent("""\
             def f(items):
                 out = []
@@ -2714,17 +2917,23 @@ class TestMechanicalUnusedImport:
 
     def test_whole_line_removal_single_name_from(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_unused_import
+
         wl = ["from .types import TaskType"]
-        finding = {"suggestion": "Imported 'TaskType' is never used. Remove the import."}
+        finding = {
+            "suggestion": "Imported 'TaskType' is never used. Remove the import."
+        }
         hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
         assert hunk is not None
         assert "@@ -1,1 +1,0 @@" in hunk
 
     def test_removes_name_from_multiname_from_import(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_unused_import
+
         src = "from .types import TaskType, ProfileType"
         wl = [src]
-        finding = {"suggestion": "Imported 'TaskType' is never used. Remove the import."}
+        finding = {
+            "suggestion": "Imported 'TaskType' is never used. Remove the import."
+        }
         hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
         assert hunk is not None
         assert "-" + src in hunk
@@ -2732,6 +2941,7 @@ class TestMechanicalUnusedImport:
 
     def test_removes_name_from_multiname_import_style(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_unused_import
+
         src = "import os, sys"
         wl = [src]
         finding = {"suggestion": "Imported 'os' is never used. Remove the import."}
@@ -2742,31 +2952,41 @@ class TestMechanicalUnusedImport:
 
     def test_last_name_removes_whole_line(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_unused_import
+
         src = "from .types import TaskType"
         wl = [src]
-        finding = {"suggestion": "Imported 'TaskType' is never used. Remove the import."}
+        finding = {
+            "suggestion": "Imported 'TaskType' is never used. Remove the import."
+        }
         hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
         assert hunk is not None
         assert "@@ -1,1 +1,0 @@" in hunk
 
     def test_target_not_present_returns_none(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_unused_import
+
         src = "from .types import ProfileType"
         wl = [src]
-        finding = {"suggestion": "Imported 'TaskType' is never used. Remove the import."}
+        finding = {
+            "suggestion": "Imported 'TaskType' is never used. Remove the import."
+        }
         hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
         assert hunk is None
 
     def test_future_import_not_flagged(self) -> None:
         from agent_core.patterns import analyze
+
         results = analyze("from __future__ import annotations\n\ndef f(x): return x")
         assert "unused_import" not in {r["pattern"] for r in results}
 
     def test_future_import_fixer_returns_none(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_unused_import
+
         src = "from __future__ import annotations"
         wl = [src]
-        finding = {"suggestion": "Imported 'annotations' is never used. Remove the import."}
+        finding = {
+            "suggestion": "Imported 'annotations' is never used. Remove the import."
+        }
         hunk = _fix_unused_import(wl, 0, 1, "m.py", finding)
         assert hunk is None
 
@@ -2779,33 +2999,40 @@ class TestMissingImportRefs:
 
     def test_flags_used_name_removed_with_unused(self) -> None:
         from agent_core.commands.optimize_cmd import _regressed_imports
+
         good = (
             "from src.agent1.core import AgentMessage, MessageType, SQLiteStorage\n"
             "def f():\n    x = SQLiteStorage(':memory:')\n"
         )
-        bad = good.replace("from src.agent1.core import AgentMessage, MessageType, SQLiteStorage\n", "")
+        bad = good.replace(
+            "from src.agent1.core import AgentMessage, MessageType, SQLiteStorage\n", ""
+        )
         assert _regressed_imports(good, good) == []
         assert "SQLiteStorage" in _regressed_imports(good, bad)
 
     def test_unused_import_removal_is_allowed(self) -> None:
         from agent_core.commands.optimize_cmd import _regressed_imports
+
         orig = "import pytest\n\ndef f():\n    return 1\n"
         patched = "def f():\n    return 1\n"
         assert _regressed_imports(orig, patched) == []
 
     def test_external_globals_not_flagged(self) -> None:
         from agent_core.commands.optimize_cmd import _regressed_imports
+
         orig = "def build():\n    lines = []\n    for item in items:\n        lines.append(item)\n    return ''.join(lines)\n"
         patched = "def build():\n    lines = [item for item in items]\n    return ''.join(lines)\n"
         assert _regressed_imports(orig, patched) == []
 
     def test_builtins_and_module_imports_ok(self) -> None:
         from agent_core.commands.optimize_cmd import _regressed_imports
+
         code = "import os\nimport pathlib\n\ndef f():\n    return os.path.join('a', 'b', pathlib.Path('c'))\n"
         assert _regressed_imports(code, code) == []
 
     def test_alias_imports_ok(self) -> None:
         from agent_core.commands.optimize_cmd import _regressed_imports
+
         code = "import numpy as np\n\ndef f():\n    return np.zeros(3)\n"
         assert _regressed_imports(code, code) == []
 
@@ -2815,6 +3042,7 @@ class TestMechanicalListAppendJoin:
 
     def test_converts_simple_loop(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_list_append_join
+
         code = textwrap.dedent("""\
             def f(items):
                 out = []
@@ -2830,6 +3058,7 @@ class TestMechanicalListAppendJoin:
     def test_hunk_applies_and_compiles(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_list_append_join
         from agent_core.patch_utils import apply_patch, apply_anchored_patch
+
         code = textwrap.dedent("""\
             def f(items):
                 out = []
@@ -2850,6 +3079,7 @@ class TestMechanicalListAppendJoin:
 
     def test_stateful_loop_returns_none(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_list_append_join
+
         code = textwrap.dedent("""\
             def merge(original, regions):
                 lines = original.split("\\n")
@@ -2866,6 +3096,7 @@ class TestMechanicalListAppendJoin:
 
     def test_no_empty_init_returns_none(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_list_append_join
+
         code = textwrap.dedent("""\
             lines = ["prefix"]
             for i in issues:
@@ -2877,9 +3108,11 @@ class TestMechanicalListAppendJoin:
 
     def test_count_reduction(self) -> None:
         from agent_core.commands.optimize_cmd import (
-            _fix_list_append_join, _count_pattern
+            _fix_list_append_join,
+            _count_pattern,
         )
         from agent_core.patch_utils import apply_patch
+
         code = textwrap.dedent("""\
             def f(items):
                 out = []
@@ -2899,8 +3132,9 @@ class TestMechFixDocstringGuard:
 
     def test_iter_dict_keys_refuses_docstring(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_iter_dict_keys
+
         wl = [
-            'def f():',
+            "def f():",
             '    """``for k in d.keys():`` — drop .keys()."""',
             "    pass",
         ]
@@ -2909,8 +3143,9 @@ class TestMechFixDocstringGuard:
 
     def test_type_comparison_refuses_docstring(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_type_comparison
+
         wl = [
-            'def g(x):',
+            "def g(x):",
             '    """``type(x) == Foo`` — use isinstance."""',
             "    pass",
         ]
@@ -2919,6 +3154,7 @@ class TestMechFixDocstringGuard:
 
     def test_iter_dict_keys_fixes_real_code(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_iter_dict_keys
+
         wl = [
             "def f():",
             '    """docstring."""',
@@ -2929,6 +3165,7 @@ class TestMechFixDocstringGuard:
 
     def test_type_comparison_fixes_real_code(self) -> None:
         from agent_core.commands.optimize_cmd import _fix_type_comparison
+
         wl = [
             "def g(x):",
             '    """docstring."""',
@@ -2938,12 +3175,6 @@ class TestMechFixDocstringGuard:
         assert hunk is not None
 
     def test_docstring_lines_returns_multi_line(self) -> None:
-        code = (
-            'def f():\n'
-            '    """\n'
-            "    multi-line doc.\n"
-            '    """\n'
-            "    pass\n"
-        )
+        code = 'def f():\n    """\n    multi-line doc.\n    """\n    pass\n'
         ds = _docstring_lines(code)
         assert {2, 3, 4} == ds

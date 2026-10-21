@@ -12,6 +12,7 @@ nowhere, and left ``agent_core/memory/types.py`` using ``Sequence``/``Mapping``
 
 These tests pin the public surface so the silent failure cannot come back.
 """
+
 from __future__ import annotations
 
 import json

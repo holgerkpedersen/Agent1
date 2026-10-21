@@ -9,6 +9,7 @@ had no "what is it doing right now" signal. These tests pin:
   and recent commits, and derives a correct running/idle flag from the heartbeat.
 - the static/autonomous.html page is served at /autonomous and /autonomous.html.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,9 @@ from agent_core.monitoring import DashboardAPIServer
 import harnessfix.progress as progress
 
 
-def test_write_progress_merges_and_stamps_ts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_write_progress_merges_and_stamps_ts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(progress, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(progress, "STATUS_PATH", tmp_path / "run_status.json")
     monkeypatch.setattr(progress, "HISTORY_PATH", tmp_path / "run_history.jsonl")
@@ -39,7 +42,9 @@ def test_write_progress_merges_and_stamps_ts(tmp_path: Path, monkeypatch: pytest
     assert isinstance(data["ts"], (int, float))
 
 
-def test_write_progress_atomic_no_partial_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_write_progress_atomic_no_partial_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(progress, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(progress, "STATUS_PATH", tmp_path / "run_status.json")
     monkeypatch.setattr(progress, "HISTORY_PATH", tmp_path / "run_history.jsonl")
@@ -50,7 +55,9 @@ def test_write_progress_atomic_no_partial_read(tmp_path: Path, monkeypatch: pyte
     assert (tmp_path / "run_status.json").is_file()
 
 
-def test_append_and_read_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_append_and_read_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(progress, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(progress, "STATUS_PATH", tmp_path / "run_status.json")
     monkeypatch.setattr(progress, "HISTORY_PATH", tmp_path / "run_history.jsonl")
@@ -66,7 +73,9 @@ def test_append_and_read_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert [h["iteration"] for h in progress.read_history(limit=1)] == [2]
 
 
-def test_read_progress_tolerates_missing_or_corrupt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_progress_tolerates_missing_or_corrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(progress, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(progress, "STATUS_PATH", tmp_path / "run_status.json")
     monkeypatch.setattr(progress, "HISTORY_PATH", tmp_path / "run_history.jsonl")
@@ -76,7 +85,9 @@ def test_read_progress_tolerates_missing_or_corrupt(tmp_path: Path, monkeypatch:
     assert progress.read_progress() == {}
 
 
-def test_clear_progress_marks_idle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_clear_progress_marks_idle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(progress, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(progress, "STATUS_PATH", tmp_path / "run_status.json")
     monkeypatch.setattr(progress, "HISTORY_PATH", tmp_path / "run_history.jsonl")
@@ -89,7 +100,8 @@ def test_clear_progress_marks_idle(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 
 def test_endpoint_merges_status_summary_history_and_commits(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Point the progress module at the temp dir.
     monkeypatch.setattr(progress, "OUTPUT_DIR", tmp_path)
@@ -97,28 +109,52 @@ def test_endpoint_merges_status_summary_history_and_commits(
     monkeypatch.setattr(progress, "HISTORY_PATH", tmp_path / "run_history.jsonl")
 
     # Seed a live beacon (recent ts) + a history record + a summary file.
-    progress.write_progress({"iteration": 3, "max_iterations": 5, "running": True, "phase": "running_test_gate"})
-    progress.append_history({"iteration": 1, "verdict": "accepted", "git_head": "abc1234"})
-    summary = {"verdict": "accepted", "proposed_repair": "stuck-repeat-tool-hints", "tests_passed": True}
+    progress.write_progress(
+        {
+            "iteration": 3,
+            "max_iterations": 5,
+            "running": True,
+            "phase": "running_test_gate",
+        }
+    )
+    progress.append_history(
+        {"iteration": 1, "verdict": "accepted", "git_head": "abc1234"}
+    )
+    summary = {
+        "verdict": "accepted",
+        "proposed_repair": "stuck-repeat-tool-hints",
+        "tests_passed": True,
+    }
     (tmp_path / "reports" / "harnessfix").mkdir(parents=True)
-    (tmp_path / "reports" / "harnessfix" / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    (tmp_path / "reports" / "harnessfix" / "summary.json").write_text(
+        json.dumps(summary), encoding="utf-8"
+    )
 
     # Serve the real endpoint; the dashboard uses repo-root-relative paths for
     # summary.json + git, so redirect those to our temp dir too.
     from agent_core.monitoring import dashboard_api
+
     monkeypatch.setattr(dashboard_api.DashboardAPIHandler, "_base_dir", str(tmp_path))
     monkeypatch.setattr(
-        dashboard_api.subprocess, "run",
+        dashboard_api.subprocess,
+        "run",
         lambda *a, **k: typing.cast(typing.Any, _FakeProc()),
     )
 
-    server = DashboardAPIServer(__import__("agent_core.monitoring.metrics_collector", fromlist=["MetricsCollector"]).MetricsCollector(), port=0)
+    server = DashboardAPIServer(
+        __import__(
+            "agent_core.monitoring.metrics_collector", fromlist=["MetricsCollector"]
+        ).MetricsCollector(),
+        port=0,
+    )
     httpd = server.start()
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
         port = httpd.server_address[1]
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/autonomous/status", timeout=10) as resp:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/autonomous/status", timeout=10
+        ) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     finally:
         threading.Thread(target=httpd.shutdown, daemon=True).start()
@@ -134,7 +170,8 @@ def test_endpoint_merges_status_summary_history_and_commits(
 
 
 def test_endpoint_derives_idle_when_heartbeat_stale(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(progress, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(progress, "STATUS_PATH", tmp_path / "run_status.json")
@@ -147,15 +184,27 @@ def test_endpoint_derives_idle_when_heartbeat_stale(
     (tmp_path / "run_status.json").write_text(json.dumps(old), encoding="utf-8")
 
     from agent_core.monitoring import dashboard_api
-    monkeypatch.setattr(dashboard_api.DashboardAPIHandler, "_base_dir", str(tmp_path))
-    monkeypatch.setattr(dashboard_api.subprocess, "run", lambda *a, **k: typing.cast(typing.Any, _FakeProc()))
 
-    server = DashboardAPIServer(__import__("agent_core.monitoring.metrics_collector", fromlist=["MetricsCollector"]).MetricsCollector(), port=0)
+    monkeypatch.setattr(dashboard_api.DashboardAPIHandler, "_base_dir", str(tmp_path))
+    monkeypatch.setattr(
+        dashboard_api.subprocess,
+        "run",
+        lambda *a, **k: typing.cast(typing.Any, _FakeProc()),
+    )
+
+    server = DashboardAPIServer(
+        __import__(
+            "agent_core.monitoring.metrics_collector", fromlist=["MetricsCollector"]
+        ).MetricsCollector(),
+        port=0,
+    )
     httpd = server.start()
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     try:
         port = httpd.server_address[1]
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/autonomous/status", timeout=10) as resp:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/autonomous/status", timeout=10
+        ) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     finally:
         threading.Thread(target=httpd.shutdown, daemon=True).start()
@@ -165,30 +214,46 @@ def test_endpoint_derives_idle_when_heartbeat_stale(
 
 
 def test_endpoint_returns_history_newest_first(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(progress, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(progress, "STATUS_PATH", tmp_path / "run_status.json")
     monkeypatch.setattr(progress, "HISTORY_PATH", tmp_path / "run_history.jsonl")
 
     # Seed three finished iterations in chronological (oldest-first) order.
-    progress.append_history({"iteration": 1, "timestamp": 1000.0, "verdict": "accepted"})
-    progress.append_history({"iteration": 2, "timestamp": 2000.0, "verdict": "rejected_and_reverted"})
-    progress.append_history({"iteration": 3, "timestamp": 3000.0, "verdict": "accepted"})
+    progress.append_history(
+        {"iteration": 1, "timestamp": 1000.0, "verdict": "accepted"}
+    )
+    progress.append_history(
+        {"iteration": 2, "timestamp": 2000.0, "verdict": "rejected_and_reverted"}
+    )
+    progress.append_history(
+        {"iteration": 3, "timestamp": 3000.0, "verdict": "accepted"}
+    )
 
     from agent_core.monitoring import dashboard_api
+
     monkeypatch.setattr(dashboard_api.DashboardAPIHandler, "_base_dir", str(tmp_path))
     monkeypatch.setattr(
-        dashboard_api.subprocess, "run",
+        dashboard_api.subprocess,
+        "run",
         lambda *a, **k: typing.cast(typing.Any, _FakeProc()),
     )
 
-    server = DashboardAPIServer(__import__("agent_core.monitoring.metrics_collector", fromlist=["MetricsCollector"]).MetricsCollector(), port=0)
+    server = DashboardAPIServer(
+        __import__(
+            "agent_core.monitoring.metrics_collector", fromlist=["MetricsCollector"]
+        ).MetricsCollector(),
+        port=0,
+    )
     httpd = server.start()
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     try:
         port = httpd.server_address[1]
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/autonomous/status", timeout=10) as resp:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/autonomous/status", timeout=10
+        ) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     finally:
         threading.Thread(target=httpd.shutdown, daemon=True).start()
@@ -198,23 +263,38 @@ def test_endpoint_returns_history_newest_first(
     assert [h["iteration"] for h in payload["history"]] == [3, 2, 1]
 
 
-def test_autonomous_page_served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_autonomous_page_served(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from agent_core.monitoring import dashboard_api
 
     # Serve a real static/autonomous.html if present, else require the route to
     # 404 cleanly (page missing is a setup error, not a route error).
-    page = Path(dashboard_api.__file__).resolve().parent.parent / "static" / "autonomous.html"
+    page = (
+        Path(dashboard_api.__file__).resolve().parent.parent
+        / "static"
+        / "autonomous.html"
+    )
     if not page.is_file():
         return
-    monkeypatch.setattr(dashboard_api.DashboardAPIHandler, "_base_dir", str(page.parent.parent))
+    monkeypatch.setattr(
+        dashboard_api.DashboardAPIHandler, "_base_dir", str(page.parent.parent)
+    )
 
-    server = DashboardAPIServer(__import__("agent_core.monitoring.metrics_collector", fromlist=["MetricsCollector"]).MetricsCollector(), port=0)
+    server = DashboardAPIServer(
+        __import__(
+            "agent_core.monitoring.metrics_collector", fromlist=["MetricsCollector"]
+        ).MetricsCollector(),
+        port=0,
+    )
     httpd = server.start()
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     try:
         port = httpd.server_address[1]
         for route in ("/autonomous", "/autonomous.html"):
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}{route}", timeout=10) as resp:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}{route}", timeout=10
+            ) as resp:
                 body = resp.read().decode("utf-8")
             assert resp.status == 200
             assert "Autonomous" in body

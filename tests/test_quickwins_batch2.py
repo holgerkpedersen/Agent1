@@ -10,6 +10,7 @@ handlers' output format.
 invariant-#4 reminder when ``git status --porcelain`` is non-empty, stays
 silent on a clean repo, and never raises outside a git repo.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -37,17 +38,23 @@ def _tool_msg(content: str) -> dict:
 # #6 — mutated-file extraction + self-review note
 # ---------------------------------------------------------------------------
 
+
 class TestMutatingFilesExtraction:
     def test_extracts_from_real_write_and_edit_output(self, bot: Agent) -> None:
         """Drive the REAL write/edit handlers, then extract."""
         target = Path(bot.workspace) / "tmp_qw6_probe.py"
-        out_write = asyncio.run(bot._execute_tool_call(
-            "write", {"path": str(target), "content": "x = 1\n"},
-        ))
-        out_edit = asyncio.run(bot._execute_tool_call(
-            "edit",
-            {"path": str(target), "old_text": "x = 1", "new_text": "x = 2"},
-        ))
+        out_write = asyncio.run(
+            bot._execute_tool_call(
+                "write",
+                {"path": str(target), "content": "x = 1\n"},
+            )
+        )
+        out_edit = asyncio.run(
+            bot._execute_tool_call(
+                "edit",
+                {"path": str(target), "old_text": "x = 1", "new_text": "x = 2"},
+            )
+        )
         assert "[verify] py_compile" in out_write
         assert "[verify] py_compile" in out_edit
         bot._chat_history.append(_tool_msg(out_write))
@@ -60,9 +67,12 @@ class TestMutatingFilesExtraction:
     def test_skipped_no_change_message_is_not_counted(self, bot: Agent) -> None:
         target = Path(bot.workspace) / "tmp_qw6_same.py"
         target.write_text("x = 1\n", encoding="utf-8")
-        out_skip = asyncio.run(bot._execute_tool_call(
-            "write", {"path": str(target), "content": "x = 1\n"},
-        ))
+        out_skip = asyncio.run(
+            bot._execute_tool_call(
+                "write",
+                {"path": str(target), "content": "x = 1\n"},
+            )
+        )
         assert out_skip.startswith("Skipped")
         bot._chat_history.append(_tool_msg(out_skip))
         assert bot._mutating_files_this_turn() == []
@@ -96,14 +106,20 @@ class TestSelfReviewNote:
         assert "deep/mod.py" in out or "deep\\mod.py" in out
 
     def test_more_than_six_files_gets_overflow_marker(
-        self, bot: Agent, capsys,
+        self,
+        bot: Agent,
+        capsys,
     ) -> None:
         bot._print_self_review_note([f"f{i}.py" for i in range(8)])
         out = capsys.readouterr().out
         assert "(+2 more)" in out
 
     def test_chat_nlp_prints_note_only_when_files_changed(
-        self, bot: Agent, tmp_path: Path, monkeypatch, capsys,
+        self,
+        bot: Agent,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
     ) -> None:
         """End-to-end through chat_nlp with the REAL write handler."""
         hist_file = tmp_path / "chat_history.json"
@@ -123,22 +139,29 @@ class TestSelfReviewNote:
             # would legitimately drop the bare tool message.
             target = Path(fresh.workspace) / "qw6_e2e.py"
             result = await fresh._execute_tool_call(
-                "write", {"path": str(target), "content": "y = 1\n"},
+                "write",
+                {"path": str(target), "content": "y = 1\n"},
             )
-            kwargs["messages"].append({
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [{
-                    "id": "call_qw6",
-                    "type": "function",
-                    "function": {"name": "write", "arguments": "{}"},
-                }],
-            })
-            kwargs["messages"].append({
-                "role": "tool",
-                "tool_call_id": "call_qw6",
-                "content": result,
-            })
+            kwargs["messages"].append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_qw6",
+                            "type": "function",
+                            "function": {"name": "write", "arguments": "{}"},
+                        }
+                    ],
+                }
+            )
+            kwargs["messages"].append(
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_qw6",
+                    "content": result,
+                }
+            )
             return f"Wrote {target.name}.", kwargs["messages"]
 
         monkeypatch.setattr(agent.ToolLoopRunner, "run", fake_loop_run)
@@ -159,10 +182,12 @@ class TestTurnBoundaryAfterRestart:
     def test_restored_history_tool_results_are_ignored(self) -> None:
         bot = Agent(workspace=".")
         # Simulate a session that RESTORED previous turns' tool results.
-        bot._chat_history.extend([
-            {"role": "user", "content": "old task"},
-            _tool_msg("Written old_session.py (5 bytes)\n[verify] py_compile ✓"),
-        ])
+        bot._chat_history.extend(
+            [
+                {"role": "user", "content": "old task"},
+                _tool_msg("Written old_session.py (5 bytes)\n[verify] py_compile ✓"),
+            ]
+        )
         bot._turn_start_index = len(bot._chat_history)
         assert bot._mutating_files_this_turn() == []
 
@@ -181,22 +206,24 @@ class TestTurnBoundaryAfterRestart:
         assert files[0].endswith("this_turn.py")
 
     def test_end_to_end_restart_then_write_prints_only_new_file(
-        self, tmp_path: Path, monkeypatch, capsys,
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
     ) -> None:
         """Full path: persisted history with an old write -> restart ->
         one new write -> note lists ONLY the new file."""
         hist_file = tmp_path / "chat_history.json"
         mem_file = tmp_path / "agent_memory.json"
-        stale = (
-            "Written C:\\somewhere\\else\\stale.py (5 bytes)\n"
-            "[verify] py_compile ✓"
-        )
+        stale = "Written C:\\somewhere\\else\\stale.py (5 bytes)\n[verify] py_compile ✓"
         hist_file.write_text(
-            json.dumps([
-                {"role": "system", "content": "s"},
-                {"role": "user", "content": "previous session prompt"},
-                {"role": "tool", "tool_call_id": "x", "content": stale},
-            ]),
+            json.dumps(
+                [
+                    {"role": "system", "content": "s"},
+                    {"role": "user", "content": "previous session prompt"},
+                    {"role": "tool", "tool_call_id": "x", "content": stale},
+                ]
+            ),
             encoding="utf-8",
         )
         mem_file.write_text("{}", encoding="utf-8")
@@ -207,22 +234,29 @@ class TestTurnBoundaryAfterRestart:
         async def fake_loop_run(self_loop, **kwargs):
             target = Path(restarted.workspace) / "new_turn.py"
             result = await restarted._execute_tool_call(
-                "write", {"path": str(target), "content": "z = 1\n"},
+                "write",
+                {"path": str(target), "content": "z = 1\n"},
             )
-            kwargs["messages"].append({
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [{
-                    "id": "call_new",
-                    "type": "function",
-                    "function": {"name": "write", "arguments": "{}"},
-                }],
-            })
-            kwargs["messages"].append({
-                "role": "tool",
-                "tool_call_id": "call_new",
-                "content": result,
-            })
+            kwargs["messages"].append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_new",
+                            "type": "function",
+                            "function": {"name": "write", "arguments": "{}"},
+                        }
+                    ],
+                }
+            )
+            kwargs["messages"].append(
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_new",
+                    "content": result,
+                }
+            )
             return f"Wrote {target.name}.", kwargs["messages"]
 
         monkeypatch.setattr(agent.ToolLoopRunner, "run", fake_loop_run)
@@ -235,6 +269,7 @@ class TestTurnBoundaryAfterRestart:
 # ---------------------------------------------------------------------------
 # #19 — uncommitted-changes reminder at shutdown
 # ---------------------------------------------------------------------------
+
 
 class TestWarnUncommitted:
     def test_clean_repo_is_silent(self, tmp_path: Path, capsys) -> None:
@@ -250,17 +285,30 @@ class TestWarnUncommitted:
         assert capsys.readouterr().out == ""
 
     def test_dirty_repo_prints_invariant_reminder(
-        self, tmp_path: Path, capsys,
+        self,
+        tmp_path: Path,
+        capsys,
     ) -> None:
         subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
         (tmp_path / "tracked.txt").write_text("v1", encoding="utf-8")
         subprocess.run(
-            ["git", "add", "tracked.txt"], cwd=tmp_path, check=True,
+            ["git", "add", "tracked.txt"],
+            cwd=tmp_path,
+            check=True,
         )
         subprocess.run(
-            ["git", "-c", "user.email=t@t", "-c", "user.name=t",
-             "commit", "-qm", "init"],
-            cwd=tmp_path, check=True,
+            [
+                "git",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "init",
+            ],
+            cwd=tmp_path,
+            check=True,
         )
         (tmp_path / "tracked.txt").write_text("v2", encoding="utf-8")
         (tmp_path / "untracked.txt").write_text("new", encoding="utf-8")

@@ -6,6 +6,7 @@ stored in plaintext: header/env values may reference the OS keyring via
 ``secret:<name>`` or an environment variable via ``${VAR}``; resolution
 happens at connect time and fails closed.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,21 +37,25 @@ class McpServerConfig:
     """One validated server entry from mcp.json."""
 
     name: str
-    transport: str                      # "stdio" | "http"
-    command: list[str] = field(default_factory=list)   # stdio argv (no shell)
-    url: str = ""                       # http endpoint
+    transport: str  # "stdio" | "http"
+    command: list[str] = field(default_factory=list)  # stdio argv (no shell)
+    url: str = ""  # http endpoint
     env: dict[str, str] = field(default_factory=dict)
     headers: dict[str, str] = field(default_factory=dict)
-    expose_to_llm: bool = False         # opt-IN bridge into the NLP tool loop
+    expose_to_llm: bool = False  # opt-IN bridge into the NLP tool loop
     timeout_s: int = 30
 
     def resolved_env(self) -> dict[str, str]:
         """Env with secret:/env refs resolved; unresolved refs fail closed."""
-        return {k: resolve_value(v, f"{self.name}.env.{k}") for k, v in self.env.items()}
+        return {
+            k: resolve_value(v, f"{self.name}.env.{k}") for k, v in self.env.items()
+        }
 
     def resolved_headers(self) -> dict[str, str]:
-        return {k: resolve_value(v, f"{self.name}.headers.{k}")
-                for k, v in self.headers.items()}
+        return {
+            k: resolve_value(v, f"{self.name}.headers.{k}")
+            for k, v in self.headers.items()
+        }
 
 
 def resolve_value(raw: str, where: str) -> str:
@@ -60,7 +65,7 @@ def resolve_value(raw: str, where: str) -> str:
     sending an empty credential.
     """
     if _SECRET_REF.match(raw):
-        name = raw[len("secret:"):]
+        name = raw[len("secret:") :]
         value = secrets.get_secret(name)
         if not value:
             raise McpConfigError(
@@ -88,7 +93,8 @@ def validate_entry(name: str, raw: Any) -> McpServerConfig:
     if transport == "stdio":
         cmd = raw.get("command")
         if (
-            not isinstance(cmd, list) or not cmd
+            not isinstance(cmd, list)
+            or not cmd
             or not all(isinstance(p, str) and p.strip() for p in cmd)
         ):
             raise McpConfigError(
@@ -131,8 +137,9 @@ def load_mcp_servers(path: Path = DEFAULT_MCP_JSON) -> dict[str, McpServerConfig
     return out
 
 
-def save_mcp_servers(configs: dict[str, McpServerConfig],
-                     path: Path = DEFAULT_MCP_JSON) -> None:
+def save_mcp_servers(
+    configs: dict[str, McpServerConfig], path: Path = DEFAULT_MCP_JSON
+) -> None:
     """Write atomically (tmp + os.replace) so a crash cannot truncate config."""
     payload = {
         cfg.name: {

@@ -1,5 +1,6 @@
 """Swarm Orchestrator tests (plan task 39): task dispatch, result retrieval,
 completion waiting, and EvolutionMetrics integration."""
+
 import time
 
 import pytest
@@ -24,6 +25,7 @@ class TestOrchestrator:
 
     def test_task_exception_captured_as_error(self):
         with Orchestrator(agents=[], max_workers=2) as orch:
+
             def boom():
                 raise RuntimeError("task exploded")
 
