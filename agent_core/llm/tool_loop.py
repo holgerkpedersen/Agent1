@@ -1846,10 +1846,7 @@ def _fmt_args_full(args: dict[str, Any]) -> str:
     Unlike :func:`_fmt_args`, no value is truncated and every key is shown,
     so the user sees the complete planned call before it executes.
     """
-    pieces = []
-    for key, value in args.items():
-        pieces.append(f"{key}={value}")
-    return ", ".join(pieces)
+    return ", ".join(f"{key}={value}" for key, value in args.items())
 
 
 def _derive_reason(tool_name: str, args: dict[str, Any], prior_text: str | None, prev_result: str = "") -> str:
