@@ -3491,14 +3491,18 @@ class FixCommand(Command):
             lines = []
             if traceback_text:
                 lines.append(traceback_text)
-            while True:
-                try:
-                    line = input()
-                    if not line.strip():
+            from agent_core.line_editing import suspend_history
+
+            # Pasted lines must not land in the command recall history.
+            with suspend_history():
+                while True:
+                    try:
+                        line = input()
+                        if not line.strip():
+                            break
+                        lines.append(line)
+                    except EOFError:
                         break
-                    lines.append(line)
-                except EOFError:
-                    break
             traceback_text = "\n".join(lines)
 
         if not traceback_text or 'File "' not in traceback_text:

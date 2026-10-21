@@ -82,16 +82,20 @@ def read_stdin(
     Blank lines are preserved.  The sentinel line ``---`` (three dashes,
     alone on a line) terminates input.  Ctrl+Z / Ctrl+D also works.
     """
+    from agent_core.line_editing import suspend_history
+
     print(prompt)
     lines: list[str] = []
-    while True:
-        try:
-            line = input()
-        except EOFError:
-            break
-        if line.strip() == "---":
-            break
-        lines.append(line)
+    # The pasted lines must not land in the command recall history.
+    with suspend_history():
+        while True:
+            try:
+                line = input()
+            except EOFError:
+                break
+            if line.strip() == "---":
+                break
+            lines.append(line)
     return "\n".join(lines)
 
 

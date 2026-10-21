@@ -130,6 +130,9 @@ chat_history.json
 chat_history_prior.json
 .metrics_events.jsonl
 
+# REPL command recall history (the user's own typed commands)
+.agent_history
+
 # Workflow command docs (spec -> analysis -> plan -> tasks -> entities),
 # one timestamped folder per run.  Legacy root artifacts remain ignored too.
 .docs/
