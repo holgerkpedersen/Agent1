@@ -808,12 +808,13 @@ def _shrink_to_budget(
             head[0] = stripped
             changed = True
 
+    # The floor (irreducible system prompt + task prompt + newest exchange)
+    # exceeds the budget.  Raising here — inside the compaction code path —
+    # killed productive turns (2026-10-22), so report it instead: the caller
+    # sees ``(msgs, False)`` and skips compaction for this pass, and the loop
+    # continues (the provider, not our own bookkeeping, gets the last word).
     if _total() > char_budget:
-        raise RuntimeError(
-            f"prompt cannot fit the context budget of {char_budget} chars "
-            f"even after shrinking (system prompt + task prompt + newest "
-            f"exchange alone are over it)"
-        )
+        return msgs, False
     return head + body, changed
 
 

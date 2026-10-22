@@ -12,7 +12,6 @@ never split an assistant/tool pair, and never drop the live (pending) tail.
 import json
 from typing import Any
 
-import pytest
 
 from agent_core.llm.tool_loop import (
     GUARD_COMPACT,
@@ -719,10 +718,17 @@ class TestShrinkFallback:
         answered = {str(m.get("tool_call_id")) for m in out if m.get("role") == "tool"}
         assert announced == answered
 
-    def test_impossible_budget_raises_clear_error(self):
+    def test_impossible_budget_is_fail_open_not_fatal(self):
+        # The 2026-10-22 crash: an impossible budget used to raise
+        # RuntimeError from inside the compaction code path and kill the
+        # interactive run.  A mechanism meant to keep long sessions alive
+        # must never be the thing that aborts them, so compaction now
+        # declines (returns the list untouched, no note) when the
+        # irreducible floor exceeds the budget.
         msgs = self._newest_giant_history(size=100)
-        with pytest.raises(RuntimeError, match="cannot fit"):
-            _compact_messages(msgs, 80, 100, None)
+        shrunk, note = _compact_messages(msgs, 80, 100, None)
+        assert shrunk is msgs
+        assert note is None
 
     def test_many_medium_messages_shrink_instead_of_raising(self):
         # The 2026-10-22 turn-killer shape: a long autonomous run whose
