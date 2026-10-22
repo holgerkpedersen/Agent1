@@ -23,6 +23,10 @@ from .memory_store import (
     clear_semantic_index_cache,
     semantic_search_memories,
 )
+from .supermemory import (
+    API_KEY_ENV as SUPERMEMORY_API_KEY_ENV,
+    SupermemoryStorage,
+)
 from .types import (
     EmbeddingService,
     MAX_GOAL_CHARS,
@@ -46,6 +50,8 @@ __all__: List[str] = [
     "VectorDatabase",
     "VectorEmbeddingModel",
     "MemoryStore",
+    "SupermemoryStorage",
+    "SUPERMEMORY_API_KEY_ENV",
     "semantic_search_memories",
     "clear_semantic_index_cache",
     "SEMANTIC_MEMORY_MARKER",
